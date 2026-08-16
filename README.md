@@ -1,146 +1,279 @@
 # AutoStream
 
-Detects which game you launch on Windows, starts a YouTube live broadcast on its own,
-and rewrites the title in real time as you switch games. Set up once, then forget it.
+**Launch a game. It goes live on YouTube by itself.**
 
-You have already done **Phase A** (YouTube channel) and **Phase B** (Google Cloud).
-What follows is Phases C, D and E.
+AutoStream sits quietly in your Windows system tray and watches which program has
+focus. The moment you start a game it recognises, it creates a YouTube broadcast,
+tells OBS to start streaming, and titles the stream after the game you are playing.
+Switch to a different game and it rewrites the title. Quit the game and it ends the
+broadcast and tidies up.
+
+You set it up once. After that you never open it again unless you want to.
 
 ---
 
-## Phase C — install
+## What it actually does
 
-Put this folder somewhere permanent, e.g. `C:\autostream`. Then:
+| | |
+|---|---|
+| **Detects the game** | Watches the foreground window and running processes, and resolves the `.exe` to a real game name using a public index of ~10,000 titles plus your Steam library. No manual list to maintain. |
+| **Starts the broadcast** | Creates the YouTube broadcast over the API, binds it to a permanent stream key, and pushes that key into OBS over websocket — you never touch OBS stream settings. |
+| **Writes the title** | From a template you control, e.g. `{game} — {hook} \| {day} night stream`. |
+| **Handles the switch** | Change games and it either retitles the same broadcast or starts a fresh one, your choice. |
+| **Stops cleanly** | Close the game, wait out the cooldown, and it ends the broadcast. If it ever crashes mid-stream it sweeps the orphaned broadcast on next start. |
+
+It talks to exactly three places: **YouTube** (your own channel, through your own
+Google Cloud project), **your local OBS**, and two public read-only game-name lists.
+There is no server, no account, and no telemetry. Everything it stores stays in its
+own folder.
+
+### The window
+
+Closing the window does not quit — it keeps running in the tray so it can detect games.
+
+| Page | What's on it |
+|---|---|
+| **Dashboard** | Live status, a countdown ring before anything goes public, viewers/likes/views with a live graph, ingest health from OBS, and live chat. |
+| **Library** | Every game it found. "Open + stream" launches one and goes live deliberately. |
+| **Settings** | All 44 options as real controls, grouped, in plain language. |
+| **Logs** | What it did and — more usefully — why it decided *not* to stream. |
+
+---
+
+## Before you start
+
+You need three things. The first one can take a day, so start it now:
+
+1. **A YouTube channel with live streaming enabled.**
+   youtube.com → Create → Go live. On a brand-new channel this can take **up to 24
+   hours** to activate. Nothing else will work until it does.
+2. **OBS Studio** — [obsproject.com](https://obsproject.com)
+3. **A free Google Cloud project.** The setup wizard walks you through creating it.
+   This is what gives you your own YouTube API allowance rather than sharing one.
+
+In OBS, before you begin: **Tools → WebSocket Server Settings** → tick **Enable
+WebSocket server**, leave the port at **4455**, set a password, then click **Apply**
+and **OK**. OBS does not open the port until that dialog is committed.
+
+---
+
+## Install (the easy way)
+
+**[⬇ Download the latest release](https://github.com/hardikneeravsharma/AutoStream/releases/latest)**
+
+1. Download `AutoStream-share.zip` and unzip it somewhere permanent, e.g.
+   `C:\AutoStream`. Do not run it from inside the zip.
+2. Double-click **`AutoStream.exe`**.
+   Windows SmartScreen will warn you because the app is not code-signed —
+   **More info → Run anyway**.
+3. A setup wizard opens. It takes about ten minutes, most of it waiting on Google.
+
+No Python needed. The zip contains no accounts or keys; you connect your own channel
+during setup.
+
+### Two things people get wrong
+
+> **Publish your OAuth consent screen.**
+> Google Auth Platform → **Audience** → **Publish App**. If you leave it in *Testing*,
+> your login silently expires after about 7 days and streaming stops with an
+> `invalid_grant` error. You do **not** need Google's verification review.
+
+> **"Google hasn't verified this app" is expected.**
+> It is your own personal app. Click **Advanced → Go to … (unsafe)**.
+
+### Start it automatically at login
+
+Finish the wizard first, then open PowerShell **as Administrator** and run:
 
 ```powershell
-cd C:\autostream
+powershell -ExecutionPolicy Bypass -File "C:\AutoStream\Run-At-Startup.ps1"
+```
+
+It registers a Scheduled Task that starts AutoStream 45 seconds after every login,
+then starts it immediately and confirms it is actually running. Add `-Remove` to undo.
+
+Administrator is needed only to *register* the task. AutoStream itself runs as you —
+it has to, because a service cannot see your desktop, your games, or OBS.
+
+---
+
+## Your first week
+
+Leave **privacy on `unlisted`** (the default) until you trust it. Watch a few
+sessions, confirm it detects your games correctly, then switch to public in
+**Settings → Stream**.
+
+> **Use a Game Capture scene in OBS, never Display Capture.**
+> If detection is ever wrong, viewers see a black screen instead of your desktop,
+> your email, or whatever else is on your monitor.
+
+### Safety rails, all on by default
+
+| Rail | What it does |
+|---|---|
+| **Cancel window** | 20 seconds held privately before anything goes public, with a desktop notification and a Cancel button on the dashboard. |
+| **Kill switch** | `Ctrl+Alt+Shift+K` pauses everything and stops the stream, from inside any game. |
+| **`NOSTREAM` file** | Create an empty file called `NOSTREAM` next to the exe and nothing will ever auto-start. Delete it to re-enable. |
+| **Arm delay** | A game must stay open 30 seconds before anything happens, so alt-tabbing never triggers a stream. |
+| **Quiet hours** | Optional window where it never auto-starts. Off by default; set it in Settings → Safety. |
+| **Veto list** | If a password manager or banking app is running, the entire session is vetoed and nothing streams. |
+| **Battery / disk / quota** | Won't start on battery, with under 25 GB free, or when your API quota is nearly spent. |
+
+---
+
+## Install from source
+
+For development, or if you would rather not run a downloaded binary.
+
+Requires **Python 3.12+** and Git.
+
+```powershell
+git clone https://github.com/hardikneeravsharma/AutoStream.git
+cd AutoStream
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
-> **Cloning this repo?** `config/config.yaml` is not tracked — it holds your OBS
-> password, YouTube stream key and local web token. You do not need to create it:
-> the setup wizard writes it on first run. `config/config.example.yaml` documents
-> every key if you would rather start from a template.
-
-That creates `.venv`, installs dependencies, finds `client_secret.json` in your
-Downloads folder and copies it to `secrets\`, and prompts for your obs-websocket
-password.
-
-**Before you run it**, open OBS → **Tools → WebSocket Server Settings**:
-
-- tick **Enable WebSocket server**
-- port **4455**
-- set a password, click **Show Connect Info** to copy it
-
----
-
-## Phase D — one-time setup
+That creates `.venv` and installs dependencies. Then run it — with no config present
+it opens the same setup wizard:
 
 ```powershell
-.\.venv\Scripts\python.exe -m autostream setup
+.\.venv\Scripts\python.exe -m autostream run
 ```
 
-Six steps, all automatic apart from one browser click:
+`config/config.yaml` is **not** tracked by git — it holds your OBS password, YouTube
+stream key and local web token. You do not need to create it; the wizard writes it.
+[`config/config.example.yaml`](config/config.example.yaml) documents every key.
 
-1. Finds/copies `client_secret.json`
-2. Opens your browser for OAuth — **you will see "Google hasn't verified this app".
-   That is expected.** Click *Advanced → Go to … (unsafe)*.
-3. Creates your **permanent reusable ingestion stream** and saves its ID to `config.yaml`
-4. Pushes the stream key into OBS over websocket (you never touch OBS stream settings again)
-5. Downloads the public game index and pre-seeds `games.yaml` from your Steam library
-6. Runs a 60-second **private** smoke test, then deletes it
+### Recommended bring-up
 
-> **Critical:** if your Google Cloud OAuth consent screen is still in *Testing* mode,
-> your refresh token dies after ~7 days. Go to **Google Auth Platform → Audience →
-> Publish App**. You do not need Google's verification review.
-
----
-
-### Stage-by-stage bring-up (recommended)
-
-Don't go straight to `run`. Do this instead:
+Rather than going straight to `run`:
 
 ```powershell
-# 1. Detection only. No API, no OBS, no streaming. Run for an evening.
+# 1. Detection only. No API, no OBS, no streaming. Run it for an evening.
 .\.venv\Scripts\python.exe -m autostream detect
 
 # 2. Prove OBS -> YouTube works, on a private broadcast.
 .\.venv\Scripts\python.exe -m autostream obs-test
 
-# 3. The real thing, in the foreground, so you can watch it.
+# 3. The real thing.
 .\.venv\Scripts\python.exe -m autostream run
 ```
 
-`detect` prints every unindexed `.exe` it saw for 60s+ when you Ctrl-C it. Sort those
-into `games:` and `blocklist:` in `config\games.yaml`. This is the single highest-value
-30 minutes you can spend — it's what makes detection feel reliable instead of random.
+`detect` prints every unrecognised `.exe` it saw for 60s+ when you Ctrl-C it. Sorting
+those into `games:` and `blocklist:` in `config\games.yaml` is the highest-value
+30 minutes you can spend — it is what makes detection feel reliable rather than random.
 
----
-
-## Phase E — make it permanent
+### Build the .exe
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\register_task.ps1
-Start-ScheduledTask -TaskName AutoStream
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1          # -> dist\AutoStream\
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Dist    # -> shareable zip, no credentials
 ```
 
-Runs at logon + 45s via `pythonw.exe`, so there's no console window. A tray icon
-shows the current phase with Pause / Force stop / Open logs.
+`-Dist` strips every credential and verifies the archive before writing it.
 
-To remove: `powershell -File scripts\register_task.ps1 -Remove`
+### Commands
 
----
-
-## Commands
+Global flags `-v/--verbose` and `-q/--quiet` work before or after the subcommand.
 
 | Command | What it does |
 |---|---|
-| `setup` | One-time interactive setup |
-| `detect` | Detection only — no streaming. Use this first. |
-| `obs-test` | 30s private test stream |
-| `run` | The daemon |
-| `status` | Print current phase, broadcast URL, quota spend |
-| `stop` | Force-stop whatever is live right now |
-| `auth` | Re-run OAuth (if the token ever breaks) |
-| `refresh` | Force a game index refresh |
+| `run` | The daemon: window, tray, engine. |
+| `setup` | Console setup wizard (the windowed one is easier). |
+| `detect` | Detection only — no API, no OBS, no streaming. |
+| `obs-test` | 30-second private test stream end to end. |
+| `status` | Print current phase, broadcast URL and quota spend as JSON. |
+| `stop` | Force-stop whatever is live right now. |
+| `scan` | Re-scan for installed games and apps. |
+| `auth` | Re-run the Google login if the token ever breaks. |
+| `refresh` | Force a game-index refresh. |
 
 ---
 
-## Safety rails (all on by default)
+## How it works
 
-- **`privacy: unlisted`** — leave it there for the first week. Flip to `public` in
-  `config\config.yaml` once you trust it.
-- **`abort_grace: 20`** — 20 seconds held in testing, with a desktop toast, before
-  anything goes public.
-- **Kill switch** — `Ctrl+Alt+Shift+K` pauses everything and stops the stream.
-- **`NOSTREAM` file** — create an empty file called `NOSTREAM` in the project root
-  and nothing will ever auto-start.
-- **`quiet_hours`** — never auto-start between 01:30 and 09:00.
-- **`never_stream_if_running`** — password managers etc. veto the whole session.
-- **Use Game Capture scenes, never Display Capture.** If detection is ever wrong,
-  viewers see a black screen instead of your desktop.
+Full technical reference: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
+
+### The state machine
+
+Everything is driven by one loop in [`engine.py`](autostream/engine.py), ticking every
+3 seconds. It is the only place a broadcast is ever started, retitled or stopped.
+
+```
+IDLE ──▶ ARMING ──▶ STARTING ──▶ TESTING ──▶ LIVE ──▶ COOLDOWN ──▶ STOPPING ──▶ IDLE
+  │         │                       │                    │
+  │         │                       │                    └─ game switch: retitle, or
+  │         │                       │                       start a fresh broadcast
+  │         │                       └─ the cancel window: private, and
+  │         │                          abortable, before it goes public
+  │         └─ the game must survive 30s here, so alt-tab never triggers a stream
+  └─ preflight: paused? quiet hours? on battery? disk? quota? veto list?
+```
+
+State is written to `state.json` **before** each side effect, so a crash mid-transition
+is always recoverable — on next start it sweeps any orphaned broadcast.
+
+### Module map
+
+| Module | Responsibility |
+|---|---|
+| [`engine.py`](autostream/engine.py) | The state machine. The only place streams start or stop. |
+| [`watcher.py`](autostream/watcher.py) | Foreground window + process polling. No network. |
+| [`gameindex.py`](autostream/gameindex.py) | exe → game name, from your overrides + public indexes. |
+| [`obs.py`](autostream/obs.py) | obs-websocket v5 client. |
+| [`youtube.py`](autostream/youtube.py) | YouTube Data API v3: OAuth, broadcasts, chat, quota. |
+| [`schema.py`](autostream/schema.py) | One declarative source of truth for all 44 settings — drives both the settings form and server-side validation. |
+| [`webui.py`](autostream/webui.py) | Local HTTP server and JSON API. |
+| [`ui/`](autostream/ui/) | The four-page web app: `shell`, `dashboard`, `library`, `settings`, `logs`, `setup`. |
+| [`window.py`](autostream/window.py) | Native window via pywebview (Edge WebView2). |
+| [`cfg.py`](autostream/cfg.py) | Config load/merge with defaults, atomic writes. |
+
+### Threading
+
+pywebview must own the main thread, so everything else runs beside it:
+
+```
+main    pywebview native window
+worker  engine poll loop      <- the only thread with side effects
+worker  HTTP server (web UI)
+worker  tray icon
+worker  overlay panel
+```
+
+The UI never touches OBS or YouTube directly. It posts commands onto a queue that the
+engine thread drains, which is what keeps "two clicks at once" from racing.
+
+### Files it writes
+
+```
+config/config.yaml         your settings (not in git — contains secrets)
+config/games.yaml          exe -> name overrides, blocklist, veto list
+config/apps.yaml           the launcher's app list
+config/index.cache.json    downloaded game index
+secrets/client_secret.json Google Cloud credentials
+secrets/token.json         your YouTube login — never share this
+state.json                 current phase and broadcast id (crash recovery)
+logs/autostream.log        rotating, 7 days
+```
 
 ---
-
-## Layout
-
-```
-config/config.yaml     all settings
-config/games.yaml      your exe -> game name overrides, blocklist, veto list
-config/index.cache.json  auto-downloaded public game index
-secrets/client_secret.json
-secrets/token.json     written on first auth — this is your login, don't share it
-state.json             current phase, broadcast id, quota spend (crash recovery)
-logs/autostream.log    rotating, 7 days
-```
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| `invalid_grant` on every call | Publish the OAuth consent screen, then `-m autostream auth` |
-| `could not reach obs-websocket` | OBS running? WebSocket enabled? Password matches `AUTOSTREAM_OBS_PW`? |
-| Stuck in STARTING, then aborts | YouTube isn't receiving bytes. Re-run `setup` to rewrite the stream key, and confirm live streaming is actually enabled on the channel (can take 24h). |
-| Stream never starts on a game | It's not in the index. Run `detect`, find the exe, add it to `games.yaml`. |
-| Started for something that isn't a game | Add that exe to `blocklist:` in `games.yaml`. |
-| Broadcast stuck live after a crash | Restart the daemon — it sweeps orphans on startup. Or `-m autostream stop`. |
+| **Nothing happens when I launch a game** | It is not in the index. Check the **Logs** page to see what was detected, then add the exe under `games:` in `config\games.yaml`. |
+| **It started for something that isn't a game** | Add that exe to `blocklist:` in `config\games.yaml`. |
+| **`invalid_grant`, or it stopped working after a week** | The OAuth consent screen is still in *Testing*. Publish it, then re-run setup or `-m autostream auth`. |
+| **Can't reach OBS** | Is OBS running? WebSocket enabled? Password right? Did you click **Apply** in that dialog? |
+| **Stuck on "Starting", then gives up** | YouTube is not receiving video. Confirm live streaming is actually enabled on the channel (can take 24h), then re-run setup to rewrite the stream key. |
+| **Broadcast stuck live after a crash** | Restart it — it sweeps orphans on startup. Or run `-m autostream stop`. |
+| **It doesn't start at login** | `Get-ScheduledTaskInfo -TaskName AutoStream`. `0x0` or `0x41301` is healthy; anything else, check `logs\autostream.log`. |
+| **It won't start at all** | Read `logs\autostream.log` and `logs\crash.log` next to the exe. |
+
+---
+
+## Licence
+
+No licence has been chosen yet, which means default copyright applies and others may
+not reuse the code. Add a `LICENSE` file if you want to change that.
