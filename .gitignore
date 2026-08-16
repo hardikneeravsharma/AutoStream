@@ -1,0 +1,37 @@
+# ---------------------------------------------------------------- secrets
+# Anything under ANY secrets/ directory, at any depth. The leading **/ matters:
+# a bare "secrets/*.json" is anchored to this file's directory and would NOT
+# have matched dist/AutoStream/secrets/token.json, which the build copies there.
+**/secrets/*
+!secrets/.gitkeep
+
+# config.yaml holds the OBS websocket password, the YouTube stream key and the
+# local web token. config.example.yaml is the tracked template instead.
+**/config/config.yaml
+**/config/apps.yaml
+*.bak
+*.orig
+
+# ---------------------------------------------------------------- runtime
+**/logs/
+**/state.json
+**/config/index.cache.json
+NOSTREAM
+
+# ---------------------------------------------------------------- build
+build/
+dist/
+*.egg-info/
+
+# ---------------------------------------------------------------- python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# ---------------------------------------------------------------- editors / OS
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

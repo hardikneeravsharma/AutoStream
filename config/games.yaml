@@ -1,0 +1,90 @@
+games:
+  dirt5.exe:
+    name: DIRT 5
+    scene: null
+    blurb: ''
+  penguinhotel-win64-shipping.exe:
+    name: MECCHA CHAMELEON
+    scene: null
+    blurb: ''
+  cs2.exe:
+    name: Counter-Strike 2
+    scene: null
+    blurb: ''
+  rainbowsix.exe:
+    name: Rainbow Six Siege
+    scene: null
+    blurb: ''
+  rainbowsix_be.exe:
+    name: Rainbow Six Siege
+    scene: null
+    blurb: ''
+  rainbowsix_vulkan.exe:
+    name: Rainbow Six Siege
+    scene: null
+    blurb: ''
+  deltaforceclient-win64-shipping.exe:
+    name: Delta Force
+    scene: null
+    blurb: ''
+  deltaforceclient.exe:
+    name: Delta Force
+    scene: null
+    blurb: ''
+  cleaner.exe:
+    name: Serial Cleaner
+    scene: null
+    blurb: ''
+blocklist:
+- battle.net helper.exe
+- battle.net.exe
+- battleye.exe
+- chrome.exe
+- crashhandler.exe
+- df_launcher.exe
+- df_launcher_global.exe
+- discord.exe
+- discordptb.exe
+- eadesktop.exe
+- easyanticheat.exe
+- epicgameslauncher.exe
+- epicwebhelper.exe
+- explorer.exe
+- firefox.exe
+- galaxyclient.exe
+- galaxyclienthelper.exe
+- launcher.exe
+- msedge.exe
+- obs32.exe
+- obs64.exe
+- origin.exe
+- riotclientservices.exe
+- riotclientux.exe
+- riotclientuxrender.exe
+- rockstarservice.exe
+- spotify.exe
+- steam.exe
+- steamerrorreporter.exe
+- steamerrorreporter64.exe
+- steamservice.exe
+- steamwebhelper.exe
+- ubisoftconnect.exe
+- ubisoftconnectinstaller.exe
+- ueprereqsetup_x64.exe
+- unitycrashhandler64.exe
+- upc.exe
+- vconsole2.exe
+- versionservice.exe
+- vgtray.exe
+- wallpaper32.exe
+- wallpaper64.exe
+- wallpaperservice32.exe
+- wallpaperservice64.exe
+- wallpaperui.exe
+- webwallpaper32.exe
+- webwallpaper64.exe
+never_stream_if_running:
+- keepassxc.exe
+- 1password.exe
+- bitwarden.exe
+- '*banking*'

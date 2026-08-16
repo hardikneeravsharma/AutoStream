@@ -1,0 +1,122 @@
+# AutoStream configuration - EXAMPLE / TEMPLATE
+#
+# Copy this to config/config.yaml, or just run AutoStream and let the setup
+# wizard write it for you (recommended - it fills in the values you cannot
+# type by hand, like the YouTube stream id).
+#
+# config/config.yaml is deliberately NOT tracked by git: it holds your OBS
+# websocket password, your YouTube stream key and the local web token.
+#
+# Every key below is optional. Anything you omit falls back to these same
+# defaults at runtime, so a minimal config.yaml is perfectly valid.
+
+youtube:
+  # Unlisted is the safe setting while you still half expect a mistake: the stream exists but only people you send the link to can find it. A game can override this in games.yaml.
+  privacy: unlisted
+  # Low latency keeps chat close to what you are doing. Ultra low cuts the delay again but leaves YouTube almost no buffer, so a shaky connection turns into stutter for viewers instead of a lag spike for you.
+  latency: low
+  # The category the finished video is filed under on your channel. Applied once the broadcast goes live.
+  category_id: 20
+  # The permanent YouTube ingest that every broadcast is bound to, created once by setup. If this is wrong or empty, broadcasts are created and then never receive any video. Re-run setup to replace it.
+  # WRITTEN BY SETUP - editing this by hand breaks streaming.
+  stream_id: ''
+  # The RTMPS server setup pushed into OBS alongside your stream key. Editing it here does not touch OBS, so the two stop agreeing and the next session never reaches YouTube.
+  # WRITTEN BY SETUP - editing this by hand breaks streaming.
+  ingestion_address: ''
+  # Leave this off unless your channel really is aimed at children. Turning it on disables live chat and strips personalised features for every viewer, on every stream.
+  made_for_kids: false
+  # Renaming keeps one video for the whole evening and just rewrites its title, which is cheap and keeps your viewers. Starting a new broadcast gives each game its own VOD, but costs roughly a whole session of API quota each time and drops everyone watching.
+  switch_policy: rolling
+
+obs:
+  # Leave this as localhost unless OBS runs on a different machine on your network.
+  host: localhost
+  # Must match Tools > WebSocket Server Settings in OBS. 4455 is the OBS default.
+  port: 4455
+  # From Show Connect Info in the same OBS dialog. If you leave this blank AutoStream falls back to the environment variable named below, which keeps the password out of config.yaml.
+  password: ''
+  # Consulted when the OBS password above is blank, so the password can live in your user environment instead of in config.yaml. A change here needs a restart, because the daemon only sees the environment it was started with.
+  password_env: AUTOSTREAM_OBS_PW
+  # AutoStream starts OBS from here when a session begins and OBS is not already running. If the path is wrong OBS simply never starts and the session is abandoned.
+  path: 'C:\Program Files\obs-studio\bin\64bit\obs64.exe'
+  # Switched to when a session starts, unless the game has its own scene in games.yaml. Leave blank to keep whatever scene is already showing. Use a Game Capture scene, never Display Capture: if detection is ever wrong, viewers see a black screen instead of your desktop.
+  default_scene: ''
+  # Name of a Text source in OBS that AutoStream rewrites with the current game name as you switch. Leave blank if you do not have one.
+  overlay_source: null
+  # Only used while setup is running. Custom RTMPS server works on every OBS build; the built-in YouTube service entry is tidier but occasionally lags behind YouTube's ingest changes. Re-run setup after changing this.
+  service_mode: rtmp_custom
+
+timing:
+  # How often AutoStream looks at your running processes. Lower reacts sooner but wakes the machine more often.
+  poll_interval: 3
+  # A game must keep running this long before a stream starts. This is what stops a mis-click, a launcher splash or a crash on load from going live. Pressing Open and stream skips it, because you have already said what you want.
+  arm_delay: 30
+  # The broadcast sits in YouTube's private testing state for this long, with a desktop notification, so the kill switch can still cancel it. Set to 0 to go straight to public with no window to change your mind.
+  abort_grace: 20
+  # How long you must stay in a different game before the title is rewritten. Stops alt-tabbing between two games from renaming the stream every few seconds.
+  switch_delay: 60
+  # A crash or a quick restart inside this window rejoins the same broadcast instead of splitting your evening into two VODs. Once it expires with nothing running, the session ends.
+  cooldown: 300
+  # How long to wait for YouTube to actually receive video after OBS starts pushing. If nothing arrives the session is abandoned and the empty broadcast is deleted, rather than sitting there forever.
+  ingestion_timeout: 90
+  # A hard stop. However long you keep playing, the broadcast is ended at this point; the next detection starts a fresh one.
+  max_session_hours: 8
+  # How stale the downloaded executable-to-game-name list may get before AutoStream fetches it again. Only checked when the daemon starts.
+  index_refresh_days: 7
+
+rules:
+  # AutoStream never starts a stream by itself inside this window. A session already running is left alone. The window may cross midnight. Leave both blank to allow streaming at any hour.
+  quiet_hours: []
+  # Refuses to auto-start while a laptop is on battery, because an hour of encoding empties it. Pressing Open and stream overrides this.
+  require_ac_power: true
+  # Never start a session with less than this free on the drive AutoStream lives on. Local recording and buffering both need room, and running out mid-stream corrupts the recording.
+  min_free_disk_gb: 25
+  # Works from inside a fullscreen game: pauses AutoStream and ends whatever is live right now. Leave blank to disable it.
+  kill_switch_hotkey: ctrl+alt+shift+k
+  # While a file with this name exists in the AutoStream folder, nothing will ever auto-start. Creating an empty NOSTREAM file is the no-clicking way to go dark for an evening.
+  paused_flag_file: NOSTREAM
+  # YouTube allows 10,000 API units a day and one session spends about 250. AutoStream refuses to start a session that would eat into this reserve, so there is always enough left to stop a stream cleanly.
+  quota_reserve: 500
+  # The notification-area icon with the current phase, pause and force stop. Turning it off leaves this window as your only way in.
+  tray_icon: true
+  # The small always-on-top panel with the current phase and a stop button, so you can see what AutoStream is doing without leaving the game.
+  control_panel: true
+  # Turning this off stops the local web server that draws this page, on the next start. You would then have to edit config.yaml by hand to get back in.
+  # WRITTEN BY SETUP - editing this by hand breaks streaming.
+  web_dashboard: true
+  # TCP port this dashboard listens on. Change it only if something else on the machine already owns 8787.
+  web_port: 8787
+  # Appended to every request this page makes. Anyone on your network holding it can read your chat and stop your stream. Generated on first run; clear it and restart to have a new one issued, which also logs out every other tab.
+  # WRITTEN BY SETUP - editing this by hand breaks streaming.
+  web_token: ''
+
+title:
+  # Rendered at the start of a session and again on every game switch. {game} is what you are playing and {hook} is one line picked at random from the hooks below; {day}, {date}, {time} and {n} (the session number) also work.
+  template: '{game} — live'
+  # One is picked at random when a session starts and stays for the whole session, so back-to-back streams do not look identical in your channel list. Press Enter to add.
+  hooks:
+    - live
+  # Longer titles are cut at a word boundary and given an ellipsis, never chopped mid-word. YouTube's own ceiling is 100 characters.
+  max_len: 100
+  # Stands in for {game} when AutoStream can tell something is running but has no name for it.
+  fallback_game: Just Chatting
+
+description:
+  # Same placeholders as the title, plus {session_games} for everything played so far this session, {start_local} for when you started and {game_hashtag} for a hashtag-safe version of the game name. Rewritten on every game switch.
+  template: 'Live: {game}'
+  # Attached to the video once it goes live. YouTube only keeps the first 30, and they matter far less than the title does.
+  tags:
+    - gaming
+    - live
+
+ui:
+  # Applies straight away, here and in any browser tab you have open on this dashboard.
+  theme: midnight
+  # Off means AutoStream starts quietly in the notification area and you open this window from the tray icon when you want it.
+  open_window: true
+
+logging:
+  # Info is the right everyday setting. Debug is loud, but it is what shows you why detection or ingestion is misbehaving.
+  level: INFO
+  # The log rotates at midnight; older files past this many days are deleted.
+  keep_days: 7
