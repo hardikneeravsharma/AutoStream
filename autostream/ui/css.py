@@ -1190,7 +1190,7 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 /* Last five seconds before a broadcast goes public. */
 .ring.is-urgent .ring-bar{stroke:var(--danger)}
 .ring.is-urgent .ring-count{color:var(--danger)}
-.ring.is-urgent{animation:as-breathe 1s ease-in-out infinite}
+.ring.is-urgent{animation:as-breathe-ring 1s ease-in-out infinite}
 
 .abort-bar{
   display:flex;align-items:center;gap:var(--space-5);
@@ -1260,7 +1260,10 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
   from{opacity:0;transform:translateY(-6px)}
   to{opacity:1;transform:none}
 }
-@keyframes as-breathe{
+/* Distinct name from the pill's as-breathe at the top of this file: a repeated
+   @keyframes name is not merged, the later one simply wins for every user of
+   it, which silently retimed the live dot. */
+@keyframes as-breathe-ring{
   0%,100%{opacity:1}
   50%{opacity:.55}
 }

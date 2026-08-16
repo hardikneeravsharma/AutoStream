@@ -10,6 +10,13 @@ broadcast and tidies up.
 
 You set it up once. After that you never open it again unless you want to.
 
+![AutoStream holding a broadcast private during its cancel window, with a countdown
+ring reading 4 seconds and a bar warning that the stream goes public when it runs
+out](docs/img/countdown.png)
+
+> Nothing goes public by surprise. Every broadcast is held **private** behind a
+> visible countdown first, with a Cancel button — that window is the whole point.
+
 ---
 
 ## What it actually does
@@ -37,6 +44,9 @@ Closing the window does not quit — it keeps running in the tray so it can dete
 | **Library** | Every game it found. "Open + stream" launches one and goes live deliberately. |
 | **Settings** | All 44 options as real controls, grouped, in plain language. |
 | **Logs** | What it did and — more usefully — why it decided *not* to stream. |
+
+![The AutoStream dashboard while live: session timer, watching/likes/views counters,
+a viewer graph for the session, OBS ingest health, and live chat](docs/img/dashboard.png)
 
 ---
 
@@ -194,6 +204,15 @@ Global flags `-v/--verbose` and `-q/--quiet` work before or after the subcommand
 
 Full technical reference: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 
+### Themes
+
+![The five built-in themes — Midnight, Carbon, Ember, Forest and Daylight — each
+shown as a four-colour swatch](docs/img/themes.png)
+
+Every colour in the app resolves through one token contract in
+[`theme.py`](autostream/theme.py), so a theme is a palette definition and nothing
+else — no view needs to know a theme exists.
+
 ### The state machine
 
 Everything is driven by one loop in [`engine.py`](autostream/engine.py), ticking every
@@ -275,5 +294,6 @@ logs/autostream.log        rotating, 7 days
 
 ## Licence
 
-No licence has been chosen yet, which means default copyright applies and others may
-not reuse the code. Add a `LICENSE` file if you want to change that.
+[Apache License 2.0](LICENSE) — free to use, modify and distribute, including commercially,
+provided you keep the notice and state your changes. Comes with an explicit patent grant and
+no warranty.
