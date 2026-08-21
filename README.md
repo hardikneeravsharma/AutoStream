@@ -1,59 +1,114 @@
-<img src="docs/img/logo.png" width="96" align="left" alt="">
+<div align="center">
 
-# AutoStream
+<img src="docs/img/logo.png" width="120" alt="AutoStream">
+
+### <b>AutoStream</b>
 
 **Launch a game. It goes live on YouTube by itself.**
 
-<br clear="left">
+[![Latest release](https://img.shields.io/github/v/release/hardikneeravsharma/AutoStream?label=release)](https://github.com/hardikneeravsharma/AutoStream/releases/latest)
+[![Licence](https://img.shields.io/github/license/hardikneeravsharma/AutoStream)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 
+<img src="docs/img/dashboard.png" width="600" alt="The AutoStream dashboard while live: session timer, watching/likes/views counters, a viewer graph, OBS ingest health, and live chat">
 
-AutoStream sits quietly in your Windows system tray and watches which program has
-focus. The moment you start a game it recognises, it creates a YouTube broadcast,
-tells OBS to start streaming, and titles the stream after the game you are playing.
-Switch to a different game and it rewrites the title. Quit the game and it ends the
-broadcast and tidies up.
+</div>
+
+AutoStream sits in your Windows system tray and watches which program has focus. The
+moment you start a game it recognises, it creates a YouTube broadcast, tells OBS to
+start streaming, and titles the stream after the game you are playing. Switch games and
+it rewrites the title. Quit the game and it ends the broadcast and tidies up.
+
+It can also record locally while you stream, then find your kills in that recording and
+cut them into clips, vertical exports and a montage — without you opening an editor.
 
 You set it up once. After that you never open it again unless you want to.
 
-![AutoStream holding a broadcast private during its cancel window, with a countdown
-ring reading 4 seconds and a bar warning that the stream goes public when it runs
-out](docs/img/countdown.png)
+It talks to exactly three places: **YouTube** (your own channel, through your own Google
+Cloud project), **your local OBS**, and two public read-only game-name lists. There is no
+server, no account, and no telemetry. Everything it stores stays in its own folder.
 
-> Nothing goes public by surprise. Every broadcast is held **private** behind a
-> visible countdown first, with a Cancel button — that window is the whole point.
+## Contents
 
----
+- [Features](#features)
+- [What you can use it for](#what-you-can-use-it-for)
+- [Nothing goes public by surprise](#nothing-goes-public-by-surprise)
+- [The window](#the-window)
+- [Before you start](#before-you-start)
+- [Install](#install-the-easy-way)
+- [Your first week](#your-first-week)
+- [Install from source](#install-from-source)
+- [How it works](#how-it-works)
+- [Troubleshooting](#troubleshooting)
+- [Licence](#licence)
 
-## What it actually does
+## Features
 
-| | |
-|---|---|
-| **Detects the game** | Watches the foreground window and running processes, and resolves the `.exe` to a real game name using a public index of ~10,000 titles plus your Steam library. No manual list to maintain. |
-| **Starts the broadcast** | Creates the YouTube broadcast over the API, binds it to a permanent stream key, and pushes that key into OBS over websocket — you never touch OBS stream settings. |
-| **Writes the title** | From a template you control, e.g. `{game} — {hook} \| {day} night stream`. |
-| **Handles the switch** | Change games and it either retitles the same broadcast or starts a fresh one, your choice. |
-| **Stops cleanly** | Close the game, wait out the cooldown, and it ends the broadcast. If it ever crashes mid-stream it sweeps the orphaned broadcast on next start. |
-| **Records and clips** | Optionally records locally while streaming, then finds your kills in that recording and cuts them into clips, vertical versions and a montage. |
+- **Detects the game by itself.** Watches the foreground window and running processes,
+  and resolves the `.exe` to a real game name.
+  - A public index of ~10,000 titles, plus your own Steam library.
+  - No list to maintain. Games it gets wrong are one line in `games.yaml`.
+- **Starts and stops the broadcast.** Creates the YouTube broadcast over the API, binds
+  it to a permanent stream key, and pushes that key into OBS over websocket.
+  - You never touch OBS stream settings.
+  - Close the game and it ends the broadcast after a cooldown.
+  - If it crashes mid-stream, it sweeps the orphaned broadcast on next start.
+- **Writes the title** from a template you control, e.g.
+  `{game} — {hook} | {day} night stream`.
+- **Handles switching games** mid-session — retitle the same broadcast, or start a fresh
+  one, your choice.
+- **Records locally while streaming**, in HQ with three separate audio tracks so the
+  mic, the game and the desktop stay separable in an editor.
+- **Finds your kills in the recording and cuts clips**, with no editing.
+  - 16:9 masters, 1080x1920 verticals for Shorts, and a montage with transitions.
+  - Filenames say what is in them: `Delta-Force_01_3kills_12m48s_15s.mp4`.
+  - Captions and channel branding burned onto the vertical exports.
+- **Two ways of finding kills**, because not every game draws a kill marker.
+  - Games that do — Delta Force draws a skull under the crosshair — are template
+    matched.
+  - Counter-Strike 2 draws no kill confirmation at all, so its kill feed is read
+    instead, and your own name in it tells a kill from a death from an assist.
+- **Clips Counter-Strike by the round, not by the kill.** Reads the scoreboard as well
+  as the feed, so it can find the rounds that actually matter.
+  - Aces, 1vN clutches won *and* nearly won, four-kill rounds, last-one-alive, quick
+    multi-kills and chaotic rounds.
+  - A 1v3 won with a single kill outranks an ordinary double, which is the whole point.
+- **Generates a thumbnail** for each go-live from a live OBS frame, your logo and the
+  game.
+- **Five themes**, a full settings page, and a log that says why it decided *not* to
+  stream.
 
-It talks to exactly three places: **YouTube** (your own channel, through your own
-Google Cloud project), **your local OBS**, and two public read-only game-name lists.
-There is no server, no account, and no telemetry. Everything it stores stays in its
-own folder.
+## What you can use it for
 
-### The window
+- Streaming every evening without remembering to press anything.
+- Never streaming your desktop by accident, because it only goes live on a game it
+  recognises and only through a Game Capture scene.
+- Turning a three-hour session into a folder of Shorts while you make dinner.
+- Finding the two rounds worth watching out of ninety, without scrubbing the VOD.
+- Keeping a local HQ recording of every stream, with the mic on its own track, whether
+  or not you ever clip it.
+
+## Nothing goes public by surprise
+
+<img src="docs/img/countdown.png" width="600" alt="AutoStream holding a broadcast private during its cancel window, with a countdown ring reading 4 seconds and a bar warning that the stream goes public when it runs out">
+
+Every broadcast is held **private** behind a visible countdown first, with a Cancel
+button. That window is the whole point — see
+[Safety rails](#safety-rails-all-on-by-default) for the rest.
+
+## The window
 
 Closing the window does not quit — it keeps running in the tray so it can detect games.
 
-| Page | What's on it |
-|---|---|
-| **Dashboard** | Live status, a countdown ring before anything goes public, viewers/likes/views with a live graph, ingest health from OBS, and live chat. |
-| **Library** | Every game it found. "Open + stream" launches one and goes live deliberately. |
-| **Clips** | Every stream you've recorded. Pick one, choose how busy a moment has to be, and it cuts the clips. |
-| **Settings** | All 58 options as real controls, grouped, in plain language. |
-| **Logs** | What it did and — more usefully — why it decided *not* to stream. |
-
-![The AutoStream dashboard while live: session timer, watching/likes/views counters,
-a viewer graph for the session, OBS ingest health, and live chat](docs/img/dashboard.png)
+- **Dashboard** — live status, the countdown ring, viewers/likes/views with a live
+  graph, OBS ingest health, and live chat.
+- **Library** — every game it found. *Open + stream* launches one and goes live
+  deliberately.
+- **Clips** — every stream you have recorded. Pick one, choose what counts as a
+  highlight, and it cuts them.
+- **Settings** — every option as a real control, grouped, in plain language.
+- **Logs** — what it did, and more usefully why it decided *not* to stream.
 
 ---
 
@@ -318,6 +373,45 @@ pip install pytesseract
 ```
 
 CS2 ships with the feed area already set; you only have to supply your name.
+
+**Counter-Strike is clipped by the round, not by the kill.** Kills are the wrong unit
+there: three kills with the team alive is a good start, three kills alone against three
+is the clip people watch, and ranking by kill count buries the second one. A 1v3 won
+with a single kill produces *one* kill and would be cut as a four-second single.
+
+So for CS2 the scoreboard is read as well as the feed, from the same pass over the
+recording:
+
+```
+             1:14          <- round timer
+           12 | 12         <- score, which is how rounds are found
+            3 |  2         <- players alive, which is how a clutch is found
+```
+
+Rounds are split on the score changing rather than the timer resetting, because the
+score also says who won and it survives overtime. The half-time side swap is detected
+explicitly — miss it and every win in the second half is recorded as a loss.
+
+Each round is then labelled, and one clip is cut per round carrying every label it
+earned, named by the strongest:
+
+| Label | What it means |
+|---|---|
+| `ACE` | five kills in the round |
+| `CLUTCH 1vN` | last one alive against N, and you won |
+| `ALMOST 1vN` | the same, and you did not — often the better watch, so it is kept |
+| `4 KILLS` | four-kill round |
+| `LAST ALIVE` | last one alive against one |
+| `3K IN 5s` | three kills inside five seconds |
+| `CHAOS` | a fast round with a high death rate on both sides |
+| `SURVIVED THE LOSS` | you got a kill and lived, and the round was still lost |
+
+Pick which of those you want on the Clips page. **Keep the whole round** gives you all
+30–115 seconds of it; turning it off trims to a Shorts-length cut that keeps the
+*ending*, because in Counter-Strike the resolution is the payoff.
+
+The scoreboard also acts as a check on the kill feed: the enemy team can only lose five
+players, so a round the feed calls a six-kill ace is corrected rather than published.
 
 **What comes out**, in `clips/<date>_<time>_<Game>/`:
 
