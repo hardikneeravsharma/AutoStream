@@ -20,6 +20,7 @@ point the synchronously-parsed view modules have registered their PAGE objects.
 """
 from __future__ import annotations
 
+from .clips import CLIPS_HTML, CLIPS_JS
 from .css import CSS
 from .dashboard import DASH_HTML, DASH_JS
 from .icons import ICONS, LOGO_LOCKUP, LOGO_MARK
@@ -32,6 +33,7 @@ from .shell import SHELL_HTML, SHELL_JS
 _VIEWS = {
     "{{DASH_HTML}}": DASH_HTML,
     "{{LIBRARY_HTML}}": LIBRARY_HTML,
+    "{{CLIPS_HTML}}": CLIPS_HTML,
     "{{SETTINGS_HTML}}": SETTINGS_HTML,
     "{{LOGS_HTML}}": LOGS_HTML,
     "{{SETUP_HTML}}": SETUP_HTML,
@@ -53,6 +55,7 @@ JS = "\n".join((
     SHELL_JS,          # must be first: declares the shared globals
     DASH_JS,
     LIBRARY_JS,
+    CLIPS_JS,
     SETTINGS_JS,
     LOGS_JS,
     SETUP_JS,

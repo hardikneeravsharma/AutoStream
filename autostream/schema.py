@@ -242,6 +242,17 @@ CONFIG_SCHEMA: list[Section] = [
                 max_chars=200,
             ),
             _field(
+                "obs.launch_elevated",
+                "Start OBS as administrator",
+                "Games with kernel anti-cheat - Delta Force, Valorant, anything "
+                "using EasyAntiCheat - block OBS's Game Capture unless OBS is "
+                "running as administrator. The symptom is a completely black "
+                "capture while everything else reports healthy. Turning this on "
+                "means Windows asks for permission whenever AutoStream has to "
+                "start OBS itself.",
+                "toggle",
+            ),
+            _field(
                 "obs.overlay_source",
                 "Overlay text source",
                 "Name of a Text source in OBS that AutoStream rewrites with the "
@@ -550,6 +561,332 @@ CONFIG_SCHEMA: list[Section] = [
                 placeholder="gaming",
                 max_items=30,
                 item_max_chars=60,
+            ),
+        ],
+    },
+    {
+        "id": "thumbnail",
+        "label": "Thumbnail",
+        "icon": "eye",
+        "blurb": "Build a thumbnail from the live picture each time a stream "
+                 "starts, and set it on the broadcast.",
+        "advanced": False,
+        "fields": [
+            _field(
+                "thumbnail.enabled",
+                "Make a thumbnail each stream",
+                "When a broadcast goes live, AutoStream grabs the frame OBS is "
+                "showing and lays your logo, the game and your channel name over "
+                "it. The image is always written to Videos\\AutoStream\\thumbnails "
+                "whether or not it is uploaded.",
+                "toggle",
+            ),
+            _field(
+                "thumbnail.upload",
+                "Set it on the broadcast",
+                "Uploads the thumbnail to YouTube. Costs 50 units of daily API "
+                "quota per stream on top of the usual 250, and needs a verified "
+                "channel - an unverified one is refused, which is logged and "
+                "otherwise ignored.",
+                "toggle",
+            ),
+            _field(
+                "thumbnail.channel_name",
+                "Channel name",
+                "Available to the templates below as {channel}.",
+                "text",
+                placeholder="YuvaNeta",
+                nullable=True,
+                max_chars=80,
+            ),
+            _field(
+                "thumbnail.logo",
+                "Channel logo",
+                "Full path to a PNG. Transparency is strongly preferred - a logo "
+                "on a white background will show its box over the gameplay.",
+                "text",
+                placeholder=r"C:\Users\you\Pictures\logo.png",
+                nullable=True,
+                max_chars=400,
+            ),
+            _field(
+                "thumbnail.headline",
+                "Headline",
+                "The big line. Tokens: {game} {channel} {username} {day} {date} "
+                "{time}. Keep it short - it is read at about 210 pixels wide.",
+                "text",
+                placeholder="{game}",
+                nullable=True,
+                max_chars=120,
+            ),
+            _field(
+                "thumbnail.subtitle",
+                "Second line",
+                "Smaller line under the headline. Same tokens. Leave blank for none.",
+                "text",
+                placeholder="{channel} | {day} night",
+                nullable=True,
+                max_chars=160,
+            ),
+            _field(
+                "thumbnail.base_image",
+                "Fallback image",
+                "Used when OBS cannot supply a frame - if it is not running, or "
+                "the scene is not rendering yet.",
+                "text",
+                placeholder="(a flat colour is used if blank)",
+                nullable=True,
+                max_chars=400,
+                advanced=True,
+            ),
+        ],
+    },
+    {
+        "id": "record",
+        "label": "Recording",
+        "icon": "save",
+        "blurb": "Keep a clean local copy of every stream. YouTube re-encodes what "
+                 "you send it and only serves a downscaled transcode back, so clips "
+                 "cut from the VOD start two generations down. A local recording "
+                 "does not.",
+        "advanced": False,
+        "fields": [
+            _field(
+                "record.enabled",
+                "Record while streaming",
+                "OBS writes the same picture to disk at the same time it streams. "
+                "On a GPU with a dedicated encoder this costs no game framerate. "
+                "Expect roughly 20-30 GB per hour at Indistinguishable quality.",
+                "toggle",
+            ),
+            _field(
+                "record.directory",
+                "Recording folder",
+                "Where OBS saves recordings. Leave blank to use whatever OBS is "
+                "already set to. AutoStream never deletes anything in here.",
+                "text",
+                placeholder=r"C:\Users\you\Videos\AutoStream",
+                nullable=True,
+                max_chars=400,
+            ),
+            _field(
+                "record.min_free_gb",
+                "Never record below",
+                "If the recording drive has less space than this, AutoStream streams "
+                "anyway but does not record. It will not delete anything to make "
+                "room.",
+                "number",
+                min=1,
+                max=10000,
+                step=5,
+                unit="GB free",
+                integer=True,
+            ),
+            _field(
+                "record.warn_free_gb",
+                "Warn below",
+                "Show a warning on the dashboard once free space drops under this. "
+                "Nothing is deleted; this is only a heads-up.",
+                "number",
+                min=1,
+                max=10000,
+                step=10,
+                unit="GB free",
+                integer=True,
+            ),
+            _field(
+                "record.auto_scan",
+                "Find kills after each stream",
+                "When a session ends, scan its recording for kill markers in the "
+                "background so the Clips page already has them ready when you open "
+                "it.",
+                "toggle",
+            ),
+        ],
+    },
+    {
+        "id": "clips",
+        "label": "Clips",
+        "icon": "film",
+        "blurb": "Defaults for the Clips page. Every one of these can also be changed "
+                 "per run, just before cutting.",
+        "advanced": False,
+        "fields": [
+            _field(
+                "clips.output_dir",
+                "Clips folder",
+                "Where finished clips are written, in a subfolder per stream. Leave "
+                "blank to use a 'clips' folder next to AutoStream.",
+                "text",
+                placeholder="(next to AutoStream)",
+                nullable=True,
+                max_chars=400,
+            ),
+            _field(
+                "clips.min_kills",
+                "Minimum kills per clip",
+                "How busy a moment has to be before it is worth cutting. On a "
+                "two-hour session, 1+ typically yields far more clips than you will "
+                "watch; 3+ keeps only the standout fights.",
+                "select",
+                options=_opts(
+                    ("1", "1 or more - everything"),
+                    ("2", "2 or more - balanced"),
+                    ("3", "3 or more - highlights only"),
+                    ("4", "4 or more - very selective"),
+                ),
+            ),
+            _field(
+                "clips.rounds",
+                "Clip whole rounds in Counter-Strike",
+                "Counter-Strike is scored by the round, so a 1v3 won with one "
+                "kill is a better clip than an ordinary double -- and a "
+                "kill-based ranking buries it. With this on, CS2 recordings are "
+                "cut per round: aces, 1vN clutches, last-alive, and chaotic "
+                "rounds. Reads the scoreboard as well as the kill feed, from "
+                "the same pass. Other games are unaffected.",
+                "toggle",
+            ),
+            _field(
+                "clips.whole_round",
+                "Keep the whole round",
+                "A Counter-Strike round runs 30 to 115 seconds, against a "
+                "15-second short-form clip. On keeps the round intact, which is "
+                "better for watching back; off trims to the finish, which is "
+                "what fits a Short. The end is always kept either way, because "
+                "in Counter-Strike the resolution is the payoff.",
+                "toggle",
+            ),
+            _field(
+                "clips.style",
+                "Clip style",
+                "Sets the three timings below together, using the way gaming "
+                "clips are actually cut: about a second or two before the kill "
+                "and two after. Most viewers who leave a short do so in the "
+                "first three seconds, so a long run-up spends the whole hook on "
+                "nothing happening. Choose Custom to set them yourself.",
+                "select",
+                options=_opts(
+                    ("shortform", "Short-form - 1.5s before, 2s after, 15s clips"),
+                    ("montage", "Montage cut - 1s before, 1.5s after, 6s clips"),
+                    ("context", "Full context - 6s before, 4s after, 30s clips"),
+                    ("custom", "Custom - use the settings below"),
+                ),
+            ),
+            _field(
+                "clips.clip_seconds",
+                "Clip length",
+                "A fixed length centres on the busiest few seconds of each fight. "
+                "Whole moment instead follows the fight however long it runs, which "
+                "can be two minutes or more.",
+                "select",
+                options=_opts(
+                    ("10", "10 seconds"),
+                    ("15", "15 seconds"),
+                    ("20", "20 seconds"),
+                    ("30", "30 seconds"),
+                    ("45", "45 seconds"),
+                    ("60", "60 seconds"),
+                    ("auto", "Whole moment"),
+                ),
+            ),
+            _field(
+                "clips.pre_roll",
+                "Run-up before the first kill",
+                "Seconds of lead-in kept before the action starts, so a clip does not "
+                "open on the shot already being fired. Around 1-2 seconds is what "
+                "short-form clips use; much more and the opening is spent on nothing "
+                "happening, which is where most viewers leave.",
+                "number",
+                min=0,
+                max=30,
+                step=0.5,
+                unit="seconds",
+                # Half seconds matter at this scale: the researched run-up is
+                # 1-2s, so rounding to whole numbers would be a 50% change.
+                # `integer` defaults to True, hence the explicit opt-out.
+                integer=False,
+            ),
+            _field(
+                "clips.tail_seconds",
+                "Hold after the last kill",
+                "Kept after the kill marker leaves the screen, so a clip never "
+                "cuts while the kill feed is still running. Raise it if clips "
+                "still end too abruptly; note that on a fixed length this room "
+                "comes out of the action, so a short clip will hold fewer kills.",
+                "number",
+                min=0,
+                max=15,
+                step=0.5,
+                unit="seconds",
+                integer=False,
+            ),
+            _field(
+                "clips.vertical_mode",
+                "Vertical versions",
+                "Also export a 9:16 copy for Shorts and Reels. Zoom keeps the "
+                "crosshair large and loses the edges of the screen; Fit keeps the "
+                "whole frame over a blurred background.",
+                "select",
+                options=_opts(
+                    ("crop", "Zoom to centre - best for shooters"),
+                    ("fit", "Fit whole frame on a blurred background"),
+                    ("none", "Do not make vertical copies"),
+                ),
+            ),
+            _field(
+                "clips.transition",
+                "Montage transition",
+                "How one clip becomes the next in the combined montage.",
+                "select",
+                options=_opts(
+                    ("fade", "Fade"),
+                    ("fadeblack", "Dip to black"),
+                    ("dissolve", "Dissolve"),
+                    ("radial", "Swirl"),
+                    ("zoomin", "Zoom"),
+                    ("slideleft", "Slide"),
+                    ("pixelize", "Pixelize"),
+                    ("wipeleft", "Wipe"),
+                    ("cut", "Hard cut - no transition"),
+                    ("mixed", "Mixed - a different one each time"),
+                ),
+            ),
+            _field(
+                "clips.transition_ms",
+                "Transition length",
+                "Long transitions eat the clips on both sides of them, so this is "
+                "capped automatically when the clips are short.",
+                "number",
+                min=100,
+                max=2000,
+                step=50,
+                unit="ms",
+                integer=True,
+            ),
+            _field(
+                "clips.encoder",
+                "Encoder",
+                "Automatic uses your GPU when it can, which is several times faster. "
+                "Switch to CPU if clips come out corrupted.",
+                "select",
+                options=_opts(
+                    ("auto", "Automatic - GPU when available"),
+                    ("nvenc", "NVIDIA GPU"),
+                    ("libx264", "CPU"),
+                ),
+                advanced=True,
+            ),
+            _field(
+                "clips.ffmpeg_path",
+                "ffmpeg folder",
+                "Only needed if AutoStream cannot find ffmpeg on its own. Point this "
+                "at the folder containing ffmpeg.exe.",
+                "text",
+                placeholder="(found automatically)",
+                nullable=True,
+                max_chars=400,
+                advanced=True,
             ),
         ],
     },

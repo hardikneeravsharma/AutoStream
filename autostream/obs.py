@@ -72,21 +72,54 @@ class Obs:
                 time.sleep(12)
         raise ObsUnavailable(f"could not reach obs-websocket: {last}")
 
+    ARGS = ("--disable-shutdown-check", "--minimize-to-tray")
+
     def _launch(self) -> None:
         path = self.cfg.obs.path
         if not path or not os.path.exists(path):
             log.error("OBS executable not found at %s", path)
             return
         cwd = os.path.dirname(path)   # OBS dies without this — it can't find locale files
+        if self.cfg.obs.launch_elevated:
+            self._launch_elevated(path, cwd)
+            return
         log.info("launching OBS from %s", path)
         try:
             subprocess.Popen(
-                [path, "--disable-shutdown-check", "--minimize-to-tray"],
+                [path, *self.ARGS],
                 cwd=cwd,
                 creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
             )
         except OSError as e:
             log.error("failed to launch OBS: %s", e)
+
+    def _launch_elevated(self, path: str, cwd: str) -> None:
+        """Start OBS with administrator rights.
+
+        Games with kernel anti-cheat -- Delta Force's ACE, Valorant's Vanguard,
+        anything with EasyAntiCheat -- refuse OBS's Game Capture hook unless OBS
+        is elevated. The failure is silent and total: the source stays black
+        while every status readout says recording and streaming are fine, so
+        you find out from the VOD.
+
+        ShellExecute rather than Popen, because CreateProcess cannot raise
+        privilege -- Popen against an elevated target fails with WinError 740.
+        If AutoStream is itself elevated the child inherits and nothing prompts;
+        otherwise Windows shows a UAC dialog, which is why this is opt-in.
+        """
+        log.info("launching OBS elevated from %s", path)
+        try:
+            import ctypes
+
+            args = " ".join(self.ARGS)
+            rc = ctypes.windll.shell32.ShellExecuteW(
+                None, "runas", path, args, cwd, 7)      # 7 = SW_SHOWMINNOACTIVE
+            if rc <= 32:
+                # 5 is ERROR_ACCESS_DENIED, which here means "user said No".
+                log.error("elevated OBS launch failed (ShellExecute returned %s)%s",
+                          rc, " - UAC was declined" if rc == 5 else "")
+        except (AttributeError, OSError) as e:
+            log.error("failed to launch OBS elevated: %s", e)
 
     def close(self) -> None:
         try:
@@ -129,13 +162,26 @@ class Obs:
     def health(self) -> dict:
         self.connect()
         s = self.ws.get_stream_status()
-        return {
+        out = {
             "active": bool(s.output_active),
             "congestion": getattr(s, "output_congestion", 0.0),
             "skipped": getattr(s, "output_skipped_frames", 0),
             "total": getattr(s, "output_total_frames", 0),
             "duration_ms": getattr(s, "output_duration", 0),
         }
+        # Recording is reported alongside the stream so the LIVE watchdog and
+        # the dashboard can notice a recording that died on its own — the
+        # stream staying up says nothing about the local file still being
+        # written.
+        try:
+            r = self.ws.get_record_status()
+            out["recording"] = bool(r.output_active)
+            out["rec_paused"] = bool(getattr(r, "output_paused", False))
+            out["rec_bytes"] = int(getattr(r, "output_bytes", 0))
+            out["rec_ms"] = int(getattr(r, "output_duration", 0))
+        except Exception:  # noqa: BLE001 - an old OBS without the verb
+            out["recording"] = False
+        return out
 
     def set_scene(self, scene: str | None) -> None:
         if not scene:
@@ -179,3 +225,95 @@ class Obs:
                 log.info("OBS StopStream issued")
         except Exception as e:  # noqa: BLE001
             log.warning("OBS stop failed: %s", e)
+
+    # ---------------- recording ----------------
+    #
+    # Local recording exists for clip production. What YouTube keeps is a
+    # re-encode of the stream at roughly half its bitrate, and Studio hands
+    # back a 720p transcode of that again, so anything cut from the VOD starts
+    # two generations down. Recording writes the same canvas straight to disk.
+    #
+    # These mirror start()/stop() above: starting raises so a caller can react,
+    # stopping swallows everything because a failure there must never be the
+    # reason a session cannot end.
+
+    def recording_active(self) -> bool:
+        try:
+            self.connect()
+            return bool(self.ws.get_record_status().output_active)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def screenshot(self, width: int = 1280, height: int = 720,
+                   scene: str | None = None) -> bytes | None:
+        """The current program output as PNG bytes.
+
+        Used to build a stream thumbnail from what is actually on screen. The
+        scene name is resolved rather than assumed: GetSourceScreenshot needs a
+        source, and the current program scene is the only one guaranteed to be
+        rendering.
+        """
+        import base64
+
+        try:
+            self.connect()
+            name = scene
+            if not name:
+                r = self.ws.get_current_program_scene()
+                name = (getattr(r, "current_program_scene_name", None)
+                        or getattr(r, "scene_name", None))
+            if not name:
+                return None
+            shot = self.ws.get_source_screenshot(name, "png", width, height, -1)
+            data = getattr(shot, "image_data", "") or ""
+            if "," in data:
+                data = data.split(",", 1)[1]
+            return base64.b64decode(data) if data else None
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not grab an OBS screenshot: %s", e)
+            return None
+
+    def record_directory(self) -> str | None:
+        """Where OBS is currently set to write recordings."""
+        try:
+            self.connect()
+            return self.ws.get_record_directory().record_directory or None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def set_record_directory(self, path: str) -> None:
+        try:
+            self.connect()
+            os.makedirs(path, exist_ok=True)
+            self.ws.set_record_directory(path)
+            log.info("OBS record directory -> %s", path)
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not set record directory: %s", e)
+
+    def start_recording(self) -> None:
+        self.connect()
+        if self.ws.get_record_status().output_active:
+            log.info("OBS already recording — reusing output")
+            return
+        self.ws.start_record()
+        log.info("OBS StartRecord issued")
+
+    def stop_recording(self) -> str | None:
+        """-> the file OBS actually wrote, or None.
+
+        The returned outputPath is the only dependable way to learn the
+        filename. Reconstructing it from the record directory plus OBS's
+        filename format means reimplementing its token expansion and its
+        collision suffixes, and being wrong there means a session's recording
+        is simply lost track of.
+        """
+        try:
+            self.connect()
+            if not self.ws.get_record_status().output_active:
+                return None
+            path = getattr(self.ws.stop_record(), "output_path", None)
+            log.info("OBS StopRecord issued -> %s", path)
+            return path or None
+        except Exception as e:  # noqa: BLE001
+            log.warning("OBS stop recording failed: %s", e)
+            return None

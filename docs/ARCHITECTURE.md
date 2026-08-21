@@ -57,6 +57,63 @@ The UI layer (panel, tray, web dashboard) never calls OBS/YouTube directly. It c
 | [`theme.py`](../autostream/theme.py) | Named CSS colour-variable sets for the web UI |
 | [`ui_assets.py`](../autostream/ui_assets.py) | Raw CSS/HTML/JS for the themed dashboard |
 | [`paths.py`](../autostream/paths.py) | Single source of truth for on-disk locations; `AUTOSTREAM_HOME` override |
+| [`history.py`](../autostream/history.py) | Append-only JSONL journal of finished sessions — the only durable record of which game ran on which broadcast, and where its recording is |
+
+### `clips/` — optional clip production
+
+Imported lazily behind `clips.available()`; needs numpy and ffmpeg, neither of which is
+bundled. A missing dependency renders a setup card on the Clips page and changes nothing
+else about the app. Reading a kill feed additionally needs Tesseract and `pytesseract`;
+without them that one detector mode reports what to install and every other game still
+works.
+
+| Module | Responsibility |
+|---|---|
+| [`tools.py`](../autostream/clips/tools.py) | ffmpeg/ffprobe discovery (PATH, then winget's versioned package dirs), subprocess helpers, encoder selection |
+| [`profiles.py`](../autostream/clips/profiles.py) | Per-game detector profiles: search band, **detector mode**, template file, **reference height**, match threshold. Built-ins plus `config/clip_profiles.yaml` |
+| [`detect.py`](../autostream/clips/detect.py) | Normalised cross-correlation scan for the marker. Chunked across a thread pool; rescales every band to the profile's reference height before matching. Dispatches `mode: killfeed` to `killfeed.py` |
+| [`killfeed.py`](../autostream/clips/killfeed.py) | For games that draw no kill marker (Counter-Strike 2): OCRs the kill feed, finds the player's own name, and reads kill/death/assist off *where* it sits on the line. Needs Tesseract |
+| [`plan.py`](../autostream/clips/plan.py) | Clusters kills into fights, picks the densest window of the requested length, ranks and names |
+| [`cutter.py`](../autostream/clips/cutter.py) | Cuts masters (all audio tracks kept), verticals and contact sheets |
+| [`montage.py`](../autostream/clips/montage.py) | xfade/acrossfade chain with cumulative offsets |
+| [`jobs.py`](../autostream/clips/jobs.py) | `ClipJob` + `JobRunner`: one job at a time on its own thread, progress published through `/api/status` |
+| [`calibrate.py`](../autostream/clips/calibrate.py) | Turns a dragged box into a template, then judges it by detection rate across the recording. For killfeed games the box *is* the band, and what gets proved instead is that the name is legible in it |
+
+**Two detector modes, because not every game has a marker to match.** Most shooters
+confirm your own kill with a fixed glyph — Delta Force draws a skull under the crosshair —
+and a template match is both cheap and unambiguous. Counter-Strike 2 draws nothing at all
+and announces kills only in the feed, which lists *everyone's*. So its profile sets
+`mode: killfeed` and the feed is read instead:
+
+- **Which slot the name occupies is the signal**, not its presence — the line reads
+  `[assister +] KILLER <icon> VICTIM` and your name can be in any of the three. Measured
+  over 12 minutes of play, kill sightings ended at 0.594–0.828 of the strip and deaths at
+  0.966–0.988, with nothing in between; the feed is right-aligned, so only a victim's name
+  reaches the margin.
+- **Colour was tried first and rejected.** CS2 does outline your rows red, but over sandy
+  terrain a *kill* row measured redness 60 against a genuine *death* row's 26 — the map
+  decides how red a row is, not the outline. The outline also marks rows you merely
+  assisted, so even read perfectly it would not separate a kill from a death.
+- **Assists are detected and excluded.** Counting them would put "3 kills" on a clip where
+  the player got one.
+- **Cost:** roughly a minute of scanning per ten minutes of footage, against seconds for a
+  template match. `scan_fps` is 1.0 because a feed row lives a median of 5 seconds.
+
+Every constant above is measured, and the measurements are pinned in
+[`tests/test_killfeed.py`](../tests/test_killfeed.py) so moving one fails loudly.
+
+**The two things that fail silently here**, both guarded and tested:
+
+1. **Reference height.** A template is a fixed pixel patch. Matched against a frame at
+   the wrong scale it returns *zero* hits, which is indistinguishable from a session with
+   no kills. `Profile.ref_height` records the height the template was cut at and every
+   scan rescales to it. The shipped Delta Force value of 720 was found by sweeping
+   540–900 against 64 known kills; it peaked at 720 and collapsed to nothing either side.
+
+2. **Crop arithmetic.** ffmpeg *rounds* a fractional crop where `int()` truncates
+   (204.8 → 205 vs 204). Predicting the band size rather than computing it misaligns the
+   raw-frame reshape by a pixel per row and the scan quietly returns nothing.
+   `band_geometry()` computes integers up front and hands ffmpeg literal values.
 
 ### Typical live-session data flow
 
@@ -294,9 +351,31 @@ config/config.yaml       all settings
 config/games.yaml        exe -> game name overrides, blocklist, veto list
 config/apps.yaml         launchable-app catalogue for the dashboard (catalog.py)
 config/index.cache.json  auto-downloaded public game index (gameindex.py)
+config/clip_profiles.yaml  calibrated kill-marker profiles (clips/profiles.py)
+config/clip_templates/     the marker patches those profiles point at (.npy)
 secrets/client_secret.json
 secrets/token.json       written on first auth — do not share
 state.json               current phase, broadcast id, quota spend (crash recovery)
 logs/autostream.log      rotating, 7 days
 autostream.spec          PyInstaller build spec
 ```
+
+Video and everything describing it lives under `paths.VIDEO_HOME` —
+`Videos\AutoStream`, overridable with `AUTOSTREAM_VIDEO_HOME`:
+
+```
+<VIDEO_HOME>/
+    2026-08-19 05-15-45.mp4  recordings (record.directory points OBS here)
+    history.jsonl            one line per finished session (history.py)
+    clips/<date>_<time>_<Game>/
+        session.json         source, options, every kill timestamp found
+        clips.json           what was actually produced
+        clips/ vertical/ montage/
+```
+
+**None of this may live under `ROOT`.** For a frozen build `ROOT` is
+`dist\AutoStream`, and PyInstaller deletes that directory wholesale on every build —
+`history.jsonl` and `clips/` were originally placed there and a routine rebuild
+destroyed a session's history along with every clip cut from it. Recordings are also
+tens of gigabytes and should survive reinstalling the app. AutoStream never deletes
+any of it.

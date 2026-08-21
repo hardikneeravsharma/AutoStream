@@ -10,10 +10,11 @@ import queue
 import shutil
 import time
 from datetime import datetime, time as dtime
+from pathlib import Path
 
 import psutil
 
-from . import notify, paths, state as st, titles
+from . import history, notify, paths, state as st, titles
 from .gameindex import GameHit, GameIndex
 from .obs import Obs, ObsUnavailable
 from .watcher import Watcher
@@ -39,6 +40,17 @@ class Engine:
         self._obs_down_since: float | None = None
         self._stop_requested = False
         self._start_failures = 0
+        # The rendered title is only built inside _begin_session, but the
+        # journal is written at the far end of the session and wants it.
+        self._last_title: str | None = None
+        # Black-output watchdog; see _check_picture.
+        self._blank_checked = 0.0
+        self._blank_strikes = 0
+        # Set when a session ends with a recording and record.auto_scan is on.
+        # The Clips job runner picks it up; the engine never scans anything
+        # itself, because a multi-minute ffmpeg pass on this thread would
+        # freeze every phase transition behind it.
+        self.pending_scan: dict | None = None
 
         # UI runs on another thread; it never touches YouTube/OBS directly.
         # It posts commands here and the engine thread drains them each tick.
@@ -82,6 +94,10 @@ class Engine:
         """A crash mid-session leaves a broadcast live on the channel. Kill it."""
         if self.state.phase in (st.LIVE, st.TESTING, st.STARTING, st.COOLDOWN):
             log.warning("recovering from unclean shutdown (phase was %s)", self.state.phase)
+            # Close the recording too, and journal it. OBS survives an
+            # AutoStream crash perfectly well and would otherwise keep writing
+            # to a file nothing remembers starting.
+            rec_path = self._stop_recording()
             try:
                 self.obs.stop()
             except Exception:  # noqa: BLE001
@@ -91,6 +107,7 @@ class Engine:
                 log.info("orphan sweep completed %d broadcast(s)", n)
             except (NotAuthorised, Exception) as e:  # noqa: BLE001
                 log.error("orphan sweep failed: %s", e)
+            self._journal(rec_path)
             self.state.reset_session()
             self.state.save()
 
@@ -179,6 +196,7 @@ class Engine:
             session_start=start,
             session_number=self.state.session_number,
             blurb=hit.blurb,
+            username=getattr(hit, "username", "") or "",
         )
 
     # ================= the tick =================
@@ -349,6 +367,7 @@ class Engine:
         v = self._vars(hit)
         title = titles.render_title(self.cfg, v)
         desc = titles.render_description(self.cfg, v)
+        self._last_title = title
 
         self._goto(st.STARTING)
         try:
@@ -358,6 +377,7 @@ class Engine:
             self.state.save()
             self.yt.bind(bid, self.cfg.youtube.stream_id)
             self.obs.start(scene=hit.scene, overlay=hit.name)
+            self._start_recording()
             self._starting_deadline = time.monotonic() + self.cfg.timing.ingestion_timeout
             log.info("session #%d started: %s", self.state.session_number, title)
         except (QuotaExhausted, NotAuthorised) as e:
@@ -372,6 +392,178 @@ class Engine:
             log.exception("session start failed: %s", e)
             self._abandon_start()
 
+    # ---- local recording --------------------------------------------
+    #
+    # Recording is strictly a side benefit: it produces the clean master the
+    # Clips page cuts from. Every failure path here logs and returns, because
+    # nothing about recording is worth interrupting a live broadcast for.
+
+    def _start_recording(self) -> None:
+        if not self.cfg.record.enabled:
+            return
+        want = (self.cfg.record.directory or "").strip()
+        if want and self.obs.record_directory() != want:
+            # Pushed here rather than at startup so it survives someone editing
+            # it in OBS: the config is the source of truth every session.
+            self.obs.set_record_directory(want)
+        free = self._free_gb()
+        if free is not None and free < self.cfg.record.min_free_gb:
+            # Refuse rather than make room. Deleting the user's video files to
+            # fit a new recording is never the right call.
+            log.warning("not recording: %.0f GB free, need %s",
+                        free, self.cfg.record.min_free_gb)
+            notify.toast("AutoStream: recording skipped",
+                         f"Only {free:.0f} GB free on the recording drive.")
+            return
+        try:
+            # Was OBS already rolling? start_recording() reuses an existing
+            # output rather than interrupting a recording you started yourself,
+            # but that means the file can predate the session by a long way --
+            # and cover a completely different game. Remember which it was, so
+            # the journal does not later claim the whole file is this session.
+            already = self.obs.recording_active()
+            self.obs.start_recording()
+            self.state.recording = True
+            self.state.recording_adopted = already
+            self.state.save()
+            if already:
+                log.info("OBS was already recording; adopting that file. Its "
+                         "earlier footage is not part of this session.")
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not start recording: %s", e)
+
+    def _stop_recording(self) -> str | None:
+        if not self.state.recording:
+            return None
+        path = self.obs.stop_recording()          # already swallows its errors
+        self.state.recording = False
+        return path
+
+    # A completely black program output while live. Every other readout says
+    # healthy in this state -- OBS reports streaming, YouTube reports ingest,
+    # bitrate looks plausible because black compresses to nothing -- so it can
+    # run for a whole session unnoticed. It has happened twice here: once from
+    # anti-cheat blocking the capture hook, once from a capture source pinned
+    # to a game that was not running.
+    BLANK_EVERY = 30.0        # seconds between checks; this is not free
+    BLANK_STRIKES = 2         # consecutive black samples before saying so
+    BLANK_LEVEL = 6.0         # mean 0-255 under which a frame is "no picture"
+
+    def _check_picture(self) -> None:
+        now = time.monotonic()
+        if now - self._blank_checked < self.BLANK_EVERY:
+            return
+        self._blank_checked = now
+        try:
+            from PIL import Image
+        except ImportError:
+            return                       # Pillow is optional; skip quietly
+        png = self.obs.screenshot(160, 90)
+        if not png:
+            return
+        try:
+            import io
+
+            # Downscale to a single pixel and read it: that IS the mean, and
+            # it avoids walking every pixel in Python on the engine thread.
+            im = Image.open(io.BytesIO(png)).convert("L").resize((1, 1))
+            mean = float(im.getpixel((0, 0)))
+        except Exception:  # noqa: BLE001
+            return
+
+        if mean >= self.BLANK_LEVEL:
+            if self._blank_strikes:
+                log.info("picture is back")
+            self._blank_strikes = 0
+            return
+
+        self._blank_strikes += 1
+        if self._blank_strikes == self.BLANK_STRIKES:
+            log.error("STREAM HAS NO PICTURE - OBS program output is black. "
+                      "Check the capture source: a game-capture pinned to a "
+                      "window that is not running, or a hook blocked by "
+                      "anti-cheat (run OBS as administrator).")
+            notify.toast("AutoStream: no picture",
+                         "The stream is black. Check your OBS capture source.")
+
+    def _set_thumbnail(self) -> None:
+        """Compose a thumbnail from the live picture and upload it.
+
+        Runs AFTER the transition to live, never before: the frame has to show
+        the game actually rendering, and nothing here is worth delaying a
+        broadcast for. Every failure is contained -- the stream is already up.
+        """
+        if not self.cfg.thumbnail.enabled or not self.state.broadcast_id:
+            return
+        try:
+            from . import thumbnail
+
+            path = thumbnail.build_for_session(
+                self.cfg, self.obs,
+                game=self.state.current_game or "",
+                username=self._username_for(self.state.current_key))
+            if not path:
+                return
+            self.last_thumbnail = str(path)
+            if self.cfg.thumbnail.upload:
+                self.yt.set_thumbnail(self.state.broadcast_id, path)
+        except Exception as e:  # noqa: BLE001
+            log.warning("thumbnail step failed (stream unaffected): %s", e)
+
+    def _username_for(self, game_key: str | None) -> str:
+        """The in-game name for this game, from games.yaml.
+
+        Per game rather than global because they genuinely differ, and a
+        killfeed detector needs the right one to tell your kills from
+        everyone else's.
+        """
+        if not game_key:
+            return ""
+        try:
+            entry = self.index.overrides.get(game_key.lower()) or {}
+            return str(entry.get("username") or "")
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _journal(self, recording_path: str | None) -> None:
+        """Write the finished session to history.jsonl. Call before
+        reset_session()."""
+        bid = self.state.broadcast_id
+        try:
+            entry = history.record_session(
+                self.state,
+                watch_url=self.yt.watch_url(bid) if bid else None,
+                title=self._last_title,
+                recording_path=recording_path,
+            )
+            if entry and self.cfg.record.auto_scan and recording_path:
+                self.pending_scan = entry
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not journal session: %s", e)
+
+    def _free_gb(self) -> float | None:
+        """Free space on the drive OBS records to, not on the AutoStream drive.
+        They are frequently different disks."""
+        target = self.cfg.record.directory or None
+        if not target:
+            try:
+                target = self.obs.record_directory()
+            except Exception:  # noqa: BLE001
+                target = None
+        if not target:
+            return None
+        try:
+            return shutil.disk_usage(target).free / 1024 ** 3
+        except OSError:
+            # Directory does not exist yet; fall back to its nearest parent.
+            p = Path(target)
+            for parent in p.parents:
+                try:
+                    return shutil.disk_usage(parent).free / 1024 ** 3
+                except OSError:
+                    continue
+            return None
+
     def _abandon_start(self) -> None:
         self._start_failures += 1
         if self.state.broadcast_id:
@@ -379,6 +571,7 @@ class Engine:
                 self.yt.delete_broadcast(self.state.broadcast_id)
             except Exception:  # noqa: BLE001
                 pass
+        self._stop_recording()
         try:
             self.obs.stop()
         except Exception:  # noqa: BLE001
@@ -446,6 +639,7 @@ class Engine:
         url = self.yt.watch_url(self.state.broadcast_id)
         log.info("LIVE: %s", url)
         notify.toast("AutoStream is live", self.state.current_game or "", url)
+        self._set_thumbnail()
         try:
             self.yt.set_video_meta(self.state.broadcast_id,
                                    list(self.cfg.description.tags or []))
@@ -466,6 +660,8 @@ class Engine:
             log.info("pause requested while live — stopping")
             self._goto(st.STOPPING)
             return
+
+        self._check_picture()
 
         # OBS health: only give up after a sustained outage, let OBS reconnect first
         if not self.obs.is_streaming():
@@ -607,6 +803,10 @@ class Engine:
 
     def _tick_stopping(self) -> None:
         bid = self.state.broadcast_id
+        # Stop recording BEFORE the stream: stop_record() is the only thing
+        # that reports the filename, and OBS needs the output closed before
+        # the container is finalised and its size is meaningful.
+        rec_path = self._stop_recording()
         try:
             self.obs.stop()
         except Exception as e:  # noqa: BLE001
@@ -620,6 +820,10 @@ class Engine:
                              self.yt.watch_url(bid))
             except Exception as e:  # noqa: BLE001
                 log.warning("complete transition failed: %s", e)
+        # The journal has to be written here. reset_session() below is the last
+        # instant broadcast_id, session_games, current_game and session_start
+        # all still exist, and the Clips page needs every one of them.
+        self._journal(rec_path)
         self.state.reset_session()
         self.state.save()
         self.watcher.reset_debounce()     # next session serves a full arm_delay

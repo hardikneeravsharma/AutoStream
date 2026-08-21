@@ -1,0 +1,451 @@
+"""Runs a clip job on its own thread and publishes progress.
+
+WHERE THIS MUST NOT RUN
+    Not on the engine thread. That loop is strictly serial -- tick, sleep,
+    tick -- so a five-minute ffmpeg pass parked in it would freeze phase
+    transitions, the OBS health watchdog and chat polling for the duration.
+
+    Not on the HTTP request thread either. The server speaks HTTP/1.1 with
+    keep-alive and a browser only opens about six connections per host; pinning
+    one open for minutes is fragile, and a fetch that never returns looks
+    identical to a hang.
+
+    So: the POST starts a worker and returns immediately, and progress is
+    published into the payload the dashboard already polls every two seconds.
+    No new client machinery, and it survives a page reload -- which a
+    JavaScript-side "busy" flag does not.
+
+CANCELLATION
+    Cooperative. The worker checks a flag between steps and ffmpeg's own
+    Popen is tracked so a long encode can be killed mid-run rather than only
+    between clips.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import subprocess
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from . import cutter, detect, killfeed, montage, overlay, plan, profiles
+from .tools import FfmpegMissing, media_info
+
+log = logging.getLogger("autostream.clips.jobs")
+
+STEPS = ("scan", "cut", "vertical", "montage")
+
+
+def _stamp_folder(started: float | None, game: str | None,
+                  style: str | None = None) -> str:
+    when = datetime.fromtimestamp(started or time.time())
+    name = f"{when:%Y-%m-%d_%H%M}_{plan.slug(game or 'Session')}"
+    # The style is part of the name because the folder is keyed on the SESSION,
+    # so re-cutting one stream at a different length would otherwise land in the
+    # folder that already exists and leave 10-second and 15-second clips mixed
+    # together with no way to tell which run produced which.
+    if style and style != "custom":
+        name += f"_{plan.slug(style)}"
+    return name
+
+
+def _free_folder(root: Path, name: str) -> Path:
+    """`name`, or name_2, name_3... if it is already taken.
+
+    Two runs of the same session at the same style are a deliberate redo, and
+    silently writing over the previous attempt loses whichever clips the new
+    run happens not to produce.
+    """
+    p = root / name
+    if not p.exists():
+        return p
+    for i in range(2, 100):
+        alt = root / f"{name}_{i}"
+        if not alt.exists():
+            return alt
+    return root / f"{name}_{int(time.time())}"
+
+
+class ClipJob:
+    """One run. Not reused -- a second run makes a second job."""
+
+    def __init__(self, source: Path, *, game: str, game_key: str | None,
+                 outdir: Path, options: dict, started: float | None = None,
+                 session: dict | None = None):
+        self.source = Path(source)
+        self.game = game or "Session"
+        self.game_key = game_key
+        self.options = options
+        self.session = session or {}
+        self.folder = _free_folder(
+            Path(outdir), _stamp_folder(started, game, options.get("style")))
+
+        self.state = "queued"          # queued|running|done|failed|cancelled
+        self.step = "scan"
+        self.done = 0
+        self.total = 1
+        self.message = "Waiting to start"
+        self.error: str | None = None
+        self.results: list[dict] = []
+        self.montage_path: str | None = None
+        self.summary: dict = {}
+        self.started_at = time.time()
+        self.finished_at: float | None = None
+
+        self._cancel = threading.Event()
+        self._proc: subprocess.Popen | None = None
+        self._lock = threading.Lock()
+
+    # ---------------- progress ----------------
+
+    def _set(self, **kw) -> None:
+        with self._lock:
+            for k, v in kw.items():
+                setattr(self, k, v)
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            pct = int(100 * self.done / self.total) if self.total else 0
+            return {
+                "state": self.state,
+                "step": self.step,
+                "step_index": STEPS.index(self.step) if self.step in STEPS else 0,
+                "done": self.done,
+                "total": self.total,
+                "percent": max(0, min(100, pct)),
+                "message": self.message,
+                "error": self.error,
+                "game": self.game,
+                "folder": str(self.folder),
+                "clips": len(self.results),
+                "montage": self.montage_path,
+                "summary": dict(self.summary),
+                "elapsed": int(time.time() - self.started_at),
+                "source": self.source.name,
+            }
+
+    def cancel(self) -> None:
+        self._cancel.set()
+        with self._lock:
+            p = self._proc
+        if p and p.poll() is None:
+            try:
+                p.terminate()
+            except OSError:
+                pass
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancel.is_set()
+
+    def _check(self) -> None:
+        if self._cancel.is_set():
+            raise detect.Cancelled("cancelled")
+
+    # ---------------- the work ----------------
+
+    def run(self) -> None:
+        try:
+            self._set(state="running")
+            self._run()
+            self._set(state="done", step="montage", done=self.total,
+                      message=f"{len(self.results)} clips in {self.folder.name}")
+        except detect.Cancelled:
+            self._set(state="cancelled", message="Cancelled")
+            log.info("clip job cancelled")
+        except FfmpegMissing as e:
+            self._set(state="failed", error=str(e), message="ffmpeg not found")
+            log.error("clip job failed: %s", e)
+        except Exception as e:  # noqa: BLE001
+            self._set(state="failed", error=str(e), message="Failed - see the log")
+            log.exception("clip job failed: %s", e)
+        finally:
+            self._set(finished_at=time.time())
+            self._write_manifest()
+
+    def _run(self) -> None:
+        if not self.source.exists():
+            raise FileNotFoundError(f"recording not found: {self.source}")
+
+        opt = self.options
+        info = cutter.probe_source(self.source)
+
+        # ---- 1. find the kills -------------------------------------------
+        self._set(step="scan", done=0, total=1, message="Looking for kills...")
+        prof = profiles.for_game(self.game_key, self.game)
+        kills: list[dict] = []
+
+        # Counter-Strike is clipped per ROUND, which needs the scoreboard as
+        # well as the feed. Both are read from ONE decode pass -- see
+        # killfeed.scan_with_hud -- because decoding is about half the cost of
+        # either and doing it twice would add ten minutes for nothing.
+        use_rounds = bool(prof and getattr(prof, "rounds", False)
+                          and opt.get("rounds", True))
+        round_list: list = []
+
+        cached = opt.get("kills")
+        if cached and not use_rounds:
+            kills = list(cached)
+            self._set(message=f"Using {len(kills)} kills found earlier")
+        elif use_rounds:
+            from . import hud, rounds as rounds_mod
+
+            def prog(d, t):
+                self._set(done=d, total=t,
+                          message=f"Reading the feed and scoreboard - "
+                                  f"{d} of {t} chunks")
+            events, readings = killfeed.scan_with_hud(
+                self.source, prof.band, prof.player,
+                duration=info["duration"], fps=prof.scan_fps,
+                hud_regions=prof.hud_regions or None,
+                progress=prog, cancelled=lambda: self._cancel.is_set())
+            if self._cancel.is_set():
+                raise detect.Cancelled("cancelled")
+            round_list = rounds_mod.analyse(readings, events)
+            kills = [{"time": e.time, "end": e.end, "score": e.ratio,
+                      "count": 1} for e in events if e.kind == "kill"]
+            self._set(message=f"{len(round_list)} rounds, "
+                              f"{len(rounds_mod.highlights(round_list))} worth cutting")
+        elif prof and prof.exists():
+            def prog(d, t):
+                self._set(done=d, total=t,
+                          message=f"Scanning for kills - {d} of {t} chunks")
+            found = detect.scan(self.source, prof, progress=prog,
+                                cancelled=lambda: self._cancel.is_set(),
+                                duration=info["duration"])
+            # `end` must survive into session.json: the planner reserves its
+            # tail from when the marker CLEARED, and without this key it silently
+            # falls back to the appearance time and clips cut early again.
+            kills = [{"time": k.time, "end": k.end, "score": k.score,
+                      "count": k.count} for k in found]
+        else:
+            raise RuntimeError(
+                prof.why_not() if prof else
+                f"No kill-marker profile for {self.game}. Calibrate it first "
+                f"from the Clips page, or pick a session for a game that has one.")
+
+        if not kills:
+            self._set(summary={"kills": 0, "clips": 0, "covered": 0,
+                               "coverage": 0, "runtime": 0})
+            raise RuntimeError("No kills found in this recording.")
+
+        # ---- 2. decide what to cut ---------------------------------------
+        if use_rounds:
+            from . import rounds as rounds_mod
+
+            hl = rounds_mod.highlights(round_list)
+            wanted = opt.get("round_types")
+            if wanted:
+                keep = set(wanted)
+                hl = [r for r in hl
+                      if any(any(k in l for l in r.labels) for k in keep)]
+            plans = plan.build_rounds(
+                hl, game=self.game,
+                pre_roll=float(opt.get("pre_roll", 3)),
+                tail=float(opt.get("tail_seconds", plan.TAIL_MIN)),
+                whole_round=bool(opt.get("whole_round", True)),
+                clip_seconds=opt.get("clip_seconds", "auto"),
+                source_duration=info["duration"])
+            if not plans:
+                raise RuntimeError(
+                    f"{len(round_list)} rounds found but none matched the "
+                    f"selected highlight types.")
+        else:
+            plans = plan.build(
+                kills, game=self.game,
+                min_kills=int(opt.get("min_kills", 2)),
+                clip_seconds=opt.get("clip_seconds", "30"),
+                pre_roll=float(opt.get("pre_roll", 6)),
+                tail=float(opt.get("tail_seconds", plan.TAIL_MIN)),
+                source_duration=info["duration"],
+            )
+            if not plans:
+                raise RuntimeError(
+                    f"{len(kills)} kills found, but none in a fight of "
+                    f"{opt.get('min_kills', 2)}+ kills. Lower the minimum.")
+
+        self._set(summary=plan.summarise(kills, plans))
+        self.folder.mkdir(parents=True, exist_ok=True)
+        (self.folder / "session.json").write_text(json.dumps({
+            "source": str(self.source), "game": self.game,
+            "game_key": self.game_key, "options": opt,
+            "kills": kills, "plans": [p.as_dict() for p in plans],
+            **({"rounds": [
+                {"number": r.number, "start": round(r.started, 1),
+                 "end": round(r.ended, 1), "half": r.half,
+                 "score": list(r.score_after), "won": r.won,
+                 "kills": r.my_kills, "deaths": r.my_deaths,
+                 "assists": r.my_assists, "labels": r.labels,
+                 "overcount": r.kill_overcount}
+                for r in round_list]} if round_list else {}),
+        }, indent=2), encoding="utf-8")
+
+        # ---- 3. cut ------------------------------------------------------
+        enc = opt.get("encoder", "auto")
+        vmode = opt.get("vertical_mode", "crop")
+        want_vertical = vmode not in ("none", "", None)
+        want_montage = bool(opt.get("montage", True)) and len(plans) > 1
+
+        steps = len(plans) + (len(plans) if want_vertical else 0) + (1 if want_montage else 0)
+        self._set(step="cut", done=0, total=steps)
+
+        masters: list[Path] = []
+        n = 0
+        for p in plans:
+            self._check()
+            self._set(message=f"Cutting clip {p.rank} of {len(plans)} "
+                              f"({p.kills} kills)")
+            m = cutter.master(self.source, p, self.folder / "clips", encoder=enc)
+            masters.append(m)
+            n += 1
+            self._set(done=n)
+            self.results.append({
+                **p.as_dict(),
+                "master": str(m),
+                "vertical": None,
+            })
+
+        # ---- 4. vertical -------------------------------------------------
+        if want_vertical:
+            self._set(step="vertical")
+            # Tag detection runs once for the whole session, at the kill
+            # timestamps already known -- a few dozen frames, not the whole
+            # recording.
+            marks: dict[float, list[str]] = {}
+            if opt.get("captions", True):
+                try:
+                    marks = overlay.detect_tags(
+                        self.source, [float(k["time"]) for k in kills],
+                        self.game_key, self.game)
+                    if marks:
+                        log.info("tagged %d kill(s): %s", len(marks),
+                                 sorted({t for v in marks.values() for t in v}))
+                except Exception as e:  # noqa: BLE001 - a caption is not worth failing over
+                    log.warning("tag detection failed: %s", e)
+
+            for i, m in enumerate(masters):
+                self._check()
+                self._set(message=f"Vertical {i + 1} of {len(masters)}")
+                v = cutter.vertical(m, self.folder / "vertical", mode=vmode,
+                                    encoder=enc)
+                if v and opt.get("captions", True):
+                    p = plans[i]
+                    inside = [k for k in kills
+                              if p.start <= float(k["time"]) <= p.end]
+                    extra = sorted({t for k in inside
+                                    for t in marks.get(float(k["time"]), [])})
+                    cap = overlay.caption_for(p, inside, extra)
+                    self.results[i]["caption"] = cap
+                    self.results[i]["tags"] = extra
+                    try:
+                        tmp = v.with_suffix(".tmp.mp4")
+                        overlay.apply(v, tmp, caption=cap,
+                                      handle=str(opt.get("handle") or "@YuvaNeta"),
+                                      encoder=enc)
+                        v.unlink(missing_ok=True)
+                        tmp.rename(v)
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("could not caption %s: %s", v.name, e)
+                self.results[i]["vertical"] = str(v) if v else None
+                n += 1
+                self._set(done=n)
+
+        # ---- 5. montage --------------------------------------------------
+        if want_montage:
+            self._check()
+            self._set(step="montage",
+                      message=f"Joining {len(masters)} clips into a montage")
+            when = datetime.fromtimestamp(
+                self.session.get("started") or self.started_at).strftime("%Y-%m-%d")
+            total = montage.expected_duration(
+                [media_info(m)["duration"] for m in masters],
+                montage.clamp_transition(
+                    [media_info(m)["duration"] for m in masters],
+                    int(opt.get("transition_ms", 500)) / 1000))
+            name = plan.montage_name(self.game, plans, when, total)
+            # Chronological, NOT by rank. The clips are numbered best-first so
+            # the strongest is easy to find on disk, but joining them in that
+            # order makes a montage that jumps from the end of the match back
+            # to the start. A session reel should play in the order things
+            # actually happened.
+            ordered = [m for _p, m in sorted(zip(plans, masters),
+                                             key=lambda pm: pm[0].start)]
+            out = montage.build(
+                ordered, self.folder / "montage" / f"{name}.mp4",
+                transition=opt.get("transition", "fade"),
+                transition_ms=int(opt.get("transition_ms", 500)),
+                encoder=enc)
+            self.montage_path = str(out)
+            n += 1
+            self._set(done=n)
+
+    def _write_manifest(self) -> None:
+        """A record of what was produced, next to the files themselves."""
+        if not self.folder.exists():
+            return
+        try:
+            (self.folder / "clips.json").write_text(json.dumps({
+                "game": self.game,
+                "source": str(self.source),
+                "state": self.state,
+                "error": self.error,
+                "summary": self.summary,
+                "montage": self.montage_path,
+                "clips": self.results,
+                "finished": self.finished_at,
+            }, indent=2), encoding="utf-8")
+        except OSError as e:
+            log.warning("could not write clips.json: %s", e)
+
+
+class JobRunner:
+    """Holds the one job that may be running, and the last one that finished.
+
+    One at a time on purpose: these saturate the GPU encoder, and two competing
+    runs would each take more than twice as long while making the progress bar
+    meaningless.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.current: ClipJob | None = None
+        self.last: ClipJob | None = None
+
+    def busy(self) -> bool:
+        with self._lock:
+            return self.current is not None and self.current.state in (
+                "queued", "running")
+
+    def start(self, job: ClipJob) -> bool:
+        with self._lock:
+            if self.current is not None and self.current.state in ("queued", "running"):
+                return False
+            self.current = job
+        threading.Thread(target=self._run, args=(job,),
+                         name="autostream-clips", daemon=True).start()
+        return True
+
+    def _run(self, job: ClipJob) -> None:
+        try:
+            job.run()
+        finally:
+            with self._lock:
+                self.last = job
+                if self.current is job:
+                    self.current = None
+
+    def cancel(self) -> bool:
+        with self._lock:
+            job = self.current
+        if job is None:
+            return False
+        job.cancel()
+        return True
+
+    def status(self) -> dict | None:
+        with self._lock:
+            job = self.current or self.last
+        return job.snapshot() if job else None

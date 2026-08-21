@@ -19,6 +19,20 @@ hidden = [
     "google.auth.transport.requests",
     "googleapiclient.discovery",
 ]
+# Reading a kill feed needs pytesseract, and killfeed.py imports it lazily
+# inside the function that uses it, so PyInstaller cannot see it. Named here or
+# the packaged build raises ImportError the first time someone scans a CS2
+# recording -- the same trap numpy fell into for the whole Clips page.
+#
+# Optional, and the build must not require it: without it every other detector
+# still works and killfeed mode says what to install.
+try:
+    import pytesseract  # noqa: F401
+    hidden += ["pytesseract"]
+except ImportError:
+    print("NOTE: pytesseract is not installed, so this build cannot read kill "
+          "feeds (Counter-Strike 2). Everything else is unaffected.")
+
 hidden += collect_submodules("obsws_python")
 # cmd_run imports submodules lazily inside the function body; be explicit so a
 # missed import fails the BUILD rather than the running app.
@@ -46,6 +60,16 @@ for _pkg in ("webview",):
     except Exception:                       # noqa: BLE001 - optional dependency
         pass
 
+# The kill-marker templates that ship with the Clips page. These live inside
+# the package rather than in config/ precisely so they survive here -- the
+# share-package step deletes config/ wholesale to strip credentials.
+datas += [("autostream/clips/templates/*.npy", "autostream/clips/templates")]
+
+# The app icon. Embedded in the exe below for Explorer and the taskbar, and
+# also shipped as a file so shortcuts and the installer can point at it without
+# having to dig it back out of the binary.
+datas += [("autostream/ui/assets/autostream.ico", "autostream/ui/assets")]
+
 a = Analysis(
     ["autostream_launcher.py"],
     pathex=["."],
@@ -54,8 +78,13 @@ a = Analysis(
     hiddenimports=hidden,
     hookspath=[],
     runtime_hooks=[],
+    # numpy is deliberately NOT excluded. It was, and that quietly made the
+    # Clips page impossible in the packaged build: a frozen app has no pip, so
+    # "install numpy" is not advice anyone can act on. It costs about 35 MB.
+    # ffmpeg is still not bundled - it is 80 MB, it is a general system tool,
+    # and the Clips page explains how to install it if it is missing.
     excludes=[
-        "matplotlib", "numpy", "pandas", "scipy",
+        "matplotlib", "pandas", "scipy",
         "PyQt5", "PyQt6", "PySide2", "PySide6",
         "pytest", "setuptools",
     ],
@@ -76,7 +105,9 @@ exe = EXE(
     upx=False,                    # UPX compression is a major AV false-positive trigger
     console=False,                # no console window; logs go to logs\autostream.log
     disable_windowed_traceback=False,
-    icon=None,
+    # Generated from the same mark the UI draws, by scripts/make_icon.py.
+    # Regenerate it rather than editing the .ico by hand.
+    icon="autostream/ui/assets/autostream.ico",
 )
 
 coll = COLLECT(

@@ -26,6 +26,10 @@ SCOPES = [
 
 COST_WRITE = 50
 COST_LIST = 1
+# thumbnails.set is billed as a write. Worth its own name because it is opt-in
+# and adds 50 units to every session that uses it -- 300 instead of 250, which
+# is 33 sessions a day against the default 10,000 quota rather than 40.
+COST_THUMBNAIL = 50
 DAILY_QUOTA = 10000
 
 
@@ -275,6 +279,41 @@ class YouTube:
             self._spend(COST_WRITE)
         except HttpError as e:
             log.warning("set_video_meta failed (non-fatal): %s", e)
+
+    def set_thumbnail(self, video_id: str, path) -> bool:
+        """Upload a custom thumbnail. -> True if YouTube accepted it.
+
+        Costs 50 units, and needs a VERIFIED channel: an unverified one is
+        rejected outright. Both are reasons this must never be able to break a
+        broadcast that is already live, so every failure is logged and
+        swallowed -- the file is on disk either way and can be set by hand.
+        """
+        from pathlib import Path
+
+        p = Path(path)
+        if not p.is_file():
+            return False
+        try:
+            from googleapiclient.http import MediaFileUpload
+
+            self.svc.thumbnails().set(
+                videoId=video_id,
+                media_body=MediaFileUpload(str(p), mimetype="image/jpeg"),
+            ).execute()
+            self._spend(COST_THUMBNAIL)
+            log.info("thumbnail set on %s (%s)", video_id, p.name)
+            return True
+        except HttpError as e:
+            # 403 here is nearly always "channel not eligible for custom
+            # thumbnails" rather than an auth problem, so say so plainly.
+            hint = ""
+            if getattr(e, "status_code", None) == 403 or "403" in str(e):
+                hint = (" - the channel may not be verified for custom "
+                        "thumbnails; the image is still saved on disk")
+            log.warning("thumbnail upload failed%s: %s", hint, e)
+        except Exception as e:  # noqa: BLE001
+            log.warning("thumbnail upload failed: %s", e)
+        return False
 
     def live_details(self, broadcast_id: str | None) -> dict:
         """Viewers + likes + views + the chat id, in ONE 1-unit call.

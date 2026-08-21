@@ -35,6 +35,30 @@ HELPER_MARKERS = (
 )
 
 
+# Executables that are not games but launch one when given arguments. Their
+# Start Menu shortcuts are how you actually start the game, so they must not be
+# filtered out -- and RiotClientServices.exe is filtered by the plain helper
+# rules, because "service" is a helper marker. That single substring is why
+# VALORANT never appeared in the Library despite being installed.
+#
+# Every one of these takes the title as an argument and opens its own home
+# screen without it, which is why discover_shortcuts has to keep sc.Arguments.
+GAME_LAUNCHERS = {
+    "riotclientservices.exe",       # Valorant, League of Legends
+    "battle.net.exe",               # Blizzard
+    "eadesktop.exe", "ealauncher.exe", "eadesktoplauncher.exe",
+    "upc.exe", "ubisoftconnect.exe",
+    "epicgameslauncher.exe",
+    "steam.exe",
+    "galaxyclient.exe",             # GOG
+    "rockstarservice.exe", "launcher.exe",
+}
+
+
+def is_launcher(target: str) -> bool:
+    return ntpath.basename(target or "").lower() in GAME_LAUNCHERS
+
+
 def is_helper(name: str) -> bool:
     low = name.lower()
     if low.endswith(("-win64-shipping.exe", "-win32-shipping.exe")):
@@ -65,6 +89,20 @@ class App:
 # ---------------------------------------------------------------- discovery
 
 STEAM_LIB_RE = re.compile(r'"path"\s+"([^"]+)"')
+
+
+# How deep to look inside a Steam game folder for its executable.
+#
+# This was 3, and 3 is not enough. Unreal titles that ship a launcher stub nest
+# the real binary at Game\<Name>\Binaries\Win64\ -- depth 4 -- and Delta Force
+# is exactly that shape: a 247 KB DeltaForceClient.exe at depth 1, which the
+# 1 MB size floor correctly rejects, and the actual 551 MB
+# DeltaForceClient-Win64-Shipping.exe at depth 4, which the walk never reached.
+# The game was installed and simply never appeared.
+#
+# The cost of going deeper is bounded: the walk prunes below the limit, and
+# only .exe names are stat-ed.
+STEAM_WALK_DEPTH = 5
 
 
 def _steam_roots() -> list[str]:
@@ -109,7 +147,15 @@ def discover_steam() -> list[App]:
             except OSError:
                 pass
 
-    for lib in dict.fromkeys(libs):
+    # The registry hands back "c:/program files (x86)/steam" while the fallback
+    # guess is "C:\Program Files (x86)\Steam". dict.fromkeys sees two different
+    # strings and every library gets walked twice.
+    seen_libs: set[str] = set()
+    for lib in libs:
+        canon = os.path.normcase(os.path.normpath(lib))
+        if canon in seen_libs:
+            continue
+        seen_libs.add(canon)
         try:
             entries = os.listdir(lib)
         except OSError:
@@ -120,7 +166,8 @@ def discover_steam() -> list[App]:
                 continue
             best: tuple[int, str] | None = None
             for root, dirs, files in os.walk(gdir):
-                if root[len(gdir):].count(os.sep) > 3:
+                depth = root[len(gdir):].count(os.sep)
+                if depth > STEAM_WALK_DEPTH:
                     dirs[:] = []
                     continue
                 for f in files:
@@ -190,24 +237,71 @@ def discover_shortcuts(limit: int = 80) -> list[App]:
                 if not f.lower().endswith(".lnk") or len(out) >= limit:
                     continue
                 name = os.path.splitext(f)[0]
-                if is_helper(name):
+                # Skip our own shortcut. Offering "Open + stream" on AutoStream
+                # itself is nonsense, and it appears the moment
+                # scripts\make_shortcut.ps1 has been run.
+                if is_helper(name) or name.lower() == "autostream":
                     continue
                 lnk = os.path.join(dirpath, f)
                 try:
                     sc = shell.CreateShortcut(lnk)
                     target = sc.TargetPath or ""
+                    args = (sc.Arguments or "").strip()
                 except Exception:  # noqa: BLE001
                     continue
                 if (not target or not target.lower().endswith(".exe")
-                        or not os.path.isfile(target) or is_helper(target)):
+                        or not os.path.isfile(target)):
                     continue
-                base = ntpath.basename(target).lower()
-                if base in seen:
+                proxy = is_launcher(target) and bool(args)
+                # A launcher invoked WITH arguments is starting a specific
+                # title, so the helper rules do not apply to it. Without
+                # arguments it is just the launcher's own shortcut, and the
+                # ordinary rules should still reject it.
+                if not proxy and is_helper(target):
                     continue
-                seen.add(base)
-                out.append(App(key=slug(name), name=name, path=target,
-                               exe=base, source="shortcut", stream=False))
+
+                launcher_exe = ntpath.basename(target).lower()
+                # De-dupe on the GAME, not on the launcher. Keying on the
+                # target would let Valorant and League collapse into one entry,
+                # since both shortcuts point at RiotClientServices.exe.
+                dedupe = f"{launcher_exe}|{args.lower()}" if proxy else launcher_exe
+                if dedupe in seen:
+                    continue
+                seen.add(dedupe)
+
+                # What to WATCH for is not what to launch. The launcher exits
+                # or idles while the game runs under its own name, so keying
+                # the launch intent on the launcher would mean "Open + stream"
+                # started the game and then never went live.
+                exe = _game_exe(name, target) if proxy else launcher_exe
+                out.append(App(key=slug(name), name=name, path=target, args=args,
+                               exe=exe, source="shortcut", stream=False))
     return out
+
+
+def _game_exe(name: str, launcher: str) -> str:
+    """Best guess at the process a launcher-started game will run under.
+
+    Asked of the game index first, which already maps ~10,000 executables to
+    display names and therefore knows that VALORANT runs as
+    VALORANT-Win64-Shipping.exe. Falling back to the launcher's own name keeps
+    the entry usable for plain launching even when the guess fails.
+    """
+    want = slug(name)
+    try:
+        from . import cfg, gameindex
+
+        idx = gameindex.GameIndex(cfg.load())
+        idx.reload()
+        for exe, title in idx.public.items():
+            if slug(title) == want:
+                return exe.lower()
+        for exe, ov in idx.overrides.items():
+            if slug((ov or {}).get("name") or "") == want:
+                return exe.lower()
+    except Exception as e:  # noqa: BLE001 - a guess failing must not lose the app
+        log.debug("could not resolve a game exe for %r: %s", name, e)
+    return ntpath.basename(launcher).lower()
 
 
 def discover_all() -> list[App]:
