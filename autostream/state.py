@@ -38,6 +38,13 @@ class State:
     quota_date: str = ""                     # YYYY-MM-DD, Pacific-ish
     last_index_refresh: float = 0.0
     paused: bool = False
+    # Set the moment recording starts, so a crash mid-session still leaves a
+    # breadcrumb pointing at the file OBS was writing. load() filters unknown
+    # keys, so an older state.json without this loads fine.
+    recording: bool = False
+    # True when OBS was ALREADY recording as the session began, so the file
+    # covers footage this session knows nothing about.
+    recording_adopted: bool = False
 
     # ---------- persistence ----------
 
@@ -83,6 +90,8 @@ class State:
         self.current_game = None
         self.current_key = None
         self.session_games = []
+        self.recording = False
+        self.recording_adopted = False
 
     def roll_quota_day(self) -> None:
         """YouTube quota resets at midnight US/Pacific. Approximated by UTC-8."""

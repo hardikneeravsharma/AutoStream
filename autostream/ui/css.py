@@ -623,6 +623,13 @@ svg{flex:0 0 auto;display:block}
              border-color var(--dur-instant);
 }
 .chip:hover{background:var(--surface-hover);color:var(--text-primary)}
+/* Highlight-type chips on the Clips page. A selected type is filled rather
+   than outlined, because the set matters more than any one of them: the user is
+   choosing WHICH kinds of round get cut, and needs to see the whole selection
+   at a glance. */
+.clip-types{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip.is-on{background:var(--accent);border-color:var(--accent);color:#fff}
+.chip.is-on:hover{background:var(--accent);color:#fff;filter:brightness(1.08)}
 .chip.is-active{background:var(--surface-active);color:var(--text-primary)}
 .chip[aria-pressed="false"]{opacity:var(--opacity-ghost)}
 
@@ -1989,6 +1996,186 @@ ol.steps-list li{margin-block:var(--space-4)}
     max-width:none;
     align-items:stretch;
   }
+}
+
+/* ==========================================================================
+   Clips
+   Built on .panel / .card / .seg / .meter rather than new primitives. The one
+   genuinely new thing is the calibration stage, because dragging a box over a
+   video frame has no precedent anywhere else in the app.
+   ========================================================================== */
+
+.clip-setup{border-color:var(--warn);gap:var(--space-4)}
+.clip-pre{
+  margin:0;
+  padding:var(--space-5);
+  overflow-x:auto;                 /* a winget command line must never widen the page */
+  font-size:12px;
+  line-height:1.6;
+  white-space:pre-wrap;
+  color:var(--text-secondary);
+  background:var(--surface-sunken);
+  border-radius:var(--radius-sm);
+}
+
+.clip-list{display:flex;flex-direction:column}
+.clip-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto auto;
+  align-items:center;
+  gap:var(--space-5);
+  width:100%;
+  min-height:var(--h-row-list);
+  padding:var(--space-4) var(--pad-card-tight);
+  font:inherit;
+  color:inherit;
+  text-align:start;
+  background:none;
+  border:0;
+  border-top:var(--border-hair) solid var(--border-subtle);
+  border-radius:0;
+  cursor:pointer;
+}
+.clip-list>.clip-row:first-child{border-top:0}
+.clip-row:hover{background:var(--surface-hover)}
+.clip-row.is-active{background:var(--surface-active)}
+/* The selected row gets a rail, not an accent fill: the accent budget is spent
+   on the primary button, and a filled row would outshout it. */
+.clip-row.is-active{box-shadow:inset 3px 0 0 var(--accent)}
+.clip-row.is-gone{opacity:var(--opacity-disabled)}
+.clip-row>*{min-width:0}
+.clip-row-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.clip-row-name{
+  overflow:hidden;
+  font-weight:550;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.clip-row-sub,.clip-row-when{font-size:12px}
+.clip-row-when{white-space:nowrap}
+
+.clip-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:var(--space-7) var(--space-8);
+}
+.clip-grid .seg{width:100%}
+.clip-grid .seg-btn{flex:1 1 0}
+/* The style control owns the other three timings, so it reads across the top
+   of the grid rather than sitting as a peer of the settings it drives. */
+.clip-span2{grid-column:1 / -1}
+/* The "this might be the wrong game" notice. Warning-coloured because acting
+   on it is optional but ignoring it produces clips of the wrong footage. */
+.clip-warn{
+  padding:var(--pad-card-tight);
+  margin-bottom:var(--space-6);
+  border-color:var(--warn);
+  display:flex;
+  flex-direction:column;
+  gap:var(--space-5);
+}
+.clip-warn .muted{font-size:13px;line-height:1.5}
+.clip-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:var(--space-5);
+  align-items:center;
+  justify-content:space-between;
+  padding-top:var(--space-6);
+  border-top:var(--border-hair) solid var(--border-subtle);
+}
+.clip-actions .muted{flex:1 1 220px;font-size:12px}
+
+.clip-steps{display:flex;flex-wrap:wrap;gap:var(--space-4);align-items:center}
+.clip-step{
+  font:600 10.5px/1 var(--font-micro);
+  color:var(--text-tertiary);
+  text-transform:uppercase;
+  letter-spacing:.08em;
+}
+.clip-step+.clip-step::before{
+  margin-inline-end:var(--space-4);
+  color:var(--text-tertiary);
+  content:"\2192";
+}
+.clip-step.is-done{color:var(--ok)}
+.clip-step.is-now{color:var(--accent)}
+
+.clip-results{display:flex;flex-direction:column}
+.clip-res{
+  display:grid;
+  grid-template-columns:28px minmax(0,1fr) auto auto;
+  gap:var(--space-5);
+  align-items:center;
+  min-height:var(--h-row-nav);
+  padding:var(--space-3) 0;
+  border-top:var(--border-hair) solid var(--border-subtle);
+}
+.clip-results>.clip-res:first-child{border-top:0}
+.clip-res-rank{font-size:12px;color:var(--text-tertiary);text-align:center}
+.clip-res.is-montage .clip-res-rank{color:var(--accent)}
+.clip-res-rank svg{width:16px;height:16px}
+.clip-res-name{font-weight:550}
+.clip-res-meta{font-size:12px}
+
+/* --- calibration ------------------------------------------------------- */
+
+.clip-modal{width:min(760px,calc(100vw - var(--space-8)))}
+.clip-cal-stage{
+  position:relative;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  aspect-ratio:16/9;
+  margin-block:var(--space-5);
+  overflow:hidden;
+  background:var(--surface-sunken);
+  border:var(--border-hair) solid var(--border-subtle);
+  border-radius:var(--radius-sm);
+  /* crosshair, because the whole interaction is "draw a box here" */
+  cursor:crosshair;
+  touch-action:none;
+  user-select:none;
+}
+.clip-cal-stage img{max-width:100%;max-height:100%;pointer-events:none}
+.clip-cal-box{
+  position:absolute;
+  pointer-events:none;
+  background:color-mix(in srgb,var(--accent) 18%,transparent);
+  border:1px solid var(--accent);
+  border-radius:2px;
+}
+.clip-cal-wait{
+  position:absolute;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:var(--scrim);
+}
+.clip-cal-wait.hide{display:none}
+.clip-cal-scrub{flex-wrap:nowrap;margin-bottom:var(--space-6)}
+.clip-range{flex:1 1 auto;min-width:0;accent-color:var(--accent)}
+
+.clip-verdict{
+  margin-top:var(--space-5);
+  padding:var(--space-5);
+  font-size:13px;
+  line-height:1.5;
+  border-left:3px solid var(--border-strong);
+  border-radius:var(--radius-sm);
+  background:var(--surface-sunken);
+}
+.clip-verdict.is-good{border-left-color:var(--ok)}
+.clip-verdict.is-weak{border-left-color:var(--warn)}
+.clip-verdict.is-bad{border-left-color:var(--danger)}
+
+/* The window is 1120 wide and the rail takes 216, so the options grid has to
+   fold well before a phone. */
+@media (max-width:880px){
+  .clip-grid{grid-template-columns:minmax(0,1fr)}
+  .clip-row{grid-template-columns:minmax(0,1fr) auto}
+  .clip-row-when{display:none}
 }
 
 /* <480px: the library row becomes a single stack. */

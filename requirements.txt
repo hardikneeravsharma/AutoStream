@@ -13,3 +13,15 @@ winotify>=1.1; sys_platform == "win32"
 pystray>=0.19
 Pillow>=10.0
 keyboard>=0.13.5
+
+# optional - the Clips page only
+# Without numpy the Clips page shows a setup card and everything else works
+# normally. ffmpeg is also required and is NOT a pip package: install it with
+#   winget install --id Gyan.FFmpeg
+numpy>=1.24
+
+# optional - only for games whose kills are READ off the kill feed rather than
+# matched as a HUD glyph (Counter-Strike 2). Needs the Tesseract binary too,
+# which is NOT a pip package:
+#   winget install --id UB-Mannheim.TesseractOCR
+pytesseract>=0.3.10

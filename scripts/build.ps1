@@ -74,6 +74,23 @@ if ((Invoke-Native $vpy @("-c", "import autostream.__main__, autostream.web, aut
 }
 Write-Ok "package imports cleanly"
 
+# A running copy of the previous build keeps logs\autostream.log open, and
+# PyInstaller clears dist\ before it writes. Without this check that surfaces as
+# a shutil.rmtree traceback ending in WinError 32, which says nothing about the
+# actual problem being "the app you are rebuilding is still running".
+$running = @(Get-Process -Name "AutoStream" -ErrorAction SilentlyContinue)
+if ($running.Count -gt 0) {
+    Write-Warn "AutoStream is running ($($running.Count) process) and holds files in dist\"
+    Write-Step "closing it..."
+    $running | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    if (@(Get-Process -Name "AutoStream" -ErrorAction SilentlyContinue).Count -gt 0) {
+        Write-Bad "could not close AutoStream - quit it from the tray and re-run"
+        exit 1
+    }
+    Write-Ok "closed"
+}
+
 if ($Clean) {
     Write-Step "cleaning build\ and dist\..."
     Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
@@ -95,7 +112,45 @@ if (-not (Test-Path $exe)) {
 }
 Write-Ok "built $exe"
 
-# ---- 4a. DIST mode: a clean, shareable package with NO credentials ---
+# ---- 4a. carry over config / secrets (never overwrite) ---------------
+# Runs BEFORE the -Dist block, not after it. PyInstaller clears dist\AutoStream
+# on every build, so a -Dist run used to rebuild the local install, package it,
+# and exit without ever restoring config\ and secrets\ -- leaving the user's own
+# installation unable to start as a side effect of packaging one for a friend.
+# The share copy is scrubbed of all of this anyway, and asserts it afterwards.
+function Restore-LocalConfig {
+    foreach ($d in @("config", "secrets", "logs")) {
+        $dst = Join-Path $out $d
+        if (-not (Test-Path $dst)) { New-Item -ItemType Directory -Path $dst | Out-Null }
+    }
+    # clip_profiles.yaml is the user's own calibration work; losing it on a
+    # rebuild would mean re-teaching every game. Its templates come along too.
+    $calib = Join-Path $Root "config\clip_templates"
+    if (Test-Path $calib) {
+        $dstCalib = Join-Path $out "config\clip_templates"
+        if (-not (Test-Path $dstCalib)) {
+            Copy-Item $calib $dstCalib -Recurse
+            Write-Ok "copied config\clip_templates"
+        }
+    }
+    # apps.yaml belongs here too: PyInstaller clears dist\AutoStream on every
+    # build, so leaving it out silently empties the Library page each rebuild.
+    foreach ($f in @("config\config.yaml", "config\games.yaml", "config\apps.yaml",
+                     "config\index.cache.json", "config\clip_profiles.yaml",
+                     "secrets\client_secret.json", "secrets\token.json")) {
+        $src = Join-Path $Root $f
+        $dst = Join-Path $out $f
+        if ((Test-Path $src) -and (-not (Test-Path $dst))) {
+            Copy-Item $src $dst
+            Write-Ok "copied $f"
+        } elseif (Test-Path $dst) {
+            Write-Host "  [--] kept existing $f" -ForegroundColor DarkGray
+        }
+    }
+}
+Restore-LocalConfig
+
+# ---- 4b. DIST mode: a clean, shareable package with NO credentials ---
 if ($Dist) {
     $share = Join-Path $Root "dist\AutoStream-share"
     Remove-Item -Recurse -Force $share -ErrorAction SilentlyContinue
@@ -119,31 +174,19 @@ if ($Dist) {
         exit 1
     }
 
+    # Zipped by scripts\make_zip.py rather than Compress-Archive. That cmdlet
+    # reports a per-file failure to the error stream and then carries on, so it
+    # can leave an archive missing _internal\base_library.zip -- which Defender
+    # routinely holds a lock on for a moment after PyInstaller writes it -- and
+    # still look like it worked. The lock is transient, so the fix is to retry
+    # the file, then verify every entry against the source listing.
     $zip = Join-Path $Root "dist\AutoStream-share.zip"
     Remove-Item -Force $zip -ErrorAction SilentlyContinue
-    Compress-Archive -Path (Join-Path $share "*") -DestinationPath $zip
-
-    # Compress-Archive reports a per-file error to the error stream and then
-    # carries on, so the archive can be missing files while the script looks
-    # like it succeeded. Defender holding a lock on a freshly written
-    # base_library.zip is the usual cause, and that one file is the difference
-    # between a working exe and one that will not start. Verify entry-by-entry.
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $srcFiles = Get-ChildItem $share -Recurse -File
-    $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
-    $entries = @($archive.Entries | ForEach-Object { $_.FullName -replace '\\', '/' })
-    $archive.Dispose()
-    $expected = @($srcFiles | ForEach-Object {
-        $_.FullName.Substring($share.Length + 1) -replace '\\', '/' })
-    $missing = @($expected | Where-Object { $entries -notcontains $_ })
-    if ($missing.Count -gt 0) {
-        Write-Bad "ABORTING - $($missing.Count) file(s) missing from the archive:"
-        $missing | Select-Object -First 10 | ForEach-Object { Write-Host "       $_" -ForegroundColor Red }
-        Write-Warn "usually an antivirus lock. Close AutoStream and run this again."
+    if ((Invoke-Native $vpy @("scripts\make_zip.py", $share, $zip) -Echo) -ne 0) {
+        Write-Bad "ABORTING - could not produce a complete archive"
         Remove-Item -Force $zip -ErrorAction SilentlyContinue
         exit 1
     }
-    Write-Ok "archive verified - $($entries.Count) entries, nothing missing"
     $zmb = "{0:N0}" -f ((Get-Item $zip).Length / 1MB)
 
     Write-Host ""
@@ -155,26 +198,6 @@ if ($Dist) {
     Write-Host "  project - the wizard walks them through it." -ForegroundColor White
     Write-Host ""
     exit 0
-}
-
-# ---- 4b. carry over config / secrets (never overwrite) ---------------
-foreach ($d in @("config", "secrets", "logs")) {
-    $dst = Join-Path $out $d
-    if (-not (Test-Path $dst)) { New-Item -ItemType Directory -Path $dst | Out-Null }
-}
-# apps.yaml belongs here too: PyInstaller clears dist\AutoStream on every build,
-# so leaving it out silently empties the Library page after each rebuild.
-foreach ($f in @("config\config.yaml", "config\games.yaml", "config\apps.yaml",
-                 "config\index.cache.json",
-                 "secrets\client_secret.json", "secrets\token.json")) {
-    $src = Join-Path $Root $f
-    $dst = Join-Path $out $f
-    if ((Test-Path $src) -and (-not (Test-Path $dst))) {
-        Copy-Item $src $dst
-        Write-Ok "copied $f"
-    } elseif (Test-Path $dst) {
-        Write-Host "  [--] kept existing $f" -ForegroundColor DarkGray
-    }
 }
 
 $size = "{0:N0}" -f ((Get-ChildItem $out -Recurse | Measure-Object Length -Sum).Sum / 1MB)

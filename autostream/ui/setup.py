@@ -69,7 +69,7 @@ SETUP_JS: str = r"""
 /* Step order, request bodies and copy are a verbatim port of the pre-rewrite
    wizard. See autostream/ui/setup.py for why. */
 
-const setup_STEPS = ['Welcome','Google Cloud','YouTube','OBS','Stream','Timing','Apps','Finish'];
+const setup_STEPS = ['Welcome','Google Cloud','YouTube','OBS','Stream','Timing','Apps','Branding','Finish'];
 
 let setup_step = 0;
 let setup_state = {};      /* SetupFlow.snapshot() payload, refreshed by every ok:true */
@@ -329,7 +329,43 @@ function setup_draw(){
     setup_renderApps();
   }
 
-  else if (setup_step === 7) c.innerHTML = setup_card(
+  else if (setup_step === 7) {
+    c.innerHTML = setup_card(
+      'Your channel',
+      'Used to build a thumbnail from the live picture each time you go live, ' +
+      'and to tell your kills from other players when clipping.',
+      '<div class="field">' +
+      '<label class="field-label" for="setup-chan">Channel name</label>' +
+      '<input class="input" id="setup-chan" type="text" autocomplete="off" ' +
+      'placeholder="YuvaNeta" value="' + setup_attr(setup_state.channel_name || '') + '"></div>' +
+      '<div class="field">' +
+      '<label class="field-label" for="setup-logo">Channel logo</label>' +
+      '<input class="input mono" id="setup-logo" type="text" spellcheck="false" ' +
+      'autocomplete="off" placeholder="C:\Users\you\Pictures\logo.png" value="' +
+      setup_attr(setup_state.logo || '') + '">' +
+      '<div class="field-help">Full path to a PNG. Transparency strongly preferred - ' +
+      'a logo on a white background shows its box over the gameplay.</div></div>' +
+      '<div class="field">' +
+      '<label class="field-label" for="setup-head">Thumbnail headline</label>' +
+      '<input class="input mono" id="setup-head" type="text" spellcheck="false" ' +
+      'autocomplete="off" value="' + setup_attr(setup_state.headline || '{game}') + '">' +
+      '<div class="field-help">Tokens: {game} {channel} {username} {day} {date} {time}. ' +
+      'Keep it short - it is read at about 210 pixels wide.</div></div>' +
+      '<div class="field">' +
+      '<label class="field-label" for="setup-sub">Second line</label>' +
+      '<input class="input mono" id="setup-sub" type="text" spellcheck="false" ' +
+      'autocomplete="off" value="' +
+      setup_attr(setup_state.subtitle === undefined ? '{channel} | {day} night' : setup_state.subtitle) +
+      '"></div>' +
+      '<div class="field"><span class="field-label">Your in-game names</span>' +
+      '<div class="field-help">Only needed for games you want clipped. Leave blank ' +
+      'to skip.</div>' +
+      '<div id="setup-usernames"></div></div>' +
+      setup_nav(true, 'saveBranding'));
+    setup_renderUsernames();
+  }
+
+  else if (setup_step === 8) c.innerHTML = setup_card(
     'Nearly there',
     'This creates your permanent YouTube ingestion stream and writes the key into ' +
     'OBS. It only happens once.',
@@ -384,6 +420,52 @@ async function setup_saveObs(){
     setup_toast(r.error, 'error');
     return;
   }
+  setup_go(setup_step + 1);
+}
+
+function setup_renderUsernames(){
+  const host = document.getElementById('setup-usernames');
+  if (!host) return;
+  /* Only games, not every shortcut - asking for an in-game name against
+     Notepad would be noise. */
+  const games = (setup_state.apps || []).filter(function(a){
+    return a.source === 'steam' || a.source === 'epic';
+  }).slice(0, 12);
+  if (!games.length){
+    host.innerHTML = '<p class="muted">No games found yet. You can add these later ' +
+                     'in config\games.yaml.</p>';
+    return;
+  }
+  host.innerHTML = games.map(function(a){
+    const prev = (setup_state.usernames || {})[a.exe || ''] || '';
+    return '<div class="field-row" style="align-items:center">' +
+      '<label class="field-label" for="setup-un-' + setup_attr(a.key) + '">' +
+      esc(a.name) + '</label>' +
+      '<input class="input" id="setup-un-' + setup_attr(a.key) + '" type="text" ' +
+      'autocomplete="off" data-exe="' + setup_attr(a.exe || '') + '" ' +
+      'placeholder="your name in this game" value="' + setup_attr(prev) + '"></div>';
+  }).join('');
+}
+
+async function setup_saveBranding(){
+  const names = {};
+  const inputs = document.querySelectorAll('#setup-usernames input[data-exe]');
+  for (let i = 0; i < inputs.length; i++){
+    const exe = inputs[i].getAttribute('data-exe');
+    const val = (inputs[i].value || '').trim();
+    if (exe && val) names[exe] = val;
+  }
+  const chan = setup_val('setup-chan');
+  const r = await setup_post('/api/setup/save', {section: 'branding', values: {
+    channel_name: chan,
+    logo: setup_val('setup-logo'),
+    headline: setup_val('setup-head'),
+    subtitle: setup_val('setup-sub'),
+    /* Only switch thumbnails on if there is something to put on them. */
+    enabled: !!(chan || setup_val('setup-logo')),
+    upload: true,
+    usernames: names}});
+  if (r._failed) { setup_toast(r.error, 'error'); return; }
   setup_go(setup_step + 1);
 }
 
@@ -469,6 +551,7 @@ const setup_ACTIONS = {
   testObs:    setup_testObs,
   saveObs:    setup_saveObs,
   saveStream: setup_saveStream,
+  saveBranding: setup_saveBranding,
   saveTiming: setup_saveTiming,
   scanApps:   setup_scanApps,
   saveApps:   setup_saveApps,

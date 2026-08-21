@@ -11,6 +11,7 @@ games:
     name: Counter-Strike 2
     scene: null
     blurb: ''
+    username: YUVANETA
   rainbowsix.exe:
     name: Rainbow Six Siege
     scene: null
@@ -27,6 +28,7 @@ games:
     name: Delta Force
     scene: null
     blurb: ''
+    username: YuvaNeta
   deltaforceclient.exe:
     name: Delta Force
     scene: null
@@ -35,12 +37,15 @@ games:
     name: Serial Cleaner
     scene: null
     blurb: ''
+  valorant-win64-shipping.exe:
+    username: YuvaNeta#IN1
 blocklist:
 - battle.net helper.exe
 - battle.net.exe
 - battleye.exe
 - chrome.exe
 - crashhandler.exe
+- deltaforceclient.exe
 - df_launcher.exe
 - df_launcher_global.exe
 - discord.exe

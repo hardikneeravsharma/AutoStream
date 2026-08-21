@@ -18,6 +18,19 @@
 **/config/index.cache.json
 NOSTREAM
 
+# The session journal is personal history: broadcast ids, watch URLs, what was
+# played and when.
+**/history.jsonl
+
+# Clip output. Gigabytes of video, and it is all reproducible from the
+# recording it came from.
+/clips/
+
+# Kill-marker profiles the user calibrated on their own footage. The shipped
+# Delta Force profile lives in clips/profiles.py:BUILTIN and its template in
+# config/clip_templates/, both of which ARE tracked.
+**/config/clip_profiles.yaml
+
 # ---------------------------------------------------------------- build
 build/
 dist/
@@ -35,3 +48,6 @@ __pycache__/
 .idea/
 Thumbs.db
 Desktop.ini
+
+# Claude Code local permission grants - machine specific, never shared
+.claude/settings.local.json

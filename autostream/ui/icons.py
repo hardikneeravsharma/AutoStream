@@ -129,6 +129,17 @@ ICONS: dict[str, str] = {
         + _rect(13, 4, 8, 7, 2)
         + _rect(13, 13, 8, 7, 2)
     ),
+    # A film strip: outer frame with two full-height perforation rails. Chosen
+    # over a clapperboard because the rails read at 16px where a hinged slate
+    # collapses into a grey wedge, and over scissors because scissors mean the
+    # ACT of cutting - this is the rail icon for a page about the results.
+    "film": (
+        _rect(2.5, 4.5, 19, 15, 2.5)
+        + _path("M7.5 4.5L7.5 19.5")
+        + _path("M16.5 4.5L16.5 19.5")
+        + _path("M2.5 12L7.5 12")
+        + _path("M16.5 12L21.5 12")
+    ),
     "settings": _path(_GEAR) + _circle(12, 12, 3.3),
     "logs": (
         _rect(4.5, 3, 15, 18, 2.5)
@@ -194,6 +205,31 @@ ICONS: dict[str, str] = {
         )
         + _path("M7.6 21V14.6H16.4V21")
         + _path("M7.6 3V8.4H14.6V3")
+    ),
+    # Open shears: two finger rings low-left and low-right, blades crossing at
+    # (12,10.4) and running up to the tips. The crossing point sits ABOVE the
+    # rings so the silhouette reads as scissors and not as a pair of spectacles.
+    "scissors": (
+        _circle(6.4, 18.1, 2.6)
+        + _circle(17.6, 18.1, 2.6)
+        + _path("M16.2 16.1L6.9 3.4")
+        + _path("M7.8 16.1L17.1 3.4")
+    ),
+    # A wand with sparks: the stroke runs bottom-left to top-right, with three
+    # spark ticks off the tip. Used for calibration, where the job is teaching
+    # AutoStream to recognise something it has not seen before.
+    "wand": (
+        _path("M4 20L14.6 9.4")
+        + _path("M17.4 6.6L19.5 4.5")
+        + _path("M13.4 4.5L13.4 7.3")
+        + _path("M19.5 10.6L16.7 10.6")
+        + _dot(16, 8.6, 1.15)
+    ),
+    # A frame with corner marks: what you drag over the kill marker when
+    # calibrating. Deliberately not a full rectangle - the gaps say "adjustable".
+    "crop": (
+        _path("M6.5 2.8V17.5H21.2")
+        + _path("M2.8 6.5H17.5V21.2")
     ),
 
     # -- feedback -----------------------------------------------------------

@@ -42,6 +42,10 @@ class GameHit:
     blurb: str = ""
     privacy: str | None = None
     source: str = "override"
+    # Your in-game name for THIS game. Per game because they genuinely differ,
+    # and a killfeed-based kill detector needs the right one to tell your kills
+    # from everyone else's. Also available to title and thumbnail templates.
+    username: str = ""
 
     def __eq__(self, other):
         return isinstance(other, GameHit) and other.key == self.key
@@ -204,13 +208,20 @@ class GameIndex:
         exe = exe.lower()
         if exe in self.overrides:
             o = self.overrides[exe]
+            # An override may set only SOME fields -- saving an in-game name
+            # creates an entry with a username and nothing else. Falling
+            # straight through to a title-cased executable there would rename
+            # VALORANT to "Valorant-Win64-Shipping", so the public index is
+            # consulted before that last resort.
             return GameHit(
                 key=exe,
-                name=o.get("name") or o.get("title_as") or exe.removesuffix(".exe").title(),
+                name=(o.get("name") or o.get("title_as") or self.public.get(exe)
+                      or exe.removesuffix(".exe").title()),
                 scene=o.get("scene"),
                 blurb=o.get("blurb", ""),
                 privacy=o.get("privacy"),
                 source="override",
+                username=str(o.get("username") or ""),
             )
         if exe in self.public:
             return GameHit(key=exe, name=self.public[exe], source="public")

@@ -30,6 +30,7 @@ DEFAULTS: dict[str, Any] = {
         "default_scene": "",
         "overlay_source": None,
         "service_mode": "rtmp_custom",
+        "launch_elevated": False,
     },
     "timing": {
         "poll_interval": 3,
@@ -61,6 +62,55 @@ DEFAULTS: dict[str, Any] = {
         "fallback_game": "Just Chatting",
     },
     "description": {"template": "Live: {game}", "tags": ["gaming", "live"]},
+    # Local recording, for clip production. What YouTube keeps is a re-encode
+    # of the stream, and Studio only serves a 720p transcode of that, so clips
+    # cut from the VOD start two generations down. Recording writes the same
+    # canvas straight to disk instead.
+    #
+    # Nothing here deletes anything. Below min_free_gb AutoStream declines to
+    # start a recording and streams anyway, rather than making room for itself.
+    "record": {
+        "enabled": False,
+        "directory": "",              # blank -> whatever OBS is already set to
+        "min_free_gb": 50,
+        "warn_free_gb": 100,
+        "auto_scan": True,            # find kills as soon as a session ends
+    },
+    "clips": {
+        "output_dir": "",             # blank -> <root>/clips
+        "ffmpeg_path": "",            # blank -> auto-discover
+        # Both are strings because they are `select` fields, and the settings
+        # form round-trips select values as strings. Keeping the default an int
+        # would mean the type silently changed the first time it was saved.
+        "min_kills": "2",
+        # style presets these three; "custom" leaves them alone. See
+        # clips/plan.py STYLES for where the numbers come from.
+        "style": "shortform",
+        "clip_seconds": "15",         # or "auto" for the whole burst
+        "pre_roll": 1.5,
+        "tail_seconds": 2,
+        "vertical_mode": "crop",
+        "transition": "fade",
+        "transition_ms": 500,
+        "encoder": "auto",
+        # Counter-Strike only. Games whose profile reads the scoreboard clip
+        # whole ROUNDS instead of bursts of kills; see clips/rounds.py.
+        "rounds": True,
+        # A round runs 30-115s. On keeps all of it, which is what you want to
+        # watch back; off trims to the finish, which is what fits a Short.
+        "whole_round": True,
+    },
+    # Composed from a live OBS frame each time a session goes live. Templates
+    # take the same tokens as the title ones.
+    "thumbnail": {
+        "enabled": False,
+        "upload": True,             # false = write the file, never call the API
+        "channel_name": "",
+        "logo": "",                 # PNG, transparency preferred
+        "base_image": "",           # fallback when OBS gives no frame
+        "headline": "{game}",
+        "subtitle": "{channel} | {day} night",
+    },
     "ui": {"theme": "midnight", "open_window": True},
     "logging": {"level": "INFO", "keep_days": 7},
 }

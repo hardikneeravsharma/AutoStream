@@ -43,8 +43,27 @@ class SetupFlow:
             "max_session_hours": c.timing.max_session_hours,
             "quiet_from": (str(qh[0]) if len(qh) == 2 else ""),
             "quiet_to": (str(qh[1]) if len(qh) == 2 else ""),
+            # as_dict() carries `exe`, which the branding step keys in-game
+            # names on -- the same key the game index resolves a running game
+            # with, so a name saved here is the one a detector looks up.
             "apps": [a.as_dict() for a in self._apps],
+            "channel_name": c.thumbnail.channel_name,
+            "logo": c.thumbnail.logo,
+            "headline": c.thumbnail.headline,
+            "subtitle": c.thumbnail.subtitle,
+            "usernames": self._usernames(),
         }
+
+    @staticmethod
+    def _usernames() -> dict:
+        """Whatever in-game names are already recorded, so stepping back
+        through the wizard does not blank them."""
+        try:
+            games = (cfg.load_games().get("games") or {})
+            return {k: v.get("username", "") for k, v in games.items()
+                    if isinstance(v, dict) and v.get("username")}
+        except Exception:  # noqa: BLE001
+            return {}
 
     # ---------------- step 1: client secret ----------------
 
@@ -160,6 +179,32 @@ class SetupFlow:
                            max(1, _int(v.get("max_session_hours"), 8)))
             a, b = str(v.get("quiet_from", "")).strip(), str(v.get("quiet_to", "")).strip()
             cfg.save_field("rules", "quiet_hours", [a, b] if (a and b) else [])
+        elif section == "branding":
+            fields = {
+                "thumbnail.channel_name": str(v.get("channel_name", ""))[:80],
+                "thumbnail.logo": str(v.get("logo", ""))[:400],
+                "thumbnail.base_image": str(v.get("base_image", ""))[:400],
+                "thumbnail.headline": str(v.get("headline", "") or "{game}")[:120],
+                "thumbnail.subtitle": str(v.get("subtitle", ""))[:160],
+                "thumbnail.enabled": bool(v.get("enabled")),
+                "thumbnail.upload": bool(v.get("upload", True)),
+            }
+            cfg.save_fields(fields)
+            # In-game names live in games.yaml beside the game they belong to,
+            # not in config.yaml: they are per game, and a killfeed detector
+            # has to look them up by the same key it resolved the game with.
+            names = v.get("usernames") or {}
+            if isinstance(names, dict) and names:
+                games = cfg.load_games()
+                table = games.setdefault("games", {})
+                for key, who in names.items():
+                    k = str(key).strip().lower()
+                    if not k:
+                        continue
+                    entry = table.setdefault(k, {})
+                    if isinstance(entry, dict):
+                        entry["username"] = str(who).strip()[:60]
+                cfg.save_games(games)
         else:
             return {"ok": False, "error": f"unknown section {section!r}"}
         return {"ok": True, "setup": self.snapshot()}

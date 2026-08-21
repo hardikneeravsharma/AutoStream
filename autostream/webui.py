@@ -18,11 +18,14 @@ import json
 import logging
 import os
 import re
+import shutil
 import socket
+import subprocess
 import threading
 import time
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -61,6 +64,13 @@ def lan_ip() -> str:
 def _int(value, fallback: int) -> int:
     try:
         return int(str(value).strip())
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _float(value, fallback: float) -> float:
+    try:
+        return float(str(value).strip())
     except (TypeError, ValueError):
         return fallback
 
@@ -177,7 +187,11 @@ class _Handler(BaseHTTPRequestHandler):
             })
         elif u.path == "/api/status":
             if self.app.engine is None:
-                self._json({"phase": "IDLE", "apps": self.app.apps_payload()})
+                # No engine yet (setup, or a headless server) still has to
+                # carry clip progress: a clip job runs on its own thread and
+                # the Clips page reads it from here, engine or not.
+                self._json({"phase": "IDLE", "apps": self.app.apps_payload(),
+                            "clips": self.app._clips_status()})
                 return
             self.app.engine.client_seen = time.monotonic()
             self._json(self.app.status())
@@ -192,6 +206,16 @@ class _Handler(BaseHTTPRequestHandler):
                           for x in tail_lines(paths.LOG_FILE, max(1, min(n, _TAIL_MAX)))],
                 "path": str(paths.LOG_FILE),
             })
+        elif u.path == "/api/clips/sessions":
+            self._json(self.app.clips_sessions())
+        elif u.path == "/api/clips/frame":
+            q = parse_qs(u.query)
+            png, err = self.app.clip_frame(
+                (q.get("path") or [""])[0], _float((q.get("t") or ["0"])[0], 0.0))
+            if err:
+                self._json({"error": err}, 400)
+            else:
+                self._send(200, png, "image/png")
         else:
             self._json({"error": "not found"}, 404)
 
@@ -285,6 +309,35 @@ class _Handler(BaseHTTPRequestHandler):
                     self._json({"ok": True})
                 except OSError as e:
                     self._json({"error": str(e)}, 500)
+
+            # ---------- clips ----------
+            # Every one of these returns immediately. The actual work runs on a
+            # worker thread and reports through /api/status, which the shell is
+            # already polling - see clips/jobs.py.
+            elif p == "/api/clips/run":
+                self._json(self.app.clips_run(b))
+            elif p == "/api/clips/cancel":
+                self._json(self.app.clips_cancel())
+            elif p == "/api/clips/open":
+                self._json(self.app.reveal(str(b.get("path", ""))))
+            elif p == "/api/clips/calibrate":
+                self._json(self.app.clips_calibrate(b))
+            elif p == "/api/clips/setgame":
+                from . import history as _h
+                from .clips import profiles as _pf
+
+                name = str(b.get("game", "")).strip()
+                key = str(b.get("game_key", "")).strip().lower()
+                if not name:
+                    self._json({"error": "no game given"}, 400)
+                    return
+                ok = _h.set_game(str(b.get("recording_path", "")), name, key)
+                prof = _pf.for_game(key, name)
+                self._json({"ok": ok, "profile": prof.label if prof else None}
+                           if ok else {"error": "no matching session"})
+            elif p == "/api/clips/forget":
+                self._json(self.app.clips_forget(str(b.get("recording_path", "")),
+                                                 _int(b.get("session"), -1)))
 
             # ---------- setup ----------
             elif p == "/api/setup/client_secret":
@@ -420,8 +473,279 @@ class Server:
             "elapsed": (int(time.time() - s.session_start) if s.session_start else None),
             "url": (f"https://www.youtube.com/watch?v={s.broadcast_id}"
                     if s.broadcast_id else None),
+            "recording": bool(getattr(s, "recording", False)),
+            # The Clips page rides this poll rather than having its own. It
+            # costs nothing when idle and means progress survives a reload.
+            "clips": self._clips_status(),
             **self._phase_clock(),
         }
+
+    # ================= clips =================
+
+    def _clips_status(self) -> dict | None:
+        from . import clips
+
+        r = clips.runner()
+        snap = r.status()
+        if snap is None:
+            return None
+        # Only the live job needs the two-second heartbeat. A finished one is
+        # kept so a reload still shows the result, but it must not look busy.
+        return snap
+
+    def clips_sessions(self) -> dict:
+        """Past streams, plus what the Clips page needs to decide about each."""
+        from . import clips, history
+        from .clips import profiles
+
+        cfg_now = cfg.load()
+        clips.set_ffmpeg_path(cfg_now.clips.ffmpeg_path or None)
+
+        rows = history.annotate(history.read(limit=200))
+        table = profiles.load_all()
+        found = self._kills_by_source(cfg_now)
+        for r in rows:
+            prof = profiles.for_game(r.get("game_key"), r.get("game"))
+            r["profile"] = prof.label if prof else None
+            r["can_scan"] = bool(prof and prof.exists())
+            r["kills_known"] = found.get(r.get("recording_path") or "")
+            # Games can only be counted, not distinguished from assists.
+            r["counts_assists"] = bool(prof and prof.counts_assists)
+            # How this game's kills are found, so the page can say. "killfeed"
+            # is slow enough to be worth warning about, and its usual failure
+            # is a missing in-game name rather than a missing template -- which
+            # would otherwise show as "Not calibrated" and send the user off to
+            # draw a box that already exists.
+            r["scan_mode"] = prof.mode if prof else None
+            # Whether this game is clipped by round rather than by kill burst.
+            r["rounds"] = bool(prof and getattr(prof, "rounds", False))
+            r["blocked"] = prof.why_not() if prof else ""
+            # So the calibrator can prefill it rather than asking again.
+            r["player"] = (prof.player if prof else "") or                 profiles.username_for(r.get("game_key"), r.get("game"))
+            # No profile yet? Hand the calibrator a starting box so the user is
+            # adjusting a rectangle rather than hunting for one.
+            r["seed"] = None if prof else profiles.seed_for(r.get("game_key"),
+                                                            r.get("game"))
+        return {
+            "sessions": rows,
+            "profiles": profiles.listing(),
+            "status": clips.status(),
+            "defaults": {k: v for k, v in schema.flatten(cfg_now).items()
+                         if k.startswith("clips.")},
+            "output_dir": str(self._clips_dir(cfg_now)),
+            "games": sorted({r["game"] for r in rows if r.get("game")}),
+            "known": len(table),
+            "last_job": self._last_manifest(cfg_now),
+        }
+
+    def _kills_by_source(self, config=None) -> dict[str, int]:
+        """How many kills a previous run already found per recording, so the
+        list can say so and the next run can skip the slowest step.
+
+        Looks in the CONFIGURED output folder, not paths.CLIPS_DIR. Those two
+        diverge the moment clips.output_dir is set, and the symptom is silent:
+        every rescan pays the slowest step again for no visible reason.
+        """
+        out: dict[str, int] = {}
+        root = self._clips_dir(config or cfg.load())
+        try:
+            for sidecar in root.glob("*/session.json"):
+                data = json.loads(sidecar.read_text(encoding="utf-8"))
+                src = data.get("source")
+                if src:
+                    out[src] = max(out.get(src, 0), len(data.get("kills") or []))
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+        return out
+
+    def _last_manifest(self, config) -> dict | None:
+        """The most recent finished run's clip list, read from its folder.
+
+        Kept on disk rather than in memory so the results survive a restart -
+        the folder is the real record of what was produced.
+        """
+        root = self._clips_dir(config)
+        try:
+            found = sorted(root.glob("*/clips.json"),
+                           key=lambda p: p.stat().st_mtime, reverse=True)
+        except OSError:
+            return None
+        for p in found[:1]:
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                return None
+        return None
+
+    @staticmethod
+    def _clips_dir(config) -> Path:
+        return Path(config.clips.output_dir or paths.CLIPS_DIR)
+
+    def clips_run(self, body: dict) -> dict:
+        from . import clips, history
+        from .clips.jobs import ClipJob
+
+        c = cfg.load()
+        clips.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+        st = clips.status()
+        if not st["ok"]:
+            return {"error": st["detail"] or "ffmpeg or numpy is missing."}
+
+        runner = clips.runner()
+        if runner.busy():
+            return {"error": "A clip job is already running."}
+
+        src = str(body.get("source") or "")
+        session: dict = {}
+        if not src:
+            # Identified by recording path rather than by index: the history
+            # list is re-read on every poll and an index would race a new entry.
+            want = str(body.get("recording_path") or "")
+            for row in history.read(limit=200):
+                if row.get("recording_path") == want:
+                    session = row
+                    break
+            if not session:
+                return {"error": "That stream is no longer in the history."}
+            src = session.get("recording_path") or ""
+
+        path = Path(src)
+        if not path.exists():
+            return {"error": f"The recording is gone: {src}"}
+
+        from .clips import plan as clip_plan
+
+        # A style presets the three timings; "custom" leaves whatever the
+        # request and config already say. Resolved here rather than in the job
+        # so session.json records the numbers actually used, not a style name
+        # whose meaning could change under it later.
+        timings = clip_plan.style_values(
+            body.get("style") or c.clips.style,
+            {
+                "clip_seconds": str(body.get("clip_seconds") or c.clips.clip_seconds),
+                "pre_roll": _float(body.get("pre_roll"), _float(c.clips.pre_roll, 1.5)),
+                "tail": _float(body.get("tail_seconds"),
+                               _float(c.clips.tail_seconds, 2)),
+            })
+
+        opt = {
+            "min_kills": _int(body.get("min_kills"), _int(c.clips.min_kills, 2)),
+            "style": str(body.get("style") or c.clips.style),
+            "clip_seconds": str(timings["clip_seconds"]),
+            "pre_roll": float(timings["pre_roll"]),
+            "tail_seconds": float(timings["tail"]),
+            "vertical_mode": str(body.get("vertical_mode") or c.clips.vertical_mode),
+            "transition": str(body.get("transition") or c.clips.transition),
+            "transition_ms": _int(body.get("transition_ms"),
+                                  _int(c.clips.transition_ms, 500)),
+            "encoder": str(body.get("encoder") or c.clips.encoder),
+            "montage": bool(body.get("montage", True)),
+        }
+        # Round mode, for games whose profile reads the scoreboard. Absent for
+        # every other game, so nothing changes for them.
+        if body.get("rounds") is not None:
+            opt["rounds"] = bool(body.get("rounds"))
+        if body.get("whole_round") is not None:
+            opt["whole_round"] = bool(body.get("whole_round"))
+        want = body.get("round_types")
+        if isinstance(want, list) and want:
+            opt["round_types"] = [str(x) for x in want][:16]
+        cached = self._cached_kills(path, c)
+        if cached and not body.get("rescan") and not opt.get("rounds"):
+            # Not reused in round mode: the cache holds kills, and a round also
+            # needs the scoreboard, which is only read during a scan.
+            opt["kills"] = cached
+
+        job = ClipJob(
+            path,
+            game=str(body.get("game") or session.get("game") or "Session"),
+            game_key=body.get("game_key") or session.get("game_key"),
+            outdir=self._clips_dir(c),
+            options=opt,
+            started=session.get("started"),
+            session=session,
+        )
+        if not runner.start(job):
+            return {"error": "A clip job is already running."}
+        log.info("clip job started: %s", path.name)
+        return {"ok": True, "folder": str(job.folder),
+                "reused_kills": bool(cached and not body.get("rescan"))}
+
+    def _cached_kills(self, source: Path, config=None) -> list | None:
+        """Kills found by an earlier run of the same recording.
+
+        Scanning is by far the slowest step, so re-cutting the same stream with
+        different lengths or thresholds should not pay for it twice.
+        """
+        root = self._clips_dir(config or cfg.load())
+        try:
+            for sidecar in sorted(root.glob("*/session.json")):
+                data = json.loads(sidecar.read_text(encoding="utf-8"))
+                if data.get("source") == str(source) and data.get("kills"):
+                    return data["kills"]
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+        return None
+
+    def clips_cancel(self) -> dict:
+        from . import clips
+
+        return {"ok": clips.runner().cancel()}
+
+    def clip_frame(self, path: str, at: float) -> tuple[bytes, str | None]:
+        """One PNG frame, for the calibrator's frame picker."""
+        from . import clips
+
+        clips.set_ffmpeg_path(cfg.load().clips.ffmpeg_path or None)
+        if not clips.available():
+            return b"", "ffmpeg is not available."
+        src = Path(path)
+        if not src.exists():
+            return b"", "That recording is no longer on disk."
+        import tempfile
+
+        from .clips.cutter import poster
+
+        tmp = Path(tempfile.mkdtemp(prefix="asframe_"))
+        try:
+            png = poster(src, max(0.0, at), tmp / "f.png", width=960)
+            return png.read_bytes(), None
+        except Exception as e:  # noqa: BLE001
+            return b"", str(e)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def clips_calibrate(self, body: dict) -> dict:
+        from .clips import calibrate
+
+        return calibrate.from_request(body)
+
+    def clips_forget(self, recording_path: str, session: int) -> dict:
+        """Drop a history row whose recording is gone. Never deletes video."""
+        from . import history
+
+        rows = history.read()
+        keep = [r for r in rows
+                if not (r.get("recording_path") == recording_path
+                        and (session < 0 or r.get("session") == session))]
+        if len(keep) == len(rows):
+            return {"error": "No matching entry."}
+        history.rewrite(keep)
+        return {"ok": True, "removed": len(rows) - len(keep)}
+
+    def reveal(self, path: str) -> dict:
+        """Open a folder (or select a file) in Explorer."""
+        p = Path(path)
+        if not p.exists():
+            return {"error": "That path no longer exists."}
+        try:
+            if p.is_dir():
+                subprocess.Popen(["explorer", str(p)])
+            else:
+                subprocess.Popen(["explorer", "/select,", str(p)])
+        except OSError as e:
+            return {"error": str(e)}
+        return {"ok": True}
 
     # Phases that run against a deadline. The dashboard draws a countdown ring
     # from these, so the timing comes from the engine's own clock rather than

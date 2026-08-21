@@ -36,6 +36,7 @@ def build_vars(
     session_start: datetime,
     session_number: int,
     blurb: str = "",
+    username: str = "",
     now: datetime | None = None,
 ) -> dict:
     now = now or datetime.now()
@@ -45,6 +46,8 @@ def build_vars(
         blurb=blurb,
         game_blurb=blurb,
         game_hashtag=hashtagify(game),
+        # Your in-game name for this title, from games.yaml. Empty unless set.
+        username=username,
         session_games=", ".join(dict.fromkeys(session_games)) or game,
         day=now.strftime("%A"),
         date=now.strftime("%d %b %Y"),
