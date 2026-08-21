@@ -7,16 +7,23 @@ FOR GAMES WITH NO KILL MARKER
     EVERYONE's kills, so finding yours means reading it.
 
 THE LINE FORMAT
-        [assister +] KILLER   <weapon icon>   VICTIM
+        KILLER [+ assister]   <weapon icon>   VICTIM
+
+    The KILLER IS FIRST. This was originally implemented the other way round
+    and it was wrong. What settles it, from the footage itself: a row read
+    "YUVANETA + Comrade P.O.T [ak47] Rebound", and sixteen seconds earlier the
+    feed had shown "Rebound [pistol] Comrade P.O.T". Comrade P.O.T was already
+    dead. A dead player cannot get a kill, but can certainly have damaged the
+    victim before dying -- so the second name is the assister and the first is
+    the killer.
 
     Your name appears in the feed whether you killed, died, or merely assisted,
     so finding it decides nothing on its own. WHICH SLOT it occupies is the
     whole signal, and the slot is read off pixel positions:
 
-        name ends at the right margin          -> you died
-        exactly one other name past yours      -> that one is your victim
-        two or more names past yours           -> killer and victim are both
-                                                  past you, so you assisted
+        name ends at the right margin   -> you died
+        a name to the LEFT of yours     -> that one is the killer, you assisted
+        nothing to the left of yours    -> you got the kill
 
 WHY POSITION AND NOT TOKENS, COLOUR, OR TIME
     Tokens. The weapon icon is not text and OCRs as junk -- on real footage it
@@ -236,18 +243,6 @@ MIN_ALPHA_FRAC = 0.6
 # trimmed there. See matched_span().
 MIN_TRIM = 2
 
-# The weapon icon is a graphic, but Tesseract transcribes it anyway and what it
-# produces looks like a word: "gage", "gummi", "pei", "gagel" all came off real
-# rows. It sits exactly where a killer's name would, so counting it as a player
-# turned kills into assists.
-#
-# Two things separate it from a real name, both measured:
-#   length  -- icon reads were 4-5 characters of gibberish, while the players
-#              in the killer slot read 6-10 ("Mrinfinite", "Kholnoayek",
-#              "LunaticYo", "insane")
-#   width   -- the icon squeezed 0.066 of the strip into 4-5 characters,
-#              ~0.015 each, against ~0.010 for real text
-MIN_KILLER_LEN = 6
 
 # How close two tokens' boxes must be vertically to be on the same feed row,
 # as a fraction of the strip's height. A FRACTION, because a pixel count is
@@ -368,10 +363,13 @@ class Sighting:
     ratio: float
     text: str
     other: str
-    # Where the other players on this row end, as fractions of the strip.
-    # Positions rather than a count, because which names OCR manages to read
-    # changes every frame while where they sit does not.
-    right_xs: tuple[float, ...] = ()
+    # Where the players to the LEFT of your name end, as fractions of the
+    # strip. Positions rather than a count, because which names OCR manages to
+    # read changes every frame while where they sit does not.
+    #
+    # LEFT, because the killer comes first: somebody standing to your left on
+    # the row means they got the kill and you assisted.
+    left_xs: tuple[float, ...] = ()
 
     @property
     def kind(self) -> str:
@@ -483,25 +481,22 @@ def find_all(words: list[Word], crop_w: float, crop_h: float, player: str,
         on_row = [o for o in words
                   if o is not w and abs(o.top - w.top) < row_px
                   and name_like(o.text)]
-        after = sorted((o for o in on_row
-                        if o.right > my_right + width * 0.25),
-                       key=lambda o: o.left)
-
-        # An assister is always LEFTMOST on the row -- the line reads
-        # "assister + killer <icon> victim" -- so a name to the left of yours
-        # means somebody else assisted and the kill is yours.
-        before = [o for o in on_row if o.right <= my_right]
-        # The token immediately past your name is either the weapon icon (you
-        # killed) or the killer's name (you assisted). Only a name long enough
-        # to be a player counts, which is what stops the icon posing as one.
-        assisted = (not before and after
-                    and len(after[0].text) >= MIN_KILLER_LEN)
-        to_right = tuple(sorted(o.right / crop_w for o in after)) if assisted             else ()
+        # The KILLER IS FIRST, so a player standing to the left of your name is
+        # the one who got the kill and you only assisted. Nothing to your left
+        # means the kill is yours.
+        #
+        # Only the left is examined, which also sidesteps the weapon icon: it
+        # sits between the killer group and the victim, so it is never left of
+        # the killer or the assister, and the victim case is already settled by
+        # the right-margin test before this runs.
+        before = [o for o in on_row
+                  if o.right < my_left - width * 0.10]
+        to_left = tuple(sorted(o.right / crop_w for o in before))
         out.append(Sighting(time=at,
                             left=my_left / crop_w,
                             right=my_right / crop_w,
                             top=w.top / crop_h, ratio=r, text=w.text, other=near,
-                            right_xs=to_right))
+                            left_xs=to_left))
     return out
 
 
@@ -721,8 +716,8 @@ def _drop_bad_boxes(sightings: list[Sighting]) -> list[Sighting]:
 SLOT_TOL = 0.05
 
 
-def _slots_right(xs: list[float], sightings: int) -> int:
-    """How many other players are on the row, past your name.
+def _slots_left(xs: list[float], sightings: int) -> int:
+    """How many other players are on the row, BEFORE your name.
 
     Counted over the row's WHOLE life rather than per frame. Which names
     Tesseract manages to read changes frame to frame -- one real assist row
@@ -763,9 +758,10 @@ def collapse(sightings: list[Sighting]) -> list[FeedEvent]:
     merging the name with the netgraph behind it moved a right edge by 69px --
     and a single bad frame must not be able to turn a kill into a death.
 
-    Assists are settled here too, and only here: whether the killer as well as
-    the victim stands past your name cannot be answered from one frame, because
-    which of them OCR manages to read changes every frame. See _slots_right().
+    Assists are settled here too, and only here: whether somebody is standing
+    to the LEFT of your name -- which, the killer being first, is what makes it
+    their kill and not yours -- cannot be answered from one frame, because
+    whether OCR reads that name changes every frame. See _slots_left().
     """
     sightings = _drop_bad_boxes(sightings)
     open_rows: list[dict] = []
@@ -796,7 +792,7 @@ def collapse(sightings: list[Sighting]) -> list[FeedEvent]:
         hit["top"] = s.top
         hit["n"] += 1
         hit["votes"].append(s.kind)
-        hit["rx"].extend(s.right_xs)
+        hit["rx"].extend(s.left_xs)
         if s.ratio > hit["best"].ratio:
             hit["best"] = s
         open_rows = [r for r in open_rows if s.time - r["last"] <= MAX_GAP]
@@ -804,8 +800,9 @@ def collapse(sightings: list[Sighting]) -> list[FeedEvent]:
     out: list[FeedEvent] = []
     for r in done:
         kind = max(set(r["votes"]), key=r["votes"].count)
-        if kind == "kill" and _slots_right(r["rx"], r["n"]) >= 2:
-            # Killer AND victim are both past your name, so you only assisted.
+        if kind == "kill" and _slots_left(r["rx"], r["n"]) >= 1:
+            # Somebody is standing to the left of your name, and the killer is
+            # first -- so they got it and you assisted.
             kind = "assist"
         b = r["best"]
         out.append(FeedEvent(time=r["first"], kind=kind, matched=b.text,

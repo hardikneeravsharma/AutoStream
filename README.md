@@ -354,13 +354,13 @@ refuses to save a template that would match everything.
 hitmarker, no banner — and announces kills only in the feed. For those, pick **Only in
 the kill feed** when calibrating, drag the box round the whole feed, and give your
 in-game name exactly as it appears there. AutoStream then reads the feed and works out
-which slot your name is in:
+which slot your name is in. **The killer is named first:**
 
 ```
-        YUVANETA  [rifle]  ANSHU      <- one name past yours: your kill
-Rico +  YUVANETA  [rifle]  ANSHU      <- still your kill; Rico assisted
-YUVANETA + Rico   [rifle]  ANSHU      <- two names past yours: you assisted
-wAcKyPrAnKsTeR    [rifle]  YUVANETA   <- your name last: you died
+YUVANETA           [rifle]  ANSHU      <- nothing to your left: your kill
+YUVANETA + Rico    [rifle]  ANSHU      <- still your kill; Rico assisted you
+Rico + YUVANETA    [rifle]  ANSHU      <- Rico killed; you only assisted
+wAcKyPrAnKsTeR     [rifle]  YUVANETA   <- your name last: you died
 ```
 
 Assists are detected and deliberately **not** clipped, so "3 kills" in a filename means

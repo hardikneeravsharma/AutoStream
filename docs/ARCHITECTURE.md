@@ -86,7 +86,7 @@ and announces kills only in the feed, which lists *everyone's*. So its profile s
 `mode: killfeed` and the feed is read instead:
 
 - **Which slot the name occupies is the signal**, not its presence — the line reads
-  `[assister +] KILLER <icon> VICTIM` and your name can be in any of the three. Measured
+  `KILLER [+ assister] <icon> VICTIM` and your name can be in any of the three. Measured
   over 12 minutes of play, kill sightings ended at 0.594–0.828 of the strip and deaths at
   0.966–0.988, with nothing in between; the feed is right-aligned, so only a victim's name
   reaches the margin.

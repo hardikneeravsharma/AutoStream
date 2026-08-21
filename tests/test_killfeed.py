@@ -113,10 +113,10 @@ def test_hud_furniture_is_not_mistaken_for_a_player():
 
 # ------------------------------------------- sightings back into single events
 
-def _sight(t, right, top, right_xs=(), left=None):
+def _sight(t, right, top, left_xs=(), left=None):
     left = right - 0.088 if left is None else left      # measured name width
     return kf.Sighting(time=t, left=left, right=right, top=top, ratio=1.0,
-                       text="YUVANETA", other="", right_xs=tuple(right_xs))
+                       text="YUVANETA", other="", left_xs=tuple(left_xs))
 
 
 def test_one_row_read_over_several_frames_is_one_event():
@@ -197,26 +197,25 @@ def test_deaths_are_grouped_more_loosely_than_kills():
 # --------------------------------------------------------------------- assists
 
 def test_an_assist_is_detected_and_is_not_counted_as_a_kill():
-    # "YUVANETA + Mr.Infinite <icon> phoniesx" is Mr.Infinite's kill, verified
-    # by eye. Counting it would put "3 kills" on a clip where the player got
-    # one, and the filename is the thing a viewer sees first.
-    ev = kf.collapse([_sight(t, 0.594, 0.185, right_xs=(0.755, 0.969))
+    ev = kf.collapse([_sight(t, 0.714, 0.185, left_xs=(0.60,))
                       for t in range(6)])
     assert [e.kind for e in ev] == ["assist"]
     assert kf.to_kills(ev) == []
 
 
-def test_one_name_to_the_right_is_your_victim_not_a_third_player():
-    ev = kf.collapse([_sight(t, 0.714, 0.185, right_xs=(0.967,))
+def test_nothing_to_your_left_means_the_kill_is_yours():
+    # "YUVANETA <icon> ANSHU": you are first, so it is your kill. The victim
+    # and the weapon icon sit to the RIGHT and are not consulted at all.
+    ev = kf.collapse([_sight(t, 0.714, 0.185, left_xs=())
                       for t in range(6)])
     assert [e.kind for e in ev] == ["kill"]
 
 
 def test_a_name_seen_in_a_single_frame_does_not_make_it_an_assist():
-    # OCR fragmented "Mr.Infinite" into "vite" on exactly one frame. Real
-    # players show up repeatedly at the same x; fragments do not.
-    xs = [(0.967,)] * 5 + [(0.661, 0.967)]
-    ev = kf.collapse([_sight(t, 0.714, 0.185, right_xs=x)
+    # OCR fragments a name on the odd frame. Real players show up repeatedly at
+    # the same x; fragments do not.
+    xs = [()] * 5 + [(0.60,)]
+    ev = kf.collapse([_sight(t, 0.714, 0.185, left_xs=x)
                       for t, x in enumerate(xs)])
     assert [e.kind for e in ev] == ["kill"]
 
@@ -226,16 +225,16 @@ def test_an_assist_is_not_decided_by_one_frames_view_of_the_row():
     # assist row, so a per-frame majority called it a kill. Pooling the
     # positions over the row is what gets it right.
     xs = [(0.755, 0.969), (0.755,), (0.755,), (0.969,), (), (0.755,)]
-    ev = kf.collapse([_sight(t, 0.594, 0.185, right_xs=x)
+    ev = kf.collapse([_sight(t, 0.594, 0.185, left_xs=x)
                       for t, x in enumerate(xs)])
     assert [e.kind for e in ev] == ["assist"]
 
 
 def test_kills_assists_and_deaths_are_all_reported():
-    ev = (kf.collapse([_sight(t, 0.714, 0.185, right_xs=(0.967,))
+    ev = (kf.collapse([_sight(t, 0.714, 0.185, left_xs=())
                        for t in range(4)])
           + kf.collapse([_sight(t, 0.966, 0.30) for t in range(20, 24)])
-          + kf.collapse([_sight(t, 0.594, 0.185, right_xs=(0.755, 0.969))
+          + kf.collapse([_sight(t, 0.714, 0.185, left_xs=(0.60,))
                          for t in range(40, 44)]))
     assert kf.tally(ev) == {"kill": 1, "assist": 1, "death": 1}
     assert len(kf.to_kills(ev)) == 1
@@ -245,7 +244,7 @@ def test_a_clipped_kill_carries_a_tail_anchor():
     # The planner reserves its tail from `end`. A feed row has no "marker
     # cleared" moment, so `end` is the kill itself -- but the key must exist or
     # clips silently start cutting early again.
-    k = kf.to_kills(kf.collapse([_sight(t, 0.714, 0.185, right_xs=(0.967,))
+    k = kf.to_kills(kf.collapse([_sight(t, 0.714, 0.185, left_xs=())
                                  for t in range(4)]))
     assert k and "end" in k[0] and k[0]["end"] == k[0]["time"]
 
@@ -303,7 +302,7 @@ def test_the_functions_the_rest_of_the_app_calls_all_exist():
     for name in ("scan", "collapse", "find_all", "to_kills", "tally",
                  "name_like", "matched_span", "norm", "tesseract",
                  "default_workers", "_extract", "_read", "_sightings",
-                 "_drop_bad_boxes", "_slots_right", "_sweep_stale_temp",
+                 "_drop_bad_boxes", "_slots_left", "_sweep_stale_temp",
                  "_crop_words", "_ocr_words"):
         assert callable(getattr(kf, name, None)), f"killfeed.{name} is missing"
 
@@ -382,7 +381,7 @@ def test_calibrating_a_killfeed_game_saves_a_usable_profile(monkeypatch, tmp_pat
     from autostream.clips import profiles
 
     hit = kf.Sighting(time=60.0, left=0.72, right=0.807, top=0.18, ratio=1.0,
-                      text="YUVANETA", other="Rico", right_xs=(0.96,))
+                      text="YUVANETA", other="Rico", left_xs=())
     r = _calibrate_with(monkeypatch, tmp_path, [hit], player="YUVANETA")
     assert r.get("ok") and r.get("saved"), r
     assert r["mode"] == "killfeed"
@@ -431,34 +430,34 @@ def test_a_big_box_is_still_refused_for_a_marker_game(monkeypatch, tmp_path):
 # ------------------------------------------------- what counts as "same row"
 
 def test_two_words_on_one_row_are_recognised_despite_differing_box_tops():
-    """Tesseract's box top follows the tallest letter in the token.
+    """Tesseract box tops follow the tallest letter in the token.
 
-    "/ANETA" and "Flex" sit on one feed line but their boxes differed by 31px,
-    and a 12px tolerance decided they were on different rows -- so the victim
-    went uncounted and a real assist was scored as a kill.
+    Two names on one feed line measured 31px apart, and a 12px tolerance
+    decided they were on different rows -- so the killer standing to the left
+    went unseen and a real assist was scored as a kill.
     """
     got = _find([
-        _w("YUVANETA", 0.50 * CROP_W, 0.594 * CROP_W, top=390),
-        _w("insane", 0.62 * CROP_W, 0.700 * CROP_W, top=372),
-        _w("Flex", 0.90 * CROP_W, 0.968 * CROP_W, top=359),
+        _w("Khalnaayak", 0.50 * CROP_W, 0.605 * CROP_W, top=372),
+        _w("YUVANETA", 0.62 * CROP_W, 0.714 * CROP_W, top=390),
+        _w("SaltFarmer", 0.88 * CROP_W, 0.968 * CROP_W, top=359),
     ])
-    assert len(got) == 1
-    assert len(got[0].right_xs) == 2, "both players past the name must count"
-    assert kf.collapse([got[0], got[0]])[0].kind == "assist"
+    mine = [g for g in got if abs(g.right - 0.714) < 0.01]
+    assert mine, "the player own name should be found"
+    assert mine[0].left_xs, "the killer to the left must be seen"
+    assert kf.collapse(mine * 4)[0].kind == "assist"
 
 
 def test_the_row_below_is_not_counted_as_part_of_this_one():
-    # Rows sit 0.118 apart. Pulling the next row's names in turned real kills
-    # into assists, which is what caps the tolerance.
+    # Rows sit 0.118 apart. Pulling the next row in would invent a killer
+    # standing to your left and turn your own kill into an assist.
     got = _find([
         _w("YUVANETA", 0.62 * CROP_W, 0.714 * CROP_W, top=200),
         _w("wAcKyPrAnKsTeR", 0.80 * CROP_W, 0.967 * CROP_W, top=204),
-        # the next row down, 0.118 of the strip lower
-        _w("SaltFarmer", 0.55 * CROP_W, 0.660 * CROP_W, top=200 + 0.118 * CROP_H),
-        _w("Khalnaayak", 0.80 * CROP_W, 0.960 * CROP_W, top=204 + 0.118 * CROP_H),
+        _w("SaltFarmer", 0.40 * CROP_W, 0.520 * CROP_W, top=200 + 0.118 * CROP_H),
     ])
-    mine = [s for s in got if s.right < 0.9][0]
-    assert len(mine.right_xs) == 1, "only the victim on this row may count"
+    mine = [g for g in got if abs(g.right - 0.714) < 0.01][0]
+    assert not mine.left_xs, "only names on this row may count"
+    assert kf.collapse([mine] * 4)[0].kind == "kill"
 
 
 def test_the_same_row_tolerance_is_a_fraction_not_a_pixel_count():
@@ -479,27 +478,22 @@ def test_netgraph_text_is_rejected_however_badly_it_is_read():
 
 # ------------------------------------ telling one player's drift from two players
 
-def test_a_victims_own_wobble_is_not_a_second_player():
-    """The single most expensive bug in this detector.
+def test_the_killers_own_wobble_is_not_several_players():
+    """A name edge wanders a few thousandths over a row lifetime.
 
-    A victim's right edge wandered 0.965 -> 0.971 over one row's life. Clustered
-    too tightly that reads as two people standing past your name, which makes
-    your kill an assist -- and it did exactly that to fourteen real kills across
-    an 88-minute recording before it was caught.
+    Clustered too tightly that reads as extra people standing beside you, and
+    the count of who is to your left stops meaning anything.
     """
-    xs = [(0.965,), (0.971,), (0.966,), (0.969,), (0.965,), (0.970,)]
-    ev = kf.collapse([_sight(t, 0.828, 0.182, right_xs=x)
-                      for t, x in enumerate(xs)])
-    assert [e.kind for e in ev] == ["kill"]
-
-
-def test_two_real_players_on_the_row_are_still_two():
-    # Measured 0.21-0.27 apart on real assist rows, against a victim's own
-    # drift of 0.006 -- so the two cases are an order of magnitude apart.
-    xs = [(0.755, 0.969)] * 6
-    ev = kf.collapse([_sight(t, 0.594, 0.185, right_xs=x)
+    xs = [(0.605,), (0.611,), (0.606,), (0.609,), (0.605,), (0.610,)]
+    ev = kf.collapse([_sight(t, 0.714, 0.182, left_xs=x)
                       for t, x in enumerate(xs)])
     assert [e.kind for e in ev] == ["assist"]
+    assert kf._slots_left([x[0] for x in xs], 6) == 1, "one player, not six"
+
+
+def test_nobody_to_the_left_stays_a_kill_however_many_frames():
+    ev = kf.collapse([_sight(t, 0.714, 0.182) for t in range(8)])
+    assert [e.kind for e in ev] == ["kill"]
 
 
 def test_the_slot_tolerance_sits_between_the_two_measurements():
@@ -510,7 +504,7 @@ def test_the_slot_tolerance_sits_between_the_two_measurements():
 
 # ------------------------------------------- the weapon icon poses as a player
 
-def test_the_weapon_icon_is_not_counted_as_a_player():
+def test_the_weapon_icon_cannot_confuse_the_verdict():
     """Tesseract transcribes the icon as a word and it sits in the killer slot.
 
     "gage", "gummi", "pei" and "gagel" all came off real rows. Counted as
@@ -521,19 +515,22 @@ def test_the_weapon_icon_is_not_counted_as_a_player():
         _w("gummi", 0.801 * CROP_W, 0.867 * CROP_W, top=204),      # the icon
         _w("SoltFormer", 0.874 * CROP_W, 0.968 * CROP_W, top=202),  # the victim
     ])
-    assert kf.collapse(got * 4)[0].kind == "kill"
+    mine = [g for g in got if abs(g.right - 0.787) < 0.01][0]
+    assert not mine.left_xs, "the icon is never left of the killer"
+    assert kf.collapse([mine] * 4)[0].kind == "kill"
 
 
-def test_a_real_killer_name_past_yours_is_still_an_assist():
+def test_a_real_killer_name_before_yours_is_an_assist():
     got = _find([
-        _w("YUVANETA", 0.50 * CROP_W, 0.595 * CROP_W, top=200),
-        _w("Kholnoayek", 0.626 * CROP_W, 0.727 * CROP_W, top=204),
+        _w("Kholnoayek", 0.50 * CROP_W, 0.601 * CROP_W, top=204),
+        _w("YUVANETA", 0.626 * CROP_W, 0.727 * CROP_W, top=200),
         _w("SoltFermer", 0.874 * CROP_W, 0.968 * CROP_W, top=202),
     ])
-    assert kf.collapse(got * 4)[0].kind == "assist"
+    mine = [g for g in got if abs(g.right - 0.727) < 0.01][0]
+    assert kf.collapse([mine] * 4)[0].kind == "assist"
 
 
-def test_a_name_to_your_left_means_the_kill_is_yours():
+def test_a_name_to_your_left_means_you_only_assisted():
     """The line reads "assister + killer <icon> victim".
 
     An assister is always leftmost, so somebody standing to your left is the
@@ -546,9 +543,8 @@ def test_a_name_to_your_left_means_the_kill_is_yours():
         _w("gummi", 0.801 * CROP_W, 0.867 * CROP_W, top=204),
         _w("SoltFormer", 0.874 * CROP_W, 0.968 * CROP_W, top=202),
     ])
-    mine = [g for g in got if 0.7 < g.right < 0.9]
-    assert mine, "the player should still be found"
-    assert kf.collapse(mine * 4)[0].kind == "kill"
+    mine = [g for g in got if 0.7 < g.right < 0.9][0]
+    assert kf.collapse([mine] * 4)[0].kind == "assist"
 
 
 def test_an_unreadable_killer_name_falls_back_to_calling_it_a_kill():

@@ -225,11 +225,12 @@ BUILTIN: dict[str, dict[str, Any]] = {
         "merge_gap": 3.0,
         "match_ratio": 0.72,
         "rounds": True,
-        "notes": "Reads the kill feed. Your name immediately left of the "
-                 "weapon icon is a kill, right of it a death, and further left "
-                 "again an assist, which is not clipped. Assists whose killer's "
-                 "name is unreadable count as kills, so kill counts can run a "
-                 "little high. Needs your in-game name, set on the Library page.",
+        "notes": "Reads the kill feed. The killer is named first, so your name "
+                 "with nobody to its left is your kill, with a name to its left "
+                 "you assisted, and at the right-hand end you died. Assists are "
+                 "not clipped. An assist whose killer's name cannot be read "
+                 "counts as a kill, so counts can run a little high. Needs your "
+                 "in-game name, set on the Library page.",
     },
 }
 
