@@ -121,6 +121,15 @@ CONFIG_SCHEMA: list[Section] = [
         "advanced": False,
         "fields": [
             _field(
+                "youtube.enabled",
+                "Go live on YouTube",
+                "Off turns AutoStream into a clipper and nothing else: it still "
+                "spots the game, still records it and still cuts clips, and never "
+                "touches YouTube. Nothing else on this page is read while it is "
+                "off, and no Google sign-in is needed.",
+                "toggle",
+            ),
+            _field(
                 "youtube.privacy",
                 "Who can see your streams",
                 "Unlisted is the safe setting while you still half expect a mistake: "
@@ -642,6 +651,71 @@ CONFIG_SCHEMA: list[Section] = [
         ],
     },
     {
+        "id": "screens",
+        "label": "Screen savers",
+        "icon": "play",
+        "blurb": "Short videos for the moments the game is not the thing to look "
+                 "at: going live, stepping away, and signing off. AutoStream "
+                 "builds the OBS scenes for these itself -- point each one at a "
+                 "file and it appears in OBS as a scene.",
+        "advanced": False,
+        "fields": [
+            _field(
+                "screens.enabled",
+                "Use screen savers",
+                "Off leaves OBS exactly as it is and never creates a scene.",
+                "toggle",
+            ),
+            _field(
+                "screens.starting_file",
+                "Stream starting",
+                "Played from the moment you go live. Give it long enough for people to arrive - the first minute of a stream is mostly people opening the tab. "
+                "A video file, or the URL of an overlay page - AutoStream makes a "
+                "media source for one and a browser source for the other.",
+                "text",
+                placeholder="C:\\Users\\you\\Videos\\starting.mp4 or https://...",
+            ),
+            _field(
+                "screens.starting_seconds",
+                "How long to hold it",
+                "Seconds before the game scene takes over. The video loops if it "
+                "is shorter than this.",
+                "number", min=0, max=600, unit="seconds",
+            ),
+            _field(
+                "screens.paused_file",
+                "Be right back",
+                "Shown for as long as the stream is paused. Pause keeps the broadcast running and only changes the picture, so this is the one people actually sit through. "
+                "A video file, or the URL of an overlay page - AutoStream makes a "
+                "media source for one and a browser source for the other.",
+                "text",
+                placeholder="C:\\Users\\you\\Videos\\brb.mp4 or https://...",
+            ),
+            _field(
+                "screens.ending_file",
+                "Thanks for watching",
+                "The last thing on the stream. Held before the broadcast is completed, because afterwards there is nothing to show it on. "
+                "A video file, or the URL of an overlay page - AutoStream makes a "
+                "media source for one and a browser source for the other.",
+                "text",
+                placeholder="C:\\Users\\you\\Videos\\ending.mp4 or https://...",
+            ),
+            _field(
+                "screens.ending_seconds",
+                "How long to hold that",
+                "Seconds to keep the ending card up before ending the broadcast.",
+                "number", min=0, max=600, unit="seconds",
+            ),
+            _field(
+                "screens.scene_prefix",
+                "Scene name prefix",
+                "What AutoStream calls the scenes it creates in OBS. Change it "
+                "only if it collides with scenes you already have.",
+                "text", advanced=True, placeholder="AutoStream",
+            ),
+        ],
+    },
+    {
         "id": "record",
         "label": "Recording",
         "icon": "save",
@@ -820,6 +894,65 @@ CONFIG_SCHEMA: list[Section] = [
                 step=0.5,
                 unit="seconds",
                 integer=False,
+            ),
+            _field(
+                "clips.voice",
+                "Spoken hook",
+                "Says what the clip is over its opening seconds -- \"one versus "
+                "three\", \"match point\" -- from the labels the clip already "
+                "earned, and stays quiet when there is nothing worth saying. "
+                "Needs a one-off 177 MB voice model download.",
+                "toggle",
+            ),
+            _field(
+                "clips.promo",
+                "Sweep the leftovers into a promo",
+                "Clips that fell below the minimum above are not cut on their own. "
+                "They are trimmed to a few seconds each, run together into one "
+                "vertical reel and captioned as an advert for the channel - which "
+                "is a claim about you rather than about the play, and so is the one "
+                "caption a single kill can honestly carry.",
+                "toggle",
+            ),
+            _field(
+                "clips.promo_caption",
+                "What the promo says",
+                "Held on screen for the whole reel. Emoji work.",
+                "text",
+                placeholder="LIVE MOST EVENINGS",
+            ),
+            _field(
+                "clips.music",
+                "Music for the reel",
+                "A track you own. Given one, the montage is joined by a beat-synced "
+                "reel: cuts on the beat, act changes on phrase boundaries, and the "
+                "session's best moment on the drop. Leave blank for no reel.",
+                "text",
+                placeholder=r"C:\Users\you\Music\track.flac",
+            ),
+            _field(
+                "clips.arc",
+                "Tell the session's story",
+                "How the reel is arranged. On keeps the clips in the order they "
+                "happened and offsets the music instead, so the drop lands on the "
+                "best moment - opening, the rounds you lost, the round that turned "
+                "it, the push, match point. Off puts the multi-kills in the busiest "
+                "section, which needs no round labels at all.",
+                "toggle",
+            ),
+            _field(
+                "clips.order",
+                "How the reel is ordered",
+                "Story plays the session in the order it happened, with the best "
+                "moment on the drop. Build goes weakest to strongest, so the reel "
+                "escalates and always ends on the peak. Hook opens on the best "
+                "moment, which is where a Short is won or lost.",
+                "select",
+                options=_opts(
+                    ("story", "Story - as it happened"),
+                    ("build", "Build - weakest to strongest"),
+                    ("hook", "Hook - best moment first"),
+                ),
             ),
             _field(
                 "clips.vertical_mode",

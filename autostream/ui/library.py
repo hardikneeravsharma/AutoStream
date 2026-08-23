@@ -123,7 +123,13 @@ function lib_wire() {
   const list = lib_el('lib-list');
   if (list) {
     list.addEventListener('click', function (ev) {
-      const b = ev.target && ev.target.closest ? ev.target.closest('button[data-key]') : null;
+      if (!ev.target || !ev.target.closest) return;
+      const t = ev.target.closest('button[data-thumb]');
+      if (t) {
+        lib_thumb(t.getAttribute('data-thumb'), t.getAttribute('data-app'));
+        return;
+      }
+      const b = ev.target.closest('button[data-key]');
       if (b) lib_launch(b, b.getAttribute('data-key'), b.getAttribute('data-stream') === '1');
     });
   }
@@ -137,6 +143,17 @@ function lib_row(a) {
     + '<div class="app-name" title="' + name + '">' + name + '</div>'
     + '<div class="app-source">' + source + '</div>'
     + '<div class="app-actions">'
+    /* Only on things that can actually be streamed. The list is mostly Start
+       Menu shortcuts -- Command Prompt, Character Map, dfrgui -- and a
+       thumbnail button on those is noise attached to something that will never
+       have a broadcast. Same condition as "Open + stream". */
+    + (a.stream
+        ? '<button class="btn btn-ghost btn-sm" type="button" data-thumb="'
+          + lib_esc(a.game_key || a.key) + '" data-app="' + key
+          + '" title="' + (a.thumbnail ? 'Thumbnail: ' + lib_esc(a.thumbnail)
+                                       : 'No thumbnail assigned') + '">'
+          + (a.thumbnail ? 'Thumbnail set' : 'Thumbnail') + '</button>'
+        : '')
     + '<button class="btn btn-ghost btn-sm" type="button" data-key="' + key
     + '" data-stream="0">Open</button>'
     + (a.stream
@@ -204,6 +221,35 @@ function lib_note(status) {
       + (s.game ? ' with ' + s.game : '')
       + '. Opening another game with "Open + stream" retitles this broadcast and '
       + 'switches it over - it does not start a second one.';
+  }
+}
+
+/* Assigning a thumbnail is a path, not a file upload: the image stays where the
+   user made it, and games.yaml holds a reference. A prompt rather than a file
+   dialog because the page is served over HTTP and cannot see the filesystem;
+   the server checks the path exists before saving, so a typo is rejected with a
+   reason rather than stored and discovered at go-live. */
+async function lib_thumb(gameKey, appKey) {
+  if (!gameKey) return;
+  const app = lib_apps.filter(function (a) {
+    return (a.game_key || a.key) === gameKey;
+  })[0] || {};
+  const now = app.thumbnail || '';
+  const label = app.name || lib_name(appKey);
+  const next = window.prompt(
+    'Thumbnail for ' + label + '.\n\n'
+    + 'Full path to a PNG or JPG. It is used exactly as given - nothing is '
+    + 'drawn over it. Leave empty to go back to the automatic one.', now);
+  if (next === null) return;                 /* cancelled */
+  try {
+    const r = await API.post('/api/games/thumbnail',
+                             { key: gameKey, path: next.trim() });
+    if (r && r.error) { toast(r.error, 'error'); return; }
+    toast(next.trim() ? 'Thumbnail assigned to ' + label + '.'
+                      : 'Thumbnail cleared for ' + label + '.', 'ok');
+    lib_sig = '';                            /* force the next poll to re-render */
+  } catch (e) {
+    toast('Could not save that thumbnail.', 'error');
   }
 }
 

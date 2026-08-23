@@ -385,14 +385,22 @@ function dash_renderHero(s) {
   const phase = s.phase || 'IDLE';
   const paused = !!s.paused;
   const active = dash_ACTIVE.indexOf(phase) >= 0;
+  /* Clips-only mode runs the same phases, and LIVE there means a recording is
+     running and nothing is being broadcast. Saying LIVE would be a lie about
+     the one thing a streamer most needs to be true. */
+  const clipsOnly = s.streaming === false;
+  const word = clipsOnly && phase === 'LIVE' ? 'RECORDING'
+                                             : (dash_PHASE_WORD[phase] || String(phase));
+  const label = clipsOnly && phase === 'LIVE' ? 'Recording'
+                                              : (dash_PHASE_LABEL[phase] || String(phase));
 
   dash_pill('dash-pill', 'dash-pill-text',
             paused ? 'pill-idle' : (dash_PHASE_PILL[phase] || 'pill-idle'),
-            paused ? 'PAUSED' : (dash_PHASE_WORD[phase] || String(phase)));
+            paused ? 'PAUSED' : word);
 
   const head = dash_el('dash-phase');
   if (head) {
-    head.textContent = paused ? 'Paused' : (dash_PHASE_LABEL[phase] || String(phase));
+    head.textContent = paused ? 'Paused' : label;
     /* Colour only when something is happening; idle stays text-primary so the
        calm default is still the most legible thing on the page. */
     let token = 'text-primary';
@@ -662,6 +670,15 @@ function dash_applyActions(s) {
                     paused ? 'Resume' : 'Pause');
     }
   }
+
+  /* Everything about a broadcast goes away when there is no broadcast: the
+     viewer/like counters, the chat column and the End stream button all
+     describe something that does not exist in clips-only mode. */
+  const clipsOnly = s.streaming === false;
+  ['dash-stats', 'dash-chat'].forEach(function (id) {
+    const el = dash_el(id);
+    if (el) el.classList.toggle('hide', clipsOnly);
+  });
 
   const open = dash_el('dash-btn-open');
   if (open) {

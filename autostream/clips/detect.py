@@ -244,6 +244,12 @@ def scan(video: Path, profile: Profile, *,
 
     if profile.mode == "killfeed":
         return scan_killfeed(video, profile, total, progress, cancelled)
+    if profile.mode == "feedbar":
+        return scan_feedbar(video, profile, total, info["height"], progress,
+                            cancelled)
+    if profile.mode == "cardcount":
+        return scan_cardcount(video, profile, total, info["height"], progress,
+                              cancelled)
 
     if info["height"] < profile.ref_height:
         # Not fatal: upscaling a smaller frame still matches, just with less to
@@ -347,6 +353,86 @@ def scan_killfeed(video: Path, profile: Profile, total: float,
     assists = sum(1 for e in events if e.kind == "assist")
     log.info("found %d kill(s), %d assist(s) (not clipped) and %d death(s) in %s",
              len(kills), assists, deaths, video.name)
+    return kills
+
+
+def scan_feedbar(video: Path, profile: Profile, total: float, height: int,
+                 progress: Callable[[int, int], None] | None,
+                 cancelled: Callable[[], bool] | None) -> list[Kill]:
+    """Kills read off the feed's coloured bars -- no OCR, no in-game name.
+
+    Same signature as the template path, so bursts, windows, the tail
+    guarantee, captions and the montage all work on these unchanged.
+    """
+    from . import valorant_feed
+
+    log.info("reading the %s kill feed bars", profile.label)
+    events = valorant_feed.scan(video, profile.band, duration=total,
+                                fps=profile.scan_fps, frame_height=height,
+                                progress=progress, cancelled=cancelled)
+    if cancelled and cancelled():
+        raise Cancelled("scan cancelled")
+
+    # ONE Kill per kill, deliberately NOT merged here. Merging close kills into
+    # a single Kill with count=2 throws the second timestamp away, and the
+    # planner counts entries rather than counts -- so four double kills came out
+    # of a real recording labelled "1kill" while containing two. Grouping is the
+    # planner's job anyway: it clusters over a 22s window and then picks the
+    # best sub-window inside it, which is strictly better than a flat merge.
+    kills: list[Kill] = []
+    for e in events:
+        # Assists are deliberately NOT clipped. The player's portrait appears
+        # on a row they only assisted, and counting those would put "3 kills"
+        # on a clip showing one.
+        if e.kind != "kill":
+            continue
+        # A feed row has no "marker cleared" moment the way a HUD glyph does,
+        # so `end` is the kill itself and the tail is measured from there.
+        kills.append(Kill(time=e.time, end=e.time, score=1.0, count=1))
+    t = valorant_feed.tally(events)
+    log.info("found %d kill(s), %d assist(s) (not clipped) and %d death(s) in %s",
+             len(kills), t["assist"], t["death"], video.name)
+    return kills
+
+
+def scan_cardcount(video: Path, profile: Profile, total: float, height: int,
+                   progress: Callable[[int, int], None] | None,
+                   cancelled: Callable[[], bool] | None) -> list[Kill]:
+    """Kills read off CS2's round kill tally -- no OCR, no in-game name.
+
+    Same signature as the template path, so bursts, windows, the tail
+    guarantee, captions and the montage all work on these unchanged.
+    """
+    from . import cs2_cards
+
+    log.info("reading the %s kill tally", profile.label)
+    hue = profile.hud_hue or None
+    if hue is None:
+        # Measured off this recording rather than asked for, then cached so
+        # only the first scan of the game ever pays for it.
+        hue = cs2_cards.measure_hue(video, total)
+        if hue is None:
+            raise RuntimeError(
+                f"Could not work out your {profile.label} HUD colour from this "
+                f"recording. Try one with more gameplay in it.")
+        log.info("measured %s HUD colour: hue %.0f", profile.label, hue)
+        from .profiles import remember
+        remember(profile.key, hud_hue=hue)
+
+    events = cs2_cards.scan(video, duration=total, fps=profile.scan_fps,
+                            hue=hue, frame_height=height,
+                            progress=progress, cancelled=cancelled)
+    if cancelled and cancelled():
+        raise Cancelled("scan cancelled")
+
+    # ONE Kill per kill, deliberately not merged: the planner clusters over a
+    # 22s window and picks the best sub-window inside it, and merging here
+    # throws away the timestamps it needs to count them.
+    kills = [Kill(time=e.time, end=e.time, score=1.0, count=1)
+             for e in events if e.kind == "kill"]
+    t = cs2_cards.tally(events)
+    log.info("found %d kill(s) and %d death(s) in %s",
+             t["kill"], t["death"], video.name)
     return kills
 
 

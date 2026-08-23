@@ -31,12 +31,24 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import cutter, detect, killfeed, montage, overlay, plan, profiles
+from . import (cutter, detect, killfeed, montage, overlay, plan, profiles,
+               promo, voice)
 from .tools import FfmpegMissing, media_info
 
 log = logging.getLogger("autostream.clips.jobs")
 
 STEPS = ("scan", "cut", "vertical", "montage")
+
+
+def _kill_tags(kill) -> list[str]:
+    """What was remarkable about one demo kill, for the caption layer."""
+    out = []
+    for flag, tag in (("headshot", "HEADSHOT"), ("thrusmoke", "THROUGH SMOKE"),
+                      ("blinded", "BLIND"), ("penetrated", "WALLBANG"),
+                      ("noscope", "NO SCOPE")):
+        if getattr(kill, flag, False):
+            out.append(tag)
+    return out
 
 
 def _stamp_folder(started: float | None, game: str | None,
@@ -91,7 +103,16 @@ class ClipJob:
         self.error: str | None = None
         self.results: list[dict] = []
         self.montage_path: str | None = None
+        self.reel_path: str | None = None
+        self.promo_path: str | None = None
+        # Every spoken hook used so far, so no two clips in one session open
+        # with the same sentence.
+        self.said: list[str] = []
         self.summary: dict = {}
+        # Filled in when a demo aligned: which one, and how the detector scored
+        # against it. Recorded because it is the only place the detector's
+        # accuracy is ever actually measured.
+        self.demo: dict = {}
         self.started_at = time.time()
         self.finished_at: float | None = None
 
@@ -122,6 +143,8 @@ class ClipJob:
                 "folder": str(self.folder),
                 "clips": len(self.results),
                 "montage": self.montage_path,
+                "reel": self.reel_path,
+                "promo": self.promo_path,
                 "summary": dict(self.summary),
                 "elapsed": int(time.time() - self.started_at),
                 "source": self.source.name,
@@ -186,12 +209,43 @@ class ClipJob:
                           and opt.get("rounds", True))
         round_list: list = []
 
+        # Clips that fall below min_kills. Swept into one promo reel instead of
+        # being cut individually -- see clips/promo.py.
+        want_promo = bool(opt.get("promo", True))
+        spare: list = []
+
+        # Per-game padding floors, applied BEFORE anything is planned. Resolved
+        # here rather than inside the planner so session.json records the
+        # numbers actually used -- a style name whose meaning changed later
+        # would otherwise be the only record of how a clip was cut.
+        asked_pre = float(opt.get("pre_roll", 3 if use_rounds else 6))
+        asked_tail = float(opt.get("tail_seconds", plan.TAIL_MIN))
+        pre_roll, tail = (prof.padding(asked_pre, asked_tail) if prof
+                          else (asked_pre, asked_tail))
+        if (pre_roll, tail) != (asked_pre, asked_tail):
+            log.info("%s needs more room than the %s style asks for: "
+                     "run-up %.1f -> %.1fs, tail %.1f -> %.1fs", self.game,
+                     opt.get("style", "chosen"), asked_pre, pre_roll,
+                     asked_tail, tail)
+        opt["pre_roll"], opt["tail_seconds"] = pre_roll, tail
+
         cached = opt.get("kills")
-        if cached and not use_rounds:
+        # Cached kills are enough for a game that writes a demo even in round
+        # mode: what the detector found is only ever the fingerprint that
+        # locates the demo, and the rounds come out of the demo itself. Without
+        # one, round mode has to rescan -- the scoreboard is only read during a
+        # scan and there is nothing else to read it from.
+        if cached and (not use_rounds or (prof and prof.demos)):
             kills = list(cached)
             self._set(message=f"Using {len(kills)} kills found earlier")
-        elif use_rounds:
-            from . import hud, rounds as rounds_mod
+        elif use_rounds and prof.mode == "killfeed":
+            # Checked before the scan, not after. Reading the feed without a
+            # name to look for finds nothing at all, and "no kills in this
+            # recording" after four minutes of scanning is the least useful way
+            # possible to say "you have not told me your in-game name".
+            if not prof.player:
+                raise RuntimeError(prof.why_not())
+            from . import rounds as rounds_mod
 
             def prog(d, t):
                 self._set(done=d, total=t,
@@ -232,7 +286,23 @@ class ClipJob:
                                "coverage": 0, "runtime": 0})
             raise RuntimeError("No kills found in this recording.")
 
+        # ---- 1b. the demo, if the game writes one ------------------------
+        #
+        # Everything found above is superseded when a demo aligns: exact kill
+        # times, exact rounds, and the circumstances no detector can see. What
+        # the detector found is kept only as the fingerprint that located it,
+        # and as a mark against a right answer.
+        if prof and prof.demos and opt.get("demo", True):
+            got = self._from_demo(kills)
+            if got:
+                kills, round_list = got["kills"], got["rounds"]
+                self.demo = got["about"]
+
         # ---- 2. decide what to cut ---------------------------------------
+        if use_rounds and not round_list:
+            log.info("no round data for this recording; cutting bursts of "
+                     "kills instead")
+            use_rounds = False
         if use_rounds:
             from . import rounds as rounds_mod
 
@@ -244,25 +314,43 @@ class ClipJob:
                       if any(any(k in l for l in r.labels) for k in keep)]
             plans = plan.build_rounds(
                 hl, game=self.game,
-                pre_roll=float(opt.get("pre_roll", 3)),
-                tail=float(opt.get("tail_seconds", plan.TAIL_MIN)),
+                pre_roll=pre_roll, tail=tail,
                 whole_round=bool(opt.get("whole_round", True)),
                 clip_seconds=opt.get("clip_seconds", "auto"),
                 source_duration=info["duration"])
+            if want_promo:
+                # Rounds the player did something in but which earned no label.
+                # Individually they are nothing; together they are the advert.
+                quiet = [r for r in round_list
+                         if r.my_kills >= 1 and not r.labels]
+                spare = plan.build_rounds(
+                    quiet, game=self.game, pre_roll=pre_roll, tail=tail,
+                    whole_round=False, clip_seconds="12",
+                    source_duration=info["duration"])
             if not plans:
                 raise RuntimeError(
                     f"{len(round_list)} rounds found but none matched the "
                     f"selected highlight types.")
         else:
+            floor = int(opt.get("min_kills", 2))
             plans = plan.build(
                 kills, game=self.game,
-                min_kills=int(opt.get("min_kills", 2)),
+                min_kills=floor,
                 clip_seconds=opt.get("clip_seconds", "30"),
-                pre_roll=float(opt.get("pre_roll", 6)),
-                tail=float(opt.get("tail_seconds", plan.TAIL_MIN)),
+                pre_roll=pre_roll, tail=tail,
                 source_duration=info["duration"],
             )
-            if not plans:
+            if want_promo:
+                # Built as a SECOND pass at min_kills=1 rather than by lowering
+                # the first: the clips that are kept must be numbered and named
+                # exactly as they would have been without the promo, and
+                # filtering a single list would leave gaps in the ranking.
+                spare = promo.pick(plan.build(
+                    kills, game=self.game, min_kills=1,
+                    clip_seconds=opt.get("clip_seconds", "30"),
+                    pre_roll=pre_roll, tail=tail,
+                    source_duration=info["duration"]), floor)
+            if not plans and not spare:
                 raise RuntimeError(
                     f"{len(kills)} kills found, but none in a fight of "
                     f"{opt.get('min_kills', 2)}+ kills. Lower the minimum.")
@@ -273,13 +361,18 @@ class ClipJob:
             "source": str(self.source), "game": self.game,
             "game_key": self.game_key, "options": opt,
             "kills": kills, "plans": [p.as_dict() for p in plans],
+            **({"demo": self.demo} if self.demo else {}),
+            **({"promo_clips": [p.as_dict() for p in spare]} if spare else {}),
             **({"rounds": [
                 {"number": r.number, "start": round(r.started, 1),
                  "end": round(r.ended, 1), "half": r.half,
                  "score": list(r.score_after), "won": r.won,
                  "kills": r.my_kills, "deaths": r.my_deaths,
                  "assists": r.my_assists, "labels": r.labels,
-                 "overcount": r.kill_overcount}
+                 "overcount": r.kill_overcount,
+                 **({"source": r.source, "reason": r.reason,
+                     "flags": r.flags, "headshots": r.headshots}
+                    if r.source == "demo" else {})}
                 for r in round_list]} if round_list else {}),
         }, indent=2), encoding="utf-8")
 
@@ -331,6 +424,18 @@ class ClipJob:
                 self._set(message=f"Vertical {i + 1} of {len(masters)}")
                 v = cutter.vertical(m, self.folder / "vertical", mode=vmode,
                                     encoder=enc)
+                # THE SPEECH IS SYNTHESISED BEFORE THE OVERLAY, not after.
+                # The subtitle has to fade out when the voice stops saying it,
+                # so its timing is only known once the line exists -- and doing
+                # it in this order also encodes the clip ONCE: the overlay pass
+                # burns everything, and the audio mix afterwards copies the
+                # video straight through.
+                spoken, speech = "", None
+                if v and opt.get("voice"):
+                    # `avoid` is what has already been said in this session.
+                    # Two clutches in one reel saying the same sentence is the
+                    # one thing a viewer notices immediately.
+                    spoken, speech = self._speak(plans[i], v)
                 if v and opt.get("captions", True):
                     p = plans[i]
                     inside = [k for k in kills
@@ -342,13 +447,26 @@ class ClipJob:
                     self.results[i]["tags"] = extra
                     try:
                         tmp = v.with_suffix(".tmp.mp4")
-                        overlay.apply(v, tmp, caption=cap,
-                                      handle=str(opt.get("handle") or "@YuvaNeta"),
-                                      encoder=enc)
+                        overlay.apply(
+                            v, tmp, caption=cap,
+                            handle=str(opt.get("handle") or "@YuvaNeta"),
+                            encoder=enc, subtitle=spoken,
+                            subtitle_until=(voice.LEAD_IN + speech.duration
+                                            if speech else 0.0))
                         v.unlink(missing_ok=True)
                         tmp.rename(v)
                     except Exception as e:  # noqa: BLE001
                         log.warning("could not caption %s: %s", v.name, e)
+                # The hook goes on the VERTICAL, not the master: it flattens
+                # the audio tracks a master deliberately keeps, and the
+                # vertical is the copy that gets posted. It lands in the
+                # run-up, which is the one part of the clip where nothing has
+                # happened yet.
+                if v and speech:
+                    if voice.lay_over(v, speech):
+                        self.said.append(spoken)
+                        self.results[i]["said"] = spoken
+                    speech.path.unlink(missing_ok=True)
                 self.results[i]["vertical"] = str(v) if v else None
                 n += 1
                 self._set(done=n)
@@ -382,6 +500,145 @@ class ClipJob:
             n += 1
             self._set(done=n)
 
+        # ---- 5b. the promo -----------------------------------------------
+        if want_promo and spare:
+            self._check()
+            self._set(message=f"Sweeping {len(spare)} leftover kill(s) into a "
+                              f"promo")
+            try:
+                got = promo.build(
+                    self.source, spare, kills, self.folder,
+                    game=self.game,
+                    handle=str(opt.get("handle") or "@YuvaNeta"),
+                    caption=str(opt.get("promo_caption")
+                               or "LIVE MOST EVENINGS \U0001F3AE"),
+                    encoder=enc, vertical_mode=(vmode if want_vertical else "fit"),
+                    transition=opt.get("transition", "fade"),
+                    transition_ms=int(opt.get("transition_ms", 400)))
+                if got:
+                    self.promo_path = str(got)
+            except Exception as e:  # noqa: BLE001 - the clips are already cut
+                log.warning("could not build the promo: %s", e)
+
+        # ---- 6. the beat-synced reel -------------------------------------
+        #
+        # Separate from the montage, not a replacement for it: a montage is the
+        # session in full with the original audio, and a reel is a short cut to
+        # music. The music has to be supplied -- there is no track to default
+        # to that would not be someone else's.
+        music = str(opt.get("music") or "")
+        if music and Path(music).is_file() and len(plans) > 1:
+            self._reel(Path(music), plans, kills, enc)
+
+    def _speak(self, plan, clip: Path):
+        """The hook for one clip, synthesised but not yet mixed in.
+
+        -> (what it says, the Speech) or ("", None). Split out from the mixing
+        because the subtitle needs the line and its duration BEFORE the overlay
+        pass runs, and because a failure here must cost the hook and not the
+        clip.
+        """
+        name = str(self.options.get("voice_name") or voice.VOICE)
+        said = voice.line_for(plan, avoid=self.said)
+        if not said:
+            return "", None
+        if not voice.available():
+            log.info("no spoken hook: %s", voice.why_not())
+            return "", None
+        try:
+            speech = voice.say(said, clip.with_suffix(".hook.wav"), voice=name)
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not say %r: %s", said, e)
+            return "", None
+        log.info("%s: %s says %r (%.1fs)", clip.name, name, said,
+                 speech.duration)
+        return said, speech
+
+    def _reel(self, music: Path, plans, kills, encoder: str) -> None:
+        """Cut a beat-synced reel to a supplied track. Never fatal.
+
+        Last, deliberately: it is the one output that depends on a file the
+        user chose, and a missing or unreadable track must not cost the clips
+        that are already on disk.
+        """
+        from . import beatsync
+
+        try:
+            self._set(step="montage", message=f"Reading {music.name}")
+            track = beatsync.analyse(music)
+            if not track.beats:
+                log.info("no beat grid in %s; no reel", music.name)
+                return
+            arc = bool(self.options.get("arc", True))
+            self._set(message=f"Cutting a {track.bpm:.0f} BPM reel"
+                              + (" as a story" if arc else ""))
+            out = self.folder / "montage" / f"{plan.slug(self.game)}_reel.mp4"
+            got = beatsync.render(self.source, plans, kills, track, out,
+                                  encoder=encoder, arc=arc,
+                                  order=str(self.options.get("order")
+                                            or "story"))
+            if got:
+                self.reel_path = str(got)
+                self._set(message=f"Reel: {got.name}")
+        except Exception as e:  # noqa: BLE001 - the clips are already cut
+            log.warning("could not cut a reel to %s: %s", music.name, e)
+
+    def _from_demo(self, kills: list[dict]) -> dict | None:
+        """Counter-Strike rounds and kills from Valve's own record of the match.
+
+        The detector's kill times go in as a FINGERPRINT -- see
+        cs2_demo.align -- so a detector that missed one or invented two costs
+        nothing beyond the search, and the demo then says exactly what it got
+        right. Returns None whenever anything is missing or does not line up:
+        a wrong alignment mis-cuts every clip in the match, so it must refuse
+        rather than shift.
+        """
+        from . import cs2_demo
+        from . import rounds as rounds_mod
+
+        folder = cs2_demo.demo_folder(str(self.options.get("demo_folder") or ""))
+        if not folder:
+            log.info("no CS2 replays folder found, so the rounds have to come "
+                     "off the screen")
+            return None
+        vod = sorted(float(k["time"]) for k in kills)
+        self._set(message="Looking for this match in your demos...")
+        try:
+            match, who, sync = cs2_demo.pick_demo(folder, vod)
+        except RuntimeError as e:          # demoparser2 not installed
+            log.info("%s", e)
+            return None
+        if not match or not sync.ok:
+            log.info("no demo in %s fits this recording (%s)", folder,
+                     sync.why)
+            return None
+
+        mine = match.by(who)
+        about = {
+            "demo": match.path.name, "map": match.map_name, "player": who,
+            "offset": round(sync.offset, 2), "rate": round(sync.scale, 6),
+            **cs2_demo.audit([k.time for k in mine], vod, sync),
+        }
+        log.info("demo %s (%s): you are %s, %s", match.path.name,
+                 match.map_name, who, sync.why)
+        log.info("the detector scored %d of %d, missing %d and inventing %d",
+                 about.get("matched", 0), about.get("demo_kills", 0),
+                 about.get("missed", 0), about.get("invented", 0))
+
+        rounds = rounds_mod.from_demo(match, who, sync)
+        # `end` is the kill itself: a demo records the moment, not how long the
+        # game drew something about it, and the planner's tail is measured from
+        # there -- see plan.TAIL_MIN and the profile's tail_min.
+        exact = [{"time": round(sync.to_vod(k.time), 3),
+                  "end": round(sync.to_vod(k.time), 3),
+                  "score": 1.0, "count": 1,
+                  "round": k.round,
+                  **({"tags": _kill_tags(k)} if _kill_tags(k) else {})}
+                 for k in mine]
+        self._set(message=f"{match.map_name}: {len(rounds)} rounds and "
+                          f"{len(exact)} kills, exactly")
+        return {"kills": exact, "rounds": rounds, "about": about}
+
     def _write_manifest(self) -> None:
         """A record of what was produced, next to the files themselves."""
         if not self.folder.exists():
@@ -394,6 +651,8 @@ class ClipJob:
                 "error": self.error,
                 "summary": self.summary,
                 "montage": self.montage_path,
+                "reel": self.reel_path,
+                "promo": self.promo_path,
                 "clips": self.results,
                 "finished": self.finished_at,
             }, indent=2), encoding="utf-8")

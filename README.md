@@ -32,6 +32,7 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
 ## Contents
 
 - [Features](#features)
+- [Coming next](#coming-next)
 - [What you can use it for](#what-you-can-use-it-for)
 - [Nothing goes public by surprise](#nothing-goes-public-by-surprise)
 - [The window](#the-window)
@@ -64,20 +65,70 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
   - 16:9 masters, 1080x1920 verticals for Shorts, and a montage with transitions.
   - Filenames say what is in them: `Delta-Force_01_3kills_12m48s_15s.mp4`.
   - Captions and channel branding burned onto the vertical exports.
-- **Two ways of finding kills**, because not every game draws a kill marker.
+- **Four ways of finding kills**, because not every game draws a kill marker.
   - Games that do — Delta Force draws a skull under the crosshair — are template
     matched.
   - Counter-Strike 2 draws no kill confirmation at all, so its kill feed is read
     instead, and your own name in it tells a kill from a death from an assist.
-- **Clips Counter-Strike by the round, not by the kill.** Reads the scoreboard as well
-  as the feed, so it can find the rounds that actually matter.
-  - Aces, 1vN clutches won *and* nearly won, four-kill rounds, last-one-alive, quick
-    multi-kills and chaotic rounds.
-  - A 1v3 won with a single kill outranks an ordinary double, which is the whole point.
+  - Valorant needs neither. It draws a yellow border round your own half of a feed
+    row, so the colours are read directly — no OCR, no Tesseract, nothing to set up.
+  - Counter-Strike also draws a card tally of your kills this round, which can be
+    read the same way — no OCR, no in-game name, and assists cannot leak in.
+- **Reads the Counter-Strike demo when you have one.** Valve's own `.dem` gives
+  exact kills, deaths and rounds — plus kills *through smoke* and *while flashed*,
+  which no amount of looking at the screen can tell you. It finds the right demo
+  itself and works out which player is you.
+- **Clips Counter-Strike by the round, not by the kill**, and takes the rounds from
+  the demo when there is one.
+  - Aces, 1vN clutches won *and* nearly won, multi-kill rounds, last-one-alive,
+    quick multi-kills and chaotic rounds.
+  - From the demo, also: the round that broke a losing streak, match point, pistol
+    rounds, and kills through smoke, through walls or without a scope.
+  - Who was alive on each side is *counted*, not guessed, so a 1v3 is really a 1v3 —
+    and a 1v3 won with a single kill outranks an ordinary double, which is the
+    whole point.
+  - Without a demo it still works, off the scoreboard, exactly as before.
+- **Says what the clip is.** An optional spoken hook over the opening seconds —
+  "one versus three", "match point" — from **Kokoro-82M** running locally on the
+  CPU. The game audio ducks under it and comes straight back. A clip with nothing
+  worth saying stays quiet.
+- **Cuts a reel to your own music.** Beats found without librosa; the cuts land on
+  them, the acts change on phrase boundaries, and the best moment of the session
+  lands on the drop — with the clips still in the order they happened.
+- **Or don't stream at all.** Turn *Go live on YouTube* off and AutoStream is just
+  the clipper: it still spots the game, records it and cuts the clips, never touches
+  the YouTube API, and asks for no Google sign-in. The dashboard says RECORDING
+  instead of LIVE and drops the things a broadcast would have.
+- **Plays your screen savers** at the three moments the game is not the thing to
+  look at: *stream starting*, *be right back*, and *thanks for watching*. Point each
+  at a video file **or an overlay URL** and AutoStream **creates the OBS scenes
+  itself** — a media source for a file, a browser source for a page. There is
+  nothing to set up in OBS.
+  - Using StreamElements? Paste your channel token once and AutoStream lists your
+    overlays and fills the three in for you.
+  - Pause keeps the broadcast running and puts the be-right-back card up, so you
+    keep the URL, the chat and the people watching.
 - **Generates a thumbnail** for each go-live from a live OBS frame, your logo and the
-  game.
+  game — or **assign a finished image per game**, used exactly as given with nothing
+  drawn over it.
 - **Five themes**, a full settings page, and a log that says why it decided *not* to
   stream.
+
+## Coming next
+
+See [docs/PROGRESS.md](docs/PROGRESS.md) for what has been measured so far and
+why each choice was made. The three items that used to be listed here — rounds
+from the demo, spoken hooks, and montages that tell the story — are done.
+
+**Valorant round context.** Valorant can label a triple kill but not a 1v3,
+because it cannot yet see who is alive. The information is in the feed — every
+row is coloured by both players' teams, so each one says which side lost
+somebody — but reading it reliably is still to do.
+
+**A faster demo sync.** Finding the demo inside a recording needs only a handful
+of detected kills, but the confidence test is a share of *all* of them, so the
+whole recording still gets scanned. Making that test window-aware would take a
+Counter-Strike clip job from about four minutes to under one.
 
 ## What you can use it for
 
@@ -276,6 +327,7 @@ Global flags `-v/--verbose` and `-q/--quiet` work before or after the subcommand
 | `scan` | Re-scan for installed games and apps. |
 | `auth` | Re-run the Google login if the token ever breaks. |
 | `refresh` | Force a game-index refresh. |
+| `voice` | Check the spoken-hook voice, `--download` it, `--list-voices`, `--sample` them all, or `--say` a line to a wav. |
 
 ---
 
@@ -374,6 +426,93 @@ pip install pytesseract
 
 CS2 ships with the feed area already set; you only have to supply your name.
 
+**Counter-Strike can also be read without OCR.** Under the crosshair the game keeps
+a tally of your kills *this round* as a fan of cards, one per kill, with the count on
+the front card. It resets every round and is absent at zero. Reading that instead of
+the feed needs no Tesseract and no in-game name, and assists cannot leak in because
+the tally only ever counts your own kills:
+
+```
+        1 card  =  34 px wide          width = 18 + 16 x kills, exactly
+        2 cards =  50 px
+        3 cards =  66 px
+```
+
+Two details make it work. A kill makes the tally *flash* — it scales up for about
+0.9s — so the flash says **when** and the settled width says **how many**, and the two
+check each other. And while you are dead you watch a team-mate, whose tally is not
+yours; that is detected from the spectator panel, which also gives your deaths for
+free. Your HUD colour is a Counter-Strike setting, so it is measured off your own
+recording rather than assumed, and cached after the first scan.
+
+**Best of all, give it the demo.** Counter-Strike hands you the match back as a
+`.dem` file — Watch → Your Matches → Download. That is the server's own record, so it
+is exact, and it carries things no detector can infer:
+
+```
+thrusmoke      the kill went through smoke
+attackerblind  you were flashed when you got it
+assistedflash  someone flashed for you
+penetrated     wallbang        headshot / noscope / distance
+winner, reason why each round ended
+```
+
+Point AutoStream at your replays folder and it finds the right demo itself — the map
+comes out of the header without parsing — then works out which player is you from the
+kills alone, so there is nothing to configure here either.
+
+The one hard part is lining the demo up with your recording: demo time is the game
+clock, your video is wall clock from whenever OBS started. AutoStream matches them on
+the *pattern* of kills rather than anchoring on one event, which survives a missed
+detection and handles OBS being started mid-match. **If fewer than 60% of the demo's
+kills line up it refuses**, because a wrong offset does not fail loudly — it quietly
+mis-cuts every clip in the match.
+
+On a real match that came out at `offset +166.60s, 12 of 12 kills aligned, worst
+error 0.01s` — and cutting from those timings needs no scan of the video at all, so
+re-cutting the same session at a different length is instant.
+
+Once a demo lines up it also **marks the detector's homework**, which is otherwise
+impossible: it says how many kills were found, how many were missed, and how many
+were invented. Only kills inside the demo's own span are counted, because a
+recording routinely holds a second match the demo knows nothing about.
+
+It needs one package:
+
+```powershell
+pip install demoparser2
+```
+
+**Valorant needs no name and no OCR at all.** Reading it the way CS2 is read does not
+work: Tesseract manages the player's own name in **13-16%** of the frames its row is
+actually on screen, and upscaling, autocontrast, sharpening, channel lifts and inversion
+were each measured over 176 frames around known-good rows without moving that. A
+detector resting on it would miss most kills *silently*, which is indistinguishable from
+a quiet recording.
+
+What Valorant does draw is a bright yellow border around **your own** half of a feed
+row, at full opacity in a fixed colour. Which end it is on is the whole answer:
+
+```
+[you] YuvaNeta  [rifle]  Omen            <- yellow at the LEFT: your kill
+      HeMaN     [rifle]  YuvaNeta [you]  <- yellow at the RIGHT: you died
+ [you]  Xorro Gaming YT [rifle] HeMaN    <- yellow DETACHED: you only assisted
+```
+
+So the bars are read instead of the text. There is nothing to configure, Tesseract is
+not needed, and the scan runs at about **20x real time** — a 46-minute recording in
+under two and a half minutes, against roughly 3.5x for the OCR path.
+
+Assists are the case worth getting right: your portrait appears on rows you only
+assisted, but as a separate tile sitting clear of the bar, while on your own kill it
+touches your name. Killing yourself puts you at both ends, and is counted as a death.
+
+Measured on one 46-minute 1080p recording, every one of the **23 kills it reported was
+checked against the footage and all 23 were real**. Deaths and assists are detected too
+but are not clipped, and have not been audited that thoroughly. The feed regions were
+measured at one person's HUD scale; a different scale needs recalibrating from the Clips
+page. Valorant is clipped by kill bursts, not by round — the round layer is CS2 only.
+
 **Counter-Strike is clipped by the round, not by the kill.** Kills are the wrong unit
 there: three kills with the team alive is a good start, three kills alone against three
 is the clip people watch, and ranking by kill count buries the second one. A 1v3 won
@@ -392,6 +531,19 @@ Rounds are split on the score changing rather than the timer resetting, because 
 score also says who won and it survives overtime. The half-time side swap is detected
 explicitly — miss it and every win in the second half is recorded as a loss.
 
+**With a demo, none of that has to be inferred.** The same rounds are built from
+Valve's own record instead: `round_start` and `round_end` for the boundaries, the
+winner straight off each round, and the roster read at every round's freeze end —
+the one moment everybody is alive and on the side they will play it on. The
+half-time swap stops being something to detect, because the roster is simply read
+again next round.
+
+That makes the alive counts a countdown from the roster rather than two OCR'd
+digits, so **1vN is counted**. It also showed up a rule that was missing: a round
+came out labelled `ALMOST 1v4` in which the player did nothing at all and then
+died. A lost last stand now needs a kill in it. The scoreboard path could never
+have surfaced that, because it needed kills to infer the counts in the first place.
+
 Each round is then labelled, and one clip is cut per round carrying every label it
 earned, named by the strongest:
 
@@ -406,6 +558,23 @@ earned, named by the strongest:
 | `CHAOS` | a fast round with a high death rate on both sides |
 | `SURVIVED THE LOSS` | you got a kill and lived, and the round was still lost |
 
+With a demo, also — none of these are visible on screen:
+
+| Label | What it means |
+|---|---|
+| `THROUGH SMOKE` | you shot through a smoke and hit |
+| `WALLBANG` | the bullet went through something first |
+| `NO SCOPE` | sniper, no scope |
+| `KNIFE KILL`, `ZEUS`, `NADE KILL` | by the weapon the demo names |
+| `BLIND KILL` | you were flashed when you got it |
+| `STREAK BREAKER` | the win that ended three or more losses in a row |
+| `MATCH POINT` | the round that could win the match |
+| `PISTOL ROUND` | round one of either half, with two kills or more |
+
+These are labelled because they are *rare*. Over one whole match: 4 kills through
+smoke and 2 wallbangs in 115 — against 48 headshots, which is why a headshot is not
+a label.
+
 Pick which of those you want on the Clips page. **Keep the whole round** gives you all
 30–115 seconds of it; turning it off trims to a Shorts-length cut that keeps the
 *ending*, because in Counter-Strike the resolution is the payoff.
@@ -413,12 +582,108 @@ Pick which of those you want on the Clips page. **Keep the whole round** gives y
 The scoreboard also acts as a check on the kill feed: the enemy team can only lose five
 players, so a round the feed calls a six-kill ace is corrected rather than published.
 
+**Counter-Strike clips get more room at both ends than the others.** Short-form's
+1.5 seconds of run-up and 2 of tail are right for a respawn shooter, where the kill
+*is* the moment — and they made CS2 clips come out four seconds long. Two things are
+different here: the feed row naming your kill stays up for a median of five seconds,
+so a two-second tail cuts while the game is still announcing it, and there is no
+respawn, so a kill is the end of a slow approach that 1.5 seconds does not show. Its
+profile therefore sets a floor of 3 seconds in and 4 out. Floors only: if you pick
+**Full context**, you still get its 6.
+
+**Spoken hooks.** Optional, off by default. Each vertical clip can open with a line
+that gives someone a reason to stay — not a description of what they are about to
+watch:
+
+```
+a 1v2 clutch      "they had the numbers. I had the timing."
+a kill in smoke   "couldn't see a thing. didn't need to."
+the round that
+broke a losing
+streak            "this is where it finally turned."
+```
+
+Spoken by **Kokoro-82M** on the CPU, with the game audio ducked underneath and back
+to normal the moment it finishes, and written out as a subtitle under the picture
+that fades once the line has been said. What happened in the round picks the pool;
+where the clip sits in the recording picks the line, so a re-cut says the same thing
+and two clutches in one session do not. A clip with nothing worth saying stays silent
+rather than being given filler. It lands in the run-up, which is the one part of a
+clip where nothing has happened yet.
+
+The voice is a setting, because it is the one thing here that cannot be decided by
+measurement. 28 English voices ship in the model — American and British, male and
+female — and the fastest way to choose is to hear them all say the same line:
+
+```powershell
+python -m autostream voice --list-voices
+python -m autostream voice --sample     # one wav per voice, in models\kokoro\samples
+```
+
+Then set `clips.voice_name`. The default is `am_michael`.
+
+The voice is a one-off 177 MB download:
+
+```powershell
+pip install kokoro-onnx
+python -m autostream voice --download
+python -m autostream voice --say "One versus three."   # try it
+```
+
+**A reel, if you supply a track.** Set `clips.music` to a file you own and the
+montage is joined by a beat-synced cut as well: cuts on the beat, act changes on
+phrase boundaries, and the best moment of the session on the drop. The clips stay in
+the order they happened — the *music* is offset so the drop lands on the peak, rather
+than the peak being moved to the middle of the reel:
+
+```
+opening    8 beats     the pistol round, or first blood
+the slide  4 -> 2      compressed, and a round you LOST gets half the room
+THE TURN   16 beats    the peak -- its LAST kill lands exactly on the drop
+the push   4 -> 2      flash cuts
+match point 8 beats    so the reel lands instead of stopping
+```
+
+The last kill, not the first: a clutch is won by its last one, and anchoring on
+the first put the drop on the defuse afterwards. The kill lands a tenth of a
+second *before* the drop, never after — a beat arriving just after the kill
+reads as the music answering it, and just before reads as a mistake. A track
+usually has several arrivals, and the reel aims at the biggest one it can
+*reach*: there has to be enough music in front of it to hold the build-up, and
+deleting clips to make the music fit is the wrong way round.
+
+Longer slots put their kill on a beat as well as their cut — a slot always
+starts on a beat, so rounding the run-up to whole beats lands both. Not every
+slot: landing everything on the grid is mechanical, and the short flash cuts
+keep a natural lead.
+
+`clips.order` picks between three arrangements: `story` (chronological, the
+default), `build` (weakest to strongest) and `hook` (best moment first, which is
+where a Short is won).
+
+**The kills that did not earn a clip become the advert.** Anything below your
+minimum is not cut on its own — a lone kill has nothing a caption could honestly
+claim about the play. Instead they are trimmed to a few seconds each, run
+together into one vertical reel and captioned with a claim that *is* honest,
+because it is about the channel rather than the play:
+
+```
+LIVE MOST EVENINGS 🎮
+                              ... seven leftover kills, ~5s each
+@YuvaNeta
+```
+
+Set the line with `clips.promo_caption`, or turn the whole thing off with
+`clips.promo`.
+
 **What comes out**, in `clips/<date>_<time>_<Game>/`:
 
 ```
 clips/     Delta-Force_01_5kills_12m48s_30s.mp4      <- the editing copies
 vertical/  Delta-Force_01_5kills_12m48s_30s_vertical.mp4
 montage/   Delta-Force_2026-08-19_montage_12clips_47kills_5m12s.mp4
+montage/   Delta-Force_reel.mp4                      <- only if you gave it music
+promo/     Delta-Force_promo_7clips_32s.mp4          <- the leftovers, as an advert
 session.json  clips.json                             <- what was found, and cut
 ```
 
@@ -449,9 +714,15 @@ Clips page shows what is missing and the rest of AutoStream is unaffected.
 | [`gameindex.py`](autostream/gameindex.py) | exe → game name, from your overrides + public indexes. |
 | [`obs.py`](autostream/obs.py) | obs-websocket v5 client. |
 | [`youtube.py`](autostream/youtube.py) | YouTube Data API v3: OAuth, broadcasts, chat, quota. |
-| [`schema.py`](autostream/schema.py) | One declarative source of truth for all 58 settings — drives both the settings form and server-side validation. |
+| [`schema.py`](autostream/schema.py) | One declarative source of truth for all 84 settings — drives both the settings form and server-side validation. |
 | [`history.py`](autostream/history.py) | Append-only journal of finished sessions. The only record of which game ran on which broadcast. |
 | [`clips/`](autostream/clips/) | Optional. `detect` finds kill markers, `plan` decides what to cut, `cutter` and `montage` produce the files, `jobs` runs it off the engine thread, `calibrate` teaches it a new game. |
+| [`clips/valorant_feed.py`](autostream/clips/valorant_feed.py) | Valorant kills from the feed's coloured bars. No OCR, no in-game name. |
+| [`clips/cs2_cards.py`](autostream/clips/cs2_cards.py) | Counter-Strike kills from the round card tally. No OCR; the HUD colour is measured, not asked for. |
+| [`clips/cs2_demo.py`](autostream/clips/cs2_demo.py) | Counter-Strike `.dem` parsing, and the fingerprint sync that maps demo time onto your recording. |
+| [`clips/beatsync.py`](autostream/clips/beatsync.py) | Tempo, beat phase and the drop, from an onset envelope — no librosa. |
+| [`clips/story.py`](autostream/clips/story.py) | The arc: opening, the slide, the turn, the push, match point. Clips stay in order and the music is offset so the drop lands on the peak. |
+| [`clips/voice.py`](autostream/clips/voice.py) | Spoken hooks from Kokoro-82M, ducked over the run-up. Optional download; silent without it. |
 | [`webui.py`](autostream/webui.py) | Local HTTP server and JSON API. |
 | [`ui/`](autostream/ui/) | The five-page web app: `shell`, `dashboard`, `library`, `clips`, `settings`, `logs`, `setup`. |
 | [`window.py`](autostream/window.py) | Native window via pywebview (Edge WebView2). |

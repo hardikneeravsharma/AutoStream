@@ -355,14 +355,18 @@ def build_rounds(highlights, *, game: str, pre_roll: float = 3.0,
 
     plans: list[ClipPlan] = []
     for i, rd in enumerate(highlights, 1):
-        # Where the interesting part starts. A last stand is the moment the
-        # round became a story; failing that, the first kill; failing that, the
-        # round itself.
-        anchor_at = rd.last_stand_at
-        if anchor_at is None and rd.kill_times:
-            anchor_at = min(rd.kill_times)
-        if anchor_at is None:
-            anchor_at = rd.started
+        # Where the interesting part starts: the EARLIER of the last stand and
+        # the player's first kill in the round.
+        #
+        # The last stand alone was the first rule, on the reasoning that it is
+        # the moment the round became a story. It is -- but it happens after
+        # the team-mates die, which in a real 1v2 was nine seconds after the
+        # player's own first kill, so the clip opened past it and the clutch
+        # appeared to start mid-fight. Whichever came first is the beginning of
+        # what the viewer needs to see.
+        marks = [t for t in (rd.last_stand_at, min(rd.kill_times, default=None))
+                 if t is not None]
+        anchor_at = min(marks) if marks else rd.started
 
         if whole_round:
             start = max(rd.started, anchor_at - pre_roll)

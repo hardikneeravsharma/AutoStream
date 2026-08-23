@@ -363,6 +363,9 @@ def _calibrate_with(monkeypatch, tmp_path, sightings, **body):
     from autostream.clips import calibrate
 
     monkeypatch.setattr(paths, "CLIP_PROFILES", tmp_path / "profiles.yaml")
+    # Calibrating now RECORDS the name in games.yaml, so without this the suite
+    # rewrites the user's real config. It did, once, before this line existed.
+    monkeypatch.setattr(paths, "GAMES_FILE", tmp_path / "games.yaml")
     monkeypatch.setattr(calibrate, "_killfeed_sightings_hook", None, raising=False)
     monkeypatch.setattr(kf, "_sightings", lambda *a, **k: list(sightings))
     monkeypatch.setattr(kf, "tesseract", lambda: "tesseract")
@@ -394,6 +397,110 @@ def test_calibrating_a_killfeed_game_saves_a_usable_profile(monkeypatch, tmp_pat
     assert saved.mode == "killfeed"
     # The band is the box as drawn - a feed is not widened like a glyph is.
     assert [round(v, 3) for v in saved.band] == [0.6, 0.03, 1.0, 0.3]
+
+
+def test_calibrating_records_the_name_so_the_next_scan_can_find_it(
+        monkeypatch, tmp_path):
+    """The name is PROVED at calibration and has to survive the round trip.
+
+    It did not. The calibrator set it on the in-memory profile, but as_dict()
+    leaves `player` out on purpose, so the value was dropped on save and the
+    next scan looked it up in games.yaml and got nothing -- reporting a clean
+    "no kills found", which is the one failure killfeed mode cannot be told
+    apart from a genuinely quiet recording.
+    """
+    import yaml as _yaml
+
+    from autostream import paths
+    from autostream.clips import profiles
+
+    hit = kf.Sighting(time=60.0, left=0.72, right=0.807, top=0.18, ratio=1.0,
+                      text="YUVANETA", other="Rico", left_xs=())
+    r = _calibrate_with(monkeypatch, tmp_path, [hit], player="YUVANETA")
+    assert r.get("saved") and r.get("name_saved") is True, r
+
+    games = _yaml.safe_load((tmp_path / "games.yaml").read_text("utf-8"))
+    assert games["games"]["cs2.exe"]["username"] == "YUVANETA"
+    # The label is kept too, because username_for() can match on it when the
+    # running game reports an exe the profile was not keyed on.
+    assert games["games"]["cs2.exe"]["name"] == "Counter-Strike 2"
+
+    # The round trip that actually matters: resolving the game must now find it.
+    monkeypatch.setattr(paths, "CLIP_PROFILES", tmp_path / "profiles.yaml")
+    monkeypatch.setattr(paths, "GAMES_FILE", tmp_path / "games.yaml")
+    got = profiles.for_game("cs2.exe")
+    assert got is not None and got.player == "YUVANETA"
+    assert got.exists(), got.why_not()
+
+
+def test_recording_a_name_leaves_the_other_games_alone(monkeypatch, tmp_path):
+    # games.yaml holds the blocklist and every other game's entry. A calibration
+    # writes one field, so anything that rewrites the file has to preserve it.
+    import yaml as _yaml
+
+    from autostream import paths
+    from autostream.clips import profiles
+
+    f = tmp_path / "games.yaml"
+    f.write_text(_yaml.safe_dump({
+        "games": {"deltaforceclient.exe": {"name": "Delta Force",
+                                           "username": "YuvaNeta"}},
+        "blocklist": ["steam.exe"],
+        "never_stream_if_running": ["keepassxc.exe"],
+    }), encoding="utf-8")
+    monkeypatch.setattr(paths, "GAMES_FILE", f)
+
+    assert profiles.save_username("cs2.exe", "YUVANETA", "Counter-Strike 2")
+    data = _yaml.safe_load(f.read_text("utf-8"))
+    assert data["games"]["deltaforceclient.exe"]["username"] == "YuvaNeta"
+    assert data["blocklist"] == ["steam.exe"]
+    assert data["never_stream_if_running"] == ["keepassxc.exe"]
+    assert data["games"]["cs2.exe"]["username"] == "YUVANETA"
+
+
+def test_recording_a_name_keeps_an_existing_display_name(monkeypatch, tmp_path):
+    # The entry usually already exists, written by the app scan. Overwriting its
+    # display name from a calibration label would rename the game in the UI.
+    import yaml as _yaml
+
+    from autostream import paths
+    from autostream.clips import profiles
+
+    f = tmp_path / "games.yaml"
+    f.write_text(_yaml.safe_dump({
+        "games": {"cs2.exe": {"name": "Counter-Strike 2", "scene": "CS"}},
+    }), encoding="utf-8")
+    monkeypatch.setattr(paths, "GAMES_FILE", f)
+
+    assert profiles.save_username("cs2.exe", "YUVANETA", "cs2 whatever")
+    entry = _yaml.safe_load(f.read_text("utf-8"))["games"]["cs2.exe"]
+    assert entry["name"] == "Counter-Strike 2"     # not the calibration label
+    assert entry["scene"] == "CS"                  # nothing else disturbed
+    assert entry["username"] == "YUVANETA"
+
+
+def test_recording_a_name_refuses_nothing_useful(monkeypatch, tmp_path):
+    from autostream import paths
+    from autostream.clips import profiles
+
+    monkeypatch.setattr(paths, "GAMES_FILE", tmp_path / "games.yaml")
+    assert not profiles.save_username("", "YUVANETA")
+    assert not profiles.save_username("cs2.exe", "   ")
+    assert not (tmp_path / "games.yaml").exists()
+
+
+def test_why_not_does_not_send_the_user_to_a_page_without_the_field(monkeypatch):
+    """The Library page has no in-game name field, and the setup wizard lists
+    Steam and Epic games only -- so a game that arrives as a shortcut, as
+    Valorant does, could never be given a name where the message pointed."""
+    from autostream.clips.profiles import Profile
+
+    p = Profile(key="valorant-win64-shipping.exe", label="VALORANT",
+                band=(0.5, 0.05, 1.0, 0.2), template="", mode="killfeed")
+    assert not p.exists()
+    why = p.why_not()
+    assert "Library" not in why
+    assert "Clips" in why
 
 
 def test_calibrating_refuses_when_the_name_is_not_readable(monkeypatch, tmp_path):

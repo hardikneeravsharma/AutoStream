@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import os
 import threading
 from collections.abc import Iterable, Mapping
@@ -11,8 +12,14 @@ import yaml
 
 from . import paths
 
+log = logging.getLogger("autostream.cfg")
+
 DEFAULTS: dict[str, Any] = {
     "youtube": {
+        # Off turns AutoStream into a clipper: it still spots the game, still
+        # records it and still cuts clips, and never touches the YouTube API.
+        # Nothing below this line is read while it is off.
+        "enabled": True,
         "privacy": "unlisted",
         "latency": "low",
         "category_id": "20",
@@ -99,6 +106,40 @@ DEFAULTS: dict[str, Any] = {
         # A round runs 30-115s. On keeps all of it, which is what you want to
         # watch back; off trims to the finish, which is what fits a Short.
         "whole_round": True,
+        # Spoken hook over the run-up of each vertical clip. Off by default
+        # because it needs a 177 MB model download -- see clips/voice.py.
+        "voice": False,
+        "voice_name": "am_michael",
+        # A music bed turns the montage into a beat-synced reel: cuts on the
+        # beat, the best moment on the drop. Blank means no reel is made --
+        # the track has to be one the user owns, so there is nothing sensible
+        # to default it to.
+        "music": "",
+        # How the reel is arranged. On tells the session's story in order (see
+        # clips/story.py); off puts the multi-kills in the busy section and the
+        # best clip on the drop, which needs no round labels at all.
+        "arc": True,
+        # Which arrangement, when arc is on: story / build / hook.
+        "order": "story",
+        # Sweep the clips that fell below min_kills into one promo reel rather
+        # than cutting them individually. A lone kill rarely earns a post; a
+        # dozen of them cut short and run together is a channel advert.
+        "promo": True,
+        "promo_caption": "LIVE MOST EVENINGS \U0001F3AE",
+    },
+    # The three screen savers. AutoStream builds the OBS scenes itself from
+    # these files -- see screens.py -- so what is configured is a video, not a
+    # scene name.
+    "screens": {
+        "enabled": False,
+        "scene_prefix": "AutoStream",
+        "starting_file": "",
+        "starting_seconds": 10,
+        # No hold: the be-right-back card stays up until Resume, which is the
+        # whole reason pause keeps the broadcast alive.
+        "paused_file": "",
+        "ending_file": "",
+        "ending_seconds": 15,
     },
     # Composed from a live OBS frame each time a session goes live. Templates
     # take the same tokens as the title ones.
@@ -287,6 +328,35 @@ def load_games() -> dict:
         if not isinstance(data.get(key), list):
             data[key] = []
     return data
+
+
+def save_game_field(key: str, field: str, value) -> bool:
+    """Set one field on one game in games.yaml. -> whether it was written.
+
+    The generic form of what clips/profiles.save_username does for the in-game
+    name. Kept here rather than there because a thumbnail has nothing to do
+    with clip detection, and `cfg` is the module that owns games.yaml.
+    """
+    key = str(key or "").strip().lower()
+    field = str(field or "").strip()
+    if not key or not field:
+        return False
+    try:
+        data = load_games()
+        games = data.setdefault("games", {})
+        entry = games.get(key)
+        if not isinstance(entry, dict):
+            entry = {}
+            games[key] = entry
+        if value in (None, ""):
+            entry.pop(field, None)
+        else:
+            entry[field] = value
+        save_games(data)
+    except (OSError, KeyError, TypeError, ValueError) as e:
+        log.warning("could not set %s for %r: %s", field, key, e)
+        return False
+    return True
 
 
 def save_games(data: dict) -> None:

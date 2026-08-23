@@ -24,6 +24,19 @@ HOW A ROUND BOUNDARY IS FOUND
     misread turned 2-8 into 12-7 in a ten-minute test scan, and one bad frame
     must not be able to invent a round.
 
+AND WHY A DEMO REPLACES ALL OF THAT WHERE THERE IS ONE
+    Everything below this line is inference from pixels: the score from matched
+    HUD digits, the alive counts beside them, the player's own side from
+    correlating their deaths against those counts. It works, and it is the only
+    option for a game that gives you nothing else.
+
+    Counter-Strike does give you something else. `from_demo` builds the same
+    Round objects out of Valve's own record of the match, where the score, the
+    winner, every player's side per round and who was alive at any instant are
+    facts rather than readings -- so 1vN is counted instead of inferred, and
+    the half-time swap needs no detecting because the roster is simply re-read
+    each round. See clips/cs2_demo.py.
+
 HOW "MY SIDE" IS DECIDED
     Not by reading the player cards. When the player dies, THEIR side's alive
     count drops; when they get a kill, the other side's does. Both events are
@@ -80,10 +93,16 @@ class Round:
     number: int
     started: float
     ended: float
+    # WHOSE POINTS THESE ARE DEPENDS ON `source`. Read off the scoreboard they
+    # are (left, right), because that is all a pixel knows; read from a demo
+    # they are (mine, theirs), because it knows which side is the player's and
+    # the scoreboard's left and right are then a detail of where the HUD drew
+    # them.
     score_before: tuple[int, int]
     score_after: tuple[int, int]
     half: int = 0                       # which side-swap era this round is in
-    my_side: str | None = None          # "l" | "r"
+    # "l" | "r" off the scoreboard; "CT" | "T" from a demo, which names it.
+    my_side: str | None = None
     won: bool | None = None
     my_kills: int = 0
     my_assists: int = 0
@@ -95,6 +114,18 @@ class Round:
     last_stand_at: float | None = None  # when I became the last one alive
     enemies_at_last_stand: int | None = None
     labels: list[str] = field(default_factory=list)
+
+    # Where this round came from: "hud" for the pixel path, "demo" for Valve's
+    # own record. Everything below is demo-only -- the pixel path cannot see
+    # any of it, and leaves it empty so the labels that depend on it never fire.
+    source: str = "hud"
+    reason: str = ""                    # "t_killed", "bomb_defused", ...
+    flags: list[str] = field(default_factory=list)   # see _flags()
+    headshots: int = 0
+    opening_kill: bool = False          # I drew first blood in this round
+    pistol: bool = False                # round 1, or the first of a half
+    match_point: bool = False
+    broke_streak: int = 0               # consecutive losses this win ended
 
     @property
     def duration(self) -> float:
@@ -327,7 +358,18 @@ def label(rounds: list[Round]) -> list[Round]:
             got.append("ACE")
         if rd.last_stand_at is not None and (rd.enemies_at_last_stand or 0) >= 2:
             n = rd.enemies_at_last_stand
-            got.append(f"{'CLUTCH' if rd.won else 'ALMOST'} 1v{n}")
+            if rd.won:
+                # A 1vN WON needs no kills of its own: defusing under the nose
+                # of two opponents, or running the clock out, is the clip.
+                got.append(f"CLUTCH 1v{n}")
+            elif rd.my_kills >= 1:
+                got.append(f"ALMOST 1v{n}")
+            # A 1vN LOST with no kills is not a highlight, it is the end of a
+            # bad round. Found by reading a demo, where alive counts are exact:
+            # a real match produced "ALMOST 1v4" for a round in which the
+            # player did nothing at all and then died. The pixel path could
+            # never surface it, because it needed kills to infer the counts in
+            # the first place.
         if ACE_KILLS > rd.my_kills >= MULTI_KILLS:
             got.append(f"{rd.my_kills} KILLS")
         if rd.last_stand_at is not None and (rd.enemies_at_last_stand or 0) < 2:
@@ -339,8 +381,59 @@ def label(rounds: list[Round]) -> list[Round]:
             got.append("CHAOS")
         if rd.survived and rd.won is False and rd.my_kills >= 1:
             got.append("SURVIVED THE LOSS")
-        rd.labels = got
+        got.extend(_demo_labels(rd))
+        # STRONGEST FIRST, by the same ranking that decides which round is worth
+        # cutting at all. Everything downstream takes labels[0] as "what this
+        # round was" -- the filename, the burned caption, the spoken hook -- and
+        # before this they took whichever label happened to be appended first.
+        # A round that was a kill through smoke in a fast, bloody round came out
+        # named CHAOS, because CHAOS is tested earlier in this function.
+        rd.labels = sorted(got, key=lambda l: rank_of([l]))
     return rounds
+
+
+# Kill circumstances worth a label, and what to call them. Every one of these
+# is a FLAG ON THE KILL in the demo and invisible to any detector, which is the
+# point of reading the demo at all.
+#
+# They are labelled because they are rare, measured over one full match: 4
+# smoke kills and 2 wallbangs in 115, against 48 headshots. A headshot is not
+# on this list for exactly that reason -- 42% of kills is not a highlight.
+FLAG_LABELS = (
+    ("smoke", "THROUGH SMOKE"),
+    ("noscope", "NO SCOPE"),
+    ("wallbang", "WALLBANG"),
+    ("knife", "KNIFE KILL"),
+    ("zeus", "ZEUS"),
+    ("grenade", "NADE KILL"),
+    ("blind", "BLIND KILL"),
+)
+
+# A win only breaks a slide if there was one. Two losses is a bad patch; three
+# in a row is the thing the round after it is worth watching for.
+SLIDE = 3
+
+
+def _demo_labels(rd: Round) -> list[str]:
+    """Labels that only a demo can support. Empty for a scoreboard-read round.
+
+    Guarded on the data rather than on `source`, so a partially filled Round
+    cannot earn a label on a field nobody set.
+    """
+    got: list[str] = []
+    for key, name in FLAG_LABELS:
+        if key in rd.flags:
+            got.append(name)
+    if rd.won and rd.broke_streak >= SLIDE:
+        got.append("STREAK BREAKER")
+    if rd.match_point and rd.won and rd.my_kills >= 1:
+        got.append("MATCH POINT")
+    # A pistol round is only a highlight if the player did something in it --
+    # every match has two, and labelling both regardless would put an ordinary
+    # round at the front of the list twice a match.
+    if rd.pistol and rd.my_kills >= 2:
+        got.append("PISTOL ROUND")
+    return got
 
 
 def fast_burst(times: Sequence[float], n: int = FAST_KILLS,
@@ -353,8 +446,12 @@ def fast_burst(times: Sequence[float], n: int = FAST_KILLS,
 # Strongest first. A round gets ONE clip carrying every label it earned, and
 # this decides which label names it -- otherwise a round that is an ace AND a
 # 1v3 emits three overlapping clips of the same forty seconds.
-RANK = ("ACE", "CLUTCH", "ALMOST", "KILLS", "LAST ALIVE", "K IN", "CHAOS",
-        "SURVIVED")
+RANK = ("ACE", "CLUTCH", "ALMOST", "KILLS", "LAST ALIVE", "K IN",
+        # Demo-only, and deliberately below the multi-kills: a smoke kill is a
+        # lovely detail, but "ACE" is what makes someone click.
+        "NO SCOPE", "KNIFE", "ZEUS", "THROUGH SMOKE", "WALLBANG", "NADE",
+        "BLIND", "STREAK BREAKER", "MATCH POINT", "PISTOL",
+        "CHAOS", "SURVIVED")
 
 
 def rank_of(labels: Sequence[str]) -> int:
@@ -369,6 +466,160 @@ def highlights(rounds: list[Round]) -> list[Round]:
     keep = [r for r in rounds if r.labels]
     keep.sort(key=lambda r: (rank_of(r.labels), -r.my_kills, r.started))
     return keep
+
+
+# ------------------------------------------------------ rounds from a demo
+
+# Weapons whose name is not enough on its own. Every CS2 knife except the
+# bayonet has "knife" in its item name, and the Zeus is filed as a taser.
+KNIVES = ("knife", "bayonet")
+NADES = ("hegrenade", "molotov", "incgrenade", "inferno", "decoy", "flashbang")
+
+
+def _flags(kills) -> list[str]:
+    """The circumstances of a set of kills, as label keys. See FLAG_LABELS."""
+    def weapon(k) -> str:
+        return str(getattr(k, "weapon", "") or "").lower()
+
+    got: list[str] = []
+    for key, test in (
+            ("smoke", lambda k: getattr(k, "thrusmoke", False)),
+            ("blind", lambda k: getattr(k, "blinded", False)),
+            ("wallbang", lambda k: getattr(k, "penetrated", False)),
+            ("noscope", lambda k: getattr(k, "noscope", False)),
+            ("knife", lambda k: any(w in weapon(k) for w in KNIVES)),
+            ("zeus", lambda k: weapon(k) == "taser"),
+            ("grenade", lambda k: weapon(k) in NADES)):
+        if any(test(k) for k in kills):
+            got.append(key)
+    return got
+
+
+def _same(a: str, b: str) -> bool:
+    return (a or "").strip().casefold() == (b or "").strip().casefold()
+
+
+def from_demo(match, player: str, sync) -> list[Round]:
+    """A demo -> the same labelled Rounds the pixel path produces.
+
+    THE DIFFERENCE IS THAT NOTHING HERE IS INFERRED. Segmentation comes from
+    round_start/round_end rather than from a score that had to be read the same
+    way three times running; the player's side comes from the roster at each
+    round's freeze end rather than from correlating their deaths against alive
+    counters; and the alive counts themselves are counted down from the roster
+    as the deaths land, so "last alive against three" is arithmetic.
+
+    `sync` maps demo time onto the recording -- see cs2_demo.align. Passing an
+    unaligned Sync would put every round in the wrong place, so an unusable one
+    is refused here rather than quietly producing plausible nonsense.
+    """
+    if not getattr(sync, "ok", False):
+        raise ValueError(f"the demo is not aligned to this recording: "
+                         f"{getattr(sync, 'why', 'no alignment')}")
+    me = (player or "").strip()
+    if not me:
+        raise ValueError("from_demo needs to know which player is the local one")
+
+    ordered = sorted(match.rounds, key=lambda r: r.number)
+    sides = {r.number: match.team_of(me, r.number) for r in ordered}
+    # The first round of each half is a pistol round. Found from the roster
+    # rather than from a rule about round 13, which is only true for one match
+    # format -- the side the player is on changing IS the swap.
+    pistols, half_of, half = set(), {}, 0
+    previous = None
+    for r in ordered:
+        if sides.get(r.number) and previous and sides[r.number] != previous:
+            half += 1
+            pistols.add(r.number)
+        if previous is None and sides.get(r.number):
+            pistols.add(r.number)
+        half_of[r.number] = half
+        previous = sides.get(r.number) or previous
+
+    out: list[Round] = []
+    my_score = their_score = 0
+    losses = 0
+    for r in ordered:
+        mine = sides.get(r.number)
+        if not mine:
+            log.info("round %d: cannot tell which side %s was on; skipped",
+                     r.number, me)
+            continue
+        theirs = "T" if mine == "CT" else "CT"
+        won = None if not r.winner else r.winner == mine
+
+        roster = match.teams.get(r.number, {})
+        my_alive = sum(1 for s in roster.values() if s == mine) or 5
+        their_alive = sum(1 for s in roster.values() if s == theirs) or 5
+        in_round = sorted((k for k in match.kills if k.round == r.number),
+                          key=lambda k: k.time)
+
+        alive_me = True
+        min_my_alive = my_alive
+        last_stand_at = enemies_at = None
+        for k in in_round:
+            side = k.victim_side or (mine if _same(k.victim, me) else "")
+            if side == mine:
+                my_alive -= 1
+                if _same(k.victim, me):
+                    alive_me = False
+            elif side == theirs:
+                their_alive -= 1
+            min_my_alive = min(min_my_alive, my_alive)
+            # The last stand: the first moment I am the only one of mine left
+            # and there is still someone to beat. Counted, not inferred -- the
+            # pixel path has to check that the player is not merely spectating
+            # the last team-mate alive, and here that cannot happen.
+            if (last_stand_at is None and my_alive == 1 and alive_me
+                    and their_alive >= 1):
+                last_stand_at = sync.to_vod(k.time)
+                enemies_at = their_alive
+
+        my_kills = [k for k in in_round if _same(k.killer, me)]
+        my_deaths = [k for k in in_round if _same(k.victim, me)]
+        my_assists = [k for k in in_round
+                      if _same(getattr(k, "assister", ""), me)]
+
+        before = (my_score, their_score)
+        if won is True:
+            my_score += 1
+        elif won is False:
+            their_score += 1
+
+        out.append(Round(
+            number=r.number,
+            # `opens_at` is the freeze END, not round_start: freeze time is the
+            # buy menu, and a clip allowed to open there opens on twenty
+            # seconds of standing still.
+            started=sync.to_vod(r.opens_at),
+            ended=sync.to_vod(r.end or r.opens_at),
+            score_before=before, score_after=(my_score, their_score),
+            half=half_of.get(r.number, 0), my_side=mine, won=won,
+            my_kills=len(my_kills), my_assists=len(my_assists),
+            my_deaths=len(my_deaths),
+            kill_times=[sync.to_vod(k.time) for k in my_kills],
+            total_kills=len(in_round), min_my_alive=min_my_alive,
+            last_stand_at=last_stand_at, enemies_at_last_stand=enemies_at,
+            source="demo", reason=getattr(r, "reason", "") or "",
+            flags=_flags(my_kills),
+            headshots=sum(1 for k in my_kills if k.headshot),
+            opening_kill=bool(in_round and _same(in_round[0].killer, me)),
+            pistol=r.number in pistols,
+            match_point=(getattr(match, "match_point", None) == r.number),
+            broke_streak=losses if won else 0))
+        # Only a round the demo says was LOST extends a slide. A round whose
+        # winner could not be read is not evidence of anything, and counting it
+        # would invent a streak-breaker out of a gap in the data.
+        if won is True:
+            losses = 0
+        elif won is False:
+            losses += 1
+
+    label(out)
+    log.info("%d round(s) from %s: %d-%d, %d worth cutting",
+             len(out), getattr(match.path, "name", "the demo"),
+             my_score, their_score, len(highlights(out)))
+    return out
 
 
 def analyse(readings: Sequence[Reading], events) -> list[Round]:

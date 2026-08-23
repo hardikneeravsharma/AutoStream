@@ -314,6 +314,94 @@ function set_fieldHtml(f){
   '</div>';
 }
 
+/* Fills the three screen-saver fields from the channel's overlays. The values
+   are only PUT IN THE FORM, never saved behind the user's back: a channel can
+   hold two installs of the same theme -- and this one does -- so which copy is
+   the live one is a choice, not something a name can settle. */
+async function set_wireStreamElements(){
+  const btn = set_el('set-se-fetch');
+  if (!btn || btn.dataset.wired) return;
+  btn.dataset.wired = '1';
+  btn.addEventListener('click', async function(){
+    const note = set_el('set-build-screens-note');
+    btn.disabled = true;
+    try {
+      let r = await API.post('/api/se/overlays', {});
+      if (r && r.error === 'no token stored'){
+        const jwt = window.prompt(
+          'Paste your StreamElements JWT token.\n\n'
+          + 'Account settings on streamelements.com, the Channels section, '
+          + '"Show secrets". It is stored in secrets\\ and never in '
+          + 'config.yaml.\n\n'
+          + 'This token can change your overlays and alerts, not only read '
+          + 'them.', '');
+        if (!jwt){ btn.disabled = false; return; }
+        r = await API.post('/api/se/connect', { jwt: jwt.trim() });
+        if (r && r.error){ toast(r.error, 'error'); btn.disabled = false; return; }
+        r = await API.post('/api/se/overlays', {});
+      }
+      if (r && r.error){ toast(r.error, 'error'); btn.disabled = false; return; }
+
+      const picked = (r && r.suggest) || {};
+      const map = { starting: 'screens.starting_file',
+                    paused:   'screens.paused_file',
+                    ending:   'screens.ending_file' };
+      let filled = 0;
+      Object.keys(map).forEach(function(which){
+        if (!picked[which]) return;
+        const el = set_el('set-f-' + set_slug(map[which]));
+        if (!el) return;
+        el.value = picked[which];
+        /* Bubbles to the panels listener, which is what marks it dirty --
+           setting .value alone leaves Save greyed out. */
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        filled++;
+      });
+      const n = (r.overlays || []).length;
+      if (note) note.textContent = n + ' overlays found, ' + filled
+        + ' filled in. Check them, then Save.';
+      toast(filled ? 'Filled ' + filled + ' screen(s) from StreamElements. '
+                     + 'Review and save.'
+                   : 'Found ' + n + ' overlays but none named like a start, '
+                     + 'be-right-back or ending scene.', filled ? 'ok' : 'warn');
+    } catch (e){
+      toast('Could not reach StreamElements.', 'error');
+    }
+    btn.disabled = false;
+  });
+}
+
+/* Save first, then build: the endpoint reads the saved config, so building
+   before saving would create scenes for the paths that were there before. */
+function set_wireBuildScreens(){
+  const btn = set_el('set-build-screens');
+  if (!btn || btn.dataset.wired) return;
+  btn.dataset.wired = '1';
+  btn.addEventListener('click', async function(){
+    const note = set_el('set-build-screens-note');
+    btn.disabled = true;
+    if (note) note.textContent = 'Saving, then asking OBS...';
+    try {
+      /* set_save() returns immediately when nothing is dirty. */
+      if (typeof set_save === 'function') await set_save();
+      const r = await API.post('/api/screens/build', {});
+      if (r && r.error){
+        if (note) note.textContent = r.error;
+        toast(r.error, 'error');
+      } else {
+        const made = (r && r.scenes) || [];
+        if (note) note.textContent = 'Ready in OBS: ' + made.join(', ');
+        toast('Built ' + made.length + ' scene' + (made.length === 1 ? '' : 's')
+              + ' in OBS.', 'ok');
+      }
+    } catch (e){
+      if (note) note.textContent = 'Could not reach OBS.';
+      toast('Could not reach OBS.', 'error');
+    }
+    btn.disabled = false;
+  });
+}
+
 function set_sectionHtml(sec){
   var plain = [], adv = [];
   (sec.fields || []).forEach(function(f){
@@ -332,6 +420,17 @@ function set_sectionHtml(sec){
         '<span class="field-label">Advanced</span>' +
         '</summary><div>' + adv.join('') + '</div></details>';
     }
+  }
+  /* One section carries an action of its own: the screen savers are not real
+     until the scenes exist in OBS, and building them at the moment of going
+     live would mean a failure is discovered by the audience. */
+  if (sec.id === 'screens'){
+    body += '<div class="controls" style="margin-top:12px">' +
+      '<button class="btn" type="button" id="set-se-fetch">' +
+      'Fetch my StreamElements scenes</button>' +
+      '<button class="btn" type="button" id="set-build-screens">' +
+      'Create the scenes in OBS</button>' +
+      '<span class="muted" id="set-build-screens-note"></span></div>';
   }
   return '<section class="settings-section card' + (sec.id === set_state.active ? '' : ' hide') +
     '" id="set-sec-' + set_slug(sec.id) + '" data-sec="' + set_attr(sec.id) + '">' +
@@ -354,6 +453,8 @@ function set_navHtml(){
 function set_render(){
   set_el('set-nav').innerHTML = set_navHtml();
   set_el('set-panels').innerHTML = set_state.sections.map(set_sectionHtml).join('');
+  set_wireBuildScreens();
+  set_wireStreamElements();
   set_growVisible();
   set_updateActions();
 }
