@@ -270,6 +270,14 @@ function dash_hms(secs) {
   return p(Math.floor(s / 3600)) + ':' + p(Math.floor((s % 3600) / 60)) + ':' + p(s % 60);
 }
 
+/* MB up to a gigabyte, then GB. A recording passes 1 GB in minutes and
+   "4823 MB" is a number nobody reads as four and a bit gigabytes. */
+function dash_bytes(n) {
+  const b = Number(n) || 0;
+  const mb = b / (1024 * 1024);
+  return mb < 1024 ? mb.toFixed(0) + ' MB' : (mb / 1024).toFixed(1) + ' GB';
+}
+
 /* Null is an em-dash, never "-": a hyphen beside real numbers reads as a minus. */
 function dash_count(v) {
   if (v == null) return dash_EMDASH;
@@ -610,6 +618,27 @@ function dash_renderIngest(s) {
   const obs = s.obs || {};
   const detail = dash_el('dash-obs-detail');
 
+  /* Clips-only has no ingest to report, and a panel stuck on OFFLINE all
+     session says nothing. Report the RECORDING instead -- which is also the
+     only place a paused recording becomes visible, since the file keeps its
+     size and the phase stays LIVE. */
+  if (s.streaming === false) {
+    const rec = !!obs.recording, held = !!obs.rec_paused;
+    dash_pill('dash-obs-pill', 'dash-obs-state',
+              !rec ? 'pill-idle' : (held ? 'pill-warn' : 'pill-ok'),
+              !rec ? 'OFFLINE' : (held ? 'PAUSED' : 'RECORDING'));
+    dash_meter('dash-obs-meter', 'dash-obs-fill', rec && !held ? 100 : 0,
+               held ? 'warn' : 'ok');
+    if (detail) {
+      detail.textContent = rec
+        ? dash_hms(Math.floor((Number(obs.rec_ms) || 0) / 1000))
+          + ' ' + dash_MIDDOT + ' ' + dash_bytes(obs.rec_bytes)
+          + (held ? ' ' + dash_MIDDOT + ' paused' : '')
+        : 'Not recording';
+    }
+    return;
+  }
+
   if (!obs.active) {
     /* An empty meter beside no words looks like a broken widget. Say the words. */
     dash_pill('dash-obs-pill', 'dash-obs-state', 'pill-idle', 'OFFLINE');
@@ -652,6 +681,9 @@ function dash_renderSession(s) {
   }
 }
 
+/* null so the first paint always writes a label, whichever mode it is in. */
+let dash_stopClipsOnly = null;
+
 function dash_applyActions(s) {
   s = s || {};
   const phase = s.phase || 'IDLE';
@@ -672,13 +704,22 @@ function dash_applyActions(s) {
   }
 
   /* Everything about a broadcast goes away when there is no broadcast: the
-     viewer/like counters, the chat column and the End stream button all
-     describe something that does not exist in clips-only mode. */
+     viewer/like counters and the chat column describe something that does not
+     exist in clips-only mode. The STOP BUTTON STAYS -- a recording still has
+     to be stoppable -- but it cannot go on calling itself "End stream". */
   const clipsOnly = s.streaming === false;
   ['dash-stats', 'dash-chat'].forEach(function (id) {
     const el = dash_el(id);
     if (el) el.classList.toggle('hide', clipsOnly);
   });
+
+  /* Guarded like the pause label: dash_setLabel rebuilds innerHTML, and doing
+     that every two-second poll would fight the browser for no reason. */
+  if (dash_stopClipsOnly !== clipsOnly) {
+    dash_stopClipsOnly = clipsOnly;
+    dash_setLabel('dash-btn-stop', 'stop',
+                  clipsOnly ? 'Stop recording' : 'End stream');
+  }
 
   const open = dash_el('dash-btn-open');
   if (open) {

@@ -42,7 +42,7 @@ The UI layer (panel, tray, web dashboard) never calls OBS/YouTube directly. It c
 | [`engine.py`](../autostream/engine.py) | The state machine — the only place a broadcast is started/retitled/stopped |
 | [`watcher.py`](../autostream/watcher.py) | Process polling + foreground-window/Steam-registry signals → resolves the "active game", no network I/O |
 | [`gameindex.py`](../autostream/gameindex.py) | exe→game-name resolution: `games.yaml` overrides + Discord detectable-apps list + Steam applist, cached to `index.cache.json` |
-| [`obs.py`](../autostream/obs.py) | obs-websocket v5 client wrapper: connect/launch OBS, configure stream service, start/stop, scene switching, health |
+| [`obs.py`](../autostream/obs.py) | obs-websocket v5 client wrapper: connect/launch OBS, configure stream service, start/stop, **pause/resume recording**, scene switching, health |
 | [`youtube.py`](../autostream/youtube.py) | YouTube Data API v3 wrapper: OAuth, quota accounting, reusable-stream + broadcast lifecycle, chat, orphan sweep |
 | [`titles.py`](../autostream/titles.py) | Pure string templating for stream title/description |
 | [`notify.py`](../autostream/notify.py) | Windows toast notifications (no-ops if `winotify` missing) |
@@ -220,6 +220,37 @@ which is not a kill switch. It now sends `kill`, a separate command that pauses
 *and* stops. The `rules.paused_flag_file` is unchanged: it is a "do not stream"
 switch meant to be left in place, so it still ends the session.
 
+### The same three controls when nothing is being broadcast
+
+Pause, Resume and Stop are offered whether or not there is a broadcast, so they
+have to mean something in both modes. With `youtube.enabled: false` the thing
+under control is the **recording**, and each maps to the honest equivalent:
+
+| control | streaming | recording only |
+|---|---|---|
+| Pause | be-right-back card, broadcast stays up | `obs.pause_recording()` — frames stop, the file stays open |
+| Resume | back to the game scene | `obs.resume_recording()` — same file, no second output |
+| Stop | ending card, then `complete` | `stop_record()`, journalled as usual |
+
+Pausing a recording-only session onto the card would be the wrong analogue
+twice over: nobody is watching it, and it would be written **into** the file
+the clips are later cut from — minutes of a title card in the middle of the
+footage. Resume continues the open file rather than starting a new one because
+the cutter reads one file per session, so a second output would strand half of
+it. If OBS refuses the pause the session stops instead, rather than reporting a
+pause that did not happen while OBS keeps writing.
+
+The LIVE watchdog never mistakes this for an outage: `_tick_live` returns as
+soon as it sees `state.paused`, well before the output-health check that ends a
+session after a 120-second outage.
+
+The dashboard follows. The stop button cannot go on saying *End stream* when
+nothing is being streamed, so it reads **Stop recording**; and the ingest panel,
+which would otherwise sit on `OFFLINE` all session, reports the recording
+instead — `RECORDING` / `PAUSED`, with its running length and size. That panel
+is the only place a paused recording is visible, since the phase stays LIVE and
+the file keeps its size.
+
 ### Clips-only mode (`youtube.enabled: false`)
 
 AutoStream has two halves — it streams, and it clips — and the second is useful
@@ -357,10 +388,11 @@ All gating is centralized in `Engine._preflight()`, called from `_tick_idle` and
   immediately; a toast fires; only after `abort_grace` seconds does `_go_live()` flip
   it to `live`. `0` skips straight to live.
 - **Kill switch** (`Ctrl+Alt+Shift+K` default) — global hotkey via the `keyboard`
-  package, bound to `engine.submit("toggle_pause")`. `Engine.toggle_pause()` flips
-  `state.paused` and, if now paused, `force_stop(..., suppress=False)`.
-  `state.paused` is also checked every LIVE tick and blocks new starts in
-  `_preflight()`.
+  package, bound to `engine.submit("kill")`. `Engine.kill()` sets `state.paused`
+  and calls `force_stop(..., suppress=False)`; it is deliberately **not**
+  `toggle_pause`, which parks a stream on a card rather than ending it — a kill
+  switch that leaves you broadcasting is not a kill switch. `state.paused` is
+  also checked every LIVE tick and blocks new starts in `_preflight()`.
 
   **`suppress=False` is load-bearing.** `force_stop` normally marks every open
   game "do not restart", because a human pressing End stream means "stop
@@ -371,8 +403,11 @@ All gating is centralized in `Engine._preflight()`, called from `_tick_idle` and
   additionally clears any `stopped` intent and re-arms the watcher — which also
   digs out anyone already stuck in that state.
 
-  YouTube cannot hold a broadcast open with nothing arriving, so pausing a LIVE
-  session does have to end that broadcast. Resume starts a fresh one.
+  Pausing a LIVE session no longer ends the broadcast: OBS keeps sending the
+  be-right-back card, so YouTube keeps receiving frames and the URL, the chat
+  and the audience survive. See "Screen savers, and what they did to pause" and
+  "The same three controls when nothing is being broadcast" above for the two
+  fallbacks — no card configured, and recording-only.
 - **`NOSTREAM` file** — `Engine._paused()` checks for `paths.ROOT / "NOSTREAM"` every
   tick; if present, `_preflight()` fails immediately and any LIVE session is ended.
   Just an empty file, no config needed.
