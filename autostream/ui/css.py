@@ -1868,6 +1868,18 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 .pick-sub{color:var(--text-secondary);font-size:.9rem;line-height:1.45}
 .pick-meta{margin-top:2px;color:var(--text-tertiary);font-size:.8rem}
 
+/* A results row that can be ticked for upload. The tick sits where the rank
+   number was, so the row does not reflow when a run becomes publishable. */
+.clip-res-tick{
+  width:16px;height:16px;margin:0;accent-color:var(--accent);cursor:pointer;
+  justify-self:center;
+}
+.clip-res.is-up{opacity:.72}
+.clip-res.is-up .clip-res-name::after{
+  content:"";display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:var(--ok);margin-inline-start:8px;vertical-align:middle;
+}
+
 /* Clipping a file the user already has, rather than a recorded session. */
 .localclip{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
 .localclip .field{flex:1 1 220px;min-width:0}

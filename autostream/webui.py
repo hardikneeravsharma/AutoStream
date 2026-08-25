@@ -198,8 +198,11 @@ class _Handler(BaseHTTPRequestHandler):
                 # No engine yet (setup, or a headless server) still has to
                 # carry clip progress: a clip job runs on its own thread and
                 # the Clips page reads it from here, engine or not.
+                # `upload` rides along for the same reason, so the page reads
+                # one payload shape whether or not an engine exists.
                 self._json({"phase": "IDLE", "apps": self.app.apps_payload(),
-                            "clips": self.app._clips_status()})
+                            "clips": self.app._clips_status(),
+                            "upload": self.app._upload_status()})
                 return
             self.app.engine.client_seen = time.monotonic()
             self._json(self.app.status())
@@ -693,6 +696,14 @@ class Server:
             "games": sorted({r["game"] for r in rows if r.get("game")}),
             "known": len(table),
             "last_job": self._last_manifest(cfg_now),
+            # Uploading needs a channel to upload TO. A clips-only install has
+            # none, and offering the button there would be a lie.
+            "can_upload": bool(self.engine is not None
+                               and getattr(self.engine, "streaming", True)
+                               and cfg_now.youtube.stream_id),
+            "upload_daily_max": int(getattr(cfg_now.rules, "upload_daily_max", 5)),
+            "upload_privacy": cfg_now.clips.upload_privacy,
+            "upload_title": cfg_now.clips.upload_title,
         }
 
     def _kills_by_source(self, config=None) -> dict[str, int]:
