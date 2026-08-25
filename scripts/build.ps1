@@ -135,9 +135,15 @@ function Restore-LocalConfig {
     }
     # apps.yaml belongs here too: PyInstaller clears dist\AutoStream on every
     # build, so leaving it out silently empties the Library page each rebuild.
+    #
+    # streamelements.json for the same reason as token.json: it is a credential
+    # the APP stored, not one anybody can paste back from memory, and losing it
+    # on a rebuild silently unhooks the screen savers -- which in turn makes
+    # Pause end a live broadcast instead of parking it on the card.
     foreach ($f in @("config\config.yaml", "config\games.yaml", "config\apps.yaml",
                      "config\index.cache.json", "config\clip_profiles.yaml",
-                     "secrets\client_secret.json", "secrets\token.json")) {
+                     "secrets\client_secret.json", "secrets\token.json",
+                     "secrets\streamelements.json")) {
         $src = Join-Path $Root $f
         $dst = Join-Path $out $f
         if ((Test-Path $src) -and (-not (Test-Path $dst))) {
