@@ -51,6 +51,10 @@ class MainWindow:
         self._show = threading.Event()
         self._hide = threading.Event()
         self._quit = False
+        # True once the UI has been handed to the real browser because no
+        # native window could be had. The caller has nothing to block on then,
+        # and must hold the process open itself -- see cmd_run.
+        self.fell_back = False
         self._veto_times: list[float] = []
 
     # ---------------- cross-thread requests ----------------
@@ -125,14 +129,32 @@ class MainWindow:
 
     # ---------------- lifecycle ----------------
 
+    def _to_browser(self) -> None:
+        """Hand the UI to the real browser. NOT a quit.
+
+        `_quit` means a PERSON asked to leave. Setting it because the window
+        backend was unavailable was the bug behind a first run that ended in
+        ERR_CONNECTION_REFUSED: run() opened the browser, set `_quit` in its
+        `finally`, and cmd_run's hold loop read that as "the user closed the
+        window" and stopped the server a fraction of a second later -- before
+        the page it had just opened could load.
+        """
+        self.fell_back = True
+        try:
+            webbrowser.open(self.url)
+        except Exception:  # noqa: BLE001
+            pass
+
     def run(self, hidden: bool = False) -> None:
-        """Blocks until the window is destroyed. Call from the MAIN thread."""
+        """Blocks until the window is destroyed. Call from the MAIN thread.
+
+        Returns AT ONCE when there is no native window to block on, with
+        `fell_back` set. Windows without the WebView2 runtime take that path,
+        and a clean install is exactly where it is missing.
+        """
         if not _HAS:
             log.info("pywebview not installed - opening the UI in your browser")
-            try:
-                webbrowser.open(self.url)
-            except Exception:  # noqa: BLE001
-                pass
+            self._to_browser()
             return
 
         try:
@@ -143,7 +165,7 @@ class MainWindow:
             )
         except Exception as e:  # noqa: BLE001
             log.error("could not create the window (%s) - using the browser", e)
-            webbrowser.open(self.url)
+            self._to_browser()
             return
 
         self._visible = not hidden
@@ -160,10 +182,9 @@ class MainWindow:
             webview.start()
         except Exception as e:  # noqa: BLE001
             log.error("native window failed (%s) - falling back to the browser", e)
-            try:
-                webbrowser.open(self.url)
-            except Exception:  # noqa: BLE001
-                pass
-        finally:
-            self._quit = True
-            log.info("native window closed")
+            self._to_browser()
+            return
+        # Only here: webview.start() returning means the window really was
+        # opened and has really been closed.
+        self._quit = True
+        log.info("native window closed")

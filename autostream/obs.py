@@ -57,7 +57,7 @@ class Obs:
                 self.ws = None
 
         last: Exception | None = None
-        for attempt in range(3):
+        for attempt in range(self.ATTEMPTS):
             try:
                 self.ws = self._connect()
                 v = self.ws.get_version()
@@ -68,9 +68,64 @@ class Obs:
                 last = e
                 if not _obs_process_alive():
                     self._launch()
-                log.info("OBS not ready (attempt %d/3): %s", attempt + 1, e)
-                time.sleep(12)
+                log.info("OBS not ready (attempt %d/%d): %s",
+                         attempt + 1, self.ATTEMPTS, e)
+                # NOT after the last attempt. Sleeping there delays the
+                # failure by a full retry interval and changes nothing about
+                # it -- the caller is already out of attempts.
+                if attempt < self.ATTEMPTS - 1:
+                    time.sleep(self.RETRY_SECONDS)
         raise ObsUnavailable(f"could not reach obs-websocket: {last}")
+
+    def probe(self) -> dict:
+        """One quick look at OBS. Never launches it, never retries.
+
+        connect() is built for the engine, which is right to wait: OBS may
+        still be starting up and a session depends on it. A person who just
+        pressed "Test" in the setup wizard is owed an answer in a second, and
+        the retry loop makes that a 50-second freeze on the one machine where
+        it is most likely to fail -- a first run, before anything is
+        configured. It also LAUNCHES OBS, which is a surprising thing for a
+        button called Test to do.
+
+        -> {ok, version, scenes} or {ok: False, reason, error}, where `reason`
+        names the fix rather than the symptom.
+        """
+        if obsws is None:
+            return {"ok": False, "reason": "missing",
+                    "error": "obsws-python is not installed."}
+        if not _obs_process_alive():
+            return {"ok": False, "reason": "not_running",
+                    "error": "OBS is not running. Start OBS, then test again."}
+        try:
+            ws = self._connect(timeout=3)
+            v = ws.get_version()
+            scenes = [sc["sceneName"] for sc in ws.get_scene_list().scenes]
+            try:
+                ws.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+            return {"ok": True, "version": getattr(v, "obs_version", "?"),
+                    "scenes": scenes}
+        except Exception as e:  # noqa: BLE001
+            msg = str(e)
+            low = msg.lower()
+            if any(k in low for k in ("auth", "password", "4009", "401")):
+                return {"ok": False, "reason": "auth",
+                        "error": "OBS is running but rejected the password. "
+                                 "Copy it from OBS: Tools > WebSocket Server "
+                                 "Settings > Show Connect Info."}
+            if any(k in low for k in ("refused", "10061", "timed out", "timeout")):
+                return {"ok": False, "reason": "closed",
+                        "error": "OBS is running but is not listening on port "
+                                 f"{self.cfg.obs.port}. Turn the server on in "
+                                 "OBS: Tools > WebSocket Server Settings > "
+                                 "Enable WebSocket server."}
+            return {"ok": False, "reason": "error", "error": msg[:200]}
+
+    # Retry budget for connect(). Named because probe() exists to NOT spend it.
+    ATTEMPTS = 3
+    RETRY_SECONDS = 12
 
     ARGS = ("--disable-shutdown-check", "--minimize-to-tray")
 
@@ -91,7 +146,11 @@ class Obs:
                 creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
             )
         except OSError as e:
-            log.error("failed to launch OBS: %s", e)
+            if getattr(e, "winerror", None) == 740:
+                log.error("OBS needs administrator rights to start. Turn on "
+                          "Settings > OBS > 'Start OBS as administrator'.")
+            else:
+                log.error("failed to launch OBS: %s", e)
 
     def _launch_elevated(self, path: str, cwd: str) -> None:
         """Start OBS with administrator rights.
