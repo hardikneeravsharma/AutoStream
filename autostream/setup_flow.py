@@ -125,7 +125,14 @@ class SetupFlow:
     # ---------------- step 3: OBS ----------------
 
     def test_obs(self, values: dict) -> dict:
-        from .obs import Obs, ObsUnavailable
+        """Answer the wizard's Test button. Fast, or it is not a test.
+
+        obs.probe() rather than obs.connect(): connect() retries three times
+        with a twelve-second backoff and starts OBS if it cannot find it,
+        which turned the first click a new user makes into a fifty-second
+        freeze ending in a websocket error they cannot act on.
+        """
+        from .obs import Obs
 
         c = cfg.load()
         c["obs"] = dict(c["obs"])
@@ -134,17 +141,9 @@ class SetupFlow:
         if values.get("path"):
             c["obs"]["path"] = str(values["path"])
         try:
-            obs = Obs(cfg.Config(c))
-            obs.connect()
-            v = obs.ws.get_version()
-            scenes = obs.scene_names()
-            obs.close()
-            return {"ok": True, "version": getattr(v, "obs_version", "?"),
-                    "scenes": scenes}
-        except ObsUnavailable as e:
-            return {"ok": False, "error": str(e)[:200]}
-        except Exception as e:  # noqa: BLE001
-            return {"ok": False, "error": str(e)[:200]}
+            return Obs(cfg.Config(c)).probe()
+        except Exception as e:  # noqa: BLE001 - a Test button never raises
+            return {"ok": False, "reason": "error", "error": str(e)[:200]}
 
     # ---------------- generic section save ----------------
 

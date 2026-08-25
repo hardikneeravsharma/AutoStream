@@ -399,6 +399,18 @@ def cmd_run(args) -> int:
         except KeyboardInterrupt:
             pass
     else:
+        if win.fell_back:
+            # No native window to block on, so THIS loop is what keeps the
+            # daemon -- and the server the browser was just pointed at --
+            # alive. Without it a machine with no WebView2 runtime ran the
+            # whole daemon for the fraction of a second run() took to return,
+            # and the UI it had opened could not even load.
+            log.info("the UI is in your browser at %s", server.url())
+            try:
+                while not win._quit:              # noqa: SLF001
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                pass
         engine.request_stop()
         time.sleep(0.6)
         engine.force_stop("shutdown")
