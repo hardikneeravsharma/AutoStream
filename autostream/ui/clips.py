@@ -57,6 +57,14 @@ CLIPS_HTML: str = (
       <button class="btn btn-primary" type="button" data-act="use-local"
               id="clip-local-go" disabled>Use this video</button>
       <p class="localclip-path" id="clip-local-path"></p>
+      <div class="panel hide" id="clip-local-namewrap" style="flex:1 1 100%">
+        <p class="muted" id="clip-local-namewhy"></p>
+        <div class="field-inline">
+          <input class="input" id="clip-local-name" type="text" spellcheck="false"
+                 autocomplete="off" placeholder="Your name, exactly as the feed shows it">
+          <button class="btn btn-sm" type="button" data-act="save-name">Save name</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -722,12 +730,75 @@ async function clip_loadGames() {
     var r = await API.get('/api/clips/games');
     clip_state.localGames = (r && r.games) || [];
   } catch (e) { clip_state.localGames = []; }
+  clip_fillLocalGames();
+  clip_renderNamePrompt();
+}
+
+function clip_fillLocalGames() {
   var sel = clip_el('clip-local-game');
   if (!sel) return;
   sel.innerHTML = clip_state.localGames.map(function (g) {
-    return '<option value="' + esc(g.game_key) + '">' + esc(g.game) +
-           (g.can_scan ? '' : ' (needs calibrating)') + '</option>';
+    /* A killfeed game is blocked by a missing NAME, not a missing template.
+       Calling that "needs calibrating" sends people off to draw a box that was
+       never the problem. */
+    var tail = g.can_scan ? '' : (g.needs_name ? ' (needs your in-game name)'
+                                               : ' (needs calibrating)');
+    return '<option value="' + esc(g.game_key) + '">' + esc(g.game) + tail +
+           '</option>';
   }).join('') || '<option value="">No games available</option>';
+}
+
+function clip_localGame() {
+  var sel = clip_el('clip-local-game');
+  if (!sel || !sel.value) return null;
+  for (var i = 0; i < clip_state.localGames.length; i++) {
+    if (clip_state.localGames[i].game_key === sel.value) return clip_state.localGames[i];
+  }
+  return null;
+}
+
+/* Asked here rather than in the calibrator: the calibrator is for drawing a
+   box, and the setup wizard -- the only other writer -- lists Steam and Epic
+   games only, so a game that arrives as a shortcut could never be given a name
+   at all. A clips-only user may open neither. */
+function clip_renderNamePrompt() {
+  var g = clip_localGame();
+  var wrap = clip_el('clip-local-namewrap');
+  if (!wrap) return;
+  var need = !!(g && g.needs_name);
+  wrap.classList.toggle('hide', !need);
+  if (!need) return;
+  var why = clip_el('clip-local-namewhy');
+  if (why) {
+    why.textContent = g.game + ' finds your highlights by reading your name in ' +
+      'the kill feed, so it needs to know what to look for. Type it exactly as ' +
+      'the feed shows it.';
+  }
+  var box = clip_el('clip-local-name');
+  if (box && !box.value) box.value = g.player || '';
+}
+
+async function clip_saveName() {
+  var g = clip_localGame();
+  var box = clip_el('clip-local-name');
+  if (!g || !box) return;
+  var name = String(box.value || '').trim();
+  if (!name) { toast('Type the name first.', 'warn'); return; }
+  var r = await API.post('/api/clips/setname',
+                         {game_key: g.game_key, name: name, label: g.game});
+  if (r && r.error) { toast(r.error, 'error'); return; }
+  clip_state.localGames = (r && r.games) || clip_state.localGames;
+  clip_renderGamesLocal();
+  toast('Saved. ' + g.game + ' can be scanned now.', 'ok');
+}
+
+/* Redraws the select in place, keeping the chosen game. */
+function clip_renderGamesLocal() {
+  var sel = clip_el('clip-local-game');
+  var keep = sel ? sel.value : '';
+  clip_fillLocalGames();
+  if (sel && keep) sel.value = keep;
+  clip_renderNamePrompt();
 }
 
 async function clip_pickLocal() {
@@ -985,6 +1056,9 @@ function clip_wire() {
   if (g) g.addEventListener('change', function () {
     clip_state.game = g.value; clip_renderList();
   });
+  var lg = clip_el('clip-local-game');
+  if (lg) lg.addEventListener('change', clip_renderNamePrompt);
+
   var rf = clip_el('clip-refresh');
   if (rf) rf.addEventListener('click', clip_load);
   var go = clip_el('clip-go');
@@ -1059,6 +1133,8 @@ function clip_wire() {
       clip_pickLocal();
     } else if (act === 'use-local') {
       clip_useLocal();
+    } else if (act === 'save-name') {
+      clip_saveName();
     } else if (act === 'setgame') {
       clip_setGame();
     } else if (act === 'calibrate') {

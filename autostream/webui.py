@@ -400,6 +400,8 @@ class _Handler(BaseHTTPRequestHandler):
                     str(b.get("section", "")), b.get("values") or {}))
             elif p == "/api/setup/clips_only":
                 self._json(self.app.setup.clips_only())
+            elif p == "/api/clips/setname":
+                self._json(self.app.clips_setname(b))
             elif p == "/api/clips/pick":
                 self._json(self.app.clips_pick())
             elif p == "/api/setup/scan":
@@ -883,9 +885,39 @@ class Server:
                 "counts_assists": bool(prof.counts_assists),
                 "blocked": prof.why_not(),
                 "player": prof.player or profiles.username_for(prof.key, prof.label),
+                # Killfeed games are blocked by a MISSING NAME, not a missing
+                # template, and the two have completely different fixes. Saying
+                # "needs calibrating" for this one sends people to draw a box
+                # that was never the problem.
+                "needs_name": (prof.mode == "killfeed"
+                               and not (prof.player
+                                        or profiles.username_for(prof.key, prof.label))),
                 "builtin": row["builtin"],
             })
         return {"games": out}
+
+    def clips_setname(self, body: dict) -> dict:
+        """Record an in-game name, so a killfeed game can be scanned.
+
+        Until now the only writers were the calibrator and the setup wizard.
+        The wizard lists Steam and Epic games only, so a game that arrives as a
+        shortcut could never be given one there -- and a clips-only user, who
+        may never open either, hit a profile that simply refused to run.
+        """
+        from .clips import profiles
+
+        key = str(body.get("game_key") or "").strip()
+        name = str(body.get("name") or "").strip()
+        if not key:
+            return {"error": "No game given."}
+        if not name:
+            return {"error": "Type the name exactly as the kill feed shows it."}
+        if len(name) > 64:
+            return {"error": "That is too long to be an in-game name."}
+        if not profiles.save_username(key, name, str(body.get("label") or "")):
+            return {"error": "Could not save that name."}
+        log.info("in-game name recorded for %s", key)
+        return {"ok": True, **self.clips_games()}
 
     def clips_calibrate(self, body: dict) -> dict:
         from .clips import calibrate
