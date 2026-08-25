@@ -562,6 +562,11 @@ def username_for(game_key: str | None, game_name: str | None = None) -> str:
     per game because they genuinely differ -- Valorant appends a tag, most
     others do not.
     """
+    # A fresh install has no games.yaml at all, and that is not a fault worth
+    # a warning -- it was four of them per Clips page load, before the user had
+    # done anything wrong. Only a file that exists and will not read is news.
+    if not paths.GAMES_FILE.exists():
+        return ""
     try:
         data = yaml.safe_load(paths.GAMES_FILE.read_text(encoding="utf-8")) or {}
         games = data.get("games") or {}

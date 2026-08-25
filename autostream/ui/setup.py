@@ -171,14 +171,29 @@ function setup_draw(){
   if (!c) return;
 
   if (setup_step === 0) c.innerHTML = setup_card(
-    'Welcome to AutoStream',
-    'This will set up automatic YouTube live streaming that starts by itself when ' +
-    'you launch a game. It takes about ten minutes, most of it waiting on Google.',
-    '<div class="note"><b>You will need:</b> a YouTube channel with live streaming ' +
-    'already enabled, and OBS Studio installed.</div>' +
-    '<div class="note warn">Enabling live streaming on a new channel can take up to ' +
-    '24 hours. Do that first at youtube.com if you have not already.</div>' +
-    setup_nav(false));
+    'What do you want AutoStream to do?',
+    'Both halves are the same app. Pick the one you want now - the other can be ' +
+    'turned on later in Settings without setting up again.',
+    '<div class="pickrow">' +
+      '<button type="button" class="pick" data-act="wantClips">' +
+        '<span class="pick-title">Just make clips</span>' +
+        '<span class="pick-sub">Point it at a video you already have, pick the ' +
+        'game, get the highlights. Nothing else to set up - no Google account, ' +
+        'no OBS.</span>' +
+        '<span class="pick-meta">Ready in seconds</span>' +
+      '</button>' +
+      '<button type="button" class="pick" data-act="wantStream">' +
+        '<span class="pick-title">Stream and clip</span>' +
+        '<span class="pick-sub">Go live on YouTube by itself when you launch a ' +
+        'game, record it, and cut the clips afterwards.</span>' +
+        '<span class="pick-meta">About ten minutes, most of it waiting on Google</span>' +
+      '</button>' +
+    '</div>' +
+    '<div class="note"><b>Streaming needs:</b> a YouTube channel with live ' +
+    'streaming already enabled, and OBS Studio installed. Enabling live ' +
+    'streaming on a new channel can take up to 24 hours - do that first at ' +
+    'youtube.com if you have not already.</div>' +
+    '<p class="muted" id="setup-pickmsg"></p>');
 
   else if (setup_step === 1) c.innerHTML = setup_card(
     'Google Cloud credentials',
@@ -541,11 +556,46 @@ async function setup_finish(){
   }
 }
 
+/* The clips-only fork. Everything the streaming path needs -- a Google Cloud
+   project, OAuth, a bound ingestion stream, OBS -- is a wall in front of
+   somebody whose whole ask is "make clips from this file", and cutting a file
+   that already exists needs none of it. So this saves one setting and stops.
+
+   The server exits shortly after, because youtube.enabled=false makes the
+   install count as configured and the wizard's job is done. The card says so;
+   it is the same restart the full path ends with. */
+async function setup_wantClips(){
+  setup_say('setup-pickmsg', '', setup_spin('Setting up the clipper...'));
+  const r = await setup_post('/api/setup/clips_only', {});
+  if (!r.ok){
+    setup_say('setup-pickmsg', 'bad', esc(r.error || 'Could not save that.'));
+    return;
+  }
+  const c = setup_$('setup-stepcard');
+  if (c) c.innerHTML = setup_card(
+    'Ready to clip',
+    'That is the whole setup. AutoStream will not touch YouTube and will never ' +
+    'ask you to sign in.',
+    '<div class="note ok"><b>Start AutoStream again</b>, open <b>Clips</b>, and ' +
+    'choose <b>Clip a video file</b>. Pick the video, pick the game, and it cuts ' +
+    'the highlights.</div>' +
+    '<div class="note">Want it to go live on YouTube later? Settings &rarr; ' +
+    'YouTube &rarr; <b>Go live on YouTube</b>, and this wizard comes back.</div>');
+  const bar = setup_$('setup-stepbar');
+  if (bar) bar.innerHTML = '';
+  const n = setup_$('setup-stepname');
+  if (n) n.textContent = 'Done';
+  const cnt = setup_$('setup-stepcount');
+  if (cnt) cnt.textContent = 'Clips only';
+}
+
 /* ---------------- wiring ---------------- */
 
 const setup_ACTIONS = {
   back:       () => setup_go(setup_step - 1),
   next:       () => setup_go(setup_step + 1),
+  wantStream: () => setup_go(1),
+  wantClips:  setup_wantClips,
   saveSecret: setup_saveSecret,
   doAuth:     setup_doAuth,
   testObs:    setup_testObs,
