@@ -241,9 +241,12 @@ function setup_draw(){
   else if (setup_step === 3) c.innerHTML = setup_card(
     'OBS Studio',
     'In OBS: <b>Tools &rarr; WebSocket Server Settings</b>. Tick <b>Enable WebSocket ' +
-    'server</b>, keep port 4455, set a password, then click <b>Apply</b> and <b>OK</b>.',
-    '<div class="note">The Apply step matters &mdash; OBS does not open the port until ' +
-    'the dialog is committed.</div>' +
+    'server</b>, click <b>Apply</b>, then let AutoStream read the settings back.',
+    '<div class="note">The Apply step matters &mdash; OBS does not write the settings ' +
+    'or open the port until the dialog is committed.</div>' +
+    '<button type="button" class="btn btn-block" data-act="detectObs">' +
+    'Read the settings from OBS</button>' +
+    '<p class="muted" id="setup-obsdetect"></p>' +
     '<div class="field-row">' +
     '<div class="field"><label class="field-label" for="setup-obspw">Password</label>' +
     '<input class="input" id="setup-obspw" type="password" autocomplete="off" ' +
@@ -412,6 +415,28 @@ async function setup_doAuth(){
     if (b) b.disabled = false;
     setup_say('setup-authmsg', 'bad', esc(r.error || 'Failed'));
   }
+}
+
+/* OBS already knows its own port and password -- it wrote them to its profile
+   the moment the WebSocket dialog was committed. Copying a generated sixteen
+   character password across by hand was the most error-prone thing this wizard
+   asked anybody to do, and getting it wrong looks exactly like OBS not
+   running. Detected values are put in the FORM, never saved behind the user:
+   which OBS profile is in use is still a guess, and they can see it. */
+async function setup_detectObs(){
+  setup_say('setup-obsdetect', '', setup_spin('Looking in the OBS profile...'));
+  const r = await setup_post('/api/setup/obs_detect', {});
+  if (!r.ok){
+    setup_say('setup-obsdetect', 'bad', esc(r.error || 'Could not read the OBS profile.'));
+    return;
+  }
+  if (r.exe && setup_$('setup-obspath')) setup_$('setup-obspath').value = r.exe;
+  if (r.found){
+    if (setup_$('setup-obsport')) setup_$('setup-obsport').value = r.port;
+    if (setup_$('setup-obspw')) setup_$('setup-obspw').value = r.password || '';
+  }
+  setup_say('setup-obsdetect', r.found && r.enabled ? 'ok' : 'warn', esc(r.hint || ''));
+  if (r.found && r.enabled) setup_testObs();
 }
 
 async function setup_testObs(){
@@ -598,6 +623,7 @@ const setup_ACTIONS = {
   wantClips:  setup_wantClips,
   saveSecret: setup_saveSecret,
   doAuth:     setup_doAuth,
+  detectObs:  setup_detectObs,
   testObs:    setup_testObs,
   saveObs:    setup_saveObs,
   saveStream: setup_saveStream,

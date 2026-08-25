@@ -1,10 +1,12 @@
 """obs-websocket 5 wrapper. Launches OBS if it isn't running."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
 import time
+from pathlib import Path
 
 import psutil
 
@@ -28,6 +30,92 @@ def _obs_process_alive() -> bool:
         except psutil.Error:
             continue
     return False
+
+
+# obs-websocket writes its own settings here, and they are the three things
+# setup used to ask a person to copy by hand. The file is JSON carrying
+# server_enabled / server_port / server_password / auth_required.
+#
+# The portable build keeps the same tree beside the executable instead, so both
+# are checked -- portable is common on a machine where the user cannot write to
+# Program Files, which is exactly the machine where hand-copying a generated
+# password goes wrong.
+WS_CONFIG = ("plugin_config", "obs-websocket", "config.json")
+
+
+def _ws_config_paths(obs_exe: str = "") -> list[Path]:
+    out: list[Path] = []
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        out.append(Path(appdata).joinpath("obs-studio", *WS_CONFIG))
+    if obs_exe:
+        # ...\obs-studio\bin\64bit\obs64.exe -> ...\obs-studio\config\obs-studio
+        exe = Path(obs_exe)
+        if len(exe.parents) > 2:
+            out.append(exe.parents[2].joinpath("config", "obs-studio", *WS_CONFIG))
+    return out
+
+
+def discover_websocket(obs_exe: str = "") -> dict:
+    """What OBS has already decided about its own WebSocket server.
+
+    -> {found, enabled, port, password, auth_required, source}. `found` is
+    False when there is nothing to read, which only means OBS has never opened
+    the WebSocket dialog on this machine.
+
+    Never raises: this feeds a setup screen, and an unreadable OBS profile
+    should fall back to asking rather than failing.
+    """
+    out = {"found": False, "enabled": False, "port": 4455,
+           "password": "", "auth_required": True, "source": ""}
+    for path in _ws_config_paths(obs_exe):
+        try:
+            if not path.is_file():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        out["found"] = True
+        out["source"] = str(path)
+        out["enabled"] = bool(data.get("server_enabled", False))
+        out["auth_required"] = bool(data.get("auth_required", True))
+        try:
+            out["port"] = int(data.get("server_port") or 4455)
+        except (TypeError, ValueError):
+            out["port"] = 4455
+        # A server with auth off ignores whatever password is stored, and
+        # handing that stale value to the client fails in a way nobody could
+        # explain from the error.
+        out["password"] = ("" if not out["auth_required"]
+                           else str(data.get("server_password") or ""))
+        return out
+    return out
+
+
+def find_obs_exe() -> str:
+    """The OBS executable: from the registry where it is recorded, else a guess."""
+    try:
+        import winreg
+
+        sub = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OBS Studio"
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            try:
+                with winreg.OpenKey(hive, sub) as k:
+                    root = Path(winreg.QueryValueEx(k, "InstallLocation")[0])
+                    exe = root.joinpath("bin", "64bit", "obs64.exe")
+                    if exe.is_file():
+                        return str(exe)
+            except OSError:
+                continue
+    except ImportError:
+        pass
+    for guess in (r"C:\Program Files\obs-studio\bin\64bit\obs64.exe",
+                  r"C:\Program Files (x86)\obs-studio\bin\64bit\obs64.exe"):
+        if Path(guess).is_file():
+            return guess
+    return ""
 
 
 class Obs:

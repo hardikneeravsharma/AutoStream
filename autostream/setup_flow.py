@@ -144,6 +144,41 @@ class SetupFlow:
 
     # ---------------- step 3: OBS ----------------
 
+    def detect_obs(self) -> dict:
+        """Read OBS's own WebSocket settings rather than asking for them.
+
+        OBS records host, port and password in its profile the moment somebody
+        commits the WebSocket dialog, so the three fields this step used to ask
+        a person to copy across are already on disk. Copying a generated
+        sixteen-character password by hand is the single most error-prone thing
+        the wizard asked for, and it fails silently -- a wrong character looks
+        exactly like OBS not running.
+
+        Nothing is saved here. The values go into the FORM, because a detected
+        password is still a guess about which OBS profile is in use, and the
+        person in front of it can see whether it looks right.
+        """
+        from .obs import discover_websocket, find_obs_exe
+
+        c = cfg.load()
+        exe = c.obs.path if c.obs.path and os.path.exists(c.obs.path) else find_obs_exe()
+        found = discover_websocket(exe)
+        out = {"ok": True, "exe": exe, **found}
+        if not found["found"]:
+            out["hint"] = ("OBS has not been given WebSocket settings yet. In OBS: "
+                           "Tools > WebSocket Server Settings, tick Enable, then Apply.")
+        elif not found["enabled"]:
+            out["hint"] = ("Found the settings, but the server is switched off. Tick "
+                           "Enable WebSocket server in OBS and click Apply.")
+        elif not found["auth_required"]:
+            out["hint"] = "Found it. This server has authentication off, so no password."
+        else:
+            out["hint"] = "Found it. Check the values look right, then test."
+        log.info("OBS detect: found=%s enabled=%s port=%s",
+                 found["found"], found["enabled"], found["port"])
+        return out
+
+
     def test_obs(self, values: dict) -> dict:
         """Answer the wizard's Test button. Fast, or it is not a test.
 

@@ -391,6 +391,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.setup.save_client_secret(str(b.get("json", ""))))
             elif p == "/api/setup/auth":
                 self._json(self.app.setup.authorise())
+            elif p == "/api/setup/obs_detect":
+                self._json(self.app.setup.detect_obs())
             elif p == "/api/setup/obs_test":
                 self._json(self.app.setup.test_obs(b))
             elif p == "/api/setup/save":
