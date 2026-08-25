@@ -211,8 +211,15 @@ function setup_draw(){
     '<code class="mono">.../auth/youtube.force-ssl</code>.</li>' +
     '<li>Google Auth Platform &rarr; <b>Clients</b> &rarr; Create client &rarr; ' +
     '<b>Desktop app</b> &rarr; Download JSON.</li></ol>' +
-    '<div class="note warn"><b>Do not skip step 4.</b> While the app is in Testing mode ' +
-    'your login expires after about 7 days and streaming silently stops.</div>' +
+    '<div class="note warn"><b>Do not skip step 4.</b> While the app is in ' +
+    'Testing mode Google blocks sign-in for anyone not on the test-user list, ' +
+    'and even for you the login expires after about 7 days and streaming ' +
+    'silently stops. If you see <b>Access blocked / Error 403</b>, that is ' +
+    'this step.</div>' +
+    '<div class="note">After publishing, Google shows <b>"Google hasn&rsquo;t ' +
+    'verified this app"</b>. That is expected for a personal app: ' +
+    '<b>Advanced &rarr; Go to (unsafe)</b>. If publishing is refused, add ' +
+    'your own account under <b>Audience &rarr; Test users</b> instead.</div>' +
     (setup_state.client_secret
       ? '<div class="note ok">Found <b>' + esc(setup_state.client_secret) + '</b></div>'
       : '<div class="field">' +

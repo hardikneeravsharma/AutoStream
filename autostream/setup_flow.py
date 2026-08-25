@@ -16,6 +16,52 @@ from . import cfg, paths
 log = logging.getLogger("autostream.setup")
 
 
+# Google's own errors are written for whoever wrote the API call, not for the
+# person who just clicked Connect. These three account for nearly every failure
+# a new user hits, and each has a fix they can carry out themselves.
+def explain_auth_error(err: Exception) -> str:
+    """Turn a Google failure into something with a next step in it."""
+    raw = str(err)
+    low = raw.lower()
+
+    if "access_denied" in low or "has not completed the google verification" in low:
+        return (
+            "Google blocked the sign-in because your app is still in Testing, "
+            "which only lets approved testers in. Two ways out, both about a "
+            "minute:  (1) Google Cloud Console > Google Auth Platform > "
+            "Audience > Test users > Add users, and add the Google account "
+            "that owns the channel.  Or (2) the same page > Publishing status "
+            "> Publish app, which also stops your login expiring every seven "
+            "days. After publishing you will see 'Google hasn't verified this "
+            "app' -- that is expected: Advanced > Go to (unsafe).")
+
+    if "invalid_grant" in low or ("token" in low and "expired" in low):
+        return (
+            "Your saved Google login is no longer valid. That usually means "
+            "the app is in Testing, where logins expire after about seven "
+            "days -- publish it in Google Cloud Console > Google Auth Platform "
+            "> Audience > Publish app. Sign in again to carry on.")
+
+    if "insufficient" in low and "scope" in low:
+        return (
+            "The saved login does not cover everything AutoStream needs. Sign "
+            "in again and accept every permission it asks for.")
+
+    if "redirect_uri_mismatch" in low:
+        return (
+            "That OAuth client is the wrong type. Create a Desktop app client "
+            "in Google Cloud Console > Clients, download its JSON, and paste "
+            "that instead.")
+
+    if "accessnotconfigured" in low or "has not been used in project" in low:
+        return (
+            "The YouTube Data API is not switched on for that project. Google "
+            "Cloud Console > APIs & Services > Library > YouTube Data API v3 "
+            "> Enable, then try again.")
+
+    return raw[:300]
+
+
 class SetupFlow:
     def __init__(self):
         self._channel: str | None = None
@@ -140,7 +186,7 @@ class SetupFlow:
             return {"ok": True, "setup": self.snapshot()}
         except Exception as e:  # noqa: BLE001
             log.exception("setup auth failed")
-            return {"ok": False, "error": str(e)[:300]}
+            return {"ok": False, "error": explain_auth_error(e)}
 
     # ---------------- step 3: OBS ----------------
 
