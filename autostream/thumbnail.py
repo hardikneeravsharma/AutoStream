@@ -303,10 +303,50 @@ def _slug(s: str) -> str:
     return re.sub(r"[\s_-]+", "-", s)[:40] or "stream"
 
 
-def build_for_session(cfg, obs, *, game: str, username: str = "") -> Path | None:
-    """Grab a frame and compose the thumbnail for the session going live."""
+def use_as_is(path: str | Path) -> Path | None:
+    """A thumbnail supplied whole. -> a file YouTube will accept, or None.
+
+    Only two things stand between the user's file and the upload: it has to
+    exist, and it has to be under YouTube's 2 MB limit. A file over the limit
+    is re-saved rather than refused -- someone who exported a 4 MB PNG meant to
+    use it, and silently not setting a thumbnail is the worst of the options.
+    """
+    p = Path(path)
+    if not p.is_file():
+        log.warning("thumbnail for this game is missing: %s", p)
+        return None
+    if p.stat().st_size <= MAX_BYTES:
+        return p
+    try:
+        from PIL import Image
+
+        out = paths.CONFIG_DIR / "thumbs" / f"{_slug(p.stem)}.jpg"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        img = Image.open(p).convert("RGB")
+        _save_under_limit(img, out)
+        log.info("%s was over %d bytes; saved a smaller copy to %s",
+                 p.name, MAX_BYTES, out)
+        return out
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not shrink %s: %s", p, e)
+        return None
+
+
+def build_for_session(cfg, obs, *, game: str, username: str = "",
+                      designated: str = "") -> Path | None:
+    """Grab a frame and compose the thumbnail for the session going live.
+
+    `designated` is a per-game image from games.yaml. Where there is one it IS
+    the thumbnail -- see use_as_is.
+    """
     if not cfg.thumbnail.enabled:
         return None
+    if designated:
+        got = use_as_is(designated)
+        if got:
+            log.info("using the thumbnail assigned to %s: %s", game, got.name)
+            return got
+        # Fall through and compose one rather than going live with none.
     frame = obs.screenshot(WIDTH, HEIGHT) if obs else None
     if frame is None:
         log.info("no OBS frame; using the configured base image")

@@ -46,6 +46,11 @@ class GameHit:
     # and a killfeed-based kill detector needs the right one to tell your kills
     # from everyone else's. Also available to title and thumbnail templates.
     username: str = ""
+    # A finished thumbnail for THIS game, used exactly as given -- nothing is
+    # drawn over it. If you have made artwork for a game, the app has no
+    # business compositing a headline across it. Games without one keep the
+    # composite built from a live OBS frame.
+    thumbnail: str = ""
 
     def __eq__(self, other):
         return isinstance(other, GameHit) and other.key == self.key
@@ -222,6 +227,7 @@ class GameIndex:
                 privacy=o.get("privacy"),
                 source="override",
                 username=str(o.get("username") or ""),
+                thumbnail=str(o.get("thumbnail") or ""),
             )
         if exe in self.public:
             return GameHit(key=exe, name=self.public[exe], source="public")

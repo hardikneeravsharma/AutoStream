@@ -31,7 +31,7 @@ import numpy as np
 
 from .. import paths
 from . import detect
-from .profiles import Profile, save, slug
+from .profiles import Profile, save, save_username, slug
 from .tools import ffmpeg_raw, media_info
 
 log = logging.getLogger("autostream.clips.calibrate")
@@ -232,15 +232,24 @@ def _killfeed_request(body: dict, src: Path, box, at: float, label: str,
               f"Name left of the weapon icon is a kill, right of it a death.",
     )
     save(profile)
+    # The profile does not carry the name -- as_dict() leaves `player` out on
+    # purpose -- so without this the name that was just proved readable would be
+    # thrown away and the next scan would find nothing.
+    kept = save_username(profile.key, player, label)
     return {
         "ok": True, "saved": True, "key": profile.key, "label": label,
         "mode": "killfeed", "band": list(band), "ref_height": H,
-        "player": player, "match_ratio": profile.match_ratio,
+        "player": player, "name_saved": kept,
+        "match_ratio": profile.match_ratio,
         "separation": "good" if best.ratio >= 0.9 else "ok",
         "read": best.text, "score": round(best.ratio, 3),
         "kind": best.kind, "hits": len(seen), "sampled": len(window),
         "note": f"Read {best.text!r} at {best.ratio:.0%} in {len(seen)} of "
-                f"{len(window)} frames, scored as a {best.kind}.",
+                f"{len(window)} frames, scored as a {best.kind}."
+                + ("" if kept else
+                   f" The name could NOT be saved to games.yaml, so add "
+                   f"{player!r} there by hand under {profile.key!r} or the "
+                   f"next scan will find nothing."),
     }
 
 

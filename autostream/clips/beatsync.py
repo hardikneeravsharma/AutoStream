@@ -54,12 +54,38 @@ DROP_LEAD_IN = 12.0            # ignore the first seconds; intros are noisy
 
 
 @dataclass
+class Slot:
+    """One clip's place on the track: where it starts, and how it is cut.
+
+    The layout stage decides all of this and the cutting stage does as it is
+    told, so a plain beat grid (`_flat_layout`) and a story arc
+    (clips/story.arrange) can share the encoder, the join and the mux without
+    either knowing about the other.
+    """
+    plan: object
+    start: float          # position on the TRACK, in seconds
+    length: float
+    pre: float = 0.45     # run-up before the anchor kill
+    # WHICH kill in the clip the slot is built around:
+    #   "first"    the clip opens on its first kill
+    #   "busiest"  the one with the most markers at once -- a spray transfer
+    #   "last"     the payoff. A clutch is won by its LAST kill, so that is the
+    #              one the drop has to land on; anchoring on the first put the
+    #              drop two seconds later, on the defuse afterwards.
+    anchor: str = "first"
+    act: str = ""         # story act, for the log and the manifest
+
+
+@dataclass
 class Track:
     path: Path
     duration: float
     bpm: float
     beats: list[float] = field(default_factory=list)
     drop: float | None = None
+    # Every arrival in the track, biggest first: [(time, dB gained)]. `drop` is
+    # the first of these; the arrangement may aim at a later one it can reach.
+    drops: list[tuple[float, float]] = field(default_factory=list)
     strength: list[float] = field(default_factory=list)
 
     def bars(self, per_bar: int = 4) -> list[float]:
@@ -165,11 +191,75 @@ def beat_grid(env: np.ndarray, bpm: float) -> list[float]:
     return out
 
 
-def find_drop(x: np.ndarray, duration: float) -> float | None:
-    """Biggest SUSTAINED rise in loudness -- where the track arrives."""
+# A rise smaller than this is not an arrival, it is a phrase getting louder.
+DROP_MIN_GAIN = 2.0
+
+# How long an arrival takes to land. Onsets inside this of the first qualifying
+# one are the same event; beyond it they are the next bar.
+ARRIVAL_CLUSTER = 1.5
+
+
+def _arrival(db: np.ndarray, env: np.ndarray, i: int, k: int) -> float:
+    """When the track has actually ARRIVED, given a rise starting around `i`.
+
+    THE RISE IS NOT THE DROP. A sustained-rise measure peaks partway up the
+    ramp, because that is where a rising leading window differs most from a
+    flat trailing one -- so it reports the build, and the drop lands seconds
+    later. Measured on a real track: the biggest rise was reported at 20.0s,
+    where the music sits at -14.3 dB, and the actual arrival is at 25.0s at
+    -4.2 dB with an onset spike twenty times anything before it. Cutting to the
+    reported time put the beat five seconds after the kill it was supposed to
+    land on.
+
+    So: inside the window, find where the loudness has reached its plateau, and
+    take the FIRST big onset from there. Not the loudest onset in the window --
+    that can be a snare four bars into the chorus.
+    """
+    lo, hi = i, min(i + k, len(db))
+    if hi - lo < 4:
+        return i * 0.25
+    span = db[lo:hi]
+    plateau = float(np.percentile(span, 80))
+    fps = SR / HOP
+    onsets = np.array([env[min(int((j * 0.25) * fps), len(env) - 1)]
+                       for j in range(lo, hi)], dtype=np.float32)
+    if not onsets.size or onsets.max() <= 0:
+        return i * 0.25
+    strong = 0.5 * float(onsets.max())
+    qualifying = [(n, j) for n, j in enumerate(range(lo, hi))
+                  if db[j] >= plateau - 2.0 and onsets[n] >= strong]
+    if not qualifying:
+        return i * 0.25
+    # THE STRONGEST HIT IN THE FIRST CLUSTER, not the first hit in it. A drop
+    # arrives over a few hundred milliseconds -- the bass enters, then the
+    # kick lands -- and taking the first qualifying frame put the mark 0.25s
+    # BEFORE the transient a listener hears as the drop. Early reads as a
+    # mistake in a way that late does not.
+    #
+    # Still limited to the first cluster: the loudest onset anywhere in a
+    # six-second window can be a snare four bars into the chorus.
+    first = qualifying[0][1]
+    cluster = [(n, j) for n, j in qualifying if (j - first) * 0.25 <= ARRIVAL_CLUSTER]
+    n, j = max(cluster, key=lambda pair: onsets[pair[0]])
+    return j * 0.25
+
+
+def find_drops(x: np.ndarray, duration: float,
+               limit: int = 8,
+               env: np.ndarray | None = None) -> list[tuple[float, float]]:
+    """Every SUSTAINED rise in loudness, biggest first. -> [(time, dB gained)]
+
+    MORE THAN ONE, because a track has more than one. The arrangement above
+    this has a constraint the audio knows nothing about: it needs enough music
+    BEFORE the drop to hold whatever leads up to the peak. On a real track the
+    biggest rise was 20 seconds in, which is about 27 beats -- not enough to
+    hold an eight-clip build-up, and aiming at it meant deleting clips to make
+    the music fit. Handing the caller a ranked list lets it pick the biggest
+    arrival it can actually reach instead.
+    """
     win = int(SR * 0.25)
     if len(x) < win * 8:
-        return None
+        return []
     n = len(x) // win
     rms = np.sqrt((x[:n * win].reshape(n, win).astype(np.float64) ** 2).mean(axis=1))
     rms = 20 * np.log10(rms + 1e-9)
@@ -182,16 +272,36 @@ def find_drop(x: np.ndarray, duration: float) -> float | None:
     k = int(window / 0.25)
     start = max(k, int(lead / 0.25))
     if n - k <= start:
-        return None
-    best_i, best_gain = None, 0.0
-    for i in range(start, n - k):
-        gain = rms[i:i + k].mean() - rms[i - k:i].mean()
-        if gain > best_gain:
-            best_i, best_gain = i, gain
-    if best_i is None or best_gain < 2.0:      # no real arrival in this track
-        return None
-    log.info("drop at %.1fs (+%.1f dB sustained)", best_i * 0.25, best_gain)
-    return best_i * 0.25
+        return []
+    gains = [(i, float(rms[i:i + k].mean() - rms[i - k:i].mean()))
+             for i in range(start, n - k)]
+    gains.sort(key=lambda g: -g[1])
+    if env is None:
+        env = onset_envelope(x)
+
+    # Non-maximum suppression: the frames either side of a real arrival all
+    # score nearly as well, and a list of eight readings of the same moment is
+    # no more useful than one.
+    out: list[tuple[float, float]] = []
+    for i, gain in gains:
+        if gain < DROP_MIN_GAIN:
+            break
+        at = _arrival(rms, env, i, k)
+        if any(abs(at - t) < window for t, _g in out):
+            continue
+        out.append((at, gain))
+        if len(out) >= limit:
+            break
+    if out:
+        log.info("drop at %.1fs (+%.1f dB sustained)%s", out[0][0], out[0][1],
+                 f", {len(out) - 1} more later" if len(out) > 1 else "")
+    return out
+
+
+def find_drop(x: np.ndarray, duration: float) -> float | None:
+    """The biggest arrival. Kept for callers that want just the one."""
+    got = find_drops(x, duration, limit=1)
+    return got[0][0] if got else None
 
 
 def analyse(path: Path) -> Track:
@@ -201,14 +311,15 @@ def analyse(path: Path) -> Track:
     env = onset_envelope(x)
     bpm = estimate_bpm(env)
     beats = beat_grid(env, bpm)
-    drop = find_drop(x, duration)
+    drops = find_drops(x, duration, env=env)
+    drop = drops[0][0] if drops else None
     fps = SR / HOP
     strength = [float(env[min(int(b * fps), len(env) - 1)]) for b in beats] if beats else []
     log.info("%s: %.0fs, %.1f BPM, %d beats, drop=%s",
              path.name, duration, bpm, len(beats),
              f"{drop:.1f}s" if drop else "none")
     return Track(path=path, duration=duration, bpm=bpm, beats=beats,
-                 drop=drop, strength=strength)
+                 drop=drop, drops=drops, strength=strength)
 
 
 def mixed_slots(track: Track, *, beats_per_clip: int = 4,
@@ -263,29 +374,21 @@ def slots(track: Track, count: int, *, beats_per_clip: int = 4,
     return out
 
 
-def render(source: Path, plans, kills, track: Track, out: Path, *,
-           beats_per_clip: int = 4, encoder: str = "auto",
-           vertical: bool = True, lead: float = 0.45,
-           fast_from: float | None = None, fast_beats: int = 2) -> Path | None:
-    """Cut `plans` onto `track`'s beat grid and mux the music over the result.
+def _flat_layout(plans, track: Track, *, beats_per_clip: int, lead: float,
+                 fast_from: float | None, fast_beats: int) -> list[Slot]:
+    """The original arrangement: a beat grid, with the multi-kills in the fast
+    section and the best clip moved onto the drop.
 
-    Each piece is exactly one slot long and starts `lead` seconds before its
-    kill, so the CUT lands on the beat and the kill reads just after it -- the
-    ordering a montage editor uses, because a cut landing after the payoff
-    feels late even when it is mathematically on time.
-
-    The clip with the most kills is moved to whichever slot contains the drop.
+    Kept as the default because it needs nothing from the round layer -- a Delta
+    Force session has kill counts and nothing else, and this is what those are
+    worth. clips/story.arrange is the arrangement for a session that knows what
+    each of its clips MEANT.
     """
-    from . import cutter, plan as planmod
-    from .tools import ffmpeg, media_info, video_codec_args
-
-    if not plans or not track.beats:
-        return None
     full = mixed_slots(track, beats_per_clip=beats_per_clip,
                        fast_from=fast_from, fast_beats=fast_beats)
     if len(full) < 2:
         log.warning("track has no usable beat grid")
-        return None
+        return []
 
     # The fast section is where the multi-kills go: a run of short cuts each
     # landing on a kill is the payoff the section is building to, and spending
@@ -321,34 +424,111 @@ def render(source: Path, plans, kills, track: Track, out: Path, *,
         log.info("drop at %.1fs -> slot %d gets the %d-kill clip",
                  track.drop, di, best.kills)
 
-    work = out.parent / "_beat"
-    work.mkdir(parents=True, exist_ok=True)
-    pieces: list[Path] = []
     flags = [f for (_s, _l, f) in full[:len(ordered)]]
-    for i, (p, (slot_start, slot_len)) in enumerate(zip(ordered, grid), 1):
-        inside = [k for k in kills if p.start <= float(k["time"]) <= p.end]
-        if not inside:
-            continue
-        # Prefer the busiest kill in the clip, so a fast slot shows the
-        # multi-kill rather than whichever kill happened to come first.
-        anchor = float(max(inside, key=lambda k: int(k.get("count", 1)))["time"]) \
-            if flags[i - 1] else float(inside[0]["time"])
+    out: list[Slot] = []
+    for i, (p, (s0, length)) in enumerate(zip(ordered, grid)):
+        fast = flags[i]
         # On the drop the KILL itself lands on the beat, not the cut: that
         # moment is the one the whole edit is built around. A fast slot gets
         # almost no run-up either -- there is no room for it in a slot barely
         # longer than a second, and the cut IS the effect.
-        if di is not None and i - 1 == di:
+        if di is not None and i == di:
             pre = 0.0
-        elif flags[i - 1]:
-            pre = min(0.18, slot_len * 0.15)
+        elif fast:
+            pre = min(0.18, length * 0.15)
         else:
             pre = lead
-        start = max(0.0, anchor - pre)
-        piece = planmod.ClipPlan(rank=i, start=start, end=start + slot_len,
+        out.append(Slot(plan=p, start=s0, length=length, pre=pre,
+                        anchor="busiest" if fast else "first",
+                        act="drop" if i == di else
+                        ("fast" if fast else "bar")))
+    return out
+
+
+def render(source: Path, plans, kills, track: Track, out: Path, *,
+           beats_per_clip: int = 4, encoder: str = "auto",
+           vertical: bool = True, lead: float = 0.45,
+           fast_from: float | None = None, fast_beats: int = 2,
+           arc: bool = False, order: str = "story") -> Path | None:
+    """Cut `plans` onto `track`'s beat grid and mux the music over the result.
+
+    Each piece is exactly one slot long and starts `pre` seconds before its
+    kill, so the CUT lands on the beat and the kill reads just after it -- the
+    ordering a montage editor uses, because a cut landing after the payoff
+    feels late even when it is mathematically on time.
+
+    `arc=True` hands the arrangement to clips/story instead: the clips stay in
+    the order they happened and the MUSIC is offset so the drop lands on the
+    best moment. That needs clips carrying labels, so it is opt-in.
+    """
+    if not plans or not track.beats:
+        return None
+    if arc:
+        from . import story
+        slots = story.arrange(plans, track, lead=lead, order=order,
+                              kills=kills).slots
+    else:
+        slots = _flat_layout(plans, track, beats_per_clip=beats_per_clip,
+                             lead=lead, fast_from=fast_from,
+                             fast_beats=fast_beats)
+    return _cut_and_mux(source, slots, kills, track, out, encoder=encoder,
+                        vertical=vertical)
+
+
+def _cut_and_mux(source: Path, slots: list[Slot], kills, track: Track,
+                 out: Path, *, encoder: str = "auto",
+                 vertical: bool = True) -> Path | None:
+    """Cut every slot, join them hard and lay the track over the result."""
+    from . import cutter, plan as planmod
+    from .tools import ffmpeg, media_info, video_codec_args
+
+    if len(slots) < 2:
+        return None
+    # Named after the output, not a fixed "_beat". Two reels rendered into the
+    # same folder shared the directory and deleted each other's pieces on the
+    # way out -- which does not fail, it just silently produces a reel that is
+    # shorter than the arrangement it logged.
+    work = out.parent / f"_beat_{out.stem}"
+    work.mkdir(parents=True, exist_ok=True)
+    pieces: list[Path] = []
+    # Where the music has to start. Taken from the first slot actually CUT, not
+    # from the first slot planned: a clip whose kills fall outside its own
+    # window is skipped, and starting the track at its slot anyway would put
+    # the whole reel a bar out of phase with the picture.
+    music_from: float | None = None
+    for i, slot in enumerate(slots, 1):
+        p = slot.plan
+        inside = [k for k in kills if p.start <= float(k["time"]) <= p.end]
+        if not inside:
+            # Said out loud: a slot that quietly produces no piece shortens the
+            # reel against the arrangement, and the arrangement is what the log
+            # above reports.
+            log.info("slot %d (%s) has no kills inside %.1f-%.1f; skipped",
+                     i, slot.act, p.start, p.end)
+            continue
+        if music_from is None:
+            music_from = slot.start
+        if slot.anchor == "last":
+            at = inside[-1]
+        elif slot.anchor == "busiest":
+            at = max(inside, key=lambda k: int(k.get("count", 1)))
+        else:
+            at = inside[0]
+        anchor = float(at["time"])
+        start = max(0.0, anchor - slot.pre)
+        piece = planmod.ClipPlan(rank=i, start=start,
+                                 end=start + slot.length,
                                  kills=len(inside), burst_kills=p.burst_kills,
                                  peak_score=0.0, name=f"beat_{i:02d}")
-        pieces.append(cutter.master(source, piece, work, encoder=encoder,
-                                    keep_all_audio=False))
+        cut = cutter.master(source, piece, work, encoder=encoder,
+                            keep_all_audio=False)
+        got = media_info(cut)["duration"]
+        if abs(got - slot.length) > 0.25:
+            # The recording ran out, or the cut landed past the end. Either way
+            # the reel is now off the beat from here on, so it has to be said.
+            log.info("slot %d (%s) wanted %.1fs and got %.1fs from %.1f",
+                     i, slot.act, slot.length, got, start)
+        pieces.append(cut)
     if len(pieces) < 2:
         return None
 
@@ -368,7 +548,8 @@ def render(source: Path, plans, kills, track: Track, out: Path, *,
     # and the cuts share a phase.
     total = media_info(joined)["duration"]
     out.parent.mkdir(parents=True, exist_ok=True)
-    ffmpeg("-i", str(joined), "-ss", f"{grid[0][0]:.3f}", "-i", str(track.path),
+    ffmpeg("-i", str(joined), "-ss", f"{music_from or 0.0:.3f}",
+           "-i", str(track.path),
            "-map", "0:v:0", "-map", "1:a:0", "-t", f"{total:.3f}",
            *video_codec_args(encoder, cq=20),
            "-c:a", "aac", "-b:a", "192k", "-shortest",

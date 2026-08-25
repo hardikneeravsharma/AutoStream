@@ -33,6 +33,24 @@ class Engine:
         self.watcher = Watcher(config, self.index)
         self.yt = YouTube(config, self.state)
         self.obs = Obs(config)
+        # CLIPS-ONLY MODE. The state machine is the same shape either way --
+        # spot the game, hold it through arm_delay, run a session, cool down --
+        # because what changes is only what a session DOES. Off, a session is a
+        # recording and nothing else: no broadcast, no OBS stream output, no
+        # quota, no Google sign-in.
+        self.streaming = bool(getattr(config.youtube, "enabled", True))
+        if not self.streaming:
+            log.info("streaming is off: AutoStream will record and clip only")
+            if not config.record.enabled:
+                # Neither half is switched on, so a session would spot the game
+                # and then do nothing at all. Said once, loudly, at startup --
+                # the alternative is a user watching IDLE forever and
+                # reasonably concluding the app is broken.
+                log.error("streaming AND recording are both off: nothing will "
+                          "be produced. Turn on Settings > Recording.")
+                notify.toast("AutoStream has nothing to do",
+                             "Streaming is off and so is recording. Turn on "
+                             "recording to make clips.")
 
         self._phase_since = time.monotonic()
         self._switch_candidate: tuple[str, float] | None = None
@@ -46,6 +64,12 @@ class Engine:
         # Black-output watchdog; see _check_picture.
         self._blank_checked = 0.0
         self._blank_strikes = 0
+        # Screen savers: when the starting card should give way to the game,
+        # and when the ending card has been shown long enough to stop. Held by
+        # a deadline rather than a sleep, because this loop is strictly serial
+        # and sleeping in it stops the OBS watchdog and chat with it.
+        self._screen_until: float | None = None
+        self._ending_until: float | None = None
         # Set when a session ends with a recording and record.auto_scan is on.
         # The Clips job runner picks it up; the engine never scans anything
         # itself, because a multi-minute ffmpeg pass on this thread would
@@ -102,11 +126,12 @@ class Engine:
                 self.obs.stop()
             except Exception:  # noqa: BLE001
                 pass
-            try:
-                n = self.yt.sweep_orphans()
-                log.info("orphan sweep completed %d broadcast(s)", n)
-            except (NotAuthorised, Exception) as e:  # noqa: BLE001
-                log.error("orphan sweep failed: %s", e)
+            if self.streaming:
+                try:
+                    n = self.yt.sweep_orphans()
+                    log.info("orphan sweep completed %d broadcast(s)", n)
+                except (NotAuthorised, Exception) as e:  # noqa: BLE001
+                    log.error("orphan sweep failed: %s", e)
             self._journal(rec_path)
             self.state.reset_session()
             self.state.save()
@@ -170,7 +195,8 @@ class Engine:
                 return f"only {free_gb:.1f} GB free"
         except OSError:
             pass
-        if self.state.quota_left(DAILY_QUOTA) < SESSION_COST + self.cfg.rules.quota_reserve:
+        if (self.streaming and self.state.quota_left(DAILY_QUOTA)
+                < SESSION_COST + self.cfg.rules.quota_reserve):
             return f"quota too low ({self.state.quota_left(DAILY_QUOTA)} units left)"
         return None
 
@@ -225,14 +251,19 @@ class Engine:
                     self.force_stop("control panel")
                 elif cmd == "pause":
                     if not self.state.paused:
-                        self.toggle_pause()
+                        self.toggle_pause("pause button")
                 elif cmd == "resume":
                     if self.state.paused:
-                        self.state.paused = False
-                        self.state.save()
-                        notify.toast("AutoStream", "Resumed")
+                        self.toggle_pause("resume button")
+                    else:
+                        # Not paused, but possibly stopped-and-stuck. Resume is
+                        # the button a user presses to mean "carry on", so it
+                        # clears the manual-stop flag either way.
+                        self._resume()
                 elif cmd == "toggle_pause":
                     self.toggle_pause()
+                elif cmd == "kill":
+                    self.kill()
                 elif cmd == "quit":
                     self._stop_requested = True
                 else:
@@ -370,13 +401,23 @@ class Engine:
         self._last_title = title
 
         self._goto(st.STARTING)
+        if not self.streaming:
+            self._begin_recording_only(hit)
+            return
         try:
             self.yt.check_budget(SESSION_COST)
             bid = self.yt.create_broadcast(title, desc, privacy=hit.privacy)
             self.state.broadcast_id = bid
             self.state.save()
             self.yt.bind(bid, self.cfg.youtube.stream_id)
-            self.obs.start(scene=hit.scene, overlay=hit.name)
+            # Open ON the starting card where there is one. Starting on the
+            # game scene and switching a moment later shows the game for a
+            # frame or two at the top of every stream -- which is the one
+            # moment the card exists to cover.
+            from . import screens
+
+            opening = screens.ensure(self.cfg, self.obs, screens.STARTING)
+            self.obs.start(scene=opening or hit.scene, overlay=hit.name)
             self._start_recording()
             self._starting_deadline = time.monotonic() + self.cfg.timing.ingestion_timeout
             log.info("session #%d started: %s", self.state.session_number, title)
@@ -391,6 +432,32 @@ class Engine:
         except Exception as e:  # noqa: BLE001
             log.exception("session start failed: %s", e)
             self._abandon_start()
+
+    def _begin_recording_only(self, hit: GameHit) -> None:
+        """A session with no broadcast: start recording and go straight to LIVE.
+
+        No ingestion to wait for and nothing to hold in `testing`, so STARTING
+        and TESTING have nothing to do -- and a phase that exists only to be
+        skipped is a phase somebody will one day debug for an hour.
+        """
+        try:
+            self.obs.set_overlay_text(hit.name)
+        except Exception:  # noqa: BLE001
+            pass
+        self._start_recording()
+        if not self.state.recording:
+            # The whole point of the session is the recording. Without one
+            # there is nothing to clip and nothing to show, so say so rather
+            # than sitting in a LIVE phase that is not doing anything.
+            log.error("recording did not start; nothing to do without it")
+            notify.toast("AutoStream", "Could not start recording. Check OBS.")
+            self._abandon_start()
+            return
+        self._start_failures = 0
+        self._goto(st.LIVE)
+        self._show_starting()
+        log.info("recording session #%d: %s", self.state.session_number, hit.name)
+        notify.toast("AutoStream is recording", hit.name)
 
     # ---- local recording --------------------------------------------
     #
@@ -498,8 +565,10 @@ class Engine:
         try:
             from . import thumbnail
 
+            hit = self.watcher.active_game()
             path = thumbnail.build_for_session(
                 self.cfg, self.obs,
+                designated=(getattr(hit, "thumbnail", "") if hit else ""),
                 game=self.state.current_game or "",
                 username=self._username_for(self.state.current_key))
             if not path:
@@ -629,6 +698,9 @@ class Engine:
         self._go_live()
 
     def _go_live(self) -> None:
+        if not self.streaming:
+            self._goto(st.LIVE)
+            return
         try:
             self.yt.transition(self.state.broadcast_id, "live")
         except Exception as e:  # noqa: BLE001
@@ -636,6 +708,7 @@ class Engine:
             self._abandon_start()
             return
         self._goto(st.LIVE)
+        self._show_starting()
         url = self.yt.watch_url(self.state.broadcast_id)
         log.info("LIVE: %s", url)
         notify.toast("AutoStream is live", self.state.current_game or "", url)
@@ -645,6 +718,40 @@ class Engine:
                                    list(self.cfg.description.tags or []))
         except Exception:  # noqa: BLE001
             pass
+
+    # ---- screen savers ----------------------------------------------
+
+    def _show_starting(self) -> None:
+        """Open the session on the starting card, if there is one."""
+        from . import screens
+
+        if screens.show(self.cfg, self.obs, screens.STARTING):
+            self._screen_until = time.monotonic() + screens.hold_for(
+                self.cfg, screens.STARTING)
+            log.info("starting screen up for %.0fs",
+                     screens.hold_for(self.cfg, screens.STARTING))
+
+    def _back_to_game(self) -> None:
+        """Put the game scene back on air and forget any screen deadline."""
+        self._screen_until = None
+        hit = self.watcher.active_game()
+        scene = (hit.scene if hit else None) or self.cfg.obs.default_scene or None
+        if scene:
+            self.obs.set_scene(scene)
+        if hit:
+            self.obs.set_overlay_text(hit.name)
+
+    def _tick_screen(self) -> None:
+        """Hand the picture back to the game once the starting card is done.
+
+        Not while paused: the be-right-back card is held by the pause, not by a
+        timer, and this would otherwise pull it off after ten seconds.
+        """
+        if self._screen_until is None or self.state.paused:
+            return
+        if time.monotonic() >= self._screen_until:
+            log.info("starting screen done -> game scene")
+            self._back_to_game()
 
     # ---- LIVE -------------------------------------------------------
 
@@ -656,15 +763,33 @@ class Engine:
             self._goto(st.STOPPING)
             return
 
-        if self._paused() or self.state.paused:
-            log.info("pause requested while live — stopping")
+        if self._paused():
+            # The flag FILE is a different thing from the pause button: it is a
+            # "do not stream" switch meant to be left in place, so it still
+            # ends the session rather than parking it on a card.
+            log.info("pause flag file present — stopping")
             self._goto(st.STOPPING)
             return
 
-        self._check_picture()
+        if self.state.paused:
+            # PAUSE KEEPS THE BROADCAST UP. A "be right back" card is a promise
+            # to come back, and it can only be kept if there is still a stream
+            # to come back to -- so pausing changes the picture and nothing
+            # else. The picture switch itself happens in toggle_pause; here we
+            # only decline to do anything a paused stream should not do.
+            self._check_picture()
+            return
 
-        # OBS health: only give up after a sustained outage, let OBS reconnect first
-        if not self.obs.is_streaming():
+        self._check_picture()
+        self._tick_screen()
+
+        # OBS health: only give up after a sustained outage, let OBS reconnect
+        # first. With streaming off the output to watch is the RECORDING --
+        # checking is_streaming() there would report a dead output every tick
+        # and end the session after two minutes, every time.
+        alive = (self.obs.recording_active() if not self.streaming
+                 else self.obs.is_streaming())
+        if not alive:
             self._obs_down_since = self._obs_down_since or time.monotonic()
             down = time.monotonic() - self._obs_down_since
             log.warning("OBS output inactive for %.0fs", down)
@@ -675,7 +800,8 @@ class Engine:
         else:
             self._obs_down_since = None
 
-        self._poll_live_extras()
+        if self.streaming:
+            self._poll_live_extras()
 
         hit = self.watcher.active_game()
         if hit is None:
@@ -752,6 +878,11 @@ class Engine:
         self.obs.set_scene(hit.scene)
         self.obs.set_overlay_text(hit.name)
 
+        if not self.streaming:
+            # Nothing to retitle and nothing to restart. The recording carries
+            # on across the switch, and history.jsonl already records every
+            # game a session covered.
+            return
         if self.cfg.youtube.switch_policy == "new_broadcast":
             self._restart_broadcast(hit)
             return
@@ -802,15 +933,33 @@ class Engine:
     # ---- STOPPING ---------------------------------------------------
 
     def _tick_stopping(self) -> None:
+        # The ending card, held before anything is torn down. This is the only
+        # window in which it can be seen at all: afterwards the broadcast is
+        # complete and there is nothing to show it on.
+        from . import screens
+
+        if self._ending_until is None and screens.configured(
+                self.cfg, screens.ENDING) and self.state.broadcast_id:
+            if screens.show(self.cfg, self.obs, screens.ENDING):
+                hold = screens.hold_for(self.cfg, screens.ENDING)
+                self._ending_until = time.monotonic() + hold
+                log.info("ending screen up for %.0fs before stopping", hold)
+                return
+        if self._ending_until is not None:
+            if time.monotonic() < self._ending_until:
+                return
+            self._ending_until = None
+
         bid = self.state.broadcast_id
         # Stop recording BEFORE the stream: stop_record() is the only thing
         # that reports the filename, and OBS needs the output closed before
         # the container is finalised and its size is meaningful.
         rec_path = self._stop_recording()
-        try:
-            self.obs.stop()
-        except Exception as e:  # noqa: BLE001
-            log.warning("OBS stop failed: %s", e)
+        if self.streaming:
+            try:
+                self.obs.stop()
+            except Exception as e:  # noqa: BLE001
+                log.warning("OBS stop failed: %s", e)
         if bid:
             try:
                 self.yt.transition(bid, "complete")
@@ -830,6 +979,8 @@ class Engine:
         self._goto(st.IDLE)
         self._obs_down_since = None
         self._switch_candidate = None
+        self._screen_until = None
+        self._ending_until = None
         self.viewers = self.likes = self.views = None
         self.obs_health = {}
         self.chat.clear()
@@ -873,11 +1024,77 @@ class Engine:
                 log.info("%s will not restart streaming until you close it",
                          hit.name)
 
-    def toggle_pause(self) -> bool:
+    def toggle_pause(self, reason: str = "pause button") -> bool:
+        """Pause or resume. -> whether it is now paused.
+
+        PAUSING A LIVE SESSION KEEPS IT LIVE and puts the be-right-back card on
+        air. That is what pause means to a viewer: a promise to come back, and
+        one that can only be kept if there is still a broadcast to come back to.
+        Ending it and starting a fresh one loses the URL, the chat and everyone
+        watching.
+
+        Without a card configured there is nothing to switch TO, so a live
+        session is stopped instead -- a paused stream showing the game is not
+        paused, it is just unattended.
+
+        PAUSING DOES NOT SUPPRESS THE RUNNING GAME either way. `force_stop`
+        marks every open game "do not restart" because a human pressing End
+        stream means "stop streaming THIS", and that flag is only cleared when
+        the game exits -- so borrowing it for pause meant Resume did nothing at
+        all and the only way out was to close the game.
+        """
+        from . import screens
+
         self.state.paused = not self.state.paused
         self.state.save()
-        log.warning("paused=%s", self.state.paused)
-        notify.toast("AutoStream", "Paused" if self.state.paused else "Resumed")
-        if self.state.paused:
-            self.force_stop("kill switch")
-        return self.state.paused
+        log.warning("paused=%s (%s)", self.state.paused, reason)
+
+        if not self.state.paused:
+            self._resume()
+            notify.toast("AutoStream", "Resumed")
+            return False
+
+        live = self.state.phase in (st.LIVE, st.TESTING)
+        if live and screens.show(self.cfg, self.obs, screens.PAUSED):
+            self._screen_until = None      # held by the pause, not by a timer
+            log.info("be right back: the broadcast stays up")
+            notify.toast("AutoStream paused", "Be right back is on air")
+            return True
+        if live:
+            log.info("no be-right-back screen configured, so pausing stops the "
+                     "session instead")
+        notify.toast("AutoStream", "Paused")
+        self.force_stop(reason, suppress=False)
+        return True
+
+    def kill(self, reason: str = "kill switch") -> None:
+        """Stop everything now, and stay stopped. The hotkey's job.
+
+        Kept separate from pause now that pause holds a stream up rather than
+        ending it. A kill switch that parks the stream on a card is not a kill
+        switch, and the hotkey is documented as one.
+        """
+        log.warning("kill switch: %s", reason)
+        notify.toast("AutoStream", "Stopped by the kill switch")
+        self.state.paused = True
+        self.state.save()
+        self.force_stop(reason, suppress=False)
+
+    def _resume(self) -> None:
+        """Undo everything pausing put in the way of carrying on.
+
+        Two different situations, and both arrive here: a session still LIVE on
+        the be-right-back card just needs the game scene back, and one that was
+        stopped needs the flags clearing so it can start again.
+        """
+        if self.state.phase in (st.LIVE, st.TESTING):
+            self._back_to_game()
+            log.info("resumed: back to the game scene")
+        for exe, intent in list(self.launch_intent.items()):
+            if intent == "stopped":
+                self.launch_intent.pop(exe, None)
+                log.info("%s may stream again", exe)
+        # A fresh arm_delay rather than an expired timer inherited from before
+        # the pause, which could otherwise start a session the same tick.
+        self.watcher.reset_debounce()
+        self.blocked_reason = None

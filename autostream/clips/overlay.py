@@ -46,7 +46,23 @@ CAPTION_Y = 0.15
 BRAND_Y = 0.855
 SAFE_X = 0.055
 
-CAPTION_SECONDS = 2.6      # long enough to read, short enough not to nag
+# 0 means the whole clip. It was 2.6 seconds on the reasoning that a caption
+# has done its job by then and afterwards only covers the gameplay it is
+# advertising -- but a Short is watched on a loop and scrubbed into halfway
+# through, and a viewer arriving at second eight then has nothing telling them
+# what they are looking at. The caption sits in the blurred bar above the
+# picture anyway, so it costs no gameplay to leave it up.
+CAPTION_SECONDS = 0.0
+
+# The spoken hook, written out underneath. Placed BELOW the picture rather than
+# over it: in "fit" verticals the gameplay occupies roughly the middle third and
+# everything from 0.68 down is blurred backdrop, so this lands in empty space
+# and still clears the branding at 0.855.
+SUB_Y = 0.715
+SUB_WRAP = 30              # characters per line before wrapping
+SUB_FADE_IN = 0.25
+SUB_HOLD = 0.35            # stays this long after the voice stops
+SUB_FADE_OUT = 0.55
 
 
 def _font(names) -> str | None:
@@ -62,6 +78,25 @@ def _esc(path: str) -> str:
     path has to become C\:/Windows/Fonts/impact.ttf or the filtergraph fails
     to parse with an error that blames the wrong thing."""
     return path.replace("\\", "/").replace(":", r"\:")
+
+
+def _wrap(text: str, width: int = SUB_WRAP) -> str:
+    """Break a hook into lines that fit the frame.
+
+    Greedy, and deliberately not clever: these are two short clauses, so the
+    only thing that matters is that a forty-character line does not run off
+    both edges of a 1080-wide frame.
+    """
+    words, lines, line = str(text or "").split(), [], ""
+    for w in words:
+        if line and len(line) + 1 + len(w) > width:
+            lines.append(line)
+            line = w
+        else:
+            line = f"{line} {w}".strip()
+    if line:
+        lines.append(line)
+    return "\n".join(lines)
 
 
 def _text(s: str) -> str:
@@ -172,12 +207,35 @@ def tags_for(plan, kills) -> list[str]:
     return out
 
 
+# How a round label reads when it is burned onto the picture. Only the ones
+# that need reordering are here; every other label is already a caption.
+CAPTIONS: tuple[tuple[str, str], ...] = (
+    (r"^CLUTCH 1v(?P<n>\d+)$", "1v{n} CLUTCH"),
+    (r"^ALMOST 1v(?P<n>\d+)$", "ALMOST A 1v{n}"),
+    (r"^(?P<n>\d+)K IN (?P<s>\d+)s$", "{n}K IN {s} SECONDS"),
+)
+
+
 def caption_for(plan, kills, extra: list[str] | None = None) -> str:
     """The line burned onto the clip. Empty means no caption is drawn.
 
     Deliberately conservative: a wrong caption is worse than none, because it
     is the one part of the clip a viewer reads as a factual claim.
+
+    THE LABEL WINS WHERE THERE IS ONE. A round clip already knows what it was,
+    and counting its kills instead produced exactly the wrong claim: a 1v2
+    clutch containing three kills was captioned "TRIPLE KILL", which is true
+    about the kill count and wrong about the clip.
     """
+    import re
+
+    for label in (getattr(plan, "labels", None) or []):
+        for pattern, template in CAPTIONS:
+            m = re.match(pattern, label.strip(), re.IGNORECASE)
+            if m:
+                return template.format(**m.groupdict())
+        return label.strip().upper()
+
     tags = set(tags_for(plan, kills)) | set(extra or [])
     n = getattr(plan, "kills", len(kills))
 
@@ -264,8 +322,15 @@ def brand_logo() -> Path | None:
 
 
 def build_filter(width: int, height: int, caption: str, handle: str,
-                 logo: Path | None, logo_h: int) -> tuple[str, list[str]]:
-    """-> (filtergraph, extra ffmpeg inputs)."""
+                 logo: Path | None, logo_h: int, *,
+                 caption_seconds: float = CAPTION_SECONDS,
+                 sub_file: Path | None = None,
+                 sub_until: float = 0.0) -> tuple[str, list[str]]:
+    """-> (filtergraph, extra ffmpeg inputs).
+
+    `sub_file` holds the spoken hook, already wrapped; `sub_until` is when the
+    voice stops saying it.
+    """
     parts: list[str] = []
     inputs: list[str] = []
     label = "0:v"
@@ -296,17 +361,47 @@ def build_filter(width: int, height: int, caption: str, handle: str,
     cf = _font(_CAPTION_FONTS)
     if caption and cf:
         size = max(48, int(height * 0.052))
-        # enable= keeps it to the opening seconds: it has done its job by then,
-        # and a caption sitting over the whole clip covers the gameplay it is
-        # advertising.
+        gate = (f":enable='lt(t,{caption_seconds})'"
+                if caption_seconds and caption_seconds > 0 else "")
         parts.append(
             f"[{label}]drawtext=fontfile='{_esc(cf)}':text='{_text(caption)}'"
             f":fontcolor=white:fontsize={size}"
             f":borderw={max(3, size // 22)}:bordercolor=black@0.9"
             f":shadowcolor=black@0.6:shadowx=3:shadowy=3"
             f":x=(w-text_w)/2:y={int(height * CAPTION_Y)}"
-            f":enable='lt(t,{CAPTION_SECONDS})'[c]")
+            f"{gate}[c]")
         label = "c"
+
+    sf = _font(_HANDLE_FONTS)
+    if sub_file and sub_until > 0 and sf:
+        size = max(34, int(height * 0.030))
+        # Timing comes from the voice: it appears with the first word and
+        # leaves once the line has been said, because a subtitle still sitting
+        # there in silence is just a second caption.
+        t0 = 0.0
+        t1 = max(t0 + 0.4, float(sub_until)) + SUB_HOLD
+        alpha = (f"if(lt(t,{t0 + SUB_FADE_IN:.2f}),(t-{t0:.2f})/{SUB_FADE_IN},"
+                 f"if(lt(t,{t1:.2f}),1,"
+                 # Commas need no escaping inside a quoted option value --
+                 # `enable='lt(t,2.6)'` above has always relied on that.
+                 f"max(0,1-(t-{t1:.2f})/{SUB_FADE_OUT})))")
+        # textfile, not text=: the hook is a real sentence with apostrophes and
+        # commas in it and may be two lines, and every one of those needs
+        # escaping through two layers of filtergraph parsing if it is inlined.
+        parts.append(
+            f"[{label}]drawtext=fontfile='{_esc(sf)}'"
+            f":textfile='{_esc(str(sub_file))}'"
+            # line_spacing 0 and text_align=C: drawtext left-aligns a
+            # multi-line block by default and its default leading leaves a gap
+            # you could park a third line in, so a two-clause hook came out
+            # ragged and double-spaced.
+            f":fontcolor=white:fontsize={size}:line_spacing=0:text_align=C"
+            f":box=1:boxcolor=black@0.55:boxborderw={size // 2}"
+            f":borderw=0:shadowcolor=black@0.7:shadowx=2:shadowy=2"
+            f":x=(w-text_w)/2:y={int(height * SUB_Y)}"
+            f":alpha='{alpha}'"
+            f":enable='lt(t,{t1 + SUB_FADE_OUT:.2f})'[s]")
+        label = "s"
 
     if not parts or label == "0:v":
         return "", []
@@ -321,23 +416,48 @@ def build_filter(width: int, height: int, caption: str, handle: str,
 
 def apply(src: Path, out: Path, *, caption: str, handle: str = "@YuvaNeta",
           logo: Path | None = None, encoder: str = "auto",
-          cq: int = 20) -> Path:
-    """Burn caption + branding onto a finished vertical clip."""
+          cq: int = 20, subtitle: str = "", subtitle_until: float = 0.0,
+          caption_seconds: float = CAPTION_SECONDS) -> Path:
+    """Burn caption, branding and the spoken hook onto a vertical clip.
+
+    `subtitle` is what the voice says and `subtitle_until` is when it stops --
+    so this has to run AFTER the speech has been synthesised and before it is
+    mixed in. Doing it in that order also means the clip is encoded once
+    rather than twice: mixing the audio afterwards copies the video through.
+    """
     from .tools import media_info
 
     info = media_info(src)
     w, h = info["width"], info["height"]
     logo = logo if logo is not None else brand_logo()
-    graph, extra = build_filter(w, h, caption, handle, logo,
-                                logo_h=max(72, int(h * 0.062)))
     out.parent.mkdir(parents=True, exist_ok=True)
-    if not graph:
-        log.warning("nothing to draw; copying instead")
-        ffmpeg("-i", str(src), "-c", "copy", "-y", str(out))
-        return out
 
-    ffmpeg("-i", str(src), *extra,
-           "-filter_complex", graph, "-map", "[vout]", "-map", "0:a:0",
-           *video_codec_args(encoder, cq=cq),
-           "-c:a", "copy", "-movflags", "+faststart", "-y", str(out))
+    sub_file = None
+    if subtitle and subtitle_until > 0:
+        sub_file = out.with_suffix(".sub.txt")
+        # newline is forced to \n, and it matters: Python translates
+        # \n to \r\n on Windows by default, and drawtext renders that
+        # carriage return as a line of its own -- so a two-line hook came
+        # out double-spaced with a blank line through the middle of the
+        # box, while a one-line hook looked perfect.
+        sub_file.write_text(_wrap(subtitle), encoding="utf-8",
+                            newline="\n")
+    try:
+        graph, extra = build_filter(w, h, caption, handle, logo,
+                                    logo_h=max(72, int(h * 0.062)),
+                                    caption_seconds=caption_seconds,
+                                    sub_file=sub_file,
+                                    sub_until=subtitle_until)
+        if not graph:
+            log.warning("nothing to draw; copying instead")
+            ffmpeg("-i", str(src), "-c", "copy", "-y", str(out))
+            return out
+
+        ffmpeg("-i", str(src), *extra,
+               "-filter_complex", graph, "-map", "[vout]", "-map", "0:a:0",
+               *video_codec_args(encoder, cq=cq),
+               "-c:a", "copy", "-movflags", "+faststart", "-y", str(out))
+    finally:
+        if sub_file is not None:
+            sub_file.unlink(missing_ok=True)
     return out

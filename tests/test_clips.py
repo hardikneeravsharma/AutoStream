@@ -22,7 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from autostream import history, paths  # noqa: E402
-from autostream.clips import montage, plan  # noqa: E402
+from autostream.clips import montage, plan, profiles  # noqa: E402
 from autostream.clips.profiles import Profile  # noqa: E402
 
 
@@ -688,3 +688,64 @@ def test_the_game_can_be_corrected_across_path_separators(tmp_path, monkeypatch)
     assert row["game"] == "Delta Force"
     assert row["game_key"] == "df.exe"
     assert row["game_uncertain"] is False        # a hand correction is trusted
+
+
+# ------------------------------------------------------- per-game clip padding
+#
+# The styles in plan.py are measured against short-form retention and are right
+# for a respawn shooter. A game whose kill ends a slow approach, and whose kill
+# feed outlives the kill by seconds, needs more room at both ends -- so a
+# profile can raise the floor.
+
+def test_a_profile_can_raise_the_run_up_and_the_tail():
+    p = profiles.Profile(key="x.exe", label="X", band=(0, 0, 1, 1),
+                         template="", pre_roll_min=3.0, tail_min=4.0)
+    assert p.padding(1.5, 2.0) == (3.0, 4.0)
+
+
+def test_padding_is_a_floor_and_never_shortens_a_longer_style():
+    # "Full context" asks for 6s of run-up. A game floor of 3 must not cut it.
+    p = profiles.Profile(key="x.exe", label="X", band=(0, 0, 1, 1),
+                         template="", pre_roll_min=3.0, tail_min=4.0)
+    assert p.padding(6.0, 8.0) == (6.0, 8.0)
+
+
+def test_a_game_with_no_floor_gets_exactly_what_was_asked_for():
+    p = profiles.Profile(key="x.exe", label="X", band=(0, 0, 1, 1),
+                         template="")
+    assert p.padding(1.5, 2.0) == (1.5, 2.0)
+
+
+def test_counter_strike_asks_for_more_room_than_short_form_gives():
+    """Real clips from a 45-minute CS2 session came out FOUR SECONDS long.
+
+    Two measurements say why that is wrong for this game and not for Delta
+    Force: the feed row naming your kill lives a median of 5s, so a 2s tail
+    cuts mid-announcement, and there is no respawn, so a kill is the end of an
+    approach that 1.5s of run-up does not show.
+    """
+    cs2 = profiles.for_game("cs2.exe", "Counter-Strike 2")
+    assert cs2 is not None
+    pre, tail = cs2.padding(1.5, 2.0)
+    assert pre >= 3.0 and tail >= 4.0
+    # ...and a single-kill short-form clip is no longer a four-second stub.
+    got = plan.build([{"time": 100.0, "end": 100.0}], game="CS2", min_kills=1,
+                     clip_seconds="15", pre_roll=pre, tail=tail)[0]
+    assert got.duration >= 7.0
+
+
+def test_delta_force_is_left_alone():
+    # Its 1.5s/2.0s were measured on its own footage and verified by eye.
+    df = profiles.for_game("deltaforceclient.exe", "Delta Force")
+    assert df.padding(1.5, 2.0) == (1.5, 2.0)
+
+
+def test_the_padding_floors_survive_the_yaml_round_trip(tmp_path,
+                                                        monkeypatch):
+    monkeypatch.setattr(paths, "CLIP_PROFILES", tmp_path / "p.yaml")
+    p = profiles.Profile(key="x.exe", label="X", band=(0.1, 0.2, 0.3, 0.4),
+                         template="t.npy", pre_roll_min=3.0, tail_min=4.0)
+    profiles.save(p)
+    back = profiles.load_all().get("x.exe")
+    assert back is not None
+    assert back.pre_roll_min == 3.0 and back.tail_min == 4.0

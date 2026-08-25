@@ -7,6 +7,7 @@ several of these were only found by auditing real output.
 """
 from __future__ import annotations
 
+import pathlib
 import sys
 from pathlib import Path
 
@@ -293,6 +294,21 @@ def test_a_round_that_matches_several_things_is_still_one_clip():
     assert rounds.rank_of(r.labels) == 0, "an ace should name the clip"
 
 
+def test_labels_come_out_strongest_first():
+    """Everything downstream takes labels[0] as "what this round was".
+
+    The filename, the burned caption and the spoken hook all do. Before this
+    they took whichever label was appended first, so a kill through smoke in a
+    fast, bloody round came out named CHAOS -- because CHAOS is tested earlier
+    in label().
+    """
+    r = _labelled(my_kills=1, total_kills=9, ended=30.0,
+                  kill_times=[10.0], flags=["smoke"], source="demo")
+    assert set(r.labels) == {"CHAOS", "THROUGH SMOKE"}
+    assert r.labels[0] == "THROUGH SMOKE"
+    assert rounds.rank_of(r.labels) == rounds.rank_of([r.labels[0]])
+
+
 def test_highlights_are_ordered_by_what_is_worth_watching():
     ace = _labelled(my_kills=5)
     clutch = _labelled(my_kills=2, last_stand_at=1.0, enemies_at_last_stand=2)
@@ -477,3 +493,206 @@ def test_both_crops_get_the_same_number_of_frames(tmp_path):
         assert len(feed) <= 8, f"{len(feed)} frames for a 4-second span"
     finally:
         shutil.rmtree(out, ignore_errors=True)
+
+
+# ------------------------------------------------- rounds built from a demo
+#
+# The pixel path infers all of this. These pin what changes when it does not
+# have to: the numbers become exact, and two labels become possible that no
+# detector could ever support.
+
+class _K:
+    """A cs2_demo.Kill, minus the import."""
+    def __init__(self, time, round, killer, victim, killer_side="CT",
+                 victim_side="T", **kw):
+        self.time, self.round = time, round
+        self.killer, self.victim = killer, victim
+        self.killer_side, self.victim_side = killer_side, victim_side
+        self.weapon = kw.get("weapon", "ak47")
+        self.headshot = kw.get("headshot", False)
+        self.thrusmoke = kw.get("thrusmoke", False)
+        self.blinded = kw.get("blinded", False)
+        self.penetrated = kw.get("penetrated", False)
+        self.noscope = kw.get("noscope", False)
+        self.assister = kw.get("assister", "")
+        self.flash_assist = kw.get("flash_assist", False)
+
+
+class _R:
+    def __init__(self, number, live, end, winner="CT", reason="t_killed"):
+        self.number, self.live, self.end = number, live, end
+        self.start = live - 20.0
+        self.winner, self.reason = winner, reason
+
+    @property
+    def opens_at(self):
+        return self.live
+
+
+class _M:
+    def __init__(self, rounds, kills, teams, match_point=None):
+        self.path = pathlib.Path("x.dem")
+        self.rounds, self.kills, self.teams = rounds, kills, teams
+        self.match_point = match_point
+
+    def team_of(self, player, round_no):
+        want = player.casefold()
+        for n in sorted((n for n in self.teams if n <= round_no), reverse=True):
+            for who, side in self.teams[n].items():
+                if who.casefold() == want:
+                    return side
+        return ""
+
+    def by(self, who):
+        return [k for k in self.kills if k.killer.casefold() == who.casefold()]
+
+
+class _S:
+    """An aligned Sync: demo time plus a fixed offset."""
+    ok = True
+    why = "aligned"
+
+    def __init__(self, offset=100.0):
+        self.offset = offset
+
+    def to_vod(self, t):
+        return t + self.offset
+
+
+ME = "ME"
+FIVE = {n: {ME: "CT", "mate": "CT", "m2": "CT", "m3": "CT", "m4": "CT",
+            "e1": "T", "e2": "T", "e3": "T", "e4": "T", "e5": "T"}
+        for n in range(1, 30)}
+
+
+def test_a_demo_round_lands_in_recording_time_not_demo_time():
+    m = _M([_R(1, 20.0, 80.0)], [_K(30.0, 1, ME, "e1")], FIVE)
+    rd = rounds.from_demo(m, ME, _S(100.0))[0]
+    assert rd.started == pytest.approx(120.0)     # freeze end + offset
+    assert rd.ended == pytest.approx(180.0)
+    assert rd.kill_times == [pytest.approx(130.0)]
+    assert rd.source == "demo"
+
+
+def test_an_unaligned_demo_is_refused_rather_than_placed_anywhere():
+    """A wrong offset does not fail loudly, it mis-cuts every clip in the match."""
+    class Bad:
+        ok = False
+        why = "only 2 of 20 kills line up"
+
+        def to_vod(self, t):
+            return t
+
+    m = _M([_R(1, 20.0, 80.0)], [], FIVE)
+    with pytest.raises(ValueError, match="not aligned"):
+        rounds.from_demo(m, ME, Bad())
+
+
+def test_the_win_comes_from_the_demos_own_winner_and_my_side():
+    m = _M([_R(1, 20.0, 80.0, winner="CT"), _R(2, 120.0, 180.0, winner="T")],
+           [], FIVE)
+    got = rounds.from_demo(m, ME, _S(0.0))
+    assert [r.won for r in got] == [True, False]
+    assert got[1].score_after == (1, 1)          # (mine, theirs)
+
+
+def test_alive_counts_are_counted_down_not_inferred():
+    """1vN is arithmetic here.
+
+    On the pixel path the alive counts are OCR'd digits and the player's own
+    side is a majority vote over their deaths; here every death names the side
+    that lost a player.
+    """
+    kills = [_K(30.0, 1, "e1", "mate", "T", "CT"),
+             _K(31.0, 1, "e1", "m2", "T", "CT"),
+             _K(32.0, 1, "e2", "m3", "T", "CT"),
+             _K(33.0, 1, "e2", "m4", "T", "CT"),
+             _K(40.0, 1, ME, "e1"), _K(41.0, 1, ME, "e2")]
+    rd = rounds.from_demo(_M([_R(1, 20.0, 80.0)], kills, FIVE), ME, _S(0.0))[0]
+    assert rd.min_my_alive == 1
+    assert rd.enemies_at_last_stand == 5         # nobody of theirs down yet
+    assert rd.last_stand_at == pytest.approx(33.0)
+    assert rd.my_kills == 2
+    assert "CLUTCH 1v5" in rd.labels
+
+
+def test_the_last_stand_is_not_claimed_while_the_player_is_dead():
+    """The pixel path needs a separate check for this.
+
+    Its counters cannot tell the last team-mate alive from the player being
+    the last one alive, because the player is watching either way.
+    """
+    kills = [_K(30.0, 1, "e1", ME, "T", "CT"),
+             _K(31.0, 1, "e1", "mate", "T", "CT"),
+             _K(32.0, 1, "e2", "m2", "T", "CT"),
+             _K(33.0, 1, "e2", "m3", "T", "CT")]
+    rd = rounds.from_demo(_M([_R(1, 20.0, 80.0)], kills, FIVE), ME, _S(0.0))[0]
+    assert rd.min_my_alive == 1
+    assert rd.last_stand_at is None
+
+
+def test_a_lost_last_stand_with_no_kills_earns_nothing():
+    """Found by reading a real demo.
+
+    A round came out labelled "ALMOST 1v4" in which the player did nothing at
+    all and then died. The pixel path could not surface it, because it needed
+    kills to infer the alive counts in the first place.
+    """
+    kills = [_K(t, 1, "e1", who, "T", "CT") for t, who in
+             ((30.0, "mate"), (31.0, "m2"), (32.0, "m3"), (33.0, "m4"),
+              (50.0, ME))]
+    rd = rounds.from_demo(_M([_R(1, 20.0, 80.0, winner="T", reason="ct_killed")],
+                             kills, FIVE), ME, _S(0.0))[0]
+    assert rd.enemies_at_last_stand == 5
+    assert rd.labels == []
+
+
+def test_the_side_swap_moves_the_half_and_the_pistol_round():
+    teams = {1: dict(FIVE[1])}
+    teams[3] = {ME: "T", "mate": "T", "e1": "CT"}
+    m = _M([_R(1, 20.0, 80.0), _R(2, 120.0, 180.0), _R(3, 220.0, 280.0)],
+           [], teams)
+    got = rounds.from_demo(m, ME, _S(0.0))
+    assert [r.half for r in got] == [0, 0, 1]
+    assert [r.pistol for r in got] == [True, False, True]
+
+
+def test_circumstances_only_a_demo_can_see_become_labels():
+    kills = [_K(30.0, 1, ME, "e1", thrusmoke=True)]
+    rd = rounds.from_demo(_M([_R(1, 20.0, 80.0)], kills, FIVE), ME, _S(0.0))[0]
+    assert rd.flags == ["smoke"]
+    assert "THROUGH SMOKE" in rd.labels
+
+
+def test_a_headshot_is_not_a_label_because_it_is_not_rare():
+    # 48 of 115 kills in one real match. A label every other kill is not a
+    # highlight, it is noise.
+    kills = [_K(30.0, 1, ME, "e1", headshot=True)]
+    rd = rounds.from_demo(_M([_R(1, 20.0, 80.0)], kills, FIVE), ME, _S(0.0))[0]
+    assert rd.headshots == 1
+    assert rd.labels == []
+
+
+def test_a_win_after_three_losses_is_a_streak_breaker():
+    rs = [_R(1, 20.0, 80.0, winner="T"), _R(2, 120.0, 180.0, winner="T"),
+          _R(3, 220.0, 280.0, winner="T"), _R(4, 320.0, 380.0, winner="CT")]
+    kills = [_K(330.0, 4, ME, "e1")]
+    got = rounds.from_demo(_M(rs, kills, FIVE), ME, _S(0.0))
+    assert got[3].broke_streak == 3
+    assert "STREAK BREAKER" in got[3].labels
+    assert all("STREAK BREAKER" not in r.labels for r in got[:3])
+
+
+def test_match_point_is_read_off_the_demo_not_counted_up():
+    rs = [_R(1, 20.0, 80.0), _R(2, 120.0, 180.0)]
+    kills = [_K(130.0, 2, ME, "e1")]
+    got = rounds.from_demo(_M(rs, kills, FIVE, match_point=2), ME, _S(0.0))
+    assert got[1].match_point and "MATCH POINT" in got[1].labels
+    assert not got[0].match_point
+
+
+def test_a_round_nobody_can_place_the_player_in_is_skipped():
+    # Better than guessing a side: the side decides the win, and a wrong win
+    # takes every label that depends on it with it.
+    m = _M([_R(1, 20.0, 80.0)], [], {})
+    assert rounds.from_demo(m, ME, _S(0.0)) == []

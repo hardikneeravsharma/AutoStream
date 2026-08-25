@@ -18,6 +18,7 @@ import logging.handlers
 import signal
 import sys
 import time
+from pathlib import Path
 
 from . import cfg, paths
 
@@ -236,6 +237,51 @@ def _engine_loop(engine, tray, interval, log) -> None:
         time.sleep(interval)
 
 
+def cmd_voice(args) -> int:
+    """Check, fetch or try out the spoken-hook voice.
+
+    A separate command because the model is a 177 MB download and nothing
+    should ever start one on its own. Clip jobs simply stay silent until this
+    has been run.
+    """
+    from .clips import voice
+
+    if args.download:
+        def show(name, done, total):
+            pct = 100 * done / total if total else 0
+            print(f"\r  {name}  {done / 1e6:6.0f} / {total / 1e6:.0f} MB "
+                  f"({pct:3.0f}%)", end="", flush=True)
+        try:
+            for path in voice.download(progress=show):
+                print(f"\r  {path.name}  done" + " " * 24)
+        except Exception as e:                     # noqa: BLE001
+            print(f"download failed: {e}")
+            return 1
+
+    if not voice.available():
+        print(voice.why_not())
+        print("\nRun  python -m autostream voice --download  to fetch it.")
+        return 1
+
+    print(f"Kokoro is ready in {voice.MODEL_DIR}")
+    print(f"the clips currently use {voice.VOICE}")
+    if args.list_voices:
+        for group, names in voice.catalogue().items():
+            print(f"\n  {group}")
+            print("    " + ", ".join(names))
+        print(f"\n  set one with  clips.voice_name  in config.yaml")
+    if args.sample:
+        out = Path(args.out or (voice.MODEL_DIR / "samples"))
+        out.mkdir(parents=True, exist_ok=True)
+        made = voice.samples(out, args.say or "")
+        print(f"{len(made)} samples in {out}")
+    elif args.say:
+        out = Path(args.out or "hook.wav")
+        got = voice.say(args.say, out, voice=args.voice or voice.VOICE)
+        print(f"said {args.say!r} -> {got.path} ({got.duration:.1f}s)")
+    return 0
+
+
 def cmd_run(args) -> int:
     """Main entry: web UI + native window + overlay + tray + engine.
 
@@ -318,7 +364,10 @@ def cmd_run(args) -> int:
             try:
                 import keyboard
 
-                keyboard.add_hotkey(hotkey, lambda: engine.submit("toggle_pause"))
+                # "kill", not "toggle_pause": pause now holds a live stream on
+                # the be-right-back card instead of ending it, and a kill
+                # switch that does that is not a kill switch.
+                keyboard.add_hotkey(hotkey, lambda: engine.submit("kill"))
                 log.info("kill switch hotkey: %s", hotkey)
             except Exception as e:  # noqa: BLE001
                 log.info("hotkey unavailable (%s) - use the tray icon", e)
@@ -398,12 +447,26 @@ def main(argv=None) -> int:
         ("run", cmd_run, "run the daemon"),
         ("status", cmd_status, "print current state"),
         ("stop", cmd_stop, "force-stop the current stream"),
+        ("voice", cmd_voice, "check or download the spoken-hook voice model"),
     ):
         sp = sub.add_parser(name, help=helptext, parents=[common])
         sp.set_defaults(func=fn, no_panel=False)
         if name == "run":
             sp.add_argument("--no-panel", action="store_true",
                             help="run without the control panel window")
+        if name == "voice":
+            sp.add_argument("--download", action="store_true",
+                            help="fetch the Kokoro model (177 MB)")
+            sp.add_argument("--say", metavar="TEXT",
+                            help="synthesise one line to a wav and stop")
+            sp.add_argument("--out", metavar="FILE",
+                            help="where --say writes (default hook.wav)")
+            sp.add_argument("--voice", metavar="NAME",
+                            help="which voice --say uses")
+            sp.add_argument("--list-voices", action="store_true",
+                            help="print every English voice, grouped")
+            sp.add_argument("--sample", action="store_true",
+                            help="render one wav per voice, to choose by ear")
 
     args = p.parse_args(argv)
     if not getattr(args, "func", None):

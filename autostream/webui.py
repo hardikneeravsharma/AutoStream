@@ -42,9 +42,17 @@ _TAIL_CHUNK = 65536
 
 
 def is_configured() -> bool:
-    """Setup is done when we have a token AND a permanent stream."""
+    """Setup is done when we have a token AND a permanent stream.
+
+    ...unless streaming is off, in which case there is nothing to sign in to
+    and nothing to bind. Sending a clips-only user through a Google OAuth flow
+    to reach a page that cuts video files locally is the kind of thing that
+    makes people close the app.
+    """
     try:
         c = cfg.load()
+        if not getattr(c.youtube, "enabled", True):
+            return True
         return bool(c.youtube.stream_id) and paths.TOKEN_FILE.exists()
     except Exception:  # noqa: BLE001
         return False
@@ -335,6 +343,43 @@ class _Handler(BaseHTTPRequestHandler):
                 prof = _pf.for_game(key, name)
                 self._json({"ok": ok, "profile": prof.label if prof else None}
                            if ok else {"error": "no matching session"})
+            elif p == "/api/games/thumbnail":
+                key = str(b.get("key", "")).strip().lower()
+                path = str(b.get("path", "")).strip().strip('"')
+                if not key:
+                    self._json({"error": "no game given"}, 400)
+                    return
+                if path and not Path(path).is_file():
+                    self._json({"error": f"no file at {path}"}, 400)
+                    return
+                ok = cfg.save_game_field(key, "thumbnail", path)
+                self._json({"ok": ok, "path": path}
+                           if ok else {"error": "could not save"})
+            elif p == "/api/se/connect":
+                from . import streamelements as se
+
+                jwt = str(b.get("jwt", "")).strip()
+                if not jwt:
+                    self._json({"error": "no token given"}, 400)
+                    return
+                if not se.save_credentials(jwt, str(b.get("channel_id", "")),
+                                           str(b.get("overlay_token", ""))):
+                    self._json({"error": "That does not look like a "
+                                         "StreamElements token."}, 400)
+                    return
+                self._json(se.listing())
+            elif p == "/api/se/overlays":
+                from . import streamelements as se
+
+                if not se.available():
+                    self._json({"error": "no token stored", "overlays": []})
+                    return
+                out = se.listing()
+                out["suggest"] = se.suggest()
+                out["expires_days"] = round(se.expires_in() / 86400)
+                self._json(out)
+            elif p == "/api/screens/build":
+                self._json(self.app.build_screens())
             elif p == "/api/clips/forget":
                 self._json(self.app.clips_forget(str(b.get("recording_path", "")),
                                                  _int(b.get("session"), -1)))
@@ -449,10 +494,53 @@ class Server:
     def apps_payload(self) -> list[dict]:
         from . import catalog
 
+        # games.yaml, not the catalog: the thumbnail is a per-game SETTING and
+        # the catalog is a list of what is installed. Read once per payload
+        # rather than per row.
+        try:
+            games = cfg.load_games().get("games", {}) or {}
+        except Exception:  # noqa: BLE001
+            games = {}
+
+        def thumb(key: str) -> str:
+            row = games.get((key or "").lower())
+            return str(row.get("thumbnail") or "") if isinstance(row, dict) else ""
+
+        # THE EXE, NOT THE CATALOG KEY. games.yaml is keyed on the executable
+        # because that is what the watcher sees running -- Counter-Strike is
+        # `cs2.exe` there and `counter-strike-global-offensive` in the Steam
+        # catalog. Saving under the wrong one writes a perfectly good entry
+        # that nothing ever reads, and the mistake only shows up as a missing
+        # thumbnail at go-live.
         return [
-            {"key": a.key, "name": a.name, "source": a.source, "stream": a.stream}
+            {"key": a.key, "name": a.name, "source": a.source, "stream": a.stream,
+             "game_key": (a.exe or a.key).lower(),
+             "thumbnail": thumb(a.exe or a.key)}
             for a in catalog.load()
         ]
+
+    def build_screens(self) -> dict:
+        """Create or update the screen-saver scenes in OBS now.
+
+        Exposed as a button because the alternative is building them at the
+        moment of going live, where a failure would be discovered by the
+        audience rather than by the user.
+        """
+        from . import screens
+
+        c = cfg.load()
+        if not c.screens.enabled:
+            return {"error": "Screen savers are switched off."}
+        gaps = screens.missing(c)
+        if gaps:
+            return {"error": "; ".join(gaps)}
+        try:
+            made = screens.ensure_all(c, self.engine.obs)
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"OBS said no: {e}"}
+        if not made:
+            return {"error": "Nothing to build - no files are set."}
+        return {"ok": True, "scenes": sorted(made.values())}
 
     def status(self) -> dict:
         e = self.engine
@@ -474,6 +562,9 @@ class Server:
             "url": (f"https://www.youtube.com/watch?v={s.broadcast_id}"
                     if s.broadcast_id else None),
             "recording": bool(getattr(s, "recording", False)),
+            # So the UI can stop saying LIVE about a session that is only
+            # recording, and hide the things a broadcast would have.
+            "streaming": bool(getattr(e, "streaming", True)),
             # The Clips page rides this poll rather than having its own. It
             # costs nothing when idle and means progress survives a reload.
             "clips": self._clips_status(),
@@ -640,6 +731,14 @@ class Server:
                                   _int(c.clips.transition_ms, 500)),
             "encoder": str(body.get("encoder") or c.clips.encoder),
             "montage": bool(body.get("montage", True)),
+            "voice": bool(body.get("voice", c.clips.voice)),
+            "voice_name": str(body.get("voice_name") or c.clips.voice_name),
+            "music": str(body.get("music") or c.clips.music),
+            "arc": bool(body.get("arc", c.clips.arc)),
+            "order": str(body.get("order") or c.clips.order),
+            "promo": bool(body.get("promo", c.clips.promo)),
+            "promo_caption": str(body.get("promo_caption")
+                                 or c.clips.promo_caption),
         }
         # Round mode, for games whose profile reads the scoreboard. Absent for
         # every other game, so nothing changes for them.

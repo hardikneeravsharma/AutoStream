@@ -54,6 +54,8 @@ class Profile:
     #   "template"  match a fixed glyph  (Delta Force's skull)
     #   "colour"    count pixels of a colour
     #   "killfeed"  OCR the feed and find your own name
+    #   "feedbar"   read the feed's coloured bars, no OCR   (Valorant)
+    #   "cardcount" read the round kill tally, no OCR        (CS2)
     #
     # Not every game draws a fixed marker. CS2 has no centre-screen kill
     # confirmation at all -- no hitmarker, no banner -- and announces kills only
@@ -75,16 +77,42 @@ class Profile:
     player: str = ""
     match_ratio: float = 0.72
 
+    # cardcount mode: the player's HUD colour, in degrees of hue. It is a CS2
+    # SETTING, so it cannot be assumed -- but it also never needs asking for,
+    # because it can be measured off the recording itself. 0 means "not
+    # measured yet"; the scan works it out and it is cached from then on.
+    hud_hue: float = 0.0
+
     # Counter-Strike only: read the scoreboard as well as the feed, and clip
     # ROUNDS rather than bursts of kills. See clips/rounds.py for why the round
     # is the right unit there -- three kills alone against three opponents is a
     # different clip from three kills with the team alive, and a kill-based
     # ranking buries the first.
     rounds: bool = False
+    # True when the game writes a replay file we can read afterwards. For
+    # Counter-Strike that is the .dem Valve serves for every matchmaking game,
+    # and it turns every number on the round layer from a reading into a fact
+    # -- see clips/cs2_demo.py. The detector still runs, because its kill times
+    # are what locates the demo inside the recording, but nothing it reports
+    # survives into the clips once a demo has aligned.
+    demos: bool = False
     # HUD regions, as fractions of the frame. Empty means use the measured
     # defaults in clips/hud.py; stored per profile because HUD SCALE is a user
     # setting and the defaults were measured at one person's.
     hud_regions: dict[str, list[float]] = field(default_factory=dict)
+
+    # PER-GAME CLIP PADDING, as floors under whatever timing style is chosen.
+    #
+    # The styles in clips/plan.py are measured against short-form retention and
+    # are right for a respawn shooter, where the kill IS the moment. They are
+    # too tight for a game whose kill is the end of a slow approach, and for one
+    # whose kill feed outlives the kill by several seconds -- a clip that cuts
+    # while the feed still names the kill reads as a mistake, which is the whole
+    # reason clips/plan.py has a TAIL_MIN at all.
+    #
+    # Floors, not overrides: a style asking for MORE room always wins.
+    pre_roll_min: float = 0.0
+    tail_min: float = 0.0
 
     # True when the game cannot distinguish a kill from an assist, so counts run
     # high and the UI has to say so -- quietly reporting inflated numbers is
@@ -112,6 +140,42 @@ class Profile:
             return mine
         return paths.CLIP_TEMPLATES_BUILTIN / self.template
 
+    def requirements(self) -> tuple[dict[str, Any], ...]:
+        """What this profile needs before it can run, and how to get it.
+
+        Declared rather than discovered so the UI can ask BEFORE a scan starts
+        instead of failing several minutes in, and so a game that needs nothing
+        says so plainly.
+
+        `auto` marks a value that can be measured off the user's own recording.
+        Those never block and are never asked for -- see `missing`.
+        """
+        if self.mode == "killfeed":
+            return ({
+                "key": "player",
+                "label": f"Your in-game name in {self.label}",
+                "help": "Exactly as it appears in the kill feed. This is what "
+                        "tells your kills from everyone else's.",
+                "where": "Calibrate it from the Clips page.",
+                "auto": False,
+                "value": self.player,
+            },)
+        if self.mode == "cardcount":
+            return ({
+                "key": "hud_hue",
+                "label": f"Your {self.label} HUD colour",
+                "help": "Measured from your own recording -- nothing to type.",
+                "where": "",
+                "auto": True,
+                "value": self.hud_hue or "",
+            },)
+        return ()
+
+    def missing(self) -> list[dict[str, Any]]:
+        """Requirements that must be ASKED for. Empty means good to go."""
+        return [r for r in self.requirements()
+                if not r["auto"] and not r["value"]]
+
     def exists(self) -> bool:
         """Whether this profile can actually be run.
 
@@ -119,20 +183,35 @@ class Profile:
         to look for -- without one it would scan the whole recording and find
         nothing, which reads as "this game had no kills" rather than as the
         configuration error it is.
+
+        A feedbar profile needs nothing at all: it finds the player's own rows
+        by the colour the game draws around them, so there is no name to get
+        wrong and no template to cut.
         """
-        if self.mode == "colour":
-            return True
+        if self.mode in ("colour", "feedbar", "cardcount"):
+            return not self.missing()
         if self.mode == "killfeed":
-            return bool(self.player)
+            return not self.missing()
         return self.template_path().is_file()
 
     def why_not(self) -> str:
         """Empty if usable, otherwise what to do about it."""
         if self.exists():
             return ""
+        gaps = self.missing()
+        if gaps:
+            g = gaps[0]
+            return " ".join(x for x in
+                            (f"{self.label} needs {g['label'].lower()}.",
+                             g.get("help", ""), g.get("where", "")) if x)
         if self.mode == "killfeed":
+            # Says Clips, not Library: the Library page has no name field, and
+            # the only other writer is the setup wizard, which lists Steam and
+            # Epic games only -- so a game that arrives as a shortcut, as
+            # Valorant does, can never be given a name there.
             return (f"{self.label} reads your name out of the kill feed, but no "
-                    f"in-game name is set for it. Add one on the Library page.")
+                    f"in-game name is set for it. Calibrate it from the Clips "
+                    f"page and type the name exactly as the feed shows it.")
         return (f"No kill-marker template for {self.label}. Calibrate it on a "
                 f"recording first.")
 
@@ -155,10 +234,21 @@ class Profile:
         if self.mode == "colour":
             out.update({"mode": self.mode, "colour": list(self.colour),
                         "tolerance": self.tolerance, "min_pixels": self.min_pixels})
+        elif self.mode == "cardcount":
+            out["mode"] = self.mode
+            # Cached once measured, so the cost is paid on the first scan only.
+            if self.hud_hue:
+                out["hud_hue"] = round(self.hud_hue, 1)
+        elif self.mode == "feedbar":
+            # Nothing else to carry: no template, no name, no threshold. The
+            # band is the whole configuration.
+            out["mode"] = self.mode
         elif self.mode == "killfeed":
             out.update({"mode": self.mode, "match_ratio": self.match_ratio})
             if self.rounds:
                 out["rounds"] = True
+            if self.demos:
+                out["demos"] = True
             if self.hud_regions:
                 out["hud_regions"] = {k: list(v)
                                       for k, v in self.hud_regions.items()}
@@ -167,7 +257,20 @@ class Profile:
             # the name.
         if self.counts_assists:
             out["counts_assists"] = True
+        if self.pre_roll_min:
+            out["pre_roll_min"] = round(self.pre_roll_min, 2)
+        if self.tail_min:
+            out["tail_min"] = round(self.tail_min, 2)
         return out
+
+    def padding(self, pre_roll: float, tail: float) -> tuple[float, float]:
+        """The run-up and tail this game needs, given what was asked for.
+
+        Raises either to the profile's floor and never lowers it, so a longer
+        style stays longer.
+        """
+        return (max(float(pre_roll), self.pre_roll_min),
+                max(float(tail), self.tail_min))
 
 
 # Shipped pre-calibrated. A single skull is centred at (0.499, 0.683) of the
@@ -225,12 +328,63 @@ BUILTIN: dict[str, dict[str, Any]] = {
         "merge_gap": 3.0,
         "match_ratio": 0.72,
         "rounds": True,
+        "demos": True,
+        # MORE ROOM THAN THE STYLE ASKS FOR, both ends. Short-form's 1.5s/2.0s
+        # is measured against respawn shooters, where the kill is the whole
+        # moment. Counter-Strike is not that:
+        #
+        #   the tail. The feed row that names your kill lives a MEDIAN OF 5
+        #     SECONDS (measured 1-9s over 20 sightings -- the same number that
+        #     sets scan_fps to 1.0 in clips/killfeed.py). A 2-second tail cuts
+        #     while the game is still announcing the kill, which is precisely
+        #     what plan.TAIL_MIN exists to stop.
+        #
+        #   the run-up. There is no respawn, so a kill is the end of a slow
+        #     approach and 1.5s of it opens with the shot already fired. Real
+        #     clips from a 45-minute session came out FOUR SECONDS long.
+        #
+        # Floors, so "Full context" still gets its 6s.
+        "pre_roll_min": 3.0,
+        "tail_min": 4.0,
         "notes": "Reads the kill feed. The killer is named first, so your name "
                  "with nobody to its left is your kill, with a name to its left "
                  "you assisted, and at the right-hand end you died. Assists are "
                  "not clipped. An assist whose killer's name cannot be read "
                  "counts as a kill, so counts can run a little high. Needs your "
-                 "in-game name, set on the Library page.",
+                 "in-game name, which is set by calibrating it on the Clips "
+                 "page.",
+    },
+    # Valorant is read like CS2 but WITHOUT OCR, because OCR does not work
+    # here: Tesseract read the player's own name in 13-16% of the frames its
+    # row was actually on screen, and upscaling, autocontrast, sharpening,
+    # channel lifts and inversion were all measured and none of them helped.
+    #
+    # What the game does draw is a bright yellow border around the local
+    # player's own segment of a feed row, in a fixed colour, at full opacity.
+    # Which end of the row it is on says whether they killed or died. So there
+    # is no name to configure and Tesseract is not needed at all.
+    #
+    # The band excludes the top bar above (agent portraits reach y 0.066) and
+    # the network overlay below (it starts at y 0.200), both measured. Four
+    # rows fit inside it.
+    "valorant-win64-shipping.exe": {
+        "label": "VALORANT",
+        "mode": "feedbar",
+        "band": [0.50, 0.070, 1.00, 0.235],
+        "template": "",
+        "ref_height": 1080,
+        "scan_fps": 2.0,
+        "merge_gap": 3.0,
+        "notes": "Reads the kill feed's coloured bars. Your own rows carry a "
+                 "yellow border: at the left of the row you got the kill, at "
+                 "the right you died. Assists show your portrait as a detached "
+                 "tile and are detected separately, so they are not clipped as "
+                 "kills, and killing yourself is counted as a death. Needs no "
+                 "in-game name and no OCR. Measured on one 46-minute 1080p "
+                 "recording: all 23 kills it reported were checked against the "
+                 "footage and all 23 were real. Regions were measured at one "
+                 "person's HUD scale; a different scale needs recalibrating "
+                 "from the Clips page.",
     },
 }
 
@@ -240,23 +394,17 @@ BUILTIN: dict[str, dict[str, Any]] = {
 # rather than a hunt.
 #
 # Measured off real gameplay at 640x360, not guessed:
-#   Valorant  killfeed top LEFT (not right - the right panel is the Combat
-#             Report). The kill banner is bottom centre per Riot's own wiki, and
-#             UPGRADED WEAPON SKINS REPLACE IT, so there is no single template
-#             that is correct for every player. It has to be cut per-account.
 #   CS2       killfeed top right, and the local player's rows are outlined red.
 #             No centre-screen confirmation exists at all - no hitmarker, no
 #             banner - so the colour mode is the only option.
+#
+# Valorant used to be seeded here as a bottom-centre TEMPLATE, and both halves
+# of that were wrong. Its comment claimed the feed was top LEFT; it is top
+# RIGHT, measured -- every row ends at x 0.978-0.986. And the kill banner it
+# pointed at is replaced by upgraded weapon skins, which the same comment
+# conceded, so no template could ever have shipped. It is a BUILTIN now, needing
+# neither a template nor calibration.
 SEEDS: dict[str, dict[str, Any]] = {
-    "valorant-win64-shipping.exe": {
-        "label": "VALORANT",
-        "mode": "template",
-        "box": [0.455, 0.640, 0.545, 0.700],     # where to open the calibrator
-        "band": [0.36, 0.625, 0.64, 0.715],
-        "why": "Kill banner, bottom centre. Your banner depends on which "
-               "weapon skin you have upgraded, so this has to be cut from your "
-               "own footage.",
-    },
     "cs2.exe": {
         "label": "Counter-Strike 2",
         "mode": "killfeed",
@@ -329,7 +477,8 @@ def _build(key: str, raw: dict) -> Profile | None:
         if str(raw.get("mode", "template")).lower() == "template" and not raw.get("template"):
             raise KeyError("template")
         mode = str(raw.get("mode", "template")).lower()
-        if mode not in ("template", "colour", "killfeed"):
+        if mode not in ("template", "colour", "killfeed", "feedbar",
+                        "cardcount"):
             raise ValueError(f"unknown mode {mode!r}")
         colour = tuple(int(v) for v in raw.get("colour", (255, 60, 60)))
         if len(colour) != 3:
@@ -353,8 +502,12 @@ def _build(key: str, raw: dict) -> Profile | None:
             player=str(raw.get("player") or ""),
             match_ratio=float(raw.get("match_ratio", 0.72)),
             rounds=bool(raw.get("rounds", False)),
+            demos=bool(raw.get("demos", False)),
+            hud_hue=float(raw.get("hud_hue", 0.0)),
             hud_regions={str(k): [float(v) for v in vals]
                          for k, vals in (raw.get("hud_regions") or {}).items()},
+            pre_roll_min=float(raw.get("pre_roll_min", 0.0)),
+            tail_min=float(raw.get("tail_min", 0.0)),
         )
     except (KeyError, TypeError, ValueError) as e:
         log.warning("ignoring malformed clip profile %r: %s", key, e)
@@ -437,6 +590,73 @@ def username_for(game_key: str | None, game_name: str | None = None) -> str:
                     and slug(str(entry.get("name") or "")) == want:
                 return str(entry["username"]).strip()
     return ""
+
+
+def save_username(game_key: str, name: str, label: str = "") -> bool:
+    """Record an in-game name in games.yaml. -> whether it was written.
+
+    Calibration is the only moment the name is ever PROVED correct -- it has
+    just been found in real frames of the user's own footage -- so it is also
+    the right moment to keep it. Before this existed the name was verified,
+    attached to the in-memory profile, and then dropped, because as_dict()
+    deliberately does not serialise `player`. The next scan looked the name up
+    here, found nothing, and reported a clean "no kills found" -- the one
+    failure mode killfeed mode is least able to survive, because it is
+    indistinguishable from a quiet recording.
+
+    Written HERE rather than into the profile so the intent of as_dict() still
+    holds: one place to change the name, and a profile that stays shareable.
+    """
+    key = str(game_key or "").strip().lower()
+    name = str(name or "").strip()[:60]
+    if not key or not name:
+        return False
+    from .. import cfg                       # local: cfg must not import clips
+
+    try:
+        data = cfg.load_games()
+        entry = data["games"].setdefault(key, {})
+        if not isinstance(entry, dict):      # hand-edited to a scalar
+            entry = {}
+            data["games"][key] = entry
+        entry["username"] = name
+        # Only as a fallback: username_for() can match on the display name, and
+        # a game calibrated from the Clips page may have no entry here at all.
+        if label and not entry.get("name"):
+            entry["name"] = label
+        cfg.save_games(data)
+    except (OSError, yaml.YAMLError, KeyError, TypeError) as e:
+        log.warning("could not record the in-game name for %r: %s", key, e)
+        return False
+    log.info("recorded in-game name for %r", key)
+    return True
+
+
+def remember(key: str, **fields: Any) -> bool:
+    """Cache something measured off the user's own footage. -> written?
+
+    The point of the requirements system is that a value which CAN be measured
+    is never asked for. Measuring is not free, though, so the answer is kept:
+    the first scan of a game pays for it and no later one does.
+
+    Writes into the user's profile file, leaving the built-in alone, so a
+    measured value survives an upgrade and can still be overridden by hand.
+    """
+    key = str(key or "").strip().lower()
+    if not key or not fields:
+        return False
+    prof = load_all().get(key)
+    if prof is None:
+        return False
+    for k, v in fields.items():
+        if hasattr(prof, k):
+            setattr(prof, k, v)
+    try:
+        save(prof)
+    except OSError as e:
+        log.warning("could not cache %s for %r: %s", list(fields), key, e)
+        return False
+    return True
 
 
 def save(profile: Profile) -> None:

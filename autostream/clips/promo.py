@@ -34,6 +34,12 @@ TARGET_MIN, TARGET_MAX = 30.0, 40.0
 # clip: nothing here has to be understood, only glimpsed.
 PROMO_PRE = 1.0
 PROMO_TAIL = 1.6
+# ...but the run-up is what absorbs the target length, so it needs a ceiling
+# as well as a floor. With only a floor, every single-kill piece came out at
+# PROMO_PRE + PROMO_TAIL = 2.6s no matter what piece_length() asked for, and a
+# reel documented at 30-40 seconds delivered fifteen. Beyond about three and a
+# half seconds the run-up is somebody walking.
+PROMO_PRE_MAX = 3.5
 MIN_PIECE = 2.4
 MAX_PIECE = 5.0
 
@@ -46,18 +52,25 @@ def piece_length(count: int) -> float:
     return max(MIN_PIECE, min(MAX_PIECE, ideal))
 
 
-def pick(plans, results) -> list:
-    """The clips no caption could be found for -- the leftovers."""
-    out = []
-    for p, r in zip(plans, results):
-        if not (r.get("caption") or "").strip():
-            out.append(p)
-    return out
+def pick(plans, floor: int = 2) -> list:
+    """The clips that fell BELOW the minimum -- the leftovers.
+
+    The rule used to be "clips no caption could be found for", which was a
+    reasonable proxy while a caption meant a multi-kill. It stopped being one
+    when round clips started captioning themselves from their labels: a
+    one-kill clutch has a caption and is not a leftover, and a two-kill burst
+    has none and is not a leftover either.
+
+    So the rule is now the one the user actually sets. Whatever `min_kills`
+    says is worth a clip of its own, anything under it is promo material --
+    which at the default of 2 is exactly "the single kills".
+    """
+    return [p for p in plans if int(getattr(p, "kills", 0)) < floor]
 
 
 def build(source: Path, leftovers, kills, outdir: Path, *,
           game: str = "Session", handle: str = "@YuvaNeta",
-          caption: str = "YuvaNeta \U0001F534 LIVE EVERYDAY \U0001F3AE",
+          caption: str = "LIVE MOST EVENINGS \U0001F3AE",
           encoder: str = "auto", vertical_mode: str = "fit",
           transition: str = "fade", transition_ms: int = 400) -> Path | None:
     """Cut every leftover short, join them, and brand the result."""
@@ -83,8 +96,12 @@ def build(source: Path, leftovers, kills, outdir: Path, *,
         # existing clip, which was cut with a much longer run-up.
         last = max(inside, key=lambda k: float(k["time"]))
         end = float(last.get("end") or last["time"]) + PROMO_TAIL
-        start = max(0.0, end - per)
-        start = max(start, float(inside[0]["time"]) - PROMO_PRE)
+        first = float(inside[0]["time"])
+        # `per` sets the length; the two bounds keep the run-up sane whatever
+        # it works out to. Ordered so the floor wins: a piece may be shorter
+        # than the target, never blinder than PROMO_PRE.
+        start = min(max(end - per, first - PROMO_PRE_MAX), first - PROMO_PRE)
+        start = max(0.0, start)
         piece = plan.ClipPlan(rank=i, start=start, end=end, kills=len(inside),
                               burst_kills=len(inside), peak_score=0.0,
                               name=f"promo_{i:02d}")

@@ -196,6 +196,144 @@ class Obs:
         except Exception as e:  # noqa: BLE001
             log.warning("scene switch failed: %s", e)
 
+    # ---------------- scenes AutoStream owns ----------------
+    #
+    # The three screen savers -- starting, be-right-back, ending -- are ordinary
+    # OBS scenes holding one looping media source each, and AutoStream builds
+    # them rather than asking the user to. Everything here is idempotent: it
+    # creates what is missing and updates what is there, so pointing a setting
+    # at a different file just changes the file.
+
+    MEDIA_KIND = "ffmpeg_source"
+    BROWSER_KIND = "browser_source"
+
+    # What a browser source renders at, before being scaled to the canvas.
+    # Overlay tools lay their widgets out against a fixed design size and 1080p
+    # is what nearly all of them use, so rendering there and scaling is safer
+    # than rendering at whatever this particular OBS canvas happens to be.
+    # Both are 16:9, so the scale is exact and nothing shifts.
+    BROWSER_SIZE = (1920, 1080)
+
+    def canvas(self) -> tuple[int, int]:
+        """OBS's base resolution, for fitting a source to the whole frame."""
+        try:
+            self.connect()
+            v = self.ws.get_video_settings()
+            return int(v.base_width), int(v.base_height)
+        except Exception:  # noqa: BLE001
+            return 1920, 1080
+
+    def ensure_browser_scene(self, scene: str, source: str, url: str) -> bool:
+        """A scene showing `url` in a browser source. -> did it work.
+
+        For screen savers that live in an overlay service rather than as a file
+        on disk. The page keeps updating itself, which a downloaded copy of it
+        would not.
+        """
+        if not scene or not source or not url:
+            return False
+        w, h = self.BROWSER_SIZE
+        settings = {
+            "url": str(url),
+            "width": w, "height": h,
+            # Start the page again each time the scene comes up, so the card
+            # begins at the top rather than resuming mid-animation. The mirror
+            # of restart_on_activate on a media source.
+            "restart_when_active": True,
+            # Shut the page down while it is off screen: an overlay left
+            # running in the background burns CPU and keeps firing whatever
+            # timers it has for the entire stream.
+            "shutdown": True,
+            # Audio through OBS's mixer rather than the desktop device, so a
+            # card with music is captured predictably instead of depending on
+            # whether desktop audio happens to be captured too.
+            "reroute_audio": True,
+        }
+        return self._ensure_input(scene, source, self.BROWSER_KIND, settings)
+
+    def ensure_media_scene(self, scene: str, source: str, path: str, *,
+                           loop: bool = True) -> bool:
+        """A scene containing `path` as a looping media source. -> did it work.
+
+        Never raises: a screen saver that cannot be built must not stop a
+        broadcast that is otherwise ready to go.
+        """
+        if not scene or not source or not path:
+            return False
+        settings = {
+            "local_file": str(path),
+            "is_local_file": True,
+            "looping": bool(loop),
+            # So the clip starts from the top each time the scene comes up
+            # rather than resuming wherever it was left.
+            "restart_on_activate": True,
+            "close_when_inactive": False,
+            "hw_decode": True,
+            # OFF, deliberately: with it on OBS blanks the source when the file
+            # ends, so a non-looping ending card would sit on black exactly
+            # when somebody is reading it.
+            "clear_on_media_end": False,
+        }
+        return self._ensure_input(scene, source, self.MEDIA_KIND, settings)
+
+    def _ensure_input(self, scene: str, source: str, kind: str,
+                      settings: dict) -> bool:
+        """Create or update one source in one scene. Never raises.
+
+        A screen saver that cannot be built must not stop a broadcast that is
+        otherwise ready to go -- which is also why the SETTINGS are updated
+        rather than the source recreated: an existing source may have been
+        moved, resized or filtered by hand, and rebuilding it would silently
+        throw that away every time the file changed.
+        """
+        try:
+            self.connect()
+            if scene not in self.scene_names():
+                self.ws.create_scene(scene)
+                log.info("created OBS scene %r", scene)
+            names = {i["inputName"] for i in self.ws.get_input_list().inputs}
+            if source in names:
+                self.ws.set_input_settings(source, settings, True)
+            else:
+                self.ws.create_input(scene, source, kind, settings, True)
+                log.info("added %r (%s) to %r", source, kind, scene)
+                # Only on creation: see above.
+                self._fit_to_canvas(scene, source)
+            return True
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not build the %r scene: %s", scene, e)
+            return False
+
+    def _fit_to_canvas(self, scene: str, source: str) -> None:
+        """Scale the source to fill the frame without distorting it."""
+        try:
+            w, h = self.canvas()
+            item = self.ws.get_scene_item_id(scene, source).scene_item_id
+            self.ws.set_scene_item_transform(scene, item, {
+                "boundsType": "OBS_BOUNDS_SCALE_INNER",
+                "boundsWidth": w, "boundsHeight": h,
+                "boundsAlignment": 0,        # centred
+                "positionX": 0, "positionY": 0,
+            })
+        except Exception as e:  # noqa: BLE001
+            log.info("could not fit %r to the canvas: %s", source, e)
+
+    def remove_scene(self, name: str) -> None:
+        try:
+            self.connect()
+            if name in self.scene_names():
+                self.ws.remove_scene(name)
+                log.info("removed OBS scene %r", name)
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not remove scene %r: %s", name, e)
+
+    def current_scene(self) -> str:
+        try:
+            self.connect()
+            return str(self.ws.get_current_program_scene().current_program_scene_name)
+        except Exception:  # noqa: BLE001
+            return ""
+
     def set_overlay_text(self, text: str) -> None:
         src = self.cfg.obs.overlay_source
         if not src:

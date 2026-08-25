@@ -37,6 +37,14 @@ VIDEO_HOME = Path(os.environ.get("AUTOSTREAM_VIDEO_HOME",
 # which game was played on which broadcast.
 HISTORY_FILE = VIDEO_HOME / "history.jsonl"
 
+# Optional model downloads -- currently the Kokoro voice for spoken hooks.
+#
+# Outside ROOT for the same reason as everything else here: a frozen build's
+# ROOT is deleted on every rebuild, and re-downloading a 177 MB model because
+# someone rebuilt the app is not acceptable. Not inside CONFIG_DIR either --
+# the share-package build strips that wholesale to remove credentials.
+MODELS_DIR = Path(os.environ.get("AUTOSTREAM_MODELS", VIDEO_HOME / "models"))
+
 # Clip output, and the per-game kill-marker detector profiles that drive it.
 CLIPS_DIR = VIDEO_HOME / "clips"
 CLIP_PROFILES = CONFIG_DIR / "clip_profiles.yaml"
