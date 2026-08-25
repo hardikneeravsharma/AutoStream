@@ -1037,6 +1037,13 @@ class Engine:
         session is stopped instead -- a paused stream showing the game is not
         paused, it is just unattended.
 
+        PAUSING A RECORDING-ONLY SESSION PAUSES THE RECORDING. There is nobody
+        watching to reassure, so the be-right-back card would be written INTO
+        the file the clips are later cut from -- minutes of a title card in the
+        middle of the footage. OBS keeps the file open across a pause, so
+        Resume continues the same recording rather than starting a second one,
+        which matters because the cutter reads one file per session.
+
         PAUSING DOES NOT SUPPRESS THE RUNNING GAME either way. `force_stop`
         marks every open game "do not restart" because a human pressing End
         stream means "stop streaming THIS", and that flag is only cleared when
@@ -1055,12 +1062,19 @@ class Engine:
             return False
 
         live = self.state.phase in (st.LIVE, st.TESTING)
-        if live and screens.show(self.cfg, self.obs, screens.PAUSED):
+        if live and not self.streaming:
+            if self.obs.pause_recording():
+                log.info("recording paused; the file stays open")
+                notify.toast("AutoStream paused", "Recording paused")
+                return True
+            log.info("the recording could not be paused, so pausing stops the "
+                     "session instead")
+        elif live and screens.show(self.cfg, self.obs, screens.PAUSED):
             self._screen_until = None      # held by the pause, not by a timer
             log.info("be right back: the broadcast stays up")
             notify.toast("AutoStream paused", "Be right back is on air")
             return True
-        if live:
+        elif live:
             log.info("no be-right-back screen configured, so pausing stops the "
                      "session instead")
         notify.toast("AutoStream", "Paused")
@@ -1088,8 +1102,13 @@ class Engine:
         stopped needs the flags clearing so it can start again.
         """
         if self.state.phase in (st.LIVE, st.TESTING):
-            self._back_to_game()
-            log.info("resumed: back to the game scene")
+            if not self.streaming:
+                # Back into the SAME file -- see obs.pause_recording.
+                if self.obs.resume_recording():
+                    log.info("resumed: recording again")
+            else:
+                self._back_to_game()
+                log.info("resumed: back to the game scene")
         for exe, intent in list(self.launch_intent.items()):
             if intent == "stopped":
                 self.launch_intent.pop(exe, None)

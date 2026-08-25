@@ -436,6 +436,49 @@ class Obs:
         self.ws.start_record()
         log.info("OBS StartRecord issued")
 
+    def recording_paused(self) -> bool:
+        try:
+            self.connect()
+            return bool(getattr(self.ws.get_record_status(), "output_paused", False))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def pause_recording(self) -> bool:
+        """Stop writing frames WITHOUT closing the file. -> is it now paused.
+
+        The recording equivalent of parking a broadcast on a card: the output
+        stays open, so resuming continues the same file rather than starting a
+        second one. Two files would have to be stitched before anything could
+        be cut from the pair, and the clip cutter reads one file per session.
+        """
+        try:
+            self.connect()
+            r = self.ws.get_record_status()
+            if not r.output_active:
+                return False
+            if getattr(r, "output_paused", False):
+                return True
+            self.ws.pause_record()
+            log.info("OBS PauseRecord issued")
+            return True
+        except Exception as e:  # noqa: BLE001
+            log.warning("OBS pause recording failed: %s", e)
+            return False
+
+    def resume_recording(self) -> bool:
+        """Write frames again, into the file already open. -> did it resume."""
+        try:
+            self.connect()
+            r = self.ws.get_record_status()
+            if not r.output_active or not getattr(r, "output_paused", False):
+                return bool(r.output_active)
+            self.ws.resume_record()
+            log.info("OBS ResumeRecord issued")
+            return True
+        except Exception as e:  # noqa: BLE001
+            log.warning("OBS resume recording failed: %s", e)
+            return False
+
     def stop_recording(self) -> str | None:
         """-> the file OBS actually wrote, or None.
 

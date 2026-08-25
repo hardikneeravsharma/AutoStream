@@ -22,8 +22,11 @@ from autostream.state import IDLE, LIVE, State                # noqa: E402
 
 
 class FakeObs:
-    def __init__(self, recording=True, streaming=False):
+    def __init__(self, recording=True, streaming=False, can_pause=True):
         self.recording, self.streaming = recording, streaming
+        # can_pause=False stands in for an OBS that refuses the verb, which is
+        # the only route back to "pausing stops the session instead".
+        self.can_pause, self.rec_paused = can_pause, False
         self.started = self.stopped = 0
         self.scene = None
         self.built = []
@@ -34,8 +37,28 @@ class FakeObs:
     def recording_active(self):
         return self.recording
 
+    def recording_paused(self):
+        return self.rec_paused
+
+    def pause_recording(self):
+        if not self.recording or not self.can_pause:
+            return False
+        self.rec_paused = True
+        return True
+
+    def resume_recording(self):
+        if not self.recording:
+            return False
+        self.rec_paused = False
+        return True
+
     def set_overlay_text(self, text):
         pass
+
+    def screenshot(self, width=160, height=90, scene=None):
+        # None short-circuits the black-output check, which is a real OBS
+        # answer (no frame available) and not a case worth faking pixels for.
+        return None
 
     def set_scene(self, scene):
         self.scene = scene
@@ -103,6 +126,8 @@ def engine(phase: str = IDLE, paused: bool = False,
     eng._details_checked = 0.0
     eng.pending_scan = None
     eng._last_title = None
+    eng._blank_checked = 0.0
+    eng._blank_strikes = 0
     return eng
 
 
@@ -573,3 +598,67 @@ def test_a_url_is_taken_on_trust_but_a_path_must_exist(tmp_path):
     # ...and only the missing FILE is reported to the user.
     gaps = screens.missing(c)
     assert len(gaps) == 1 and "gone.mp4" in gaps[0]
+
+
+# ------------------------------------ pause/resume/stop with no broadcast
+#
+# The dashboard offers the same three controls whether or not there is a
+# broadcast, so they have to MEAN something in both. With streaming off the
+# thing being controlled is the recording, and pause has to pause THAT: a
+# be-right-back card here would be written into the file the clips are cut
+# from, and stopping outright would end a session the user only meant to
+# interrupt.
+
+
+def test_pausing_a_recording_only_session_pauses_the_recording():
+    """And keeps the session alive. The old behaviour force-stopped, because
+    no be-right-back card is configured in a mode that has no viewers."""
+    eng = clips_only(phase=LIVE, running=a_game())
+    assert eng.toggle_pause("test") is True
+    assert eng.obs.rec_paused is True
+    assert eng.state.phase == LIVE          # not STOPPING
+    assert eng.obs.stopped == 0
+
+
+def test_resuming_writes_into_the_same_recording():
+    """Not a second file: the clip cutter reads one file per session, so a
+    resume that started a new recording would strand half the footage."""
+    eng = clips_only(phase=LIVE, running=a_game(), paused=True)
+    eng.obs.rec_paused = True
+    assert eng.toggle_pause("test") is False
+    assert eng.obs.rec_paused is False
+    assert eng.state.phase == LIVE
+    assert eng.obs.started == 0             # no new output was opened
+
+
+def test_a_recording_that_cannot_be_paused_stops_the_session():
+    """The honest fallback. Reporting a pause that did not happen would leave
+    the user believing the footage is safe while OBS keeps writing."""
+    stopped = {}
+    eng = clips_only(phase=LIVE, running=a_game())
+    eng.obs = FakeObs(can_pause=False)
+    eng.force_stop = lambda reason="", suppress=True: stopped.update(
+        reason=reason, suppress=suppress)                # type: ignore[assignment]
+    assert eng.toggle_pause("test") is True
+    assert stopped["suppress"] is False
+
+
+def test_pausing_a_recording_does_not_suppress_the_game():
+    """Same rule as a paused stream: Resume must be able to start again."""
+    eng = clips_only(phase=LIVE, running=a_game())
+    eng.toggle_pause("test")
+    assert eng.launch_intent == {}
+
+
+def test_the_watchdog_does_not_end_a_paused_recording():
+    """A paused recording reports an inactive output on some OBS builds, and
+    the watchdog ends a session after two minutes of one. It never sees this
+    because _tick_live returns as soon as it finds state.paused -- which is
+    what this pins, since that early return is the only thing standing between
+    a deliberate pause and a session that stops itself."""
+    eng = clips_only(phase=LIVE, running=a_game(), paused=True)
+    eng.obs = FakeObs(recording=False)      # worst case: reports inactive
+    eng._obs_down_since = 1.0
+    for _ in range(5):
+        eng._tick_live()
+    assert eng.state.phase == LIVE

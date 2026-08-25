@@ -99,6 +99,11 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
   the clipper: it still spots the game, records it and cuts the clips, never touches
   the YouTube API, and asks for no Google sign-in. The dashboard says RECORDING
   instead of LIVE and drops the things a broadcast would have.
+  - **Pause, Resume and Stop work the same way** — they just control the recording
+    instead. Pause pauses the recording *into the same file*, so the clip cutter
+    still sees one session, and the be-right-back card is never written into the
+    footage you cut from. The OBS panel reports the recording's length and size,
+    and says `PAUSED` while it is held.
 - **Plays your screen savers** at the three moments the game is not the thing to
   look at: *stream starting*, *be right back*, and *thanks for watching*. Point each
   at a video file **or an overlay URL** and AutoStream **creates the OBS scenes
@@ -107,7 +112,9 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
   - Using StreamElements? Paste your channel token once and AutoStream lists your
     overlays and fills the three in for you.
   - Pause keeps the broadcast running and puts the be-right-back card up, so you
-    keep the URL, the chat and the people watching.
+    keep the URL, the chat and the people watching. With no card configured there
+    is nothing to switch to, so pause stops the session instead — a paused stream
+    still showing the game is not paused, it is unattended.
 - **Generates a thumbnail** for each go-live from a live OBS frame, your logo and the
   game — or **assign a finished image per game**, used exactly as given with nothing
   drawn over it.
