@@ -27,6 +27,7 @@ class FakeObs:
         # can_pause=False stands in for an OBS that refuses the verb, which is
         # the only route back to "pausing stops the session instead".
         self.can_pause, self.rec_paused = can_pause, False
+        self.audio_watching = False
         self.started = self.stopped = 0
         self.scene = None
         self.built = []
@@ -54,6 +55,17 @@ class FakeObs:
 
     def set_overlay_text(self, text):
         pass
+
+    def audio_watch_start(self):
+        self.audio_watching = True
+
+    def audio_watch_stop(self):
+        self.audio_watching = False
+
+    def silent_for(self):
+        # None is "cannot tell", which is what an OBS with no metering
+        # reports -- and what must never read as silence.
+        return None
 
     def screenshot(self, width=160, height=90, scene=None):
         # None short-circuits the black-output check, which is a real OBS
