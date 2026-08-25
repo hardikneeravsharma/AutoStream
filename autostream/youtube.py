@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -32,6 +33,20 @@ COST_LIST = 1
 COST_THUMBNAIL = 50
 DAILY_QUOTA = 10000
 
+# videos.insert. Historically 1600 units against a 10,000/day default -- six
+# uploads a day. Reporting since December 2025 says Google cut it to about 100
+# and moved uploads into a separate daily bucket, and sources published since
+# still disagree with one another.
+#
+# So: assume the EXPENSIVE case and correct it from evidence. upload_video
+# logs the quota actually consumed, and rules.upload_daily_max caps the count
+# independently of this arithmetic -- a wrong estimate must not be able to
+# quietly burn a day's streaming.
+UPLOAD_COST = 1600
+UPLOAD_CHUNK = 4 * 1024 * 1024
+TITLE_MAX = 100
+DESCRIPTION_MAX = 5000
+
 
 class QuotaExhausted(RuntimeError):
     pass
@@ -39,6 +54,10 @@ class QuotaExhausted(RuntimeError):
 
 class NotAuthorised(RuntimeError):
     pass
+
+
+class Cancelled(RuntimeError):
+    """The user stopped an upload between chunks."""
 
 
 def _now_rfc3339() -> str:
@@ -130,6 +149,85 @@ class YouTube:
             raise QuotaExhausted(
                 f"only {self.quota_left()} units left (need {need} + {reserve} reserve)"
             )
+
+    # ---------------- uploading a finished clip ----------------
+
+    def upload_video(self, path, *, title: str, description: str = "",
+                     privacy: str = "unlisted", tags=None,
+                     category_id: str = "20",
+                     on_progress=None, should_stop=None) -> dict:
+        """Upload one file. -> {id, url}. Resumable, cancellable, chunked.
+
+        RESUMABLE ON PURPOSE. A forty-megabyte clip on a domestic uplink is not
+        instant, and a plain upload that dies at ninety percent starts again
+        from nothing. Chunks also give the only honest progress there is, and
+        the only place a cancel can be honoured -- between chunks, cooperatively,
+        exactly as ClipJob does it.
+
+        The title is checked HERE rather than by YouTube, because YouTube
+        rejects the whole request on a long title and it does so only after the
+        file has finished uploading.
+        """
+        from googleapiclient.http import MediaFileUpload
+
+        title = str(title or "").strip()
+        if not title:
+            raise ValueError("A video needs a title.")
+        if len(title) > TITLE_MAX:
+            raise ValueError(
+                f"That title is {len(title)} characters; YouTube's limit is "
+                f"{TITLE_MAX}, and it rejects the whole upload after the file "
+                f"has already gone up.")
+        if privacy not in ("public", "unlisted", "private"):
+            privacy = "unlisted"
+
+        src = Path(path)
+        if not src.is_file():
+            raise FileNotFoundError(f"{src} is not there")
+
+        self.check_budget(UPLOAD_COST)
+        before = self.quota_left()
+
+        body = {
+            "snippet": {
+                "title": title,
+                "description": str(description or "")[:DESCRIPTION_MAX],
+                "categoryId": str(category_id or "20"),
+                "tags": [str(t)[:60] for t in (tags or [])][:15],
+            },
+            "status": {
+                "privacyStatus": privacy,
+                "selfDeclaredMadeForKids": bool(self.cfg.youtube.made_for_kids),
+            },
+        }
+        media = MediaFileUpload(str(src), chunksize=UPLOAD_CHUNK,
+                                resumable=True, mimetype="video/*")
+        request = self.svc.videos().insert(part="snippet,status", body=body,
+                                           media_body=media)
+        # Charged once, up front. An upload that fails halfway has still spent
+        # the units, and pretending otherwise would let a failing batch loop
+        # against a quota the app believes is intact.
+        self._spend(UPLOAD_COST)
+
+        response = None
+        while response is None:
+            if should_stop is not None and should_stop():
+                raise Cancelled("upload cancelled")
+            status, response = request.next_chunk()
+            if status is not None and on_progress is not None:
+                try:
+                    on_progress(float(status.progress()))
+                except Exception:  # noqa: BLE001 - progress must never fail an upload
+                    pass
+
+        vid = str(response.get("id") or "")
+        if not vid:
+            raise RuntimeError("YouTube accepted the upload but returned no id.")
+        log.info("uploaded %s as %s (%s) -- quota %d -> %d",
+                 src.name, vid, privacy, before, self.quota_left())
+        return {"id": vid, "url": f"https://www.youtube.com/watch?v={vid}",
+                "shorts_url": f"https://www.youtube.com/shorts/{vid}",
+                "privacy": privacy, "title": title}
 
     # ---------------- channel ----------------
 
