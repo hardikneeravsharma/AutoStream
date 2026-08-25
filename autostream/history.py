@@ -57,7 +57,8 @@ def append(entry: dict[str, Any]) -> None:
 
 def record_session(state, *, watch_url: str | None = None,
                    title: str | None = None,
-                   recording_path: str | None = None) -> dict | None:
+                   recording_path: str | None = None,
+                   marks: list | None = None) -> dict | None:
     """Build and append an entry from the live State.
 
     Must be called BEFORE State.reset_session(), which is the last moment
@@ -86,6 +87,10 @@ def record_session(state, *, watch_url: str | None = None,
         "game": state.current_game,
         "game_key": state.current_key,
         "games": list(state.session_games) or None,
+        # Moments chat asked for, in seconds into the recording. Journalled
+        # rather than kept in memory because the clip run happens after the
+        # session has ended -- often days after.
+        "marks": list(marks) if marks else None,
         "started": state.session_start,
         "ended": time.time(),
         "recording_path": recording_path,

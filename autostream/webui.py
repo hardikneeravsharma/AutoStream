@@ -759,6 +759,14 @@ class Server:
         want = body.get("round_types")
         if isinstance(want, list) and want:
             opt["round_types"] = [str(x) for x in want][:16]
+        # What chat asked for during the stream. The request may override, so
+        # the Clips page can offer them as a switch.
+        marks = body.get("marks")
+        if marks is None:
+            marks = session.get("marks")
+        if marks:
+            opt["marks"] = [m for m in marks if isinstance(m, dict)][:300]
+
         cached = self._cached_kills(path, c)
         if cached and not body.get("rescan") and not opt.get("rounds"):
             # Not reused in round mode: the cache holds kills, and a round also

@@ -350,10 +350,24 @@ class ClipJob:
                     clip_seconds=opt.get("clip_seconds", "30"),
                     pre_roll=pre_roll, tail=tail,
                     source_duration=info["duration"]), floor)
-            if not plans and not spare:
+            if not plans and not spare and not opt.get("marks"):
                 raise RuntimeError(
                     f"{len(kills)} kills found, but none in a fight of "
                     f"{opt.get('min_kills', 2)}+ kills. Lower the minimum.")
+
+        # What chat asked for, folded in beside what was detected. Added after
+        # both modes so a marked moment survives round filtering and the kill
+        # threshold alike -- the point of a mark is that it catches what a
+        # detector cannot, including in a game with no profile at all.
+        if opt.get("marks"):
+            marked = plan.build_marks(
+                opt["marks"], game=self.game,
+                clip_seconds=opt.get("clip_seconds", "30"),
+                source_duration=info["duration"])
+            before = len(plans)
+            plans = plan.merge_marks(plans, marked)
+            log.info("chat asked for %d moment(s); %d were not already found",
+                     len(marked), len(plans) - before)
 
         self._set(summary=plan.summarise(kills, plans))
         self.folder.mkdir(parents=True, exist_ok=True)
