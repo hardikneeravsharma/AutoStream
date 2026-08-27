@@ -269,19 +269,32 @@ class SetupFlow:
                 info = yt.create_reusable_stream()
             except Exception as e:  # noqa: BLE001
                 return {"ok": False, "error": f"Could not create stream: {str(e)[:200]}"}
-            cfg.save_field("youtube", "stream_id", info["id"])
-            cfg.save_field("youtube", "ingestion_address", info["ingestion_address"])
 
+        # OBS FIRST, config LAST. Saving youtube.stream_id is the moment
+        # webui.is_configured() turns true, and this install is only really
+        # configured once OBS also holds the stream key -- without it OBS
+        # pushes to nowhere, YouTube never sees ingestion, and every session
+        # aborts after ninety seconds with an error that says nothing about
+        # setup.
+        #
+        # Written the other way round, anything that ended this process
+        # between the two left exactly that state: a config that looked
+        # complete and an OBS that could not stream. It happened, because the
+        # wizard's own hold loop stopped the server two seconds after
+        # stream_id was saved and the key had not been written yet.
         try:
             obs = Obs(cfg.load())
             obs.configure_stream(info["ingestion_address"], info["stream_key"])
             scenes = obs.scene_names()
-            if scenes and not cfg.load().obs.default_scene:
-                cfg.save_field("obs", "default_scene", scenes[0])
             obs.close()
         except Exception as e:  # noqa: BLE001
             return {"ok": False,
                     "error": f"Stream created, but OBS refused: {str(e)[:200]}"}
+
+        cfg.save_field("youtube", "stream_id", info["id"])
+        cfg.save_field("youtube", "ingestion_address", info["ingestion_address"])
+        if scenes and not cfg.load().obs.default_scene:
+            cfg.save_field("obs", "default_scene", scenes[0])
 
         try:
             from .gameindex import GameIndex
