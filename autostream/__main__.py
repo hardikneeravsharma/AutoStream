@@ -282,6 +282,12 @@ def cmd_voice(args) -> int:
     return 0
 
 
+# How long the setup server keeps answering after the install becomes
+# configured. Long enough for the finish response to arrive, for the page to
+# render what it says, and for a person to read it before the process exits.
+SETUP_LINGER = 10.0
+
+
 def cmd_run(args) -> int:
     """Main entry: web UI + native window + overlay + tray + engine.
 
@@ -390,12 +396,25 @@ def cmd_run(args) -> int:
     if engine is None:
         # Setup mode with no native window: hold the process open so the
         # wizard in the browser can finish.
+        #
+        # THE WIZARD'S OWN SUCCESS USED TO KILL IT. finish() saves
+        # youtube.stream_id part-way through its work, which is the moment
+        # is_configured() turns true -- while the request that caused it is
+        # still being answered. This loop saw that within two seconds and
+        # stopped the server underneath the response, so the browser got a
+        # connection reset and the last thing every new user saw was "Failed
+        # to fetch" on a setup that had in fact worked.
+        #
+        # So: never while a request is in flight, and not until the answer has
+        # had time to arrive and be read.
         log.info("setup wizard running at %s", server.url())
         try:
-            while not is_configured() and not win._quit:  # noqa: SLF001
-                time.sleep(2)
-            if is_configured():
-                log.info("setup complete - restart AutoStream to begin streaming")
+            while not win._quit:                          # noqa: SLF001
+                if is_configured() and server.idle_for() >= SETUP_LINGER:
+                    log.info("setup complete - restart AutoStream to begin "
+                             "streaming")
+                    break
+                time.sleep(0.5)
         except KeyboardInterrupt:
             pass
     else:
