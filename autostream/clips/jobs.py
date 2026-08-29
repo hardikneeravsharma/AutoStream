@@ -312,11 +312,26 @@ class ClipJob:
         # Not when the probe already did it: `kills` are the demo's own by
         # then, so searching again would spend another pass matching the demo
         # against itself.
-        if prof and prof.demos and opt.get("demo", True) and not self.demo:
+        # Logged either way. A run once reached the end with no demo and no
+        # line explaining why -- every branch inside _from_demo logs, so the
+        # only reading left was that it had never been called, and there was
+        # nothing in the record to confirm or refute that. A decision this
+        # expensive should never be invisible.
+        wants_demo = bool(prof and prof.demos and opt.get("demo", True))
+        if not wants_demo:
+            log.info("not looking for a demo: profile=%s demos=%s option=%s",
+                     bool(prof), getattr(prof, "demos", None),
+                     opt.get("demo", True))
+        elif self.demo:
+            log.info("the demo was already found by the probe")
+        else:
             got = self._from_demo(kills)
             if got:
                 kills, round_list = got["kills"], got["rounds"]
                 self.demo = got["about"]
+            else:
+                log.info("carrying on with the %d kills the detector found",
+                         len(kills))
 
         # ---- 2. decide what to cut ---------------------------------------
         if use_rounds and not round_list:
