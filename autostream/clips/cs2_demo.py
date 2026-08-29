@@ -197,16 +197,35 @@ def _rows(parser, event: str, **kw) -> list[dict]:
     sides named on the kills.
     """
     try:
-        return parser.parse_event(event, **kw).to_dict("records")
+        return _records(parser.parse_event(event, **kw))
     except TypeError:
         try:
-            return parser.parse_event(event).to_dict("records")
+            return _records(parser.parse_event(event))
         except Exception as e:                         # pragma: no cover
             log.warning("could not read %s: %s", event, e)
             return []
     except Exception as e:                             # pragma: no cover
         log.warning("could not read %s: %s", event, e)
         return []
+
+
+def _records(got) -> list[dict]:
+    """Rows out of whatever demoparser2 returned for an event.
+
+    It answers a DataFrame when the event occurred and a plain LIST when it
+    did not. Calling .to_dict on the list raises, and the old code logged that
+    as "could not read round_announce_match_point" -- on every parse of every
+    demo without a match point, which is most of them. A match that never went
+    to a match point is not a failure to read one.
+    """
+    if got is None:
+        return []
+    if isinstance(got, list):
+        return [r for r in got if isinstance(r, dict)]
+    to_dict = getattr(got, "to_dict", None)
+    if to_dict is None:
+        return []
+    return to_dict("records")
 
 
 def _flag(row: dict, key: str) -> bool:
@@ -221,6 +240,24 @@ def _name(row: dict, key: str) -> str:
 
 def _side(row: dict, key: str) -> str:
     return TEAM_NAMES.get(_name(row, key).upper(), "")
+
+
+def _num(value, default: float = 0.0) -> float:
+    """A number out of a parsed demo row, whatever the parser put there.
+
+    THE NaN TRAP. parse_ticks comes back through pandas, and a missing cell is
+    float("nan") rather than None. NaN is TRUTHY, so `int(row.get(k) or 0)`
+    does not fall back -- it reaches int(nan) and raises "cannot convert float
+    NaN to integer". That killed the whole parse of a perfectly good demo, and
+    with it the entire demo path for that recording: the rounds then had to be
+    read off the screen, which is the worse source this code exists to avoid.
+    """
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return default
+    # NaN is the only float that is not equal to itself.
+    return default if out != out else out
 
 
 def _number(row: dict, index: int) -> int:
@@ -245,7 +282,7 @@ def _number(row: dict, index: int) -> int:
 def _read_rounds(parser, tickrate: float) -> list[Round]:
     """round_start / round_freeze_end / round_end -> one Round each."""
     def secs(row):
-        return float(row.get("tick") or 0) / tickrate
+        return _num(row.get("tick")) / tickrate
 
     out: list[Round] = []
     for i, row in enumerate(_rows(parser, "round_start",
@@ -301,8 +338,8 @@ def _rosters(parser, kills: list["Kill"]) -> dict[int, dict[str, str]]:
                      "sides named on the kills instead", e)
             rows = []
         for row in rows:
-            n = want.get(int(row.get("tick") or -1))
-            side = SIDES.get(int(row.get("team_num") or 0))
+            n = want.get(int(_num(row.get("tick"), -1)))
+            side = SIDES.get(int(_num(row.get("team_num"))))
             who = str(row.get("name") or "")
             if n and side and who and who != "nan":
                 out.setdefault(n, {})[who] = side
@@ -335,6 +372,7 @@ def parse(path: Path, tickrate: float = TICKRATE) -> Match:
 
     kills: list[Kill] = []
     warmup = 0
+    dropped = 0
     for row in rows:
         # WARM-UP KILLS ARE NOT KILLS. They arrive before round 1 with exactly
         # the same shape as everything else, so counting them inflates the
@@ -343,12 +381,22 @@ def parse(path: Path, tickrate: float = TICKRATE) -> Match:
         if _flag(row, "is_warmup_period"):
             warmup += 1
             continue
+
         killer = _name(row, "attacker_name")
         if not killer:
             continue          # the world killed them: a fall, the bomb, a team
+        # Same NaN trap as the rosters, but worse if it got through: a NaN
+        # tick does not raise here, it produces a NaN TIME, and a clip planned
+        # at an undefined position fails much later with nothing pointing
+        # back. A kill whose tick cannot be read is dropped instead -- the
+        # detector's own timings still cover it.
+        tick = _num(row.get("tick"), -1.0)
+        if tick < 0:
+            dropped += 1
+            continue
         kills.append(Kill(
-            time=float(row["tick"]) / tickrate,
-            round=int(row.get("total_rounds_played") or 0) + 1,
+            time=tick / tickrate,
+            round=int(_num(row.get("total_rounds_played"))) + 1,
             killer=killer, victim=_name(row, "user_name"),
             killer_side=_side(row, "attacker_team_name"),
             victim_side=_side(row, "user_team_name"),
@@ -364,6 +412,9 @@ def parse(path: Path, tickrate: float = TICKRATE) -> Match:
     kills.sort(key=lambda k: k.time)
     if warmup:
         log.info("dropped %d warm-up kill(s) from %s", warmup, path.name)
+    if dropped:
+        log.warning("%d kill(s) in %s had no readable tick and were skipped",
+                    dropped, path.name)
 
     rounds = _read_rounds(p, tickrate)
     teams = _rosters(p, kills)

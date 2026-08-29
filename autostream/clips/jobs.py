@@ -597,6 +597,10 @@ class ClipJob:
         except Exception as e:  # noqa: BLE001 - the clips are already cut
             log.warning("could not cut a reel to %s: %s", music.name, e)
 
+    # Generous: the whole replays folder parses in about twenty seconds, so
+    # anything past this is stuck rather than slow.
+    DEMO_TIMEOUT = 240.0
+
     def _from_demo(self, kills: list[dict]) -> dict | None:
         """Counter-Strike rounds and kills from Valve's own record of the match.
 
@@ -617,10 +621,39 @@ class ClipJob:
             return None
         vod = sorted(float(k["time"]) for k in kills)
         self._set(message="Looking for this match in your demos...")
-        try:
-            match, who, sync = cs2_demo.pick_demo(folder, vod)
-        except RuntimeError as e:          # demoparser2 not installed
-            log.info("%s", e)
+        # ON ITS OWN THREAD, WITH A DEADLINE. The demo search reads other
+        # people's files through a native parser: fourteen demos take about
+        # twenty seconds here, but a corrupt or half-written one is not this
+        # code's to survive, and a clip job that hangs in it hangs forever --
+        # the step reports no progress, the job never fails, and the only way
+        # out is killing the app and losing the scan that already succeeded.
+        # That happened, for twenty-five minutes, at two percent of one core.
+        #
+        # Rounds off the screen are the documented fallback, so giving up here
+        # costs quality rather than the run.
+        got: dict = {}
+
+        def search():
+            try:
+                got["r"] = cs2_demo.pick_demo(folder, vod)
+            except RuntimeError as e:      # demoparser2 not installed
+                got["skip"] = str(e)
+            except Exception as e:         # noqa: BLE001
+                got["skip"] = f"the demo search failed: {e}"
+
+        worker = threading.Thread(target=search, name="autostream-demo",
+                                  daemon=True)
+        worker.start()
+        worker.join(self.DEMO_TIMEOUT)
+        if worker.is_alive():
+            log.warning("the demo search has taken over %ds; falling back to "
+                        "reading the rounds off the screen", self.DEMO_TIMEOUT)
+            return None
+        if "skip" in got:
+            log.info("%s", got["skip"])
+            return None
+        match, who, sync = got.get("r") or (None, "", None)
+        if sync is None:
             return None
         if not match or not sync.ok:
             log.info("no demo in %s fits this recording (%s)", folder,

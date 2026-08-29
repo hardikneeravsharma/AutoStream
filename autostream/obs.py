@@ -128,6 +128,9 @@ class Obs:
         self._audio_client = None
         self._audio_stop = threading.Event()
         self._audio_heard: float | None = None
+        # When each input was last heard, so one dead source among several is
+        # distinguishable from the whole stream being silent.
+        self._audio_by_input: dict[str, float] = {}
         self._audio_since = 0.0
         self._audio_ok = False
 
@@ -341,6 +344,7 @@ class Obs:
         self._audio_stop.clear()
         self._audio_heard = None
         self._audio_ok = False
+        self._audio_by_input = {}
         # The clock silence is measured against until the first sound lands.
         self._audio_since = time.monotonic()
         self._audio_thread = threading.Thread(
@@ -374,14 +378,24 @@ class Obs:
         log.info("listening to OBS audio levels")
 
         def on_input_volume_meters(data):
+            now = time.monotonic()
             peak = -200.0
             for inp in getattr(data, "inputs", None) or []:
+                name = str(inp.get("inputName") or "")
+                best = -200.0
                 for channel in inp.get("inputLevelsMul") or []:
                     # Three magnitudes per channel; the first is the peak.
                     if channel and channel[0] > 0:
-                        peak = max(peak, 20 * math.log10(channel[0]))
+                        best = max(best, 20 * math.log10(channel[0]))
+                if name:
+                    # Seen, so it exists; the timestamp only moves when it is
+                    # actually carrying something.
+                    self._audio_by_input.setdefault(name, 0.0)
+                    if best >= self.SILENCE_FLOOR:
+                        self._audio_by_input[name] = now
+                peak = max(peak, best)
             if peak >= self.SILENCE_FLOOR:
-                self._audio_heard = time.monotonic()
+                self._audio_heard = now
 
         try:
             client.callback.register(on_input_volume_meters)
@@ -394,6 +408,33 @@ class Obs:
                 client.disconnect()
             except Exception:  # noqa: BLE001
                 pass
+
+    def quiet_inputs(self, floor: float = 30.0) -> list[str]:
+        """Audio sources that have been silent while others were not.
+
+        The silence watchdog asks whether ANY sound is reaching the encoder, so
+        a live game with a dead microphone passes it: the game is loud, and the
+        stream is not silent. But nobody hears the streamer, which is its own
+        failure and a more common one -- a muted mic, a device that vanished
+        when a headset was unplugged, or a source pointed at the wrong one.
+
+        -> the names that have carried nothing for `floor` seconds while some
+        other input has. Empty when nothing is provably wrong, including when
+        metering never came up.
+        """
+        if not self._audio_ok or not self._audio_by_input:
+            return []
+        now = time.monotonic()
+        heard = [t for t in self._audio_by_input.values() if t]
+        if not heard or now - max(heard) > 5.0:
+            return []                  # everything is quiet: that is silence,
+                                       # not one broken source
+        out = []
+        for name, when in self._audio_by_input.items():
+            since = now - (when or self._audio_since)
+            if since >= floor:
+                out.append(name)
+        return sorted(out)
 
     def silent_for(self) -> float | None:
         """Seconds since OBS last carried audible sound.
