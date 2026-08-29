@@ -20,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import cfg, paths
+from . import cfg, notify, paths, single
 
 
 def setup_logging(level: str = "INFO", console: bool = True) -> None:
@@ -318,6 +318,19 @@ def cmd_run(args) -> int:
         cfg.save_field("rules", "web_token", token)
     port = int(config.rules.web_port or 8787)
 
+    # One at a time. Two engines each create their own broadcast and each tell
+    # the same OBS to start, so one broadcast never receives a frame, waits out
+    # the ingestion timeout, aborts, and eventually pauses itself -- while the
+    # log reads as one confused process rather than two coherent ones. Easy to
+    # reach: the Scheduled Task starts one at login and somebody double-clicks
+    # the shortcut.
+    if not single.acquire():
+        log.error("AutoStream is already running. Use the tray icon, or the "
+                  "dashboard at %s", f"http://127.0.0.1:{port}/")
+        notify.toast("AutoStream is already running",
+                     "Open it from the tray icon rather than starting a second copy.")
+        return 1
+
     first_run = not is_configured()
     engine = None if first_run else Engine(config)
 
@@ -435,6 +448,7 @@ def cmd_run(args) -> int:
         engine.force_stop("shutdown")
 
     server.stop()
+    single.release()
     log.info("AutoStream exited cleanly")
     return 0
 
