@@ -894,6 +894,19 @@ class Engine:
                             titles.render_description(self.cfg, v))
         except Exception as e:  # noqa: BLE001
             log.warning("retitle failed (non-fatal): %s", e)
+        # The title now says the new game, so the picture has to as well.
+        # Setting it only at go-live meant a session that began on one game
+        # and moved to another kept the first one's thumbnail for the rest of
+        # the night -- and a per-game image assigned to the second game never
+        # appeared at all, which reads as the assignment not working.
+        #
+        # Contained: a thumbnail is decoration, the retitle is what viewers see
+        # in their subscriptions, and one must not be able to take the other
+        # down. _set_thumbnail already guards itself; this guards the call.
+        try:
+            self._set_thumbnail()
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not update the thumbnail on the switch: %s", e)
 
     def _restart_broadcast(self, hit: GameHit) -> None:
         old = self.state.broadcast_id

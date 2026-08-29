@@ -88,3 +88,85 @@ def test_the_day_comes_from_the_session_not_from_now():
     assert v["day"] == "Wednesday"
     assert v["daypart"] == "night"
     assert v["date"] == "26 Aug 2026"
+
+
+# --------------------------------------------- the picture follows the title
+
+from autostream.engine import Engine                             # noqa: E402
+from autostream.state import LIVE, State                         # noqa: E402
+from autostream.gameindex import GameHit                         # noqa: E402
+from autostream import cfg                                       # noqa: E402
+
+
+def a_switching_engine():
+    """An engine mid-session, about to be told a different game is running."""
+    eng = Engine.__new__(Engine)
+    c = cfg.load()
+    raw = {k: (dict(v) if isinstance(v, dict) else v) for k, v in c.items()}
+    raw["youtube"] = dict(raw["youtube"])
+    raw["youtube"]["switch_policy"] = "rolling"
+    eng.cfg = cfg.Config(raw)
+    eng.state = State(phase=LIVE)
+    eng.state.broadcast_id = "bid"
+    eng.state.current_game = "Counter-Strike 2"
+    eng.state.session_games = ["Counter-Strike 2"]
+    eng.state.save = lambda: None            # type: ignore[method-assign]
+    eng.streaming = True
+    eng._switch_candidate = None
+    eng.thumbs = []
+    eng._set_thumbnail = lambda: eng.thumbs.append(eng.state.current_game)
+
+    class Yt:
+        retitled = []
+        def retitle(self, bid, title, desc):
+            Yt.retitled.append(title)
+    eng.yt = Yt()
+
+    class Obs:
+        def set_scene(self, s): pass
+        def set_overlay_text(self, t): pass
+    eng.obs = Obs()
+    return eng
+
+
+def test_switching_game_updates_the_thumbnail_too():
+    """It used to be set once at go-live and never again, so a session that
+    started on one game kept its picture all night -- and a per-game image
+    assigned to the SECOND game never appeared at all, which reads as the
+    assignment silently not working.
+
+    Drives the real _maybe_switch, twice: once to nominate the candidate and
+    once past the debounce, which is how a switch actually happens.
+    """
+    eng = a_switching_engine()
+    hit = GameHit(key="deltaforceclient-win64-shipping.exe", name="Delta Force",
+                  source="test")
+
+    eng._maybe_switch(hit)                       # nominates, does not switch
+    assert eng.thumbs == []
+    assert eng.state.current_game == "Counter-Strike 2"
+
+    eng._switch_candidate = (hit.key, 0.0)       # debounce already served
+    eng._maybe_switch(hit)
+
+    assert eng.state.current_game == "Delta Force"
+    assert eng.yt.retitled, "the broadcast was never retitled"
+    assert "Delta Force" in eng.yt.retitled[-1]
+    assert eng.thumbs == ["Delta Force"], "the picture did not follow the title"
+
+
+def test_a_switch_still_happens_when_the_thumbnail_fails():
+    """A thumbnail is decoration; the retitle is the thing viewers see in
+    their subscriptions. One must not be able to take the other down."""
+    eng = a_switching_engine()
+
+    def boom():
+        raise RuntimeError("no frame")
+    eng._set_thumbnail = boom
+    hit = GameHit(key="cs2.exe", name="Counter-Strike 2 Redux", source="test")
+    eng._switch_candidate = (hit.key, 0.0)
+    try:
+        eng._maybe_switch(hit)
+    except RuntimeError:
+        raise AssertionError("a failing thumbnail broke the game switch")
+    assert eng.state.current_game == "Counter-Strike 2 Redux"
