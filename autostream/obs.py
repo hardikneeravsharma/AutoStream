@@ -1,10 +1,13 @@
 """obs-websocket 5 wrapper. Launches OBS if it isn't running."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
+import threading
 import time
+from pathlib import Path
 
 import psutil
 
@@ -30,10 +33,103 @@ def _obs_process_alive() -> bool:
     return False
 
 
+# obs-websocket writes its own settings here, and they are the three things
+# setup used to ask a person to copy by hand. The file is JSON carrying
+# server_enabled / server_port / server_password / auth_required.
+#
+# The portable build keeps the same tree beside the executable instead, so both
+# are checked -- portable is common on a machine where the user cannot write to
+# Program Files, which is exactly the machine where hand-copying a generated
+# password goes wrong.
+WS_CONFIG = ("plugin_config", "obs-websocket", "config.json")
+
+
+def _ws_config_paths(obs_exe: str = "") -> list[Path]:
+    out: list[Path] = []
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        out.append(Path(appdata).joinpath("obs-studio", *WS_CONFIG))
+    if obs_exe:
+        # ...\obs-studio\bin\64bit\obs64.exe -> ...\obs-studio\config\obs-studio
+        exe = Path(obs_exe)
+        if len(exe.parents) > 2:
+            out.append(exe.parents[2].joinpath("config", "obs-studio", *WS_CONFIG))
+    return out
+
+
+def discover_websocket(obs_exe: str = "") -> dict:
+    """What OBS has already decided about its own WebSocket server.
+
+    -> {found, enabled, port, password, auth_required, source}. `found` is
+    False when there is nothing to read, which only means OBS has never opened
+    the WebSocket dialog on this machine.
+
+    Never raises: this feeds a setup screen, and an unreadable OBS profile
+    should fall back to asking rather than failing.
+    """
+    out = {"found": False, "enabled": False, "port": 4455,
+           "password": "", "auth_required": True, "source": ""}
+    for path in _ws_config_paths(obs_exe):
+        try:
+            if not path.is_file():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        out["found"] = True
+        out["source"] = str(path)
+        out["enabled"] = bool(data.get("server_enabled", False))
+        out["auth_required"] = bool(data.get("auth_required", True))
+        try:
+            out["port"] = int(data.get("server_port") or 4455)
+        except (TypeError, ValueError):
+            out["port"] = 4455
+        # A server with auth off ignores whatever password is stored, and
+        # handing that stale value to the client fails in a way nobody could
+        # explain from the error.
+        out["password"] = ("" if not out["auth_required"]
+                           else str(data.get("server_password") or ""))
+        return out
+    return out
+
+
+def find_obs_exe() -> str:
+    """The OBS executable: from the registry where it is recorded, else a guess."""
+    try:
+        import winreg
+
+        sub = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OBS Studio"
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            try:
+                with winreg.OpenKey(hive, sub) as k:
+                    root = Path(winreg.QueryValueEx(k, "InstallLocation")[0])
+                    exe = root.joinpath("bin", "64bit", "obs64.exe")
+                    if exe.is_file():
+                        return str(exe)
+            except OSError:
+                continue
+    except ImportError:
+        pass
+    for guess in (r"C:\Program Files\obs-studio\bin\64bit\obs64.exe",
+                  r"C:\Program Files (x86)\obs-studio\bin\64bit\obs64.exe"):
+        if Path(guess).is_file():
+            return guess
+    return ""
+
+
 class Obs:
     def __init__(self, config):
         self.cfg = config
         self.ws = None
+        # Audio metering runs on its own thread; see audio_watch_start.
+        self._audio_thread = None
+        self._audio_client = None
+        self._audio_stop = threading.Event()
+        self._audio_heard: float | None = None
+        self._audio_since = 0.0
+        self._audio_ok = False
 
     # ---------------- connection ----------------
 
@@ -217,6 +313,103 @@ class Obs:
             return bool(self.ws.get_stream_status().output_active)
         except Exception:  # noqa: BLE001
             return False
+
+    # ---------------- is anything being heard ----------------
+    #
+    # The picture watchdog has a twin. A stream can be perfectly healthy by
+    # every readout OBS offers -- output active, no dropped frames, a bright
+    # picture -- and still be going out silent, because the scene collection
+    # has no audio device in it, or the one it has is muted, or it is pointed
+    # at a device that is not the one making sound. All three are invisible
+    # from the request API: it reports what a source IS, never what it is
+    # DOING.
+    #
+    # So the levels are read from the event stream instead, on their own
+    # thread. InputVolumeMeters arrives about fifty times a second, which is
+    # far too often to serve on the engine loop -- and the engine loop is
+    # strictly serial, so anything that blocks it stops the OBS watchdog and
+    # chat with it. The thread keeps one number: when sound was last heard.
+
+    SILENCE_FLOOR = -55.0     # dBFS below which a peak is not audible content
+
+    def audio_watch_start(self) -> None:
+        """Begin listening to OBS's meters. Safe to call repeatedly."""
+        if self._audio_thread is not None and self._audio_thread.is_alive():
+            return
+        if obsws is None:
+            return
+        self._audio_stop.clear()
+        self._audio_heard = None
+        self._audio_ok = False
+        # The clock silence is measured against until the first sound lands.
+        self._audio_since = time.monotonic()
+        self._audio_thread = threading.Thread(
+            target=self._audio_loop, name="autostream-audio", daemon=True)
+        self._audio_thread.start()
+
+    def audio_watch_stop(self) -> None:
+        self._audio_stop.set()
+        client, self._audio_client = self._audio_client, None
+        if client is not None:
+            try:
+                client.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+        self._audio_thread = None
+
+    def _audio_loop(self) -> None:
+        import math
+
+        try:
+            client = obsws.EventClient(
+                host=self.cfg.obs.host, port=int(self.cfg.obs.port),
+                password=self.cfg.obs_password,
+                subs=obsws.Subs.INPUTVOLUMEMETERS)
+        except Exception as e:  # noqa: BLE001
+            log.info("audio metering unavailable (%s) - silence will not be "
+                     "reported", e)
+            return
+        self._audio_client = client
+        self._audio_ok = True
+        log.info("listening to OBS audio levels")
+
+        def on_input_volume_meters(data):
+            peak = -200.0
+            for inp in getattr(data, "inputs", None) or []:
+                for channel in inp.get("inputLevelsMul") or []:
+                    # Three magnitudes per channel; the first is the peak.
+                    if channel and channel[0] > 0:
+                        peak = max(peak, 20 * math.log10(channel[0]))
+            if peak >= self.SILENCE_FLOOR:
+                self._audio_heard = time.monotonic()
+
+        try:
+            client.callback.register(on_input_volume_meters)
+            self._audio_stop.wait()
+        except Exception as e:  # noqa: BLE001
+            log.info("audio metering stopped: %s", e)
+        finally:
+            self._audio_ok = False
+            try:
+                client.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def silent_for(self) -> float | None:
+        """Seconds since OBS last carried audible sound.
+
+        -> None when metering never came up, which must NOT read as silence:
+        an old OBS, a refused event connection or a missing library would
+        otherwise raise a false alarm on every stream.
+        """
+        if not self._audio_ok:
+            return None
+        if self._audio_heard is None:
+            # Connected, nothing heard yet. Measured from when listening began
+            # rather than treated as unknown, so a stream that is silent from
+            # its first second is still caught.
+            return max(0.0, time.monotonic() - self._audio_since)
+        return max(0.0, time.monotonic() - self._audio_heard)
 
     def health(self) -> dict:
         self.connect()

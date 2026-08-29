@@ -64,6 +64,9 @@ class Engine:
         # Black-output watchdog; see _check_picture.
         self._blank_checked = 0.0
         self._blank_strikes = 0
+        # Silent-output watchdog; see _check_audio. One flag, not strikes:
+        # the metering thread is already smoothing over individual samples.
+        self._silent_said = False
         # Screen savers: when the starting card should give way to the game,
         # and when the ending card has been shown long enough to stop. Held by
         # a deadline rather than a sleep, because this loop is strictly serial
@@ -456,6 +459,7 @@ class Engine:
         self._start_failures = 0
         self._goto(st.LIVE)
         self._show_starting()
+        self.obs.audio_watch_start()
         log.info("recording session #%d: %s", self.state.session_number, hit.name)
         notify.toast("AutoStream is recording", hit.name)
 
@@ -516,6 +520,12 @@ class Engine:
     BLANK_STRIKES = 2         # consecutive black samples before saying so
     BLANK_LEVEL = 6.0         # mean 0-255 under which a frame is "no picture"
 
+    # Silence has to be given longer than a black frame. A stream is legibly
+    # broken the moment the picture goes, but a quiet stretch is ordinary --
+    # a menu, a held breath, a reload. Ninety seconds of nothing at all is
+    # not.
+    SILENT_AFTER = 90.0
+
     def _check_picture(self) -> None:
         now = time.monotonic()
         if now - self._blank_checked < self.BLANK_EVERY:
@@ -552,6 +562,35 @@ class Engine:
                       "anti-cheat (run OBS as administrator).")
             notify.toast("AutoStream: no picture",
                          "The stream is black. Check your OBS capture source.")
+
+    def _check_audio(self) -> None:
+        """Say so when the stream has been going out silent.
+
+        The twin of _check_picture, and the harder of the two to notice by
+        eye: every readout OBS offers can be healthy -- output active, no
+        dropped frames, a bright picture -- while the scene collection has no
+        audio device in it at all. That is not hypothetical; it is how a
+        session went out on 26 August 2026.
+
+        Costs nothing per tick. obs.silent_for() reads a number kept by the
+        metering thread rather than asking OBS anything.
+        """
+        quiet = self.obs.silent_for()
+        if quiet is None:
+            return                        # no metering: never a false alarm
+        if quiet < self.SILENT_AFTER:
+            if self._silent_said:
+                log.info("audio is back")
+                self._silent_said = False
+            return
+        if not self._silent_said:
+            self._silent_said = True
+            log.error("STREAM HAS NO SOUND - nothing audible for %.0fs. Check "
+                      "the Audio Mixer in OBS: a scene with no audio device in "
+                      "it, a muted one, or one pointed at a device that is not "
+                      "the one making sound.", quiet)
+            notify.toast("AutoStream: no sound",
+                         "The stream is silent. Check the OBS audio mixer.")
 
     def _set_thumbnail(self) -> None:
         """Compose a thumbnail from the live picture and upload it.
@@ -709,6 +748,7 @@ class Engine:
             return
         self._goto(st.LIVE)
         self._show_starting()
+        self.obs.audio_watch_start()
         url = self.yt.watch_url(self.state.broadcast_id)
         log.info("LIVE: %s", url)
         notify.toast("AutoStream is live", self.state.current_game or "", url)
@@ -781,6 +821,7 @@ class Engine:
             return
 
         self._check_picture()
+        self._check_audio()
         self._tick_screen()
 
         # OBS health: only give up after a sustained outage, let OBS reconnect
@@ -981,6 +1022,8 @@ class Engine:
         self._switch_candidate = None
         self._screen_until = None
         self._ending_until = None
+        self._silent_said = False
+        self.obs.audio_watch_stop()
         self.viewers = self.likes = self.views = None
         self.obs_health = {}
         self.chat.clear()
