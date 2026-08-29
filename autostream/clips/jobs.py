@@ -238,6 +238,23 @@ class ClipJob:
         if cached and (not use_rounds or (prof and prof.demos)):
             kills = list(cached)
             self._set(message=f"Using {len(kills)} kills found earlier")
+        # ---- 1a. the probe ------------------------------------------------
+        #
+        # THE SCAN ONLY EXISTS TO FIND THE DEMO. Where a demo aligns, every
+        # kill and round below is thrown away and taken from it instead -- so
+        # reading a whole recording to build a fingerprint that a few minutes
+        # would have built is the most expensive thing this job does for the
+        # least reason. Reading the feed costs about eleven seconds per minute
+        # of video: twenty minutes on a feature-length recording, about one on
+        # the probe.
+        #
+        # Five minutes of kills picked the right demo out of fourteen with
+        # every kill aligned and no error, measured. Twelve is used because a
+        # recording often opens on a menu, a warm-up, or the tail of the
+        # previous match, and those minutes contribute nothing.
+        elif (probe := self._probe_for_demo(prof, opt, info)) is not None:
+            kills, round_list = probe["kills"], probe["rounds"]
+            self.demo = probe["about"]
         elif use_rounds and prof.mode == "killfeed":
             # Checked before the scan, not after. Reading the feed without a
             # name to look for finds nothing at all, and "no kills in this
@@ -292,7 +309,10 @@ class ClipJob:
         # times, exact rounds, and the circumstances no detector can see. What
         # the detector found is kept only as the fingerprint that located it,
         # and as a mark against a right answer.
-        if prof and prof.demos and opt.get("demo", True):
+        # Not when the probe already did it: `kills` are the demo's own by
+        # then, so searching again would spend another pass matching the demo
+        # against itself.
+        if prof and prof.demos and opt.get("demo", True) and not self.demo:
             got = self._from_demo(kills)
             if got:
                 kills, round_list = got["kills"], got["rounds"]
@@ -600,6 +620,64 @@ class ClipJob:
     # Generous: the whole replays folder parses in about twenty seconds, so
     # anything past this is stuck rather than slow.
     DEMO_TIMEOUT = 240.0
+
+    # How much of the recording to read before trying the demos. Generous
+    # against the five minutes that proved sufficient against fourteen real
+    # demos, because a recording often opens on a menu, a warm-up, or the tail
+    # of the previous match, and those minutes contribute nothing.
+    PROBE_SECONDS = 12 * 60.0
+
+    def _probe_for_demo(self, prof, opt: dict, info: dict) -> dict | None:
+        """Read a few minutes, then take the whole match from the demo it finds.
+
+        -> the same shape as _from_demo, or None to fall back to a full scan.
+        Never raises past Cancelled: a probe that cannot answer must cost the
+        run nothing beyond the minutes it spent.
+        """
+        from . import cs2_demo, detect
+
+        if not (prof and prof.demos and opt.get("demo", True)):
+            return None
+        if opt.get("kills"):
+            return None                 # a cached scan is already free
+        total = float(info.get("duration") or 0)
+        if total <= self.PROBE_SECONDS * 1.5:
+            return None                 # short enough that a full read is cheap
+        if not cs2_demo.demo_folder(str(opt.get("demo_folder") or "")):
+            return None
+
+        def prog(d, t):
+            self._set(done=d, total=t,
+                      message=f"Reading a few minutes to find the match - "
+                              f"{d} of {t} chunks")
+        try:
+            found = detect.scan(self.source, prof, progress=prog,
+                                cancelled=lambda: self._cancel.is_set(),
+                                duration=self.PROBE_SECONDS)
+        except detect.Cancelled:
+            raise
+        except Exception as e:  # noqa: BLE001
+            log.info("the probe scan failed (%s); reading the whole recording", e)
+            return None
+        if self._cancel.is_set():
+            raise detect.Cancelled("cancelled")
+
+        seed = [{"time": k.time, "end": k.end, "score": k.score,
+                 "count": k.count} for k in found]
+        if len(seed) < 3:
+            log.info("only %d kill(s) in the first %.0f minutes -- not enough to "
+                     "find the demo, so the whole recording is read",
+                     len(seed), self.PROBE_SECONDS / 60)
+            return None
+
+        got = self._from_demo(seed)
+        if not got:
+            log.info("no demo matched the first %.0f minutes; reading the whole "
+                     "recording", self.PROBE_SECONDS / 60)
+            return None
+        log.info("the demo was found from the first %.0f minutes, so the rest of "
+                 "the recording did not need reading", self.PROBE_SECONDS / 60)
+        return got
 
     def _from_demo(self, kills: list[dict]) -> dict | None:
         """Counter-Strike rounds and kills from Valve's own record of the match.
