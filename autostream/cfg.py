@@ -160,7 +160,7 @@ DEFAULTS: dict[str, Any] = {
         "logo": "",                 # PNG, transparency preferred
         "base_image": "",           # fallback when OBS gives no frame
         "headline": "{game}",
-        "subtitle": "{channel} | {day} night",
+        "subtitle": "{channel} | {day} {daypart}",
     },
     "ui": {"theme": "midnight", "open_window": True},
     "logging": {"level": "INFO", "keep_days": 7},
