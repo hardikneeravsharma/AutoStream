@@ -1847,6 +1847,34 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 .note.warn{border-inline-start-color:var(--warn);background:var(--warn-muted)}
 .note.bad{border-inline-start-color:var(--danger);background:var(--danger-muted)}
 .note.ok{border-inline-start-color:var(--ok);background:var(--ok-muted)}
+
+/* The first thing a new user is asked: clipper, or streaming as well. Two
+   cards rather than a radio group, because the choice decides whether the next
+   ten minutes involve a Google Cloud project -- that deserves more than a
+   bullet. Stacks on narrow windows; the setup pane is often half a screen. */
+.pickrow{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:4px 0 14px}
+@media (max-width:720px){.pickrow{grid-template-columns:1fr}}
+.pick{
+  display:flex;flex-direction:column;gap:6px;text-align:start;cursor:pointer;
+  padding:16px;border-radius:var(--radius-lg,12px);
+  border:1px solid var(--border-subtle);background:var(--surface-raised);
+  color:var(--text-primary);font:inherit;
+  transition:border-color .12s ease,background .12s ease,transform .12s ease;
+}
+.pick:hover{border-color:var(--accent);background:var(--surface-hover)}
+.pick:active{transform:translateY(1px)}
+.pick:focus-visible{outline:2px solid var(--border-focus);outline-offset:2px}
+.pick-title{font-size:1.05rem;font-weight:650}
+.pick-sub{color:var(--text-secondary);font-size:.9rem;line-height:1.45}
+.pick-meta{margin-top:2px;color:var(--text-tertiary);font-size:.8rem}
+
+/* Clipping a file the user already has, rather than a recorded session. */
+.localclip{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.localclip .field{flex:1 1 220px;min-width:0}
+.localclip-path{
+  flex:1 1 100%;min-width:0;color:var(--text-secondary);font-size:.85rem;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
 ol.steps-list{
   list-style:decimal;
   padding-inline-start:var(--space-7);

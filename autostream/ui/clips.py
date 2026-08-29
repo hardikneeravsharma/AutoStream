@@ -38,6 +38,29 @@ CLIPS_HTML: str = (
   <pre class="clip-pre mono" id="clip-setup-detail"></pre>
 </div>
 
+<div class="card" id="clip-local">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Clip a video file</h2>
+      <p class="card-sub">Any recording you already have - AutoStream does not have
+         to have made it. Pick the file, say which game it is, and the highlights
+         come out the same way they do for a stream.</p>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="localclip">
+      <button class="btn" type="button" data-act="pick-local">Choose video&hellip;</button>
+      <div class="field">
+        <label class="field-label" for="clip-local-game">Game</label>
+        <select class="select" id="clip-local-game"></select>
+      </div>
+      <button class="btn btn-primary" type="button" data-act="use-local"
+              id="clip-local-go" disabled>Use this video</button>
+      <p class="localclip-path" id="clip-local-path"></p>
+    </div>
+  </div>
+</div>
+
 <div class="searchbar">
   <span class="overline">Streams</span>
   <select class="select" id="clip-game" aria-label="Filter by game">
@@ -659,6 +682,9 @@ async function clip_run() {
   if (go) go.disabled = true;
   try {
     var r = await API.post('/api/clips/run', {
+      /* `source` wins server-side. A file the user picked is not in the
+         history, so there is no row to look it up by. */
+      source: s.source || '',
       recording_path: s.recording_path,
       game: s.game, game_key: s.game_key,
       style: clip_state.style,
@@ -684,11 +710,79 @@ async function clip_run() {
   }
 }
 
+/* ------------------------------------------------- a file the user picked */
+
+/* The whole clips-only path: somebody with a recording and no interest in
+   streaming should not have to have made that recording with AutoStream. The
+   picked file becomes an ordinary `pick`, so every option below it -- style,
+   length, rounds, montage -- works exactly as it does for a stream, rather
+   than growing a second, poorer copy of the same form. */
+async function clip_loadGames() {
+  try {
+    var r = await API.get('/api/clips/games');
+    clip_state.localGames = (r && r.games) || [];
+  } catch (e) { clip_state.localGames = []; }
+  var sel = clip_el('clip-local-game');
+  if (!sel) return;
+  sel.innerHTML = clip_state.localGames.map(function (g) {
+    return '<option value="' + esc(g.game_key) + '">' + esc(g.game) +
+           (g.can_scan ? '' : ' (needs calibrating)') + '</option>';
+  }).join('') || '<option value="">No games available</option>';
+}
+
+async function clip_pickLocal() {
+  var r;
+  try {
+    r = await API.post('/api/clips/pick', {});
+  } catch (e) { toast('Could not open the file picker.', 'error'); return; }
+  if (r && r.error) { toast(r.error, 'error'); return; }
+  if (!r || !r.path) return;                 /* cancelled */
+  clip_state.localFile = r;
+  var lbl = clip_el('clip-local-path');
+  if (lbl) lbl.textContent = r.name + '  ' + (r.size_mb ? r.size_mb + ' MB' : '');
+  var go = clip_el('clip-local-go');
+  if (go) go.disabled = false;
+}
+
+function clip_useLocal() {
+  var f = clip_state.localFile;
+  var sel = clip_el('clip-local-game');
+  if (!f || !sel || !sel.value) {
+    toast('Choose a video and a game first.', 'warn');
+    return;
+  }
+  var g = null;
+  for (var i = 0; i < clip_state.localGames.length; i++) {
+    if (clip_state.localGames[i].game_key === sel.value) g = clip_state.localGames[i];
+  }
+  if (!g) return;
+  /* Shaped like a history row so clip_renderOptions needs no special case.
+     `source` is what marks it as not-from-history. */
+  clip_state.pick = {
+    source: f.path, recording_path: f.path,
+    game: g.game, game_key: g.game_key, profile: g.profile,
+    can_scan: g.can_scan, scan_mode: g.scan_mode, rounds: g.rounds,
+    counts_assists: g.counts_assists, blocked: g.blocked, player: g.player,
+    started: null, display_started: null, local: true
+  };
+  clip_renderList();
+  clip_renderOptions();
+  var card = clip_el('clip-options');
+  if (card && card.scrollIntoView) card.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
 async function clip_setGame() {
   var s = clip_state.pick;
   var sel = clip_el('clip-gamefix');
   if (!s || !sel || !sel.value) return;
   var label = sel.options[sel.selectedIndex].getAttribute('data-label') || sel.value;
+  if (s.local) {
+    /* Nothing to correct in the journal: this file was never a session. */
+    s.game_key = sel.value;
+    s.game = label;
+    clip_renderOptions();
+    return;
+  }
   var r = await API.post('/api/clips/setgame', {
     recording_path: s.recording_path, game: label, game_key: sel.value});
   if (r && r.error) { toast(r.error, 'error'); return; }
@@ -961,6 +1055,10 @@ function clip_wire() {
     } else if (act === 'reveal-out') {
       clip_reveal((clip_state.lastJob && clip_state.lastJob.folder) ||
                   clip_state.outputDir);
+    } else if (act === 'pick-local') {
+      clip_pickLocal();
+    } else if (act === 'use-local') {
+      clip_useLocal();
     } else if (act === 'setgame') {
       clip_setGame();
     } else if (act === 'calibrate') {
@@ -1047,7 +1145,7 @@ function clip_calPaint() {
 window.PAGE_CLIPS = {
   onShow: function () {
     clip_wire();
-    if (!clip_state.loaded) clip_load();
+    if (!clip_state.loaded) { clip_load(); clip_loadGames(); }
     else clip_renderOptions();
   },
   onTick: function (status) {

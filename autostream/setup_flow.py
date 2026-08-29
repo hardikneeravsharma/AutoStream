@@ -65,6 +65,26 @@ class SetupFlow:
         except Exception:  # noqa: BLE001
             return {}
 
+    # ---------------- the clips-only fork ----------------
+
+    def clips_only(self) -> dict:
+        """Finish setup for somebody who only wants the clipper.
+
+        Cutting a video they already have needs ffmpeg and nothing else -- no
+        Google Cloud project, no OAuth, no OBS, not even a recording. Every one
+        of those was a wall in front of a person whose whole ask was "make
+        clips from this file", and the wizard used to make all of them
+        mandatory because the streaming path needs them.
+
+        Turning youtube.enabled off is what makes webui.is_configured() true,
+        so the app stops treating this install as unconfigured and never asks
+        for a Google sign-in again. Settings can turn it back on later, which
+        re-arms the full wizard on the next start.
+        """
+        cfg.save_field("youtube", "enabled", False)
+        log.info("setup: clips-only mode - YouTube is off, no sign-in needed")
+        return {"ok": True, "setup": self.snapshot()}
+
     # ---------------- step 1: client secret ----------------
 
     def find_downloaded_secret(self) -> str | None:

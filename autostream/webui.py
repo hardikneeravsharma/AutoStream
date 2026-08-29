@@ -224,6 +224,8 @@ class _Handler(BaseHTTPRequestHandler):
                           for x in tail_lines(paths.LOG_FILE, max(1, min(n, _TAIL_MAX)))],
                 "path": str(paths.LOG_FILE),
             })
+        elif u.path == "/api/clips/games":
+            self._json(self.app.clips_games())
         elif u.path == "/api/clips/sessions":
             self._json(self.app.clips_sessions())
         elif u.path == "/api/clips/frame":
@@ -408,6 +410,10 @@ class _Handler(BaseHTTPRequestHandler):
             elif p == "/api/setup/save":
                 self._json(self.app.setup.save_section(
                     str(b.get("section", "")), b.get("values") or {}))
+            elif p == "/api/setup/clips_only":
+                self._json(self.app.setup.clips_only())
+            elif p == "/api/clips/pick":
+                self._json(self.app.clips_pick())
             elif p == "/api/setup/scan":
                 self._json(self.app.setup.scan())
             elif p == "/api/setup/apps":
@@ -832,6 +838,71 @@ class Server:
             return b"", str(e)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    def clips_pick(self) -> dict:
+        """Ask the OS for a video file. -> {ok, path} or {error}.
+
+        A browser file input hands back a NAME, never a path, and these files
+        run to tens of gigabytes so uploading one is not an option either. The
+        server and the page are always the same machine, so the dialog opens
+        here and only the path crosses.
+
+        Tk rather than pywebview's dialog: the native window is not always
+        there -- plenty of machines fall back to a browser -- and Tk is already
+        bundled for the overlay panel.
+        """
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+        except ImportError:
+            return {"error": "No file picker on this machine. Paste the path instead."}
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)   # or it opens behind the browser
+            chosen = filedialog.askopenfilename(
+                parent=root,
+                title="Choose a video to clip",
+                filetypes=[("Video", "*.mp4 *.mkv *.mov *.flv *.avi *.ts *.webm"),
+                           ("All files", "*.*")])
+            root.destroy()
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"Could not open the file picker: {str(e)[:160]}"}
+        if not chosen:
+            return {"ok": True, "path": ""}          # cancelled, not an error
+        path = Path(chosen)
+        if not path.is_file():
+            return {"error": "That file is not there any more."}
+        return {"ok": True, "path": str(path), "name": path.name,
+                "size_mb": round(path.stat().st_size / (1024 * 1024))}
+
+    def clips_games(self) -> dict:
+        """Games the clipper can read, for the local-file picker.
+
+        Carries the same per-game fields clips_sessions attaches to a recorded
+        session, so a file the user picked can drive the identical options card
+        instead of a second, poorer one.
+        """
+        from .clips import profiles
+
+        out = []
+        for row in profiles.listing():
+            prof = profiles.for_game(row["key"])
+            if prof is None:
+                continue
+            out.append({
+                "game_key": prof.key,
+                "game": prof.label,
+                "profile": prof.label,
+                "can_scan": prof.exists(),
+                "scan_mode": prof.mode,
+                "rounds": bool(getattr(prof, "rounds", False)),
+                "counts_assists": bool(prof.counts_assists),
+                "blocked": prof.why_not(),
+                "player": prof.player or profiles.username_for(prof.key, prof.label),
+                "builtin": row["builtin"],
+            })
+        return {"games": out}
 
     def clips_calibrate(self, body: dict) -> dict:
         from .clips import calibrate
