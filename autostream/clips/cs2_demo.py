@@ -197,16 +197,35 @@ def _rows(parser, event: str, **kw) -> list[dict]:
     sides named on the kills.
     """
     try:
-        return parser.parse_event(event, **kw).to_dict("records")
+        return _records(parser.parse_event(event, **kw))
     except TypeError:
         try:
-            return parser.parse_event(event).to_dict("records")
+            return _records(parser.parse_event(event))
         except Exception as e:                         # pragma: no cover
             log.warning("could not read %s: %s", event, e)
             return []
     except Exception as e:                             # pragma: no cover
         log.warning("could not read %s: %s", event, e)
         return []
+
+
+def _records(got) -> list[dict]:
+    """Rows out of whatever demoparser2 returned for an event.
+
+    It answers a DataFrame when the event occurred and a plain LIST when it
+    did not. Calling .to_dict on the list raises, and the old code logged that
+    as "could not read round_announce_match_point" -- on every parse of every
+    demo without a match point, which is most of them. A match that never went
+    to a match point is not a failure to read one.
+    """
+    if got is None:
+        return []
+    if isinstance(got, list):
+        return [r for r in got if isinstance(r, dict)]
+    to_dict = getattr(got, "to_dict", None)
+    if to_dict is None:
+        return []
+    return to_dict("records")
 
 
 def _flag(row: dict, key: str) -> bool:
@@ -353,6 +372,7 @@ def parse(path: Path, tickrate: float = TICKRATE) -> Match:
 
     kills: list[Kill] = []
     warmup = 0
+    dropped = 0
     for row in rows:
         # WARM-UP KILLS ARE NOT KILLS. They arrive before round 1 with exactly
         # the same shape as everything else, so counting them inflates the
@@ -361,11 +381,21 @@ def parse(path: Path, tickrate: float = TICKRATE) -> Match:
         if _flag(row, "is_warmup_period"):
             warmup += 1
             continue
+
         killer = _name(row, "attacker_name")
         if not killer:
             continue          # the world killed them: a fall, the bomb, a team
+        # Same NaN trap as the rosters, but worse if it got through: a NaN
+        # tick does not raise here, it produces a NaN TIME, and a clip planned
+        # at an undefined position fails much later with nothing pointing
+        # back. A kill whose tick cannot be read is dropped instead -- the
+        # detector's own timings still cover it.
+        tick = _num(row.get("tick"), -1.0)
+        if tick < 0:
+            dropped += 1
+            continue
         kills.append(Kill(
-            time=float(row["tick"]) / tickrate,
+            time=tick / tickrate,
             round=int(_num(row.get("total_rounds_played"))) + 1,
             killer=killer, victim=_name(row, "user_name"),
             killer_side=_side(row, "attacker_team_name"),
@@ -382,6 +412,9 @@ def parse(path: Path, tickrate: float = TICKRATE) -> Match:
     kills.sort(key=lambda k: k.time)
     if warmup:
         log.info("dropped %d warm-up kill(s) from %s", warmup, path.name)
+    if dropped:
+        log.warning("%d kill(s) in %s had no readable tick and were skipped",
+                    dropped, path.name)
 
     rounds = _read_rounds(p, tickrate)
     teams = _rosters(p, kills)
