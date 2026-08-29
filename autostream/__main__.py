@@ -20,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import cfg, paths
+from . import cfg, notify, paths, single
 
 
 def setup_logging(level: str = "INFO", console: bool = True) -> None:
@@ -282,6 +282,12 @@ def cmd_voice(args) -> int:
     return 0
 
 
+# How long the setup server keeps answering after the install becomes
+# configured. Long enough for the finish response to arrive, for the page to
+# render what it says, and for a person to read it before the process exits.
+SETUP_LINGER = 10.0
+
+
 def cmd_run(args) -> int:
     """Main entry: web UI + native window + overlay + tray + engine.
 
@@ -311,6 +317,19 @@ def cmd_run(args) -> int:
         token = _secrets.token_urlsafe(12)
         cfg.save_field("rules", "web_token", token)
     port = int(config.rules.web_port or 8787)
+
+    # One at a time. Two engines each create their own broadcast and each tell
+    # the same OBS to start, so one broadcast never receives a frame, waits out
+    # the ingestion timeout, aborts, and eventually pauses itself -- while the
+    # log reads as one confused process rather than two coherent ones. Easy to
+    # reach: the Scheduled Task starts one at login and somebody double-clicks
+    # the shortcut.
+    if not single.acquire():
+        log.error("AutoStream is already running. Use the tray icon, or the "
+                  "dashboard at %s", f"http://127.0.0.1:{port}/")
+        notify.toast("AutoStream is already running",
+                     "Open it from the tray icon rather than starting a second copy.")
+        return 1
 
     first_run = not is_configured()
     engine = None if first_run else Engine(config)
@@ -390,12 +409,25 @@ def cmd_run(args) -> int:
     if engine is None:
         # Setup mode with no native window: hold the process open so the
         # wizard in the browser can finish.
+        #
+        # THE WIZARD'S OWN SUCCESS USED TO KILL IT. finish() saves
+        # youtube.stream_id part-way through its work, which is the moment
+        # is_configured() turns true -- while the request that caused it is
+        # still being answered. This loop saw that within two seconds and
+        # stopped the server underneath the response, so the browser got a
+        # connection reset and the last thing every new user saw was "Failed
+        # to fetch" on a setup that had in fact worked.
+        #
+        # So: never while a request is in flight, and not until the answer has
+        # had time to arrive and be read.
         log.info("setup wizard running at %s", server.url())
         try:
-            while not is_configured() and not win._quit:  # noqa: SLF001
-                time.sleep(2)
-            if is_configured():
-                log.info("setup complete - restart AutoStream to begin streaming")
+            while not win._quit:                          # noqa: SLF001
+                if is_configured() and server.idle_for() >= SETUP_LINGER:
+                    log.info("setup complete - restart AutoStream to begin "
+                             "streaming")
+                    break
+                time.sleep(0.5)
         except KeyboardInterrupt:
             pass
     else:
@@ -416,6 +448,7 @@ def cmd_run(args) -> int:
         engine.force_stop("shutdown")
 
     server.stop()
+    single.release()
     log.info("AutoStream exited cleanly")
     return 0
 
