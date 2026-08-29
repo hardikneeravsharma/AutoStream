@@ -122,6 +122,31 @@ class SetupFlow:
             log.exception("setup auth failed")
             return {"ok": False, "error": str(e)[:300]}
 
+    # ---------------- the app window ----------------
+
+    def webview2(self) -> dict:
+        """Is the runtime here, and what does that mean for this user."""
+        from . import webview2 as wv
+
+        got = wv.version()
+        return {"ok": True, "installed": bool(got), "version": got,
+                "hint": ("AutoStream will open in its own window."
+                         if got else
+                         "AutoStream will open in your browser instead of its "
+                         "own window. Everything works either way -- the app "
+                         "window just needs a small Microsoft runtime that is "
+                         "not on this PC.")}
+
+    def install_webview2(self) -> dict:
+        """Fetch and run Microsoft's installer, at the user's request."""
+        from . import webview2 as wv
+
+        r = wv.install()
+        if r.get("ok"):
+            r["hint"] = ("Installed. Restart AutoStream and it will open in "
+                         "its own window.")
+        return r
+
     # ---------------- step 3: OBS ----------------
 
     def test_obs(self, values: dict) -> dict:
