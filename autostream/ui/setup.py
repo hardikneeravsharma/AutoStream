@@ -174,6 +174,10 @@ function setup_draw(){
     'Welcome to AutoStream',
     'This will set up automatic YouTube live streaming that starts by itself when ' +
     'you launch a game. It takes about ten minutes, most of it waiting on Google.',
+    '<div class="note hide" id="setup-wv2"><span id="setup-wv2-text"></span> ' +
+    '<button type="button" class="btn btn-sm" data-act="getWebview2" ' +
+    'id="setup-wv2-btn" style="margin-top:8px">Get the app window</button>' +
+    '<p class="muted" id="setup-wv2-msg"></p></div>' +
     '<div class="note"><b>You will need:</b> a YouTube channel with live streaming ' +
     'already enabled, and OBS Studio installed.</div>' +
     '<div class="note warn">Enabling live streaming on a new channel can take up to ' +
@@ -541,9 +545,42 @@ async function setup_finish(){
   }
 }
 
+/* Without the Edge WebView2 runtime there is no native window, so the UI opens
+   in the real browser instead. Everything works there; what is missing is a
+   window in the taskbar. So this is OFFERED, never done quietly: the installer
+   raises a UAC prompt of its own, and a prompt from a process the user did not
+   ask to run is how software gets mistaken for something worse. */
+async function setup_checkWebview2(){
+  const box = setup_$('setup-wv2');
+  if (!box) return;
+  const r = await setup_post('/api/setup/webview2', {});
+  /* Nothing to say when the runtime is there -- and it is, on Windows 11. */
+  if (!r || !r.ok || r.installed){ box.classList.add('hide'); return; }
+  box.classList.remove('hide');
+  const t = setup_$('setup-wv2-text');
+  if (t) t.innerHTML = '<b>You are reading this in a browser tab.</b> ' +
+                       esc(r.hint || '');
+}
+
+async function setup_getWebview2(){
+  const btn = setup_$('setup-wv2-btn');
+  if (btn) btn.disabled = true;
+  setup_say('setup-wv2-msg', '', setup_spin(
+    'Downloading from Microsoft. Windows will ask for permission...'));
+  const r = await setup_post('/api/setup/webview2/install', {});
+  if (r && r.ok){
+    setup_say('setup-wv2-msg', 'ok', esc(r.hint || 'Installed.'));
+    if (btn) btn.classList.add('hide');
+  } else {
+    setup_say('setup-wv2-msg', 'warn', esc((r && r.error) || 'Could not install it.'));
+    if (btn) btn.disabled = false;
+  }
+}
+
 /* ---------------- wiring ---------------- */
 
 const setup_ACTIONS = {
+  getWebview2: setup_getWebview2,
   back:       () => setup_go(setup_step - 1),
   next:       () => setup_go(setup_step + 1),
   saveSecret: setup_saveSecret,
@@ -590,6 +627,7 @@ window.PAGE_SETUP = {
   start: async function(boot){
     setup_wire();
     setup_step = 0;
+    setup_checkWebview2();
     setup_bar();
     const c = setup_$('setup-stepcard');
     if (c) c.innerHTML = setup_card('Getting ready', '',
