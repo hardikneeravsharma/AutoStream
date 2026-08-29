@@ -223,6 +223,24 @@ def _side(row: dict, key: str) -> str:
     return TEAM_NAMES.get(_name(row, key).upper(), "")
 
 
+def _num(value, default: float = 0.0) -> float:
+    """A number out of a parsed demo row, whatever the parser put there.
+
+    THE NaN TRAP. parse_ticks comes back through pandas, and a missing cell is
+    float("nan") rather than None. NaN is TRUTHY, so `int(row.get(k) or 0)`
+    does not fall back -- it reaches int(nan) and raises "cannot convert float
+    NaN to integer". That killed the whole parse of a perfectly good demo, and
+    with it the entire demo path for that recording: the rounds then had to be
+    read off the screen, which is the worse source this code exists to avoid.
+    """
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return default
+    # NaN is the only float that is not equal to itself.
+    return default if out != out else out
+
+
 def _number(row: dict, index: int) -> int:
     """Which round a row belongs to, 1-indexed.
 
@@ -245,7 +263,7 @@ def _number(row: dict, index: int) -> int:
 def _read_rounds(parser, tickrate: float) -> list[Round]:
     """round_start / round_freeze_end / round_end -> one Round each."""
     def secs(row):
-        return float(row.get("tick") or 0) / tickrate
+        return _num(row.get("tick")) / tickrate
 
     out: list[Round] = []
     for i, row in enumerate(_rows(parser, "round_start",
@@ -301,8 +319,8 @@ def _rosters(parser, kills: list["Kill"]) -> dict[int, dict[str, str]]:
                      "sides named on the kills instead", e)
             rows = []
         for row in rows:
-            n = want.get(int(row.get("tick") or -1))
-            side = SIDES.get(int(row.get("team_num") or 0))
+            n = want.get(int(_num(row.get("tick"), -1)))
+            side = SIDES.get(int(_num(row.get("team_num"))))
             who = str(row.get("name") or "")
             if n and side and who and who != "nan":
                 out.setdefault(n, {})[who] = side
@@ -348,7 +366,7 @@ def parse(path: Path, tickrate: float = TICKRATE) -> Match:
             continue          # the world killed them: a fall, the bomb, a team
         kills.append(Kill(
             time=float(row["tick"]) / tickrate,
-            round=int(row.get("total_rounds_played") or 0) + 1,
+            round=int(_num(row.get("total_rounds_played"))) + 1,
             killer=killer, victim=_name(row, "user_name"),
             killer_side=_side(row, "attacker_team_name"),
             victim_side=_side(row, "user_team_name"),

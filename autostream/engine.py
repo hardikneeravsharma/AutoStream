@@ -67,6 +67,7 @@ class Engine:
         # Silent-output watchdog; see _check_audio. One flag, not strikes:
         # the metering thread is already smoothing over individual samples.
         self._silent_said = False
+        self._quiet_said: set[str] = set()
         # Moments chat asked for, in seconds into the recording. Cleared with
         # the session and journalled with it, so the clip run can read them.
         self._marks: list[dict] = []
@@ -128,7 +129,14 @@ class Engine:
             # Close the recording too, and journal it. OBS survives an
             # AutoStream crash perfectly well and would otherwise keep writing
             # to a file nothing remembers starting.
-            rec_path = self._stop_recording()
+            # _stop_recording answers None when OBS is no longer recording --
+            # which is the normal case after a crash, because OBS outlives
+            # AutoStream and may have been closed since. The file is still on
+            # disk, so look for it rather than journalling None: a session
+            # remembered with no recording_path is INVISIBLE on the Clips page,
+            # and that is how a 44 GB recording became unreachable with nothing
+            # anywhere saying so.
+            rec_path = self._stop_recording() or self._adopt_recording()
             try:
                 self.obs.stop()
             except Exception:  # noqa: BLE001
@@ -142,6 +150,52 @@ class Engine:
             self._journal(rec_path)
             self.state.reset_session()
             self.state.save()
+
+    # How far apart a session's start and OBS's filename stamp may be and
+    # still be the same recording. They differ by however long it took to
+    # start the output, which is seconds -- but a session that began while
+    # another recording was already running must not steal that one, so the
+    # window stays tight.
+    ADOPT_WINDOW = 180.0
+
+    def _adopt_recording(self) -> str | None:
+        """Find the file a crashed session left behind. -> its path, or None.
+
+        Matched on OBS's own filename stamp against the session's start, which
+        is the same evidence a person would use and the only evidence there is
+        once OBS has forgotten the output.
+        """
+        start = self.state.session_start
+        if not start:
+            return None
+        folder = self.cfg.record.directory or ""
+        if not folder:
+            try:
+                folder = self.obs.record_directory() or ""
+            except Exception:  # noqa: BLE001
+                folder = ""
+        if not folder:
+            return None
+
+        from . import history
+
+        best, best_gap = None, self.ADOPT_WINDOW
+        try:
+            files = list(Path(folder).glob("*.mp4")) + list(Path(folder).glob("*.mkv"))
+        except OSError:
+            return None
+        for f in files:
+            stamp = history._started_from_name(str(f))  # noqa: SLF001
+            if stamp is None:
+                continue
+            gap = abs(stamp - start)
+            if gap <= best_gap:
+                best, best_gap = f, gap
+        if best is None:
+            return None
+        log.info("adopted the recording this session left behind: %s (%.0fs "
+                 "from the session start)", best.name, best_gap)
+        return str(best)
 
     def request_stop(self) -> None:
         self._stop_requested = True
@@ -530,6 +584,10 @@ class Engine:
     # not.
     SILENT_AFTER = 90.0
 
+    # Longer than SILENT_AFTER: a microphone is SUPPOSED to be quiet much of
+    # the time, and a streamer who says nothing for two minutes is not broken.
+    QUIET_INPUT_AFTER = 300.0
+
     def _check_picture(self) -> None:
         now = time.monotonic()
         if now - self._blank_checked < self.BLANK_EVERY:
@@ -586,6 +644,11 @@ class Engine:
             if self._silent_said:
                 log.info("audio is back")
                 self._silent_said = False
+            # The stream is not silent -- but one source inside it can still
+            # be. A live game with a dead microphone passes the check above,
+            # because the game is loud; nobody hears the streamer, which is
+            # its own failure and a more common one.
+            self._check_quiet_inputs()
             return
         if not self._silent_said:
             self._silent_said = True
@@ -595,6 +658,26 @@ class Engine:
                       "the one making sound.", quiet)
             notify.toast("AutoStream: no sound",
                          "The stream is silent. Check the OBS audio mixer.")
+
+    def _check_quiet_inputs(self) -> None:
+        """Name a source that has been silent while the rest were not."""
+        try:
+            quiet = self.obs.quiet_inputs(self.QUIET_INPUT_AFTER)
+        except Exception:  # noqa: BLE001
+            return
+        gone = set(quiet)
+        if gone == self._quiet_said:
+            return                        # already said, and nothing changed
+        for name in sorted(gone - self._quiet_said):
+            log.warning("%r has been silent for over %.0fs while other audio "
+                        "is playing. A muted source, a device that was "
+                        "unplugged, or one pointed at the wrong input.",
+                        name, self.QUIET_INPUT_AFTER)
+            notify.toast("AutoStream: no sound from " + name,
+                         "Everything else is audible. Check it in the OBS mixer.")
+        for name in sorted(self._quiet_said - gone):
+            log.info("%r is audible again", name)
+        self._quiet_said = gone
 
     def _set_thumbnail(self) -> None:
         """Compose a thumbnail from the live picture and upload it.
@@ -1068,6 +1151,7 @@ class Engine:
         self._screen_until = None
         self._ending_until = None
         self._silent_said = False
+        self._quiet_said = set()
         self._marks = []
         self._mark_seen = {}
         self.obs.audio_watch_stop()
