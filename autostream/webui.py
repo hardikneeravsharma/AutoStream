@@ -21,6 +21,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 from functools import partial
@@ -208,8 +209,11 @@ class _Handler(BaseHTTPRequestHandler):
                 # No engine yet (setup, or a headless server) still has to
                 # carry clip progress: a clip job runs on its own thread and
                 # the Clips page reads it from here, engine or not.
+                # `upload` rides along for the same reason, so the page reads
+                # one payload shape whether or not an engine exists.
                 self._json({"phase": "IDLE", "apps": self.app.apps_payload(),
-                            "clips": self.app._clips_status()})
+                            "clips": self.app._clips_status(),
+                            "upload": self.app._upload_status()})
                 return
             self.app.engine.client_seen = time.monotonic()
             self._json(self.app.status())
@@ -421,6 +425,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.setup.clips_only())
             elif p == "/api/clips/setname":
                 self._json(self.app.clips_setname(b))
+            elif p == "/api/diagnostics":
+                self._json(self.app.diagnostics())
             elif p == "/api/clips/pick":
                 self._json(self.app.clips_pick())
             elif p == "/api/setup/scan":
@@ -712,6 +718,14 @@ class Server:
             "games": sorted({r["game"] for r in rows if r.get("game")}),
             "known": len(table),
             "last_job": self._last_manifest(cfg_now),
+            # Uploading needs a channel to upload TO. A clips-only install has
+            # none, and offering the button there would be a lie.
+            "can_upload": bool(self.engine is not None
+                               and getattr(self.engine, "streaming", True)
+                               and cfg_now.youtube.stream_id),
+            "upload_daily_max": int(getattr(cfg_now.rules, "upload_daily_max", 5)),
+            "upload_privacy": cfg_now.clips.upload_privacy,
+            "upload_title": cfg_now.clips.upload_title,
         }
 
     def _kills_by_source(self, config=None) -> dict[str, int]:
@@ -906,6 +920,105 @@ class Server:
             return b"", str(e)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    # Stripped BOTH ways, because neither alone is enough.
+    #
+    # By name, for config.yaml -- these are the keys that must never reach a
+    # chat window. And by value over the whole report, because the log carries
+    # them in prose: the startup banner prints the dashboard URL with the web
+    # token in the query string, and the first version of this leaked it
+    # exactly that way.
+    SECRET_KEYS = ("password", "web_token", "stream_id", "ingestion_address")
+
+    def diagnostics(self) -> dict:
+        """One paste-able report about this install. -> {ok, text}.
+
+        Turns "it does not work" into something answerable. Every problem this
+        app has had reported to it arrived as a photograph of a screen, and a
+        photograph cannot say which OBS version, which build, or what the log
+        said thirty seconds earlier.
+        """
+        import platform
+
+        from . import __version__
+
+        c = cfg.load()
+        lines = [
+            f"AutoStream {__version__}",
+            f"Python      {platform.python_version()}  ({sys.platform})",
+            f"OS          {platform.platform()}",
+            f"Home        {paths.ROOT}",
+            f"Frozen      {bool(getattr(sys, 'frozen', False))}",
+        ]
+
+        try:
+            from .obs import discover_websocket, find_obs_exe, _obs_process_alive
+
+            exe = c.obs.path or find_obs_exe()
+            ws = discover_websocket(exe)
+            lines += [
+                "",
+                f"OBS exe     {exe or '(not found)'}",
+                f"OBS running {_obs_process_alive()}",
+                f"OBS ws      found={ws['found']} enabled={ws['enabled']} "
+                f"port={ws['port']} auth={ws['auth_required']}",
+            ]
+        except Exception as e:  # noqa: BLE001
+            lines += ["", f"OBS         could not be inspected: {e}"]
+
+        try:
+            from . import clips as clipsmod
+
+            st = clipsmod.status()
+            lines.append(f"ffmpeg      ok={st.get('ok')} {st.get('detail') or ''}".rstrip())
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"ffmpeg      could not be checked: {e}")
+
+        lines += [
+            "",
+            f"streaming   {bool(c.youtube.enabled)}",
+            f"recording   {bool(c.record.enabled)}",
+            f"token       {'present' if paths.TOKEN_FILE.exists() else 'MISSING'}",
+            f"client id   {'present' if paths.CLIENT_SECRET.exists() else 'MISSING'}",
+            f"screens     enabled={bool(c.screens.enabled)}",
+        ]
+        if self.engine is not None:
+            s_ = self.engine.state
+            lines += [
+                f"phase       {s_.phase} paused={s_.paused}",
+                f"quota spent {s_.quota_spent} on {s_.quota_date}",
+            ]
+
+        lines += ["", "--- config (secrets removed) ---"]
+        for section, body in sorted((cfg.load_raw() or {}).items()):
+            if not isinstance(body, dict):
+                lines.append(f"{section}: {body}")
+                continue
+            for key, value in sorted(body.items()):
+                if any(k in key for k in self.SECRET_KEYS):
+                    value = "(removed)" if value else "(empty)"
+                lines.append(f"{section}.{key} = {value}")
+
+        lines += ["", "--- last 40 log lines ---"]
+        try:
+            lines += [ln.rstrip() for ln in tail_lines(paths.LOG_FILE, 40)]
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"(could not read the log: {e})")
+
+        return {"ok": True, "text": self._scrub(chr(10).join(lines), c)}
+
+    def _scrub(self, text: str, config) -> str:
+        """Remove secret VALUES wherever they appear, prose included."""
+        for value in (config.obs.password, config.rules.web_token,
+                      config.youtube.stream_id, config.youtube.ingestion_address,
+                      config.obs.get("password_env", "")):
+            v = str(value or "")
+            if len(v) >= 6:          # short values would scrub ordinary words
+                text = text.replace(v, "(removed)")
+        # Any token-bearing URL, including one from a config this process has
+        # not loaded -- an older log line, or a second install.
+        return re.sub(r"([?&]k=)[^\s&\"']+",
+                      lambda m: m.group(1) + "(removed)", text)
 
     def clips_pick(self) -> dict:
         """Ask the OS for a video file. -> {ok, path} or {error}.

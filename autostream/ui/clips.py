@@ -210,6 +210,31 @@ CLIPS_HTML: str = (
     + """<span>Open folder</span></button>
   </div>
   <div class="clip-results" id="clip-res-list"></div>
+
+  <div class="panel hide" id="clip-up" style="margin-top:12px">
+    <div class="field-inline" style="flex-wrap:wrap;gap:10px">
+      <div class="field" style="min-width:150px">
+        <label class="field-label" for="clip-up-privacy">Who can see them</label>
+        <select class="select" id="clip-up-privacy">
+          <option value="unlisted">Unlisted - only with the link</option>
+          <option value="public">Public</option>
+          <option value="private">Private - only you</option>
+        </select>
+      </div>
+      <div class="field" style="flex:1 1 260px;min-width:0">
+        <label class="field-label" for="clip-up-title">Title</label>
+        <input class="input" id="clip-up-title" type="text" spellcheck="false"
+               autocomplete="off">
+      </div>
+      <button class="btn btn-primary" type="button" data-act="upload"
+              id="clip-up-go">Upload</button>
+      <button class="btn btn-danger btn-sm hide" type="button"
+              data-act="upload-cancel" id="clip-up-stop">Stop</button>
+    </div>
+    <p class="field-help" id="clip-up-note"></p>
+    <div class="meter hide" id="clip-up-meter"><div class="meter-fill"
+         id="clip-up-fill"></div></div>
+  </div>
 </div>
 
 <div class="scrim hide" id="clip-cal-scrim">
@@ -620,17 +645,85 @@ function clip_renderResults(list, montagePath) {
   }
   for (var i = 0; i < list.length; i++) {
     var c = list[i];
-    h += '<div class="clip-res">' +
-      '<span class="clip-res-rank mono">' + esc(String(c.rank)) + '</span>' +
-      '<span class="clip-res-name">' + esc(c.kills) +
-        (c.kills === 1 ? ' kill' : ' kills') + '</span>' +
+    /* Only a vertical can be a Short, and only an un-uploaded one is worth
+       ticking. A clip with no vertical is still listed -- it just cannot go. */
+    var can = !!c.vertical;
+    var done = !!c.video_id;
+    var on = clip_upWanted(c);
+    var label = c.caption ? esc(c.caption)
+                          : (esc(String(c.kills)) + (c.kills === 1 ? ' kill' : ' kills'));
+    h += '<div class="clip-res' + (done ? ' is-up' : '') + '">' +
+      (can && !done
+        ? '<input class="clip-res-tick" type="checkbox" data-up="' + i + '"' +
+          (on ? ' checked' : '') + ' aria-label="Upload ' + esc(label) + '">'
+        : '<span class="clip-res-rank mono">' + esc(String(c.rank)) + '</span>') +
+      '<span class="clip-res-name">' + label + '</span>' +
       '<span class="clip-res-meta muted">at ' + esc(c.at) + '  ·  ' +
-        Math.round(c.duration) + 's</span>' +
+        Math.round(c.duration) + 's' +
+        (done ? '  ·  on YouTube' : (can ? '' : '  ·  no vertical')) + '</span>' +
       '<span class="clip-res-acts">' +
+      (done ? '<a class="btn btn-ghost btn-sm" target="_blank" rel="noreferrer noopener"'
+              + ' href="' + esc(c.shorts_url || c.url) + '">Watch</a>' : '') +
       '<button class="btn btn-ghost btn-sm" type="button" data-act="reveal"' +
       ' data-path="' + esc(c.master) + '">Show</button></span></div>';
   }
   host.innerHTML = h;
+  clip_state.results = list;
+  clip_renderUpload();
+}
+
+/* Ticked by default where the clip earned a caption: those are the ones with
+   something to say. The rest are available, not chosen. */
+function clip_upWanted(c) {
+  if (!c.vertical || c.video_id) return false;
+  if (clip_state.upPicked && Object.prototype.hasOwnProperty.call(
+        clip_state.upPicked, String(c.rank))) {
+    return !!clip_state.upPicked[String(c.rank)];
+  }
+  return !!c.caption;
+}
+
+function clip_upSelection() {
+  var out = [];
+  var list = clip_state.results || [];
+  for (var i = 0; i < list.length; i++) {
+    if (clip_upWanted(list[i])) out.push(list[i]);
+  }
+  return out;
+}
+
+function clip_renderUpload() {
+  var box = clip_el('clip-up');
+  if (!box) return;
+  /* Hidden entirely when there is nothing to publish TO -- a clips-only
+     install has no YouTube, and offering an upload button there is a lie. */
+  var possible = !!clip_state.canUpload &&
+                 (clip_state.results || []).some(function (c) { return !!c.vertical; });
+  box.classList.toggle('hide', !possible);
+  if (!possible) return;
+
+  var t = clip_el('clip-up-title');
+  if (t && !t.value) t.value = clip_state.upTitle || '{caption} - {game}';
+  var pv = clip_el('clip-up-privacy');
+  if (pv && clip_state.upPrivacy) pv.value = clip_state.upPrivacy;
+
+  var n = clip_upSelection().length;
+  var go = clip_el('clip-up-go');
+  if (go) {
+    go.disabled = !n || clip_state.upBusy;
+    go.innerHTML = '<span>Upload' + (n ? ' ' + n + ' clip' + (n === 1 ? '' : 's') : '') +
+                   '</span>';
+  }
+  var note = clip_el('clip-up-note');
+  if (note) {
+    var cap = clip_state.upDailyMax || 0;
+    note.textContent = !n
+      ? 'Tick the clips you want on your channel.'
+      : (n > cap
+          ? n + ' selected, but the limit is ' + cap + ' a day. Raise it in Settings.'
+          : n + ' of ' + cap + ' uploads left today. They go out ' +
+            (clip_el('clip-up-privacy') || {}).value + '.');
+  }
 }
 
 /* -------------------------------------------------------------- actions */
@@ -644,6 +737,20 @@ async function clip_load() {
     clip_state.status = (r && r.status) || null;
     clip_state.games = (r && r.games) || [];
     clip_state.outputDir = (r && r.output_dir) || '';
+    clip_state.canUpload = !!(r && r.can_upload);
+    clip_state.upDailyMax = (r && r.upload_daily_max) || 0;
+    clip_state.upPrivacy = (r && r.upload_privacy) || 'unlisted';
+    clip_state.upTitle = (r && r.upload_title) || '';
+    var lj = (r && r.last_job) || null;
+    if (lj) {
+      clip_state.upGame = lj.game || '';
+      /* The folder holding clips.json, taken off a clip path rather than
+         guessed: output_dir moves, and the ids have to be written back into
+         the run they came from. */
+      var any = (lj.clips || [])[0];
+      var mp = any && (any.master || any.vertical);
+      if (mp) clip_state.upFolder = mp.replace(/[\/][^\/]+[\/][^\/]+$/, '');
+    }
     clip_state.loaded = true;
 
     var d = (r && r.defaults) || {};
@@ -840,6 +947,61 @@ function clip_useLocal() {
   clip_renderOptions();
   var card = clip_el('clip-options');
   if (card && card.scrollIntoView) card.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+async function clip_upload() {
+  var picked = clip_upSelection();
+  if (!picked.length) { toast('Tick a clip first.', 'warn'); return; }
+  var body = {
+    clips: picked.map(function (c) {
+      /* The VERTICAL is the Short. The master is 16:9 and would land as an
+         ordinary video. */
+      return {path: c.vertical, caption: c.caption || '', kills: c.kills,
+              at: c.at, video_id: c.video_id || ''};
+    }),
+    folder: clip_state.upFolder || '',
+    game: clip_state.upGame || '',
+    privacy: (clip_el('clip-up-privacy') || {}).value || 'unlisted',
+    title: (clip_el('clip-up-title') || {}).value || ''
+  };
+  var r = await API.post('/api/clips/upload', body);
+  if (r && r.error) { toast(r.error, 'error'); return; }
+  clip_state.upBusy = true;
+  clip_renderUpload();
+  toast('Uploading ' + picked.length + ' clip' + (picked.length === 1 ? '' : 's') +
+        '.', 'ok');
+}
+
+/* Progress rides the same two-second status poll everything else uses, so it
+   survives a reload and keeps working if the page is closed mid-upload. */
+function clip_renderUploadJob(u) {
+  var meter = clip_el('clip-up-meter');
+  var stop = clip_el('clip-up-stop');
+  var note = clip_el('clip-up-note');
+  var running = !!u && (u.state === 'running' || u.state === 'queued');
+  clip_state.upBusy = running;
+  if (meter) meter.classList.toggle('hide', !running);
+  if (stop) stop.classList.toggle('hide', !running);
+  var fill = clip_el('clip-up-fill');
+  if (fill && u) fill.style.width = Math.max(0, Math.min(100, u.percent || 0)) + '%';
+  if (running && note) {
+    note.textContent = (u.message || 'Uploading') + '  ·  ' +
+      (u.done || 0) + ' of ' + (u.total || 0);
+    return;
+  }
+  if (!u || u.state === 'queued') return;
+  if (u.state === 'failed' && clip_state.upLast !== 'failed') {
+    toast(u.error || 'Upload failed.', 'error');
+  } else if (u.state === 'done' && clip_state.upLast !== 'done') {
+    toast(u.message || 'Uploaded.', 'ok');
+    if ((u.failed || []).length) {
+      toast((u.failed || []).length + ' clip(s) were skipped - see the list.', 'warn');
+    }
+    clip_state.upPicked = {};        /* the ids are on disk now; re-read them */
+    clip_load();
+  }
+  clip_state.upLast = u.state;
+  clip_renderUpload();
 }
 
 async function clip_setGame() {
@@ -1056,6 +1218,21 @@ function clip_wire() {
   if (g) g.addEventListener('change', function () {
     clip_state.game = g.value; clip_renderList();
   });
+  /* Delegated: the results list is rebuilt on every finished run. */
+  document.addEventListener('change', function (ev) {
+    var t = ev.target;
+    if (!t || !t.getAttribute) return;
+    var i = t.getAttribute('data-up');
+    if (i === null) return;
+    var c = (clip_state.results || [])[Number(i)];
+    if (!c) return;
+    clip_state.upPicked = clip_state.upPicked || {};
+    clip_state.upPicked[String(c.rank)] = !!t.checked;
+    clip_renderUpload();
+  });
+  var upv = clip_el('clip-up-privacy');
+  if (upv) upv.addEventListener('change', clip_renderUpload);
+
   var lg = clip_el('clip-local-game');
   if (lg) lg.addEventListener('change', clip_renderNamePrompt);
 
@@ -1135,6 +1312,10 @@ function clip_wire() {
       clip_useLocal();
     } else if (act === 'save-name') {
       clip_saveName();
+    } else if (act === 'upload') {
+      clip_upload();
+    } else if (act === 'upload-cancel') {
+      API.post('/api/clips/upload/cancel', {});
     } else if (act === 'setgame') {
       clip_setGame();
     } else if (act === 'calibrate') {
@@ -1225,6 +1406,7 @@ window.PAGE_CLIPS = {
     else clip_renderOptions();
   },
   onTick: function (status) {
+    clip_renderUploadJob(status && status.upload);
     var j = status && status.clips;
     if (!j) { clip_state.busy = false; return; }
     var wasBusy = clip_state.busy;
