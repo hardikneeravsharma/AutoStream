@@ -176,6 +176,16 @@ class _Handler(BaseHTTPRequestHandler):
 
     # ---------------- GET ----------------
 
+    # Every request, tracked. cmd_run stops this server the moment setup
+    # completes, and "the moment" used to include the two seconds in which the
+    # response saying so was still being written -- see Server.idle_for.
+    def handle_one_request(self):
+        self.app.request_started()
+        try:
+            super().handle_one_request()
+        finally:
+            self.app.request_finished()
+
     def do_GET(self):
         u = urlparse(self.path)
         if not self._authed(u.query):
@@ -402,6 +412,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.setup.authorise())
             elif p == "/api/setup/obs_detect":
                 self._json(self.app.setup.detect_obs())
+            elif p == "/api/setup/webview2":
+                self._json(self.app.setup.webview2())
+            elif p == "/api/setup/webview2/install":
+                self._json(self.app.setup.install_webview2())
             elif p == "/api/setup/obs_test":
                 self._json(self.app.setup.test_obs(b))
             elif p == "/api/setup/save":
@@ -437,6 +451,11 @@ class Server:
         self.httpd = None
         self._thread = None
         self._theme: str | None = None
+        # See idle_for: the setup wizard's own success used to stop this
+        # server while it was still answering the request that caused it.
+        self._busy_lock = threading.Lock()
+        self._in_flight = 0
+        self._idle_since = time.monotonic()
         from .setup_flow import SetupFlow
         self.setup = SetupFlow()
 
@@ -1177,6 +1196,27 @@ class Server:
         log.info("AutoStream UI: %s", self.url())
         log.info("=" * 60)
         return self.url()
+
+    def request_started(self) -> None:
+        with self._busy_lock:
+            self._in_flight += 1
+
+    def request_finished(self) -> None:
+        with self._busy_lock:
+            self._in_flight = max(0, self._in_flight - 1)
+            self._idle_since = time.monotonic()
+
+    def idle_for(self) -> float:
+        """Seconds since the last request finished. 0.0 while any is running.
+
+        Read before shutting the server down: closing the socket out from
+        under a response in flight reaches the browser as a connection reset,
+        and the page cannot tell that apart from the request having failed.
+        """
+        with self._busy_lock:
+            if self._in_flight > 0:
+                return 0.0
+            return time.monotonic() - self._idle_since
 
     def stop(self):
         if self.httpd:
