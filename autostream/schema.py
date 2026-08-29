@@ -510,11 +510,14 @@ CONFIG_SCHEMA: list[Section] = [
                 "title.template",
                 "Title template",
                 "Rendered at the start of a session and again on every game switch. "
-                "{game} is what you are playing and {hook} is one line picked at "
-                "random from the hooks below; {day}, {date}, {time} and {n} (the "
-                "session number) also work.",
+                "{game} is what you are playing RIGHT NOW and {games} is everything "
+                "played this session -- use {games} if you hop between games, or a "
+                "retitle will forget the earlier ones. {hook} is one line picked at "
+                "random from the hooks below. {daypart} becomes morning, afternoon, "
+                "evening or night from when the session actually started; {day}, "
+                "{date}, {time} and {n} (the session number) also work.",
                 "text",
-                placeholder="{game} - {hook} | {day} night stream",
+                placeholder="{games} - {hook} | {day} {daypart} stream",
                 required=True,
                 max_chars=200,
             ),
@@ -621,7 +624,8 @@ CONFIG_SCHEMA: list[Section] = [
             _field(
                 "thumbnail.headline",
                 "Headline",
-                "The big line. Tokens: {game} {channel} {username} {day} {date} "
+                "The big line. Tokens: {game} {games} {channel} {username} {day} "
+                "{daypart} {date} "
                 "{time}. Keep it short - it is read at about 210 pixels wide.",
                 "text",
                 placeholder="{game}",
@@ -633,7 +637,7 @@ CONFIG_SCHEMA: list[Section] = [
                 "Second line",
                 "Smaller line under the headline. Same tokens. Leave blank for none.",
                 "text",
-                placeholder="{channel} | {day} night",
+                placeholder="{channel} | {day} {daypart}",
                 nullable=True,
                 max_chars=160,
             ),

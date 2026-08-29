@@ -279,7 +279,7 @@ function setup_draw(){
     '<label class="field-label" for="setup-title">Title template</label>' +
     '<input class="input mono" id="setup-title" type="text" spellcheck="false" ' +
     'autocomplete="off" value="' +
-    setup_attr(setup_state.title || '{game} - {hook} | {day} night stream') + '">' +
+    setup_attr(setup_state.title || '{games} - {hook} | {day} {daypart} stream') + '">' +
     '<div class="field-help">Available: {game} {hook} {day} {date} {time} {n} ' +
     '{session_games}</div></div>' +
     setup_nav(true, 'saveStream'));
@@ -359,7 +359,7 @@ function setup_draw(){
       '<label class="field-label" for="setup-sub">Second line</label>' +
       '<input class="input mono" id="setup-sub" type="text" spellcheck="false" ' +
       'autocomplete="off" value="' +
-      setup_attr(setup_state.subtitle === undefined ? '{channel} | {day} night' : setup_state.subtitle) +
+      setup_attr(setup_state.subtitle === undefined ? '{channel} | {day} {daypart}' : setup_state.subtitle) +
       '"></div>' +
       '<div class="field"><span class="field-label">Your in-game names</span>' +
       '<div class="field-help">Only needed for games you want clipped. Leave blank ' +

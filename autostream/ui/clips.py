@@ -483,20 +483,40 @@ function clip_renderOptions() {
   if (td) td.disabled = !clip_state.montage;
   if (tm) tm.disabled = !clip_state.montage || clip_state.trans === 'cut';
 
-  /* Only offered when the recording predates the session: that is the case
-     where the detected game describes a minute of a much longer file. */
-  clip_show('clip-wrongwrap', !!s.game_uncertain);
-  if (s.game_uncertain) {
-    clip_el('clip-wrongtext').textContent =
-      'OBS was already recording ' + clip_dur(s.pre_session_seconds) +
-      ' before this session started, so most of this file is footage AutoStream ' +
-      'never saw. It is labelled ' + (s.game || 'unknown') +
-      ' because that is what was running at the end. If that is wrong, correct it here.';
+  /* Two reasons to offer the game chooser, and they read differently.
+
+     One: the recording predates the session, so the detected game describes a
+     minute of a much longer file.
+
+     Two: SEVERAL GAMES were played into one recording. The session is labelled
+     with the LAST of them, and a scan only ever reads one game -- so without
+     this the other games in the file are silently unreachable, which is what
+     happened to a session holding both Counter-Strike 2 and Delta Force. */
+  var played = (s.games || []).filter(function (g) { return !!g; });
+  var multi = played.length > 1;
+  clip_show('clip-wrongwrap', !!s.game_uncertain || multi);
+  if (s.game_uncertain || multi) {
+    clip_el('clip-wrongtext').textContent = s.game_uncertain
+      ? ('OBS was already recording ' + clip_dur(s.pre_session_seconds) +
+         ' before this session started, so most of this file is footage AutoStream ' +
+         'never saw. It is labelled ' + (s.game || 'unknown') +
+         ' because that is what was running at the end. If that is wrong, correct it here.')
+      : ('This session covered ' + played.join(' and ') + '. A scan reads one ' +
+         'game at a time, and this file is set to ' + (s.game || 'unknown') +
+         ' because that is what you finished on. Pick another to cut its ' +
+         'highlights instead.');
     var sel = clip_el('clip-gamefix');
     if (sel) {
-      var opts = (clip_state.profiles || []).map(function (pr) {
+      /* The games actually played come first: on a multi-game recording they
+         are the only ones that can find anything. */
+      var profs = clip_state.profiles || [];
+      var first = profs.filter(function (pr) { return played.indexOf(pr.label) >= 0; });
+      var rest = profs.filter(function (pr) { return played.indexOf(pr.label) < 0; });
+      var opts = first.concat(rest).map(function (pr) {
+        var here = played.indexOf(pr.label) >= 0;
         return '<option value="' + esc(pr.key) + '" data-label="' + esc(pr.label) +
-               '"' + (pr.label === s.game ? ' selected' : '') + '>' + esc(pr.label) + '</option>';
+               '"' + (pr.label === s.game ? ' selected' : '') + '>' + esc(pr.label) +
+               (multi && here ? ' (played this session)' : '') + '</option>';
       }).join('');
       sel.innerHTML = opts || '<option value="">no calibrated games</option>';
     }
