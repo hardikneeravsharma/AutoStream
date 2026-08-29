@@ -336,6 +336,11 @@ class _Handler(BaseHTTPRequestHandler):
             # already polling - see clips/jobs.py.
             elif p == "/api/clips/run":
                 self._json(self.app.clips_run(b))
+            elif p == "/api/clips/upload":
+                self._json(self.app.clips_upload(b))
+            elif p == "/api/clips/upload/cancel":
+                from .clips import upload as up
+                self._json({"ok": up.runner().cancel()})
             elif p == "/api/clips/cancel":
                 self._json(self.app.clips_cancel())
             elif p == "/api/clips/open":
@@ -597,6 +602,7 @@ class Server:
             # The Clips page rides this poll rather than having its own. It
             # costs nothing when idle and means progress survives a reload.
             "clips": self._clips_status(),
+            "upload": self._upload_status(),
             **self._phase_clock(),
         }
 
@@ -612,6 +618,56 @@ class Server:
         # Only the live job needs the two-second heartbeat. A finished one is
         # kept so a reload still shows the result, but it must not look busy.
         return snap
+
+    def _upload_status(self) -> dict | None:
+        from .clips import upload as up
+
+        return up.runner().status()
+
+    def clips_upload(self, body: dict) -> dict:
+        """Publish selected clips. Never happens without this call.
+
+        Refuses rather than half-publishes: quota, the daily cap and an empty
+        selection are all settled before a byte goes up.
+        """
+        from .clips import upload as up
+
+        if self.engine is None or not getattr(self.engine, "streaming", True):
+            return {"error": "Uploading needs YouTube switched on. "
+                             "Settings > YouTube > Go live on YouTube."}
+        runner = up.runner()
+        if runner.busy():
+            return {"error": "An upload is already running."}
+
+        clips = [c for c in (body.get("clips") or []) if isinstance(c, dict)]
+        if not clips:
+            return {"error": "No clips selected."}
+        c = cfg.load()
+        privacy = str(body.get("privacy") or c.clips.upload_privacy)
+        if privacy not in ("public", "unlisted", "private"):
+            privacy = "unlisted"
+
+        folder = Path(str(body.get("folder") or ""))
+        job = up.UploadJob(
+            clips, yt=self.engine.yt,
+            game=str(body.get("game") or "Session"),
+            folder=folder,
+            privacy=privacy,
+            title_template=str(body.get("title") or c.clips.upload_title),
+            description_template=str(body.get("description")
+                                     or c.clips.upload_description),
+            tags=list(c.description.tags or []),
+            daily_max=int(getattr(c.rules, "upload_daily_max", 5)),
+            channel=str(c.thumbnail.channel_name or ""))
+        if not runner.start(job):
+            return {"error": "An upload is already running."}
+        # Remembered so the next batch offers what the last one used.
+        try:
+            cfg.save_field("clips", "upload_privacy", privacy)
+        except Exception:  # noqa: BLE001
+            pass
+        log.info("upload job started: %d clip(s), %s", len(clips), privacy)
+        return {"ok": True, "count": len(clips)}
 
     def clips_sessions(self) -> dict:
         """Past streams, plus what the Clips page needs to decide about each."""
@@ -778,6 +834,14 @@ class Server:
         want = body.get("round_types")
         if isinstance(want, list) and want:
             opt["round_types"] = [str(x) for x in want][:16]
+        # What chat asked for during the stream. The request may override, so
+        # the Clips page can offer them as a switch.
+        marks = body.get("marks")
+        if marks is None:
+            marks = session.get("marks")
+        if marks:
+            opt["marks"] = [m for m in marks if isinstance(m, dict)][:300]
+
         cached = self._cached_kills(path, c)
         if cached and not body.get("rescan") and not opt.get("rounds"):
             # Not reused in round mode: the cache holds kills, and a round also

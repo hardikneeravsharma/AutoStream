@@ -400,6 +400,126 @@ def build_rounds(highlights, *, game: str, pre_roll: float = 3.0,
     return plans
 
 
+# ---------------------------------------------------------------- chat marks
+#
+# A viewer typing !clip is reacting to something that has ALREADY happened.
+# Reaction time plus typing runs three to eight seconds behind the moment, so a
+# clip centred on the mark would open after the thing it was asked for. The
+# window therefore sits almost entirely BEHIND the mark, with only enough after
+# it to catch the aftermath.
+MARK_GAP = 20.0          # marks closer than this are one moment, not several
+MARK_AFTER = 4.0         # kept after the last mark in a cluster
+MARK_LEAD = 26.0         # how far back an "auto" length reaches
+
+
+@dataclass
+class Mark:
+    """One moment chat asked for, and how many people asked."""
+    at: float                         # seconds into the recording
+    votes: int = 1
+    who: list[str] = field(default_factory=list)
+
+
+def cluster_marks(marks, gap: float = MARK_GAP) -> list[Mark]:
+    """Several people shouting at once is one moment, and a better one.
+
+    Votes are the whole signal here: nothing was detected, so the only
+    evidence a clip is worth cutting is how many people said so.
+    """
+    times: list[tuple[float, str]] = []
+    for m in marks or []:
+        try:
+            at = float(m.get("at") if isinstance(m, dict) else m)
+        except (TypeError, ValueError):
+            continue
+        if at < 0:
+            continue
+        who = str(m.get("author", "")) if isinstance(m, dict) else ""
+        times.append((at, who))
+    if not times:
+        return []
+    times.sort()
+
+    out: list[Mark] = []
+    cur = Mark(at=times[0][0], votes=0)
+    for at, who in times:
+        if at - cur.at > gap:
+            out.append(cur)
+            cur = Mark(at=at, votes=0)
+        cur.at = at                   # the LAST mark in a cluster anchors it
+        cur.votes += 1
+        if who and who not in cur.who:
+            cur.who.append(who)
+    out.append(cur)
+    return out
+
+
+def build_marks(marks, *, game: str, clip_seconds: str | int = "30",
+                tail: float = MARK_AFTER,
+                source_duration: float | None = None) -> list[ClipPlan]:
+    """A clip around each moment chat asked for. -> most-asked-for first.
+
+    Deliberately not filtered by kills. The point of a chat mark is that it
+    catches what a detector cannot -- a save, a fail, a joke, a moment in a
+    game AutoStream has no profile for at all.
+    """
+    groups = cluster_marks(marks)
+    if not groups:
+        return []
+    fixed = None if str(clip_seconds).lower() in ("auto", "", "0") else float(clip_seconds)
+    after = max(0.0, float(tail))
+    tag = slug(game)
+
+    rows: list[tuple[Mark, float, float]] = []
+    for m in groups:
+        end = m.at + after
+        start = end - (fixed if fixed else MARK_LEAD)
+        start = max(0.0, start)
+        if source_duration:
+            end = min(end, source_duration)
+        if end - start < MIN_CLIP:
+            continue
+        rows.append((m, start, end))
+
+    # Most-requested first, then earliest, so reruns are stable.
+    rows.sort(key=lambda r: (-r[0].votes, r[1]))
+
+    plans: list[ClipPlan] = []
+    for i, (m, start, end) in enumerate(rows, 1):
+        name = (f"{tag}_chat{i:02d}_{m.votes}ask{'s' if m.votes != 1 else ''}"
+                f"_{stamp(start)}_{duration_label(end - start)}")
+        plans.append(ClipPlan(
+            rank=i, start=start, end=end, kills=0, burst_kills=0,
+            peak_score=float(m.votes), name=name, labels=["CHAT"]))
+    return plans
+
+
+def merge_marks(plans: list[ClipPlan], marked: list[ClipPlan],
+                overlap: float = 0.5) -> list[ClipPlan]:
+    """Fold chat clips in beside detected ones, dropping the duplicates.
+
+    Where both fired on the same moment the DETECTED clip wins: it was placed
+    from the kill times themselves rather than from how fast somebody types.
+    The chat clip is only kept when it found something the detector did not,
+    which is the entire reason for having it.
+    """
+    kept: list[ClipPlan] = []
+    for c in marked:
+        span = c.duration or 1.0
+        clash = False
+        for p in plans:
+            lap = min(c.end, p.end) - max(c.start, p.start)
+            if lap > 0 and lap / span >= overlap:
+                clash = True
+                break
+        if not clash:
+            kept.append(c)
+    out = list(plans) + kept
+    for i, p in enumerate(out, 1):
+        p.rank = i
+    return out
+
+
 def montage_name(game: str, plans: list[ClipPlan], when: str,
                  total: float) -> str:
     kills = sum(p.kills for p in plans)

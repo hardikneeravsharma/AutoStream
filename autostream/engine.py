@@ -67,6 +67,10 @@ class Engine:
         # Silent-output watchdog; see _check_audio. One flag, not strikes:
         # the metering thread is already smoothing over individual samples.
         self._silent_said = False
+        # Moments chat asked for, in seconds into the recording. Cleared with
+        # the session and journalled with it, so the clip run can read them.
+        self._marks: list[dict] = []
+        self._mark_seen: dict[str, float] = {}
         # Screen savers: when the starting card should give way to the game,
         # and when the ending card has been shown long enough to stop. Held by
         # a deadline rather than a sleep, because this loop is strictly serial
@@ -643,6 +647,7 @@ class Engine:
                 watch_url=self.yt.watch_url(bid) if bid else None,
                 title=self._last_title,
                 recording_path=recording_path,
+                marks=self._marks,
             )
             if entry and self.cfg.record.auto_scan and recording_path:
                 self.pending_scan = entry
@@ -895,8 +900,35 @@ class Engine:
                 self._chat_next_poll = now + self._chat_interval
                 for m in msgs:
                     self.chat.append(m)
+                    self._maybe_mark(m)
             except Exception:  # noqa: BLE001
                 self._chat_next_poll = now + 15
+
+    # Chat can mark a moment the detectors cannot see: a save, a fail, a joke,
+    # or anything at all in a game with no profile. One command, no
+    # punctuation to get wrong.
+    MARK_WORDS = ("!clip", "!highlight")
+    MARK_COOLDOWN = 3.0        # per viewer, so one person cannot spam the reel
+    MARK_MAX = 300             # a whole stream of them is still bounded
+
+    def _maybe_mark(self, msg: dict) -> None:
+        """Record a !clip from chat, placed where the recording actually is."""
+        text = str(msg.get("text") or "").strip().lower()
+        if not any(text == w or text.startswith(w + " ") for w in self.MARK_WORDS):
+            return
+        if not self.state.recording or len(self._marks) >= self.MARK_MAX:
+            return
+        who = str(msg.get("author") or "?")
+        now = time.monotonic()
+        if now - self._mark_seen.get(who, 0.0) < self.MARK_COOLDOWN:
+            return
+        self._mark_seen[who] = now
+
+        at = self.obs.record_offset()
+        if at is None:
+            return                       # nothing being written to mark INTO
+        self._marks.append({"at": round(at, 2), "author": who})
+        log.info("chat mark at %.0fs by %s (%d total)", at, who, len(self._marks))
 
     def _maybe_switch(self, hit: GameHit) -> None:
         """Debounce a game switch so alt-tabbing doesn't spam the API."""
@@ -1023,6 +1055,8 @@ class Engine:
         self._screen_until = None
         self._ending_until = None
         self._silent_said = False
+        self._marks = []
+        self._mark_seen = {}
         self.obs.audio_watch_stop()
         self.viewers = self.likes = self.views = None
         self.obs_health = {}

@@ -688,6 +688,23 @@ class Obs:
         self.ws.start_record()
         log.info("OBS StartRecord issued")
 
+    def record_offset(self) -> float | None:
+        """Seconds into the file OBS is writing. -> None when not recording.
+
+        Asked of OBS rather than worked out from wall clocks. The recording may
+        have started late, been paused, or been adopted from an output that was
+        already running -- and a chat mark placed by arithmetic on
+        session_start would be wrong by exactly that much, silently.
+        """
+        try:
+            self.connect()
+            r = self.ws.get_record_status()
+            if not r.output_active:
+                return None
+            return max(0.0, float(getattr(r, "output_duration", 0)) / 1000.0)
+        except Exception:  # noqa: BLE001
+            return None
+
     def recording_paused(self) -> bool:
         try:
             self.connect()

@@ -56,6 +56,10 @@ DEFAULTS: dict[str, Any] = {
         "kill_switch_hotkey": "ctrl+alt+shift+k",
         "paused_flag_file": "NOSTREAM",
         "quota_reserve": 500,
+        # Enforced INDEPENDENTLY of the quota arithmetic. videos.insert has
+        # had two very different published prices in a year, and a wrong
+        # estimate must not be able to spend a day's streaming on uploads.
+        "upload_daily_max": 5,
         "tray_icon": True,
         "control_panel": True,
         "web_dashboard": True,
@@ -84,6 +88,12 @@ DEFAULTS: dict[str, Any] = {
         "auto_scan": True,            # find kills as soon as a session ends
     },
     "clips": {
+        # Publishing is public, attributed and awkward to undo, so it never
+        # happens by itself -- there is deliberately no auto_upload. These only
+        # decide what the button does when a person presses it.
+        "upload_privacy": "unlisted",
+        "upload_title": "{caption} - {game}",
+        "upload_description": "Cut automatically by AutoStream from a {game} stream.",
         "output_dir": "",             # blank -> <root>/clips
         "ffmpeg_path": "",            # blank -> auto-discover
         # Both are strings because they are `select` fields, and the settings
