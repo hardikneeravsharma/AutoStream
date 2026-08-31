@@ -161,6 +161,9 @@ DASH_HTML: str = """
     <button type="button" class="btn" id="dash-btn-pause">
       <span>Pause</span>
     </button>
+    <button type="button" class="btn" id="dash-btn-record">
+      <span>Stop recording</span>
+    </button>
     <a class="btn btn-ghost hide" id="dash-btn-open"
        href="#" target="_blank" rel="noreferrer noopener">
       <span>Open on YouTube</span>
@@ -683,6 +686,7 @@ function dash_renderSession(s) {
 
 /* null so the first paint always writes a label, whichever mode it is in. */
 let dash_stopClipsOnly = null;
+let dash_recState = null;
 
 function dash_applyActions(s) {
   s = s || {};
@@ -712,6 +716,26 @@ function dash_applyActions(s) {
     const el = dash_el(id);
     if (el) el.classList.toggle('hide', clipsOnly);
   });
+
+  /* The recording is a separate thing from the broadcast: it is the master the
+     clips are cut from, and it used to begin and end with the session with no
+     way to reach it in between -- so the only way to stop writing a file was
+     to end the stream. */
+  const rec = dash_el('dash-btn-record');
+  if (rec) {
+    const on = !!s.recording;
+    const can = s.record_enabled !== false;
+    rec.classList.toggle('hide', !can && !on);
+    rec.disabled = dash_busy || (!can && !on);
+    if (dash_recState !== on) {
+      dash_recState = on;
+      dash_setLabel('dash-btn-record', on ? 'stop' : 'save',
+                    on ? 'Stop recording' : 'Record');
+      rec.classList.toggle('btn-danger', false);
+    }
+    rec.title = on ? 'Stop writing the local recording. The stream carries on.'
+                   : 'Start writing a local recording. Clips are cut from it.';
+  }
 
   /* Guarded like the pause label: dash_setLabel rebuilds innerHTML, and doing
      that every two-second poll would fight the browser for no reason. */
@@ -852,6 +876,7 @@ function dash_wire() {
 
   dash_setLabel('dash-btn-stop', 'stop', 'End stream');
   dash_setLabel('dash-btn-pause', 'pause', 'Pause');
+  dash_setLabel('dash-btn-record', 'save', 'Stop recording');
   dash_setLabel('dash-btn-open', 'external', 'Open on YouTube');
   dash_setLabel('dash-chat-send', 'chevron-right', 'Send');
 
@@ -864,6 +889,9 @@ function dash_wire() {
       dash_cmd(dash_pauseState ? 'resume' : 'pause');
     });
   }
+
+  const rec = dash_el('dash-btn-record');
+  if (rec) rec.addEventListener('click', function () { dash_cmd('record'); });
 
   const send = dash_el('dash-chat-send');
   if (send) send.addEventListener('click', function () { dash_send(); });
