@@ -265,7 +265,8 @@ class _Handler(BaseHTTPRequestHandler):
 
             elif p == "/api/cmd":
                 c = str(b.get("command", ""))
-                if c not in ("stop", "pause", "resume", "toggle_pause", "quit"):
+                if c not in ("stop", "pause", "resume", "toggle_pause",
+                             "record", "quit"):
                     self._json({"error": "unknown command"}, 400)
                     return
                 if c == "quit":
@@ -602,6 +603,10 @@ class Server:
             "url": (f"https://www.youtube.com/watch?v={s.broadcast_id}"
                     if s.broadcast_id else None),
             "recording": bool(getattr(s, "recording", False)),
+            # So the button can say Record or Stop recording, and disable
+            # itself when recording is switched off entirely rather than
+            # offering something that would do nothing.
+            "record_enabled": bool(cfg.load().record.enabled),
             # So the UI can stop saying LIVE about a session that is only
             # recording, and hide the things a broadcast would have.
             "streaming": bool(getattr(e, "streaming", True)),

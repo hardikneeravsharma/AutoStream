@@ -88,7 +88,11 @@ def test_probe_names_the_fix_not_the_symptom(monkeypatch):
 
 def test_connect_does_not_sleep_after_its_last_attempt(no_sleep, monkeypatch):
     """It used to, which added a whole retry interval to every failure and
-    changed nothing about it -- the caller is already out of attempts."""
+    changed nothing about it -- the caller is already out of attempts.
+
+    wait=True because retrying is now what a session START does, not what
+    every call does; see the fast-fail tests below.
+    """
     monkeypatch.setattr(obsmod, "_obs_process_alive", lambda: True)
 
     def boom(self, timeout=5):
@@ -96,7 +100,7 @@ def test_connect_does_not_sleep_after_its_last_attempt(no_sleep, monkeypatch):
     monkeypatch.setattr(Obs, "_connect", boom)
 
     with pytest.raises(ObsUnavailable):
-        an_obs().connect()
+        an_obs().connect(wait=True)
 
     assert len(no_sleep) == Obs.ATTEMPTS - 1, (
         f"{Obs.ATTEMPTS} attempts should serve {Obs.ATTEMPTS - 1} backoffs, "
@@ -119,6 +123,100 @@ def test_connect_still_retries_for_the_engine(no_sleep, monkeypatch):
         return Ws()
     monkeypatch.setattr(Obs, "_connect", flaky)
 
-    an_obs().connect()
+    an_obs().connect(wait=True)
     assert len(calls) == 2
     assert len(no_sleep) == 1, "one failed attempt, one backoff"
+
+
+# ------------------------------------------------- not waiting, by default
+
+def test_an_ordinary_call_does_not_retry(no_sleep, monkeypatch):
+    """THE STUCK SESSION. Every call used to spend the full retry budget --
+    three attempts twelve seconds apart, plus a launch -- whenever OBS was not
+    answering. The engine loop is serial, so half a minute of that blocked the
+    tick, the ingestion timeout, and every button. End stream was pressed seven
+    times against a session that could not get a turn to end."""
+    monkeypatch.setattr(obsmod, "_obs_process_alive", lambda: True)
+    tries = []
+
+    def boom(self, timeout=5):
+        tries.append(1)
+        raise OSError("refused")
+    monkeypatch.setattr(Obs, "_connect", boom)
+
+    with pytest.raises(ObsUnavailable):
+        an_obs().connect()
+    assert len(tries) == 1, "an ordinary call retried"
+    assert no_sleep == [], "an ordinary call slept"
+
+
+def test_an_ordinary_call_never_launches_obs(monkeypatch):
+    """Starting OBS from a status poll would relaunch it behind the user."""
+    launched = []
+    monkeypatch.setattr(obsmod, "_obs_process_alive", lambda: False)
+    monkeypatch.setattr(Obs, "_launch", lambda self: launched.append(1))
+    monkeypatch.setattr(Obs, "_connect",
+                        lambda self, timeout=5: (_ for _ in ()).throw(OSError("no")))
+    with pytest.raises(ObsUnavailable):
+        an_obs().connect()
+    assert launched == []
+
+
+def test_a_failure_is_remembered_so_the_next_call_is_instant(monkeypatch):
+    """One dead websocket should cost one handshake, not one per call."""
+    monkeypatch.setattr(obsmod, "_obs_process_alive", lambda: True)
+    tries = []
+
+    def boom(self, timeout=5):
+        tries.append(1)
+        raise OSError("refused")
+    monkeypatch.setattr(Obs, "_connect", boom)
+
+    o = an_obs()
+    for _ in range(5):
+        with pytest.raises(ObsUnavailable):
+            o.connect()
+    assert len(tries) == 1, "it kept re-running a doomed handshake"
+
+
+def test_a_waiting_call_ignores_the_remembered_failure(no_sleep, monkeypatch):
+    """Starting a session must still try, even seconds after a failed poll --
+    that is exactly when OBS is being launched and is not up yet."""
+    monkeypatch.setattr(obsmod, "_obs_process_alive", lambda: True)
+    tries = []
+
+    def boom(self, timeout=5):
+        tries.append(1)
+        raise OSError("refused")
+    monkeypatch.setattr(Obs, "_connect", boom)
+
+    o = an_obs()
+    with pytest.raises(ObsUnavailable):
+        o.connect()
+    with pytest.raises(ObsUnavailable):
+        o.connect(wait=True)
+    assert len(tries) == 1 + Obs.ATTEMPTS
+
+
+def test_coming_back_clears_the_memory(monkeypatch):
+    monkeypatch.setattr(obsmod, "_obs_process_alive", lambda: True)
+    state = {"up": False}
+
+    class Ws:
+        def get_version(self):
+            return type("V", (), {"obs_version": "32", "rpc_version": 1})()
+
+    def flaky(self, timeout=5):
+        if not state["up"]:
+            raise OSError("refused")
+        return Ws()
+    monkeypatch.setattr(Obs, "_connect", flaky)
+
+    o = an_obs()
+    with pytest.raises(ObsUnavailable):
+        o.connect()
+    state["up"] = True
+    o.ws = None
+    o._down_until = 0.0          # as it would be once the window passed
+    o.connect()
+    assert o.ws is not None
