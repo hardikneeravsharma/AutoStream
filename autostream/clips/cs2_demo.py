@@ -618,6 +618,19 @@ def identify(match: Match, vod_times: list[float],
     return best
 
 
+def newest_demo_time(folder: Path) -> float | None:
+    """When the most recent demo was written. -> None if there are none.
+
+    Cheap: a directory listing, no parsing. Used to decide whether looking is
+    worth anything at all -- a demo cannot record a match played after it.
+    """
+    try:
+        dems = list(Path(folder).glob("*.dem"))
+    except OSError:
+        return None
+    return max((p.stat().st_mtime for p in dems), default=None)
+
+
 def pick_demo(folder: Path, vod_times: list[float], *,
               newest: int = 12) -> tuple[Match | None, str, "Sync"]:
     """Choose which demo in a folder belongs to a recording, by fingerprint.

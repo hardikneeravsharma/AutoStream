@@ -176,3 +176,69 @@ def test_align_itself_stays_permissive():
     vod = [110.0, 120.0, 130.0]
     s = cs2_demo.align(demo, vod)
     assert s.ok, "align became too strict for the audit path"
+
+
+# ------------------------------- not looking when there is nothing to find
+
+def test_the_probe_is_skipped_when_no_demo_is_newer(tmp_path, monkeypatch):
+    """A demo cannot record a match played after it was written.
+
+    Reading twelve minutes to search a folder whose newest demo predates the
+    recording proves something a directory listing already knew. It cost 2.2
+    minutes on a real recording made two days after the last demo -- and the
+    whole file was then read anyway.
+    """
+    import autostream.clips.cs2_demo as cs2_demo
+    import autostream.clips.detect as detect
+
+    job = a_job(tmp_path)
+    scanned = []
+    monkeypatch.setattr(cs2_demo, "demo_folder", lambda *a, **k: str(tmp_path))
+    monkeypatch.setattr(cs2_demo, "newest_demo_time", lambda f: 1_000.0)
+    monkeypatch.setattr(ClipJob, "_source_started", lambda self: 200_000.0)
+    monkeypatch.setattr(detect, "scan", lambda *a, **k: scanned.append(1) or [])
+
+    assert job._probe_for_demo(Prof(), {}, LONG) is None
+    assert scanned == [], "it scanned anyway"
+
+
+def test_a_demo_newer_than_the_recording_is_still_searched(tmp_path, monkeypatch):
+    """The ordinary case: you played, the demo was written, then you clip it."""
+    import autostream.clips.cs2_demo as cs2_demo
+    import autostream.clips.detect as detect
+
+    job = a_job(tmp_path)
+    scanned = []
+    monkeypatch.setattr(cs2_demo, "demo_folder", lambda *a, **k: str(tmp_path))
+    monkeypatch.setattr(cs2_demo, "newest_demo_time", lambda f: 300_000.0)
+    monkeypatch.setattr(ClipJob, "_source_started", lambda self: 200_000.0)
+    monkeypatch.setattr(detect, "scan",
+                        lambda *a, **k: scanned.append(1) or [])
+
+    job._probe_for_demo(Prof(), {}, LONG)
+    assert scanned == [1], "it skipped a search that could have succeeded"
+
+
+def test_an_unknown_recording_time_does_not_skip(tmp_path, monkeypatch):
+    """Refusing to look because a timestamp could not be read would lose the
+    demo path on any file OBS did not name."""
+    import autostream.clips.cs2_demo as cs2_demo
+    import autostream.clips.detect as detect
+
+    job = a_job(tmp_path)
+    scanned = []
+    monkeypatch.setattr(cs2_demo, "demo_folder", lambda *a, **k: str(tmp_path))
+    monkeypatch.setattr(cs2_demo, "newest_demo_time", lambda f: 1_000.0)
+    monkeypatch.setattr(ClipJob, "_source_started", lambda self: None)
+    monkeypatch.setattr(detect, "scan", lambda *a, **k: scanned.append(1) or [])
+
+    job._probe_for_demo(Prof(), {}, LONG)
+    assert scanned == [1]
+
+
+def test_an_empty_demo_folder_does_not_skip_on_time(tmp_path, monkeypatch):
+    """No demos at all is a different answer from stale demos, and the rest of
+    the guard already covers it."""
+    import autostream.clips.cs2_demo as cs2_demo
+
+    assert cs2_demo.newest_demo_time(tmp_path) is None
