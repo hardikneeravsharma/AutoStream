@@ -61,6 +61,14 @@ log = logging.getLogger("autostream.clips.rounds")
 # Measured need: one misread in a 600-frame scan read 2-8 as 12-7.
 SCORE_SETTLE = 3
 
+# ...and the same for the ALIVE counters, which decide every 1vN label there
+# is. One frame reading "1" was enough to declare a last stand: measured
+# against a demo over 17 rounds, three rounds were labelled CLUTCH 1v5, CLUTCH
+# 1v3 and ALMOST 1v2 on a single misread digit each, in rounds where the player
+# was never alone at all. A real 1vN lasts many seconds and the counters are
+# read once a second, so insisting it hold is free.
+ALIVE_SETTLE = 3
+
 # A round is at most this long. CS2 rounds are 1:55 plus freeze time and
 # overtime; anything longer means the segmentation lost the thread (a menu, a
 # map change) and the span should be dropped rather than reported as a round.
@@ -68,6 +76,21 @@ MAX_ROUND = 210.0
 
 # ...and at least this long. Shorter spans are score corrections, not rounds.
 MIN_ROUND = 8.0
+
+# THE SCORE CHANGES WHEN A ROUND ENDS, NOT WHEN THE NEXT ONE STARTS. Between
+# the two CS2 plays a round-end delay and then freeze time, and taking the
+# score change as the next round's start put every clip 27 SECONDS EARLY --
+# opening on the previous round's corpses and death cam instead of the round
+# being clipped. Measured against a demo for a full 17-round match, the error
+# was 26.7-27.7s on every ordinary round (7s round end + 20s freeze) and about
+# 20s on the two that opened a half.
+#
+# Both numbers are server settings, so neither is assumed: the round clock is
+# already read off the HUD every second, and the moment it comes back to its
+# full value IS the start of play. The constant is only the fallback for a
+# recording whose clock could not be read.
+ROUND_TRANSITION = 27.0
+CLOCK_SLACK = 3          # s. How far below full still counts as "just started"
 
 # A round counts as fast when it ends inside this.
 FAST_ROUND = 35.0
@@ -182,6 +205,79 @@ def halves(steps: Sequence[tuple[float, tuple[int, int]]]) -> list[float]:
     return sorted(set(marks))
 
 
+def clock_top(readings: Sequence[Reading]) -> int | None:
+    """The round clock's full value, measured off this recording.
+
+    mp_roundtime is a server setting and overtime changes it, so it is read
+    rather than assumed. A near-max rather than the max: one misread digit
+    would otherwise define the value every round is then compared against.
+    """
+    vals = sorted(r.seconds for r in readings
+                  if r.seconds is not None and r.seconds >= 60)
+    if len(vals) < 5:
+        return None
+    return vals[int(len(vals) * 0.98)]
+
+
+def play_start(readings: Sequence[Reading], t0: float, t1: float,
+               top: int | None) -> float:
+    """When the round actually begins, between two score changes.
+
+    -> the first moment the round clock reads full, which is freeze end and
+    the first frame of play. Falls back to the measured transition when the
+    clock cannot be read at all.
+    """
+    fallback = min(t0 + ROUND_TRANSITION, max(t0, t1 - MIN_ROUND))
+    if top is None:
+        return fallback
+    for r in readings:
+        if r.time <= t0:
+            continue
+        if r.time > t1:
+            break
+        if r.seconds is not None and r.seconds >= top - CLOCK_SLACK:
+            return r.time
+    return fallback
+
+
+def held(values: Sequence[int], need: int = ALIVE_SETTLE) -> list[int]:
+    """The values that held for `need` readings in a row. -> in order seen.
+
+    Alive counts only ever fall inside a round, so a real count always arrives
+    as a run; a misread digit almost never repeats.
+    """
+    out: list[int] = []
+    run_val, run_n = None, 0
+    for v in values:
+        run_n = run_n + 1 if v == run_val else 1
+        run_val = v
+        if run_n == need:
+            out.append(v)
+    return out
+
+
+def trimmed_span(values: Sequence[int], drop: int = 1) -> int:
+    """How far a counter fell, ignoring one extreme reading at each end.
+
+    A RANGE is not a state, so it cannot be settled the way a last stand is: in
+    a fast round no count holds for three readings, and insisting it does threw
+    away a real kill. FROM FOOTAGE, round 2: the enemy went 5-4-3-2 and then
+    read 0 as the round ended. Settling saw only 5,4,3 and bounded the round at
+    two kills; the demo says three. Trimming one reading at each end drops the
+    end-of-round 0 and keeps the 2, which is exactly right.
+    """
+    v = sorted(values)
+    if len(v) > 2 * drop + 1:
+        v = v[drop:len(v) - drop]
+    return max(v) - min(v)
+
+
+def held_min(values: Sequence[int], need: int = ALIVE_SETTLE) -> int | None:
+    """The smallest value that held. -> None if nothing did."""
+    kept = held(values, need)
+    return min(kept) if kept else None
+
+
 def segment(readings: Iterable[Reading]) -> list[Round]:
     """Cut a recording into rounds on confirmed score changes."""
     rs = [r for r in readings if r.score is not None]
@@ -198,6 +294,9 @@ def segment(readings: Iterable[Reading]) -> list[Round]:
         return sum(1 for m in marks if t >= m)
 
     out: list[Round] = []
+    top = clock_top(rs)
+    if top is not None:
+        log.info("the round clock runs from %d:%02d", top // 60, top % 60)
     for (t0, s0), (t1, s1) in zip(steps, steps[1:]):
         d = (s1[0] - s0[0], s1[1] - s0[1])
         # Exactly one side gaining exactly one point is a round. Anything else
@@ -211,7 +310,8 @@ def segment(readings: Iterable[Reading]) -> list[Round]:
         # of it describes different ends of the map.
         if half_of(t0) != half_of(t1):
             continue
-        out.append(Round(number=s0[0] + s0[1] + 1, started=t0, ended=t1,
+        out.append(Round(number=s0[0] + s0[1] + 1,
+                         started=play_start(rs, t0, t1, top), ended=t1,
                          score_before=s0, score_after=s1, half=half_of(t0)))
     log.info("segmented %d round(s) from %d scoreboard reading(s)",
              len(out), len(rs))
@@ -304,6 +404,11 @@ def annotate(rounds: list[Round], readings: Sequence[Reading],
         # turn got the win or loss wrong wherever it flipped. A half has
         # dozens of events and cannot swap in the middle by definition.
         rd.my_side = by_half.get(rd.half) or global_side
+        # The first round of each half is a pistol round -- a fact about the
+        # round number, not something only a demo can see. Setting it here lets
+        # a scoreboard-read round earn the label on the same terms.
+        rd.pistol = rd.number == min(r.number for r in rounds
+                                     if r.half == rd.half)
         if rd.my_side:
             i = 0 if rd.my_side == "l" else 1
             rd.won = rd.score_after[i] > rd.score_before[i]
@@ -313,7 +418,10 @@ def annotate(rounds: list[Round], readings: Sequence[Reading],
         curve = [(r.time, getattr(r, mine), getattr(r, theirs)) for r in inside
                  if getattr(r, mine) is not None and getattr(r, theirs) is not None]
         if curve:
-            rd.min_my_alive = min(c[1] for c in curve)
+            mine_curve = [c[1] for c in curve]
+            rd.min_my_alive = held_min(mine_curve)
+            if rd.min_my_alive is None:
+                rd.min_my_alive = min(mine_curve)
             # THE SCOREBOARD BOUNDS THE KILL FEED. The enemy team can lose at
             # most five players, so however many kills the feed reports, it
             # cannot exceed how far their alive count actually fell. This is a
@@ -323,7 +431,10 @@ def annotate(rounds: list[Round], readings: Sequence[Reading],
             #
             # Measured over 48 real rounds it fired once, on a round the feed
             # called a six-kill ace in a game where five is the maximum.
-            enemy_died = max(c[2] for c in curve) - min(c[2] for c in curve)
+            # Trimmed at both ends: a single misread digit at either extreme
+            # widens this bound and stops it catching the overcount it exists
+            # to catch, and the last reading of a round is the round ending.
+            enemy_died = trimmed_span([c[2] for c in curve])
             if rd.my_kills > enemy_died:
                 log.info("round at %dm%02ds: feed says %d kills but the enemy "
                          "only lost %d players; trusting the scoreboard",
@@ -333,18 +444,25 @@ def annotate(rounds: list[Round], readings: Sequence[Reading],
                 rd.my_kills = enemy_died
                 rd.kill_times = rd.kill_times[:enemy_died]
             # Total bloodshed: how far both counts fell from their peak.
-            rd.total_kills = ((max(c[1] for c in curve) - min(c[1] for c in curve))
-                              + (max(c[2] for c in curve) - min(c[2] for c in curve)))
+            rd.total_kills = (trimmed_span(mine_curve)
+                              + trimmed_span([c[2] for c in curve]))
             # The last stand: the first moment only one of mine was left AND I
             # was still in it. Without the death check this fires for the last
             # teammate alive while the player spectates.
-            for t, mn, th in curve:
-                if mn == 1 and (rd.my_deaths == 0 or
-                                all(d > t for d in deaths
-                                    if rd.started <= d <= rd.ended)):
-                    rd.last_stand_at = t
-                    rd.enemies_at_last_stand = th
+            run = 0
+            for i, (t, mn, th) in enumerate(curve):
+                run = run + 1 if mn == 1 else 0
+                if run < ALIVE_SETTLE:
+                    continue
+                # The FIRST reading of the run, not the one that confirmed it:
+                # the last stand began when the counter first said so.
+                t0, _, th0 = curve[i - ALIVE_SETTLE + 1]
+                if rd.my_deaths and not all(d > t0 for d in deaths
+                                            if rd.started <= d <= rd.ended):
                     break
+                rd.last_stand_at = t0
+                rd.enemies_at_last_stand = th0
+                break
     return rounds
 
 

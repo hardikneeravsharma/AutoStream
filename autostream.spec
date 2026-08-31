@@ -33,6 +33,25 @@ except ImportError:
     print("NOTE: pytesseract is not installed, so this build cannot read kill "
           "feeds (Counter-Strike 2). Everything else is unaffected.")
 
+# Reading a CS2 demo goes through demoparser2, whose native extension returns
+# its rows as pandas DataFrames by way of polars and pyarrow. NOTHING imports
+# those from Python -- the .pyd reaches for them itself -- so PyInstaller's
+# analysis cannot see them and the packaged app shipped without all three.
+#
+# It failed in the worst possible way. pyo3 raises PanicException, which is a
+# BaseException and NOT an Exception, so the demo search thread died without
+# being caught, the search "returned nothing at all" in zero seconds, and every
+# CS2 run in a packaged build fell back to reading rounds off the screen. That
+# is the fallback path, so nothing looked broken -- the round boundaries and
+# the clutch tags were just quietly wrong. Same trap as numpy and pytesseract.
+try:
+    import demoparser2  # noqa: F401
+    hidden += ["demoparser2", "pandas", "pyarrow"]
+    hidden += collect_submodules("polars")
+except ImportError:
+    print("NOTE: demoparser2 is not installed, so this build cannot read CS2 "
+          "demos. Rounds and clutches would come off the screen instead.")
+
 hidden += collect_submodules("obsws_python")
 # cmd_run imports submodules lazily inside the function body; be explicit so a
 # missed import fails the BUILD rather than the running app.
@@ -84,7 +103,7 @@ a = Analysis(
     # ffmpeg is still not bundled - it is 80 MB, it is a general system tool,
     # and the Clips page explains how to install it if it is missing.
     excludes=[
-        "matplotlib", "pandas", "scipy",
+        "matplotlib", "scipy",
         "PyQt5", "PyQt6", "PySide2", "PySide6",
         "pytest", "setuptools",
     ],

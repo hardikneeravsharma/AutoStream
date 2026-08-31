@@ -696,3 +696,137 @@ def test_a_round_nobody_can_place_the_player_in_is_skipped():
     # takes every label that depends on it with it.
     m = _M([_R(1, 20.0, 80.0)], [], {})
     assert rounds.from_demo(m, ME, _S(0.0)) == []
+
+
+# ------------------------------------------- when a round actually starts
+#
+# FROM FOOTAGE. Measured against a demo for a full 17-round match, every clip
+# opened 27 seconds before its round did -- on the previous round's death cam.
+# The score changes when a round ENDS; the next one starts a round-end delay
+# and a freeze time later.
+
+def _match_readings(top=115, freeze=27, play=30):
+    """A two-round HUD: the clock runs down, the score lands, the clock comes
+    back to full `freeze` seconds later, and the next round runs down too."""
+    out, t = [], 0.0
+
+    def run(score, clocks):
+        nonlocal t
+        for c in clocks:
+            out.append(Reading(time=t, seconds=c, score_l=score[0],
+                               score_r=score[1], alive_l=5, alive_r=5))
+            t += 1.0
+
+    run((0, 0), range(top, top - play, -1))         # round 1 plays
+    run((0, 1), range(20, 20 - freeze, -1))         # ...ends: round end + freeze
+    run((0, 1), range(top, top - play, -1))         # round 2 plays
+    run((0, 2), [50] * 5)                           # ...and ends
+    return out
+
+
+def test_a_round_starts_when_the_clock_comes_back_to_full():
+    rs = _match_readings()
+    got = rounds.segment(rs)
+    # Two: the round the recording opened in the middle of, then a whole one.
+    assert len(got) == 2, [(r.number, r.started, r.ended) for r in got]
+    rd = got[1]
+    # The score landed at t=30; the clock came back to full at t=57.
+    assert rd.started == 57.0, rd.started
+    assert rd.ended == 87.0, rd.ended
+
+
+def test_the_clock_top_is_measured_rather_than_assumed():
+    """mp_roundtime is a server setting, and overtime changes it."""
+    assert rounds.clock_top(_match_readings(top=115)) == 115
+    assert rounds.clock_top(_match_readings(top=95)) == 95
+    assert rounds.clock_top([]) is None
+
+
+def test_one_misread_clock_digit_cannot_define_the_top():
+    rs = _match_readings(top=115)
+    rs[5].seconds = 199                       # a misread that would win a max()
+    assert rounds.clock_top(rs) == 115
+
+
+def test_the_round_start_falls_back_to_the_transition_without_a_clock():
+    rs = _match_readings()
+    for r in rs:
+        r.seconds = None
+    got = rounds.segment(rs)
+    assert len(got) == 2
+    # No clock to read, so the measured 7s round end + 20s freeze is used.
+    assert got[1].started == 30.0 + rounds.ROUND_TRANSITION
+
+
+def test_a_clip_no_longer_opens_on_the_previous_rounds_death_cam():
+    """The user-visible bug, stated as the user saw it."""
+    rd = rounds.segment(_match_readings())[1]
+    score_change = 30.0
+    assert rd.started > score_change, "the clip would open before the round"
+    assert rd.started - score_change == pytest.approx(27.0, abs=1.5)
+
+
+# --------------------------------------------- 1vN labels off a single frame
+#
+# FROM FOOTAGE. Scored against a demo over a full 17-round match, three rounds
+# were labelled CLUTCH 1v5, CLUTCH 1v3 and ALMOST 1v2 on ONE misread alive
+# digit each, in rounds where the player was never alone.
+
+def _alive(mine, theirs, start=100.0):
+    """Readings with a given pair of alive curves, a second apart.
+
+    With no events to infer a side from, annotate() falls back to reading
+    alive_r as the player's own -- so `mine` goes on the right.
+    """
+    return [Reading(time=start + i, seconds=100 - i, score_l=0, score_r=0,
+                    alive_l=b, alive_r=a)
+            for i, (a, b) in enumerate(zip(mine, theirs))]
+
+
+def test_a_value_has_to_hold_before_it_counts():
+    assert rounds.held([5, 5, 5, 4, 4, 4]) == [5, 4]
+    assert rounds.held([5, 5, 1, 5, 5]) == []        # nothing held long enough
+    assert rounds.held([5, 5, 5, 1, 5, 5, 5]) == [5, 5]   # the 1 is a misread
+    assert rounds.held_min([5, 5, 5, 1, 5, 5, 5]) == 5
+    assert rounds.held_min([5, 5, 5, 1, 1, 1]) == 1
+    assert rounds.held_min([1, 2]) is None
+
+
+def test_one_misread_alive_digit_is_not_a_last_stand():
+    """The bug exactly: a single frame reading 1 became CLUTCH 1v5."""
+    rd = rounds.Round(number=1, started=100.0, ended=140.0,
+                      score_before=(0, 0), score_after=(0, 1), half=1)
+    mine =   [5, 5, 5, 5, 1, 5, 5, 5, 5, 5]     # noqa: E222 - one bad frame
+    theirs = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5]
+    rounds.annotate([rd], _alive(mine, theirs), [])
+    assert rd.last_stand_at is None
+    assert rounds.label([rd])[0].labels == []
+
+
+def test_a_real_last_stand_still_earns_its_label():
+    rd = rounds.Round(number=1, started=100.0, ended=140.0,
+                      score_before=(0, 0), score_after=(1, 0), half=1)
+    mine =   [5, 5, 4, 3, 1, 1, 1, 1, 1, 1]     # noqa: E222
+    theirs = [5, 5, 5, 4, 3, 3, 3, 3, 3, 3]
+    rounds.annotate([rd], _alive(mine, theirs), [])
+    assert rd.last_stand_at is not None
+    assert rd.enemies_at_last_stand == 3
+
+
+def test_a_range_is_trimmed_rather_than_settled():
+    """FROM FOOTAGE, round 2: the enemy went 5-4-3-2 and then read 0 as the
+    round ended. Settling saw only 5,4,3 and bounded the round at two kills;
+    the demo says three."""
+    curve = [5] * 29 + [4] * 7 + [3] * 18 + [2, 0]
+    assert rounds.trimmed_span(curve) == 3
+    assert max(curve) - min(curve) == 5           # untrimmed believes the 0
+    assert rounds.held(curve) == [5, 4, 3]        # settling loses the 2
+
+
+def test_the_first_round_of_a_half_is_a_pistol_round():
+    rd1 = rounds.Round(number=1, started=10.0, ended=40.0,
+                       score_before=(0, 0), score_after=(1, 0), half=1)
+    rd2 = rounds.Round(number=2, started=40.0, ended=70.0,
+                       score_before=(1, 0), score_after=(2, 0), half=1)
+    rounds.annotate([rd1, rd2], _alive([5] * 5, [5] * 5), [])
+    assert rd1.pistol and not rd2.pistol

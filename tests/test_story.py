@@ -656,3 +656,38 @@ def test_the_promo_takes_what_fell_below_the_minimum():
     plans = [clip(1, 10, 1, []), clip(2, 20, 2, []), clip(3, 30, 3, [])]
     assert [p.kills for p in promo.pick(plans, 2)] == [1]
     assert [p.kills for p in promo.pick(plans, 3)] == [1, 2]
+
+
+def test_a_promo_never_holds_more_clips_than_it_has_seconds_for():
+    """FROM FOOTAGE: a 13-clip reel came out at 29s -- 2.2s a cut, with the
+    kills chopped mid-action. Length is shared between the pieces, so past a
+    point the target can only be met by cutting below what is watchable."""
+    from autostream.clips import promo
+
+    assert promo.MAX_CLIPS * promo.MIN_PIECE <= promo.TARGET_MAX + 0.01
+    assert promo.piece_length(promo.MAX_CLIPS) >= promo.MIN_PIECE
+    assert promo.piece_length(13) >= promo.MIN_PIECE
+
+
+def test_a_promo_piece_is_long_enough_to_hold_its_kill():
+    from autostream.clips import promo
+
+    assert promo.MIN_PIECE >= promo.PROMO_PRE + promo.PROMO_TAIL
+
+
+def test_the_extra_leftovers_dropped_from_a_promo_are_the_weakest():
+    from autostream.clips import promo
+
+    plans = [clip(i, 10.0 * i, 1, []) for i in range(1, 15)]
+    for i, p in enumerate(plans):
+        p.peak_score = float(i)              # last is strongest
+    kept = promo.strongest(plans, promo.MAX_CLIPS)
+    assert len(kept) == promo.MAX_CLIPS
+    assert plans[-1] in kept and plans[0] not in kept
+
+
+def test_a_short_promo_keeps_every_leftover():
+    from autostream.clips import promo
+
+    plans = [clip(i, 10.0 * i, 1, []) for i in range(1, 5)]
+    assert promo.strongest(plans, promo.MAX_CLIPS) == plans
