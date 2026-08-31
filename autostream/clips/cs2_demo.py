@@ -631,6 +631,38 @@ def newest_demo_time(folder: Path) -> float | None:
     return max((p.stat().st_mtime for p in dems), default=None)
 
 
+def demo_for_recording(folder, started: float, duration: float = 0.0,
+                       *, after: float = 12 * 3600.0) -> str | None:
+    """Is there a demo that could belong to this recording? -> its name.
+
+    A rough test on dates alone, meant for a list where an exact answer would
+    cost a parse of every demo. Counter-Strike writes the file when the match
+    ENDS, so a demo for this recording was written after it started and not
+    long after it finished.
+
+    Wrong in one direction on purpose: it may say yes to a demo from another
+    match played the same evening. Saying "there is probably one" and being
+    occasionally wrong is far better than telling somebody to re-download a
+    demo they already have -- and the alignment settles it properly later.
+    """
+    if not folder or not started:
+        return None
+    try:
+        dems = list(Path(folder).glob("*.dem"))
+    except OSError:
+        return None
+    latest = max(started + duration, started) + after
+    best, best_when = None, 0.0
+    for d in dems:
+        try:
+            when = d.stat().st_mtime
+        except OSError:
+            continue
+        if started <= when <= latest and when > best_when:
+            best, best_when = d.name, when
+    return best
+
+
 def pick_demo(folder: Path, vod_times: list[float], *,
               newest: int = 12) -> tuple[Match | None, str, "Sync"]:
     """Choose which demo in a folder belongs to a recording, by fingerprint.

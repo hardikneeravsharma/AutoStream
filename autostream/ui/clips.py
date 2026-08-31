@@ -403,9 +403,18 @@ function clip_row(s, i) {
   /* OBS was already recording when the session started, so most of this file
      is footage AutoStream never saw - possibly a different game entirely. */
   if (s.game_uncertain) sub.push(clip_dur(s.pre_session_seconds) + ' before this session');
+  /* Only for games that HAVE replays -- has_demo is null for the rest, and
+     "no demo" against Valorant would read as a fault rather than as not
+     applicable. With one, a run reads twelve minutes instead of the whole
+     recording and the clips carry real round context; without, it reads
+     everything and guesses the rounds off the screen. */
+  if (s.has_demo === true) sub.push('demo on disk');
+  else if (s.has_demo === false) sub.push('no demo - slower, rougher clips');
 
   var tag;
   if (gone) tag = '<span class="tag is-warn">Recording gone</span>';
+  else if (s.has_demo === false && s.can_scan)
+    tag = '<span class="tag is-warn">No demo</span>';
   else if (s.game_uncertain) tag = '<span class="tag is-warn">Game may be wrong</span>';
   else if (s.can_scan) tag = '<span class="tag">' + esc(s.profile) + '</span>';
   /* A killfeed game IS calibrated - it is just missing the in-game name. Saying
