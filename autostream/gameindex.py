@@ -11,7 +11,9 @@ import fnmatch
 import json
 import logging
 import ntpath
+import re
 import time
+from pathlib import Path
 from dataclasses import dataclass
 
 import requests
@@ -25,11 +27,8 @@ DISCORD_SOURCES = [
     "https://discord.com/api/v9/applications/detectable",
     "https://discord.com/api/v10/applications/detectable",
 ]
-STEAM_APPLIST_SOURCES = [
-    "https://api.steampowered.com/ISteamApps/GetAppList/v0002/?format=json",
-    "https://api.steampowered.com/ISteamApps/GetAppList/v2/",
-    "https://api.steampowered.com/ISteamApps/GetAppList/v1/",
-]
+# Steam's public app list is gone -- see steam_apps_from_disk. Names come from
+# the install manifests instead, so there is nothing to fetch.
 
 UA = {"User-Agent": "AutoStream/1.0 (+local game detection)"}
 
@@ -102,6 +101,68 @@ def _parse_detectable(payload) -> dict[str, str]:
     return out
 
 
+def steam_apps_from_disk() -> dict[str, str]:
+    """appid -> name, read from Steam's own install manifests.
+
+    REPLACES A WEB ENDPOINT THAT NO LONGER EXISTS. Every documented form of
+    ISteamApps/GetAppList now answers 404 -- v0002, v2 and v1, with or without
+    a User-Agent -- while the rest of api.steampowered.com answers normally, so
+    Valve retired it rather than the host being unreachable. Three requests
+    failed on every start, logged three warnings, and left the appid table
+    empty; the name lookup that depends on it then never fired, silently, and
+    a Steam game the public index did not recognise stayed named after its
+    executable.
+
+    Every installed game already carries its name in
+    steamapps/appmanifest_<appid>.acf, which is better than the web list ever
+    was for this purpose: it is instant, it needs no network, it cannot be
+    retired, and it covers exactly the games that could actually be running.
+
+    The .acf is Valve's key-value text. Parsed with a regex rather than a VDF
+    library, because two quoted tokens on a line is the whole grammar being
+    used here and a dependency for that would be silly.
+    """
+    from .catalog import _steam_roots
+
+    out: dict[str, str] = {}
+    seen: set[str] = set()
+    libs: list[Path] = []
+    for root in _steam_roots():
+        base = Path(root) / "steamapps"
+        if base.is_dir():
+            libs.append(base)
+        # Games are routinely on a second drive; libraryfolders.vdf lists them.
+        vdf = base / "libraryfolders.vdf"
+        try:
+            text = vdf.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for extra in re.findall(r'"path"\s+"([^"]+)"', text):
+            more = Path(extra.replace("\\\\", "\\")) / "steamapps"
+            if more.is_dir():
+                libs.append(more)
+
+    for lib in libs:
+        key = str(lib).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            manifests = list(lib.glob("appmanifest_*.acf"))
+        except OSError:
+            continue
+        for man in manifests:
+            try:
+                text = man.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            appid = re.search(r'"appid"\s+"(\d+)"', text)
+            name = re.search(r'"name"\s+"([^"]*)"', text)
+            if appid and name and name.group(1).strip():
+                out[appid.group(1)] = name.group(1).strip()
+    return out
+
+
 class GameIndex:
     def __init__(self, config):
         self.cfg = config
@@ -160,23 +221,14 @@ class GameIndex:
             except Exception as e:  # noqa: BLE001 - any network/parse failure is non-fatal
                 log.warning("game index source failed (%s): %s", url, e)
 
-        steam: dict[str, str] = {}
-        for url in STEAM_APPLIST_SOURCES:
-            try:
-                r = requests.get(url, timeout=(5, 20), headers=UA)
-                r.raise_for_status()
-                apps = r.json().get("applist", {}).get("apps", [])
-                # v1 nests as {"apps": {"app": [...]}}
-                if isinstance(apps, dict):
-                    apps = apps.get("app", [])
-                for a in apps:
-                    if a.get("name"):
-                        steam[str(a["appid"])] = a["name"]
-                if steam:
-                    log.info("fetched %d steam apps from %s", len(steam), url)
-                    break
-            except Exception as e:  # noqa: BLE001
-                log.warning("steam applist source failed (%s): %s", url, e)
+        try:
+            steam = steam_apps_from_disk()
+        except Exception as e:  # noqa: BLE001 - naming is a nicety, not the job
+            log.info("could not read Steam's install manifests (%s)", e)
+            steam = {}
+        if steam:
+            log.info("read %d installed steam game(s) from Steam's own "
+                     "manifests", len(steam))
 
         if not execs and not steam:
             log.warning("index refresh produced nothing — keeping existing cache")
