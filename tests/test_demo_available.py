@@ -102,3 +102,52 @@ def test_the_reminder_never_breaks_the_journal(monkeypatch):
     eng = Engine.__new__(Engine)
     eng._remind_about_demo({"game_key": "cs2.exe", "game": "Counter-Strike 2",
                             "started": STARTED})     # must not raise
+
+
+# ------------------------------- listed, but the download never landed
+
+def info(folder: Path, name: str, when: float) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    f = folder / name
+    f.write_bytes(b"")
+    os.utime(f, (when, when))
+    return f
+
+
+def test_a_match_listed_without_its_file_is_its_own_answer(tmp_path):
+    """Counter-Strike writes the .info when the match appears in the history
+    and the .dem when the download completes -- about two minutes apart on a
+    real one. Five .info files and no .dem is a download that never landed,
+    which a user hit while believing they had downloaded it. Telling them "no
+    demo" sends them looking for a match already in front of them."""
+    info(tmp_path, "match730_1.dem.info", STARTED + 30 * 60)
+    got = cs2_demo.demo_state(tmp_path, STARTED, 45 * 60)
+    assert got["state"] == "listed"
+    assert got["file"] is None
+
+
+def test_the_file_landing_changes_the_answer(tmp_path):
+    info(tmp_path, "match730_1.dem.info", STARTED + 30 * 60)
+    demo(tmp_path, "match730_1.dem", STARTED + 32 * 60)
+    got = cs2_demo.demo_state(tmp_path, STARTED, 45 * 60)
+    assert got["state"] == "have"
+    assert got["file"] == "match730_1.dem"
+
+
+def test_nothing_at_all_is_still_none(tmp_path):
+    assert cs2_demo.demo_state(tmp_path, STARTED, 45 * 60)["state"] == "none"
+
+
+def test_an_old_info_does_not_count_as_listed(tmp_path):
+    """A stub from a match played days earlier says nothing about this one."""
+    info(tmp_path, "match730_old.dem.info", STARTED - 48 * HOUR)
+    assert cs2_demo.demo_state(tmp_path, STARTED, 45 * 60)["state"] == "none"
+
+
+def test_an_info_never_masks_a_real_demo(tmp_path):
+    """The .dem is the answer whenever there is one, whatever stubs sit
+    beside it."""
+    info(tmp_path, "match730_a.dem.info", STARTED + 5 * 60)
+    info(tmp_path, "match730_b.dem.info", STARTED + 6 * 60)
+    demo(tmp_path, "match730_a.dem", STARTED + 10 * 60)
+    assert cs2_demo.demo_state(tmp_path, STARTED, 45 * 60)["state"] == "have"

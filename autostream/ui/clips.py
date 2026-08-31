@@ -408,12 +408,19 @@ function clip_row(s, i) {
      applicable. With one, a run reads twelve minutes instead of the whole
      recording and the clips carry real round context; without, it reads
      everything and guesses the rounds off the screen. */
-  if (s.has_demo === true) sub.push('demo on disk');
-  else if (s.has_demo === false) sub.push('no demo - slower, rougher clips');
+  if (s.demo_state === 'have') sub.push('demo on disk');
+  /* "listed" means the match is in your Counter-Strike history and the
+     download has not finished -- the .dem.info is written when the match
+     appears, the .dem when the download lands. Saying "no demo" there sends
+     somebody looking for a match that is already in front of them. */
+  else if (s.demo_state === 'listed') sub.push('demo not downloaded yet');
+  else if (s.demo_state === 'none') sub.push('no demo - slower, rougher clips');
 
   var tag;
   if (gone) tag = '<span class="tag is-warn">Recording gone</span>';
-  else if (s.has_demo === false && s.can_scan)
+  else if (s.demo_state === 'listed' && s.can_scan)
+    tag = '<span class="tag is-warn">Demo not downloaded</span>';
+  else if (s.demo_state === 'none' && s.can_scan)
     tag = '<span class="tag is-warn">No demo</span>';
   else if (s.game_uncertain) tag = '<span class="tag is-warn">Game may be wrong</span>';
   else if (s.can_scan) tag = '<span class="tag">' + esc(s.profile) + '</span>';
