@@ -910,3 +910,69 @@ def test_the_victim_side_survives_a_frame_that_disagrees():
     got = vf.collapse(rows, min_seen=3)
     assert len(got) == 1
     assert got[0].victim == "enemy"
+
+
+# ------------------------------------------------- one kill counted as two
+#
+# FROM FOOTAGE. Five clips out of a 93-minute Valorant recording went out
+# labelled "2 kills" holding exactly one. All five were the same row counted
+# twice, by three different routes.
+
+def test_one_stray_kill_frame_does_not_outvote_three_assist_frames():
+    """FROM FOOTAGE at 43m43s: a row voting "aaka" was reported as a kill.
+
+    A hard verdict only had to beat "other", and no frame there read "other",
+    so a single misread frame won outright against three that agreed.
+    """
+    seen = [_sight(10.0, "assist"), _sight(10.5, "assist"),
+            _sight(11.0, "kill"), _sight(11.5, "assist")]
+    got = vf.collapse(seen)
+    assert len(got) == 1
+    assert got[0].kind == "assist", got[0].votes
+
+
+def test_a_hard_verdict_still_wins_a_tie_with_assists():
+    """The rescue this rule exists for must survive the fix above.
+
+    A row whose edge wanders late in its life starts reading as a detached
+    assist tile, so a real kill comes back "kkkaaa" -- and a plain plurality
+    threw it away on the 3-3 tie.
+    """
+    seen = [_sight(10.0 + i * 0.5, "kill") for i in range(3)]
+    seen += [_sight(11.5 + i * 0.5, "assist") for i in range(3)]
+    got = vf.collapse(seen)
+    assert len(got) == 1 and got[0].kind == "kill", got[0].votes
+
+
+def test_a_row_sliding_up_with_a_wandering_edge_is_still_one_event():
+    """FROM FOOTAGE at 1h14m04s: y 98 -> 59 while the left edge moved 16px.
+
+    Two over X_TOL, so the row's own track lost it and a second track started.
+    """
+    seen = [_sight(10.0 + i * 0.5, "kill", y0=98, x0=654) for i in range(4)]
+    seen += [_sight(12.0 + i * 0.5, "kill", y0=59, x0=638) for i in range(5)]
+    got = vf.collapse(seen)
+    assert len(got) == 1, [(e.time, e.y0, e.votes) for e in got]
+
+
+def test_a_row_holding_its_slot_across_a_dropout_is_one_event():
+    """FROM FOOTAGE at 1h20m04s: one row sat at y 20 for four and a half
+    seconds while its edge swung 566-640-566-668-648, with a frame missing in
+    the middle. The feed only ever appends BELOW, so a second kill cannot land
+    in a slot this one is still holding."""
+    xs = [566, 640, 566, 640, 668]
+    seen = [_sight(10.0 + i * 0.5, "kill", y0=20, x0=x) for i, x in enumerate(xs)]
+    seen += [_sight(13.0 + i * 0.5, "kill", y0=20, x0=x)      # 1s hole
+             for i, x in enumerate((648, 662, 672, 670))]
+    got = vf.collapse(seen)
+    assert len(got) == 1, [(e.time, e.votes) for e in got]
+
+
+def test_a_real_second_kill_in_the_next_slot_is_still_two_events():
+    """The guard on all of the above: the merges must not swallow a genuine
+    double. A second kill lands in a DIFFERENT slot, because the row above it
+    is still alive."""
+    seen = [_sight(10.0 + i * 0.5, "kill", y0=20, x0=600) for i in range(6)]
+    seen += [_sight(11.5 + i * 0.5, "kill", y0=59, x0=640) for i in range(6)]
+    got = vf.collapse(seen)
+    assert len(got) == 2, [(e.time, e.y0, e.votes) for e in got]

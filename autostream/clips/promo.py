@@ -33,15 +33,28 @@ TARGET_MIN, TARGET_MAX = 30.0, 40.0
 # Room either side of the kill inside a promo cut. Tighter than any normal
 # clip: nothing here has to be understood, only glimpsed.
 PROMO_PRE = 1.0
-PROMO_TAIL = 1.6
+# Long enough to hold the kill itself. At 1.6s the reel cut away while the kill
+# was still happening -- the feed row is what dates a kill, and it appears as
+# the animation plays, so a tail measured from it has to cover the rest of it.
+PROMO_TAIL = 2.5
 # ...but the run-up is what absorbs the target length, so it needs a ceiling
 # as well as a floor. With only a floor, every single-kill piece came out at
 # PROMO_PRE + PROMO_TAIL = 2.6s no matter what piece_length() asked for, and a
 # reel documented at 30-40 seconds delivered fifteen. Beyond about three and a
 # half seconds the run-up is somebody walking.
 PROMO_PRE_MAX = 3.5
-MIN_PIECE = 2.4
-MAX_PIECE = 5.0
+# A piece has to be long enough to READ, not merely long enough to contain the
+# kill. At 2.4s a thirteen-clip reel came out at 2.2s a cut and every kill was
+# clipped mid-action. The floor is now PROMO_PRE + PROMO_TAIL with room to
+# spare, so the run-up grows with the piece instead of staying at the minimum.
+MIN_PIECE = 4.0
+MAX_PIECE = 5.5
+
+# ...which in turn caps how many clips a reel can hold. Length is shared out
+# between them, so past this the target window can only be met by cutting below
+# the floor. The extras are dropped rather than squeezed: a promo is a taster,
+# and the ones dropped are the weakest single kills of the session.
+MAX_CLIPS = int(TARGET_MAX // MIN_PIECE)
 
 
 def piece_length(count: int) -> float:
@@ -68,6 +81,19 @@ def pick(plans, floor: int = 2) -> list:
     return [p for p in plans if int(getattr(p, "kills", 0)) < floor]
 
 
+def strongest(leftovers, limit: int) -> list:
+    """The `limit` best leftovers, in whatever order they came. -> a subset."""
+    if len(leftovers) <= limit:
+        return list(leftovers)
+    best = sorted(leftovers,
+                  key=lambda p: (int(getattr(p, "kills", 0)),
+                                 float(getattr(p, "peak_score", 0.0) or 0.0)),
+                  reverse=True)[:limit]
+    log.info("promo: %d leftovers is more than %d cuts can hold; keeping the "
+             "best %d", len(leftovers), limit, limit)
+    return best
+
+
 def build(source: Path, leftovers, kills, outdir: Path, *,
           game: str = "Session", handle: str = "@YuvaNeta",
           caption: str = "LIVE MOST EVENINGS \U0001F3AE",
@@ -85,7 +111,7 @@ def build(source: Path, leftovers, kills, outdir: Path, *,
 
     # Chronological, like the main montage -- a reel that jumps around the
     # match reads as an editing mistake even when nothing else is wrong.
-    ordered = sorted(leftovers, key=lambda p: p.start)
+    ordered = sorted(strongest(leftovers, MAX_CLIPS), key=lambda p: p.start)
 
     pieces: list[Path] = []
     for i, p in enumerate(ordered, 1):

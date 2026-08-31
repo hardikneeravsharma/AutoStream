@@ -469,6 +469,12 @@ SETTLE_GAP = 0.75     # s. One frame at the 2 fps this scans at, with slack.
 # artefact without being near a real row's length. This is the rule CS2 taught:
 # no single frame's verdict may become an event.
 MIN_SEEN = 3
+# How far a row's TOP may wander and still be the same slot. A row jitters a
+# few scanlines frame to frame (3px was enough to break the JOIN_GAP of 2 that
+# was used here first), while consecutive slots are a whole PITCH apart -- so a
+# third of a pitch is loose enough for the jitter and cannot reach the row
+# above or below.
+SLOT_TOL = PITCH // 3
 
 
 @dataclass
@@ -512,7 +518,34 @@ def collapse(seen: list[Row], min_seen: int = MIN_SEEN) -> list[Event]:
             # same row, whatever its left edge did.
             same_spot = (r.time - t["last"] <= SETTLE_GAP
                          and abs(t["y0"] - r.y0) <= JOIN_GAP)
-            if abs(t["x0"] - r.x0) > X_TOL and not same_spot:
+            # A row slides UP one pitch whenever the row above it expires, and
+            # its left edge can wander across that step. FROM FOOTAGE at
+            # 1h14m04s a kill row moved y 98 -> 59 while its edge moved 16px --
+            # two over X_TOL -- so its own track lost it and a second track
+            # started: ONE kill reported twice, 2.25s apart, and the clip went
+            # out labelled "2 kills". Restricted to a track already holding the
+            # same hard verdict, so a stale "other" track still cannot absorb a
+            # kill that has just moved into its slot (see the note above).
+            slid_up = (r.time - t["last"] <= SETTLE_GAP
+                       and t["hard"] is not None and t["hard"] == r.kind
+                       and 0 < t["y0"] - r.y0 <= PITCH + JOIN_GAP)
+            # A row STAYING PUT is the same row, whatever its left edge does.
+            # That edge is the start of the longest solid run and it is not
+            # stable: FROM FOOTAGE at 1h20m04s one row sat at y 20 for four and
+            # a half seconds while its edge swung 566-640-566-668-648, and at
+            # 1h08m31s a row held the same slot across a 2s dropout. Both split
+            # on X_TOL and both went out labelled "2 kills" holding one.
+            #
+            # A genuine second kill cannot be confused with this, because it
+            # does not land in an occupied slot -- the feed appends BELOW and
+            # only ever moves rows up, so a new row while this one is alive
+            # sits at a different y. Still requires the settled verdict to
+            # match, so a stale "other" track cannot swallow a new kill.
+            held = (r.time - t["last"] <= MAX_GAP
+                    and abs(t["y0"] - r.y0) <= SLOT_TOL
+                    and t["hard"] is not None and t["hard"] == r.kind)
+            if abs(t["x0"] - r.x0) > X_TOL and not (same_spot or slid_up
+                                                    or held):
                 continue
             if r.time - t["t0"] > MAX_LIFE:
                 continue
@@ -583,10 +616,19 @@ def collapse(seen: list[Row], min_seen: int = MIN_SEEN) -> list[Event]:
         # degraded ones -- and a plain plurality threw the kill away on the
         # 3-3 tie.
         n_other = kinds.count("other")
+        n_assist = kinds.count("assist")
         hard = max(("kill", "death"), key=kinds.count)
-        if kinds.count(hard) > n_other:
+        # A hard verdict has to beat "other" AND not be outvoted by "assist".
+        # Testing it only against "other" meant a SINGLE stray kill frame won
+        # outright whenever no frame had read "other": FROM FOOTAGE at 43m43s a
+        # row voting "aaka" -- three assist frames to one kill frame -- was
+        # reported as a kill, and the clip went out labelled "2 kills" holding
+        # one. Ties still go to the hard verdict, which is what rescues the
+        # "kkkaaa" row above: a degraded frame reads as an assist, never the
+        # other way round, so assists can only ever be the noise here.
+        if kinds.count(hard) > n_other and kinds.count(hard) >= n_assist:
             kind = hard
-        elif kinds.count("assist") > n_other:
+        elif n_assist > n_other:
             kind = "assist"
         else:
             kind = "other"

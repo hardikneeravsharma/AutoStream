@@ -765,8 +765,12 @@ def pick_demo(folder: Path, vod_times: list[float], *,
     for p in dems[:newest]:
         try:
             m = parse(p)
-        except Exception as e:                     # pragma: no cover
-            log.warning("could not parse %s: %s", p.name, e)
+        except BaseException as e:                 # noqa: BLE001
+            # BaseException, not Exception: demoparser2 is a Rust extension and
+            # pyo3 raises PanicException, which is not an Exception. One demo
+            # the parser cannot stomach must cost that demo, not the search.
+            log.warning("could not parse %s: %s: %s",
+                        p.name, type(e).__name__, str(e)[:200])
             continue
         who, s = identify(m, vod_times)
         # A SHARE IS NOT ENOUGH WHEN CHOOSING BETWEEN DEMOS. align() judges one

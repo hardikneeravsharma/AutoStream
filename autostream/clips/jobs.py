@@ -768,9 +768,20 @@ class ClipJob:
                 got["skip"] = str(e)
             except Exception as e:         # noqa: BLE001
                 got["skip"] = f"the demo search failed: {e}"
+            except BaseException as e:     # noqa: BLE001
+                # NOT redundant. demoparser2 is a Rust extension, and pyo3
+                # raises PanicException, which derives from BaseException --
+                # so `except Exception` let it kill this thread in silence.
+                # The packaged build shipped without polars/pyarrow/pandas and
+                # every CS2 demo search died here, instantly and invisibly,
+                # for as long as the demo path has existed.
+                got["skip"] = (f"the demo reader crashed ({type(e).__name__}: "
+                               f"{str(e)[:200]}); reading the rounds off the "
+                               f"screen instead")
 
         worker = threading.Thread(target=search, name="autostream-demo",
                                   daemon=True)
+        t0 = time.time()
         worker.start()
         worker.join(self.DEMO_TIMEOUT)
         if worker.is_alive():
@@ -784,7 +795,16 @@ class ClipJob:
         if sync is None:
             # Added logging to this method precisely so a run could not end
             # with no demo and no reason, and then left this path silent.
-            log.info("the demo search returned nothing at all")
+            # It then happened anyway, above, and this said nothing useful --
+            # so say what was actually on the table.
+            try:
+                count = len(list(Path(folder).glob("*.dem")))
+            except Exception:              # noqa: BLE001
+                count = -1
+            log.warning("the demo search returned nothing at all after %.0fs "
+                        "(%d demo file(s) in %s, %d kill(s) to match) -- the "
+                        "worker died without reporting why",
+                        time.time() - t0, count, folder, len(vod))
             return None
         if not match or not sync.ok:
             log.info("no demo in %s fits this recording (%s)", folder,
