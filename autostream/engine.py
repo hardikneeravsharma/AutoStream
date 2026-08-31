@@ -740,8 +740,48 @@ class Engine:
             )
             if entry and self.cfg.record.auto_scan and recording_path:
                 self.pending_scan = entry
+            if entry and recording_path:
+                self._remind_about_demo(entry)
         except Exception as e:  # noqa: BLE001
             log.warning("could not journal session: %s", e)
+
+    def _remind_about_demo(self, entry: dict) -> None:
+        """Say so when a match that could have a replay has not got one.
+
+        A demo makes a Counter-Strike clip run several times faster and the
+        clips themselves better -- exact kill times and real round context
+        rather than a reading off the screen. Without one the whole recording
+        is scanned and the rounds are guessed.
+
+        Said HERE, at the end of the session, because Counter-Strike keeps
+        demos for about a fortnight and then deletes them. A reminder a week
+        later is a reminder about something that no longer exists.
+
+        Never fatal, and never said for a game that has no demos at all --
+        "no demo" against Valorant reads as a fault rather than as not
+        applicable.
+        """
+        try:
+            from .clips import cs2_demo, profiles
+
+            prof = profiles.for_game(entry.get("game_key"), entry.get("game"))
+            if not (prof and getattr(prof, "demos", False)):
+                return
+            folder = cs2_demo.demo_folder("")
+            if not folder:
+                return
+            if cs2_demo.demo_for_recording(folder,
+                                           float(entry.get("started") or 0),
+                                           float(entry.get("rec_seconds") or 0)):
+                return
+            log.info("no %s demo for this session yet -- downloading it makes "
+                     "the clips faster and better", prof.label)
+            notify.toast(
+                f"Download your {prof.label} demo",
+                "Clips come out faster and with real round context. "
+                "The game keeps demos for about two weeks.")
+        except Exception as e:  # noqa: BLE001 - a reminder is never worth a failure
+            log.debug("could not check for a demo: %s", e)
 
     def _free_gb(self) -> float | None:
         """Free space on the drive OBS records to, not on the AutoStream drive.

@@ -707,6 +707,20 @@ class Server:
             # Whether this game is clipped by round rather than by kill burst.
             r["rounds"] = bool(prof and getattr(prof, "rounds", False))
             r["blocked"] = prof.why_not() if prof else ""
+            # Whether a replay for this match looks to be on disk. Only games
+            # that HAVE replays get an answer -- "no demo" against Valorant
+            # would read as a fault rather than as not applicable.
+            if prof and getattr(prof, "demos", False):
+                from .clips import cs2_demo
+
+                name = cs2_demo.demo_for_recording(
+                    cs2_demo.demo_folder(""),
+                    float(r.get("started") or 0),
+                    float(r.get("rec_seconds") or 0))
+                r["demo_file"] = name
+                r["has_demo"] = bool(name)
+            else:
+                r["has_demo"] = None
             # So the calibrator can prefill it rather than asking again.
             r["player"] = (prof.player if prof else "") or                 profiles.username_for(r.get("game_key"), r.get("game"))
             # No profile yet? Hand the calibrator a starting box so the user is
