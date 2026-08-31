@@ -67,6 +67,13 @@ MATCH_TOL = 1.5
 # Below this share of the demo's kills lining up, the alignment is not trusted.
 # Refusing costs one match; a wrong offset silently mis-cuts every clip in it.
 MIN_ALIGNED = 0.6
+# Absolute floor on matched kills, independent of the share. With a windowed
+# denominator a share can be computed from very few pairs, and "2 of 2" is a
+# perfect score that means nothing at all.
+MIN_MATCHED = 6
+# Below this share of the demo, the recording is a sample of the match rather
+# than a truncated copy of it, and the floor above applies.
+WINDOW_MINORITY = 0.5
 # Rate ratios tried while searching. Matchmaking demos are 64 tick and third
 # party servers are often 128, so parsing at the wrong one doubles or halves
 # every timestamp. A least-squares fit CANNOT rescue that -- it only runs after
@@ -538,8 +545,40 @@ def align(demo_times: list[float], vod_times: list[float], *,
             pairs.append((x, min(near,
                                  key=lambda y: abs(x * best_rate + best_off - y))))
 
+    # THE DENOMINATOR IS THE WINDOW, NOT THE WHOLE DEMO.
+    #
+    # A recording rarely covers a whole match: OBS is started late, stopped
+    # early, or -- the case this exists for -- only a few minutes of it have
+    # been scanned so far. Counting demo kills that fall OUTSIDE what was
+    # looked at marks the alignment down for the scan's coverage rather than
+    # for being wrong, and that is what forced every job to scan the entire
+    # recording before a demo could be trusted.
+    #
+    # So only demo kills whose mapped time lands inside the scanned span can
+    # count against us. That makes a partial scan a valid fingerprint, which
+    # is the whole optimisation.
+    lo, hi = vod[0] - tol, vod[-1] + tol
+    in_window = [x for x in demo if lo <= x * best_rate + best_off <= hi]
+
+    # "Windowed" means judging the demo from a MINORITY of it -- a deliberate
+    # partial scan. A recording that merely starts late or stops early still
+    # covers most of the match, and that is the ordinary case the old
+    # behaviour was written for; treating it as a partial scan would demand
+    # extra evidence for nothing.
+    windowed = 0 < len(in_window) < len(demo) * WINDOW_MINORITY
     s = Sync(offset=best_off, scale=best_rate,
-             matched=len(pairs), total=len(demo))
+             matched=len(pairs), total=len(in_window) or len(demo))
+
+    # The absolute floor applies ONLY when the window actually narrowed the
+    # denominator. A share computed from few pairs is easy to hit by luck --
+    # two out of two is a perfect score and means nothing -- so a partial scan
+    # has to clear a real count as well. A demo fully inside the recording is
+    # judged exactly as it always was, floor and all left out of it, because
+    # a genuinely short match is not a suspicious one.
+    if windowed and s.matched < MIN_MATCHED:
+        s.why = (f"only {s.matched} kill(s) line up in the part scanned so far "
+                 f"-- is this the right match?")
+        return s
     if s.share < min_share:
         s.why = (f"only {s.matched} of {s.total} demo kills line up with the "
                  f"recording -- is this the right match?")
