@@ -35,7 +35,7 @@ HOUR = 3600.0
 def test_a_demo_written_after_the_match_is_found(tmp_path):
     """Counter-Strike writes the file when the match ENDS."""
     demo(tmp_path, "match730_1.dem", STARTED + 40 * 60)
-    got = cs2_demo.demo_for_recording(tmp_path, STARTED, 45 * 60)
+    got = cs2_demo.demo_state(tmp_path, STARTED, 45 * 60)["file"]
     assert got == "match730_1.dem"
 
 
@@ -43,33 +43,36 @@ def test_a_demo_from_before_the_recording_is_not_it(tmp_path):
     """The case that cost 2.2 minutes of scanning: the newest demo predated
     the recording by two days."""
     demo(tmp_path, "match730_old.dem", STARTED - 48 * HOUR)
-    assert cs2_demo.demo_for_recording(tmp_path, STARTED, 45 * 60) is None
+    assert cs2_demo.demo_state(tmp_path, STARTED, 45 * 60)["file"] is None
 
 
-def test_a_demo_from_long_after_is_not_it(tmp_path):
-    """A match played the next day is a different match."""
-    demo(tmp_path, "match730_later.dem", STARTED + 30 * HOUR)
-    assert cs2_demo.demo_for_recording(tmp_path, STARTED, 45 * 60) is None
+def test_a_demo_downloaded_days_later_still_counts(tmp_path):
+    """A file's timestamp is when it was DOWNLOADED, not when the match was
+    played. This shipped with a twelve-hour window, which assumed people
+    download demos promptly -- and reported a demo fetched forty-nine hours
+    after the match as absent, twice, to somebody who had just downloaded it."""
+    demo(tmp_path, "match730_later.dem", STARTED + 49 * HOUR)
+    assert cs2_demo.demo_state(tmp_path, STARTED, 45 * 60)["state"] == "have"
 
 
 def test_the_newest_candidate_wins(tmp_path):
     demo(tmp_path, "match730_a.dem", STARTED + 10 * 60)
     demo(tmp_path, "match730_b.dem", STARTED + 40 * 60)
-    assert cs2_demo.demo_for_recording(tmp_path, STARTED, 45 * 60) == "match730_b.dem"
+    assert cs2_demo.demo_state(tmp_path, STARTED, 45 * 60)["file"] == "match730_b.dem"
 
 
 def test_an_empty_folder_is_a_clear_no(tmp_path):
-    assert cs2_demo.demo_for_recording(tmp_path, STARTED, 45 * 60) is None
+    assert cs2_demo.demo_state(tmp_path, STARTED, 45 * 60)["file"] is None
 
 
 def test_no_start_time_gives_no_answer(tmp_path):
     """Better to say nothing than to guess from a recording with no date."""
     demo(tmp_path, "match730_1.dem", STARTED)
-    assert cs2_demo.demo_for_recording(tmp_path, 0, 0) is None
+    assert cs2_demo.demo_state(tmp_path, 0, 0)["state"] == "none"
 
 
 def test_a_missing_folder_is_not_an_error(tmp_path):
-    assert cs2_demo.demo_for_recording(tmp_path / "nope", STARTED, 60) is None
+    assert cs2_demo.demo_state(tmp_path / "nope", STARTED, 60)["state"] == "none"
 
 
 # ------------------------------------------------- the end-of-session nudge
@@ -138,9 +141,11 @@ def test_nothing_at_all_is_still_none(tmp_path):
     assert cs2_demo.demo_state(tmp_path, STARTED, 45 * 60)["state"] == "none"
 
 
-def test_an_old_info_does_not_count_as_listed(tmp_path):
-    """A stub from a match played days earlier says nothing about this one."""
+def test_a_file_older_than_the_recording_is_not_it(tmp_path):
+    """The one bound that is real: a demo cannot be downloaded before the
+    match it records was played."""
     info(tmp_path, "match730_old.dem.info", STARTED - 48 * HOUR)
+    demo(tmp_path, "match730_old.dem", STARTED - 47 * HOUR)
     assert cs2_demo.demo_state(tmp_path, STARTED, 45 * 60)["state"] == "none"
 
 
