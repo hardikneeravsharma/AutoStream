@@ -14,6 +14,7 @@ exception, which is exactly the kind that survives a manual smoke test:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -749,3 +750,28 @@ def test_the_padding_floors_survive_the_yaml_round_trip(tmp_path,
     back = profiles.load_all().get("x.exe")
     assert back is not None
     assert back.pre_roll_min == 3.0 and back.tail_min == 4.0
+
+
+def test_a_recut_reuses_the_newest_scan_not_the_oldest(tmp_path, monkeypatch):
+    """FROM FOOTAGE. Sorted by name, the first session.json belongs to the run
+    whose folder has no "_2" suffix -- the oldest scan there is. So a re-cut
+    after the Valorant feed reader was fixed quietly reproduced the OLD kill
+    list, and five clips came back out labelled "2 kills" holding one."""
+    import json as _json
+    from autostream import webui
+
+    src = str(Path(r"C:/rec/x.mp4"))     # as the sidecar records it
+    for name, kills, when in (("2026-08-27_2047_VALORANT", 33, 1000),
+                              ("2026-08-27_2047_VALORANT_2", 30, 2000)):
+        d = tmp_path / name
+        d.mkdir()
+        f = d / "session.json"
+        f.write_text(_json.dumps(
+            {"source": src, "kills": [{"time": float(i)} for i in range(kills)]}),
+            encoding="utf-8")
+        os.utime(f, (when, when))
+
+    app = webui.Server.__new__(webui.Server)
+    monkeypatch.setattr(app, "_clips_dir", lambda _c: tmp_path, raising=False)
+    got = app._cached_kills(Path(src), object())
+    assert got is not None and len(got) == 30, "the older 33-kill scan won"

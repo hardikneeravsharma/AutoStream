@@ -907,7 +907,15 @@ class Server:
         """
         root = self._clips_dir(config or cfg.load())
         try:
-            for sidecar in sorted(root.glob("*/session.json")):
+            # NEWEST FIRST. Sorted by name, the first match is the run whose
+            # folder has no "_2" suffix -- the OLDEST scan of that recording.
+            # So every re-cut reused the oldest kills there had ever been, and
+            # after the Valorant feed reader was fixed a re-cut quietly
+            # reproduced the old, wrong kill list: five clips labelled "2
+            # kills" holding one, from a scan that no longer said that.
+            for sidecar in sorted(root.glob("*/session.json"),
+                                  key=lambda f: f.stat().st_mtime,
+                                  reverse=True):
                 data = json.loads(sidecar.read_text(encoding="utf-8"))
                 if data.get("source") == str(source) and data.get("kills"):
                     return data["kills"]
