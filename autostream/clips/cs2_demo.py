@@ -46,7 +46,10 @@ THE DEMO IS ALSO A MARKING SCHEME
 from __future__ import annotations
 
 import logging
+import os
 import re
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -629,6 +632,66 @@ def newest_demo_time(folder: Path) -> float | None:
     except OSError:
         return None
     return max((p.stat().st_mtime for p in dems), default=None)
+
+
+# ---------------------------------------------------------------- share codes
+#
+# A match share code is the only handle on a demo that a person can copy out of
+# the game, and Counter-Strike will act on one through a steam:// link. That
+# link is the whole reason this exists: it asks the user's OWN client to fetch
+# the file, so no Steam credentials, no API key and no game-coordinator
+# protocol are involved. AutoStream never touches the download itself.
+SHARE_ALPHABET = "ABCDEFGHJKLMNOPQRSTUVWXYZabcdefhijkmnopqrstuvwxyz23456789"
+SHARE_RE = re.compile(r"CSGO(?:-[" + SHARE_ALPHABET + r"]{5}){5}")
+
+# Any SteamID64 works here -- Counter-Strike reads the command, not the id --
+# but a real-looking one is used so the link is indistinguishable from the one
+# the game itself puts on the clipboard.
+STEAM_RUNGAME = "steam://rungame/730/{steamid}/+csgo_download_match%20{code}"
+DEFAULT_STEAMID = "76561202255233023"
+
+
+def share_codes(text: str) -> list[str]:
+    """Every share code in a blob of pasted text, in order, deduplicated.
+
+    Takes whatever the user actually has: bare CSGO-... codes, the full
+    steam://rungame link the game copies, several of either on separate lines
+    or run together. A live recording routinely spans more than one match, so
+    the plural is the normal case rather than the exception.
+    """
+    out: list[str] = []
+    for m in SHARE_RE.finditer(str(text or "")):
+        code = m.group(0)
+        if code not in out:
+            out.append(code)
+    return out
+
+
+def download_link(code: str, steamid: str = "") -> str:
+    """The steam:// link that makes Counter-Strike download this match."""
+    return STEAM_RUNGAME.format(steamid=(steamid or DEFAULT_STEAMID), code=code)
+
+
+def request_download(code: str, steamid: str = "") -> bool:
+    """Ask Counter-Strike to download one match. -> whether the link was fired.
+
+    Handing the link to the shell is the whole mechanism: Steam registers the
+    protocol, and the running Counter-Strike client picks up the command. It
+    returns as soon as the shell accepts it -- the download happens inside the
+    game, on its own schedule, and the file appearing in the replays folder is
+    the only completion signal there is.
+    """
+    link = download_link(code, steamid)
+    try:
+        if sys.platform == "win32":
+            os.startfile(link)  # noqa: S606 - a steam: protocol link, not a file
+        else:
+            subprocess.Popen(["xdg-open", link])
+        log.info("asked Counter-Strike to download %s", code)
+        return True
+    except OSError as e:
+        log.warning("could not open %s: %s", link, e)
+        return False
 
 
 def demo_state(folder, started: float, duration: float = 0.0) -> dict:

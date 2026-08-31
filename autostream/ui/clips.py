@@ -102,6 +102,17 @@ CLIPS_HTML: str = (
     + """<span>Show file</span></button>
   </div>
 
+  <div class="panel hide" id="clip-demowrap">
+    <p class="muted" id="clip-demotext"></p>
+    <textarea class="textarea mono" id="clip-democodes" rows="3" spellcheck="false"
+              placeholder="Paste the match sharing code, or the whole steam:// link.
+One per line - a long session often covers several matches."></textarea>
+    <div class="field-inline" style="margin-top:8px">
+      <button class="btn" type="button" data-act="get-demos">Download in Counter-Strike</button>
+      <span class="muted" id="clip-demomsg"></span>
+    </div>
+  </div>
+
   <div class="panel clip-warn hide" id="clip-wrongwrap">
     <p class="muted" id="clip-wrongtext"></p>
     <div class="field-inline">
@@ -564,6 +575,8 @@ function clip_renderOptions() {
      with the LAST of them, and a scan only ever reads one game -- so without
      this the other games in the file are silently unreachable, which is what
      happened to a session holding both Counter-Strike 2 and Delta Force. */
+  clip_renderDemoBox();
+
   var played = (s.games || []).filter(function (g) { return !!g; });
   var multi = played.length > 1;
   clip_show('clip-wrongwrap', !!s.game_uncertain || multi);
@@ -1040,6 +1053,53 @@ function clip_renderUploadJob(u) {
   clip_renderUpload();
 }
 
+/* Counter-Strike will download a match when handed its sharing code through a
+   steam:// link, and that link asks the user's OWN client to do it -- so this
+   needs no Steam credentials, no API key and no game-coordinator protocol, and
+   AutoStream never downloads anything itself.
+
+   Several at once because a live session routinely covers more than one match,
+   and pasting them one at a time would be the tedious way to say the same
+   thing. */
+function clip_renderDemoBox() {
+  var s = clip_state.pick;
+  var wrap = clip_el('clip-demowrap');
+  if (!wrap) return;
+  /* Only where a demo would help and there is not already one: the panel is an
+     answer to "this will be slow", not a permanent fixture. */
+  var want = !!s && s.demo_state && s.demo_state !== 'have';
+  wrap.classList.toggle('hide', !want);
+  if (!want) return;
+  var t = clip_el('clip-demotext');
+  if (t) {
+    t.textContent = s.demo_state === 'listed'
+      ? 'This match is in your Counter-Strike history but the demo has not '
+        + 'finished downloading. Paste its sharing code and AutoStream will ask '
+        + 'the game to fetch it again.'
+      : 'No demo for this recording. With one it is read in about twelve '
+        + 'minutes instead of in full, and the clips carry real round context. '
+        + 'Copy the sharing code from the match in Counter-Strike and paste it '
+        + 'here.';
+  }
+}
+
+async function clip_getDemos() {
+  var box = clip_el('clip-democodes');
+  var text = box ? String(box.value || '').trim() : '';
+  if (!text) { toast('Paste a sharing code first.', 'warn'); return; }
+  clip_say('clip-demomsg', 'Asking Counter-Strike...');
+  var r = await API.post('/api/clips/demos', {text: text});
+  if (r && r.error) { clip_say('clip-demomsg', ''); toast(r.error, 'error'); return; }
+  clip_say('clip-demomsg', r.hint || '');
+  toast('Counter-Strike is downloading ' + r.sent + ' match'
+        + (r.sent === 1 ? '' : 'es') + '.', 'ok');
+}
+
+function clip_say(id, text) {
+  var el = clip_el(id);
+  if (el) el.textContent = text || '';
+}
+
 async function clip_setGame() {
   var s = clip_state.pick;
   var sel = clip_el('clip-gamefix');
@@ -1346,6 +1406,8 @@ function clip_wire() {
       clip_pickLocal();
     } else if (act === 'use-local') {
       clip_useLocal();
+    } else if (act === 'get-demos') {
+      clip_getDemos();
     } else if (act === 'save-name') {
       clip_saveName();
     } else if (act === 'upload') {

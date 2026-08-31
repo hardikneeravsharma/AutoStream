@@ -424,6 +424,8 @@ class _Handler(BaseHTTPRequestHandler):
                     str(b.get("section", "")), b.get("values") or {}))
             elif p == "/api/setup/clips_only":
                 self._json(self.app.setup.clips_only())
+            elif p == "/api/clips/demos":
+                self._json(self.app.clips_demos(b))
             elif p == "/api/clips/setname":
                 self._json(self.app.clips_setname(b))
             elif p == "/api/diagnostics":
@@ -1111,6 +1113,51 @@ class Server:
                 "builtin": row["builtin"],
             })
         return {"games": out}
+
+    def clips_demos(self, body: dict) -> dict:
+        """Ask Counter-Strike to download the matches the user pasted.
+
+        The share code is the only handle on a demo a person can copy out of
+        the game, and the steam:// link makes their OWN client fetch it -- no
+        Steam credentials, no API key, no game-coordinator protocol.
+        AutoStream never downloads anything itself.
+
+        Several at once because a live session routinely spans more than one
+        match, and pasting them one at a time would be the tedious way to say
+        the same thing.
+        """
+        from .clips import cs2_demo
+
+        codes = cs2_demo.share_codes(str(body.get("text") or ""))
+        if not codes:
+            return {"error": "No match codes in that. Copy the sharing code "
+                             "from a match in Counter-Strike (or the whole "
+                             "steam:// link) and paste it here."}
+        before = set()
+        folder = cs2_demo.demo_folder("")
+        if folder:
+            try:
+                before = {p.name for p in Path(folder).glob("*.dem")}
+            except OSError:
+                pass
+
+        sent, failed = [], []
+        for code in codes[:20]:
+            (sent if cs2_demo.request_download(code) else failed).append(code)
+        if not sent:
+            return {"error": "Windows would not open the Steam link. Is Steam "
+                             "installed?"}
+        log.info("asked Counter-Strike for %d demo(s)", len(sent))
+        return {
+            "ok": True, "sent": len(sent), "failed": len(failed),
+            "have": len(before),
+            # Counter-Strike does the downloading on its own schedule, and the
+            # file appearing is the only completion signal there is.
+            "hint": (f"Counter-Strike is downloading {len(sent)} match"
+                     f"{'' if len(sent) == 1 else 'es'}. It has to be running, "
+                     f"and the files appear in your replays folder when it is "
+                     f"done - refresh this page then."),
+        }
 
     def clips_setname(self, body: dict) -> dict:
         """Record an in-game name, so a killfeed game can be scanned.
