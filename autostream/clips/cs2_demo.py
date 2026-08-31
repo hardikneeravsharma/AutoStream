@@ -631,40 +631,7 @@ def newest_demo_time(folder: Path) -> float | None:
     return max((p.stat().st_mtime for p in dems), default=None)
 
 
-def demo_for_recording(folder, started: float, duration: float = 0.0,
-                       *, after: float = 12 * 3600.0) -> str | None:
-    """Is there a demo that could belong to this recording? -> its name.
-
-    A rough test on dates alone, meant for a list where an exact answer would
-    cost a parse of every demo. Counter-Strike writes the file when the match
-    ENDS, so a demo for this recording was written after it started and not
-    long after it finished.
-
-    Wrong in one direction on purpose: it may say yes to a demo from another
-    match played the same evening. Saying "there is probably one" and being
-    occasionally wrong is far better than telling somebody to re-download a
-    demo they already have -- and the alignment settles it properly later.
-    """
-    if not folder or not started:
-        return None
-    try:
-        dems = list(Path(folder).glob("*.dem"))
-    except OSError:
-        return None
-    latest = max(started + duration, started) + after
-    best, best_when = None, 0.0
-    for d in dems:
-        try:
-            when = d.stat().st_mtime
-        except OSError:
-            continue
-        if started <= when <= latest and when > best_when:
-            best, best_when = d.name, when
-    return best
-
-
-def demo_state(folder, started: float, duration: float = 0.0,
-               *, after: float = 12 * 3600.0) -> dict:
+def demo_state(folder, started: float, duration: float = 0.0) -> dict:
     """What Counter-Strike has for this recording. -> {state, file}.
 
     Three answers, not two, because they need different things done:
@@ -680,6 +647,19 @@ def demo_state(folder, started: float, duration: float = 0.0,
     .dem when the download completes -- a couple of minutes apart on a real
     one. Five .info files with no .dem is a download that never landed, which
     is exactly what one user hit while believing they had downloaded it.
+
+    A FILE'S TIMESTAMP IS WHEN IT WAS DOWNLOADED, NOT WHEN THE MATCH WAS
+    PLAYED. This first shipped with a twelve-hour window after the recording,
+    which assumed people download demos promptly. They do not: a demo fetched
+    forty-nine hours after the match was reported as absent while sitting on
+    disk, twice, to somebody who had just downloaded it.
+
+    So the only bound is the lower one, which is real -- a demo cannot be
+    downloaded before its match was played. That over-reports on an old
+    recording when newer demos exist, and that is the right way round to be
+    wrong: a hopeful "there may be one" costs a twelve-minute probe that then
+    falls back, while a wrong "none" costs somebody re-downloading a file they
+    already have. The alignment is what actually decides.
     """
     out = {"state": "none", "file": None}
     if not folder or not started:
@@ -688,7 +668,6 @@ def demo_state(folder, started: float, duration: float = 0.0,
         entries = list(Path(folder).glob("*.dem")) + list(Path(folder).glob("*.dem.info"))
     except OSError:
         return out
-    latest = max(started + duration, started) + after
     best_dem, best_dem_at = None, 0.0
     listed = False
     for f in entries:
@@ -696,8 +675,8 @@ def demo_state(folder, started: float, duration: float = 0.0,
             when = f.stat().st_mtime
         except OSError:
             continue
-        if not (started <= when <= latest):
-            continue
+        if when < started:
+            continue                    # written before the match was played
         if f.name.endswith(".dem.info"):
             listed = True
         elif when > best_dem_at:
