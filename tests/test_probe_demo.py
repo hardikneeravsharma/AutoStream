@@ -147,3 +147,32 @@ def test_a_found_demo_is_returned_and_the_rest_is_skipped(tmp_path, monkeypatch)
 
     got = job._probe_for_demo(Prof(), {}, LONG)
     assert got is answer, "the demo's own kills must replace the probe's"
+
+
+# ------------------------------------------- choosing between real demos
+
+def test_choosing_a_demo_needs_a_real_count_not_just_a_share(monkeypatch):
+    """A wrong demo does not fail loudly -- it mis-cuts every clip in the run.
+
+    align() judges one candidate on its own terms, and a player with seven
+    kills needs only five to clear the 0.6 share. A demo from two days before
+    a recording was accepted on five coincidental timings out of seven. The
+    CHOICE between demos therefore demands an absolute count as well.
+    """
+    from autostream.clips import cs2_demo
+
+    assert cs2_demo.MIN_MATCHED >= 5, "the floor is what makes the choice safe"
+
+    src = __import__("inspect").getsource(cs2_demo.pick_demo)
+    assert "MIN_MATCHED" in src, "pick_demo does not apply the floor"
+
+
+def test_align_itself_stays_permissive():
+    """It is also used to audit a demo already known to be right, where a
+    three-kill fixture is a legitimate thing to align."""
+    from autostream.clips import cs2_demo
+
+    demo = [10.0, 20.0, 30.0]
+    vod = [110.0, 120.0, 130.0]
+    s = cs2_demo.align(demo, vod)
+    assert s.ok, "align became too strict for the audit path"

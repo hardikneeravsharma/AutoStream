@@ -747,6 +747,9 @@ class ClipJob:
             return None
         match, who, sync = got.get("r") or (None, "", None)
         if sync is None:
+            # Added logging to this method precisely so a run could not end
+            # with no demo and no reason, and then left this path silent.
+            log.info("the demo search returned nothing at all")
             return None
         if not match or not sync.ok:
             log.info("no demo in %s fits this recording (%s)", folder,

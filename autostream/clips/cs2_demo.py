@@ -636,6 +636,19 @@ def pick_demo(folder: Path, vod_times: list[float], *,
             log.warning("could not parse %s: %s", p.name, e)
             continue
         who, s = identify(m, vod_times)
+        # A SHARE IS NOT ENOUGH WHEN CHOOSING BETWEEN DEMOS. align() judges one
+        # candidate on its own terms, and a player with seven kills in a demo
+        # needs only five to clear 0.6 -- so a demo from two days earlier was
+        # accepted for a recording it had nothing to do with, on five
+        # coincidental timings out of seven. A wrong demo does not fail
+        # loudly: it mis-cuts every clip in the run.
+        #
+        # So the CHOICE demands a real count as well. align stays permissive,
+        # because it is also used to audit a demo already known to be right.
+        if s.ok and s.matched < MIN_MATCHED:
+            log.info("%s lines up on only %d kill(s) -- too few to trust",
+                     p.name, s.matched)
+            continue
         if s.ok and s.matched > best[2].matched:
             best = (m, who, s)
         # Stop looking once a demo accounts for nearly all of its own kills.
