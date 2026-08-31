@@ -713,12 +713,13 @@ class Server:
             if prof and getattr(prof, "demos", False):
                 from .clips import cs2_demo
 
-                name = cs2_demo.demo_for_recording(
+                got = cs2_demo.demo_state(
                     cs2_demo.demo_folder(""),
                     float(r.get("started") or 0),
                     float(r.get("rec_seconds") or 0))
-                r["demo_file"] = name
-                r["has_demo"] = bool(name)
+                r["demo_state"] = got["state"]
+                r["demo_file"] = got["file"]
+                r["has_demo"] = got["state"] == "have"
             else:
                 r["has_demo"] = None
             # So the calibrator can prefill it rather than asking again.

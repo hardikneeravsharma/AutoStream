@@ -663,6 +663,52 @@ def demo_for_recording(folder, started: float, duration: float = 0.0,
     return best
 
 
+def demo_state(folder, started: float, duration: float = 0.0,
+               *, after: float = 12 * 3600.0) -> dict:
+    """What Counter-Strike has for this recording. -> {state, file}.
+
+    Three answers, not two, because they need different things done:
+
+        have    the .dem is on disk and the clip run will use it
+        listed  a .dem.info is there and the .dem is not -- the match is in
+                your history and the download has not finished. Clicking
+                Download again is the fix, and "no demo" would send somebody
+                looking for a match that is already listed
+        none    nothing for this recording at all
+
+    Counter-Strike writes the .info when the match appears in the list and the
+    .dem when the download completes -- a couple of minutes apart on a real
+    one. Five .info files with no .dem is a download that never landed, which
+    is exactly what one user hit while believing they had downloaded it.
+    """
+    out = {"state": "none", "file": None}
+    if not folder or not started:
+        return out
+    try:
+        entries = list(Path(folder).glob("*.dem")) + list(Path(folder).glob("*.dem.info"))
+    except OSError:
+        return out
+    latest = max(started + duration, started) + after
+    best_dem, best_dem_at = None, 0.0
+    listed = False
+    for f in entries:
+        try:
+            when = f.stat().st_mtime
+        except OSError:
+            continue
+        if not (started <= when <= latest):
+            continue
+        if f.name.endswith(".dem.info"):
+            listed = True
+        elif when > best_dem_at:
+            best_dem, best_dem_at = f.name, when
+    if best_dem:
+        return {"state": "have", "file": best_dem}
+    if listed:
+        return {"state": "listed", "file": None}
+    return out
+
+
 def pick_demo(folder: Path, vod_times: list[float], *,
               newest: int = 12) -> tuple[Match | None, str, "Sync"]:
     """Choose which demo in a folder belongs to a recording, by fingerprint.

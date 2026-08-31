@@ -770,9 +770,21 @@ class Engine:
             folder = cs2_demo.demo_folder("")
             if not folder:
                 return
-            if cs2_demo.demo_for_recording(folder,
-                                           float(entry.get("started") or 0),
-                                           float(entry.get("rec_seconds") or 0)):
+            got = cs2_demo.demo_state(folder,
+                                      float(entry.get("started") or 0),
+                                      float(entry.get("rec_seconds") or 0))
+            if got["state"] == "have":
+                return
+            if got["state"] == "listed":
+                # The match is in the history and the file never landed. Saying
+                # "download it" there sends somebody looking for something
+                # already in front of them.
+                log.info("the %s match is listed but its demo has not finished "
+                         "downloading", prof.label)
+                notify.toast(
+                    f"Your {prof.label} demo did not finish downloading",
+                    "The match is in your history. Press Download again, and "
+                    "wait for it to complete.")
                 return
             log.info("no %s demo for this session yet -- downloading it makes "
                      "the clips faster and better", prof.label)
