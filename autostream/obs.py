@@ -131,6 +131,8 @@ class Obs:
         # When each input was last heard, so one dead source among several is
         # distinguishable from the whole stream being silent.
         self._audio_by_input: dict[str, float] = {}
+        # When to stop believing OBS is unreachable; see connect().
+        self._down_until = 0.0
         self._audio_since = 0.0
         self._audio_ok = False
 
@@ -146,8 +148,25 @@ class Obs:
             timeout=timeout,
         )
 
-    def connect(self) -> None:
-        """Connect, launching OBS if needed. Retries 3x with backoff."""
+    def connect(self, *, wait: bool = False) -> None:
+        """Reach OBS. -> nothing, or ObsUnavailable.
+
+        `wait` is the difference between STARTING something and everything
+        else. Starting a session is worth waiting for: OBS may still be
+        loading, so it retries and will launch OBS itself. Nothing else is.
+
+        Without that distinction every call took the full retry budget -- three
+        attempts, twelve seconds apart, plus a launch -- whenever OBS was not
+        answering. The engine loop is strictly serial, so half a minute of that
+        blocks the tick, the ingestion timeout, and any button the user
+        presses. A session once sat in STARTING with a dead websocket while
+        End stream was pressed seven times, each press queueing behind the
+        wait rather than doing anything.
+
+        So a failure is REMEMBERED: for the next few seconds every non-waiting
+        call fails at once instead of re-running the same doomed handshake.
+        The engine keeps ticking, and the buttons answer.
+        """
         if self.ws is not None:
             try:
                 self.ws.get_version()
@@ -155,25 +174,35 @@ class Obs:
             except Exception:  # noqa: BLE001
                 self.ws = None
 
+        now = time.monotonic()
+        if not wait and now < self._down_until:
+            raise ObsUnavailable(
+                "OBS is not answering (it was checked a moment ago)")
+
         last: Exception | None = None
-        for attempt in range(self.ATTEMPTS):
+        attempts = self.ATTEMPTS if wait else 1
+        for attempt in range(attempts):
             try:
                 self.ws = self._connect()
                 v = self.ws.get_version()
+                self._down_until = 0.0
                 log.info("connected to OBS %s (websocket rpc %s)",
                          getattr(v, "obs_version", "?"), getattr(v, "rpc_version", "?"))
                 return
             except Exception as e:  # noqa: BLE001
                 last = e
-                if not _obs_process_alive():
+                # Only a caller that is willing to wait may start OBS. Doing it
+                # from a status poll would relaunch it behind the user's back.
+                if wait and not _obs_process_alive():
                     self._launch()
                 log.info("OBS not ready (attempt %d/%d): %s",
-                         attempt + 1, self.ATTEMPTS, e)
+                         attempt + 1, attempts, e)
                 # NOT after the last attempt. Sleeping there delays the
                 # failure by a full retry interval and changes nothing about
                 # it -- the caller is already out of attempts.
-                if attempt < self.ATTEMPTS - 1:
+                if attempt < attempts - 1:
                     time.sleep(self.RETRY_SECONDS)
+        self._down_until = time.monotonic() + self.UNREACHABLE_FOR
         raise ObsUnavailable(f"could not reach obs-websocket: {last}")
 
     def probe(self) -> dict:
@@ -225,6 +254,10 @@ class Obs:
     # Retry budget for connect(). Named because probe() exists to NOT spend it.
     ATTEMPTS = 3
     RETRY_SECONDS = 12
+    # How long a failure is believed before trying again. Long enough that a
+    # dead websocket costs one handshake rather than one per call, short
+    # enough that OBS coming back is noticed within a few ticks.
+    UNREACHABLE_FOR = 20.0
 
     ARGS = ("--disable-shutdown-check", "--minimize-to-tray")
 
@@ -291,7 +324,7 @@ class Obs:
 
     def configure_stream(self, ingestion_address: str, stream_key: str) -> None:
         """Written ONCE at setup. Never touched at runtime."""
-        self.connect()
+        self.connect(wait=True)
         if self.cfg.obs.service_mode == "rtmp_common":
             self.ws.set_stream_service_settings(
                 "rtmp_common", {"service": "YouTube - RTMPS", "key": stream_key})
@@ -638,7 +671,9 @@ class Obs:
             log.warning("overlay text update failed (source %r): %s", src, e)
 
     def start(self, scene: str | None = None, overlay: str | None = None) -> None:
-        self.connect()
+        # The one call worth waiting for: a session is beginning and OBS may
+        # still be loading, so this is also the only path allowed to launch it.
+        self.connect(wait=True)
         self.set_scene(scene or self.cfg.obs.default_scene or None)
         if overlay:
             self.set_overlay_text(overlay)

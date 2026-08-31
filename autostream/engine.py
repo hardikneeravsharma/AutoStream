@@ -68,6 +68,9 @@ class Engine:
         # the metering thread is already smoothing over individual samples.
         self._silent_said = False
         self._quiet_said: set[str] = set()
+        # A recording the user stopped by hand mid-session. Kept so the journal
+        # can still name the file; see toggle_recording.
+        self._stopped_recording: str | None = None
         # Moments chat asked for, in seconds into the recording. Cleared with
         # the session and journalled with it, so the clip run can read them.
         self._marks: list[dict] = []
@@ -136,7 +139,8 @@ class Engine:
             # remembered with no recording_path is INVISIBLE on the Clips page,
             # and that is how a 44 GB recording became unreachable with nothing
             # anywhere saying so.
-            rec_path = self._stop_recording() or self._adopt_recording()
+            rec_path = (self._stop_recording() or self._stopped_recording
+                        or self._adopt_recording())
             try:
                 self.obs.stop()
             except Exception:  # noqa: BLE001
@@ -323,6 +327,8 @@ class Engine:
                         self._resume()
                 elif cmd == "toggle_pause":
                     self.toggle_pause()
+                elif cmd == "record":
+                    self.toggle_recording("record button")
                 elif cmd == "kill":
                     self.kill()
                 elif cmd == "quit":
@@ -1254,6 +1260,50 @@ class Engine:
         notify.toast("AutoStream", "Paused")
         self.force_stop(reason, suppress=False)
         return True
+
+    def toggle_recording(self, reason: str = "record button") -> bool:
+        """Start or stop the local recording without touching the stream.
+
+        -> whether it is recording now.
+
+        Recording used to begin and end with the session and could not be
+        reached in between, so the only way to stop writing a file was to end
+        the broadcast. They are separate things: the recording is the master
+        the clips are cut from, and a streamer may want it running for a
+        session they are not broadcasting, or stopped for a stretch they would
+        rather not keep.
+
+        Stopping mid-session KEEPS THE PATH. The journal is written at the far
+        end of the session from whatever _stop_recording returns, and by then
+        OBS has forgotten this file -- so without remembering it here, a
+        recording the user deliberately stopped would be journalled as no
+        recording at all and vanish from the Clips page.
+        """
+        if self.state.recording:
+            path = self._stop_recording()
+            if path:
+                self._stopped_recording = path
+            log.warning("recording stopped (%s) -> %s", reason, path or "?")
+            notify.toast("AutoStream", "Recording stopped. The stream is "
+                                       "unaffected.")
+            return False
+
+        if not self.cfg.record.enabled:
+            log.info("recording is switched off in Settings, so there is "
+                     "nothing to start")
+            notify.toast("AutoStream", "Turn on Settings > Recording first.")
+            return False
+        self._start_recording()
+        if self.state.recording:
+            # A second file for the same session. The journal holds one path,
+            # so the newest is the one it will carry -- said plainly rather
+            # than discovered later.
+            if self._stopped_recording:
+                log.info("recording again; this session now has more than one "
+                         "file and the journal will name the latest")
+            log.warning("recording started (%s)", reason)
+            notify.toast("AutoStream", "Recording.")
+        return bool(self.state.recording)
 
     def kill(self, reason: str = "kill switch") -> None:
         """Stop everything now, and stay stopped. The hotkey's job.
