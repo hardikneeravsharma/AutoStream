@@ -658,7 +658,25 @@ class ClipJob:
         total = float(info.get("duration") or 0)
         if total <= self.PROBE_SECONDS * 1.5:
             return None                 # short enough that a full read is cheap
-        if not cs2_demo.demo_folder(str(opt.get("demo_folder") or "")):
+        folder = cs2_demo.demo_folder(str(opt.get("demo_folder") or ""))
+        if not folder:
+            return None
+
+        # A demo cannot record a match played after it was written. Reading
+        # twelve minutes to search a folder whose newest demo predates the
+        # recording is time spent proving something a directory listing
+        # already knew -- it cost 2.2 minutes on a recording made two days
+        # after the last demo, and then the whole file was read anyway.
+        #
+        # The recording's own start is taken from OBS's filename stamp rather
+        # than the file's mtime, which is when WRITING FINISHED and would make
+        # a long recording look newer than it is.
+        newest = cs2_demo.newest_demo_time(folder)
+        started = self._source_started()
+        if newest is not None and started is not None and newest < started:
+            log.info("no demo newer than this recording (the last one was "
+                     "written %.1f hours before it started), so there is "
+                     "nothing to search for", (started - newest) / 3600.0)
             return None
 
         def prog(d, t):
@@ -693,6 +711,23 @@ class ClipJob:
         log.info("the demo was found from the first %.0f minutes, so the rest of "
                  "the recording did not need reading", self.PROBE_SECONDS / 60)
         return got
+
+    def _source_started(self) -> float | None:
+        """When the recording began, by OBS's own filename stamp.
+
+        Falls back to the file's modification time, which is when writing
+        FINISHED -- close enough to reject a demo from days earlier, and the
+        only thing available for a file OBS did not name.
+        """
+        from .. import history
+
+        stamp = history._started_from_name(str(self.source))  # noqa: SLF001
+        if stamp is not None:
+            return stamp
+        try:
+            return self.source.stat().st_mtime
+        except OSError:
+            return None
 
     def _from_demo(self, kills: list[dict]) -> dict | None:
         """Counter-Strike rounds and kills from Valve's own record of the match.
@@ -747,6 +782,9 @@ class ClipJob:
             return None
         match, who, sync = got.get("r") or (None, "", None)
         if sync is None:
+            # Added logging to this method precisely so a run could not end
+            # with no demo and no reason, and then left this path silent.
+            log.info("the demo search returned nothing at all")
             return None
         if not match or not sync.ok:
             log.info("no demo in %s fits this recording (%s)", folder,
