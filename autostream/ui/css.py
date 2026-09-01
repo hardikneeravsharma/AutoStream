@@ -1583,6 +1583,30 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
   font-variant-numeric:tabular-nums lining-nums;
 }
 
+/* The version card. Its own rules are only the few things the shared card
+   primitives do not already give it: a warned message, and release notes that
+   wrap instead of running off the side. */
+#set-ver-msg{margin:0}
+#set-ver-msg.is-warn{color:var(--warn)}
+#set-ver-body{display:flex;flex-direction:column;gap:var(--space-4)}
+#set-ver-meter{width:100%}
+.set-ver-notes{
+  margin:var(--space-4) 0 0;
+  max-height:220px;
+  overflow:auto;
+  white-space:pre-wrap;
+  word-break:break-word;
+  font-size:12px;
+  line-height:1.6;
+  color:var(--text-secondary);
+}
+#set-ver-noteswrap>summary{
+  font-size:13px;font-weight:600;
+  color:var(--text-secondary);
+  cursor:pointer;
+}
+#set-ver-noteswrap>summary:hover{color:var(--text-primary)}
+
 /* Advanced disclosure. */
 .settings-body details{
   border-top:var(--border-hair) solid var(--border-subtle);

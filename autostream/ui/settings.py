@@ -31,6 +31,33 @@ SETTINGS_HTML = r"""
     <div id="set-panels">
       <div class="empty"><span class="spin"></span> Loading settings...</div>
     </div>
+    <div class="card set-about" id="set-about">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">This version</h2>
+          <p class="card-sub" id="set-ver-sub">&nbsp;</p>
+        </div>
+        <div class="field-inline">
+          <button class="btn btn-sm" type="button" id="set-ver-check">
+            <span>Check for updates</span></button>
+          <button class="btn btn-primary btn-sm hide" type="button" id="set-ver-get">
+            <span>Download</span></button>
+          <button class="btn btn-primary btn-sm hide" type="button" id="set-ver-open">
+            <span>Open the installer</span></button>
+        </div>
+      </div>
+      <div class="card-body hide" id="set-ver-body">
+        <div class="meter hide" id="set-ver-meter" role="progressbar"
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <span class="meter-fill" id="set-ver-fill"></span></div>
+        <p class="muted" id="set-ver-msg"></p>
+        <details id="set-ver-noteswrap" class="hide">
+          <summary>What changed</summary>
+          <pre class="set-ver-notes" id="set-ver-notes"></pre>
+        </details>
+      </div>
+    </div>
+
     <div class="settings-actions hide" id="set-actions">
       <span class="muted" id="set-count">No unsaved changes</span>
       <div class="field-inline">
@@ -64,6 +91,10 @@ function set_attr(v){
 }
 
 function set_el(id){ return document.getElementById(id); }
+function set_show(id, on){
+  var el = set_el(id);
+  if (el) el.classList.toggle('hide', !on);
+}
 
 function set_num(v){
   if (v === null || v === undefined || v === '') return null;
@@ -938,11 +969,151 @@ function set_guardNav(){
   }
 }
 
+function set_wireUpdates(){
+  if (set_update.wired) return;
+  set_update.wired = true;
+  var check = set_el('set-ver-check');
+  if (check) check.addEventListener('click', set_verCheck);
+  var get = set_el('set-ver-get');
+  if (get) get.addEventListener('click', set_verGet);
+  var open = set_el('set-ver-open');
+  if (open) open.addEventListener('click', async function(){
+    open.disabled = true;
+    try {
+      var r = await API.post('/api/update/install', {});
+      if (r && r.error){ set_verSay(r.error, 'warn'); open.disabled = false; }
+      else set_verSay('Installing. AutoStream will close and reopen.');
+    } catch (e){
+      /* The app quits as part of this, so a dropped request is the expected
+         shape of success rather than a failure. */
+      set_verSay('Installing. AutoStream will close and reopen.');
+    }
+  });
+  /* The version is known without asking anybody. */
+  var sub = set_el('set-ver-sub');
+  if (sub && window.SHELL_BOOT && SHELL_BOOT.version){
+    sub.textContent = 'AutoStream ' + SHELL_BOOT.version;
+  }
+}
+
 window.PAGE_SETTINGS = {
   onShow: function(){
     set_guardNav();
+    set_wireUpdates();
     if (!set_state.loaded){ set_load(); return; }
     if (!set_dirtyPaths().length) set_refresh().catch(function(){});
+  },
+  onTick: function(status){
+    set_verProgress(status && status.update);
   }
 };
+
+/* ------------------------------------------------------------ updates
+
+   Checking is a button rather than something that happens on every start:
+   GitHub allows 60 unauthenticated requests an hour, and an app that spends
+   them silently is an app that stops being able to check when asked. The
+   answer is cached server-side for the same reason.
+
+   Downloading stops at a verified file on disk. Replacing a running program
+   is the installer's job, and there is one -- so what a person gets is a
+   button that opens it, not a surprise restart. */
+
+var set_update = {latest: null, path: ''};
+
+function set_verSay(text, kind) {
+  var el = set_el('set-ver-msg');
+  if (el) el.textContent = text || '';
+  set_show('set-ver-body', !!text || !!set_update.path);
+  if (el) el.classList.toggle('is-warn', kind === 'warn');
+}
+
+function set_verRender(r) {
+  var sub = set_el('set-ver-sub');
+  if (sub) {
+    sub.textContent = 'AutoStream ' + (r.current || '?') +
+      (r.available ? '  -  ' + r.latest + ' is available'
+                   : (r.latest ? '  -  up to date' : ''));
+  }
+  set_show('set-ver-get', !!r.available);
+  var notes = set_el('set-ver-notes');
+  if (notes && r.notes) notes.textContent = r.notes;
+  set_show('set-ver-noteswrap', !!(r.available && r.notes));
+  if (r.why) {
+    set_verSay(r.why, 'warn');
+  } else if (r.available) {
+    var mb = r.bytes ? ' (' + Math.round(r.bytes / 1e6) + ' MB' +
+             (r.verifiable ? ', checksummed' : ', no checksum published') + ')' : '';
+    set_verSay('Version ' + r.latest + ' is available' + mb + '.' +
+      (r.installable ? '' : ' This release ships as a zip, so it has to be '
+                          + 'unpacked by hand once it is downloaded.'));
+  } else if (r.latest) {
+    set_verSay('');
+  }
+}
+
+async function set_verCheck() {
+  var btn = set_el('set-ver-check');
+  if (btn) btn.disabled = true;
+  set_verSay('Asking GitHub...');
+  try {
+    var r = await API.get('/api/update/check');
+    if (r && r.error) set_verSay(r.error, 'warn');
+    else { set_update.latest = r; set_verRender(r); }
+  } catch (e) {
+    set_verSay('Could not reach GitHub.', 'warn');
+  }
+  if (btn) btn.disabled = false;
+}
+
+async function set_verGet() {
+  var btn = set_el('set-ver-get');
+  if (btn) btn.disabled = true;
+  try {
+    var r = await API.post('/api/update/download', {});
+    if (r && r.error) { set_verSay(r.error, 'warn'); if (btn) btn.disabled = false; }
+  } catch (e) {
+    set_verSay('Could not start the download.', 'warn');
+    if (btn) btn.disabled = false;
+  }
+}
+
+/* Rides the same status poll as everything else. */
+function set_verProgress(u) {
+  if (!u || !u.state || u.state === 'idle') return;
+  var meter = set_el('set-ver-meter'), fill = set_el('set-ver-fill');
+  if (u.state === 'downloading') {
+    set_show('set-ver-meter', true);
+    var pct = u.total ? Math.round(100 * u.done / u.total) : 0;
+    if (fill) fill.style.width = pct + '%';
+    if (meter) meter.setAttribute('aria-valuenow', String(pct));
+    set_verSay('Downloading ' + (u.version || '') + ' - ' + pct + '%');
+    return;
+  }
+  set_show('set-ver-meter', false);
+  if (u.state === 'failed') {
+    set_verSay(u.error || 'The download failed.', 'warn');
+    var g = set_el('set-ver-get');
+    if (g) g.disabled = false;
+    return;
+  }
+  if (u.state === 'ready' && u.path && set_update.path !== u.path) {
+    set_update.path = u.path;
+    set_show('set-ver-get', false);
+    set_show('set-ver-open', true);
+    var open = set_el('set-ver-open');
+    if (u.installable === false) {
+      /* A zip cannot install itself. Point at the file instead of offering a
+         button that would only be able to explain why it does not work. */
+      set_show('set-ver-open', false);
+      set_verSay('Version ' + u.version + ' is downloaded to ' + u.path
+                 + '. Unpack it over your installation to update.');
+      return;
+    }
+    if (open) open.disabled = false;
+    set_verSay('Version ' + u.version + ' is downloaded and verified. '
+               + 'Installing it will close AutoStream, replace this version '
+               + 'and start it again.');
+  }
+}
 """
