@@ -24,7 +24,12 @@ from . import cfg, notify, paths, single
 
 
 def setup_logging(level: str = "INFO", console: bool = True) -> None:
+    # BEFORE ANYTHING ELSE, and before the log file is opened, because the old
+    # log is one of the things that comes across. Every command routes through
+    # here, so this is the one place a migration cannot be skipped.
+    moved = paths.migrate_data_home()
     paths.ensure_dirs()
+    seeded = paths.seed_config()
     root = logging.getLogger()
     root.setLevel(getattr(logging, str(level).upper(), logging.INFO))
     root.handlers.clear()
@@ -44,6 +49,20 @@ def setup_logging(level: str = "INFO", console: bool = True) -> None:
     logging.getLogger("googleapiclient").setLevel(logging.ERROR)
     logging.getLogger("google_auth_oauthlib").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+    # Said only once, on the run that actually moves anything -- and said at
+    # all because "where did my settings go" is the first question an upgrade
+    # of this kind provokes.
+    # This module has no module-level logger -- setup_logging IS what makes
+    # logging work -- so the logger is fetched here, after the handlers exist.
+    started = logging.getLogger("autostream")
+    if moved:
+        started.info("your settings now live in %s (%d file(s) brought across "
+                     "from the program folder, which an update no longer "
+                     "touches)", paths.DATA_HOME, len(moved))
+    if seeded:
+        started.info("wrote %d default config file(s) into %s",
+                     len(seeded), paths.CONFIG_DIR)
 
 
 # ---------------------------------------------------------------- commands

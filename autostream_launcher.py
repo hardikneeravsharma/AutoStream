@@ -1,9 +1,16 @@
 """Frozen-app entry point.
 
 When PyInstaller freezes the app, `__file__` points inside the bundle, which is
-read-only and thrown away on upgrade. Config, secrets, logs and state must live
-NEXT TO the exe instead, so we pin AUTOSTREAM_HOME before importing anything
-that reads paths.
+read-only and thrown away on upgrade -- so paths cannot work out where the
+program is from its own source file. This pins it, before anything that reads
+paths is imported.
+
+AUTOSTREAM_APP_DIR, NOT AUTOSTREAM_HOME. It used to set AUTOSTREAM_HOME, which
+is the variable a USER sets to say "keep everything in this one folder". Once
+paths learned to put the user's files in %LOCALAPPDATA%, that conflation meant
+every frozen build looked like it had been given an explicit override -- so the
+new location was never used and nothing ever migrated. The launcher is saying
+where the PROGRAM is; only a person can say where their FILES should go.
 """
 from __future__ import annotations
 
@@ -18,7 +25,7 @@ def _app_home() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
-os.environ.setdefault("AUTOSTREAM_HOME", _app_home())
+os.environ.setdefault("AUTOSTREAM_APP_DIR", _app_home())
 
 from autostream.__main__ import main  # noqa: E402
 
