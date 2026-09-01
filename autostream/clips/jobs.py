@@ -155,6 +155,11 @@ class ClipJob:
         self.clip_count = 0            # known once the plan exists
         self.eta_at: float | None = None
 
+        # When Cancel was pressed. A cancelled scan does not stop at once --
+        # the chunks already running finish on their own -- so the page has to
+        # be able to say "stopping" rather than leave the last message up
+        # looking hung.
+        self.cancel_at: float | None = None
         self._cancel = threading.Event()
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
@@ -227,6 +232,12 @@ class ClipJob:
                 "eta": None,          # filled in below, outside the lock
                 "source": self.source.name,
                 "scan_mode": self.scan_mode,
+                # Cancelled but not finished yet: ffmpeg has to be waited on
+                # and any chunk already decoding runs to its end.
+                "stopping": bool(self.cancel_at
+                                 and self.state in ("running", "queued")),
+                "stopping_for": (int(time.time() - self.cancel_at)
+                                 if self.cancel_at else 0),
             }
         out["eta"] = self.eta()
         return out
@@ -234,6 +245,8 @@ class ClipJob:
     def cancel(self) -> None:
         self._cancel.set()
         with self._lock:
+            if self.cancel_at is None:
+                self.cancel_at = time.time()
             p = self._proc
         if p and p.poll() is None:
             try:

@@ -483,6 +483,7 @@ var clip_state = {
   made: null,                /* clips a previous run already produced */
   player: null,              /* {list, i, folder, trim} while the player is up */
   editing: false,            /* a re-render is in flight */
+  stopping: false,           /* Cancel pressed, job not finished yet */
   cal: {open: false, t: 0, dur: 0, box: null, drag: null, path: '', busy: false}
 };
 
@@ -809,11 +810,31 @@ function clip_renderJob(j) {
     /* HOW LONG IT HAS RUN AND HOW LONG IS LEFT. A scan of a two-hour
        recording is eight minutes of nothing visible happening, and "Reading
        the feed" does not say whether that means one minute or twenty. */
+    var msg = clip_el('clip-prog-msg');
+    var cancelBtn = clip_el('clip-progress')
+      ? clip_el('clip-progress').querySelector('[data-act="cancel"]') : null;
+    if (j.stopping) {
+      /* A cancelled job is not a stopped job. The chunks already decoding run
+         to their end, which on a long recording is most of a minute -- and
+         with the old message still on screen that reads as "it ignored me". */
+      clip_state.stopping = true;
+      if (cancelBtn) { cancelBtn.disabled = true; cancelBtn.textContent = 'Stopping...'; }
+      if (msg) {
+        msg.textContent = 'Stopping - anything already decoding finishes first' +
+          ' (' + clip_fmtTime(j.stopping_for || 0) + ')';
+      }
+      clip_el('clip-prog-title').textContent = 'Stopping';
+      return;
+    }
+    if (cancelBtn && cancelBtn.disabled && !clip_state.stopping) {
+      cancelBtn.disabled = false;
+      cancelBtn.textContent = 'Cancel';
+    }
     var run = 'running ' + clip_fmtTime(j.elapsed || 0);
     var eta = (j.eta != null && j.eta > 0)
       ? ' - about ' + clip_fmtTime(j.eta) + ' left'
       : (j.eta === 0 ? ' - nearly done' : '');
-    clip_el('clip-prog-msg').textContent = (j.message || '') + '  (' + run + eta + ')';
+    if (msg) msg.textContent = (j.message || '') + '  (' + run + eta + ')';
     var fill = clip_el('clip-fill'), meter = clip_el('clip-meter');
     if (fill) fill.style.width = j.percent + '%';
     if (meter) meter.setAttribute('aria-valuenow', String(j.percent));
@@ -830,6 +851,12 @@ function clip_renderJob(j) {
   /* Results stay on screen after the run, so closing and reopening the page
      mid-job still ends with something to click. */
   var done = !!j && (j.state === 'done' || j.state === 'failed' || j.state === 'cancelled');
+  if (done && clip_state.stopping) {
+    clip_state.stopping = false;
+    var cb = clip_el('clip-progress')
+      ? clip_el('clip-progress').querySelector('[data-act="cancel"]') : null;
+    if (cb) { cb.disabled = false; cb.textContent = 'Cancel'; }
+  }
   clip_show('clip-results', done);
   if (!done) return;
 
@@ -1838,6 +1865,39 @@ function clip_say(id, text) {
   if (el) el.textContent = text || '';
 }
 
+function clip_profileFor(key) {
+  var list = clip_state.profiles || [];
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].key === key) return list[i];
+  }
+  return null;
+}
+
+function clip_useGameLocally(key, label) {
+  /* WHY SELECTING IS ENOUGH. The dropdown says "pick another to cut its
+     highlights instead", so picking one and seeing the options stay as they
+     were reads as though nothing happened -- and Counter-Strike's controls are
+     not Delta Force's: it clips whole ROUNDS, so the minimum-kills control is
+     replaced by the round types.
+
+     This changes the options and what the next run will be told, but does NOT
+     rewrite the journal. "Use this game" still does that, because correcting
+     the record of a stream is a bigger claim than choosing what to cut now. */
+  var s = clip_state.pick;
+  if (!s || !key) return;
+  var prof = clip_profileFor(key);
+  s.game_key = key;
+  s.game = label || (prof && prof.label) || key;
+  if (prof) {
+    s.rounds = !!prof.rounds;
+    s.scan_mode = prof.mode || s.scan_mode;
+    s.profile = prof.label;
+    s.can_scan = !!prof.ready;
+    s.blocked = prof.ready ? '' : s.blocked;
+  }
+  clip_renderOptions();
+}
+
 async function clip_setGame() {
   var s = clip_state.pick;
   var sel = clip_el('clip-gamefix');
@@ -2211,6 +2271,13 @@ function clip_wire() {
     if (el && m) clip_openPlayer(m.clips, Number(el.getAttribute('data-made')), m.folder);
   });
 
+  var gamefix = clip_el('clip-gamefix');
+  if (gamefix) gamefix.addEventListener('change', function () {
+    var opt = gamefix.options[gamefix.selectedIndex];
+    clip_useGameLocally(gamefix.value,
+                        opt ? opt.getAttribute('data-label') : '');
+  });
+
   var rev = clip_el('clip-review');
   if (rev) rev.addEventListener('click', clip_preview);
   var revCut = clip_el('clip-review-cut');
@@ -2306,6 +2373,13 @@ function clip_wire() {
     } else if (act === 'montage') {
       clip_state.montage = !clip_state.montage; clip_renderOptions();
     } else if (act === 'cancel') {
+      /* The poll is two seconds away and the job takes longer than that to
+         wind down, so the button answers for itself immediately. Pressing it
+         and seeing nothing change is what made a stopping job look hung. */
+      b.disabled = true;
+      b.textContent = 'Stopping...';
+      clip_state.stopping = true;
+      toast('Stopping - anything already decoding finishes first.', 'ok');
       API.post('/api/clips/cancel', {});
     } else if (act === 'reveal') {
       clip_reveal(b.getAttribute('data-path'));

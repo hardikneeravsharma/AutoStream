@@ -186,3 +186,94 @@ def test_every_voice_chooser_is_filled_by_the_same_function():
     html = ui.CLIPS_HTML
     for token in ("clip-play-voice", "clip-review-voice-all"):
         assert f'id="{token}"' in html, token
+
+
+# ------------------------------------------------- a cancelled job says so
+
+def _stub_job():
+    import threading
+    import time as _t
+
+    j = jobs.ClipJob.__new__(jobs.ClipJob)
+    j._lock = threading.Lock()
+    j._cancel = threading.Event()
+    j._proc = None
+    j.cancel_at = None
+    j.state, j.step = "running", "scan"
+    j.done, j.total = 1, 23
+    j.message, j.error = "Reading the feed", None
+    j.game, j.folder = "Delta Force", Path("x")
+    j.results, j.preview, j.summary = [], [], {}
+    j.montage_path = j.reel_path = j.promo_path = None
+    j.started_at = _t.time() - 90
+    j.step_started = j.started_at
+    j.source = Path("rec.mp4")
+    j.source_seconds, j.scan_seconds = 6660.0, 6660.0
+    j.scan_mode, j.clip_count = "template", 0
+    return j
+
+
+def test_a_cancelled_job_reports_that_it_is_stopping():
+    """FROM THE APP: pressing Cancel left the last message on screen while the
+    chunks already decoding ran to their end -- most of a minute on a long
+    recording -- which reads as "it ignored me"."""
+    j = _stub_job()
+    assert j.snapshot()["stopping"] is False
+    j.cancel()
+    snap = j.snapshot()
+    assert snap["stopping"] is True
+    assert snap["stopping_for"] >= 0
+
+
+def test_stopping_stops_being_true_once_the_job_has_ended():
+    j = _stub_job()
+    j.cancel()
+    j.state = "cancelled"
+    assert j.snapshot()["stopping"] is False
+
+
+def test_pressing_cancel_twice_does_not_restart_the_clock():
+    j = _stub_job()
+    j.cancel()
+    first = j.cancel_at
+    j.cancel()
+    assert j.cancel_at == first
+
+
+# ------------------------------------------- choosing a game changes the form
+
+def test_the_profile_listing_says_what_kind_of_game_each_one_is():
+    """FROM THE APP: a Delta Force recording was re-pointed at Counter-Strike 2
+    and the options carried on offering "minimum kills in a clip" -- which
+    Counter-Strike does not use, because it clips whole ROUNDS.
+
+    The page could only describe the game the journal had recorded, because the
+    listing did not say what kind of game any of the others were."""
+    from autostream.clips import profiles
+
+    rows = {r["label"]: r for r in profiles.listing()}
+    for r in rows.values():
+        assert "rounds" in r and "mode" in r
+        assert "demos" in r and "matches" in r
+    if "Counter-Strike 2" in rows:
+        assert rows["Counter-Strike 2"]["rounds"] is True
+        assert rows["Counter-Strike 2"]["demos"] is True
+    if "Delta Force" in rows:
+        assert rows["Delta Force"]["rounds"] is False
+    if "VALORANT" in rows:
+        assert rows["VALORANT"]["matches"] is True
+
+
+def test_choosing_a_game_retargets_the_options_without_rewriting_the_journal():
+    """Structural: selecting applies to the form and the next run; only the
+    button writes the correction back to the stream's record."""
+    from autostream.ui import clips as ui
+
+    js = ui.CLIPS_JS
+    start = js.index("function clip_useGameLocally(")
+    body = js[start:js.index("async function clip_setGame()", start)]
+    assert "clip_renderOptions()" in body
+    assert "s.rounds" in body                  # the form follows the game
+    assert "/api/clips/setgame" not in body    # ...but the journal is not touched
+    # ...and selecting is wired, not just the button.
+    assert "gamefix.addEventListener('change'" in js
