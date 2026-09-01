@@ -908,6 +908,56 @@ CONFIG_SCHEMA: list[Section] = [
                 "Needs a one-off 177 MB voice model download.",
                 "toggle",
             ),
+            # THE VOICE, AND WHAT AN UPLOAD SAYS. All four of these exist in
+            # the config, are read on every run, and were not on this page --
+            # so the only way to change any of them was to hand-edit the YAML
+            # of the INSTALLED copy, which is not a thing anybody would guess.
+            #
+            # upload_privacy is the one that matters most: it decides whether a
+            # clip goes out public.
+            _field(
+                "clips.voice_name",
+                "Which voice",
+                "The voice used for spoken hooks, unless a clip is given its "
+                "own. Twenty-eight are installed with the model, grouped by "
+                "accent -- and the honest way to choose one is to hear it, "
+                "which the clip player and the review panel both let you do. "
+                "The names look like af_bella (American female) or bm_george "
+                "(British male).",
+                "text",
+                advanced=True,
+            ),
+            _field(
+                "clips.upload_privacy",
+                "Who can see an uploaded clip",
+                "Applies to clips sent to YouTube from the Clips page. Unlisted "
+                "is the default on purpose: an upload that turns out wrong is a "
+                "quiet mistake rather than a public one. This is the default "
+                "for the button; the button asks as well.",
+                "select",
+                options=_opts(
+                    ("private", "Private - only you"),
+                    ("unlisted", "Unlisted - anyone with the link"),
+                    ("public", "Public - listed on the channel"),
+                ),
+            ),
+            _field(
+                "clips.upload_title",
+                "Title for an uploaded clip",
+                "Tokens: {caption} is what the clip says on screen, {game} the "
+                "game, {at} where in the stream it happened. YouTube truncates "
+                "a Short's title in search at about 60 characters.",
+                "text",
+                advanced=True,
+            ),
+            _field(
+                "clips.upload_description",
+                "Description for an uploaded clip",
+                "The same tokens as the title. Kept short by default: a Short's "
+                "description is rarely read and is not where a channel is won.",
+                "text",
+                advanced=True,
+            ),
             _field(
                 "clips.promo",
                 "Sweep the leftovers into a promo",

@@ -414,3 +414,60 @@ def test_the_estimate_covers_the_cutting_that_follows_the_scan():
     j.clip_count = 10
     with_clips = j.eta()
     assert with_clips > bare, "ten clips of encoding is not free"
+
+
+# ------------------------------------------------- why the app exited
+
+def test_a_quit_says_who_asked_for_it(caplog):
+    """FROM AN AUDIT. Closing the window is vetoed and hides to the tray, so
+    the app only ever exits because something called request_quit -- and
+    nothing said which something. An exit looked identical in the log whether
+    the Quit button was pressed, the tray menu was used, or a shutdown was
+    under way, and working out which cost an hour of reading pywebview's event
+    internals to rule out a veto that had never failed."""
+    import logging
+
+    from autostream import window as win_mod
+
+    w = win_mod.MainWindow.__new__(win_mod.MainWindow)
+    w._quit = False
+    w._show = __import__("threading").Event()
+    w.win = None
+    with caplog.at_level(logging.INFO, logger="autostream.window"):
+        w.request_quit("the tray menu")
+    assert w._quit is True
+    assert "the tray menu" in caplog.text
+
+
+def test_a_quit_with_no_reason_still_says_so(caplog):
+    import logging
+
+    from autostream import window as win_mod
+
+    w = win_mod.MainWindow.__new__(win_mod.MainWindow)
+    w._quit = False
+    w._show = __import__("threading").Event()
+    w.win = None
+    with caplog.at_level(logging.INFO, logger="autostream.window"):
+        w.request_quit()
+    assert "no reason given" in caplog.text
+
+
+def test_every_caller_names_itself():
+    """A reason nobody passes is a reason nobody reads."""
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "autostream"
+    calls = []
+    for f in root.rglob("*.py"):
+        src = f.read_text(encoding="utf-8", errors="ignore")
+        for line in src.splitlines():
+            bare_line = line.strip()
+            if bare_line.startswith("#") or "`" in bare_line:
+                continue                      # a comment or a docstring mention
+            m = re.search(r"\.request_quit\(([^)]*)\)", line)
+            if m:
+                calls.append((f.name, m.group(1).strip()))
+    assert calls, "nothing calls request_quit at all"
+    bare = [c for c in calls if not c[1]]
+    assert bare == [], f"request_quit called with no reason: {bare}"

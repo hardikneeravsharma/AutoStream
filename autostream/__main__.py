@@ -350,7 +350,7 @@ def cmd_run(args) -> int:
             engine.request_stop()
         w = win_ref.get("w")
         if w is not None:
-            w.request_quit()          # otherwise webview.start() never returns
+            w.request_quit("shutting down")          # otherwise webview.start() never returns
 
     for s in (signal.SIGINT, signal.SIGTERM):
         try:
