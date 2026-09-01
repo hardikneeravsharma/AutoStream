@@ -7,6 +7,7 @@ setting is stored under has to survive the round trip from planning to cutting.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import sys
 from pathlib import Path
@@ -309,3 +310,44 @@ def test_a_run_and_a_re_render_cannot_overlap():
     run = src[src.index("def clips_run(self, body: dict) -> dict:"):]
     run = run[:run.index("    def _cached_kills(")]
     assert "editor().busy()" in run, "a job can start mid re-render"
+
+
+# ------------------------------------------------- one walk over the sidecars
+
+def test_kills_and_previous_runs_come_from_one_walk(tmp_path, monkeypatch):
+    """Both answers come from every run's session.json, and reading them
+    separately walked every folder twice for nothing."""
+    import json as _json
+
+    for name, kills, made, when in (("run_a", 24, 3, 2000),
+                                    ("run_b", 9, 0, 3000)):
+        d = tmp_path / name
+        (d / "vertical").mkdir(parents=True)
+        f = d / "session.json"
+        f.write_text(_json.dumps({
+            "source": r"C:/rec/x.mp4",
+            "kills": [{"time": float(i)} for i in range(kills)]}), encoding="utf-8")
+        for i in range(made):
+            (d / "vertical" / f"c{i}.mp4").write_bytes(b"x")
+        os.utime(f, (when, when))
+
+    srv = _server()
+    monkeypatch.setattr(srv, "_clips_dir", lambda _c: tmp_path, raising=False)
+    kills, runs = srv._scan_runs(object())
+    key = srv._same_file(r"C:/rec/x.mp4")
+    # The most kills any run found, and the NEWEST run that actually made clips.
+    assert kills[key] == 24
+    assert runs[key]["clips"] == 3 and runs[key]["folder"].endswith("run_a")
+
+
+def test_a_run_that_made_nothing_is_not_offered_as_previous_clips(tmp_path, monkeypatch):
+    import json as _json
+
+    d = tmp_path / "empty"
+    d.mkdir()
+    (d / "session.json").write_text(
+        _json.dumps({"source": r"C:/rec/y.mp4", "kills": []}), encoding="utf-8")
+    srv = _server()
+    monkeypatch.setattr(srv, "_clips_dir", lambda _c: tmp_path, raising=False)
+    _, runs = srv._scan_runs(object())
+    assert runs == {}

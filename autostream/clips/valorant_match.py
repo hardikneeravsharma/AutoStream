@@ -394,9 +394,15 @@ def rounds_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list:
     return out
 
 
-def state(started: float, seconds: float) -> dict:
-    """Whether a match record is on hand for this recording, for the UI."""
-    got = for_recording(started, seconds)
+def state(started: float, seconds: float,
+          matches: list[Match] | None = None) -> dict:
+    """Whether a match record is on hand for this recording, for the UI.
+
+    `matches` is the cache, already read. Pass it when asking about more than
+    one recording: reading every cached match once per recording is every
+    match times every stream.
+    """
+    got = for_recording(started, seconds, matches)
     if got:
         nameless = [m for m in got if not str(m.data.get(MINE) or "")]
         return {"state": "have", "matches": len(got),

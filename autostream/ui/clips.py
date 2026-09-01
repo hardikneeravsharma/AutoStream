@@ -268,6 +268,8 @@ One per line - a long session often covers several matches."></textarea>
     </div>
   </div>
 
+  <p class="clip-matchline hide" id="clip-matchline"></p>
+
   <div class="panel clip-warn hide" id="clip-wrongwrap">
     <p class="muted" id="clip-wrongtext"></p>
     <div class="field-inline">
@@ -755,6 +757,7 @@ function clip_renderOptions() {
      this the other games in the file are silently unreachable, which is what
      happened to a session holding both Counter-Strike 2 and Delta Force. */
   clip_renderDemoBox();
+  clip_renderMatchLine();
 
   var played = (s.games || []).filter(function (g) { return !!g; });
   var multi = played.length > 1;
@@ -1859,6 +1862,37 @@ function clip_renderDemoBox() {
         + 'Copy the sharing code from the match in Counter-Strike and paste it '
         + 'here.';
   }
+}
+
+function clip_renderMatchLine() {
+  /* Whether Valorant's own record of the match is on hand. The record is
+     fetched while the game is running and read when the clip is cut, so the
+     only moment it can be FIXED is the next time you play -- which makes
+     saying so worth a line of its own. Counter-Strike has the demo box for the
+     same reason; this is the equivalent for a game whose record lives on
+     Riot's servers rather than on disk. */
+  var s = clip_state.pick;
+  var el = clip_el('clip-matchline');
+  if (!el) return;
+  var st = s && s.match_state;
+  el.classList.toggle('hide', !st);
+  if (!st) return;
+  if (st === 'have') {
+    el.textContent = s.match_count === 1
+      ? 'VALORANT match record: 1 match cached, so the kills, rounds and '
+        + 'clutches come from the game rather than from the screen.'
+      : 'VALORANT match record: ' + s.match_count + ' matches cached, so the '
+        + 'kills, rounds and clutches come from the game rather than from the '
+        + 'screen.';
+    el.classList.remove('is-warn');
+    if (s.match_why) el.textContent += ' (' + s.match_why + ')';
+    return;
+  }
+  el.classList.add('is-warn');
+  el.textContent = 'No VALORANT match record for this recording' +
+    (s.match_why ? ' - ' + s.match_why : '') +
+    '. The clips still get cut from the screen; a record can only be captured '
+    + 'while the game is running, so the next session is the one that fixes it.';
 }
 
 async function clip_getDemos() {
