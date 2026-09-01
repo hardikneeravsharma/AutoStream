@@ -170,3 +170,65 @@ def test_a_switch_still_happens_when_the_thumbnail_fails():
     except RuntimeError:
         raise AssertionError("a failing thumbnail broke the game switch")
     assert eng.state.current_game == "Counter-Strike 2 Redux"
+
+
+# ------------------------------------- a template nobody could have saved
+#
+# The Settings page refuses to save "{game" -- unbalanced braces are caught by
+# schema.validate. But the config is a YAML file people edit by hand, and until
+# the upload and voice settings reached that page, editing it by hand was the
+# only way to change some of them. So a broken template arriving at the
+# renderer is reachable, and it used to raise ValueError out of _begin_session
+# and stop the stream starting, over a missing bracket in a title.
+
+def _stub(title="{game}", desc="{game}", max_len=100):
+    import types
+
+    return types.SimpleNamespace(
+        title=types.SimpleNamespace(template=title, max_len=max_len),
+        description=types.SimpleNamespace(template=desc))
+
+
+def _vars():
+    from datetime import datetime
+
+    return titles.build_vars(
+        game="Counter-Strike 2", hook="casual run",
+        session_games=["Counter-Strike 2"],
+        session_start=datetime(2026, 9, 2, 20, 30),
+        session_number=1, blurb="b", username="YUVANETA")
+
+
+def test_an_unbalanced_brace_does_not_stop_a_stream_starting():
+    got = titles.render_title(_stub(title="{game"), _vars())
+    assert got == "Counter-Strike 2"
+
+
+def test_a_stray_closing_brace_is_survived_too():
+    assert titles.render_title(_stub(title="}{"), _vars()) == "Counter-Strike 2"
+
+
+def test_a_broken_description_comes_back_empty_rather_than_raising():
+    assert titles.render_description(_stub(desc="{oops"), _vars()) == ""
+
+
+def test_a_malformed_template_says_so_in_the_log(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="autostream.titles"):
+        titles.render_title(_stub(title="{game"), _vars())
+    assert "malformed" in caplog.text
+    assert "Settings" in caplog.text, "the log should say where to fix it"
+
+
+def test_an_unknown_token_costs_only_that_token():
+    """Already true, and worth pinning: build_vars supplies "" for a token it
+    does not have, so a typo does not take the rest of the title with it."""
+    got = titles.render_title(_stub(title="{game} {typo} tonight"), _vars())
+    assert got.startswith("Counter-Strike 2")
+    assert "tonight" in got
+
+
+def test_a_good_template_is_untouched():
+    got = titles.render_title(_stub(title="{game} - {hook}"), _vars())
+    assert got == "Counter-Strike 2 - casual run"

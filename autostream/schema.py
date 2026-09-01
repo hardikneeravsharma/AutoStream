@@ -944,17 +944,19 @@ CONFIG_SCHEMA: list[Section] = [
             _field(
                 "clips.upload_title",
                 "Title for an uploaded clip",
-                "Tokens: {caption} is what the clip says on screen, {game} the "
-                "game, {at} where in the stream it happened. YouTube truncates "
-                "a Short's title in search at about 60 characters.",
+                "Tokens: {caption} what the clip says on screen, {game}, "
+                "{kills}, {at} where in the stream it happened, {channel}, "
+                "{date}, and {n} its number in the batch. YouTube truncates a "
+                "Short's title in search at about 60 characters.",
                 "text",
                 advanced=True,
             ),
             _field(
                 "clips.upload_description",
                 "Description for an uploaded clip",
-                "The same tokens as the title. Kept short by default: a Short's "
-                "description is rarely read and is not where a channel is won.",
+                "The same seven tokens as the title. Kept short by default: a "
+                "Short's description is rarely read and is not where a channel "
+                "is won.",
                 "text",
                 advanced=True,
             ),

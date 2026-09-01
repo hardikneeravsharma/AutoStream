@@ -1,9 +1,17 @@
-"""Title and description rendering. Pure functions, no side effects."""
+"""Title and description rendering.
+
+Pure functions, with one exception: a malformed template is logged rather
+than raised, because the alternative is a missing bracket in a title stopping
+a stream from starting. See _fill.
+"""
 from __future__ import annotations
 
+import logging
 import random
 import re
 from datetime import datetime
+
+log = logging.getLogger("autostream.titles")
 
 
 def hashtagify(name: str) -> str:
@@ -91,13 +99,36 @@ def _and_list(names) -> str:
     return ", ".join(names[:-1]) + " and " + names[-1]
 
 
+def _fill(template: str, variables: dict, what: str) -> str:
+    """Substitute, and survive a template nobody could have saved.
+
+    UNKNOWN TOKENS ARE ALREADY SAFE -- build_vars returns a mapping whose
+    __missing__ gives "" -- so `{typo}` costs the token and nothing else. An
+    UNBALANCED BRACE is different: str.format raises, and this is called while
+    a session is starting.
+
+    The Settings page refuses to save `{game` for exactly that reason. But the
+    config is a YAML file people edit by hand, and until the upload and voice
+    settings were added to that page, editing it by hand was the only way to
+    change some of them. So a broken template arriving here is reachable, and
+    it used to raise ValueError out of _begin_session and stop the stream
+    starting -- over a missing bracket in a title.
+    """
+    try:
+        return str(template).format_map(variables)
+    except (ValueError, KeyError, IndexError, AttributeError) as e:
+        log.warning("the %s template is malformed (%s) - using the game name "
+                    "instead. Fix it on the Settings page.", what, e)
+        return ""
+
+
 def render_title(cfg, variables: dict) -> str:
-    raw = str(cfg.title.template).format_map(variables)
+    raw = _fill(cfg.title.template, variables, "title")
     return truncate(raw, int(cfg.title.max_len)) or str(variables.get("game", "Live"))
 
 
 def render_description(cfg, variables: dict) -> str:
-    return str(cfg.description.template).format_map(variables).strip()[:5000]
+    return _fill(cfg.description.template, variables, "description").strip()[:5000]
 
 
 def pick_hook(cfg, rng: random.Random | None = None) -> str:
