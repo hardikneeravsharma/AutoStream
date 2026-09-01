@@ -100,6 +100,10 @@ GROUPS = {"af": "American female", "am": "American male",
 # Where the hook sits in the clip, and how loud. The delay keeps it off the
 # very first frame -- a voice that starts before the picture has settled sounds
 # like a mistake.
+# What a voice says when it is being auditioned. One sentence, with a comma
+# and a full stop in it, because that is where voices differ most audibly.
+SAMPLE_LINE = "They had the numbers. I had the timing."
+
 LEAD_IN = 0.3
 VOICE_GAIN = 1.7          # the model peaks around 0.65, gameplay is mastered hot
 DUCK_THRESHOLD = 0.06     # game audio dips under the voice, then comes back
@@ -433,7 +437,7 @@ def samples(out_dir: Path, line: str = "", *,
     A voice is the one thing here that cannot be decided by measurement, so
     the honest answer to "which voice" is to render them and listen.
     """
-    line = line or "They had the numbers. I had the timing."
+    line = line or SAMPLE_LINE
     picked = list(names) or [n for group in catalogue().values() for n in group]
     made = []
     for name in picked:

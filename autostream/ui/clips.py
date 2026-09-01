@@ -91,6 +91,33 @@ CLIPS_HTML: str = (
      stream once. When it ends, the recording shows up here.</p>
 </div>
 
+<div class="card hide" id="clip-review-card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Review the clips before cutting</h2>
+      <p class="card-sub" id="clip-review-sub">Nothing has been encoded yet. Each
+         clip below can have its own caption and its own spoken line, or neither.</p>
+    </div>
+    <div class="field-inline">
+      <button class="btn btn-sm btn-ghost" type="button" id="clip-review-close">
+        <span>Discard</span></button>
+      <button class="btn btn-primary" type="button" id="clip-review-cut">
+        <span>Cut these clips</span></button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="panel" id="clip-review-bulk">
+      <div class="field-inline">
+        <label class="field-label" for="clip-review-voice-all">Voice for every clip</label>
+        <select class="select" id="clip-review-voice-all" style="max-width:16rem"></select>
+        <button class="btn btn-sm" type="button" id="clip-review-play-all">Hear it</button>
+        <span class="muted" id="clip-review-voicewhy"></span>
+      </div>
+    </div>
+    <div class="clip-review-list" id="clip-review-list"></div>
+  </div>
+</div>
+
 <div class="card hide" id="clip-options">
   <div class="card-head">
     <div>
@@ -192,6 +219,9 @@ One per line - a long session often covers several matches."></textarea>
       <button class="btn btn-ghost btn-sm" type="button" data-act="calibrate">"""
     + _svg("wand")
     + """<span>Calibrate a game</span></button>
+      <button class="btn btn-ghost" type="button" id="clip-review">"""
+    + _svg("wand")
+    + """<span>Review clips first</span></button>
       <button class="btn btn-primary" type="button" id="clip-go">"""
     + _svg("scissors")
     + """<span>Make clips</span></button>
@@ -318,6 +348,10 @@ var clip_state = {
   min: '2', len: '15', vert: 'crop', montage: true,
   trans: 'fade', transMs: 500,
   lastJob: null,
+  reviewing: false,          /* a plan-only run is on its way */
+  review: null,              /* {folder, source, rows: [...]} once it lands */
+  voices: null,              /* the installed voices, once fetched */
+  audio: null,               /* the one <audio> that plays samples */
   cal: {open: false, t: 0, dur: 0, box: null, drag: null, path: '', busy: false}
 };
 
@@ -839,29 +873,284 @@ async function clip_load() {
   }
 }
 
+/* ------------------------------------------------- reviewing the clips
+
+   Nothing is encoded until the plan has been seen, and the same plan is then
+   cut -- which is what makes the review worth anything. It is not a guess at
+   what the run would do, it IS what the run decided. */
+
+async function clip_preview() {
+  var s = clip_state.pick;
+  if (!s) return;
+  var b = clip_el('clip-review');
+  if (b) b.disabled = true;
+  try {
+    var r = await API.post('/api/clips/preview', clip_runBody(s));
+    if (r && r.error) { toast(r.error, 'error'); if (b) b.disabled = false; return; }
+    clip_state.reviewing = true;
+    clip_state.busy = true;
+    clip_show('clip-results', false);
+    toast(r && r.reused_kills
+      ? 'Working out the clips from the kills found earlier.'
+      : 'Scanning the recording. Nothing is encoded yet.', 'ok');
+  } catch (e) {
+    toast('Could not start the review.', 'error');
+    if (b) b.disabled = false;
+  }
+}
+
+function clip_openReview(j) {
+  var s = clip_state.pick || {};
+  var rows = (j.preview || []).map(function (row) {
+    return {
+      key: row.key, name: row.name, start: row.start, end: row.end,
+      duration: row.duration, kills: row.kills, labels: row.labels || [],
+      thumb_at: row.thumb_at,
+      caption_on: true, caption_text: row.caption || '',
+      caption_default: row.caption || '',
+      voice_on: false, voice_text: row.voice_line || '',
+      voice_default: row.voice_line || '', voice_name: ''
+    };
+  });
+  clip_state.review = {
+    folder: j.folder || '',
+    source: s.recording_path || s.source || '',
+    rows: rows
+  };
+  clip_show('clip-review-card', true);
+  clip_show('clip-results', false);
+  clip_loadVoices();
+  clip_renderReview();
+  var card = clip_el('clip-review-card');
+  if (card && card.scrollIntoView) {
+    card.scrollIntoView({behavior: 'smooth', block: 'start'});
+  }
+}
+
+function clip_frameURL(path, at) {
+  return '/api/clips/frame?k=' + encodeURIComponent(SHELL_K) +
+         '&path=' + encodeURIComponent(path) + '&t=' + encodeURIComponent(at);
+}
+
+function clip_reviewRowHTML(r, i) {
+  var mins = Math.floor(r.start / 60), secs = Math.round(r.start % 60);
+  var at = mins + 'm' + (secs < 10 ? '0' : '') + secs + 's';
+  var kills = r.kills + ' kill' + (r.kills === 1 ? '' : 's');
+  var off = ' disabled';
+  return '' +
+    '<div class="clip-review-row" data-i="' + i + '">' +
+      '<img class="clip-review-thumb" alt="" loading="lazy" src="' +
+          esc(clip_frameURL(clip_state.review.source, r.thumb_at)) + '">' +
+      '<div class="clip-review-body">' +
+        '<div class="clip-review-head">' +
+          '<strong>' + esc(r.labels[0] || kills) + '</strong>' +
+          '<span class="muted">' + esc(at) + ' &middot; ' +
+            Math.round(r.duration) + 's &middot; ' + esc(kills) + '</span>' +
+        '</div>' +
+        '<div class="clip-review-field">' +
+          '<button class="switch' + (r.caption_on ? ' is-on' : '') + '" type="button"' +
+            ' role="switch" data-rev="caption" data-i="' + i + '"' +
+            ' aria-checked="' + (r.caption_on ? 'true' : 'false') + '"' +
+            ' aria-label="Burn a caption on this clip">' +
+            '<span class="switch-dot"></span></button>' +
+          '<label class="field-label">Caption</label>' +
+          '<input class="input" type="text" data-rev="caption_text" data-i="' + i + '"' +
+            ' placeholder="' + esc(r.caption_default || 'no caption') + '"' +
+            ' value="' + esc(r.caption_text) + '"' +
+            (r.caption_on ? '' : off) + '>' +
+        '</div>' +
+        '<div class="clip-review-field">' +
+          '<button class="switch' + (r.voice_on ? ' is-on' : '') + '" type="button"' +
+            ' role="switch" data-rev="voice" data-i="' + i + '"' +
+            ' aria-checked="' + (r.voice_on ? 'true' : 'false') + '"' +
+            ' aria-label="Speak a line over this clip">' +
+            '<span class="switch-dot"></span></button>' +
+          '<label class="field-label">Spoken</label>' +
+          '<input class="input" type="text" data-rev="voice_text" data-i="' + i + '"' +
+            ' placeholder="' + esc(r.voice_default || 'nothing to say') + '"' +
+            ' value="' + esc(r.voice_text) + '"' +
+            (r.voice_on ? '' : off) + '>' +
+          '<select class="select clip-review-voice" data-rev="voice_name"' +
+            ' data-i="' + i + '" aria-label="Voice for this clip"' +
+            (r.voice_on ? '' : off) + '></select>' +
+          '<button class="btn btn-sm" type="button" data-rev="play" data-i="' + i + '"' +
+            (r.voice_on ? '' : off) + '>Hear it</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+}
+
+function clip_renderReview() {
+  var rv = clip_state.review;
+  if (!rv) return;
+  var sub = clip_el('clip-review-sub');
+  if (sub) {
+    var caps = rv.rows.filter(function (r) { return r.caption_on; }).length;
+    var says = rv.rows.filter(function (r) { return r.voice_on; }).length;
+    sub.textContent = rv.rows.length + ' clip' + (rv.rows.length === 1 ? '' : 's') +
+      ', ' + caps + ' with a caption and ' + says + ' with a spoken line. ' +
+      'Nothing has been encoded yet.';
+  }
+  var host = clip_el('clip-review-list');
+  if (!host) return;
+  host.innerHTML = rv.rows.map(clip_reviewRowHTML).join('') ||
+    '<p class="muted">Nothing was found to cut.</p>';
+  clip_fillVoiceSelects();
+}
+
+function clip_voiceOptions(chosen) {
+  var v = clip_state.voices;
+  if (!v || !v.available) return '<option value="">no voices installed</option>';
+  var html = '<option value="">' + esc(v.default) + ' (default)</option>';
+  Object.keys(v.groups).forEach(function (label) {
+    html += '<optgroup label="' + esc(label) + '">';
+    v.groups[label].forEach(function (name) {
+      html += '<option value="' + esc(name) + '"' +
+              (name === chosen ? ' selected' : '') + '>' + esc(name) + '</option>';
+    });
+    html += '</optgroup>';
+  });
+  return html;
+}
+
+function clip_fillVoiceSelects() {
+  var rv = clip_state.review;
+  var all = clip_el('clip-review-voice-all');
+  if (all && !all.getAttribute('data-filled')) {
+    all.innerHTML = clip_voiceOptions('');
+    all.setAttribute('data-filled', '1');
+  }
+  var why = clip_el('clip-review-voicewhy');
+  if (why) {
+    why.textContent = (clip_state.voices && !clip_state.voices.available)
+      ? (clip_state.voices.why || '') : '';
+  }
+  if (!rv) return;
+  var sels = document.querySelectorAll('.clip-review-voice');
+  for (var i = 0; i < sels.length; i++) {
+    var idx = Number(sels[i].getAttribute('data-i'));
+    var row = rv.rows[idx];
+    sels[i].innerHTML = clip_voiceOptions(row ? row.voice_name : '');
+  }
+}
+
+async function clip_loadVoices() {
+  if (clip_state.voices) { clip_fillVoiceSelects(); return; }
+  try {
+    var r = await API.get('/api/clips/voices');
+    if (r && !r.error) { clip_state.voices = r; clip_fillVoiceSelects(); }
+  } catch (e) { /* the selects just say so */ }
+}
+
+function clip_playVoice(name, line) {
+  var v = clip_state.voices;
+  if (v && !v.available) {
+    toast(v.why || 'No voice model is installed.', 'error');
+    return;
+  }
+  var url = '/api/clips/voice_sample?k=' + encodeURIComponent(SHELL_K) +
+            '&name=' + encodeURIComponent(name || (v ? v.default : '')) +
+            '&line=' + encodeURIComponent(line || '');
+  if (!clip_state.audio) clip_state.audio = new Audio();
+  var a = clip_state.audio;
+  a.pause();
+  a.src = url;
+  a.play().catch(function () { toast('Could not play the sample.', 'error'); });
+}
+
+/* One handler for the whole list: the rows are rebuilt on every change, so a
+   listener per control would have to be rebound each time. */
+function clip_reviewClick(ev) {
+  var el = ev.target.closest ? ev.target.closest('[data-rev]') : null;
+  if (!el) return;
+  var rv = clip_state.review;
+  if (!rv) return;
+  var what = el.getAttribute('data-rev');
+  var i = Number(el.getAttribute('data-i'));
+  var row = rv.rows[i];
+  if (!row) return;
+  if (what === 'caption' || what === 'voice') {
+    ev.preventDefault();
+    row[what + '_on'] = !row[what + '_on'];
+    clip_renderReview();
+  } else if (what === 'play') {
+    ev.preventDefault();
+    clip_playVoice(row.voice_name, row.voice_text || row.voice_default);
+  }
+}
+
+function clip_reviewInput(ev) {
+  var el = ev.target;
+  if (!el || !el.getAttribute) return;
+  var what = el.getAttribute('data-rev');
+  if (what !== 'caption_text' && what !== 'voice_text' && what !== 'voice_name') return;
+  var rv = clip_state.review;
+  if (!rv) return;
+  var row = rv.rows[Number(el.getAttribute('data-i'))];
+  if (row) row[what] = el.value;
+}
+
+async function clip_reviewCut() {
+  var rv = clip_state.review, s = clip_state.pick;
+  if (!rv || !s) return;
+  var b = clip_el('clip-review-cut');
+  if (b) b.disabled = true;
+  var per = {};
+  rv.rows.forEach(function (r) {
+    per[r.key] = {
+      caption: !!r.caption_on,
+      caption_text: r.caption_on ? (r.caption_text || '') : '',
+      voice: !!r.voice_on,
+      voice_text: r.voice_on ? (r.voice_text || '') : '',
+      voice_name: r.voice_on ? (r.voice_name || '') : ''
+    };
+  });
+  var body = clip_runBody(s);
+  body.per_clip = per;
+  /* The pass only runs at all if something wants it; the per-clip switches
+     then decide which clips actually get one. */
+  body.voice = rv.rows.some(function (r) { return r.voice_on; });
+  body.captions = rv.rows.some(function (r) { return r.caption_on; });
+  try {
+    var r = await API.post('/api/clips/run', body);
+    if (r && r.error) { toast(r.error, 'error'); if (b) b.disabled = false; return; }
+    clip_state.busy = true;
+    clip_state.review = null;
+    clip_show('clip-review-card', false);
+    toast('Cutting the clips you reviewed.', 'ok');
+  } catch (e) {
+    toast('Could not start cutting.', 'error');
+    if (b) b.disabled = false;
+  }
+}
+
+function clip_runBody(s) {
+  return {
+    /* `source` wins server-side. A file the user picked is not in the
+       history, so there is no row to look it up by. */
+    source: s.source || '',
+    recording_path: s.recording_path,
+    game: s.game, game_key: s.game_key,
+    style: clip_state.style,
+    min_kills: Number(clip_state.min),
+    clip_seconds: clip_state.len,
+    vertical_mode: clip_state.vert,
+    montage: clip_state.montage,
+    transition: clip_state.trans,
+    transition_ms: clip_state.transMs,
+    rounds: clip_state.rounds !== false,
+    whole_round: clip_state.whole !== false,
+    round_types: clip_state.types || null
+  };
+}
+
 async function clip_run() {
   var s = clip_state.pick;
   if (!s) return;
   var go = clip_el('clip-go');
   if (go) go.disabled = true;
   try {
-    var r = await API.post('/api/clips/run', {
-      /* `source` wins server-side. A file the user picked is not in the
-         history, so there is no row to look it up by. */
-      source: s.source || '',
-      recording_path: s.recording_path,
-      game: s.game, game_key: s.game_key,
-      style: clip_state.style,
-      min_kills: Number(clip_state.min),
-      clip_seconds: clip_state.len,
-      vertical_mode: clip_state.vert,
-      montage: clip_state.montage,
-      transition: clip_state.trans,
-      transition_ms: clip_state.transMs,
-      rounds: clip_state.rounds !== false,
-      whole_round: clip_state.whole !== false,
-      round_types: clip_state.types || null
-    });
+    var r = await API.post('/api/clips/run', clip_runBody(s));
     if (r && r.error) { toast(r.error, 'error'); if (go) go.disabled = false; return; }
     clip_state.busy = true;
     clip_show('clip-results', false);
@@ -1336,6 +1625,32 @@ function clip_wire() {
   if (rf) rf.addEventListener('click', clip_load);
   var go = clip_el('clip-go');
   if (go) go.addEventListener('click', clip_run);
+  var rev = clip_el('clip-review');
+  if (rev) rev.addEventListener('click', clip_preview);
+  var revCut = clip_el('clip-review-cut');
+  if (revCut) revCut.addEventListener('click', clip_reviewCut);
+  var revClose = clip_el('clip-review-close');
+  if (revClose) revClose.addEventListener('click', function () {
+    clip_state.review = null;
+    clip_show('clip-review-card', false);
+  });
+  var revList = clip_el('clip-review-list');
+  if (revList) {
+    revList.addEventListener('click', clip_reviewClick);
+    revList.addEventListener('input', clip_reviewInput);
+    revList.addEventListener('change', clip_reviewInput);
+  }
+  var allVoice = clip_el('clip-review-voice-all');
+  if (allVoice) allVoice.addEventListener('change', function () {
+    var rv = clip_state.review;
+    if (!rv) return;
+    rv.rows.forEach(function (r) { r.voice_name = allVoice.value; });
+    clip_renderReview();
+  });
+  var playAll = clip_el('clip-review-play-all');
+  if (playAll) playAll.addEventListener('click', function () {
+    clip_playVoice(allVoice ? allVoice.value : '', '');
+  });
 
   var rsw = clip_el('clip-rounds');
   if (rsw) rsw.addEventListener('click', function () {
@@ -1508,6 +1823,26 @@ window.PAGE_CLIPS = {
     var j = status && status.clips;
     if (!j) { clip_state.busy = false; return; }
     var wasBusy = clip_state.busy;
+    var fresh = !clip_state.lastJob || clip_state.lastJob.folder !== j.folder ||
+                clip_state.lastJob.state !== 'done';
+    /* A plan-only run has clips to review and no files to show, so it opens
+       the review panel rather than the results. Checked before the results
+       branch because both fire on the same transition to done. */
+    if (clip_state.reviewing && j.state === 'done' && fresh) {
+      clip_state.reviewing = false;
+      clip_state.busy = false;
+      var rb = clip_el('clip-review');
+      if (rb) rb.disabled = false;
+      clip_openReview(j);
+      clip_state.lastJob = j;
+      clip_load();
+      return;
+    }
+    if (clip_state.reviewing && (j.state === 'failed' || j.state === 'cancelled')) {
+      clip_state.reviewing = false;
+      var rb2 = clip_el('clip-review');
+      if (rb2) rb2.disabled = false;
+    }
     clip_renderJob(j);
     if (j.state === 'done' && (!clip_state.lastJob ||
         clip_state.lastJob.folder !== j.folder ||

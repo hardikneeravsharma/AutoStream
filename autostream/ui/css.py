@@ -2210,12 +2210,57 @@ ol.steps-list li{margin-block:var(--space-4)}
 .clip-verdict.is-weak{border-left-color:var(--warn)}
 .clip-verdict.is-bad{border-left-color:var(--danger)}
 
+/* ---------------------------------------- reviewing a plan before cutting
+
+   A still from the recording is the only thing that says WHICH moment a row
+   is, so it leads the row and everything else sits beside it. 16:9 at a fixed
+   width, because the frames arrive at whatever the source was. */
+.clip-review-list{display:flex;flex-direction:column;gap:var(--space-3)}
+.clip-review-row{
+  display:grid;
+  grid-template-columns:170px minmax(0,1fr);
+  gap:var(--space-4);
+  padding:var(--space-3);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  background:var(--surface-sunken);
+}
+.clip-review-thumb{
+  width:170px;
+  aspect-ratio:16/9;
+  object-fit:cover;
+  border-radius:var(--radius-sm);
+  background:var(--surface-raised);
+  display:block;
+}
+.clip-review-body{display:flex;flex-direction:column;gap:var(--space-2);min-width:0}
+.clip-review-head{
+  display:flex;
+  align-items:baseline;
+  gap:var(--space-3);
+  flex-wrap:wrap;
+}
+.clip-review-field{
+  display:flex;
+  align-items:center;
+  gap:var(--space-2);
+  flex-wrap:wrap;
+}
+/* The label is fixed-width so the two rows' inputs line up under each other. */
+.clip-review-field>.field-label{flex:0 0 4.5rem;margin:0}
+.clip-review-field>.input{flex:1 1 12rem;min-width:0}
+.clip-review-voice{flex:0 0 11rem;max-width:11rem}
+.clip-review-field>.input:disabled,
+.clip-review-voice:disabled{opacity:.5}
+
 /* The window is 1120 wide and the rail takes 216, so the options grid has to
    fold well before a phone. */
 @media (max-width:880px){
   .clip-grid{grid-template-columns:minmax(0,1fr)}
   .clip-row{grid-template-columns:minmax(0,1fr) auto}
   .clip-row-when{display:none}
+  .clip-review-row{grid-template-columns:minmax(0,1fr)}
+  .clip-review-thumb{width:100%}
 }
 
 /* <480px: the library row becomes a single stack. */
