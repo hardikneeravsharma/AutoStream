@@ -775,3 +775,27 @@ def test_a_recut_reuses_the_newest_scan_not_the_oldest(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "_clips_dir", lambda _c: tmp_path, raising=False)
     got = app._cached_kills(Path(src), object())
     assert got is not None and len(got) == 30, "the older 33-kill scan won"
+
+
+def test_the_round_type_filter_does_not_drop_kill_count_rounds():
+    """round_types is set by DEFAULT, and a round kept for its kill count has
+    no type -- so testing it against the list would have quietly undone the
+    min_kills selection for everyone."""
+    from autostream.clips import rounds as R
+
+    def rd(number, kills, labels=()):
+        r = R.Round(number=number, started=number * 100.0,
+                    ended=number * 100.0 + 60, score_before=(0, 0),
+                    score_after=(1, 0), half=1)
+        r.my_kills, r.labels = kills, list(labels)
+        return r
+
+    hl = R.highlights([rd(1, 3, ["3K IN 5s"]), rd(2, 2), rd(3, 1),
+                       rd(4, 2, ["CHAOS"])], min_kills=2)
+    wanted = {"ACE", "CLUTCH", "K IN"}
+    kept = [r for r in hl
+            if (any(any(k in l for l in r.labels) for k in wanted)
+                if r.labels else True)]
+    # round 1 matches "K IN", round 2 has no label and 2 kills, round 4's only
+    # label is CHAOS which was not asked for.
+    assert [r.number for r in kept] == [1, 2]
