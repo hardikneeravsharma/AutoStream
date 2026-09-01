@@ -734,5 +734,13 @@ def listing() -> list[dict]:
             "builtin": p.key in BUILTIN,
             "ready": p.exists(),
             "notes": p.notes,
+            # What KIND of game this is, so the Clips page can offer the right
+            # controls the moment a game is chosen. Without these it could only
+            # describe the game the journal already recorded, so correcting the
+            # game left the options describing the old one.
+            "mode": p.mode,
+            "rounds": bool(p.rounds),
+            "demos": bool(p.demos),
+            "matches": bool(p.matches),
         })
     return out
