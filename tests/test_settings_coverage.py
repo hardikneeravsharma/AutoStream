@@ -22,12 +22,21 @@ NOT_SETTINGS = {"obs.get"}
 
 
 def _reads() -> set[str]:
+    """Every config path the code actually reads, however it reads it."""
     src = ""
     for f in (Path(__file__).resolve().parents[1] / "autostream").rglob("*.py"):
         src += f.read_text(encoding="utf-8", errors="ignore")
     found = set()
-    for m in re.finditer(r"\b(?:c|cfg_now|self\.cfg|config|conf)\.([a-z_]+)\.([a-z_]+)",
-                         src):
+    # The names a Config gets bound to across the codebase.
+    holder = r"(?<![A-Za-z_.])(?:c|cfg_now|self\.cfg|config|conf)"
+    # plain attribute access: c.clips.min_kills
+    for m in re.finditer(holder + r"\.([a-z_]+)\.([a-z_]+)", src):
+        found.add(f"{m.group(1)}.{m.group(2)}")
+    # ...and through getattr, which is how rules.upload_daily_max hid from this
+    # check while two error messages told people to change it on the page.
+    getter = (r"getattr\(\s*" + holder +
+              r"\.([a-z_]+)\s*,\s*['\"]([a-z_]+)['\"]")
+    for m in re.finditer(getter, src):
         found.add(f"{m.group(1)}.{m.group(2)}")
     return found - NOT_SETTINGS
 

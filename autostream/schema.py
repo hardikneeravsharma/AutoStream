@@ -456,6 +456,27 @@ CONFIG_SCHEMA: list[Section] = [
                 placeholder="NOSTREAM",
                 max_chars=120,
             ),
+            # THE ERROR MESSAGES ALREADY POINT HERE. Refusing an upload says
+            # "uploads per day is 0 in Settings" and "raise the limit in
+            # Settings" -- and the limit was not on this page, so both told the
+            # user to go and change something they could not find. Read through
+            # getattr(), which is why the check comparing what the code reads
+            # against what this page offers did not catch it.
+            _field(
+                "rules.upload_daily_max",
+                "Clips uploaded per day",
+                "A ceiling on one batch and on the day, because an upload is "
+                "the one thing here that cannot be undone quietly -- a mistake "
+                "is already on the channel. Each upload costs about 1,600 of "
+                "YouTube's 10,000 daily API units, so six is roughly the most a "
+                "day can hold anyway. Zero switches uploading off.",
+                "number",
+                min=0,
+                max=50,
+                step=1,
+                unit="clips",
+                integer=True,
+            ),
             _field(
                 "rules.quota_reserve",
                 "API quota to hold back",
