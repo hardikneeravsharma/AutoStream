@@ -347,9 +347,14 @@ class ClipJob:
                                        int(opt.get("min_kills", 2)))
             wanted = opt.get("round_types")
             if wanted:
+                # The type filter governs LABELLED rounds. A round kept for its
+                # kill count has no type, so testing it against the list would
+                # drop every one of them -- and this list is set by default,
+                # which would have quietly undone min_kills entirely.
                 keep = set(wanted)
                 hl = [r for r in hl
-                      if any(any(k in l for l in r.labels) for k in keep)]
+                      if (any(any(k in l for l in r.labels) for k in keep)
+                          if r.labels else True)]
             plans = plan.build_rounds(
                 hl, game=self.game,
                 pre_roll=pre_roll, tail=tail,
