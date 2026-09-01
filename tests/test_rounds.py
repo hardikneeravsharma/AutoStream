@@ -830,3 +830,42 @@ def test_the_first_round_of_a_half_is_a_pistol_round():
                        score_before=(1, 0), score_after=(2, 0), half=1)
     rounds.annotate([rd1, rd2], _alive([5] * 5, [5] * 5), [])
     assert rd1.pistol and not rd2.pistol
+
+
+# ------------------------------------------- how many rounds become clips
+#
+# A real 17-round match with 24 kills in it earned three labels. Cutting only
+# labelled rounds left three quarters of the player's good rounds unreachable,
+# and he asked the obvious question: "I got more than 20 kills in that match,
+# only 3 were clip worthy?"
+
+def _round(number, kills, labels=()):
+    rd = rounds.Round(number=number, started=number * 100.0,
+                      ended=number * 100.0 + 60, score_before=(0, 0),
+                      score_after=(1, 0), half=1)
+    rd.my_kills = kills
+    rd.labels = list(labels)
+    return rd
+
+
+def test_a_labelled_round_is_always_worth_cutting():
+    rds = [_round(1, 0, ["MATCH POINT"]), _round(2, 0)]
+    assert [r.number for r in rounds.highlights(rds)] == [1]
+
+
+def test_min_kills_keeps_a_good_round_that_earned_no_label():
+    rds = [_round(1, 3, ["3K IN 5s"]), _round(2, 2), _round(3, 1),
+           _round(4, 2)]
+    got = rounds.highlights(rds, min_kills=2)
+    assert [r.number for r in got] == [1, 2, 4]
+
+
+def test_the_labelled_round_still_leads_the_list():
+    """Everything downstream takes the order as the ranking."""
+    rds = [_round(1, 2), _round(2, 2, ["ACE"])]
+    assert [r.number for r in rounds.highlights(rds, min_kills=2)] == [2, 1]
+
+
+def test_min_kills_of_zero_keeps_the_old_labels_only_behaviour():
+    rds = [_round(1, 4), _round(2, 0, ["MATCH POINT"])]
+    assert [r.number for r in rounds.highlights(rds)] == [2]

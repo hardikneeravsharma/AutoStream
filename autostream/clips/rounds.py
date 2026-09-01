@@ -579,9 +579,22 @@ def rank_of(labels: Sequence[str]) -> int:
     return len(RANK)
 
 
-def highlights(rounds: list[Round]) -> list[Round]:
-    """Only the rounds worth cutting, best first."""
-    keep = [r for r in rounds if r.labels]
+def highlights(rounds: list[Round], min_kills: int = 0) -> list[Round]:
+    """Only the rounds worth cutting, best first.
+
+    A round that earned a label is always worth cutting. `min_kills` keeps any
+    round the player got that many kills in as well, labelled or not -- the
+    same setting that decides what becomes a clip in every other game.
+
+    WHY IT IS NOT LABELS ALONE. The labels describe rounds that were
+    remarkable, and in an ordinary match almost none are: a real 17-round match
+    with 24 kills in it had 8 rounds of two kills or more and only 3 that
+    earned a label, so three quarters of the player's good rounds were
+    unreachable. Ranking still puts the labelled rounds first, so what changes
+    is how far down the list the cutting goes, not which round leads it.
+    """
+    keep = [r for r in rounds
+            if r.labels or (min_kills > 0 and r.my_kills >= min_kills)]
     keep.sort(key=lambda r: (rank_of(r.labels), -r.my_kills, r.started))
     return keep
 
@@ -734,7 +747,9 @@ def from_demo(match, player: str, sync) -> list[Round]:
             losses += 1
 
     label(out)
-    log.info("%d round(s) from %s: %d-%d, %d worth cutting",
+    # "earned a label", not "worth cutting": how many rounds get cut depends on
+    # min_kills, which belongs to the request and is not known here.
+    log.info("%d round(s) from %s: %d-%d, %d earned a label",
              len(out), getattr(match.path, "name", "the demo"),
              my_score, their_score, len(highlights(out)))
     return out

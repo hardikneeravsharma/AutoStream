@@ -976,3 +976,58 @@ def test_a_real_second_kill_in_the_next_slot_is_still_two_events():
     seen += [_sight(11.5 + i * 0.5, "kill", y0=59, x0=640) for i in range(6)]
     got = vf.collapse(seen)
     assert len(got) == 2, [(e.time, e.y0, e.votes) for e in got]
+
+
+def test_a_row_missed_for_one_frame_keeps_its_slot():
+    """FROM FOOTAGE at 1h27m09s. Two of the player's kill rows sat at their
+    own slots. The upper one was missed in a single frame, which made the LOWER
+    row's track the more recently seen -- so on the next frame it took the
+    upper row (a legal one-pitch slide) and stranded its own. The stranded row
+    started a second track, and the clip went out cut as four kills holding
+    three.
+
+    A row only moves when the row above it expires, so a track that did not
+    have to move is the better explanation of a position than one that did.
+    """
+    seen = []
+
+    def frame(t, upper=True):
+        if upper:
+            seen.append(_sight(t, "kill", y0=20, x0=580))
+        seen.append(_sight(t, "kill", y0=59, x0=632))
+
+    for i in range(4):
+        frame(10.0 + i * 0.5)
+    frame(12.0, upper=False)        # the upper row is missed here
+    for i in range(4):
+        frame(12.5 + i * 0.5)
+
+    got = [e for e in vf.collapse(seen) if e.kind == "kill"]
+    assert len(got) == 2, [(e.time, e.y0, e.votes) for e in got]
+
+
+def test_the_feed_sliding_up_through_a_degraded_frame_is_one_row_each():
+    """FROM FOOTAGE at 1h27m07s. The frames on which rows MOVE are exactly the
+    ones that read badly: the whole feed slid up a pitch and both kill rows
+    came back "assist" in that frame. Requiring the frame's verdict to match
+    the track's meant nothing could bridge it, and the row that slid into the
+    vacated slot was taken for the row that had been sitting there.
+    """
+    seen = []
+    for i in range(2):                       # three rows, stacked
+        t = 10.0 + i * 0.5
+        seen.append(_sight(t, "other", y0=20, x0=650))
+        seen.append(_sight(t, "kill", y0=59, x0=588))
+        seen.append(_sight(t, "kill", y0=98, x0=684))
+    seen.append(_sight(11.0, "kill", y0=59, x0=588))    # the top row goes
+    seen.append(_sight(11.0, "kill", y0=98, x0=650))
+    # ...everything moves up, and the frame they move on reads badly
+    seen.append(_sight(11.5, "assist", y0=20, x0=628))
+    seen.append(_sight(11.5, "assist", y0=59, x0=652))
+    for i in range(4):
+        t = 12.0 + i * 0.5
+        seen.append(_sight(t, "kill", y0=20, x0=578))
+        seen.append(_sight(t, "kill", y0=59, x0=638))
+
+    got = [e for e in vf.collapse(seen) if e.kind == "kill"]
+    assert len(got) == 2, [(e.time, e.y0, e.votes) for e in got]

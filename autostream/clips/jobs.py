@@ -278,8 +278,10 @@ class ClipJob:
             round_list = rounds_mod.analyse(readings, events)
             kills = [{"time": e.time, "end": e.end, "score": e.ratio,
                       "count": 1} for e in events if e.kind == "kill"]
+            worth = rounds_mod.highlights(round_list,
+                                          int(opt.get("min_kills", 2)))
             self._set(message=f"{len(round_list)} rounds, "
-                              f"{len(rounds_mod.highlights(round_list))} worth cutting")
+                              f"{len(worth)} worth cutting")
         elif prof and prof.exists():
             def prog(d, t):
                 self._set(done=d, total=t,
@@ -341,7 +343,8 @@ class ClipJob:
         if use_rounds:
             from . import rounds as rounds_mod
 
-            hl = rounds_mod.highlights(round_list)
+            hl = rounds_mod.highlights(round_list,
+                                       int(opt.get("min_kills", 2)))
             wanted = opt.get("round_types")
             if wanted:
                 keep = set(wanted)
@@ -356,8 +359,9 @@ class ClipJob:
             if want_promo:
                 # Rounds the player did something in but which earned no label.
                 # Individually they are nothing; together they are the advert.
+                cutting = {id(r) for r in hl}
                 quiet = [r for r in round_list
-                         if r.my_kills >= 1 and not r.labels]
+                         if r.my_kills >= 1 and id(r) not in cutting]
                 spare = plan.build_rounds(
                     quiet, game=self.game, pre_roll=pre_roll, tail=tail,
                     whole_round=False, clip_seconds="12",
