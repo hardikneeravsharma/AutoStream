@@ -459,14 +459,16 @@ class ClipJob:
                                        int(opt.get("min_kills", 2)))
             wanted = opt.get("round_types")
             if wanted:
-                # The type filter governs LABELLED rounds. A round kept for its
-                # kill count has no type, so testing it against the list would
-                # drop every one of them -- and this list is set by default,
-                # which would have quietly undone min_kills entirely.
-                keep = set(wanted)
+                # See rounds.wanted_by: a round with no label is kept because
+                # it is being cut on its kill count, and a round whose labels
+                # the list has never heard of is kept because a list that
+                # cannot offer a thing must not be read as excluding it.
+                before = len(hl)
                 hl = [r for r in hl
-                      if (any(any(k in l for l in r.labels) for k in keep)
-                          if r.labels else True)]
+                      if rounds_mod.wanted_by(r.labels, wanted)]
+                if before != len(hl):
+                    log.info("%d of %d round(s) dropped by the chosen types",
+                             before - len(hl), before)
             plans = plan.build_rounds(
                 hl, game=self.game,
                 pre_roll=pre_roll, tail=tail,
@@ -968,6 +970,14 @@ class ClipJob:
         if not got:
             log.info("no demo matched the first %.0f minutes; reading the whole "
                      "recording", self.PROBE_SECONDS / 60)
+            # THE ESTIMATE STARTS AGAIN HERE. The probe and the demo search are
+            # not chunks, and leaving their minute and three quarters inside the
+            # per-chunk average made the first estimate of the full scan about a
+            # fifth too pessimistic -- measured on a 111-minute recording:
+            # 13m24s claimed against 10m54s actual, converging only near the
+            # end. Reading the whole file is new work, so it is timed as such.
+            self._set(scan_seconds=float(info.get("duration") or 0.0),
+                      step_started=time.time(), done=0, total=1)
             return None
         log.info("the demo was found from the first %.0f minutes, so the rest of "
                  "the recording did not need reading", self.PROBE_SECONDS / 60)

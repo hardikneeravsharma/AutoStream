@@ -554,6 +554,26 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"error": str(e)}, 500)
 
 
+def _rec_seconds(row: dict) -> float:
+    """How long a session's recording is, whatever the row calls it.
+
+    THE KEY IS "recording_seconds". Two callers asked for "rec_seconds", which
+    is the name of the LOCAL VARIABLE that produces it in history.py and not of
+    the field -- so both silently got zero. For the Valorant match lookup that
+    made the search window a hundred and eighty seconds wide instead of the
+    length of the stream, so a match played twenty minutes in was reported as
+    having no record at all.
+    """
+    for key in ("recording_seconds", "rec_seconds", "duration"):
+        got = row.get(key)
+        if got:
+            try:
+                return float(got)
+            except (TypeError, ValueError):
+                continue
+    return 0.0
+
+
 class Server:
     def __init__(self, token: str, port: int = 8787, engine=None):
         self.token = token
@@ -837,7 +857,7 @@ class Server:
                 got = cs2_demo.demo_state(
                     cs2_demo.demo_folder(""),
                     float(r.get("started") or 0),
-                    float(r.get("rec_seconds") or 0))
+                    _rec_seconds(r))
                 r["demo_state"] = got["state"]
                 r["demo_file"] = got["file"]
                 r["has_demo"] = got["state"] == "have"
@@ -849,7 +869,7 @@ class Server:
                 from .clips import valorant_match
 
                 got = valorant_match.state(float(r.get("started") or 0),
-                                           float(r.get("rec_seconds") or 0))
+                                           _rec_seconds(r))
                 r["match_state"] = got["state"]
                 r["match_count"] = got["matches"]
                 r["match_why"] = got.get("why", "")
@@ -1008,6 +1028,12 @@ class Server:
         runner = clips.runner()
         if runner.busy():
             return {"error": "A clip job is already running."}
+        # An edit is an encode too. clips_edit refuses while a job runs; this is
+        # the other half of that, so the two cannot fight over the machine.
+        from .clips import edit as edit_mod
+
+        if edit_mod.editor().busy():
+            return {"error": "A clip is being re-rendered; wait for it to finish."}
 
         src = str(body.get("source") or "")
         session: dict = {}
@@ -1131,7 +1157,11 @@ class Server:
                                   key=lambda f: f.stat().st_mtime,
                                   reverse=True):
                 data = json.loads(sidecar.read_text(encoding="utf-8"))
-                if data.get("source") == str(source) and data.get("kills"):
+                # Compared the way everything else compares a path, because
+                # Windows does not care about case and the journal and OBS do
+                # not agree on it -- see _same_file.
+                if (self._same_file(data.get("source") or "")
+                        == self._same_file(str(source)) and data.get("kills")):
                     return data["kills"]
         except (OSError, ValueError, json.JSONDecodeError):
             pass

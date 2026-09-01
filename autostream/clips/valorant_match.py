@@ -58,6 +58,10 @@ DISAGREE_MAX = 20.0
 # Riot's own name for what made a round notable. These are the values the
 # client sends; the mapping is to the words this app already uses elsewhere so
 # a Valorant clip and a Counter-Strike clip read the same way.
+# Where the local player's id is kept inside a cached record. Prefixed because
+# it is not one of Riot's fields and must not be mistaken for one.
+MINE = "_autostream_puuid"
+
 CEREMONIES = {
     "CeremonyAce": "ACE",
     "CeremonyTeamAce": "TEAM ACE",
@@ -169,6 +173,13 @@ def collect(limit: int = 5) -> list[str]:
         except valorant_api.Unavailable as e:
             log.info("could not read Valorant match %s: %s", mid[:8], e)
             continue
+        # WHOSE RECORD THIS IS, written into it now. The record itself does
+        # not say which player is the local one, and the only thing that knows
+        # is the client the token came from -- which is closed by the time
+        # anything is clipped. Without this the whole route was unusable in the
+        # normal case: every match would line up and then be discarded for not
+        # knowing which of the ten players to read.
+        data[MINE] = sess.puuid
         try:
             target.write_text(json.dumps(data), encoding="utf-8")
         except OSError as e:
@@ -183,23 +194,29 @@ def collect(limit: int = 5) -> list[str]:
 
 
 def puuid_of(match: Match, name_hint: str = "") -> str:
-    """Which player is the local one.
+    """Which player is the local one. -> a puuid, or "" if it cannot be told.
 
-    The record does not say, so it is the one the cache was fetched for -- and
-    the client can be asked for that without the game running only while it is
-    still open. Falls back to the player whose name matches the configured
-    in-game name, which is what the pixel reader already needs anyway.
+    Three ways, cheapest and most reliable first:
+
+    1. What the record was fetched FOR, written into it at the time. This is
+       the normal case and needs nothing running.
+    2. The in-game name, if one is configured. Works for a record copied from
+       somewhere else.
+    3. The client, if it happens to be open. Last because it is a lockfile read
+       and an HTTP call, and because a second account would answer wrongly.
     """
-    try:
-        return valorant_api.session().puuid
-    except valorant_api.Unavailable:
-        pass
+    mine = str(match.data.get(MINE) or "")
+    if mine:
+        return mine
     want = (name_hint or "").strip().lower()
     if want:
         for p in match.data.get("players") or []:
             if str(p.get("gameName") or "").strip().lower() == want:
                 return str(p.get("subject") or "")
-    return ""
+    try:
+        return valorant_api.session().puuid
+    except valorant_api.Unavailable:
+        return ""
 
 
 # ------------------------------------------------------------- the matching
@@ -381,8 +398,11 @@ def state(started: float, seconds: float) -> dict:
     """Whether a match record is on hand for this recording, for the UI."""
     got = for_recording(started, seconds)
     if got:
+        nameless = [m for m in got if not str(m.data.get(MINE) or "")]
         return {"state": "have", "matches": len(got),
-                "ids": [m.id[:8] for m in got]}
+                "ids": [m.id[:8] for m in got],
+                **({"why": f"{len(nameless)} of {len(got)} record(s) do not say "
+                            f"which player you are"} if nameless else {})}
     if valorant_api.available():
         return {"state": "none", "matches": 0, "ids": [],
                 "why": "no match record was cached while this was recorded"}

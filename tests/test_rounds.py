@@ -869,3 +869,67 @@ def test_the_labelled_round_still_leads_the_list():
 def test_min_kills_of_zero_keeps_the_old_labels_only_behaviour():
     rds = [_round(1, 4), _round(2, 0, ["MATCH POINT"])]
     assert [r.number for r in rounds.highlights(rds)] == [2]
+
+
+# ------------------------------------------- the round-type filter's blind spot
+#
+# FROM THE APP. The filter kept a round only if one of its labels matched
+# something the request asked for, and the request asks for the types the page
+# offers. So every label the page did not list was dropped by a filter that had
+# never heard of it -- from the page, always, silently. Runs driven straight
+# from the API kept them, because those send no filter, which is how the
+# difference stayed hidden for as long as it did.
+
+OFFERED_BEFORE = ["ACE", "CLUTCH", "ALMOST", "KILLS", "LAST ALIVE", "K IN",
+                  "CHAOS", "SURVIVED"]
+
+
+def test_a_label_the_choice_cannot_offer_is_never_filtered_out():
+    """How a kill happened is a detail of a round, not a type of round, and is
+    never a switch on the page -- so a list of types must not exclude it."""
+    for label in ("THROUGH SMOKE", "WALLBANG", "NO SCOPE", "KNIFE", "ZEUS"):
+        assert rounds.wanted_by([label], OFFERED_BEFORE), label
+        assert not rounds.filterable([label]), label
+
+
+def test_a_round_with_no_label_is_kept():
+    """It is being cut on its kill count, which is not a type."""
+    assert rounds.wanted_by([], OFFERED_BEFORE)
+    assert rounds.wanted_by([], [])
+
+
+def test_a_type_that_was_deselected_is_still_excluded():
+    assert not rounds.wanted_by(["CLUTCH 1v3"], ["ACE"])
+    assert rounds.wanted_by(["CLUTCH 1v3"], ["ACE", "CLUTCH"])
+
+
+def test_every_choosable_type_is_in_the_filterable_list():
+    """The page's list and this one have to agree, or a type the page offers
+    cannot be excluded, and a type it does not offer gets dropped."""
+    import re
+    from autostream.ui import clips as ui
+
+    block = ui.CLIPS_JS[ui.CLIPS_JS.index("var CLIP_ROUND_TYPES = ["):]
+    block = block[:block.index("];")]
+    keys = re.findall(r"key: '([^']+)'", block)
+    assert keys, "the page offers no round types at all"
+    assert set(keys) <= set(rounds.FILTERABLE), set(keys) - set(rounds.FILTERABLE)
+
+
+def test_nothing_the_app_can_label_is_dropped_by_the_pages_own_default():
+    """The bug, stated as the user would see it: a MATCH POINT round never
+    reached a clip from the page."""
+    import re
+    from autostream.ui import clips as ui
+
+    block = ui.CLIPS_JS[ui.CLIPS_JS.index("var CLIP_ROUND_TYPES = ["):]
+    keys = re.findall(r"key: '([^']+)'", block[:block.index("];")])
+    produced = ["ACE", "TEAM ACE", "CLUTCH 1v5", "ALMOST 1v2", "4 KILLS",
+                "LAST ALIVE", "3K IN 5s", "CHAOS", "SURVIVED THE LOSS",
+                "MATCH POINT", "PISTOL ROUND", "STREAK BREAKER",
+                "FLAWLESS", "THRIFTY", "CLOSER", "THROUGH SMOKE"]
+    dropped = [l for l in produced if not rounds.wanted_by([l], keys)]
+    assert dropped == [], dropped
+    # ...and the old eight-key list is what used to drop them.
+    assert "MATCH POINT" in [l for l in produced
+                             if not rounds.wanted_by([l], OFFERED_BEFORE)]
