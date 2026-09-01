@@ -1048,6 +1048,8 @@ function clip_openPlayer(list, i, folder) {
     folder: folder || '', trim: {in: null, out: null}
   };
   clip_show('clip-player-card', true);
+  /* Not awaited: the panel draws now and the chooser fills itself in when the
+     voices land -- see clip_fillVoiceSelects. */
   clip_loadVoices();
   clip_playerLoad();
   var card = clip_el('clip-player-card');
@@ -1462,6 +1464,15 @@ function clip_fillVoiceSelects() {
   if (why) {
     why.textContent = (clip_state.voices && !clip_state.voices.available)
       ? (clip_state.voices.why || '') : '';
+  }
+  /* The player's own chooser. Filling the voices is a fetch, so the panel is
+     built before they arrive -- and this is what comes back to fill it in.
+     Without it the player said "no voices installed" with 28 of them loaded. */
+  var pv = clip_el('clip-play-voice');
+  if (pv) {
+    var keep = pv.value;
+    pv.innerHTML = clip_voiceOptions(keep);
+    if (keep) pv.value = keep;
   }
   if (!rv) return;
   var sels = document.querySelectorAll('.clip-review-voice');
