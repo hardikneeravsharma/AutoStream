@@ -116,7 +116,7 @@ class Tray:
         # Order matters: the window owns the main thread, so it must be told to
         # go before anything waits on it.
         if self.window is not None:
-            self.window.request_quit()
+            self.window.request_quit("the tray menu")
         self.engine.request_stop()
         if self.icon:
             self.icon.stop()

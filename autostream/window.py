@@ -65,8 +65,18 @@ class MainWindow:
     def request_hide(self) -> None:
         self._hide.set()
 
-    def request_quit(self) -> None:
-        """The only way the window is allowed to close for good."""
+    def request_quit(self, reason: str = "") -> None:
+        """The only way the window is allowed to close for good.
+
+        `reason` is logged. WHY THAT MATTERS: closing the window is vetoed and
+        hides to the tray, so the app only ever exits because something called
+        this -- and nothing said which something. An exit therefore looked
+        identical in the log whether the Quit button was pressed, the tray menu
+        was used, or a shutdown was under way. Working out which cost an hour
+        of reading pywebview's event internals to rule out a veto that had
+        never failed.
+        """
+        log.info("quit requested: %s", reason or "no reason given")
         self._quit = True
         self._show.set()          # wake the worker so it exits promptly
         try:
@@ -186,5 +196,13 @@ class MainWindow:
             return
         # Only here: webview.start() returning means the window really was
         # opened and has really been closed.
-        self._quit = True
-        log.info("native window closed")
+        # A close the user asked for was vetoed and hidden, so reaching here
+        # means either a quit was requested or the window was destroyed from
+        # outside. Saying which is the difference between "expected" and
+        # "something killed the window".
+        if self._quit:
+            log.info("native window closed after a quit was requested")
+        else:
+            log.warning("the native window was destroyed without a quit being "
+                        "requested - the app will exit")
+            self._quit = True

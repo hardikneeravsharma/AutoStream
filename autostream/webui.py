@@ -379,7 +379,7 @@ class _Handler(BaseHTTPRequestHandler):
                     if self.app.engine:
                         self.app.engine.request_stop()
                     if self.app.window:
-                        self.app.window.request_quit()
+                        self.app.window.request_quit("the Quit button in the app")
                 elif self.app.engine:
                     self.app.engine.submit(c)
                 self._json({"ok": True})
