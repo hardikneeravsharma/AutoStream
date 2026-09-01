@@ -808,11 +808,12 @@ class Server:
             prof = profiles.for_game(r.get("game_key"), r.get("game"))
             r["profile"] = prof.label if prof else None
             r["can_scan"] = bool(prof and prof.exists())
-            r["kills_known"] = found.get(r.get("recording_path") or "")
+            here = self._same_file(r.get("recording_path") or "")
+            r["kills_known"] = found.get(here)
             # What a previous run already produced. Cutting a stream again is
             # usually a mistake made for want of knowing it was cut already --
             # eight minutes of scanning to arrive back where you started.
-            made = runs.get(r.get("recording_path") or "")
+            made = runs.get(here)
             r["made_clips"] = made["clips"] if made else 0
             r["made_folder"] = made["folder"] if made else ""
             r["made_when"] = made["when"] if made else 0
@@ -880,6 +881,22 @@ class Server:
             "upload_title": cfg_now.clips.upload_title,
         }
 
+    @staticmethod
+    def _same_file(raw: str) -> str:
+        """One spelling for a path, so two records of it can be compared.
+
+        The history writes a recording as "C:/Users/.../x.mp4" and a run's
+        session.json writes the same file with backslashes instead. Compared
+        as strings they never match, which is why the Clips page could not say
+        how many kills a previous run had found, and later could not say a
+        stream had already been clipped -- both looked up a key that could not
+        exist.
+        """
+        try:
+            return str(Path(raw)).casefold() if raw else ""
+        except (OSError, ValueError):
+            return (raw or "").casefold()
+
     def _kills_by_source(self, config=None) -> dict[str, int]:
         """How many kills a previous run already found per recording, so the
         list can say so and the next run can skip the slowest step.
@@ -893,7 +910,7 @@ class Server:
         try:
             for sidecar in root.glob("*/session.json"):
                 data = json.loads(sidecar.read_text(encoding="utf-8"))
-                src = data.get("source")
+                src = self._same_file(data.get("source") or "")
                 if src:
                     out[src] = max(out.get(src, 0), len(data.get("kills") or []))
         except (OSError, ValueError, json.JSONDecodeError):
@@ -919,7 +936,7 @@ class Server:
                 data = json.loads(sidecar.read_text(encoding="utf-8"))
             except (OSError, ValueError, json.JSONDecodeError):
                 continue
-            src = data.get("source")
+            src = self._same_file(data.get("source") or "")
             if not src or src in out:
                 continue          # a newer run already answered for this one
             folder = sidecar.parent

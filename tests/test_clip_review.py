@@ -143,3 +143,19 @@ def test_a_repeated_typed_line_is_not_dropped(monkeypatch, tmp_path):
     j.said = ["Same line."]
     spoken, _ = j._speak(_Plan(), tmp_path / "clip.mp4", line="Same line.")
     assert spoken == "Same line."
+
+
+# ------------------------------------------------- one spelling for a path
+
+def test_a_path_is_compared_by_what_it_points_at():
+    """The history writes a recording with forward slashes; a run's
+    session.json writes the same file with backslashes. Compared as strings
+    they never match -- which is why the Clips page could say neither how many
+    kills a previous run found nor that a stream had already been clipped."""
+    srv = _server()
+    a = srv._same_file(r"C:/Users/u/Videos/AutoStream/x.mp4")
+    b = srv._same_file(r"C:\Users\u\Videos\AutoStream\x.mp4")
+    assert a == b and a
+    assert srv._same_file("") == ""
+    # Windows does not care about case, and OBS and the journal disagree on it.
+    assert srv._same_file(r"C:\Users\U\X.MP4") == srv._same_file(r"c:/users/u/x.mp4")
