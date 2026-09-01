@@ -389,7 +389,15 @@ def build_rounds(highlights, *, game: str, pre_roll: float = 3.0,
         if end - start < MIN_CLIP:
             continue
 
-        label = rd.labels[0] if rd.labels else "ROUND"
+        # A round cut on its kill count alone has no label, and "ROUND" says
+        # nothing about it. Name it after what it actually holds -- the same way
+        # every other game names a clip -- so a folder of them can be read.
+        if rd.labels:
+            label = rd.labels[0]
+        elif rd.my_kills:
+            label = f"{rd.my_kills} KILLS"
+        else:
+            label = "ROUND"
         plans.append(ClipPlan(
             rank=i, start=start, end=end, kills=rd.my_kills,
             burst_kills=rd.my_kills, peak_score=0.0,

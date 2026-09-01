@@ -799,3 +799,24 @@ def test_the_round_type_filter_does_not_drop_kill_count_rounds():
     # round 1 matches "K IN", round 2 has no label and 2 kills, round 4's only
     # label is CHAOS which was not asked for.
     assert [r.number for r in kept] == [1, 2]
+
+
+def test_a_round_cut_on_kill_count_is_named_after_its_kills():
+    """"ROUND_r12" says nothing about the clip. Every other game names a clip
+    after what it holds, and a round kept for its kill count should too."""
+    from autostream.clips import plan as P
+    from autostream.clips import rounds as R
+
+    def rd(number, kills, labels=()):
+        r = R.Round(number=number, started=number * 100.0,
+                    ended=number * 100.0 + 40, score_before=(0, 0),
+                    score_after=(1, 0), half=1)
+        r.my_kills, r.labels = kills, list(labels)
+        r.kill_times = [number * 100.0 + 10.0] * kills
+        return r
+
+    got = P.build_rounds([rd(3, 2), rd(2, 3, ["3K IN 5s"])], game="CS2",
+                         source_duration=4000.0)
+    names = [p.name for p in got]
+    assert any("2-KILLS_r3" in n for n in names), names
+    assert any("3K-IN-5s_r2" in n for n in names), names
