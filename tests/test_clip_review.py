@@ -159,3 +159,30 @@ def test_a_path_is_compared_by_what_it_points_at():
     assert srv._same_file("") == ""
     # Windows does not care about case, and OBS and the journal disagree on it.
     assert srv._same_file(r"C:\Users\U\X.MP4") == srv._same_file(r"c:/users/u/x.mp4")
+
+
+# --------------------------------------------- the voice chooser gets filled
+
+def test_every_voice_chooser_is_filled_by_the_same_function():
+    """FROM THE APP: the player said "no voices installed" with 28 of them
+    loaded. Fetching the voices is async, so a panel is drawn before they
+    arrive and has to be filled in when they land -- and the function that
+    does that filled the review panel's choosers and not the player's.
+
+    Structural rather than behavioural, because there is no browser here: every
+    <select> that offers voices must be named inside clip_fillVoiceSelects.
+    """
+    from autostream.ui import clips as ui
+
+    js = ui.CLIPS_JS
+    start = js.index("function clip_fillVoiceSelects()")
+    body = js[start:js.index("\nasync function clip_loadVoices", start)]
+    # The player's chooser and the review rows' choosers.
+    assert "clip-play-voice" in body
+    assert "clip-review-voice" in body
+    assert "clip-review-voice-all" in body
+
+    # ...and every chooser in the markup is one of those three.
+    html = ui.CLIPS_HTML
+    for token in ("clip-play-voice", "clip-review-voice-all"):
+        assert f'id="{token}"' in html, token
