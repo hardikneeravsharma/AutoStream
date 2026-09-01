@@ -96,6 +96,12 @@ class Profile:
     # are what locates the demo inside the recording, but nothing it reports
     # survives into the clips once a demo has aligned.
     demos: bool = False
+    # True when the game keeps a SERVER-SIDE record of the match that can be
+    # fetched instead of read off the screen. Valorant does: see
+    # clips/valorant_match.py. Like `demos`, the detector still runs, because
+    # its kill times are what confirm where the match sits in the recording --
+    # but nothing it reports survives once a record has lined up.
+    matches: bool = False
     # HUD regions, as fractions of the frame. Empty means use the measured
     # defaults in clips/hud.py; stored per profile because HUD SCALE is a user
     # setting and the defaults were measured at one person's.
@@ -249,6 +255,8 @@ class Profile:
                 out["rounds"] = True
             if self.demos:
                 out["demos"] = True
+            if self.matches:
+                out["matches"] = True
             if self.hud_regions:
                 out["hud_regions"] = {k: list(v)
                                       for k, v in self.hud_regions.items()}
@@ -370,6 +378,10 @@ BUILTIN: dict[str, dict[str, Any]] = {
     "valorant-win64-shipping.exe": {
         "label": "VALORANT",
         "mode": "feedbar",
+        # The round layer comes from the match record, never from the screen:
+        # `rounds` here would send the scan down Counter-Strike's scoreboard
+        # reader, which knows nothing about Valorant's HUD.
+        "matches": True,
         "band": [0.50, 0.070, 1.00, 0.235],
         "template": "",
         "ref_height": 1080,
@@ -503,6 +515,7 @@ def _build(key: str, raw: dict) -> Profile | None:
             match_ratio=float(raw.get("match_ratio", 0.72)),
             rounds=bool(raw.get("rounds", False)),
             demos=bool(raw.get("demos", False)),
+            matches=bool(raw.get("matches", False)),
             hud_hue=float(raw.get("hud_hue", 0.0)),
             hud_regions={str(k): [float(v) for v in vals]
                          for k, vals in (raw.get("hud_regions") or {}).items()},

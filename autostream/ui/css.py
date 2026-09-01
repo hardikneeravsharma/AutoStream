@@ -2210,6 +2210,94 @@ ol.steps-list li{margin-block:var(--space-4)}
 .clip-verdict.is-weak{border-left-color:var(--warn)}
 .clip-verdict.is-bad{border-left-color:var(--danger)}
 
+/* ------------------------------------------------------------- the player
+
+   Video on the left at whatever aspect the clip is, everything about the clip
+   on the right. A vertical clip is tall, so the stage is capped by HEIGHT
+   rather than width -- capped by width it would run off the bottom of a
+   1120-wide window and the controls would be unreachable. */
+.clip-play-body{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 20rem;
+  gap:var(--space-5);
+  align-items:start;
+}
+.clip-play-left{display:flex;flex-direction:column;gap:var(--space-3);min-width:0}
+.clip-play-stage{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:#000;
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  overflow:hidden;
+  max-height:62vh;
+}
+.clip-play-stage:fullscreen{max-height:none;border:0;border-radius:0}
+#clip-video{max-width:100%;max-height:62vh;display:block}
+.clip-play-stage:fullscreen #clip-video{max-height:100vh}
+
+.clip-play-bar{
+  display:flex;
+  align-items:center;
+  gap:var(--space-2);
+  flex-wrap:wrap;
+  padding:var(--space-2) var(--space-3);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  background:var(--surface-sunken);
+}
+.btn-icon{
+  min-width:2.2rem;
+  padding:.3rem .5rem;
+  font-size:1rem;
+  line-height:1;
+}
+.clip-play-time{flex:0 0 auto;font-size:var(--font-sm);color:var(--text-muted)}
+.clip-play-seek{flex:1 1 8rem;min-width:6rem;accent-color:var(--accent)}
+.clip-play-vol{flex:0 0 4.5rem;accent-color:var(--accent)}
+.clip-play-speed{flex:0 0 5.5rem;max-width:5.5rem}
+
+.clip-play-right{display:flex;flex-direction:column;gap:var(--space-3)}
+.clip-play-h{
+  margin:0 0 var(--space-2);
+  font-size:var(--font-sm);
+  font-weight:600;
+  color:var(--text-muted);
+  text-transform:uppercase;
+  letter-spacing:.04em;
+}
+/* Two columns so the values line up; the labels are short by design. */
+.clip-play-info{
+  display:grid;
+  grid-template-columns:5.5rem minmax(0,1fr);
+  gap:.2rem var(--space-2);
+  margin:0;
+  font-size:var(--font-sm);
+}
+.clip-play-info dt{color:var(--text-muted)}
+.clip-play-info dd{margin:0;overflow-wrap:anywhere}
+.clip-play-apply{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:var(--space-2);
+  flex-wrap:wrap;
+}
+
+/* ------------------------------------------- clips a run already produced */
+.clip-made-list{display:flex;flex-direction:column}
+.clip-made-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto auto;
+  gap:var(--space-3);
+  align-items:center;
+  padding:var(--space-2) 0;
+  border-top:1px solid var(--border);
+}
+.clip-made-row:first-child{border-top:0}
+.clip-made-name{font-weight:600;overflow-wrap:anywhere}
+
 /* ---------------------------------------- reviewing a plan before cutting
 
    A still from the recording is the only thing that says WHICH moment a row
@@ -2261,6 +2349,8 @@ ol.steps-list li{margin-block:var(--space-4)}
   .clip-row-when{display:none}
   .clip-review-row{grid-template-columns:minmax(0,1fr)}
   .clip-review-thumb{width:100%}
+  .clip-play-body{grid-template-columns:minmax(0,1fr)}
+  .clip-made-row{grid-template-columns:minmax(0,1fr) auto}
 }
 
 /* <480px: the library row becomes a single stack. */

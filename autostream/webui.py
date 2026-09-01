@@ -186,6 +186,79 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             self.app.request_finished()
 
+    def _video(self, path: str) -> None:
+        """Stream one clip to a <video> tag, honouring Range.
+
+        RANGE IS NOT OPTIONAL HERE. Without it the browser can play a clip from
+        the start and nothing else: dragging the scrub bar, stepping a frame,
+        or starting anywhere but zero all need a byte range, and a player that
+        cannot seek is not a player. Chrome also re-requests the tail of an mp4
+        to find the moov atom before it will play at all.
+        """
+        p = Path(path)
+        # Only ever inside the clips folder. The page builds these paths, but
+        # the page is not the only thing that can call this.
+        root = self.app._clips_dir(cfg.load()).resolve()
+        try:
+            if not p.resolve().is_relative_to(root):
+                self._json({"error": "That file is not in the clips folder."}, 403)
+                return
+        except OSError:
+            self._json({"error": "No such file."}, 404)
+            return
+        if not p.is_file() or p.suffix.lower() not in (".mp4", ".m4v", ".webm"):
+            self._json({"error": "No such clip."}, 404)
+            return
+
+        size = p.stat().st_size
+        ctype = "video/webm" if p.suffix.lower() == ".webm" else "video/mp4"
+        rng = self.headers.get("Range", "")
+        start, end = 0, size - 1
+        partial = False
+        if rng.startswith("bytes="):
+            spec = rng[6:].split(",")[0].strip()
+            lo, _, hi = spec.partition("-")
+            try:
+                if lo:
+                    start = int(lo)
+                    end = int(hi) if hi else size - 1
+                elif hi:                      # "bytes=-500": the last 500
+                    start = max(0, size - int(hi))
+                partial = True
+            except ValueError:
+                partial = False
+        if start >= size:
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        end = min(end, size - 1)
+        length = end - start + 1
+
+        self.send_response(206 if partial else 200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(length))
+        self.send_header("Accept-Ranges", "bytes")
+        if partial:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        # A clip is rewritten in place when it is edited, so it must not be
+        # cached: the player would keep showing the version before the edit.
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        try:
+            with p.open("rb") as fh:
+                fh.seek(start)
+                left = length
+                while left > 0:
+                    chunk = fh.read(min(1 << 16, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass          # the page seeked away or closed the player
+
     def do_GET(self):
         u = urlparse(self.path)
         if not self._authed(u.query):
@@ -227,6 +300,7 @@ class _Handler(BaseHTTPRequestHandler):
                 # one payload shape whether or not an engine exists.
                 self._json({"phase": "IDLE", "apps": self.app.apps_payload(),
                             "clips": self.app._clips_status(),
+                            "edit": self.app._edit_status(),
                             "upload": self.app._upload_status()})
                 return
             self.app.engine.client_seen = time.monotonic()
@@ -246,6 +320,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.app.clips_games())
         elif u.path == "/api/clips/sessions":
             self._json(self.app.clips_sessions())
+        elif u.path == "/api/clips/video":
+            q = parse_qs(u.query)
+            self._video((q.get("path") or [""])[0])
+        elif u.path == "/api/clips/existing":
+            q = parse_qs(u.query)
+            self._json(self.app.clips_existing((q.get("folder") or [""])[0]))
         elif u.path == "/api/clips/voices":
             self._json(self.app.clips_voices())
         elif u.path == "/api/clips/voice_sample":
@@ -363,6 +443,8 @@ class _Handler(BaseHTTPRequestHandler):
             # Every one of these returns immediately. The actual work runs on a
             # worker thread and reports through /api/status, which the shell is
             # already polling - see clips/jobs.py.
+            elif p == "/api/clips/edit":
+                self._json(self.app.clips_edit(b))
             elif p == "/api/clips/preview":
                 b["plan_only"] = True
                 self._json(self.app.clips_run(b))
@@ -642,6 +724,7 @@ class Server:
             # The Clips page rides this poll rather than having its own. It
             # costs nothing when idle and means progress survives a reload.
             "clips": self._clips_status(),
+            "edit": self._edit_status(),
             "upload": self._upload_status(),
             **self._phase_clock(),
         }
@@ -720,11 +803,19 @@ class Server:
         rows = history.annotate(history.read(limit=200))
         table = profiles.load_all()
         found = self._kills_by_source(cfg_now)
+        runs = self._runs_by_source(cfg_now)
         for r in rows:
             prof = profiles.for_game(r.get("game_key"), r.get("game"))
             r["profile"] = prof.label if prof else None
             r["can_scan"] = bool(prof and prof.exists())
             r["kills_known"] = found.get(r.get("recording_path") or "")
+            # What a previous run already produced. Cutting a stream again is
+            # usually a mistake made for want of knowing it was cut already --
+            # eight minutes of scanning to arrive back where you started.
+            made = runs.get(r.get("recording_path") or "")
+            r["made_clips"] = made["clips"] if made else 0
+            r["made_folder"] = made["folder"] if made else ""
+            r["made_when"] = made["when"] if made else 0
             # Games can only be counted, not distinguished from assists.
             r["counts_assists"] = bool(prof and prof.counts_assists)
             # How this game's kills are found, so the page can say. "killfeed"
@@ -751,6 +842,18 @@ class Server:
                 r["has_demo"] = got["state"] == "have"
             else:
                 r["has_demo"] = None
+            # The same question for a game that keeps a server-side record
+            # instead of writing a replay file.
+            if prof and getattr(prof, "matches", False):
+                from .clips import valorant_match
+
+                got = valorant_match.state(float(r.get("started") or 0),
+                                           float(r.get("rec_seconds") or 0))
+                r["match_state"] = got["state"]
+                r["match_count"] = got["matches"]
+                r["match_why"] = got.get("why", "")
+            else:
+                r["match_state"] = None
             # So the calibrator can prefill it rather than asking again.
             r["player"] = (prof.player if prof else "") or                 profiles.username_for(r.get("game_key"), r.get("game"))
             # No profile yet? Hand the calibrator a starting box so the user is
@@ -796,6 +899,61 @@ class Server:
         except (OSError, ValueError, json.JSONDecodeError):
             pass
         return out
+
+    def _runs_by_source(self, config=None) -> dict[str, dict]:
+        """The NEWEST finished run per recording. -> {source: {folder, clips, when}}
+
+        Newest by modification time, for the same reason the kill cache is --
+        see _cached_kills. The oldest run of a recording is the one whose
+        clips are most likely to be wrong.
+        """
+        out: dict[str, dict] = {}
+        root = self._clips_dir(config or cfg.load())
+        try:
+            sidecars = sorted(root.glob("*/session.json"),
+                              key=lambda f: f.stat().st_mtime, reverse=True)
+        except OSError:
+            return out
+        for sidecar in sidecars:
+            try:
+                data = json.loads(sidecar.read_text(encoding="utf-8"))
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            src = data.get("source")
+            if not src or src in out:
+                continue          # a newer run already answered for this one
+            folder = sidecar.parent
+            made = 0
+            try:
+                made = len(list((folder / "vertical").glob("*.mp4"))) or \
+                    len(list((folder / "clips").glob("*.mp4")))
+            except OSError:
+                pass
+            if made:
+                out[src] = {"folder": str(folder), "clips": made,
+                            "when": int(sidecar.stat().st_mtime)}
+        return out
+
+    def clips_existing(self, folder: str) -> dict:
+        """One finished run's clips, for looking at before cutting again."""
+        if not folder:
+            return {"error": "No folder given."}
+        f = Path(folder)
+        man, sess = f / "clips.json", f / "session.json"
+        if not man.exists():
+            return {"error": "That run has no clip list."}
+        try:
+            data = json.loads(man.read_text(encoding="utf-8"))
+            plan = json.loads(sess.read_text(encoding="utf-8")) if sess.exists() else {}
+        except (OSError, ValueError, json.JSONDecodeError) as e:
+            return {"error": f"Could not read that run: {e}"}
+        clips = data if isinstance(data, list) else (data.get("clips") or [])
+        return {"ok": True, "folder": str(f),
+                "source": plan.get("source", ""),
+                "game": plan.get("game", ""),
+                "when": int(man.stat().st_mtime),
+                "montage": (data or {}).get("montage") if isinstance(data, dict) else None,
+                "clips": clips}
 
     def _last_manifest(self, config) -> dict | None:
         """The most recent finished run's clip list, read from its folder.
@@ -966,6 +1124,71 @@ class Server:
         from . import clips
 
         return {"ok": clips.runner().cancel()}
+
+    def _edit_status(self) -> dict:
+        from .clips import edit as edit_mod
+
+        return edit_mod.editor().snapshot()
+
+    def clips_edit(self, body: dict) -> dict:
+        """Re-render one already-cut clip with new settings."""
+        from . import clips
+        from .clips import edit as edit_mod
+
+        c = cfg.load()
+        clips.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+        st = clips.status()
+        if not st["ok"]:
+            return {"error": st["detail"] or "ffmpeg or numpy is missing."}
+
+        folder = Path(str(body.get("folder") or ""))
+        name = str(body.get("name") or "")
+        if not folder.is_dir() or not name:
+            return {"error": "Which clip? A folder and a clip name are needed."}
+        try:
+            if not folder.resolve().is_relative_to(
+                    self._clips_dir(c).resolve()):
+                return {"error": "That folder is not in the clips folder."}
+        except OSError:
+            return {"error": "That folder is gone."}
+
+        ed = edit_mod.editor()
+        if ed.busy():
+            return {"error": "Another clip is being re-rendered."}
+        runner = clips.runner()
+        if runner.busy():
+            return {"error": "A clip job is running; wait for it to finish."}
+
+        def _flag(key):
+            v = body.get(key)
+            return None if v is None else bool(v)
+
+        def _num(key):
+            v = body.get(key)
+            try:
+                return None if v is None or v == "" else float(v)
+            except (TypeError, ValueError):
+                return None
+
+        mode = str(body.get("vertical_mode") or "") or None
+        if mode is not None and mode not in ("crop", "fit"):
+            return {"error": "A vertical is either cropped or fitted."}
+
+        spec = edit_mod.Spec(
+            folder=folder, name=name,
+            caption=_flag("caption"),
+            caption_text=(None if body.get("caption_text") is None
+                          else str(body["caption_text"])),
+            speak=_flag("voice"),
+            voice_text=(None if body.get("voice_text") is None
+                        else str(body["voice_text"])),
+            voice_name=str(body.get("voice_name") or "") or None,
+            vertical_mode=mode,
+            trim_start=_num("trim_start"), trim_end=_num("trim_end"))
+        if not ed.start(spec):
+            return {"error": "Another clip is being re-rendered."}
+        log.info("re-rendering %s in %s", name, folder.name)
+        return {"ok": True, "name": name}
 
     def clips_voices(self) -> dict:
         """The voices installed, grouped, so one can be chosen by ear."""

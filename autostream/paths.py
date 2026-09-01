@@ -37,6 +37,13 @@ VIDEO_HOME = Path(os.environ.get("AUTOSTREAM_VIDEO_HOME",
 # which game was played on which broadcast.
 HISTORY_FILE = VIDEO_HOME / "history.jsonl"
 
+# VALORANT's own record of each match, fetched while the game is running and
+# read when the recording is clipped -- see clips/valorant_match.py. Beside the
+# recordings for the same reason the history is: it describes a recording, it
+# cannot be fetched again once the client has closed, and a rebuild deletes
+# anything inside the application folder.
+MATCHES_DIR = VIDEO_HOME / "matches"
+
 # Optional model downloads -- currently the Kokoro voice for spoken hooks.
 #
 # Outside ROOT for the same reason as everything else here: a frozen build's
