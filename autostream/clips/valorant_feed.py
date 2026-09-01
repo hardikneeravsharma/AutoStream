@@ -501,6 +501,15 @@ class Event:
             self.end = self.time
 
 
+def _contradicts(track: dict, row: "Row") -> bool:
+    """Does this sighting say something the track's settled verdict rules out?
+
+    Only a DIFFERENT hard verdict does. "other" and "assist" are what a frame
+    says when it could not read the yellow, so they never contradict anything.
+    """
+    return row.kind in ("kill", "death") and track["hard"] != row.kind
+
+
 def collapse(seen: list[Row], min_seen: int = MIN_SEEN) -> list[Event]:
     """Sightings -> events. One row on screen becomes exactly one event."""
     tracks: list[dict] = []
@@ -526,8 +535,16 @@ def collapse(seen: list[Row], min_seen: int = MIN_SEEN) -> list[Event]:
             # out labelled "2 kills". Restricted to a track already holding the
             # same hard verdict, so a stale "other" track still cannot absorb a
             # kill that has just moved into its slot (see the note above).
+            # The verdict test is on the TRACK, not on the frame. A frame that
+            # failed to find the yellow reads "other" or "assist", and the
+            # frames on which a row MOVES are exactly the degraded ones: FROM
+            # FOOTAGE at 1h27m07s the whole feed slid up one pitch and both of
+            # the player's kill rows read "assist" in that single frame.
+            # Insisting the row agree meant nothing could bridge it, both
+            # tracks were stranded, and the row that slid into the vacated slot
+            # was taken for the row that had been sitting there.
             slid_up = (r.time - t["last"] <= SETTLE_GAP
-                       and t["hard"] is not None and t["hard"] == r.kind
+                       and t["hard"] is not None and not _contradicts(t, r)
                        and 0 < t["y0"] - r.y0 <= PITCH + JOIN_GAP)
             # A row STAYING PUT is the same row, whatever its left edge does.
             # That edge is the start of the longest solid run and it is not
@@ -543,7 +560,7 @@ def collapse(seen: list[Row], min_seen: int = MIN_SEEN) -> list[Event]:
             # match, so a stale "other" track cannot swallow a new kill.
             held = (r.time - t["last"] <= MAX_GAP
                     and abs(t["y0"] - r.y0) <= SLOT_TOL
-                    and t["hard"] is not None and t["hard"] == r.kind)
+                    and t["hard"] is not None and not _contradicts(t, r))
             if abs(t["x0"] - r.x0) > X_TOL and not (same_spot or slid_up
                                                     or held):
                 continue
@@ -583,9 +600,49 @@ def collapse(seen: list[Row], min_seen: int = MIN_SEEN) -> list[Event]:
         # Preferring the track whose settled verdict already matches, and then
         # the one seen most recently, resolves it: the kill's own track had been
         # seen in the previous frame, while the expiring row had not.
+        # ...and GEOMETRY BEFORE THE LEFT EDGE. Rows are processed top-first
+        # within a frame and a track can only take one row per frame, so when
+        # the whole feed slides up at once the assignment is decided by which
+        # track each row is offered to first. Ranking on the left edge got that
+        # backwards: FROM FOOTAGE at 1h27m, two of the player's kill rows slid
+        # up together, the lower row's track had the closer edge to the upper
+        # row, took it, and the row it should have taken started a track of its
+        # own -- one kill reported twice, 3.5s apart, and a clip cut as four
+        # kills holding three.
+        #
+        # A row moves up by a whole pitch or not at all, so how far a candidate
+        # is from explaining this row's position is the reliable signal; x0 is
+        # the one that wanders 74px between frames.
+        def _slide_error(t) -> int:
+            # Staying put beats sliding by a pitch, because a row only moves
+            # when the row above it expires -- so when both explain a position,
+            # the one that did not have to move is the true one.
+            #
+            # A row jitters a few scanlines where it sits, so any wander inside
+            # SLOT_TOL is a perfect stay, and a slide has to cost more than the
+            # worst possible jitter. FROM FOOTAGE at 28m14s the top row was
+            # measured 2px from where it had been; at a penalty of 1 that read
+            # as WORSE than a full pitch of movement, so the kill row's track
+            # took the top row and its own row started a second track.
+            dy = t["y0"] - r.y0
+            stay = 0 if abs(dy) <= SLOT_TOL else abs(dy)
+            slid = abs(dy - PITCH) + SLOT_TOL + 1
+            return min(stay, slid)
+
         if cands:
-            t = max(cands, key=lambda t: (t["hard"] == r.kind, t["last"],
+            # GEOMETRY BEFORE RECENCY. Ranking "seen most recently" first meant
+            # a track whose own row was missed for one frame lost that row to a
+            # neighbour on the next: FROM FOOTAGE at 1h27m09s the upper of the
+            # player's two kill rows was skipped in one frame, the lower row's
+            # track was therefore the more recent, and it took the upper row --
+            # stranding its own, which started a second track. One kill counted
+            # twice and a clip cut as four kills holding three.
+            t = max(cands, key=lambda t: (t["hard"] == r.kind,
+                                          -_slide_error(t), t["last"],
                                           -abs(t["x0"] - r.x0)))
+            log.debug("t=%.2f y0=%3d x0=%3d %-6s -> track t0=%.2f (y0=%3d, "
+                      "%d cand)", r.time, r.y0, r.x0, r.kind, t["t0"],
+                      t["y0"], len(cands))
             t["last"] = r.time
             t["y0"] = r.y0
             t["x0"] = r.x0
@@ -594,6 +651,8 @@ def collapse(seen: list[Row], min_seen: int = MIN_SEEN) -> list[Event]:
             if r.kind in ("kill", "death"):
                 t["hard"] = r.kind
         else:
+            log.debug("t=%.2f y0=%3d x0=%3d %-6s -> NEW TRACK", r.time, r.y0,
+                      r.x0, r.kind)
             tracks.append({"t0": r.time, "last": r.time, "y0": r.y0,
                            "x0": r.x0, "kinds": [r.kind],
                            "victims": [r.victim],
