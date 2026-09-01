@@ -73,6 +73,21 @@ datas = []
 datas += collect_data_files("googleapiclient",
                             includes=["discovery_cache/documents/*.json"])
 datas += collect_data_files("certifi")
+# kokoro-onnx reads its own config.json out of its package directory, and the
+# voice model is loaded from it -- so without this the packaged build can load
+# the 177 MB model and then fail to tell you which voices are in it. Same trap
+# as numpy, pytesseract and demoparser2: a data file nothing imports.
+# ...and espeakng_loader carries the phoneme data and the DLL that turns the
+# words into sounds, in a directory nothing imports either. 18 MB, and without
+# it a packaged build loads the model and then fails on every line it is asked
+# to say -- which is how the spoken hooks came to work only in development.
+try:
+    datas += collect_data_files("kokoro_onnx", includes=["*.json"])
+    datas += collect_data_files("espeakng_loader",
+                                includes=["espeak-ng-data/**", "*.dll"])
+except Exception:                           # noqa: BLE001 - optional feature
+    print("NOTE: kokoro-onnx is not installed, so this build cannot speak. "
+          "Everything else is unaffected.")
 for _pkg in ("webview",):
     try:
         datas += collect_data_files(_pkg)

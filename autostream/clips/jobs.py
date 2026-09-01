@@ -39,6 +39,12 @@ log = logging.getLogger("autostream.clips.jobs")
 
 STEPS = ("scan", "cut", "vertical", "montage")
 
+# Per-clip settings are keyed on the clip's START, to a tenth of a second.
+# Not on its index: the list is re-planned between reviewing it and cutting
+# it, and a rank can move. Not on its name either -- the name carries the rank.
+def clip_key(start: float) -> str:
+    return f"{float(start):.1f}"
+
 
 def _kill_tags(kill) -> list[str]:
     """What was remarkable about one demo kill, for the caption layer."""
@@ -109,6 +115,10 @@ class ClipJob:
         # with the same sentence.
         self.said: list[str] = []
         self.summary: dict = {}
+        # In plan_only mode, what WOULD be cut: one entry per clip, with the
+        # caption and spoken line it would get, so the choice can be made on
+        # the real thing rather than on a description of it.
+        self.preview: list[dict] = []
         # Filled in when a demo aligned: which one, and how the detector scored
         # against it. Recorded because it is the only place the detector's
         # accuracy is ever actually measured.
@@ -146,6 +156,7 @@ class ClipJob:
                 "reel": self.reel_path,
                 "promo": self.promo_path,
                 "summary": dict(self.summary),
+                "preview": list(self.preview),
                 "elapsed": int(time.time() - self.started_at),
                 "source": self.source.name,
             }
@@ -434,7 +445,60 @@ class ClipJob:
                 for r in round_list]} if round_list else {}),
         }, indent=2), encoding="utf-8")
 
+        # ---- 2b. stop here if the plan is all that was asked for ---------
+        if opt.get("plan_only"):
+            marks = self._tags(kills, True)
+            said: list[str] = []
+            rows = []
+            for i, pl in enumerate(plans):
+                inside = [k for k in kills
+                          if pl.start <= float(k["time"]) <= pl.end]
+                extra = sorted({t for k in inside
+                                for t in marks.get(float(k["time"]), [])})
+                line = voice.line_for(pl, avoid=said)
+                if line:
+                    said.append(line)
+                rows.append({
+                    "index": i, "key": clip_key(pl.start),
+                    "name": pl.name, "start": round(pl.start, 2),
+                    "end": round(pl.end, 2),
+                    "duration": round(pl.end - pl.start, 2),
+                    "kills": int(getattr(pl, "kills", 0)),
+                    "labels": list(getattr(pl, "labels", []) or []),
+                    "round": getattr(pl, "round", None),
+                    "caption": overlay.caption_for(pl, inside, extra),
+                    "voice_line": line,
+                    # Where to grab a still from: a moment INTO the clip, not
+                    # its first frame, which is the run-up and often a wall.
+                    "thumb_at": round(min(pl.end - 0.5,
+                                          pl.start + (pl.end - pl.start) * 0.6), 2),
+                })
+            self._set(preview=rows, step="scan", done=1, total=1,
+                      message=f"{len(rows)} clip(s) ready to review")
+            data = json.loads((self.folder / "session.json").read_text(
+                encoding="utf-8"))
+            data["preview"] = rows
+            (self.folder / "session.json").write_text(
+                json.dumps(data, indent=2), encoding="utf-8")
+            log.info("plan only: %d clip(s) ready to review", len(rows))
+            # Nothing was encoded, so leave nothing behind. The plan itself
+            # lives in this job's status, which is what the page reads.
+            try:
+                for f in self.folder.iterdir():
+                    if f.is_file() and f.name in ("session.json", "clips.json"):
+                        f.unlink()
+                self.folder.rmdir()
+            except OSError:
+                pass          # something else is in there; leave it alone
+            return
+
         # ---- 3. cut ------------------------------------------------------
+        raw_per_clip = opt.get("per_clip") or {}
+        per_clip = {str(k): v for k, v in raw_per_clip.items()
+                    if isinstance(v, dict)}
+        if per_clip:
+            log.info("%d clip(s) carry their own caption or voice settings",
+                     len(per_clip))
         enc = opt.get("encoder", "auto")
         vmode = opt.get("vertical_mode", "crop")
         want_vertical = vmode not in ("none", "", None)
@@ -465,17 +529,7 @@ class ClipJob:
             # Tag detection runs once for the whole session, at the kill
             # timestamps already known -- a few dozen frames, not the whole
             # recording.
-            marks: dict[float, list[str]] = {}
-            if opt.get("captions", True):
-                try:
-                    marks = overlay.detect_tags(
-                        self.source, [float(k["time"]) for k in kills],
-                        self.game_key, self.game)
-                    if marks:
-                        log.info("tagged %d kill(s): %s", len(marks),
-                                 sorted({t for v in marks.values() for t in v}))
-                except Exception as e:  # noqa: BLE001 - a caption is not worth failing over
-                    log.warning("tag detection failed: %s", e)
+            marks = self._tags(kills, bool(opt.get("captions", True)))
 
             for i, m in enumerate(masters):
                 self._check()
@@ -488,19 +542,28 @@ class ClipJob:
                 # it in this order also encodes the clip ONCE: the overlay pass
                 # burns everything, and the audio mix afterwards copies the
                 # video straight through.
+                # WHAT THIS CLIP WAS TOLD TO DO, if anything. Reviewing the
+                # plan lets each clip be given its own caption, its own spoken
+                # line, its own voice, or none of them -- so the switches in
+                # the request are only the default for a clip nobody decided
+                # about. Keyed on the start time; see clip_key.
+                mine = per_clip.get(clip_key(plans[i].start), {})
                 spoken, speech = "", None
-                if v and opt.get("voice"):
+                if v and bool(mine.get("voice", opt.get("voice"))):
                     # `avoid` is what has already been said in this session.
                     # Two clutches in one reel saying the same sentence is the
                     # one thing a viewer notices immediately.
-                    spoken, speech = self._speak(plans[i], v)
-                if v and opt.get("captions", True):
+                    spoken, speech = self._speak(
+                        plans[i], v, line=str(mine.get("voice_text") or ""),
+                        name=str(mine.get("voice_name") or ""))
+                if v and bool(mine.get("caption", opt.get("captions", True))):
                     p = plans[i]
                     inside = [k for k in kills
                               if p.start <= float(k["time"]) <= p.end]
                     extra = sorted({t for k in inside
                                     for t in marks.get(float(k["time"]), [])})
-                    cap = overlay.caption_for(p, inside, extra)
+                    cap = (str(mine.get("caption_text") or "").strip()
+                           or overlay.caption_for(p, inside, extra))
                     self.results[i]["caption"] = cap
                     self.results[i]["tags"] = extra
                     try:
@@ -588,7 +651,28 @@ class ClipJob:
         if music and Path(music).is_file() and len(plans) > 1:
             self._reel(Path(music), plans, kills, enc)
 
-    def _speak(self, plan, clip: Path):
+    def _tags(self, kills, wanted: bool) -> dict[float, list[str]]:
+        """Kill circumstances read off the frames, for the captions.
+
+        A few dozen frames at the kill timestamps already known, not the whole
+        recording. Never worth failing a run over: a caption without its tags
+        is still a caption.
+        """
+        if not wanted:
+            return {}
+        try:
+            marks = overlay.detect_tags(
+                self.source, [float(k["time"]) for k in kills],
+                self.game_key, self.game)
+            if marks:
+                log.info("tagged %d kill(s): %s", len(marks),
+                         sorted({t for v in marks.values() for t in v}))
+            return marks
+        except Exception as e:  # noqa: BLE001
+            log.warning("tag detection failed: %s", e)
+            return {}
+
+    def _speak(self, plan, clip: Path, *, line: str = "", name: str = ""):
         """The hook for one clip, synthesised but not yet mixed in.
 
         -> (what it says, the Speech) or ("", None). Split out from the mixing
@@ -596,8 +680,11 @@ class ClipJob:
         pass runs, and because a failure here must cost the hook and not the
         clip.
         """
-        name = str(self.options.get("voice_name") or voice.VOICE)
-        said = voice.line_for(plan, avoid=self.said)
+        name = name or str(self.options.get("voice_name") or voice.VOICE)
+        # A line typed for THIS clip wins over anything generated, and is not
+        # held to `avoid`: if someone wrote the same sentence twice they meant
+        # it, and silently dropping their words would be worse than a repeat.
+        said = line.strip() or voice.line_for(plan, avoid=self.said)
         if not said:
             return "", None
         if not voice.available():

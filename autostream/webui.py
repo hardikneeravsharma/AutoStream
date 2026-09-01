@@ -192,7 +192,21 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(403, b"Add ?k=<token>. See the AutoStream log.",
                        "text/plain; charset=utf-8")
             return
+        try:
+            self._get(u)
+        except Exception as e:  # noqa: BLE001 - never fail silently at the user
+            # WITHOUT THIS A FAILING GET IS INVISIBLE. do_POST has logged its
+            # failures since it was written; do_GET did not, so an exception
+            # went to the base handler, which writes to a stderr a windowed
+            # build does not have and then drops the connection. The browser
+            # sees "connection closed" and the log says nothing at all.
+            log.exception("GET %s failed: %s", u.path, e)
+            try:
+                self._json({"error": str(e)}, 500)
+            except Exception:  # noqa: BLE001 - the socket is already gone
+                pass
 
+    def _get(self, u):
         if u.path in ("/", "/index.html"):
             self._send(200, page(self.app.theme_id()).encode("utf-8"),
                        "text/html; charset=utf-8")
@@ -232,6 +246,16 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.app.clips_games())
         elif u.path == "/api/clips/sessions":
             self._json(self.app.clips_sessions())
+        elif u.path == "/api/clips/voices":
+            self._json(self.app.clips_voices())
+        elif u.path == "/api/clips/voice_sample":
+            q = parse_qs(u.query)
+            wav, err = self.app.voice_sample(
+                (q.get("name") or [""])[0], (q.get("line") or [""])[0])
+            if err:
+                self._json({"error": err}, 400)
+            else:
+                self._send(200, wav, "audio/wav")
         elif u.path == "/api/clips/frame":
             q = parse_qs(u.query)
             png, err = self.app.clip_frame(
@@ -339,6 +363,9 @@ class _Handler(BaseHTTPRequestHandler):
             # Every one of these returns immediately. The actual work runs on a
             # worker thread and reports through /api/status, which the shell is
             # already polling - see clips/jobs.py.
+            elif p == "/api/clips/preview":
+                b["plan_only"] = True
+                self._json(self.app.clips_run(b))
             elif p == "/api/clips/run":
                 self._json(self.app.clips_run(b))
             elif p == "/api/clips/upload":
@@ -878,6 +905,18 @@ class Server:
         if marks:
             opt["marks"] = [m for m in marks if isinstance(m, dict)][:300]
 
+        # Per-clip caption and voice settings, from reviewing the plan. Keyed
+        # on the clip's start time to a tenth of a second -- see jobs.clip_key.
+        per = body.get("per_clip")
+        if isinstance(per, dict):
+            opt["per_clip"] = {str(k): v for k, v in list(per.items())[:200]
+                               if isinstance(v, dict)}
+        if body.get("plan_only"):
+            # Plan and stop, so the clips can be reviewed before any encoding
+            # happens. Everything else about the run is identical, which is
+            # what makes the review honest: the same plan gets cut.
+            opt["plan_only"] = True
+
         cached = self._cached_kills(path, c)
         if cached and not body.get("rescan") and not opt.get("rounds"):
             # Not reused in round mode: the cache holds kills, and a round also
@@ -927,6 +966,56 @@ class Server:
         from . import clips
 
         return {"ok": clips.runner().cancel()}
+
+    def clips_voices(self) -> dict:
+        """The voices installed, grouped, so one can be chosen by ear."""
+        from .clips import voice as v
+
+        if not v.available():
+            return {"ok": True, "available": False, "why": v.why_not(),
+                    "groups": {}, "default": v.VOICE,
+                    "sample_line": v.SAMPLE_LINE}
+        groups = {}
+        for prefix, names in v.catalogue().items():
+            groups[v.GROUPS.get(prefix, prefix)] = list(names)
+        return {"ok": True, "available": True, "why": "", "groups": groups,
+                "default": v.VOICE, "sample_line": v.SAMPLE_LINE}
+
+    # One rendered sample per voice, kept between requests. Kokoro takes about
+    # a second a line and the model a second to load, and choosing a voice
+    # means playing several of them repeatedly.
+    _voice_samples: dict[tuple[str, str], bytes] = {}
+
+    def voice_sample(self, name: str, line: str = "") -> tuple[bytes, str | None]:
+        """One voice saying one line, as a wav. For choosing by ear."""
+        from .clips import voice as v
+
+        name = (name or v.VOICE).strip()
+        if name not in v.voices():
+            return b"", f"There is no voice called {name!r}."
+        line = (line or "").strip()[:200]
+        key = (name, line)
+        got = self._voice_samples.get(key)
+        if got:
+            return got, None
+        if not v.available():
+            return b"", v.why_not()
+        import tempfile
+
+        tmp = Path(tempfile.mkdtemp(prefix="asvoice_"))
+        try:
+            made = v.samples(tmp, line, names=[name])
+            if not made:
+                return b"", f"Could not render {name}."
+            data = made[0].read_bytes()
+            if len(self._voice_samples) > 60:
+                self._voice_samples.clear()
+            self._voice_samples[key] = data
+            return data, None
+        except Exception as e:  # noqa: BLE001
+            return b"", str(e)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def clip_frame(self, path: str, at: float) -> tuple[bytes, str | None]:
         """One PNG frame, for the calibrator's frame picker."""
