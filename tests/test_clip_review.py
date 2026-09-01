@@ -7,6 +7,7 @@ setting is stored under has to survive the round trip from planning to cutting.
 from __future__ import annotations
 
 import json
+import pathlib
 import sys
 from pathlib import Path
 
@@ -277,3 +278,34 @@ def test_choosing_a_game_retargets_the_options_without_rewriting_the_journal():
     assert "/api/clips/setgame" not in body    # ...but the journal is not touched
     # ...and selecting is wired, not just the button.
     assert "gamefix.addEventListener('change'" in js
+
+
+# ------------------------------------------- how long is a recording, really
+
+def test_the_recordings_length_is_read_from_the_field_that_exists():
+    """FROM THE APP: two callers asked a session row for "rec_seconds", which
+    is the name of the local variable that PRODUCES the field in history.py and
+    not of the field itself -- so both silently got zero. For the Valorant
+    match lookup that made the search window 180 seconds wide instead of the
+    length of the stream, so a match played twenty minutes in was reported as
+    having no record at all."""
+    from autostream.webui import _rec_seconds
+
+    assert _rec_seconds({"recording_seconds": 1793.8}) == 1793.8
+    # ...and it still copes with a row that only has the older spellings.
+    assert _rec_seconds({"rec_seconds": 100}) == 100.0
+    assert _rec_seconds({"duration": 55}) == 55.0
+    assert _rec_seconds({}) == 0.0
+    assert _rec_seconds({"recording_seconds": None, "duration": 12}) == 12.0
+    assert _rec_seconds({"recording_seconds": "nonsense", "duration": 7}) == 7.0
+
+
+def test_a_run_and_a_re_render_cannot_overlap():
+    """Both are encodes on the same machine. clips_edit already refused while a
+    job was running; this is the other half."""
+    from autostream import webui as w
+
+    src = pathlib.Path(w.__file__).read_text(encoding="utf-8")
+    run = src[src.index("def clips_run(self, body: dict) -> dict:"):]
+    run = run[:run.index("    def _cached_kills(")]
+    assert "editor().busy()" in run, "a job can start mid re-render"

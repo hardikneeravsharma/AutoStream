@@ -572,6 +572,44 @@ RANK = ("ACE", "CLUTCH", "ALMOST", "KILLS", "LAST ALIVE", "K IN",
         "CHAOS", "SURVIVED")
 
 
+# THE ROUND TYPES A USER CAN CHOOSE BETWEEN, and therefore the only ones a
+# choice can exclude. Everything else this file can produce -- how a kill
+# happened, and Riot's own ceremony names -- is a DETAIL of a round rather than
+# a type of round, and is never offered as a switch.
+#
+# WHY THIS EXISTS. The filter kept a round only if one of its labels matched
+# something the request asked for, and the request asks for the eight types the
+# page offers. So MATCH POINT, PISTOL ROUND, STREAK BREAKER, every kill
+# circumstance, and Valorant's FLAWLESS, THRIFTY and CLOSER were dropped by a
+# filter that had never heard of them -- from the page, always, silently. Runs
+# driven straight from the API kept them, because those send no filter at all,
+# which is how the difference stayed hidden.
+FILTERABLE = ("ACE", "CLUTCH", "ALMOST", "KILLS", "LAST ALIVE", "K IN",
+              "CHAOS", "SURVIVED", "MATCH POINT", "PISTOL", "STREAK BREAKER",
+              "FLAWLESS", "THRIFTY", "CLOSER")
+
+
+def filterable(labels: Sequence[str]) -> bool:
+    """Whether a choice of round types could speak about this round at all."""
+    return any(key in l for l in labels for key in FILTERABLE)
+
+
+def wanted_by(labels: Sequence[str], keys) -> bool:
+    """Does a round with these labels survive a choice of `keys`?
+
+    A round with no label at all is kept -- it is being cut on its kill count,
+    which is not a type. A round whose labels are all outside FILTERABLE is
+    kept too: a list that cannot offer a thing must not be read as excluding
+    it.
+    """
+    if not labels:
+        return True
+    want = set(keys or ())
+    if any(key in l for l in labels for key in want):
+        return True
+    return not filterable(labels)
+
+
 def rank_of(labels: Sequence[str]) -> int:
     for i, key in enumerate(RANK):
         if any(key in l for l in labels):

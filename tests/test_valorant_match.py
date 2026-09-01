@@ -267,3 +267,56 @@ def test_a_match_id_that_is_not_one_is_refused_before_any_request():
         valorant_api.details(sess, "../../etc/passwd")
     assert sess.pd == "https://pd.eu.a.pvp.net"
     assert sess.headers()["X-Riot-ClientVersion"] == "v"
+
+
+# --------------------------------------- the record has to remember whose it is
+
+def test_a_cached_record_says_which_player_it_was_fetched_for(tmp_path, monkeypatch):
+    """WITHOUT THIS THE WHOLE ROUTE IS UNUSABLE in the normal case. The record
+    does not name the local player, and the only thing that knows is the client
+    the token came from -- which is closed by the time anything is clipped. So
+    every match would line up and then be discarded for not knowing which of
+    the ten players to read."""
+    monkeypatch.setattr(vm, "CACHE", tmp_path)
+
+    class FakeSession:
+        puuid = ME
+
+    monkeypatch.setattr(valorant_api, "session", lambda: FakeSession())
+    monkeypatch.setattr(valorant_api, "history",
+                        lambda s, limit=5: [{"MatchID": "abc12345"}])
+    monkeypatch.setattr(valorant_api, "details", lambda s, mid: _match())
+
+    assert vm.collect() == ["abc12345"]
+    got = vm.cached()
+    assert len(got) == 1
+    # ...and it can be attributed with nothing running at all.
+    monkeypatch.setattr(valorant_api, "session",
+                        lambda: (_ for _ in ()).throw(
+                            valorant_api.Unavailable("client closed")))
+    assert vm.puuid_of(got[0]) == ME
+
+
+def test_the_in_game_name_is_the_fallback_for_a_record_from_elsewhere():
+    m = _m()
+    assert vm.puuid_of(m, "YuvaNeta") == ME
+    assert vm.puuid_of(m, "nobody") == ""
+
+
+def test_the_record_is_preferred_over_the_name():
+    """A second account on the same machine would answer wrongly, and the name
+    can be stale; what the record was fetched for cannot be either."""
+    data = _match()
+    data[vm.MINE] = MATE
+    m = _m(data)
+    assert vm.puuid_of(m, "YuvaNeta") == MATE
+
+
+def test_a_record_that_cannot_be_attributed_is_reported_as_such(tmp_path, monkeypatch):
+    """"no match data" and "a match record nobody can read" are different
+    problems and must not look the same."""
+    monkeypatch.setattr(vm, "CACHE", tmp_path)
+    (tmp_path / "one.json").write_text(json.dumps(_match()), encoding="utf-8")
+    got = vm.state(REC_STARTED, 1800.0)
+    assert got["state"] == "have" and got["matches"] == 1
+    assert "which player" in got.get("why", "")

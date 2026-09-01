@@ -126,6 +126,11 @@ def recut(spec: Spec) -> Result:
     if want_say:
         said = (spec.voice_text or "").strip() or voice.line_for(fresh)
         if said and voice.available():
+            # The wav lands beside the vertical, and the speech is synthesised
+            # BEFORE the re-cut -- so on a clip that has no vertical yet the
+            # directory does not exist and the write fails, losing the line for
+            # a reason that has nothing to do with speech.
+            (spec.folder / "vertical").mkdir(parents=True, exist_ok=True)
             try:
                 speech = voice.say(
                     said, spec.folder / "vertical" / f"{spec.name}.hook.wav",

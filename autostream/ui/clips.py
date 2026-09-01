@@ -656,6 +656,12 @@ function clip_renderGames() {
 /* The highlight types, in the order rounds.py ranks them. Losses are kept
    deliberately: a 1v3 lost at the last moment is often better viewing than a
    1v2 won, so ALMOST sits alongside CLUTCH rather than replacing it. */
+/* Every round type that can be chosen between. It has to list everything the
+   app can label a round with, because a type missing from here was dropped by
+   the filter rather than left alone -- MATCH POINT and PISTOL ROUND never
+   reached a clip from this page for exactly that reason. Labels that are a
+   DETAIL of a round rather than a type of round -- how a kill happened -- are
+   deliberately absent and are never filtered; see rounds.FILTERABLE. */
 var CLIP_ROUND_TYPES = [
   {key: 'ACE',      label: 'Ace (5 kills)'},
   {key: 'CLUTCH',   label: '1vN clutch won'},
@@ -664,7 +670,14 @@ var CLIP_ROUND_TYPES = [
   {key: 'LAST ALIVE', label: 'Last one alive'},
   {key: 'K IN',     label: 'Quick multi-kill'},
   {key: 'CHAOS',    label: 'Chaotic round'},
-  {key: 'SURVIVED', label: 'Survived a loss'}
+  {key: 'SURVIVED', label: 'Survived a loss'},
+  {key: 'MATCH POINT', label: 'Match point'},
+  {key: 'PISTOL',   label: 'Pistol round'},
+  {key: 'STREAK BREAKER', label: 'Broke a losing streak'},
+  /* Valorant's own ceremony names, read off the match record. */
+  {key: 'FLAWLESS', label: 'Flawless (nobody died)'},
+  {key: 'THRIFTY',  label: 'Thrifty (won on worse guns)'},
+  {key: 'CLOSER',   label: 'Closed out the match'}
 ];
 
 function clip_renderTypes() {
