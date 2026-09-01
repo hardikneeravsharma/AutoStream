@@ -1,0 +1,9 @@
+# Only needed to run the tests. Nothing here ships in a build.
+-r requirements.txt
+
+pytest>=8.0
+
+# Parses the UI's JavaScript so a syntax error fails the suite instead of
+# reaching a machine where nobody has the browser console open. Pure Python,
+# so it needs no Node install on a Windows box.
+esprima>=4.0

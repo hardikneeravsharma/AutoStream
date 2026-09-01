@@ -2130,6 +2130,58 @@ ol.steps-list li{margin-block:var(--space-4)}
 .clip-span2{grid-column:1 / -1}
 /* The "this might be the wrong game" notice. Warning-coloured because acting
    on it is optional but ignoring it produces clips of the wrong footage. */
+/* The trim bar. It shows the scrubbing window: the original clip as a faint
+   band behind, what will actually be kept as solid blocks in front, and the
+   playhead as a line. Everything is positioned in percentages of the window,
+   so the same markup works whether the window is forty seconds or four. */
+.clip-trim-bar{
+  position:relative;
+  height:26px;
+  margin-top:var(--space-4);
+  border-radius:var(--radius-sm);
+  background:var(--surface-sunken);
+  border:var(--border-hair) solid var(--border-subtle);
+  overflow:hidden;
+}
+.clip-trim-was{
+  position:absolute;top:0;bottom:0;
+  background:var(--accent-muted);
+}
+.clip-trim-keep{position:absolute;inset:0}
+.clip-trim-keep>i{
+  position:absolute;top:3px;bottom:3px;
+  border-radius:2px;
+  background:var(--accent);
+}
+/* Where a removal has been started but not yet ended. */
+.clip-trim-keep>b{
+  position:absolute;top:0;bottom:0;width:2px;
+  background:var(--warn);
+}
+.clip-trim-head{
+  position:absolute;top:0;bottom:0;width:2px;
+  background:var(--text-primary);
+  opacity:.85;
+  pointer-events:none;
+}
+.clip-trim-chips{
+  display:flex;flex-wrap:wrap;gap:var(--space-3);
+  margin-top:var(--space-3);
+}
+.clip-trim-chip{
+  display:inline-flex;align-items:center;gap:var(--space-3);
+  padding:2px var(--space-4);
+  font-size:12px;
+  font-variant-numeric:tabular-nums lining-nums;
+  color:var(--text-secondary);
+  background:var(--surface-sunken);
+  border:var(--border-hair) solid var(--border-subtle);
+  border-radius:999px;
+  cursor:pointer;
+}
+.clip-trim-chip:hover{color:var(--text-primary);border-color:var(--warn)}
+#clip-play-trim.is-warn{color:var(--warn)}
+
 .clip-warn{
   padding:var(--pad-card-tight);
   margin-bottom:var(--space-6);
