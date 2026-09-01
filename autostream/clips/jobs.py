@@ -37,6 +37,27 @@ from .tools import FfmpegMissing, media_info
 
 log = logging.getLogger("autostream.clips.jobs")
 
+# HOW FAST EACH SCAN MODE ACTUALLY IS, in seconds of recording per second of
+# work. Measured on this machine, on real recordings, so the estimate shown
+# before any progress exists is a measurement rather than a guess:
+#
+#   feedbar   (Valorant)  102 min in 435s  -> 14x
+#   killfeed  (CS2, OCR)   30 min in 396s  ->  4.5x
+#   cardcount (CS2 cards)  30 min in 170s  -> 10x        (same pass as the HUD)
+#   template  (Delta Force) faster than any of them; treated as feedbar
+#
+# A demo changes the picture completely: the scan stops after the probe window,
+# so only PROBE_SECONDS of the recording is ever read.
+SCAN_RATE = {"feedbar": 14.0, "killfeed": 4.5, "cardcount": 10.0,
+             "template": 14.0, "colour": 14.0}
+DEFAULT_SCAN_RATE = 8.0
+
+# Seconds per clip for everything after the scan: cutting the master, the
+# vertical, the caption pass and the voice. Measured across the runs in this
+# session at 9-24s a clip depending on length; the mean is what is reported.
+CUT_SECONDS_PER_CLIP = 16.0
+MONTAGE_SECONDS = 25.0
+
 STEPS = ("scan", "cut", "vertical", "montage")
 
 # Per-clip settings are keyed on the clip's START, to a tenth of a second.
@@ -125,6 +146,14 @@ class ClipJob:
         self.demo: dict = {}
         self.started_at = time.time()
         self.finished_at: float | None = None
+        # For the estimate: when the current step began, how long the recording
+        # is, and how it is being read. Filled in as the run learns them.
+        self.step_started = self.started_at
+        self.source_seconds = 0.0
+        self.scan_mode = ""
+        self.scan_seconds = 0.0        # how much of the recording will be read
+        self.clip_count = 0            # known once the plan exists
+        self.eta_at: float | None = None
 
         self._cancel = threading.Event()
         self._proc: subprocess.Popen | None = None
@@ -134,13 +163,50 @@ class ClipJob:
 
     def _set(self, **kw) -> None:
         with self._lock:
+            if "step" in kw and kw["step"] != self.step:
+                self.step_started = time.time()
             for k, v in kw.items():
                 setattr(self, k, v)
+
+    def eta(self) -> int | None:
+        """Seconds left, or None when there is nothing honest to say.
+
+        Two sources, in order of trust. Once a step reports progress, its own
+        rate is used -- that is measurement, and it accounts for a machine that
+        is busy with something else. Before then the estimate comes from the
+        measured throughput of the scan mode, which is the only thing known in
+        advance. A number that is wrong is worse than no number, so anything
+        this cannot reason about returns None.
+        """
+        with self._lock:
+            step, done, total = self.step, self.done, self.total
+            begun, clips = self.step_started, self.clip_count
+            scan_seconds, mode = self.scan_seconds, self.scan_mode
+        if self.state not in ("running", "queued"):
+            return None
+        now = time.time()
+
+        after_scan = (clips * CUT_SECONDS_PER_CLIP + MONTAGE_SECONDS
+                      if clips else 0.0)
+        if step == "scan":
+            if done and total and done < total:
+                # The scan reports chunks; its own pace is the best guide.
+                per = (now - begun) / done
+                return int(per * (total - done) + after_scan)
+            if scan_seconds:
+                rate = SCAN_RATE.get(mode, DEFAULT_SCAN_RATE)
+                left = scan_seconds / rate - (now - begun)
+                return int(max(0.0, left) + after_scan)
+            return None
+        if done and total and done < total:
+            per = (now - begun) / done
+            return int(per * (total - done))
+        return None
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             pct = int(100 * self.done / self.total) if self.total else 0
-            return {
+            out = {
                 "state": self.state,
                 "step": self.step,
                 "step_index": STEPS.index(self.step) if self.step in STEPS else 0,
@@ -158,8 +224,12 @@ class ClipJob:
                 "summary": dict(self.summary),
                 "preview": list(self.preview),
                 "elapsed": int(time.time() - self.started_at),
+                "eta": None,          # filled in below, outside the lock
                 "source": self.source.name,
+                "scan_mode": self.scan_mode,
             }
+        out["eta"] = self.eta()
+        return out
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -211,6 +281,12 @@ class ClipJob:
         self._set(step="scan", done=0, total=1, message="Looking for kills...")
         prof = profiles.for_game(self.game_key, self.game)
         kills: list[dict] = []
+        # What the estimate needs. The whole recording gets read unless a demo
+        # turns up, and that is decided later -- so this starts pessimistic and
+        # is corrected the moment the probe is chosen.
+        self._set(source_seconds=float(info.get("duration") or 0.0),
+                  scan_mode=(prof.mode if prof else ""),
+                  scan_seconds=float(info.get("duration") or 0.0))
 
         # Counter-Strike is clipped per ROUND, which needs the scoreboard as
         # well as the feed. Both are read from ONE decode pass -- see
@@ -315,6 +391,18 @@ class ClipJob:
             self._set(summary={"kills": 0, "clips": 0, "covered": 0,
                                "coverage": 0, "runtime": 0})
             raise RuntimeError("No kills found in this recording.")
+
+        # ---- 1a2. the match record, if the game keeps one ----------------
+        # Before the demo branch and on the same terms: a record that lines up
+        # replaces everything the detector said, and one that does not costs
+        # only the lookup. Valorant is the only game with one today.
+        if prof and getattr(prof, "matches", False) and opt.get("matches", True):
+            got = self._from_match(kills, prof)
+            if got:
+                kills = got["kills"]
+                round_list = got["rounds"]
+                use_rounds = bool(round_list)
+                self.demo = got["about"]
 
         # ---- 1b. the demo, if the game writes one ------------------------
         #
@@ -424,7 +512,9 @@ class ClipJob:
             log.info("chat asked for %d moment(s); %d were not already found",
                      len(marked), len(plans) - before)
 
-        self._set(summary=plan.summarise(kills, plans))
+        # Now the plan is known, so the rest of the run can be estimated: a
+        # clip costs about the same as any other clip.
+        self._set(summary=plan.summarise(kills, plans), clip_count=len(plans))
         self.folder.mkdir(parents=True, exist_ok=True)
         (self.folder / "session.json").write_text(json.dumps({
             "source": str(self.source), "game": self.game,
@@ -651,6 +741,63 @@ class ClipJob:
         if music and Path(music).is_file() and len(plans) > 1:
             self._reel(Path(music), plans, kills, enc)
 
+    def _from_match(self, kills: list[dict], prof) -> dict | None:
+        """Valorant's own record of the match, if one is cached for this
+        recording and it lines up with what the detector found.
+
+        -> {"kills", "rounds", "about"} or None. Never raises: the pixel reader
+        has already produced a usable answer by this point, and this is only
+        ever an improvement on it.
+        """
+        from . import valorant_match as vmatch
+
+        started = self._source_started()
+        if not started:
+            log.info("no start time for this recording, so its Valorant match "
+                     "record cannot be found")
+            return None
+        found = vmatch.for_recording(started, self.source_seconds)
+        if not found:
+            state = vmatch.state(started, self.source_seconds)
+            log.info("no Valorant match record for this recording (%s)",
+                     state.get("why") or "none cached")
+            return None
+
+        vod = sorted(float(k["time"]) for k in kills)
+        best = None
+        for m in found:
+            puuid = vmatch.puuid_of(m, getattr(prof, "player", "") or "")
+            if not puuid:
+                log.info("match %s: cannot tell which player is you, so its "
+                         "record is unusable", m.id[:8])
+                continue
+            sync = vmatch.align(m, puuid, started, vod)
+            if not sync.ok:
+                log.info("match %s does not line up: %s", m.id[:8], sync.why)
+                continue
+            if best is None or sync.matched > best[2].matched:
+                best = (m, puuid, sync)
+        if best is None:
+            return None
+
+        m, puuid, sync = best
+        got_kills = vmatch.kills_from(m, puuid, sync)
+        got_rounds = vmatch.rounds_from(m, puuid, sync)
+        if not got_kills:
+            log.info("match %s lined up but reports no kills by you", m.id[:8])
+            return None
+        log.info("Valorant match %s (%s): %d kill(s) and %d round(s) from "
+                 "Riot's own record, %s", m.id[:8], m.mode or "?",
+                 len(got_kills), len(got_rounds), sync.why)
+        return {
+            "kills": got_kills,
+            "rounds": got_rounds,
+            "about": {"match": m.id, "mode": m.mode, "ranked": m.ranked,
+                      "offset": round(sync.offset, 2),
+                      "matched": sync.matched, "total": sync.total,
+                      "how": sync.why},
+        }
+
     def _tags(self, kills, wanted: bool) -> dict[float, list[str]]:
         """Kill circumstances read off the frames, for the captions.
 
@@ -779,6 +926,10 @@ class ClipJob:
             self._set(done=d, total=t,
                       message=f"Reading a few minutes to find the match - "
                               f"{d} of {t} chunks")
+        # The probe reads a window, not the recording, which changes the
+        # estimate by an order of magnitude on a two-hour stream.
+        self._set(scan_seconds=min(self.PROBE_SECONDS,
+                                   float(info.get("duration") or 0.0)))
         try:
             found = detect.scan(self.source, prof, progress=prog,
                                 cancelled=lambda: self._cancel.is_set(),
@@ -787,6 +938,7 @@ class ClipJob:
             raise
         except Exception as e:  # noqa: BLE001
             log.info("the probe scan failed (%s); reading the whole recording", e)
+            self._set(scan_seconds=float(info.get("duration") or 0.0))
             return None
         if self._cancel.is_set():
             raise detect.Cancelled("cancelled")

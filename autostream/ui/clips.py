@@ -91,6 +91,134 @@ CLIPS_HTML: str = (
      stream once. When it ends, the recording shows up here.</p>
 </div>
 
+<div class="card hide" id="clip-made-card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">This stream already has clips</h2>
+      <p class="card-sub" id="clip-made-sub">&nbsp;</p>
+    </div>
+    <div class="field-inline">
+      <button class="btn btn-sm btn-ghost" type="button" id="clip-made-hide">
+        <span>Hide</span></button>
+      <button class="btn btn-sm" type="button" id="clip-made-play">
+        <span>Play them</span></button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="clip-made-list" id="clip-made-list"></div>
+  </div>
+</div>
+
+<div class="card hide" id="clip-player-card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title" id="clip-play-title">&nbsp;</h2>
+      <p class="card-sub" id="clip-play-sub">&nbsp;</p>
+    </div>
+    <button class="btn btn-sm btn-ghost" type="button" id="clip-play-close">
+      <span>Close</span></button>
+  </div>
+  <div class="card-body clip-play-body">
+    <div class="clip-play-left">
+      <div class="clip-play-stage">
+        <video id="clip-video" playsinline preload="metadata"></video>
+      </div>
+
+      <div class="clip-play-bar">
+        <button class="btn btn-icon" type="button" data-play="prev"
+                title="Previous clip" aria-label="Previous clip">&#9198;</button>
+        <button class="btn btn-icon btn-primary" type="button" data-play="toggle"
+                title="Play or pause (space)" aria-label="Play or pause"
+                id="clip-play-toggle">&#9654;</button>
+        <button class="btn btn-icon" type="button" data-play="next"
+                title="Next clip" aria-label="Next clip">&#9197;</button>
+        <span class="clip-play-time mono" id="clip-play-time">0:00 / 0:00</span>
+        <input class="clip-play-seek" id="clip-play-seek" type="range"
+               min="0" max="1000" value="0" step="1" aria-label="Seek">
+        <button class="btn btn-icon" type="button" data-play="mute"
+                title="Mute (m)" aria-label="Mute" id="clip-play-mute">&#128266;</button>
+        <input class="clip-play-vol" id="clip-play-vol" type="range"
+               min="0" max="100" value="100" step="1" aria-label="Volume">
+        <select class="select clip-play-speed" id="clip-play-speed"
+                aria-label="Playback speed">
+          <option value="0.25">0.25x</option>
+          <option value="0.5">0.5x</option>
+          <option value="0.75">0.75x</option>
+          <option value="1" selected>1x</option>
+          <option value="1.25">1.25x</option>
+          <option value="1.5">1.5x</option>
+          <option value="2">2x</option>
+        </select>
+        <button class="btn btn-icon" type="button" data-play="full"
+                title="Fullscreen (f)" aria-label="Fullscreen">&#9974;</button>
+      </div>
+      <p class="field-help" id="clip-play-keys">Space plays and pauses. Left and
+         right step five seconds, up and down change the volume, m mutes,
+         f is fullscreen, n and p change clip.</p>
+    </div>
+
+    <div class="clip-play-right">
+      <div class="panel">
+        <h3 class="clip-play-h">This clip</h3>
+        <dl class="clip-play-info" id="clip-play-meta"></dl>
+      </div>
+
+      <div class="panel">
+        <h3 class="clip-play-h">Caption</h3>
+        <div class="field-inline">
+          <button class="switch is-on" type="button" role="switch"
+                  id="clip-play-capsw" aria-checked="true"
+                  aria-label="Burn a caption"><span class="switch-dot"></span></button>
+          <input class="input" id="clip-play-cap" type="text"
+                 placeholder="the caption to burn" style="flex:1 1 8rem">
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3 class="clip-play-h">Spoken line</h3>
+        <div class="field-inline">
+          <button class="switch" type="button" role="switch"
+                  id="clip-play-saysw" aria-checked="false"
+                  aria-label="Speak a line"><span class="switch-dot"></span></button>
+          <input class="input" id="clip-play-say" type="text"
+                 placeholder="what it should say" style="flex:1 1 8rem">
+        </div>
+        <div class="field-inline" style="margin-top:.4rem">
+          <select class="select" id="clip-play-voice" aria-label="Voice"
+                  style="flex:1 1 8rem"></select>
+          <button class="btn btn-sm" type="button" id="clip-play-hear">Hear it</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3 class="clip-play-h">Framing</h3>
+        <div class="seg" id="clip-play-vert" role="group" aria-label="Vertical framing">
+          <button class="seg-btn" type="button" data-vert="crop">Zoom in</button>
+          <button class="seg-btn" type="button" data-vert="fit">Fit whole frame</button>
+        </div>
+        <p class="field-help">Zoom keeps the action large and loses the edges.
+           Fit keeps everything and makes the gameplay smaller.</p>
+      </div>
+
+      <div class="panel">
+        <h3 class="clip-play-h">Trim</h3>
+        <div class="field-inline">
+          <button class="btn btn-sm" type="button" data-play="setin">Start here</button>
+          <button class="btn btn-sm" type="button" data-play="setout">End here</button>
+          <button class="btn btn-sm btn-ghost" type="button" data-play="cleartrim">Reset</button>
+        </div>
+        <p class="field-help mono" id="clip-play-trim">whole clip</p>
+      </div>
+
+      <div class="clip-play-apply">
+        <span class="muted" id="clip-play-editmsg"></span>
+        <button class="btn btn-primary" type="button" id="clip-play-apply">
+          <span>Apply and re-render</span></button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="card hide" id="clip-review-card">
   <div class="card-head">
     <div>
@@ -352,6 +480,9 @@ var clip_state = {
   review: null,              /* {folder, source, rows: [...]} once it lands */
   voices: null,              /* the installed voices, once fetched */
   audio: null,               /* the one <audio> that plays samples */
+  made: null,                /* clips a previous run already produced */
+  player: null,              /* {list, i, folder, trim} while the player is up */
+  editing: false,            /* a re-render is in flight */
   cal: {open: false, t: 0, dur: 0, box: null, drag: null, path: '', busy: false}
 };
 
@@ -675,7 +806,14 @@ function clip_renderJob(j) {
 
   if (running) {
     clip_el('clip-prog-title').textContent = 'Making clips from ' + (j.game || 'the stream');
-    clip_el('clip-prog-msg').textContent = j.message || '';
+    /* HOW LONG IT HAS RUN AND HOW LONG IS LEFT. A scan of a two-hour
+       recording is eight minutes of nothing visible happening, and "Reading
+       the feed" does not say whether that means one minute or twenty. */
+    var run = 'running ' + clip_fmtTime(j.elapsed || 0);
+    var eta = (j.eta != null && j.eta > 0)
+      ? ' - about ' + clip_fmtTime(j.eta) + ' left'
+      : (j.eta === 0 ? ' - nearly done' : '');
+    clip_el('clip-prog-msg').textContent = (j.message || '') + '  (' + run + eta + ')';
     var fill = clip_el('clip-fill'), meter = clip_el('clip-meter');
     if (fill) fill.style.width = j.percent + '%';
     if (meter) meter.setAttribute('aria-valuenow', String(j.percent));
@@ -747,11 +885,15 @@ function clip_renderResults(list, montagePath) {
       '<span class="clip-res-acts">' +
       (done ? '<a class="btn btn-ghost btn-sm" target="_blank" rel="noreferrer noopener"'
               + ' href="' + esc(c.shorts_url || c.url) + '">Watch</a>' : '') +
+      '<button class="btn btn-ghost btn-sm" type="button" data-res-play="' + i + '"' +
+      '>Play</button>' +
       '<button class="btn btn-ghost btn-sm" type="button" data-act="reveal"' +
       ' data-path="' + esc(c.master) + '">Show</button></span></div>';
   }
   host.innerHTML = h;
   clip_state.results = list;
+  clip_state.resultsFolder = (list[0] && (list[0].master || list[0].vertical) || '')
+      .replace(/[\\/][^\\/]*[\\/][^\\/]*$/, '');
   clip_renderUpload();
 }
 
@@ -868,9 +1010,305 @@ async function clip_load() {
     clip_renderGames();
     clip_renderList();
     clip_renderOptions();
+    clip_loadMade(clip_state.pick);
   } catch (e) {
     toast('Could not read the stream history.', 'error');
   }
+}
+
+/* --------------------------------------------------------------- the player
+
+   A clip is a video, and the only honest way to decide whether it is any good
+   is to watch it. Explorer could do that, but not while showing the caption
+   that is burned into it, the line it says, and the controls to change either.
+
+   The controls are the ones a media player has, because that is what people
+   already know how to use: play, seek, volume, speed, next, fullscreen, and
+   the same keys VLC uses. Everything else on the panel is about the clip
+   rather than about playing it. */
+
+function clip_fmtTime(t) {
+  if (!isFinite(t) || t < 0) t = 0;
+  var m = Math.floor(t / 60), sec = Math.floor(t % 60);
+  return m + ':' + (sec < 10 ? '0' : '') + sec;
+}
+
+function clip_videoURL(path) {
+  return '/api/clips/video?k=' + encodeURIComponent(SHELL_K) +
+         '&path=' + encodeURIComponent(path) +
+         /* Defeats the cache after a re-render writes the same filename. */
+         '&v=' + Date.now();
+}
+
+function clip_openPlayer(list, i, folder) {
+  var playable = (list || []).filter(function (c) { return c.vertical || c.master; });
+  if (!playable.length) { toast('Nothing to play in that run.', 'error'); return; }
+  clip_state.player = {
+    list: playable, i: Math.max(0, Math.min(i || 0, playable.length - 1)),
+    folder: folder || '', trim: {in: null, out: null}
+  };
+  clip_show('clip-player-card', true);
+  clip_loadVoices();
+  clip_playerLoad();
+  var card = clip_el('clip-player-card');
+  if (card && card.scrollIntoView) {
+    card.scrollIntoView({behavior: 'smooth', block: 'start'});
+  }
+}
+
+function clip_playerClip() {
+  var p = clip_state.player;
+  return p ? p.list[p.i] : null;
+}
+
+function clip_playerLoad() {
+  var p = clip_state.player, c = clip_playerClip();
+  if (!p || !c) return;
+  p.trim = {in: null, out: null};
+  var v = clip_el('clip-video');
+  var path = c.vertical || c.master;
+  if (v) {
+    v.src = clip_videoURL(path);
+    v.load();
+    var sp = clip_el('clip-play-speed');
+    v.playbackRate = sp ? Number(sp.value) : 1;
+    var vol = clip_el('clip-play-vol');
+    if (vol) v.volume = Number(vol.value) / 100;
+    v.play().catch(function () { /* autoplay refused; the button works */ });
+  }
+  clip_el('clip-play-title').textContent =
+    (c.caption || (c.kills + ' kill' + (c.kills === 1 ? '' : 's')));
+  clip_el('clip-play-sub').textContent =
+    'clip ' + (p.i + 1) + ' of ' + p.list.length +
+    (c.vertical ? '' : ' - no vertical, showing the 16:9 master');
+  clip_playerMeta();
+  clip_playerForm();
+  clip_playerTrimText();
+}
+
+function clip_playerMeta() {
+  var c = clip_playerClip();
+  var host = clip_el('clip-play-meta');
+  if (!c || !host) return;
+  var path = c.vertical || c.master || '';
+  var rows = [
+    ['Found at', c.at || '-'],
+    ['Length', Math.round(c.duration || 0) + 's'],
+    ['Kills', String(c.kills == null ? '-' : c.kills)],
+    ['Caption', c.caption || 'none'],
+    ['Says', c.said || 'nothing'],
+    ['File', path.split('\\').pop().split('/').pop()]
+  ];
+  if (c.video_id) rows.push(['On YouTube', 'yes']);
+  host.innerHTML = rows.map(function (r) {
+    return '<dt>' + esc(r[0]) + '</dt><dd>' + esc(String(r[1])) + '</dd>';
+  }).join('');
+}
+
+function clip_playerForm() {
+  var c = clip_playerClip();
+  if (!c) return;
+  var cap = clip_el('clip-play-cap'), say = clip_el('clip-play-say');
+  if (cap) cap.value = c.caption || '';
+  if (say) say.value = c.said || '';
+  clip_switch('clip-play-capsw', !!c.caption);
+  clip_switch('clip-play-saysw', !!c.said);
+  var sel = clip_el('clip-play-voice');
+  if (sel) sel.innerHTML = clip_voiceOptions('');
+  var mode = (c.vertical_mode || 'crop');
+  var seg = clip_el('clip-play-vert');
+  if (seg) {
+    var btns = seg.querySelectorAll('[data-vert]');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle('is-on',
+        btns[i].getAttribute('data-vert') === mode);
+    }
+  }
+}
+
+function clip_switch(id, on) {
+  var el = clip_el(id);
+  if (!el) return;
+  el.classList.toggle('is-on', !!on);
+  el.setAttribute('aria-checked', on ? 'true' : 'false');
+}
+
+function clip_switchOn(id) {
+  var el = clip_el(id);
+  return !!(el && el.classList.contains('is-on'));
+}
+
+function clip_playerTrimText() {
+  var p = clip_state.player;
+  var el = clip_el('clip-play-trim');
+  if (!p || !el) return;
+  var v = clip_el('clip-video');
+  var dur = v && isFinite(v.duration) ? v.duration : 0;
+  if (p.trim.in == null && p.trim.out == null) {
+    el.textContent = 'whole clip';
+    return;
+  }
+  var a = p.trim.in == null ? 0 : p.trim.in;
+  var b = p.trim.out == null ? dur : p.trim.out;
+  el.textContent = clip_fmtTime(a) + ' to ' + clip_fmtTime(b) +
+                   '  (' + Math.max(0, Math.round(b - a)) + 's)';
+}
+
+function clip_playerStep(by) {
+  var p = clip_state.player;
+  if (!p) return;
+  var next = p.i + by;
+  if (next < 0 || next >= p.list.length) return;
+  p.i = next;
+  clip_playerLoad();
+}
+
+function clip_playerToggle() {
+  var v = clip_el('clip-video');
+  if (!v) return;
+  if (v.paused) v.play().catch(function () {}); else v.pause();
+}
+
+function clip_playerTick() {
+  var v = clip_el('clip-video');
+  if (!v) return;
+  var t = clip_el('clip-play-time'), seek = clip_el('clip-play-seek');
+  var dur = isFinite(v.duration) ? v.duration : 0;
+  if (t) t.textContent = clip_fmtTime(v.currentTime) + ' / ' + clip_fmtTime(dur);
+  if (seek && !seek.dataset.dragging && dur) {
+    seek.value = String(Math.round(1000 * v.currentTime / dur));
+  }
+  var btn = clip_el('clip-play-toggle');
+  if (btn) btn.innerHTML = v.paused ? '&#9654;' : '&#10074;&#10074;';
+}
+
+async function clip_playerApply() {
+  var p = clip_state.player, c = clip_playerClip();
+  if (!p || !c) return;
+  if (clip_state.editing) { toast('Already re-rendering a clip.', 'error'); return; }
+  var folder = p.folder;
+  var name = (c.master || c.vertical || '').split('\\').pop().split('/').pop()
+               .replace(/_vertical\.mp4$/, '').replace(/\.mp4$/, '');
+  if (!folder || !name) { toast('That clip cannot be edited.', 'error'); return; }
+  var seg = clip_el('clip-play-vert');
+  var on = seg ? seg.querySelector('.is-on') : null;
+  var body = {
+    folder: folder, name: name,
+    caption: clip_switchOn('clip-play-capsw'),
+    caption_text: (clip_el('clip-play-cap') || {}).value || '',
+    voice: clip_switchOn('clip-play-saysw'),
+    voice_text: (clip_el('clip-play-say') || {}).value || '',
+    voice_name: (clip_el('clip-play-voice') || {}).value || '',
+    vertical_mode: on ? on.getAttribute('data-vert') : ''
+  };
+  if (p.trim.in != null) body.trim_start = p.trim.in;
+  if (p.trim.out != null) body.trim_end = p.trim.out;
+  var btn = clip_el('clip-play-apply');
+  if (btn) btn.disabled = true;
+  clip_state.editing = true;
+  var msg = clip_el('clip-play-editmsg');
+  if (msg) msg.textContent = 'Re-rendering...';
+  try {
+    var r = await API.post('/api/clips/edit', body);
+    if (r && r.error) {
+      toast(r.error, 'error');
+      clip_state.editing = false;
+      if (btn) btn.disabled = false;
+      if (msg) msg.textContent = '';
+    }
+  } catch (e) {
+    toast('Could not start the re-render.', 'error');
+    clip_state.editing = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+/* The re-render rides the same status poll as everything else. */
+function clip_renderEdit(ed) {
+  if (!ed) return;
+  var msg = clip_el('clip-play-editmsg'), btn = clip_el('clip-play-apply');
+  if (ed.state === 'running') {
+    clip_state.editing = true;
+    if (btn) btn.disabled = true;
+    if (msg) msg.textContent = 'Re-rendering ' + (ed.name || 'the clip') +
+                               ' - ' + ed.elapsed + 's';
+    return;
+  }
+  if (!clip_state.editing) return;      /* nothing of ours in flight */
+  clip_state.editing = false;
+  if (btn) btn.disabled = false;
+  if (msg) msg.textContent = '';
+  if (ed.state === 'failed') {
+    toast(ed.error || 'Could not re-render that clip.', 'error');
+    return;
+  }
+  if (ed.state === 'done') {
+    var c = clip_playerClip();
+    var res = ed.result || {};
+    if (c) {
+      if (res.caption !== undefined) c.caption = res.caption;
+      if (res.said !== undefined) c.said = res.said;
+      if (res.duration) c.duration = res.duration;
+      if (res.vertical) c.vertical = res.vertical;
+      if (res.master) c.master = res.master;
+      var seg = clip_el('clip-play-vert');
+      var on = seg ? seg.querySelector('.is-on') : null;
+      if (on) c.vertical_mode = on.getAttribute('data-vert');
+    }
+    toast('Clip re-rendered.', 'ok');
+    clip_playerLoad();                  /* reload so the new file is shown */
+  }
+}
+
+/* ------------------------------------------------- clips a run already made */
+
+async function clip_loadMade(s) {
+  if (!s || !s.made_folder || !s.made_clips) {
+    clip_state.made = null;
+    clip_show('clip-made-card', false);
+    return;
+  }
+  try {
+    var r = await API.get('/api/clips/existing?folder=' +
+                          encodeURIComponent(s.made_folder));
+    if (!r || r.error || !(r.clips || []).length) {
+      clip_state.made = null;
+      clip_show('clip-made-card', false);
+      return;
+    }
+    clip_state.made = r;
+    clip_renderMade();
+  } catch (e) {
+    clip_state.made = null;
+    clip_show('clip-made-card', false);
+  }
+}
+
+function clip_renderMade() {
+  var m = clip_state.made;
+  if (!m) { clip_show('clip-made-card', false); return; }
+  var when = m.when ? new Date(m.when * 1000) : null;
+  var sub = clip_el('clip-made-sub');
+  if (sub) {
+    sub.textContent = m.clips.length + ' clip' + (m.clips.length === 1 ? '' : 's') +
+      ' from ' + (m.folder || '').split('\\').pop().split('/').pop() +
+      (when ? ', cut ' + when.toLocaleString() : '') +
+      '. Watch them before cutting again - a re-cut of a long recording costs minutes.';
+  }
+  var host = clip_el('clip-made-list');
+  if (host) {
+    host.innerHTML = m.clips.map(function (c, i) {
+      var label = c.caption || ((c.kills || 0) + ' kill' + (c.kills === 1 ? '' : 's'));
+      return '<div class="clip-made-row">' +
+        '<span class="clip-made-name">' + esc(label) + '</span>' +
+        '<span class="muted">' + esc(c.at || '') + '  &middot;  ' +
+          Math.round(c.duration || 0) + 's' +
+          (c.said ? '  &middot;  says "' + esc(c.said) + '"' : '') + '</span>' +
+        '<button class="btn btn-sm" type="button" data-made="' + i + '">Play</button>' +
+        '</div>';
+    }).join('');
+  }
+  clip_show('clip-made-card', true);
 }
 
 /* ------------------------------------------------- reviewing the clips
@@ -1625,6 +2063,143 @@ function clip_wire() {
   if (rf) rf.addEventListener('click', clip_load);
   var go = clip_el('clip-go');
   if (go) go.addEventListener('click', clip_run);
+  /* ---- the player. One delegated handler, because the panel is rebuilt
+     whenever a clip is loaded and per-button listeners would need rebinding. */
+  var pcard = clip_el('clip-player-card');
+  if (pcard) pcard.addEventListener('click', function (ev) {
+    var el = ev.target.closest ? ev.target.closest('[data-play],[data-vert]') : null;
+    if (!el) return;
+    var v = clip_el('clip-video');
+    var vert = el.getAttribute('data-vert');
+    if (vert) {
+      var seg = clip_el('clip-play-vert');
+      if (seg) {
+        var all = seg.querySelectorAll('[data-vert]');
+        for (var i = 0; i < all.length; i++) all[i].classList.toggle('is-on', all[i] === el);
+      }
+      return;
+    }
+    var what = el.getAttribute('data-play');
+    var p = clip_state.player;
+    if (what === 'toggle') clip_playerToggle();
+    else if (what === 'next') clip_playerStep(1);
+    else if (what === 'prev') clip_playerStep(-1);
+    else if (what === 'mute' && v) {
+      v.muted = !v.muted;
+      el.innerHTML = v.muted ? '&#128263;' : '&#128266;';
+    } else if (what === 'full') {
+      var stage = pcard.querySelector('.clip-play-stage');
+      if (document.fullscreenElement) document.exitFullscreen();
+      else if (stage && stage.requestFullscreen) stage.requestFullscreen();
+    } else if (what === 'setin' && v && p) {
+      p.trim.in = Math.max(0, v.currentTime);
+      if (p.trim.out != null && p.trim.out <= p.trim.in) p.trim.out = null;
+      clip_playerTrimText();
+    } else if (what === 'setout' && v && p) {
+      p.trim.out = Math.max(0.5, v.currentTime);
+      if (p.trim.in != null && p.trim.in >= p.trim.out) p.trim.in = null;
+      clip_playerTrimText();
+    } else if (what === 'cleartrim' && p) {
+      p.trim = {in: null, out: null};
+      clip_playerTrimText();
+    }
+  });
+
+  var vid = clip_el('clip-video');
+  if (vid) {
+    vid.addEventListener('timeupdate', clip_playerTick);
+    vid.addEventListener('loadedmetadata', function () {
+      clip_playerTick();
+      clip_playerTrimText();
+    });
+    vid.addEventListener('play', clip_playerTick);
+    vid.addEventListener('pause', clip_playerTick);
+    /* Autoplay the next clip, the way a playlist does. */
+    vid.addEventListener('ended', function () { clip_playerStep(1); });
+  }
+  var seek = clip_el('clip-play-seek');
+  if (seek) {
+    seek.addEventListener('pointerdown', function () { seek.dataset.dragging = '1'; });
+    var stop = function () { delete seek.dataset.dragging; };
+    seek.addEventListener('pointerup', stop);
+    seek.addEventListener('change', stop);
+    seek.addEventListener('input', function () {
+      var v = clip_el('clip-video');
+      if (v && isFinite(v.duration)) v.currentTime = v.duration * Number(seek.value) / 1000;
+    });
+  }
+  var vol = clip_el('clip-play-vol');
+  if (vol) vol.addEventListener('input', function () {
+    var v = clip_el('clip-video');
+    if (v) { v.volume = Number(vol.value) / 100; v.muted = false; }
+  });
+  var spd = clip_el('clip-play-speed');
+  if (spd) spd.addEventListener('change', function () {
+    var v = clip_el('clip-video');
+    if (v) v.playbackRate = Number(spd.value);
+  });
+  ['clip-play-capsw', 'clip-play-saysw'].forEach(function (id) {
+    var sw = clip_el(id);
+    if (sw) sw.addEventListener('click', function () {
+      clip_switch(id, !clip_switchOn(id));
+    });
+  });
+  var hear = clip_el('clip-play-hear');
+  if (hear) hear.addEventListener('click', function () {
+    clip_playVoice((clip_el('clip-play-voice') || {}).value || '',
+                   (clip_el('clip-play-say') || {}).value || '');
+  });
+  var apply = clip_el('clip-play-apply');
+  if (apply) apply.addEventListener('click', clip_playerApply);
+  var pclose = clip_el('clip-play-close');
+  if (pclose) pclose.addEventListener('click', function () {
+    var v = clip_el('clip-video');
+    if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
+    clip_state.player = null;
+    clip_show('clip-player-card', false);
+  });
+
+  /* The keys a media player has. Ignored while typing, or the caption box
+     would swallow every space and jump the video instead of spacing a word. */
+  document.addEventListener('keydown', function (ev) {
+    if (!clip_state.player) return;
+    var t = ev.target && ev.target.tagName;
+    if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') return;
+    var v = clip_el('clip-video');
+    if (!v) return;
+    var k = ev.key;
+    if (k === ' ') { ev.preventDefault(); clip_playerToggle(); }
+    else if (k === 'ArrowRight') { ev.preventDefault(); v.currentTime += 5; }
+    else if (k === 'ArrowLeft') { ev.preventDefault(); v.currentTime -= 5; }
+    else if (k === 'ArrowUp') { ev.preventDefault(); v.volume = Math.min(1, v.volume + 0.1); }
+    else if (k === 'ArrowDown') { ev.preventDefault(); v.volume = Math.max(0, v.volume - 0.1); }
+    else if (k === 'm' || k === 'M') { v.muted = !v.muted; }
+    else if (k === 'n' || k === 'N') { clip_playerStep(1); }
+    else if (k === 'p' || k === 'P') { clip_playerStep(-1); }
+    else if (k === 'f' || k === 'F') {
+      var stage = document.querySelector('.clip-play-stage');
+      if (document.fullscreenElement) document.exitFullscreen();
+      else if (stage && stage.requestFullscreen) stage.requestFullscreen();
+    }
+  });
+
+  /* ---- clips a previous run already produced */
+  var madeHide = clip_el('clip-made-hide');
+  if (madeHide) madeHide.addEventListener('click', function () {
+    clip_show('clip-made-card', false);
+  });
+  var madePlay = clip_el('clip-made-play');
+  if (madePlay) madePlay.addEventListener('click', function () {
+    var m = clip_state.made;
+    if (m) clip_openPlayer(m.clips, 0, m.folder);
+  });
+  var madeList = clip_el('clip-made-list');
+  if (madeList) madeList.addEventListener('click', function (ev) {
+    var el = ev.target.closest ? ev.target.closest('[data-made]') : null;
+    var m = clip_state.made;
+    if (el && m) clip_openPlayer(m.clips, Number(el.getAttribute('data-made')), m.folder);
+  });
+
   var rev = clip_el('clip-review');
   if (rev) rev.addEventListener('click', clip_preview);
   var revCut = clip_el('clip-review-cut');
@@ -1683,6 +2258,17 @@ function clip_wire() {
   var tm = clip_el('clip-transms');
   if (tm) tm.addEventListener('change', function () {
     clip_state.transMs = Number(tm.value);
+  });
+
+  /* Playing a finished clip. Separate from data-act because the results list
+     is rebuilt on every poll and the index is the only handle on a row. */
+  document.addEventListener('click', function (ev) {
+    var b = ev.target && ev.target.closest
+      ? ev.target.closest('[data-res-play]') : null;
+    if (!b) return;
+    var list = clip_state.results || [];
+    var i = Number(b.getAttribute('data-res-play'));
+    if (list.length) clip_openPlayer(list, i, clip_state.resultsFolder || '');
   });
 
   /* One delegated listener for everything with a data-act. No inline onclick
@@ -1820,6 +2406,7 @@ window.PAGE_CLIPS = {
   },
   onTick: function (status) {
     clip_renderUploadJob(status && status.upload);
+    clip_renderEdit(status && status.edit);
     var j = status && status.clips;
     if (!j) { clip_state.busy = false; return; }
     var wasBusy = clip_state.busy;

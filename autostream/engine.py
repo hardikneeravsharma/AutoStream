@@ -354,6 +354,7 @@ class Engine:
             self._tick_testing()
         elif phase == st.LIVE:
             self._tick_live()
+            self._collect_matches()
         elif phase == st.COOLDOWN:
             self._tick_cooldown()
         elif phase == st.STOPPING:
@@ -1049,6 +1050,46 @@ class Engine:
     # or anything at all in a game with no profile. One command, no
     # punctuation to get wrong.
     MARK_WORDS = ("!clip", "!highlight")
+    # HOW OFTEN THE MATCH RECORD IS ASKED FOR. Valorant publishes a match once
+    # it has ended, so polling faster than a match is pointless; polling slower
+    # than a session risks the client closing first, and the record cannot be
+    # had at all once it has. Two minutes covers both with room to spare.
+    MATCH_POLL = 120.0
+
+    def _collect_matches(self) -> None:
+        """Cache Valorant's own record of any match that has just finished.
+
+        WHY DURING THE SESSION AND NOT AT CLIP TIME. The credentials come from
+        the running Riot Client's lockfile, and clips are usually cut hours
+        later with the game long closed. So the record is fetched while it can
+        be, and read from disk afterwards -- the same shape as a Counter-Strike
+        demo, which the game writes and this reads later.
+
+        Costs nothing when the game is not Valorant, and never raises: a match
+        record that cannot be fetched costs that match its extra context and
+        nothing else.
+        """
+        from .clips import profiles
+
+        prof = profiles.for_game(self.state.current_key,
+                                 self.state.current_game)
+        if not (prof and getattr(prof, "matches", False)):
+            return
+        now = time.time()
+        if now - getattr(self, "_matches_at", 0.0) < self.MATCH_POLL:
+            return
+        self._matches_at = now
+        try:
+            from .clips import valorant_match
+
+            added = valorant_match.collect()
+        except Exception as e:                     # noqa: BLE001
+            log.debug("could not collect Valorant match records: %s", e)
+            return
+        if added:
+            log.info("cached %d Valorant match record(s) for later clipping",
+                     len(added))
+
     MARK_COOLDOWN = 3.0        # per viewer, so one person cannot spam the reel
     MARK_MAX = 300             # a whole stream of them is still bounded
 
