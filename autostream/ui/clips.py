@@ -201,13 +201,31 @@ CLIPS_HTML: str = (
       </div>
 
       <div class="panel">
-        <h3 class="clip-play-h">Trim</h3>
+        <h3 class="clip-play-h">Trim and cut</h3>
         <div class="field-inline">
-          <button class="btn btn-sm" type="button" data-play="setin">Start here</button>
-          <button class="btn btn-sm" type="button" data-play="setout">End here</button>
-          <button class="btn btn-sm btn-ghost" type="button" data-play="cleartrim">Reset</button>
+          <button class="btn btn-sm" type="button" id="clip-trim-open">
+            <span id="clip-trim-openlabel">Adjust the cut</span></button>
         </div>
-        <p class="field-help mono" id="clip-play-trim">whole clip</p>
+        <p class="field-help" id="clip-trim-hint">The clip was cut around the
+           kills. Adjusting it plays the recording either side, so you can
+           start earlier, end later, or take a dull stretch out of the
+           middle.</p>
+        <div class="hide" id="clip-trim-panel">
+          <div class="clip-trim-bar" id="clip-trim-bar">
+            <span class="clip-trim-keep" id="clip-trim-keep"></span>
+            <span class="clip-trim-was" id="clip-trim-was"></span>
+            <span class="clip-trim-head" id="clip-trim-head"></span>
+          </div>
+          <div class="field-inline" style="margin-top:.5rem">
+            <button class="btn btn-sm" type="button" data-play="setin">Start here</button>
+            <button class="btn btn-sm" type="button" data-play="setout">End here</button>
+            <button class="btn btn-sm" type="button" id="clip-trim-cut">Cut from here</button>
+            <button class="btn btn-sm btn-ghost" type="button" data-play="cleartrim">Reset</button>
+          </div>
+          <p class="field-help mono" id="clip-play-trim">whole clip</p>
+          <p class="field-help hide" id="clip-trim-msg"></p>
+          <div class="clip-trim-chips" id="clip-trim-chips"></div>
+        </div>
       </div>
 
       <div class="clip-play-apply">
@@ -1088,7 +1106,8 @@ function clip_openPlayer(list, i, folder) {
   if (!playable.length) { toast('Nothing to play in that run.', 'error'); return; }
   clip_state.player = {
     list: playable, i: Math.max(0, Math.min(i || 0, playable.length - 1)),
-    folder: folder || '', trim: {in: null, out: null}
+    folder: folder || '', trim: {in: null, out: null},
+    edit: clip_trimBlank()
   };
   clip_show('clip-player-card', true);
   /* Not awaited: the panel draws now and the chooser fills itself in when the
@@ -1106,21 +1125,29 @@ function clip_playerClip() {
   return p ? p.list[p.i] : null;
 }
 
+/* Point the player at the finished clip. Separate from clip_playerLoad
+   because adjusting the cut swaps the same element over to the recording and
+   has to be able to put it back. */
+function clip_playerLoadVideo() {
+  var c = clip_playerClip();
+  var v = clip_el('clip-video');
+  if (!v || !c) return;
+  v.src = clip_videoURL(c.vertical || c.master);
+  v.load();
+  var sp = clip_el('clip-play-speed');
+  v.playbackRate = sp ? Number(sp.value) : 1;
+  var vol = clip_el('clip-play-vol');
+  if (vol) v.volume = Number(vol.value) / 100;
+  v.play().catch(function () { /* autoplay refused; the button works */ });
+}
+
 function clip_playerLoad() {
   var p = clip_state.player, c = clip_playerClip();
   if (!p || !c) return;
   p.trim = {in: null, out: null};
-  var v = clip_el('clip-video');
-  var path = c.vertical || c.master;
-  if (v) {
-    v.src = clip_videoURL(path);
-    v.load();
-    var sp = clip_el('clip-play-speed');
-    v.playbackRate = sp ? Number(sp.value) : 1;
-    var vol = clip_el('clip-play-vol');
-    if (vol) v.volume = Number(vol.value) / 100;
-    v.play().catch(function () { /* autoplay refused; the button works */ });
-  }
+  p.edit = clip_trimBlank();
+  clip_trimSync();
+  clip_playerLoadVideo();
   clip_el('clip-play-title').textContent =
     (c.caption || (c.kills + ' kill' + (c.kills === 1 ? '' : 's')));
   clip_el('clip-play-sub').textContent =
@@ -1202,6 +1229,8 @@ function clip_playerTrimText() {
 function clip_playerStep(by) {
   var p = clip_state.player;
   if (!p) return;
+  /* Leave the recording behind. Its window belongs to the clip being left. */
+  if (p.edit && p.edit.on) clip_trimToggle();
   var next = p.i + by;
   if (next < 0 || next >= p.list.length) return;
   p.i = next;
@@ -1227,6 +1256,397 @@ function clip_playerTick() {
   if (btn) btn.innerHTML = v.paused ? '&#9654;' : '&#10074;&#10074;';
 }
 
+/* --------------------------------------------------- trimming and cutting
+
+   THE PROBLEM THIS SOLVES
+     A clip is cut around the kills, which is rarely where the moment starts.
+     Wanting two seconds of run-up before the first shot, or four more at the
+     end so the round result lands, is the ordinary case. The old controls
+     could not do it: they measured from the clip's own first frame, so the
+     earliest they could ever start was zero.
+
+   SO THE TIMES HERE ARE RECORDING SECONDS
+     Every number in this state -- in, out, and both ends of every removal --
+     is a position in the RECORDING. That is the only frame of reference that
+     can express "start three seconds earlier", and it is what the re-render
+     is asked for.
+
+   WHAT ACTUALLY PLAYS IS A PREVIEW, NOT THE RECORDING
+     AutoStream's recordings are fragmented mp4 with no seek index, so a
+     browser cannot scrub one at all -- and they are 47 GB. Pressing "Adjust
+     the cut" therefore asks the app to cut the twenty seconds either side of
+     the clip into a small seekable file, and plays that.
+
+     Which means the video element's currentTime is a position in the PREVIEW,
+     and every reading of it has to be shifted by where the preview begins.
+     clip_trimAt does that shift, and nothing else should read currentTime
+     directly while the panel is open. */
+
+var CLIP_HEADROOM = 20;        /* seconds either side offered for scrubbing */
+
+function clip_trimBlank() {
+  return {ready: false, on: false, source: '', srcSeconds: 0,
+          was: [0, 0], win: [0, 0], in: null, out: null, drop: [],
+          pending: null,
+          /* the preview: where it lives, and where in the recording it
+             begins, which is the offset every reading of the player has to
+             be shifted by */
+          preview: '', at: 0, building: false, tries: 0};
+}
+
+/* What the current clip's editable window is, from the row and the run. */
+function clip_trimSync() {
+  var p = clip_state.player, c = clip_playerClip();
+  var t = p && p.edit;
+  if (!t || !c) return;
+  /* The run the player was opened from. Matched on the folder rather than
+     assumed, because the player can also be opened from a review of a run
+     that is not the one on screen. */
+  var run = clip_state.made;
+  if (!run || run.folder !== p.folder) run = null;
+  var a = Number(c.start), b = Number(c.end);
+  t.source = run ? String(run.source || '') : '';
+  t.srcSeconds = run ? Number(run.source_seconds || 0) : 0;
+  t.ready = !!(t.source && isFinite(a) && isFinite(b) && b > a);
+  if (!t.ready) return;
+  t.was = [a, b];
+  /* A first guess at the window, so the bar can be drawn before the app has
+     answered. The app's own answer replaces it, because only the app knows
+     how much recording there actually is either side. */
+  var lo = Math.max(0, a - CLIP_HEADROOM);
+  var hi = b + CLIP_HEADROOM;
+  if (t.srcSeconds > 0) hi = Math.min(hi, t.srcSeconds);
+  t.win = [lo, hi];
+}
+
+/* Where the player is, in RECORDING seconds. */
+function clip_trimAt() {
+  var t = clip_state.player && clip_state.player.edit;
+  var v = clip_el('clip-video');
+  var now = v && isFinite(v.currentTime) ? v.currentTime : 0;
+  return t && t.on ? t.at + now : now;
+}
+
+/* ...and the other way, for seeking to a moment in the recording. */
+function clip_trimSeek(to) {
+  var t = clip_state.player && clip_state.player.edit;
+  var v = clip_el('clip-video');
+  if (!t || !v || !t.on) return;
+  v.currentTime = Math.max(0, to - t.at);
+}
+
+function clip_trimIn() {
+  var t = clip_state.player && clip_state.player.edit;
+  return t ? (t.in == null ? t.was[0] : t.in) : 0;
+}
+
+function clip_trimOut() {
+  var t = clip_state.player && clip_state.player.edit;
+  return t ? (t.out == null ? t.was[1] : t.out) : 0;
+}
+
+function clip_trimToggle() {
+  var p = clip_state.player, t = p && p.edit;
+  if (!t) return;
+  if (!t.ready) {
+    toast('That run did not keep its recording, so the cut cannot be moved.',
+          'error');
+    return;
+  }
+  t.on = !t.on;
+  var v = clip_el('clip-video');
+  clip_show('clip-trim-panel', t.on);
+  var label = clip_el('clip-trim-openlabel');
+  if (label) label.textContent = t.on ? 'Back to the clip' : 'Adjust the cut';
+  var hint = clip_el('clip-trim-hint');
+  if (hint) {
+    hint.textContent = t.on
+      ? 'This is the recording, not the clip. The lighter band is what the '
+        + 'clip will contain.'
+      : 'The clip was cut around the kills. Adjusting it plays the recording '
+        + 'either side, so you can start earlier, end later, or take a dull '
+        + 'stretch out of the middle.';
+  }
+  if (!v) return;
+  if (t.on) clip_trimWindow();
+  else clip_playerLoadVideo();
+  clip_trimRender();
+}
+
+/* Ask for the preview, wait for it, then play it. */
+async function clip_trimWindow() {
+  var p = clip_state.player, t = p && p.edit, c = clip_playerClip();
+  if (!t || !c) return;
+  var name = (c.master || c.vertical || '').split('\\').pop().split('/').pop()
+               .replace(/_vertical\.mp4$/, '').replace(/\.mp4$/, '');
+  t.building = true;
+  t.tries = 0;
+  clip_trimSay('Cutting the footage either side of this clip...');
+  var r;
+  try {
+    r = await API.post('/api/clips/window',
+                       {folder: p.folder, name: name, headroom: CLIP_HEADROOM});
+  } catch (e) {
+    r = null;
+  }
+  if (!r || r.error) {
+    t.building = false;
+    clip_trimSay((r && r.error) || 'Could not open the footage around this clip.');
+    return;
+  }
+  t.preview = r.path;
+  t.at = Number(r.start) || 0;
+  if (Number(r.source_seconds)) t.srcSeconds = Number(r.source_seconds);
+  t.win = [Number(r.start) || 0, Number(r.end) || 0];
+  if (r.cached) { clip_trimPlay(); return; }
+  clip_trimWait();
+}
+
+/* The preview is encoded on a thread, so the page asks until it is there.
+   Every half second for a minute: a twenty-second window takes two or three
+   seconds, and anything past a minute has gone wrong rather than gone slowly. */
+function clip_trimWait() {
+  var t = clip_state.player && clip_state.player.edit;
+  if (!t || !t.on) return;
+  t.tries += 1;
+  if (t.tries > 120) {
+    t.building = false;
+    clip_trimSay('That preview is taking too long. Try again.');
+    return;
+  }
+  setTimeout(async function () {
+    var t2 = clip_state.player && clip_state.player.edit;
+    if (!t2 || !t2.on || t2.preview !== t.preview) return;   /* moved on */
+    var r;
+    try {
+      r = await API.get('/api/clips/window-ready?path='
+                        + encodeURIComponent(t2.preview));
+    } catch (e) {
+      r = null;
+    }
+    if (r && r.ready) { clip_trimPlay(); return; }
+    if (r && r.error) {
+      t2.building = false;
+      clip_trimSay(r.error);
+      return;
+    }
+    clip_trimWait();
+  }, 500);
+}
+
+function clip_trimPlay() {
+  var t = clip_state.player && clip_state.player.edit;
+  var v = clip_el('clip-video');
+  if (!t || !v) return;
+  t.building = false;
+  clip_trimSay('');
+  v.src = clip_videoURL(t.preview);
+  v.load();
+  /* Seeking before the metadata lands is ignored, so wait for it once. */
+  var go = function () {
+    v.removeEventListener('loadedmetadata', go);
+    clip_trimSeek(Math.max(t.win[0], clip_trimIn() - 2));
+    clip_trimRender();
+  };
+  v.addEventListener('loadedmetadata', go);
+  var sp = clip_el('clip-play-speed');
+  v.playbackRate = sp ? Number(sp.value) : 1;
+  v.play().catch(function () { /* autoplay refused; the button works */ });
+}
+
+function clip_trimSay(text) {
+  var el = clip_el('clip-trim-msg');
+  if (!el) return;
+  el.textContent = text || '';
+  clip_show('clip-trim-msg', !!text);
+}
+
+function clip_trimSetIn(at) {
+  var t = clip_state.player && clip_state.player.edit;
+  if (!t || !t.on) return;
+  var v = Math.max(t.win[0], Math.min(at, t.win[1] - 1));
+  if (v >= clip_trimOut()) {
+    toast('The start has to come before the end.', 'error');
+    return;
+  }
+  t.in = v;
+  clip_trimRender();
+}
+
+function clip_trimSetOut(at) {
+  var t = clip_state.player && clip_state.player.edit;
+  if (!t || !t.on) return;
+  var v = Math.max(t.win[0] + 1, Math.min(at, t.win[1]));
+  if (v <= clip_trimIn()) {
+    toast('The end has to come after the start.', 'error');
+    return;
+  }
+  t.out = v;
+  clip_trimRender();
+}
+
+/* Two presses: the first marks where the removal starts, the second ends it.
+   One button rather than two, because the second press is only ever meaningful
+   after the first and a button that does nothing yet is worse than a button
+   that changes what it says. */
+function clip_trimCut() {
+  var t = clip_state.player && clip_state.player.edit;
+  if (!t || !t.on) return;
+  var at = clip_trimAt();
+  if (t.pending == null) {
+    if (at <= clip_trimIn() || at >= clip_trimOut()) {
+      toast('A cut has to start inside the clip.', 'error');
+      return;
+    }
+    t.pending = at;
+    clip_trimRender();
+    return;
+  }
+  var a = Math.min(t.pending, at), b = Math.max(t.pending, at);
+  t.pending = null;
+  if (b - a < 0.2) {
+    toast('That is too short to be worth cutting.', 'error');
+    clip_trimRender();
+    return;
+  }
+  t.drop.push([a, b]);
+  t.drop.sort(function (x, y) { return x[0] - y[0]; });
+  clip_trimRender();
+}
+
+function clip_trimUncut(i) {
+  var t = clip_state.player && clip_state.player.edit;
+  if (!t) return;
+  t.drop.splice(i, 1);
+  clip_trimRender();
+}
+
+function clip_trimReset() {
+  var p = clip_state.player, t = p && p.edit;
+  if (!p) return;
+  p.trim = {in: null, out: null};
+  if (t) { t.in = null; t.out = null; t.drop = []; t.pending = null; }
+  clip_trimRender();
+}
+
+/* What survives, given the in and out points and the removals. Deliberately
+   the same arithmetic the app does server-side -- if the page said one
+   duration and the re-render produced another, the number on screen would be
+   a lie right up until the clip was made. */
+function clip_trimSpans() {
+  var t = clip_state.player && clip_state.player.edit;
+  if (!t) return [];
+  var a = clip_trimIn(), b = clip_trimOut();
+  var cuts = (t.drop || []).map(function (d) {
+    return [Math.max(Math.min(d[0], d[1]), a), Math.min(Math.max(d[0], d[1]), b)];
+  }).filter(function (d) { return d[1] - d[0] >= 0.2; })
+    .sort(function (x, y) { return x[0] - y[0]; });
+
+  var merged = [];
+  for (var i = 0; i < cuts.length; i++) {
+    var last = merged[merged.length - 1];
+    if (last && cuts[i][0] <= last[1]) last[1] = Math.max(last[1], cuts[i][1]);
+    else merged.push([cuts[i][0], cuts[i][1]]);
+  }
+  var spans = [], at = a;
+  for (var j = 0; j < merged.length; j++) {
+    if (merged[j][0] - at >= 1) spans.push([at, merged[j][0]]);
+    at = Math.max(at, merged[j][1]);
+  }
+  if (b - at >= 1) spans.push([at, b]);
+  return spans;
+}
+
+function clip_trimRender() {
+  var t = clip_state.player && clip_state.player.edit;
+  if (!t) return;
+  var pct = function (x) {
+    var span = t.win[1] - t.win[0];
+    return span > 0 ? (100 * (x - t.win[0]) / span) : 0;
+  };
+
+  /* The bar: the original span behind, what survives in front. */
+  var was = clip_el('clip-trim-was');
+  if (was) {
+    was.style.left = pct(t.was[0]) + '%';
+    was.style.width = Math.max(0, pct(t.was[1]) - pct(t.was[0])) + '%';
+  }
+  var bar = clip_el('clip-trim-bar');
+  var keep = clip_el('clip-trim-keep');
+  if (bar && keep) {
+    var spans = clip_trimSpans();
+    var html = '';
+    for (var i = 0; i < spans.length; i++) {
+      html += '<i style="left:' + pct(spans[i][0]).toFixed(3) + '%;width:'
+            + Math.max(0, pct(spans[i][1]) - pct(spans[i][0])).toFixed(3)
+            + '%"></i>';
+    }
+    if (t.pending != null) {
+      html += '<b style="left:' + pct(t.pending).toFixed(3) + '%"></b>';
+    }
+    keep.innerHTML = html;
+  }
+
+  clip_trimHead();
+
+  /* The sentence under it. */
+  var el = clip_el('clip-play-trim');
+  if (el) {
+    var spans2 = clip_trimSpans();
+    var kept = 0;
+    for (var k = 0; k < spans2.length; k++) kept += spans2[k][1] - spans2[k][0];
+    var was_len = t.was[1] - t.was[0];
+    var delta = kept - was_len;
+    var bits = [Math.round(kept) + 's'];
+    if (Math.abs(delta) >= 0.5) {
+      bits.push((delta > 0 ? '+' : '') + Math.round(delta) + 's on the original');
+    }
+    if (spans2.length > 1) {
+      bits.push(spans2.length + ' pieces joined');
+    }
+    if (t.pending != null) {
+      bits.push('cutting from ' + clip_fmtTime(t.pending - t.win[0])
+                + ' - press again to end it');
+    }
+    el.textContent = spans2.length ? bits.join('  -  ')
+                                   : 'that removes the whole clip';
+    el.classList.toggle('is-warn', !spans2.length);
+  }
+
+  /* One chip per removal, each with a way back. */
+  var chips = clip_el('clip-trim-chips');
+  if (chips) {
+    if (!t.drop.length) {
+      chips.innerHTML = '';
+    } else {
+      var out = '';
+      for (var d = 0; d < t.drop.length; d++) {
+        var len = Math.abs(t.drop[d][1] - t.drop[d][0]);
+        out += '<button class="clip-trim-chip" type="button" data-uncut="' + d
+             + '" title="Put this stretch back">cut '
+             + clip_fmtTime(Math.min(t.drop[d][0], t.drop[d][1]) - t.win[0])
+             + ' (' + len.toFixed(1) + 's) <span aria-hidden="true">x</span>'
+             + '</button>';
+      }
+      chips.innerHTML = out;
+    }
+  }
+
+  var cut = clip_el('clip-trim-cut');
+  if (cut) cut.textContent = t.pending == null ? 'Cut from here' : 'Cut to here';
+}
+
+/* Just the playhead, which moves on every frame of playback. Split out so the
+   timeupdate handler is not rebuilding the whole bar sixty times a second. */
+function clip_trimHead() {
+  var t = clip_state.player && clip_state.player.edit;
+  var head = clip_el('clip-trim-head');
+  if (!t || !head || !t.on) return;
+  var span = t.win[1] - t.win[0];
+  var at = span > 0 ? (100 * (clip_trimAt() - t.win[0]) / span) : 0;
+  head.style.left = Math.max(0, Math.min(100, at)) + '%';
+}
+
 async function clip_playerApply() {
   var p = clip_state.player, c = clip_playerClip();
   if (!p || !c) return;
@@ -1246,8 +1666,16 @@ async function clip_playerApply() {
     voice_name: (clip_el('clip-play-voice') || {}).value || '',
     vertical_mode: on ? on.getAttribute('data-vert') : ''
   };
-  if (p.trim.in != null) body.trim_start = p.trim.in;
-  if (p.trim.out != null) body.trim_end = p.trim.out;
+  /* Recording seconds, not clip seconds. The older trim_start/trim_end could
+     only ever make a clip shorter, because they were measured from the clip
+     itself -- there is no way to say "three seconds earlier" in a number that
+     starts counting at the clip's first frame. */
+  var t = p.edit;
+  if (t && t.ready) {
+    if (t.in != null) body.start_at = t.in;
+    if (t.out != null) body.end_at = t.out;
+    if (t.drop.length) body.drop = t.drop.map(function (d) { return [d[0], d[1]]; });
+  }
   var btn = clip_el('clip-play-apply');
   if (btn) btn.disabled = true;
   clip_state.editing = true;
@@ -2210,21 +2638,29 @@ function clip_wire() {
       if (document.fullscreenElement) document.exitFullscreen();
       else if (stage && stage.requestFullscreen) stage.requestFullscreen();
     } else if (what === 'setin' && v && p) {
-      p.trim.in = Math.max(0, v.currentTime);
-      if (p.trim.out != null && p.trim.out <= p.trim.in) p.trim.out = null;
-      clip_playerTrimText();
+      clip_trimSetIn(clip_trimAt());
     } else if (what === 'setout' && v && p) {
-      p.trim.out = Math.max(0.5, v.currentTime);
-      if (p.trim.in != null && p.trim.in >= p.trim.out) p.trim.in = null;
-      clip_playerTrimText();
+      clip_trimSetOut(clip_trimAt());
     } else if (what === 'cleartrim' && p) {
-      p.trim = {in: null, out: null};
-      clip_playerTrimText();
+      clip_trimReset();
     }
+  });
+
+  var topen = clip_el('clip-trim-open');
+  if (topen) topen.addEventListener('click', clip_trimToggle);
+  var tcut = clip_el('clip-trim-cut');
+  if (tcut) tcut.addEventListener('click', clip_trimCut);
+  /* Delegated: the chips are rebuilt every time a cut is added or undone. */
+  var chips = clip_el('clip-trim-chips');
+  if (chips) chips.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('[data-uncut]') : null;
+    if (b) clip_trimUncut(Number(b.getAttribute('data-uncut')));
   });
 
   var vid = clip_el('clip-video');
   if (vid) {
+    vid.addEventListener('timeupdate', clip_trimHead);
+    vid.addEventListener('seeked', clip_trimHead);
     vid.addEventListener('timeupdate', clip_playerTick);
     vid.addEventListener('loadedmetadata', function () {
       clip_playerTick();
@@ -2233,7 +2669,13 @@ function clip_wire() {
     vid.addEventListener('play', clip_playerTick);
     vid.addEventListener('pause', clip_playerTick);
     /* Autoplay the next clip, the way a playlist does. */
-    vid.addEventListener('ended', function () { clip_playerStep(1); });
+    vid.addEventListener('ended', function () {
+      /* Not while the recording is loaded: reaching the end of a two-hour
+         file is not a signal that this clip has finished playing. */
+      var t = clip_state.player && clip_state.player.edit;
+      if (t && t.on) return;
+      clip_playerStep(1);
+    });
   }
   var seek = clip_el('clip-play-seek');
   if (seek) {

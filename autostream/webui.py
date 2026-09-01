@@ -198,6 +198,12 @@ class _Handler(BaseHTTPRequestHandler):
         p = Path(path)
         # Only ever inside the clips folder. The page builds these paths, but
         # the page is not the only thing that can call this.
+        #
+        # The recordings folder is deliberately NOT included. Adjusting where
+        # a clip starts needs footage either side of it, but that arrives as a
+        # small preview cut into the run's own folder -- so nothing here has
+        # to reach a 47 GB source file, and this guard stays as narrow as it
+        # has always been.
         root = self.app._clips_dir(cfg.load()).resolve()
         try:
             if not p.resolve().is_relative_to(root):
@@ -327,6 +333,9 @@ class _Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/clips/existing":
             q = parse_qs(u.query)
             self._json(self.app.clips_existing((q.get("folder") or [""])[0]))
+        elif u.path == "/api/clips/window-ready":
+            self._json(self.app.clips_window_ready(
+                (parse_qs(u.query).get("path") or [""])[0]))
         elif u.path == "/api/update/check":
             self._json(self.app.update_check())
         elif u.path == "/api/clips/voices":
@@ -446,6 +455,8 @@ class _Handler(BaseHTTPRequestHandler):
             # Every one of these returns immediately. The actual work runs on a
             # worker thread and reports through /api/status, which the shell is
             # already polling - see clips/jobs.py.
+            elif p == "/api/clips/window":
+                self._json(self.app.clips_window(b))
             elif p == "/api/update/install":
                 self._json(self.app.update_install())
             elif p == "/api/update/download":
@@ -579,6 +590,31 @@ def _rec_seconds(row: dict) -> float:
             except (TypeError, ValueError):
                 continue
     return 0.0
+
+
+# Scrubbing previews are about nine megabytes each and are a means to an end,
+# not a result. A handful is enough to move between clips without waiting; a
+# folder of forty is just disk that nobody asked to spend.
+KEEP_PREVIEWS = 8
+
+
+def _trim_previews(where: Path, keep: int = KEEP_PREVIEWS) -> int:
+    """Delete all but the `keep` newest previews. -> how many went."""
+    try:
+        found = sorted(where.glob("*.mp4"), key=lambda p: p.stat().st_mtime,
+                       reverse=True)
+    except OSError:
+        return 0
+    gone = 0
+    for old in found[keep:]:
+        try:
+            old.unlink()
+            gone += 1
+        except OSError:
+            pass
+    if gone:
+        log.info("cleared %d old preview(s) from %s", gone, where.parent.name)
+    return gone
 
 
 class Server:
@@ -999,10 +1035,141 @@ class Server:
         clips = data if isinstance(data, list) else (data.get("clips") or [])
         return {"ok": True, "folder": str(f),
                 "source": plan.get("source", ""),
+                # The page needs this to know how far past the clip it may
+                # scrub. Without it the window would be guesswork and asking
+                # for a tail near the end of a recording would fail at the
+                # re-render rather than being clamped on screen.
+                "source_seconds": self._source_seconds(plan),
                 "game": plan.get("game", ""),
                 "when": int(man.stat().st_mtime),
                 "montage": (data or {}).get("montage") if isinstance(data, dict) else None,
                 "clips": clips}
+
+    _probed: dict = {}
+
+    def _source_seconds(self, plan: dict) -> float:
+        """How long a run's recording is. Cached: probing costs a subprocess
+        and the answer cannot change for a file that has stopped growing."""
+        src = str(plan.get("source") or "")
+        if not src:
+            return 0.0
+        for key in ("recording_seconds", "source_seconds", "duration"):
+            try:
+                got = float(plan.get(key) or 0.0)
+            except (TypeError, ValueError):
+                got = 0.0
+            if got > 0:
+                return got
+        if src in self._probed:
+            return self._probed[src]
+        got = 0.0
+        try:
+            from .clips import cutter
+            got = float((cutter.probe_source(Path(src)) or {}).get("duration") or 0.0)
+        except Exception as e:                          # noqa: BLE001
+            log.info("could not measure %s: %s", Path(src).name, e)
+        self._probed[src] = got
+        return got
+
+    _windowing: dict = {}
+
+    def clips_window(self, body: dict) -> dict:
+        """A seekable preview of the footage either side of one clip.
+
+        Returns where the preview STARTS in the recording, because that is
+        what turns a position in the preview back into a position in the
+        recording -- which is the number an edit is expressed in.
+        """
+        from .clips import cutter
+
+        folder = Path(str(body.get("folder") or ""))
+        name = str(body.get("name") or "")
+        try:
+            headroom = float(body.get("headroom") or 20.0)
+        except (TypeError, ValueError):
+            headroom = 20.0
+        headroom = max(0.0, min(headroom, 120.0))
+        if not name:
+            return {"error": "No clip given."}
+        try:
+            if not folder.resolve().is_relative_to(
+                    self._clips_dir(cfg.load()).resolve()):
+                return {"error": "That folder is not in the clips folder."}
+        except OSError:
+            return {"error": "That folder is gone."}
+
+        sess = folder / "session.json"
+        if not sess.exists():
+            return {"error": "That run has no session.json, so its plan is gone."}
+        try:
+            plan = json.loads(sess.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            return {"error": f"Could not read that run: {e}"}
+
+        row = None
+        for candidate in (plan.get("plans") or []) + (plan.get("promo_clips") or []):
+            if candidate.get("name") == name:
+                row = candidate
+                break
+        if row is None:
+            return {"error": "There is no clip by that name in this run."}
+
+        source = Path(str(plan.get("source") or ""))
+        if not source.exists():
+            return {"error": "The recording this run was cut from is gone."}
+
+        limit = self._source_seconds(plan)
+        start = max(0.0, float(row["start"]) - headroom)
+        end = float(row["end"]) + headroom
+        if limit > 0:
+            end = min(end, limit)
+        if end - start < 1.0:
+            return {"error": "There is not enough recording around that clip."}
+
+        # Named for the window, so asking for the same one twice is free and
+        # asking for a different one does not collide with it.
+        out = (folder / "preview" /
+               f"{name}.{int(start)}-{int(end)}.mp4")
+        answer = {"ok": True, "path": str(out), "start": start, "end": end,
+                  "was_start": float(row["start"]), "was_end": float(row["end"]),
+                  "source_seconds": limit}
+        if out.is_file() and out.stat().st_size > 0:
+            return dict(answer, cached=True)
+
+        key = str(out)
+        if self._windowing.get(key) == "running":
+            return dict(answer, building=True)
+        self._windowing[key] = "running"
+
+        def run():
+            try:
+                cutter.preview(source, start, end, out)
+                log.info("preview for %s: %.0f-%.0f", name, start, end)
+                _trim_previews(out.parent)
+            except Exception as e:                      # noqa: BLE001
+                log.warning("could not build a preview for %s: %s", name, e)
+            finally:
+                self._windowing.pop(key, None)
+
+        threading.Thread(target=run, name="autostream-preview",
+                         daemon=True).start()
+        return dict(answer, building=True)
+
+    def clips_window_ready(self, path: str) -> dict:
+        """Is that preview finished? The page polls this while it waits."""
+        p = Path(path)
+        try:
+            if not p.resolve().is_relative_to(
+                    self._clips_dir(cfg.load()).resolve()):
+                return {"error": "That file is not in the clips folder."}
+        except OSError:
+            return {"error": "No such file."}
+        if self._windowing.get(str(p)) == "running":
+            return {"ok": True, "ready": False}
+        if p.is_file() and p.stat().st_size > 0:
+            return {"ok": True, "ready": True}
+        return {"ok": True, "ready": False,
+                "error": "The preview could not be made."}
 
     def _last_manifest(self, config) -> dict | None:
         """The most recent finished run's clip list, read from its folder.
@@ -1233,6 +1400,24 @@ class Server:
         if mode is not None and mode not in ("crop", "fit"):
             return {"error": "A vertical is either cropped or fitted."}
 
+        # Stretches to take out of the middle, as [[from, to], ...] in
+        # recording seconds. Anything unreadable is rejected here rather than
+        # silently ignored: a removal that quietly does not happen means the
+        # clip that gets published still has the dead half-minute in it.
+        drop: list[tuple[float, float]] | None = None
+        raw = body.get("drop")
+        if raw is not None:
+            if not isinstance(raw, list):
+                return {"error": "Removals have to be a list of ranges."}
+            drop = []
+            for pair in raw:
+                if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                    return {"error": "Each removal is a pair of times."}
+                try:
+                    drop.append((float(pair[0]), float(pair[1])))
+                except (TypeError, ValueError):
+                    return {"error": "A removal has a time that is not a number."}
+
         spec = edit_mod.Spec(
             folder=folder, name=name,
             caption=_flag("caption"),
@@ -1243,7 +1428,9 @@ class Server:
                         else str(body["voice_text"])),
             voice_name=str(body.get("voice_name") or "") or None,
             vertical_mode=mode,
-            trim_start=_num("trim_start"), trim_end=_num("trim_end"))
+            trim_start=_num("trim_start"), trim_end=_num("trim_end"),
+            start_at=_num("start_at"), end_at=_num("end_at"),
+            drop=drop)
         if not ed.start(spec):
             return {"error": "Another clip is being re-rendered."}
         log.info("re-rendering %s in %s", name, folder.name)

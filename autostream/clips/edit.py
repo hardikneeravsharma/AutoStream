@@ -27,7 +27,7 @@ import json
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +35,19 @@ from .. import atomic
 from . import cutter, overlay, plan, voice
 
 log = logging.getLogger("autostream.clips.edit")
+
+# Two different floors, because keeping and removing are not symmetrical.
+#
+# A removal shorter than MIN_REMOVAL is not worth splitting a clip in two for:
+# it would cost an extra encode and a join to take out three frames nobody can
+# see. It is treated as though it had not been asked for.
+#
+# A surviving piece shorter than MIN_PIECE is not footage, it is a flash. Two
+# half-second fragments joined together satisfy any "the clip is at least a
+# second long" rule while being unwatchable, so short pieces are discarded
+# outright -- and if that leaves nothing, the edit is refused.
+MIN_REMOVAL = 0.2
+MIN_PIECE = 1.0
 
 
 @dataclass
@@ -51,6 +64,17 @@ class Spec:
     trim_start: float | None = None   # seconds INTO the clip
     trim_end: float | None = None     # seconds into the clip, from its start
 
+    # In and out measured in RECORDING seconds, which is the only way to ask
+    # for more than the clip already contains. trim_start/trim_end can only
+    # ever shrink what was cut; these can start the clip earlier and end it
+    # later, bounded by the recording itself.
+    start_at: float | None = None
+    end_at: float | None = None
+    # Stretches to take OUT of the middle, also in recording seconds. The
+    # remaining pieces are joined in order, so the dead half-minute between
+    # two fights can come out and leave one clip rather than two.
+    drop: list[tuple[float, float]] | None = None
+
 
 @dataclass
 class Result:
@@ -61,6 +85,8 @@ class Result:
     caption: str = ""
     said: str = ""
     duration: float = 0.0
+    spans: list[tuple[float, float]] = field(default_factory=list)
+    removed: float = 0.0             # seconds taken out of the middle
 
 
 def _session(folder: Path) -> dict:
@@ -80,6 +106,62 @@ def _find(data: dict, name: str) -> dict:
     raise KeyError(f"no clip called {name!r} in this run")
 
 
+def keep_spans(start: float, end: float,
+               drop: list[tuple[float, float]] | None) -> list[tuple[float, float]]:
+    """[start, end] with `drop` taken out of it. -> the pieces that survive.
+
+    Overlapping and out-of-order removals are normalised rather than rejected:
+    a person dragging two handles over the same second means "take this out",
+    not "here is a malformed request". Slivers are
+    Pieces shorter than MIN_PIECE are discarded and removals shorter than
+    MIN_REMOVAL are ignored -- see those two constants for why the floors
+    differ.
+    """
+    ranges = []
+    for a, b in (drop or []):
+        a, b = float(a), float(b)
+        if b < a:
+            a, b = b, a
+        a, b = max(a, start), min(b, end)
+        # A removal too short to see is not worth splitting a clip in two for:
+        # it would cost an extra encode and a join to take out three frames.
+        if b - a >= MIN_REMOVAL:
+            ranges.append((a, b))
+    ranges.sort()
+
+    merged: list[list[float]] = []
+    for a, b in ranges:
+        if merged and a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+
+    spans, at = [], start
+    for a, b in merged:
+        if a - at >= MIN_PIECE:
+            spans.append((at, a))
+        at = max(at, b)
+    if end - at >= MIN_PIECE:
+        spans.append((at, end))
+    return spans
+
+
+def _source_seconds(data: dict, source: Path) -> float:
+    """How long the recording is, so an out-point cannot run off the end."""
+    for key in ("recording_seconds", "source_seconds", "duration"):
+        try:
+            got = float(data.get(key) or 0.0)
+        except (TypeError, ValueError):
+            got = 0.0
+        if got > 0:
+            return got
+    try:
+        info = cutter.probe_source(source)
+        return float(info.get("duration") or 0.0)
+    except Exception:                                   # noqa: BLE001
+        return 0.0
+
+
 def recut(spec: Spec) -> Result:
     """Apply `spec` to one clip. -> what it now is."""
     data = _session(spec.folder)
@@ -93,19 +175,45 @@ def recut(spec: Spec) -> Result:
     handle = str(opt.get("handle") or "@YuvaNeta")
     mode = spec.vertical_mode or str(opt.get("vertical_mode") or "crop")
 
-    # The in and out points are measured from the clip, not from the recording,
-    # because that is what a viewer of the clip can see and reason about.
+    # Two ways of saying where the clip begins and ends. start_at/end_at are
+    # recording seconds and can reach OUTSIDE what was originally cut, which
+    # is what asking for a run-up means. trim_start/trim_end are the older
+    # form, measured from the clip, and can only ever shrink it.
     was_start, was_end = float(row["start"]), float(row["end"])
-    start = was_start + max(0.0, float(spec.trim_start or 0.0))
-    end = (was_start + float(spec.trim_end)
-           if spec.trim_end is not None else was_end)
+    if spec.start_at is not None:
+        start = float(spec.start_at)
+    else:
+        start = was_start + max(0.0, float(spec.trim_start or 0.0))
+    if spec.end_at is not None:
+        end = float(spec.end_at)
+    elif spec.trim_end is not None:
+        end = was_start + float(spec.trim_end)
+    else:
+        end = was_end
+
+    # Bounded by the recording, not by the original clip. Asking for four
+    # seconds of run-up on a clip that starts three seconds into the file
+    # gets three, rather than an error about a negative timestamp.
+    limit = _source_seconds(data, source)
+    start = max(0.0, start)
+    if limit > 0:
+        end = min(end, limit)
     if end - start < 1.0:
         return Result(False, error="a clip has to be at least a second long")
 
+    spans = keep_spans(start, end, spec.drop)
+    kept = sum(b - a for a, b in spans)
+    if not spans or kept < 1.0:
+        return Result(False, error="that removes almost the whole clip")
+    removed = (end - start) - kept
+
     kills = [k for k in (data.get("kills") or [])
-             if start <= float(k["time"]) <= end]
+             if any(a <= float(k["time"]) <= b for a, b in spans)]
+    # The plan describes the clip as it will EXIST, so its length is what
+    # survives the removals: a caption claiming forty seconds on a clip that
+    # is now twelve is worse than no caption.
     fresh = plan.ClipPlan(
-        rank=int(row.get("rank", 1)), start=start, end=end,
+        rank=int(row.get("rank", 1)), start=start, end=start + kept,
         kills=len(kills) or int(row.get("kills", 0)),
         burst_kills=int(row.get("burst_kills", 0)),
         peak_score=float(row.get("score", 0.0) or 0.0),
@@ -147,12 +255,13 @@ def recut(spec: Spec) -> Result:
     # ---- re-cut, from the recording. The master is re-made because a trim
     # changes it, and because deriving the vertical from a stale master would
     # silently keep the old in-point.
-    master = cutter.master(source, fresh, spec.folder / "clips", encoder=enc)
+    master = cutter.master_segments(source, spans, spec.name,
+                                    spec.folder / "clips", encoder=enc)
     vert = cutter.vertical(master, spec.folder / "vertical", mode=mode,
                            encoder=enc)
     if vert is None:
         return Result(True, master=str(master), caption=caption,
-                      duration=end - start)
+                      duration=kept, spans=spans, removed=removed)
 
     if caption:
         tmp = vert.with_suffix(".tmp.mp4")
@@ -172,10 +281,13 @@ def recut(spec: Spec) -> Result:
             said = ""
         speech.path.unlink(missing_ok=True)
 
-    log.info("re-cut %s: %s, caption %r%s", spec.name, mode, caption,
-             f", says {said!r}" if said else "")
+    log.info("re-cut %s: %.1fs of recording %.1f-%.1f%s, %s, caption %r%s",
+             spec.name, kept, start, end,
+             f", less {removed:.1f}s in {len(spans) - 1} cut" if removed else "",
+             mode, caption, f", says {said!r}" if said else "")
     return Result(True, vertical=str(vert), master=str(master),
-                  caption=caption, said=said, duration=end - start)
+                  caption=caption, said=said, duration=kept,
+                  spans=spans, removed=removed)
 
 
 def apply_to_manifest(folder: Path, res: Result, name: str) -> None:
@@ -252,7 +364,9 @@ class Editor:
             self.state = "done"
             self.result = {"vertical": res.vertical, "master": res.master,
                            "caption": res.caption, "said": res.said,
-                           "duration": round(res.duration, 2)}
+                           "duration": round(res.duration, 2),
+                           "removed": round(res.removed, 2),
+                           "pieces": len(res.spans)}
 
     def snapshot(self) -> dict:
         with self._lock:

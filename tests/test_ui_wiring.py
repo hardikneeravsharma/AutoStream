@@ -124,3 +124,25 @@ def test_the_settings_page_can_show_and_install_an_update(ui):
         assert call in text, f"nothing in Settings calls {call}"
     # Progress has to ride the status poll, or the meter never moves.
     assert "onTick" in text and "set_verProgress" in text
+
+
+def test_the_ui_script_is_valid_javascript(everything):
+    """A syntax error anywhere kills EVERY page at once.
+
+    The scripts are Python strings, so nothing checks them: a stray bracket
+    passes the whole Python suite and then stops the entire app from working,
+    silently, on a machine where nobody has the browser console open. esprima
+    is a JavaScript parser written in Python, so this needs no Node install.
+    """
+    esprima = pytest.importorskip(
+        "esprima", reason="pip install -r requirements-dev.txt to check the JS")
+
+    from autostream import ui_assets
+
+    assert len(ui_assets.JS) > 100_000, (
+        "the assembled script is suspiciously small -- this test would be "
+        "checking almost nothing")
+    try:
+        esprima.parseScript(ui_assets.JS)
+    except Exception as e:                              # noqa: BLE001
+        pytest.fail(f"the UI script does not parse: {e}")
