@@ -212,10 +212,37 @@ if ($Dist) {
     New-Item -ItemType Directory -Path (Join-Path $share "secrets") | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $share "logs")    | Out-Null
 
-    # Verify: no credential-shaped file survived anywhere in the package.
+    # ...then put back the ONE config file that belongs to nobody. The public
+    # game index is 10,000 executables mapped to game names, fetched from a
+    # public endpoint on every start anyway -- shipping it means a new install
+    # names games correctly on its very first launch and before it has been
+    # online. Everything else in config\ is personal:
+    #
+    #   config.yaml         the channel, the stream key's home, the overlays
+    #   games.yaml          the IN-GAME NAME the kill feed is read for
+    #   clip_profiles.yaml  calibration, including that name and the HUD colour
+    #   apps.yaml           which games are installed on this machine
+    #   clip_templates\     pixel patches cut from the user's own footage
+    #
+    # paths.seed_config() copies whatever survives here into the user's own
+    # config folder on first run, and never over anything already there.
+    $seedDir = Join-Path $share "config"
+    New-Item -ItemType Directory -Path $seedDir | Out-Null
+    $index = Join-Path $out "config\index.cache.json"
+    if (Test-Path $index) {
+        Copy-Item $index (Join-Path $seedDir "index.cache.json")
+        Write-Ok "shipped the public game index as a default"
+    }
+
+    # Verify: no personal file survived anywhere in the package. games.yaml and
+    # clip_profiles.yaml are on this list because both carry the in-game name
+    # the kill feed is read for, which is a real identity and not a setting.
     $leaks = Get-ChildItem $share -Recurse -File -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -match "token|client_secret|state\.json" -or
-                       $_.Name -eq "config.yaml" -or $_.Name -eq "apps.yaml" }
+                       $_.Name -eq "config.yaml" -or $_.Name -eq "apps.yaml" -or
+                       $_.Name -eq "games.yaml" -or
+                       $_.Name -eq "clip_profiles.yaml" -or
+                       $_.Name -eq "streamelements.json" }
     if ($leaks) {
         Write-Bad "ABORTING - credential files found in the share package:"
         $leaks | ForEach-Object { Write-Host "       $($_.FullName)" -ForegroundColor Red }
