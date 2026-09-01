@@ -64,3 +64,27 @@ def test_every_offered_setting_actually_exists_on_the_config():
         obj = getattr(c, section, None)
         assert obj is not None, f"no config section for {path}"
         assert getattr(obj, key, "<<missing>>") != "<<missing>>", path
+
+
+def test_the_upload_token_help_lists_the_tokens_that_exist():
+    """Help that names a token which does not exist is a promise the app
+    breaks; help that omits one hides a feature. Both are cheap to get wrong
+    and cheap to check."""
+    import re
+
+    from autostream.clips.upload import UploadJob
+
+    # The tokens _text_for actually builds.
+    src = __import__("inspect").getsource(UploadJob._text_for)
+    real = set(re.findall(r'^\s+"([a-z]+)":', src, re.M))
+    assert real, "could not find the token table"
+
+    for path in ("clips.upload_title", "clips.upload_description"):
+        help_text = schema.FIELDS_BY_PATH[path]["help"]
+        named = set(re.findall(r"\{([a-z]+)\}", help_text))
+        assert named <= real, f"{path} names tokens that do not exist: {named - real}"
+    # ...and the title help should name all of them, since it is the one place
+    # anybody looks for the list.
+    title_help = schema.FIELDS_BY_PATH["clips.upload_title"]["help"]
+    named = set(re.findall(r"\{([a-z]+)\}", title_help))
+    assert named == real, f"missing from the help: {sorted(real - named)}"
