@@ -351,3 +351,66 @@ def test_a_run_that_made_nothing_is_not_offered_as_previous_clips(tmp_path, monk
     monkeypatch.setattr(srv, "_clips_dir", lambda _c: tmp_path, raising=False)
     _, runs = srv._scan_runs(object())
     assert runs == {}
+
+
+# ------------------------------------------------------- the estimate itself
+
+def test_before_any_progress_the_estimate_comes_from_the_measured_throughput():
+    """A scan of a two-hour recording is minutes in which nothing visible
+    happens, so the first estimate cannot wait for a chunk to finish."""
+    import time as _t
+
+    j = _stub_job()
+    j.done, j.total = 0, 1
+    j.scan_mode, j.scan_seconds = "killfeed", 111 * 60.0
+    j.step_started = _t.time()
+    got = j.eta()
+    # 111 minutes at the measured 4.5x is about 24-25 minutes.
+    assert got is not None and 1400 < got < 1550, got
+
+
+def test_a_mode_nobody_measured_still_gives_an_answer():
+    import time as _t
+
+    j = _stub_job()
+    j.done, j.total = 0, 1
+    j.scan_mode, j.scan_seconds = "something-new", 600.0
+    j.step_started = _t.time()
+    assert j.eta() is not None
+
+
+def test_once_a_step_reports_progress_its_own_pace_is_used():
+    """Measurement beats the benchmark: it accounts for a machine that is busy
+    with something else."""
+    import time as _t
+
+    j = _stub_job()
+    j.done, j.total = 24, 56
+    j.step_started = _t.time() - 8.2 * 60          # 8m12s for 24 chunks
+    got = j.eta()
+    # 20.5s a chunk with 32 to go is about 11 minutes.
+    assert got is not None and 600 < got < 720, got
+
+
+def test_nothing_is_claimed_when_nothing_can_be_reasoned_about():
+    """A wrong number is worse than no number."""
+    j = _stub_job()
+    j.done, j.total = 0, 1
+    j.scan_seconds, j.scan_mode = 0.0, ""
+    assert j.eta() is None
+    # ...and a finished job is not still estimating.
+    j.state = "done"
+    assert j.eta() is None
+
+
+def test_the_estimate_covers_the_cutting_that_follows_the_scan():
+    import time as _t
+
+    j = _stub_job()
+    j.done, j.total = 0, 1
+    j.scan_mode, j.scan_seconds = "feedbar", 600.0
+    j.step_started = _t.time()
+    bare = j.eta()
+    j.clip_count = 10
+    with_clips = j.eta()
+    assert with_clips > bare, "ten clips of encoding is not free"

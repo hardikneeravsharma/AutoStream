@@ -96,6 +96,33 @@ if ($Clean) {
     Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
 }
 
+# ---- 2b. keep the LIVE installation's own files -----------------------
+# PyInstaller clears dist\AutoStream, and what used to be restored afterwards
+# came from the REPO. So every rebuild silently replaced the running app's
+# settings with the repo's copy, and deleted its log.
+#
+# That is not a theoretical loss. The log is the only record of what the app
+# did, and losing it on every build meant a folder that vanished during a
+# session could not be accounted for afterwards -- there was nothing left to
+# read. paths.py already says exactly this about clips and history: anything
+# inside the application folder is destroyed by a rebuild.
+#
+# So the live copies are taken first and put back first; the repo only fills
+# what the live install did not have.
+$carry = Join-Path $Root "build\_carry"
+Remove-Item -Recurse -Force $carry -ErrorAction SilentlyContinue
+$live = Join-Path $Root "dist\AutoStream"
+if (Test-Path $live) {
+    New-Item -ItemType Directory -Path $carry -Force | Out-Null
+    foreach ($d in @("config", "secrets", "logs")) {
+        $src = Join-Path $live $d
+        if (Test-Path $src) { Copy-Item $src (Join-Path $carry $d) -Recurse -Force }
+    }
+    $st = Join-Path $live "state.json"
+    if (Test-Path $st) { Copy-Item $st (Join-Path $carry "state.json") -Force }
+    Write-Ok "kept the live install's config, secrets, logs and state.json"
+}
+
 # ---- 3. build --------------------------------------------------------
 Write-Step "building (2-4 minutes, output below)..."
 $code = Invoke-Native $vpy @("-m", "PyInstaller", "autostream.spec", "--noconfirm", "--log-level", "WARN") -Echo
@@ -122,6 +149,21 @@ function Restore-LocalConfig {
     foreach ($d in @("config", "secrets", "logs")) {
         $dst = Join-Path $out $d
         if (-not (Test-Path $dst)) { New-Item -ItemType Directory -Path $dst | Out-Null }
+    }
+    # THE LIVE INSTALL'S OWN FILES FIRST. Everything below copies from the REPO
+    # and skips what already exists, so putting these back here is what makes
+    # the repo the fallback rather than the winner. Without it a rebuild handed
+    # the running app the repo's settings and an empty log.
+    if (Test-Path $carry) {
+        foreach ($d in @("config", "secrets", "logs")) {
+            $src = Join-Path $carry $d
+            if (Test-Path $src) {
+                Copy-Item (Join-Path $src "*") (Join-Path $out $d) -Recurse -Force
+            }
+        }
+        $st = Join-Path $carry "state.json"
+        if (Test-Path $st) { Copy-Item $st (Join-Path $out "state.json") -Force }
+        Write-Ok "restored the live install's config, secrets, logs and state.json"
     }
     # clip_profiles.yaml is the user's own calibration work; losing it on a
     # rebuild would mean re-teaching every game. Its templates come along too.
