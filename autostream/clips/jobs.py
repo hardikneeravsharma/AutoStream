@@ -33,6 +33,7 @@ from typing import Any
 
 from . import (cutter, detect, killfeed, montage, overlay, plan, profiles,
                promo, voice)
+from .. import atomic
 from .tools import FfmpegMissing, media_info
 
 log = logging.getLogger("autostream.clips.jobs")
@@ -531,7 +532,7 @@ class ClipJob:
         # clip costs about the same as any other clip.
         self._set(summary=plan.summarise(kills, plans), clip_count=len(plans))
         self.folder.mkdir(parents=True, exist_ok=True)
-        (self.folder / "session.json").write_text(json.dumps({
+        atomic.write_json(self.folder / "session.json", {
             "source": str(self.source), "game": self.game,
             "game_key": self.game_key, "options": opt,
             "kills": kills, "plans": [p.as_dict() for p in plans],
@@ -548,7 +549,7 @@ class ClipJob:
                      "flags": r.flags, "headshots": r.headshots}
                     if r.source == "demo" else {})}
                 for r in round_list]} if round_list else {}),
-        }, indent=2), encoding="utf-8")
+        })
 
         # ---- 2b. stop here if the plan is all that was asked for ---------
         if opt.get("plan_only"):
@@ -583,8 +584,7 @@ class ClipJob:
             data = json.loads((self.folder / "session.json").read_text(
                 encoding="utf-8"))
             data["preview"] = rows
-            (self.folder / "session.json").write_text(
-                json.dumps(data, indent=2), encoding="utf-8")
+            atomic.write_json(self.folder / "session.json", data)
             log.info("plan only: %d clip(s) ready to review", len(rows))
             # Nothing was encoded, so leave nothing behind. The plan itself
             # lives in this job's status, which is what the page reads.
@@ -1113,7 +1113,7 @@ class ClipJob:
         if not self.folder.exists():
             return
         try:
-            (self.folder / "clips.json").write_text(json.dumps({
+            atomic.write_json(self.folder / "clips.json", {
                 "game": self.game,
                 "source": str(self.source),
                 "state": self.state,
@@ -1124,7 +1124,7 @@ class ClipJob:
                 "promo": self.promo_path,
                 "clips": self.results,
                 "finished": self.finished_at,
-            }, indent=2), encoding="utf-8")
+            })
         except OSError as e:
             log.warning("could not write clips.json: %s", e)
 

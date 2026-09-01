@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .. import atomic
 from . import cutter, overlay, plan, voice
 
 log = logging.getLogger("autostream.clips.edit")
@@ -200,7 +201,7 @@ def apply_to_manifest(folder: Path, res: Result, name: str) -> None:
                 row["duration"] = round(res.duration, 2)
             break
     try:
-        f.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        atomic.write_json(f, data)
     except OSError as e:
         log.warning("could not update %s: %s", f.name, e)
 

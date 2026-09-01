@@ -971,6 +971,15 @@ class Server:
         if not folder:
             return {"error": "No folder given."}
         f = Path(folder)
+        # Confined the way the video and edit endpoints are. Without it this
+        # would read a clips.json from anywhere on disk and hand its contents
+        # back -- the page only ever passes folders it was given, but the page
+        # is not the only thing that can call this.
+        try:
+            if not f.resolve().is_relative_to(self._clips_dir(cfg.load()).resolve()):
+                return {"error": "That folder is not in the clips folder."}
+        except OSError:
+            return {"error": "That folder is gone."}
         man, sess = f / "clips.json", f / "session.json"
         if not man.exists():
             return {"error": "That run has no clip list."}
@@ -1289,8 +1298,14 @@ class Server:
         clips.set_ffmpeg_path(cfg.load().clips.ffmpeg_path or None)
         if not clips.available():
             return b"", "ffmpeg is not available."
+        # Path("") is the CURRENT DIRECTORY, and a directory exists -- so an
+        # empty path passed the check below and reached ffmpeg, which answered
+        # with "ffmpeg.EXE failed (4294967283)". That is a true statement about
+        # ffmpeg and says nothing at all about the request.
+        if not str(path).strip():
+            return b"", "No recording given."
         src = Path(path)
-        if not src.exists():
+        if not src.is_file():
             return b"", "That recording is no longer on disk."
         import tempfile
 
