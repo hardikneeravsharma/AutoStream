@@ -66,6 +66,18 @@ if ((Invoke-Native $vpy @("-c", "import PyInstaller")) -ne 0) {
 }
 Write-Ok "PyInstaller ready"
 
+# The version, read from the one place it is declared. Never typed twice: the
+# installer, its filename and its Add/Remove entry all come from here, and a
+# version that disagrees with the app's own is worse than no version at all.
+$initPy = Get-Content (Join-Path $Root "autostream\__init__.py") -Raw
+if ($initPy -match '__version__\s*=\s*"([^"]+)"') {
+    $version = $Matches[1]
+    Write-Ok "version $version"
+} else {
+    Write-Bad "ABORTING - could not read __version__ from autostream\__init__.py"
+    exit 1
+}
+
 # ---- 2. sanity: does the app import at all? --------------------------
 if ((Invoke-Native $vpy @("-c", "import autostream.__main__, autostream.web, autostream.panel")) -ne 0) {
     Write-Bad "the package does not import - fix that before building:"
@@ -263,6 +275,53 @@ if ($Dist) {
         exit 1
     }
     $zmb = "{0:N0}" -f ((Get-Item $zip).Length / 1MB)
+
+    # A CHECKSUM BESIDE THE PACKAGE. Published with the release so the in-app
+    # updater can prove that what it downloaded is what was built, before it
+    # runs any of it. Nothing else can: the package is unsigned, GitHub serves
+    # it over a redirect, and a truncated download is indistinguishable from a
+    # complete one without this.
+    $hash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
+    $sums = "$zip.sha256"
+    # The format `sha256sum -c` expects, so it can be checked by hand too.
+    Set-Content -Path $sums -Value "$hash  $(Split-Path $zip -Leaf)" -Encoding ascii
+    Write-Ok "sha256 $hash"
+
+    # ---- 4c. the Windows installer ------------------------------------
+    # Built from the SAME scrubbed folder the zip is made from, so whatever
+    # the package assertion above proved about the zip is true of the
+    # installer as well. Skipped rather than fatal when the compiler is
+    # absent: a machine without Inno Setup can still produce the zip, which
+    # is what the build is fundamentally for.
+    $iscc = @(
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+        "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    if ($iscc) {
+        Write-Step "building the installer..."
+        $iss = Join-Path $Root "packaging\AutoStream.iss"
+        $args = @("/Q", "/DAppVersion=$version", "/DSourceDir=$share", $iss)
+        if ((Invoke-Native $iscc $args) -ne 0) {
+            Write-Bad "ABORTING - the installer did not compile"
+            exit 1
+        }
+        $setup = Join-Path $Root "dist\AutoStream-$version-setup.exe"
+        if (-not (Test-Path $setup)) {
+            Write-Bad "ABORTING - the compiler reported success but $setup is missing"
+            exit 1
+        }
+        $shash = (Get-FileHash -Path $setup -Algorithm SHA256).Hash.ToLower()
+        Set-Content -Path "$setup.sha256" `
+            -Value "$shash  $(Split-Path $setup -Leaf)" -Encoding ascii
+        $smb = "{0:N0}" -f ((Get-Item $setup).Length / 1MB)
+        Write-Ok "installer $([System.IO.Path]::GetFileName($setup))  ($smb MB)"
+        Write-Ok "sha256 $shash"
+    } else {
+        Write-Warn "Inno Setup is not installed, so no installer was built."
+        Write-Host "       winget install JRSoftware.InnoSetup" -ForegroundColor DarkGray
+    }
 
     Write-Host ""
     Write-Ok "shareable package verified clean - no tokens, no config"

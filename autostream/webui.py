@@ -301,6 +301,7 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json({"phase": "IDLE", "apps": self.app.apps_payload(),
                             "clips": self.app._clips_status(),
                             "edit": self.app._edit_status(),
+                            "update": self.app.update_status(),
                             "upload": self.app._upload_status()})
                 return
             self.app.engine.client_seen = time.monotonic()
@@ -326,6 +327,8 @@ class _Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/clips/existing":
             q = parse_qs(u.query)
             self._json(self.app.clips_existing((q.get("folder") or [""])[0]))
+        elif u.path == "/api/update/check":
+            self._json(self.app.update_check())
         elif u.path == "/api/clips/voices":
             self._json(self.app.clips_voices())
         elif u.path == "/api/clips/voice_sample":
@@ -443,6 +446,10 @@ class _Handler(BaseHTTPRequestHandler):
             # Every one of these returns immediately. The actual work runs on a
             # worker thread and reports through /api/status, which the shell is
             # already polling - see clips/jobs.py.
+            elif p == "/api/update/install":
+                self._json(self.app.update_install())
+            elif p == "/api/update/download":
+                self._json(self.app.update_download())
             elif p == "/api/clips/edit":
                 self._json(self.app.clips_edit(b))
             elif p == "/api/clips/preview":
@@ -745,6 +752,7 @@ class Server:
             # costs nothing when idle and means progress survives a reload.
             "clips": self._clips_status(),
             "edit": self._edit_status(),
+            "update": self.update_status(),
             "upload": self._upload_status(),
             **self._phase_clock(),
         }
@@ -1240,6 +1248,157 @@ class Server:
             return {"error": "Another clip is being re-rendered."}
         log.info("re-rendering %s in %s", name, folder.name)
         return {"ok": True, "name": name}
+
+    # The last check, so the page can ask freely without the button becoming a
+    # way to spend GitHub's 60-requests-an-hour allowance.
+    _update_seen: dict = {}
+    _update_job: dict = {}
+
+    def update_check(self, force: bool = False) -> dict:
+        """Is there a newer AutoStream? -> what the page needs to say so."""
+        from . import __version__, updates
+
+        now = time.time()
+        cached = self._update_seen
+        if (not force and cached.get("at")
+                and now - cached["at"] < updates.MIN_SECONDS_BETWEEN_CHECKS):
+            return dict(cached["answer"], cached=True)
+
+        answer: dict
+        try:
+            rel = updates.latest()
+        except RuntimeError as e:
+            # Not being able to check is not an error state for the app; it is
+            # a sentence on a page. Cached like a success so a machine that is
+            # offline does not retry every time the page is opened.
+            answer = {"ok": True, "checked": True, "available": False,
+                      "current": __version__, "why": str(e)}
+        else:
+            answer = {
+                "ok": True, "checked": True,
+                "current": __version__,
+                "latest": rel.version,
+                "available": bool(rel.usable
+                                  and updates.is_newer(rel.version, __version__)),
+                "notes": rel.notes[:4000],
+                "url": rel.url,
+                "bytes": rel.asset_bytes,
+                "verifiable": bool(rel.sha256_url),
+                # An installer can replace a running program; a zip cannot,
+                # so the page has to offer a different ending for each.
+                "installable": bool(rel.installable),
+                "asset": rel.asset_name,
+                "published": rel.published,
+            }
+        self._update_seen = {"at": now, "answer": answer}
+        return dict(answer, cached=False)
+
+    def update_download(self) -> dict:
+        """Fetch the newer package, verify it, and say where it landed.
+
+        Deliberately stops there. Replacing a running program is the
+        installer's job, and this app has one -- so what a person gets is a
+        verified file and a button that opens it, not a surprise restart.
+        """
+        from . import __version__, updates
+
+        job = self._update_job
+        if job.get("state") == "downloading":
+            return {"error": "That download is already running."}
+
+        try:
+            rel = updates.latest()
+        except RuntimeError as e:
+            return {"error": str(e)}
+        if not rel.usable:
+            return {"error": "That release has no package to download."}
+        if not updates.is_newer(rel.version, __version__):
+            return {"error": f"You already have {__version__}, which is the "
+                             f"newest there is."}
+
+        into = paths.DATA_HOME / "updates"
+        self._update_job = {"state": "downloading", "version": rel.version,
+                            "done": 0, "total": rel.asset_bytes, "path": "",
+                            "installable": bool(rel.installable), "error": ""}
+
+        def run():
+            def progress(done, total):
+                self._update_job.update(done=done, total=total or rel.asset_bytes)
+            try:
+                got = updates.download(rel, into, on_progress=progress)
+            except RuntimeError as e:
+                self._update_job.update(state="failed", error=str(e))
+                log.warning("update download failed: %s", e)
+                return
+            self._update_job.update(state="ready", path=str(got))
+            log.info("update %s downloaded to %s", rel.version, got)
+
+        threading.Thread(target=run, name="autostream-update",
+                         daemon=True).start()
+        log.info("downloading AutoStream %s", rel.version)
+        return {"ok": True, "version": rel.version}
+
+    def update_install(self) -> dict:
+        """Hand the downloaded installer over and get out of its way.
+
+        A PROGRAM CANNOT REPLACE ITS OWN RUNNING FILES, so this does not try.
+        The installer is launched detached and then AutoStream quits; the
+        installer waits for the exit, swaps the files and starts the new
+        version. That is what its CloseApplications/RestartApplications
+        settings are for.
+
+        Refused while anything is in flight: an update that interrupts a clip
+        job or a live broadcast would be a worse bug than any it fixes.
+        """
+        from . import clips
+        from .clips import edit as edit_mod
+
+        job = self._update_job
+        if job.get("state") != "ready" or not job.get("path"):
+            return {"error": "There is nothing downloaded to install."}
+        installer = Path(job["path"])
+        if not installer.is_file():
+            return {"error": "The downloaded file is no longer there."}
+
+        if self.engine is not None and getattr(self.engine.state, "phase", "IDLE") != "IDLE":
+            return {"error": "A session is running. Stop it before updating."}
+        if clips.runner().busy():
+            return {"error": "A clip job is running. Wait for it to finish."}
+        if edit_mod.editor().busy():
+            return {"error": "A clip is being re-rendered. Wait for it to finish."}
+
+        # The zip has no installer to run; it is extracted by hand. Say so
+        # rather than trying to execute an archive.
+        if installer.suffix.lower() != ".exe":
+            return {"error": f"{installer.name} is a zip. Unzip it over your "
+                             f"installation yourself, or download the "
+                             f"installer instead."}
+        try:
+            subprocess.Popen(
+                [str(installer), "/SILENT", "/CLOSEAPPLICATIONS",
+                 "/RESTARTAPPLICATIONS", "/NORESTART"],
+                cwd=str(installer.parent),
+                creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        except OSError as e:
+            return {"error": f"Could not start the installer: {e}"}
+        log.info("handing over to the installer: %s", installer.name)
+
+        # Quit a moment later, not here. Closing the app inside the request
+        # that asked for it means the reply never arrives, so the page cannot
+        # say what is happening before the window vanishes. The installer is
+        # already waiting for this process either way.
+        def leave():
+            time.sleep(1.5)
+            if self.window is not None:
+                self.window.request_quit("an update is being installed")
+
+        threading.Thread(target=leave, name="autostream-handover",
+                         daemon=True).start()
+        return {"ok": True, "version": job.get("version", "")}
+
+    def update_status(self) -> dict:
+        return dict(self._update_job) or {"state": "idle"}
 
     def clips_voices(self) -> dict:
         """The voices installed, grouped, so one can be chosen by ear."""
