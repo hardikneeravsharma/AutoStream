@@ -28,6 +28,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .. import atomic
+
 log = logging.getLogger("autostream.clips.upload")
 
 STEPS = ("check", "upload", "verify")
@@ -258,7 +260,11 @@ class UploadJob:
                 row["url"] = got["url"]
                 row["shorts_url"] = got["shorts_url"]
         try:
-            manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            # THE MOST IMPORTANT ONE. This is where the YouTube ids of
+            # clips already uploaded are written back. A truncated write here
+            # means the app forgets what went up, and the next batch sends the
+            # same clips to the channel AGAIN.
+            atomic.write_json(manifest, data)
         except OSError as e:
             log.warning("could not record the upload ids: %s", e)
 

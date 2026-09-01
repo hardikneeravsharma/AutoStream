@@ -471,3 +471,52 @@ def test_every_caller_names_itself():
     assert calls, "nothing calls request_quit at all"
     bare = [c for c in calls if not c[1]]
     assert bare == [], f"request_quit called with no reason: {bare}"
+
+
+# ------------------------------- what a malformed request gets told
+
+def test_an_empty_recording_path_is_refused_rather_than_handed_to_ffmpeg():
+    """FROM A PROBE. Path("") is the CURRENT DIRECTORY, and a directory
+    exists -- so an empty path passed the existence check and reached ffmpeg,
+    which answered "ffmpeg.EXE failed (4294967283)". A true statement about
+    ffmpeg that says nothing at all about the request."""
+    srv = _server()
+    png, err = srv.clip_frame("", 0.0)
+    assert png == b"" and err == "No recording given."
+    assert srv.clip_frame("   ", 0.0)[1] == "No recording given."
+
+
+def test_a_directory_is_not_a_recording():
+    srv = _server()
+    assert srv.clip_frame(str(pathlib.Path.cwd()), 0.0)[1]
+
+
+def test_a_run_outside_the_clips_folder_is_refused(tmp_path, monkeypatch):
+    """The video and edit endpoints confine what they will read; this one did
+    not, so it would read a clips.json from anywhere on disk and hand its
+    contents back."""
+    import json as _json
+
+    clips_root = tmp_path / "clips"
+    (clips_root / "run").mkdir(parents=True)
+    (clips_root / "run" / "clips.json").write_text("[]", encoding="utf-8")
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "clips.json").write_text(_json.dumps([{"secret": 1}]),
+                                        encoding="utf-8")
+
+    srv = _server()
+    monkeypatch.setattr(srv, "_clips_dir", lambda _c: clips_root, raising=False)
+    assert "not in the clips folder" in srv.clips_existing(str(outside))["error"]
+    # ...and a real run inside it still reads.
+    assert srv.clips_existing(str(clips_root / "run")).get("ok") is True
+
+
+def test_traversal_out_of_the_clips_folder_is_refused(tmp_path, monkeypatch):
+    clips_root = tmp_path / "clips"
+    clips_root.mkdir()
+    (tmp_path / "clips.json").write_text("[]", encoding="utf-8")
+    srv = _server()
+    monkeypatch.setattr(srv, "_clips_dir", lambda _c: clips_root, raising=False)
+    got = srv.clips_existing(str(clips_root / ".." ))
+    assert "error" in got

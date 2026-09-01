@@ -32,7 +32,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from .. import paths, valorant_api
+from .. import atomic, paths, valorant_api
 from . import cs2_demo, rounds as rounds_mod
 
 log = logging.getLogger("autostream.clips.valorant_match")
@@ -181,7 +181,9 @@ def collect(limit: int = 5) -> list[str]:
         # knowing which of the ten players to read.
         data[MINE] = sess.puuid
         try:
-            target.write_text(json.dumps(data), encoding="utf-8")
+            # Cannot be fetched again once the client has closed, so a
+            # half-written one is gone for good.
+            atomic.write_json(target, data, indent=None)
         except OSError as e:
             log.warning("could not cache Valorant match %s: %s", mid[:8], e)
             continue
