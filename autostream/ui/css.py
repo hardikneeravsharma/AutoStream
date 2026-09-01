@@ -2210,6 +2210,21 @@ ol.steps-list li{margin-block:var(--space-4)}
 .clip-verdict.is-weak{border-left-color:var(--warn)}
 .clip-verdict.is-bad{border-left-color:var(--danger)}
 
+/* One line, stated plainly. Not a panel: there is nothing to do about it here
+   -- the record is captured while the game runs -- so it informs rather than
+   asks. */
+.clip-matchline{
+  margin:0 0 var(--space-4);
+  padding:var(--space-2) var(--space-3);
+  border-left:3px solid var(--ok);
+  border-radius:var(--radius-sm);
+  background:var(--surface-sunken);
+  color:var(--text-muted);
+  font-size:var(--font-sm);
+}
+.clip-matchline.is-warn{border-left-color:var(--warn)}
+.clip-matchline.hide{display:none}
+
 /* ------------------------------------------------------------- the player
 
    Video on the left at whatever aspect the clip is, everything about the clip

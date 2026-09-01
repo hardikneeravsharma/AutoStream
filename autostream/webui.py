@@ -822,8 +822,14 @@ class Server:
 
         rows = history.annotate(history.read(limit=200))
         table = profiles.load_all()
-        found = self._kills_by_source(cfg_now)
-        runs = self._runs_by_source(cfg_now)
+        # ONE PASS. Both of these read every run's session.json, and they used
+        # to do it separately -- twenty-five folders of twenty-kilobyte JSON,
+        # parsed twice, every time this page is opened or refreshed.
+        found, runs = self._scan_runs(cfg_now)
+        # The match cache is read once here too, for the same reason: state()
+        # reads every cached match, and calling it per session row made that
+        # every match times every Valorant stream.
+        vmatches = None
         for r in rows:
             prof = profiles.for_game(r.get("game_key"), r.get("game"))
             r["profile"] = prof.label if prof else None
@@ -868,8 +874,10 @@ class Server:
             if prof and getattr(prof, "matches", False):
                 from .clips import valorant_match
 
+                if vmatches is None:
+                    vmatches = valorant_match.cached()
                 got = valorant_match.state(float(r.get("started") or 0),
-                                           _rec_seconds(r))
+                                           _rec_seconds(r), matches=vmatches)
                 r["match_state"] = got["state"]
                 r["match_count"] = got["matches"]
                 r["match_why"] = got.get("why", "")
@@ -917,48 +925,35 @@ class Server:
         except (OSError, ValueError):
             return (raw or "").casefold()
 
-    def _kills_by_source(self, config=None) -> dict[str, int]:
-        """How many kills a previous run already found per recording, so the
-        list can say so and the next run can skip the slowest step.
+    def _scan_runs(self, config=None) -> tuple[dict[str, int], dict[str, dict]]:
+        """One walk over every run's session.json.
 
-        Looks in the CONFIGURED output folder, not paths.CLIPS_DIR. Those two
-        diverge the moment clips.output_dir is set, and the symptom is silent:
-        every rescan pays the slowest step again for no visible reason.
+        -> (kills found per recording, newest finished run per recording)
+
+        Both answers come from the same files, and reading them twice cost a
+        second walk over every folder for nothing. Newest first, so the newest
+        run of a recording is the one that answers -- the oldest run of a
+        recording is the one whose clips are most likely to be wrong.
         """
-        out: dict[str, int] = {}
-        root = self._clips_dir(config or cfg.load())
-        try:
-            for sidecar in root.glob("*/session.json"):
-                data = json.loads(sidecar.read_text(encoding="utf-8"))
-                src = self._same_file(data.get("source") or "")
-                if src:
-                    out[src] = max(out.get(src, 0), len(data.get("kills") or []))
-        except (OSError, ValueError, json.JSONDecodeError):
-            pass
-        return out
-
-    def _runs_by_source(self, config=None) -> dict[str, dict]:
-        """The NEWEST finished run per recording. -> {source: {folder, clips, when}}
-
-        Newest by modification time, for the same reason the kill cache is --
-        see _cached_kills. The oldest run of a recording is the one whose
-        clips are most likely to be wrong.
-        """
-        out: dict[str, dict] = {}
+        kills: dict[str, int] = {}
+        runs: dict[str, dict] = {}
         root = self._clips_dir(config or cfg.load())
         try:
             sidecars = sorted(root.glob("*/session.json"),
                               key=lambda f: f.stat().st_mtime, reverse=True)
         except OSError:
-            return out
+            return kills, runs
         for sidecar in sidecars:
             try:
                 data = json.loads(sidecar.read_text(encoding="utf-8"))
             except (OSError, ValueError, json.JSONDecodeError):
                 continue
             src = self._same_file(data.get("source") or "")
-            if not src or src in out:
-                continue          # a newer run already answered for this one
+            if not src:
+                continue
+            kills[src] = max(kills.get(src, 0), len(data.get("kills") or []))
+            if src in runs:
+                continue                  # a newer run already answered
             folder = sidecar.parent
             made = 0
             try:
@@ -967,9 +962,9 @@ class Server:
             except OSError:
                 pass
             if made:
-                out[src] = {"folder": str(folder), "clips": made,
-                            "when": int(sidecar.stat().st_mtime)}
-        return out
+                runs[src] = {"folder": str(folder), "clips": made,
+                             "when": int(sidecar.stat().st_mtime)}
+        return kills, runs
 
     def clips_existing(self, folder: str) -> dict:
         """One finished run's clips, for looking at before cutting again."""
