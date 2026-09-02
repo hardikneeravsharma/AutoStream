@@ -1114,6 +1114,12 @@ class Server:
         if row is None:
             return {"error": "There is no clip by that name in this run."}
 
+        # Centre the window on what the clip IS, not on what the run first cut.
+        # A clip already stretched to the edge of its old window would
+        # otherwise open in a window that does not contain all of it.
+        from .clips import edit as edit_mod
+        row = edit_mod.current(folder, name) or row
+
         source = Path(str(plan.get("source") or ""))
         if not source.exists():
             return {"error": "The recording this run was cut from is gone."}

@@ -27,7 +27,7 @@ import json
 import logging
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +94,31 @@ def _session(folder: Path) -> dict:
     if not f.exists():
         raise FileNotFoundError("that run has no session.json, so its plan is gone")
     return json.loads(f.read_text(encoding="utf-8"))
+
+
+def current(folder: Path, name: str) -> dict | None:
+    """What the clip is NOW, from the manifest, if it has been edited before.
+
+    session.json holds the plan the run produced and never changes -- it is
+    the record of what the detector found. clips.json holds what the clips
+    have since become. Editing has to start from the second, or every edit
+    silently reverts the one before it.
+    """
+    f = folder / "clips.json"
+    if not f.exists():
+        return None
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    rows = data if isinstance(data, list) else (data.get("clips") or [])
+    for row in rows:
+        if not row.get("edited"):
+            continue
+        if Path(str(row.get("vertical") or "")).stem == f"{name}_vertical" \
+                or Path(str(row.get("master") or "")).stem == name:
+            return row
+    return None
 
 
 def _find(data: dict, name: str) -> dict:
@@ -179,7 +204,15 @@ def recut(spec: Spec) -> Result:
     # recording seconds and can reach OUTSIDE what was originally cut, which
     # is what asking for a run-up means. trim_start/trim_end are the older
     # form, measured from the clip, and can only ever shrink it.
-    was_start, was_end = float(row["start"]), float(row["end"])
+    # Where the clip currently begins and ends -- which is what a previous
+    # edit left it as, if there was one, and the original plan otherwise.
+    now = current(spec.folder, spec.name) or row
+    was_start, was_end = float(now["start"]), float(now["end"])
+    # Removals made last time are still removals, unless this edit replaces
+    # them. Otherwise saving a new caption would put the dull middle back.
+    if spec.drop is None and now.get("drop"):
+        spec = replace(spec, drop=[(float(a), float(b))
+                                   for a, b in now["drop"]])
     if spec.start_at is not None:
         start = float(spec.start_at)
     else:
@@ -291,10 +324,16 @@ def recut(spec: Spec) -> Result:
 
 
 def apply_to_manifest(folder: Path, res: Result, name: str) -> None:
-    """Write the new caption and spoken line back into clips.json.
+    """Write what the clip has BECOME back into clips.json.
 
     The manifest is what the Clips page and the uploader read, so an edit that
     only changed the file would show the old caption next to the new video.
+
+    The span matters just as much. Without it the second edit of a clip starts
+    from the original cut again: adding two seconds of run-up and then coming
+    back to add two more would quietly throw the first two away, and changing
+    only the caption afterwards would revert the trim entirely. The manifest
+    is where "what this clip is now" lives, so that is where it is recorded.
     """
     f = folder / "clips.json"
     if not f.exists():
@@ -311,6 +350,15 @@ def apply_to_manifest(folder: Path, res: Result, name: str) -> None:
             row["said"] = res.said
             if res.duration:
                 row["duration"] = round(res.duration, 2)
+            if res.spans:
+                row["start"] = round(res.spans[0][0], 3)
+                row["end"] = round(res.spans[-1][1], 3)
+                # The gaps between the pieces, which is what was taken out.
+                # Kept so the page can show them again and the next edit can
+                # start from what the clip is rather than what it was.
+                row["drop"] = [[round(a[1], 3), round(b[0], 3)]
+                               for a, b in zip(res.spans, res.spans[1:])]
+                row["edited"] = True
             break
     try:
         atomic.write_json(f, data)
@@ -366,7 +414,14 @@ class Editor:
                            "caption": res.caption, "said": res.said,
                            "duration": round(res.duration, 2),
                            "removed": round(res.removed, 2),
-                           "pieces": len(res.spans)}
+                           "pieces": len(res.spans),
+                           # Where the clip now sits in the recording, so the
+                           # page can carry on editing from what it has become
+                           # rather than from what the run originally cut.
+                           "start": round(res.spans[0][0], 3) if res.spans else 0,
+                           "end": round(res.spans[-1][1], 3) if res.spans else 0,
+                           "drop": [[round(a[1], 3), round(b[0], 3)]
+                                    for a, b in zip(res.spans, res.spans[1:])]}
 
     def snapshot(self) -> dict:
         with self._lock:
