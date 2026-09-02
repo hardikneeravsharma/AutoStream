@@ -274,3 +274,46 @@ def test_the_page_offers_every_style_the_app_has_and_no_others(ui):
 
     offered = set(re.findall(r"\['([a-z]+)',", _js_list(ui["clips"], "CLIP_STYLES")))
     assert offered == set(plan.STYLES) | {"custom"}
+
+
+# ------------------------------------------------------------------- routes
+
+def _routes():
+    """(what the server answers, what the page asks for)."""
+    import inspect
+    import re
+
+    from autostream import ui_assets, webui
+
+    src = inspect.getsource(webui)
+    answers = set(re.findall(r'==\s*"(/api/[a-z0-9/_-]+)"', src))
+    answers |= set(re.findall(r'startswith\("(/api/[a-z0-9/_-]+)"', src))
+    asks = set(re.findall(r"['\"](/api/[a-z0-9/_-]+)", ui_assets.JS))
+    return answers, asks
+
+
+def test_every_route_the_page_calls_exists():
+    """A 404 from the page shows up nowhere but a console nobody has open."""
+    answers, asks = _routes()
+    assert len(answers) > 40, (
+        f"only {len(answers)} routes found -- the pattern has drifted and this "
+        f"test is checking nothing")
+    assert not asks - answers, (
+        f"the page calls routes the server does not answer: {sorted(asks - answers)}")
+
+
+def test_no_route_exists_that_nothing_can_reach():
+    """Two did, for a long time: a diagnostic report and a way to clear
+    streams whose recording had been deleted. Both were built, both were
+    sensible, and no button anywhere called either -- so they were not
+    features, just code that had to keep working for nobody.
+
+    If a route belongs here without a caller, say why in this list rather
+    than deleting the assertion.
+    """
+    answers, asks = _routes()
+    deliberate: set[str] = set()
+    orphaned = answers - asks - deliberate
+    assert not orphaned, (
+        f"nothing in the UI reaches: {sorted(orphaned)} -- wire it up, delete "
+        f"it, or add it to `deliberate` above with a reason")

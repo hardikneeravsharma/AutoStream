@@ -530,8 +530,10 @@ class _Handler(BaseHTTPRequestHandler):
             elif p == "/api/screens/build":
                 self._json(self.app.build_screens())
             elif p == "/api/clips/forget":
-                self._json(self.app.clips_forget(str(b.get("recording_path", "")),
-                                                 _int(b.get("session"), -1)))
+                self._json(self.app.clips_forget(
+                    str(b.get("recording_path", "")),
+                    _int(b.get("session"), -1),
+                    missing_only=bool(b.get("missing_only"))))
 
             # ---------- setup ----------
             elif p == "/api/setup/client_secret":
@@ -1916,18 +1918,41 @@ class Server:
 
         return calibrate.from_request(body)
 
-    def clips_forget(self, recording_path: str, session: int) -> dict:
-        """Drop a history row whose recording is gone. Never deletes video."""
+    def clips_forget(self, recording_path: str, session: int,
+                     missing_only: bool = False) -> dict:
+        """Drop history rows. NEVER deletes video.
+
+        Two modes. Named, which drops one entry, and missing_only, which drops
+        every entry whose recording is no longer on disk -- because deleting
+        old footage is normal and the list otherwise fills up with streams
+        that can never be cut again and cannot be dismissed.
+
+        The file is checked NOW rather than trusted from the entry: a
+        recording on a drive that happens to be unplugged is not gone, and
+        forgetting it would lose the record of a stream that still exists.
+        """
         from . import history
 
         rows = history.read()
-        keep = [r for r in rows
-                if not (r.get("recording_path") == recording_path
-                        and (session < 0 or r.get("session") == session))]
-        if len(keep) == len(rows):
-            return {"error": "No matching entry."}
+        if missing_only:
+            keep = [r for r in rows
+                    if not r.get("recording_path")
+                    or Path(str(r["recording_path"])).exists()]
+            if len(keep) == len(rows):
+                return {"ok": True, "removed": 0,
+                        "detail": "Every stream still has its recording."}
+        else:
+            if not recording_path:
+                return {"error": "No recording given."}
+            keep = [r for r in rows
+                    if not (r.get("recording_path") == recording_path
+                            and (session < 0 or r.get("session") == session))]
+            if len(keep) == len(rows):
+                return {"error": "No matching entry."}
         history.rewrite(keep)
-        return {"ok": True, "removed": len(rows) - len(keep)}
+        gone = len(rows) - len(keep)
+        log.info("forgot %d stream(s) whose recording was gone", gone)
+        return {"ok": True, "removed": gone}
 
     def reveal(self, path: str) -> dict:
         """Open a folder (or select a file) in Explorer."""
