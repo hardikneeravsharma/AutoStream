@@ -999,6 +999,16 @@ CONFIG_SCHEMA: list[Section] = [
                 placeholder="LIVE MOST EVENINGS",
             ),
             _field(
+                "clips.sounds_dir",
+                "Sound effects folder",
+                "Drop .mp3, .wav, .m4a or .ogg files in here and they can be "
+                "added to any clip while editing it. Only files inside this "
+                "folder can be used. Leave blank for a 'sounds' folder beside "
+                "your recordings, which is made for you.",
+                "text",
+                placeholder=r"C:\Users\you\Videos\AutoStream\sounds",
+            ),
+            _field(
                 "clips.music",
                 "Music for the reel",
                 "A track you own. Given one, the montage is joined by a beat-synced "

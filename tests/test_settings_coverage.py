@@ -21,6 +21,22 @@ from autostream import cfg, schema                     # noqa: E402
 NOT_SETTINGS = {"obs.get"}
 
 
+def _sections() -> set[str]:
+    """The config's real top-level sections.
+
+    The patterns below look for `c.<something>.<something>`, and `c` is an
+    ordinary name for an ordinary variable -- a caption, a clip, a character.
+    Without this, `c.text.strip()` in a loop over captions reads as a setting
+    called text.strip and the test fails for a reason that has nothing to do
+    with settings.
+
+    Filtering on the real sections keeps every bug this was written for: the
+    one that prompted it, rules.upload_daily_max, is under a real section and
+    would still be caught.
+    """
+    return {k for k, v in cfg.DEFAULTS.items() if isinstance(v, dict)}
+
+
 def _reads() -> set[str]:
     """Every config path the code actually reads, however it reads it."""
     src = ""
@@ -38,6 +54,8 @@ def _reads() -> set[str]:
               r"\.([a-z_]+)\s*,\s*['\"]([a-z_]+)['\"]")
     for m in re.finditer(getter, src):
         found.add(f"{m.group(1)}.{m.group(2)}")
+    real = _sections()
+    found = {f for f in found if f.split(".")[0] in real}
     return found - NOT_SETTINGS
 
 

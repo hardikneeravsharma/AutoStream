@@ -207,6 +207,24 @@ CLIPS_HTML: str = (
       </div>
 
       <div class="panel">
+        <h3 class="clip-play-h">Effects</h3>
+        <p class="field-help">Scrub to the moment, then add. Everything is
+           placed where the playhead is and can be nudged afterwards.</p>
+        <div class="field-inline">
+          <button class="btn btn-sm" type="button" data-fxadd="caption">
+            + Caption</button>
+          <button class="btn btn-sm" type="button" data-fxadd="zoom">
+            + Zoom</button>
+          <button class="btn btn-sm" type="button" data-fxadd="freeze">
+            + Freeze</button>
+          <button class="btn btn-sm" type="button" data-fxadd="sound">
+            + Sound</button>
+        </div>
+        <div class="clip-fx-list" id="clip-fx-list"></div>
+        <p class="field-help hide" id="clip-fx-note"></p>
+      </div>
+
+      <div class="panel">
         <h3 class="clip-play-h">Trim and cut</h3>
         <div class="field-inline">
           <button class="btn btn-sm" type="button" id="clip-trim-open">
@@ -510,6 +528,8 @@ var clip_state = {
   reviewing: false,          /* a plan-only run is on its way */
   review: null,              /* {folder, source, rows: [...]} once it lands */
   voices: null,              /* the installed voices, once fetched */
+  sounds: null,              /* the sound effects folder, once listed */
+  soundsFolder: '',
   audio: null,               /* the one <audio> that plays samples */
   made: null,                /* clips a previous run already produced */
   player: null,              /* {list, i, folder, trim} while the player is up */
@@ -1153,12 +1173,13 @@ function clip_openPlayer(list, i, folder) {
   clip_state.player = {
     list: playable, i: Math.max(0, Math.min(i || 0, playable.length - 1)),
     folder: folder || '', trim: {in: null, out: null},
-    edit: clip_trimBlank()
+    edit: clip_trimBlank(), fx: clip_fxBlank()
   };
   clip_show('clip-player-card', true);
   /* Not awaited: the panel draws now and the chooser fills itself in when the
      voices land -- see clip_fillVoiceSelects. */
   clip_loadVoices();
+  clip_fxLoadSounds();
   clip_playerLoad();
   var card = clip_el('clip-player-card');
   if (card && card.scrollIntoView) {
@@ -1192,6 +1213,8 @@ function clip_playerLoad() {
   if (!p || !c) return;
   p.trim = {in: null, out: null};
   p.edit = clip_trimBlank();
+  p.fx = clip_fxFrom(c.effects);
+  clip_fxRender();
   clip_trimSync();
   /* The panel belongs to the clip that was open. Reloading means a different
      clip, or the same one re-rendered -- either way its window is stale. */
@@ -1736,6 +1759,255 @@ function clip_trimHead() {
   head.style.left = Math.max(0, Math.min(100, at)) + '%';
 }
 
+/* ------------------------------------------------------------------ effects
+
+   WHAT THE TIMES MEAN
+     Seconds into the FINISHED CLIP -- the thing the player is showing. That is
+     the only timeline a person can point at, so it is the one the app takes.
+
+     Which is why adding an effect is blocked while the trim panel is open: the
+     player is showing the RECORDING then, and a time read from it would be a
+     position in a two-hour file rather than in a twenty-second clip. The
+     numbers would look perfectly reasonable and be nonsense.
+
+   WHY EVERYTHING DEFAULTS TO THE PLAYHEAD
+     Because that is what placing an effect is. Watch, stop where it should
+     happen, press the button. Typing a number in afterwards is for nudging,
+     not for placing. */
+
+var CLIP_FX_KINDS = ['captions', 'zooms', 'freezes', 'sounds'];
+
+function clip_fxBlank() {
+  return {captions: [], zooms: [], freezes: [], sounds: []};
+}
+
+/* What a clip already carries, from the manifest. */
+function clip_fxFrom(saved) {
+  var out = clip_fxBlank();
+  if (!saved || typeof saved !== 'object') return out;
+  for (var i = 0; i < CLIP_FX_KINDS.length; i++) {
+    var k = CLIP_FX_KINDS[i];
+    var rows = saved[k];
+    if (Object.prototype.toString.call(rows) === '[object Array]') {
+      out[k] = rows.slice();
+    }
+  }
+  return out;
+}
+
+function clip_fxPayload() {
+  var f = (clip_state.player && clip_state.player.fx) || clip_fxBlank();
+  return {
+    captions: f.captions.map(function (c) {
+      return {text: String(c.text || ''), at: Number(c.at) || 0,
+              until: Number(c.until) || 0, where: c.where || 'top',
+              size: Number(c.size) || 1};
+    }),
+    zooms: f.zooms.map(function (z) {
+      return {at: Number(z.at) || 0, until: Number(z.until) || 0,
+              to: Number(z.to) || 1.35};
+    }),
+    freezes: f.freezes.map(function (z) {
+      return {at: Number(z.at) || 0, seconds: Number(z.seconds) || 0.7};
+    }),
+    sounds: f.sounds.map(function (z) {
+      return {path: String(z.path || ''), at: Number(z.at) || 0,
+              gain: Number(z.gain) || 1};
+    })
+  };
+}
+
+/* Where the playhead is, in the clip. Null while the player is showing
+   something that is not the clip. */
+function clip_fxNow() {
+  var p = clip_state.player;
+  if (p && p.edit && p.edit.on) return null;      /* the recording is up */
+  var v = clip_el('clip-video');
+  if (!v || !isFinite(v.currentTime)) return null;
+  return Math.max(0, v.currentTime);
+}
+
+function clip_fxDuration() {
+  var v = clip_el('clip-video');
+  return v && isFinite(v.duration) ? v.duration : 0;
+}
+
+function clip_fxAdd(kind) {
+  var p = clip_state.player;
+  if (!p) return;
+  var at = clip_fxNow();
+  if (at == null) {
+    toast('Close "Adjust the cut" first - effects are placed on the clip, '
+          + 'not on the recording.', 'error');
+    return;
+  }
+  var dur = clip_fxDuration() || (at + 4);
+  if (kind === 'caption') {
+    p.fx.captions.push({text: '', at: at, until: Math.min(dur, at + 2.5),
+                        where: 'top', size: 1});
+  } else if (kind === 'zoom') {
+    p.fx.zooms.push({at: at, until: Math.min(dur, at + 2), to: 1.35});
+  } else if (kind === 'freeze') {
+    p.fx.freezes.push({at: at, seconds: 0.7});
+  } else if (kind === 'sound') {
+    var first = (clip_state.sounds && clip_state.sounds[0]) || null;
+    if (!first) {
+      clip_fxSay('No sounds yet. Put .mp3 or .wav files in your sound '
+                 + 'effects folder (Settings) and they will show up here.');
+      return;
+    }
+    p.fx.sounds.push({path: first.path, at: at, gain: 1});
+  }
+  clip_fxRender();
+}
+
+function clip_fxRemove(kind, i) {
+  var p = clip_state.player;
+  if (!p) return;
+  p.fx[kind].splice(i, 1);
+  clip_fxRender();
+}
+
+function clip_fxSet(kind, i, field, value) {
+  var p = clip_state.player;
+  if (!p || !p.fx[kind][i]) return;
+  p.fx[kind][i][field] = value;
+  /* Not a full redraw: it would take the focus out of the box being typed in
+     after every keystroke. Only the summary line changes. */
+  clip_fxSummary();
+}
+
+function clip_fxSay(text) {
+  var el = clip_el('clip-fx-note');
+  if (!el) return;
+  el.textContent = text || '';
+  clip_show('clip-fx-note', !!text);
+}
+
+function clip_fxCount() {
+  var f = (clip_state.player && clip_state.player.fx) || clip_fxBlank();
+  return f.captions.length + f.zooms.length + f.freezes.length
+       + f.sounds.length;
+}
+
+function clip_fxSummary() {
+  var f = (clip_state.player && clip_state.player.fx) || clip_fxBlank();
+  var held = 0;
+  for (var i = 0; i < f.freezes.length; i++) {
+    held += Math.max(0, Number(f.freezes[i].seconds) || 0);
+  }
+  if (!clip_fxCount()) { clip_fxSay(''); return; }
+  var dur = clip_fxDuration();
+  var bits = [clip_fxCount() + (clip_fxCount() === 1 ? ' effect' : ' effects')];
+  if (held > 0.05 && dur) {
+    bits.push('the clip becomes ' + (dur + held).toFixed(1) + 's, from '
+              + dur.toFixed(1) + 's');
+  }
+  clip_fxSay(bits.join('  -  '));
+}
+
+function clip_fxTimeBox(kind, i, field, value) {
+  return '<input class="input clip-fx-num" type="number" step="0.1" min="0"'
+       + ' value="' + (Number(value) || 0).toFixed(1) + '"'
+       + ' data-fxkind="' + kind + '" data-fxi="' + i + '"'
+       + ' data-fxfield="' + field + '" aria-label="' + field + '">';
+}
+
+function clip_fxRow(kind, i, inner) {
+  return '<div class="clip-fx-row">' + inner
+       + '<button class="btn btn-sm btn-ghost clip-fx-x" type="button"'
+       + ' data-fxdel="' + kind + '" data-fxi="' + i + '"'
+       + ' aria-label="Remove">&times;</button></div>';
+}
+
+function clip_fxRender() {
+  var host = clip_el('clip-fx-list');
+  var p = clip_state.player;
+  if (!host || !p) return;
+  var f = p.fx || clip_fxBlank();
+  var html = '';
+
+  for (var i = 0; i < f.captions.length; i++) {
+    var c = f.captions[i];
+    var where = ['top', 'middle', 'bottom'].map(function (w) {
+      return '<option value="' + w + '"' + (c.where === w ? ' selected' : '')
+           + '>' + w + '</option>';
+    }).join('');
+    html += clip_fxRow('captions', i,
+      '<span class="clip-fx-tag">Text</span>'
+      + '<input class="input clip-fx-text" type="text" placeholder="what it says"'
+      + ' value="' + esc(String(c.text || '')) + '"'
+      + ' data-fxkind="captions" data-fxi="' + i + '" data-fxfield="text"'
+      + ' aria-label="Caption text">'
+      + clip_fxTimeBox('captions', i, 'at', c.at)
+      + '<span class="clip-fx-to">to</span>'
+      + clip_fxTimeBox('captions', i, 'until', c.until)
+      + '<select class="select clip-fx-sel" data-fxkind="captions"'
+      + ' data-fxi="' + i + '" data-fxfield="where" aria-label="Position">'
+      + where + '</select>');
+  }
+
+  for (var j = 0; j < f.zooms.length; j++) {
+    var z = f.zooms[j];
+    html += clip_fxRow('zooms', j,
+      '<span class="clip-fx-tag">Zoom</span>'
+      + clip_fxTimeBox('zooms', j, 'at', z.at)
+      + '<span class="clip-fx-to">to</span>'
+      + clip_fxTimeBox('zooms', j, 'until', z.until)
+      + '<input class="input clip-fx-num" type="number" step="0.05" min="1.05"'
+      + ' max="2.5" value="' + (Number(z.to) || 1.35).toFixed(2) + '"'
+      + ' data-fxkind="zooms" data-fxi="' + j + '" data-fxfield="to"'
+      + ' aria-label="How much"><span class="clip-fx-to">x</span>');
+  }
+
+  for (var k = 0; k < f.freezes.length; k++) {
+    var fr = f.freezes[k];
+    html += clip_fxRow('freezes', k,
+      '<span class="clip-fx-tag">Freeze</span>'
+      + '<span class="clip-fx-to">at</span>'
+      + clip_fxTimeBox('freezes', k, 'at', fr.at)
+      + '<span class="clip-fx-to">for</span>'
+      + clip_fxTimeBox('freezes', k, 'seconds', fr.seconds)
+      + '<span class="clip-fx-to">s</span>');
+  }
+
+  for (var m = 0; m < f.sounds.length; m++) {
+    var sd = f.sounds[m];
+    var opts = (clip_state.sounds || []).map(function (o) {
+      return '<option value="' + esc(o.path) + '"'
+           + (o.path === sd.path ? ' selected' : '') + '>'
+           + esc(o.name) + '</option>';
+    }).join('');
+    html += clip_fxRow('sounds', m,
+      '<span class="clip-fx-tag">Sound</span>'
+      + '<select class="select clip-fx-sel grow" data-fxkind="sounds"'
+      + ' data-fxi="' + m + '" data-fxfield="path" aria-label="Which sound">'
+      + opts + '</select>'
+      + '<span class="clip-fx-to">at</span>'
+      + clip_fxTimeBox('sounds', m, 'at', sd.at)
+      + '<input class="input clip-fx-num" type="number" step="0.1" min="0.1"'
+      + ' max="3" value="' + (Number(sd.gain) || 1).toFixed(1) + '"'
+      + ' data-fxkind="sounds" data-fxi="' + m + '" data-fxfield="gain"'
+      + ' aria-label="Volume">');
+  }
+
+  host.innerHTML = html;
+  clip_fxSummary();
+}
+
+/* The sounds folder's contents, fetched once and reused. */
+async function clip_fxLoadSounds() {
+  if (clip_state.sounds) return;
+  try {
+    var r = await API.get('/api/clips/sounds');
+    clip_state.sounds = (r && r.sounds) || [];
+    clip_state.soundsFolder = (r && r.folder) || '';
+  } catch (e) {
+    clip_state.sounds = [];
+  }
+  clip_fxRender();
+}
+
 async function clip_playerApply() {
   var p = clip_state.player, c = clip_playerClip();
   if (!p || !c) return;
@@ -1759,6 +2031,11 @@ async function clip_playerApply() {
      only ever make a clip shorter, because they were measured from the clip
      itself -- there is no way to say "three seconds earlier" in a number that
      starts counting at the clip's first frame. */
+  /* Always sent, even when empty: the app reads a missing `effects` as
+     "leave whatever is on this clip alone", so an empty object is the only
+     way to say "there are none now". Those are different answers. */
+  body.effects = clip_fxPayload();
+
   var t = p.edit;
   if (t && t.ready && t.on) {
     /* Always explicit while the panel is open, never only-when-changed. The
@@ -1822,6 +2099,7 @@ function clip_renderEdit(ed) {
       if (res.start) c.start = res.start;
       if (res.end) c.end = res.end;
       if (res.drop) c.drop = res.drop;
+      if (res.effects) c.effects = res.effects;
       var seg = clip_el('clip-play-vert');
       var on = seg ? seg.querySelector('.is-on') : null;
       if (on) c.vertical_mode = on.getAttribute('data-vert');
@@ -2743,6 +3021,46 @@ function clip_wire() {
       clip_trimReset();
     }
   });
+
+  var fxhost = clip_el('clip-fx-list');
+  if (fxhost) {
+    /* Delegated: the rows are rebuilt whenever one is added or removed. */
+    fxhost.addEventListener('input', function (e) {
+      var el = e.target;
+      if (!el || !el.getAttribute) return;
+      var kind = el.getAttribute('data-fxkind');
+      if (!kind) return;
+      var field = el.getAttribute('data-fxfield');
+      var i = Number(el.getAttribute('data-fxi'));
+      var val = (field === 'text' || field === 'where' || field === 'path')
+              ? el.value : Number(el.value);
+      clip_fxSet(kind, i, field, val);
+    });
+    fxhost.addEventListener('change', function (e) {
+      var el = e.target;
+      if (el && el.getAttribute && el.getAttribute('data-fxkind')) {
+        var f = el.getAttribute('data-fxfield');
+        if (f === 'where' || f === 'path') {
+          clip_fxSet(el.getAttribute('data-fxkind'),
+                     Number(el.getAttribute('data-fxi')), f, el.value);
+        }
+      }
+    });
+    fxhost.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-fxdel]') : null;
+      if (b) {
+        clip_fxRemove(b.getAttribute('data-fxdel'),
+                      Number(b.getAttribute('data-fxi')));
+      }
+    });
+  }
+  var pcardfx = clip_el('clip-player-card');
+  if (pcardfx) {
+    pcardfx.addEventListener('click', function (e) {
+      var b = e.target.closest ? e.target.closest('[data-fxadd]') : null;
+      if (b) clip_fxAdd(b.getAttribute('data-fxadd'));
+    });
+  }
 
   var topen = clip_el('clip-trim-open');
   if (topen) topen.addEventListener('click', clip_trimToggle);

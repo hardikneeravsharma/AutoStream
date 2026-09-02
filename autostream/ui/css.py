@@ -2154,6 +2154,32 @@ ol.steps-list li{margin-block:var(--space-4)}
    band behind, what will actually be kept as solid blocks in front, and the
    playhead as a line. Everything is positioned in percentages of the window,
    so the same markup works whether the window is forty seconds or four. */
+/* The effects list. One row per effect, each a label, its fields and a way
+   to take it off again. Rows wrap rather than scroll sideways: the panel is
+   already the narrow column beside the video. */
+.clip-fx-list{display:flex;flex-direction:column;gap:var(--space-3);
+  margin-top:var(--space-4)}
+.clip-fx-row{
+  display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap;
+  padding:var(--space-3) var(--space-4);
+  background:var(--surface-sunken);
+  border:var(--border-hair) solid var(--border-subtle);
+  border-radius:var(--radius-sm);
+}
+.clip-fx-tag{
+  font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--text-secondary);
+  min-width:3.6rem;
+}
+.clip-fx-to{font-size:12px;color:var(--text-secondary)}
+.clip-fx-num{width:4.6rem;flex:0 0 auto;font-variant-numeric:tabular-nums}
+.clip-fx-text{flex:1 1 7rem;min-width:6rem}
+.clip-fx-sel{flex:0 1 auto;min-width:5.5rem}
+.clip-fx-sel.grow{flex:1 1 6rem}
+.clip-fx-x{margin-inline-start:auto;padding-inline:var(--space-4);
+  font-size:16px;line-height:1}
+.clip-fx-x:hover{color:var(--danger)}
+
 .clip-gone{
   display:flex;align-items:center;gap:var(--space-4);
   flex-wrap:wrap;

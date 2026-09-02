@@ -125,6 +125,12 @@ DEFAULTS: dict[str, Any] = {
         # the track has to be one the user owns, so there is nothing sensible
         # to default it to.
         "music": "",
+        # Where the sound effects a person can drop into a clip live. A
+        # FOLDER rather than a list of files: the app confines what it will
+        # play to inside it, so a page can only ask for something the user
+        # deliberately put there. Blank means the default beside the
+        # recordings, which is created on first use.
+        "sounds_dir": "",
         # How the reel is arranged. On tells the session's story in order (see
         # clips/story.py); off puts the multi-kills in the busy section and the
         # best clip on the drop, which needs no round labels at all.
