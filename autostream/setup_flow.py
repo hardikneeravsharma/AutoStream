@@ -9,7 +9,7 @@ import glob
 import json
 import logging
 import os
-import shutil
+import pathlib
 
 from . import cfg, paths
 
@@ -133,36 +133,79 @@ class SetupFlow:
 
     # ---------------- step 1: client secret ----------------
 
+    @staticmethod
+    def check_client_secret(raw: str) -> tuple[dict | None, str]:
+        """Is this a usable Desktop OAuth client? -> (parsed, why not).
+
+        THE ONE PLACE THAT DECIDES. This used to be inline in the paste
+        handler only, so a file the app found in Downloads was copied in
+        without being looked at -- and a stale Web client or a downloaded API
+        key became a broken install that failed two steps later with one of
+        Google's own error messages. Being wrong here is expensive, because
+        the next thing that happens is an OAuth round trip.
+        """
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError) as e:
+            return None, f"Not valid JSON ({getattr(e, 'msg', e)})"
+        if not isinstance(data, dict):
+            return None, "That JSON is not an OAuth client file."
+        # A Web client is named before the client_id is checked: it HAS one,
+        # and "no client_id" would send somebody looking for a problem that is
+        # not the problem.
+        if data.get("web"):
+            return None, ("That is a Web client. Create a Desktop app client "
+                          "instead.")
+        root = data.get("installed")
+        if not root or not root.get("client_id"):
+            return None, ("That JSON has no client_id. Download the "
+                          "Desktop app OAuth client, not an API key.")
+        if not root.get("client_secret"):
+            return None, ("That client has no client_secret. Download the "
+                          "JSON again from Google Cloud Console > Clients.")
+        return data, ""
+
     def find_downloaded_secret(self) -> str | None:
+        """The newest downloaded file that is actually a Desktop client.
+
+        Newest-first, but VALIDATED: somebody who downloaded an API key on
+        Monday and the right client on Tuesday should get Tuesday's, and
+        somebody who did it the other way round should still get the one that
+        works rather than the one that is newer.
+        """
         cands: list[str] = []
         for d in (os.path.expanduser("~/Downloads"), os.path.expanduser("~/Desktop")):
             cands += glob.glob(os.path.join(d, "client_secret*.json"))
-        if not cands:
-            return None
-        return sorted(cands, key=os.path.getmtime, reverse=True)[0]
+        for path in sorted(cands, key=os.path.getmtime, reverse=True):
+            try:
+                raw = pathlib.Path(path).read_text(encoding="utf-8")
+            except OSError:
+                continue
+            data, _ = self.check_client_secret(raw)
+            if data:
+                return path
+        return None
 
     def save_client_secret(self, raw: str) -> dict:
         raw = (raw or "").strip()
         if not raw:
             found = self.find_downloaded_secret()
-            if found:
-                paths.ensure_dirs()
-                shutil.copy2(found, paths.CLIENT_SECRET)
-                return {"ok": True, "setup": self.snapshot()}
-            return {"ok": False, "error": "Paste the JSON, or download it first."}
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            return {"ok": False, "error": f"Not valid JSON ({e.msg})"}
-        root = data.get("installed") or data.get("web")
-        if not root or not root.get("client_id"):
-            return {"ok": False,
-                    "error": "That JSON has no client_id. Download the "
-                             "Desktop app OAuth client, not an API key."}
-        if data.get("web"):
-            return {"ok": False,
-                    "error": "That is a Web client. Create a Desktop app client instead."}
+            if not found:
+                return {"ok": False,
+                        "error": "Paste the JSON, or download it first."}
+            try:
+                raw = pathlib.Path(found).read_text(encoding="utf-8")
+            except OSError as e:
+                return {"ok": False, "error": f"Could not read {found}: {e}"}
+
+        data, why = self.check_client_secret(raw)
+        if data is None:
+            return {"ok": False, "error": why}
+
         paths.ensure_dirs()
+        # Rewritten rather than copied even when it came from a file, so the
+        # saved copy is this app's own with this app's own permissions --
+        # shutil.copy2 would have carried whatever Downloads had.
         paths.CLIENT_SECRET.write_text(json.dumps(data, indent=2), encoding="utf-8")
         try:
             paths.CLIENT_SECRET.chmod(0o600)
