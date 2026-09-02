@@ -146,3 +146,131 @@ def test_the_ui_script_is_valid_javascript(everything):
         esprima.parseScript(ui_assets.JS)
     except Exception as e:                              # noqa: BLE001
         pytest.fail(f"the UI script does not parse: {e}")
+
+
+# ------------------------------------------------------------------ choices
+#
+# Every list the page offers has a counterpart in the app, and the two drift
+# apart silently: an option that matches nothing looks exactly like an option
+# nobody picked. That is how the round-type filter came to offer 8 labels for
+# 17 kinds of clip, with nine of them unreachable and nobody any the wiser.
+#
+# So each of these pins one list to its source of truth.
+
+def _js_list(js: str, name: str) -> str:
+    """The text of one `NAME = [...]` array.
+
+    Counts brackets rather than matching to the next `];`. A regex that guesses
+    where the array ends swallows the rest of the script the moment the
+    formatting changes -- and then every assertion made about "the list" is
+    really about the whole file, which passes for the wrong reason or fails
+    for one that has nothing to do with the list. Getting that wrong once was
+    enough.
+    """
+    import re
+
+    m = re.search(rf"\b{name}\s*=\s*\[", js)
+    assert m, f"{name} is not in the page any more"
+    at = m.end() - 1
+    depth = 0
+    for i in range(at, len(js)):
+        if js[i] == "[":
+            depth += 1
+        elif js[i] == "]":
+            depth -= 1
+            if depth == 0:
+                return js[at:i + 1]
+    raise AssertionError(f"{name} is never closed")
+
+
+def test_the_round_type_filter_offers_every_type_the_app_produces(ui):
+    import re
+
+    from autostream.clips import rounds
+
+    offered = set(re.findall(r"'([A-Z0-9 ]{2,})'",
+                             _js_list(ui["clips"], "CLIP_ROUND_TYPES")))
+    assert offered == set(rounds.FILTERABLE), (
+        f"unreachable in the app: {sorted(offered - set(rounds.FILTERABLE))}; "
+        f"unofferable on the page: {sorted(set(rounds.FILTERABLE) - offered)}")
+
+
+def test_the_filter_is_not_truncated_on_the_way_to_the_app(everything):
+    """The endpoint caps the list it accepts. The cap has to be above the
+    number of types, or the last few are dropped in transit -- the same bug
+    again, one layer further down."""
+    import inspect
+    import re
+
+    from autostream import webui
+    from autostream.clips import rounds
+
+    src = inspect.getsource(webui.Server.clips_run)
+    caps = [int(n) for n in re.findall(r'round_types"\]\s*=\s*\[[^\]]*\]\[:(\d+)\]',
+                                       src)]
+    assert caps, "the round_types cap is no longer where this test looks"
+    assert min(caps) >= len(rounds.FILTERABLE), (
+        f"the endpoint keeps only {min(caps)} of {len(rounds.FILTERABLE)} types")
+
+
+def test_every_transition_offered_is_one_the_montage_can_do(ui):
+    import re
+
+    from autostream.clips import montage
+
+    offered = set(re.findall(r"'([a-z]+)'", _js_list(ui["clips"], "CLIP_TRANS")))
+    known = set(montage.TRANSITIONS) | {"cut", "mixed"}
+    assert not offered - known, f"the montage cannot do: {sorted(offered - known)}"
+    assert not known - offered, f"the page hides: {sorted(known - offered)}"
+
+
+def test_every_framing_offered_is_one_the_cutter_can_do(ui):
+    import inspect
+    import re
+
+    from autostream.clips import cutter
+
+    offered = set(re.findall(r'data-vert="([a-z]+)"', ui["clips"]))
+    known = set(re.findall(r'mode == "(\w+)"',
+                           inspect.getsource(cutter.vertical))) | {"none"}
+    assert offered and not offered - known
+
+
+def test_the_clip_styles_say_the_numbers_the_app_actually_uses(ui):
+    """The timings are written out in prose in two places -- the Clips page and
+    the Settings schema -- and applied from a third. Prose does not fail a
+    test when it goes stale, so this checks the numbers inside it."""
+    from autostream import schema
+    from autostream.clips import plan
+
+    page = _js_list(ui["clips"], "CLIP_STYLES")
+    settings = str(schema.FIELDS) if hasattr(schema, "FIELDS") else ""
+    if not settings:
+        import inspect
+        settings = inspect.getsource(schema)
+
+    for key, style in plan.STYLES.items():
+        pre = style["pre_roll"]
+        tail = style["tail"]
+        length = style["clip_seconds"]
+        # "1.5s before, 2s after, 15s clips" -- written with the trailing .0
+        # dropped, the way a person writes it.
+        def num(v):
+            return str(int(v)) if float(v) == int(v) else str(v)
+
+        for where, text in (("the Clips page", page),
+                            ("the Settings schema", settings)):
+            assert key in text, f"{key} is missing from {where}"
+            said = f"{num(pre)}s before, {num(tail)}s after, {length}s clips"
+            assert said in text, (
+                f"{where} does not say {said!r} for {key} -- plan.STYLES has "
+                f"pre_roll={pre}, tail={tail}, clip_seconds={length}")
+
+
+def test_the_page_offers_every_style_the_app_has_and_no_others(ui):
+    import re
+
+    from autostream.clips import plan
+
+    offered = set(re.findall(r"\['([a-z]+)',", _js_list(ui["clips"], "CLIP_STYLES")))
+    assert offered == set(plan.STYLES) | {"custom"}
