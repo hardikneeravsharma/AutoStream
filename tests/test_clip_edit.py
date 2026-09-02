@@ -281,3 +281,118 @@ def test_trimming_previews_survives_a_folder_that_is_not_there(tmp_path):
     from autostream import webui
 
     assert webui._trim_previews(tmp_path / "never-made") == 0
+
+
+# ------------------------------------------------- an edit outliving the next
+
+@pytest.fixture
+def run_with_manifest(run):
+    """The same run, but with the clips.json a real one would have."""
+    folder = run["folder"]
+    (folder / "clips.json").write_text(json.dumps({
+        "clips": [{"name": "clip_01", "start": 100.0, "end": 130.0,
+                   "master": str(folder / "clips" / "clip_01.mp4"),
+                   "vertical": str(folder / "vertical" / "clip_01_vertical.mp4"),
+                   "caption": "", "said": "", "duration": 30.0}],
+    }), encoding="utf-8")
+    return run
+
+
+def _manifest(run):
+    return json.loads((run["folder"] / "clips.json").read_text(encoding="utf-8"))
+
+
+def _row(run):
+    return _manifest(run)["clips"][0]
+
+
+def _finish(run, res):
+    edit.apply_to_manifest(run["folder"], res, "clip_01")
+
+
+def test_an_edit_records_what_the_clip_became(run_with_manifest):
+    run = run_with_manifest
+    _finish(run, edit.recut(_spec(run, start_at=95.0, end_at=138.0)))
+    row = _row(run)
+    assert row["start"] == pytest.approx(95.0)
+    assert row["end"] == pytest.approx(138.0)
+    assert row["duration"] == pytest.approx(43.0)
+    assert row["edited"] is True
+
+
+def test_a_removal_is_recorded_as_the_gap_it_leaves(run_with_manifest):
+    run = run_with_manifest
+    _finish(run, edit.recut(_spec(run, drop=[(110.0, 120.0)])))
+    assert _row(run)["drop"] == [[110.0, 120.0]]
+
+
+def test_a_second_edit_starts_from_the_first(run_with_manifest):
+    """Adding two seconds of run-up twice has to give four, not two.
+
+    The plan in session.json never changes -- it is the record of what the
+    detector found. Starting from it every time would silently throw away
+    the edit before.
+    """
+    run = run_with_manifest
+    _finish(run, edit.recut(_spec(run, start_at=95.0)))
+    assert run["spans"] == [(95.0, 130.0)]
+
+    # Now the person comes back and asks for five seconds more.
+    _finish(run, edit.recut(_spec(run, start_at=90.0)))
+    assert run["spans"] == [(90.0, 130.0)]
+    assert _row(run)["start"] == pytest.approx(90.0)
+
+
+def test_changing_only_the_caption_does_not_undo_the_trim(run_with_manifest):
+    """The bug this whole pair of functions exists to stop.
+
+    Trim a clip, then come back and fix a typo in its caption. Nothing about
+    the caption says anything about the trim, so nothing is sent about it --
+    and the clip would be re-cut from the original plan and lose the trim.
+    """
+    run = run_with_manifest
+    _finish(run, edit.recut(_spec(run, start_at=95.0, end_at=138.0)))
+
+    res = edit.recut(_spec(run, caption=True, caption_text="a better line"))
+    _finish(run, res)
+    assert run["spans"] == [(95.0, 138.0)], "the trim was thrown away"
+    assert _row(run)["caption"] == "a better line"
+
+
+def test_changing_only_the_caption_does_not_put_the_removal_back(run_with_manifest):
+    run = run_with_manifest
+    _finish(run, edit.recut(_spec(run, drop=[(110.0, 120.0)])))
+    assert run["spans"] == [(100.0, 110.0), (120.0, 130.0)]
+
+    _finish(run, edit.recut(_spec(run, caption=True, caption_text="hello")))
+    assert run["spans"] == [(100.0, 110.0), (120.0, 130.0)], \
+        "the dull middle came back"
+
+
+def test_a_new_removal_replaces_the_old_ones(run_with_manifest):
+    """Remembering last time's cuts must not mean they cannot be undone."""
+    run = run_with_manifest
+    _finish(run, edit.recut(_spec(run, drop=[(110.0, 120.0)])))
+    _finish(run, edit.recut(_spec(run, drop=[])))
+    assert run["spans"] == [(100.0, 130.0)]
+    assert _row(run)["drop"] == []
+
+
+def test_a_clip_that_was_never_edited_uses_the_plan(run_with_manifest):
+    """No `edited` flag means the manifest row is just the run's own output."""
+    run = run_with_manifest
+    assert edit.current(run["folder"], "clip_01") is None
+    res = edit.recut(_spec(run))
+    assert res.ok
+    assert run["spans"] == [(100.0, 130.0)]
+
+
+def test_the_editor_says_what_a_clip_currently_is(run_with_manifest):
+    """`current` is what the preview window is centred on, not just an
+    internal detail of recut -- so it is part of the interface."""
+    run = run_with_manifest
+    assert edit.current(run["folder"], "clip_01") is None
+    _finish(run, edit.recut(_spec(run, start_at=95.0, end_at=138.0)))
+    now = edit.current(run["folder"], "clip_01")
+    assert now is not None
+    assert (now["start"], now["end"]) == (pytest.approx(95.0), pytest.approx(138.0))

@@ -1147,6 +1147,12 @@ function clip_playerLoad() {
   p.trim = {in: null, out: null};
   p.edit = clip_trimBlank();
   clip_trimSync();
+  /* The panel belongs to the clip that was open. Reloading means a different
+     clip, or the same one re-rendered -- either way its window is stale. */
+  clip_show('clip-trim-panel', false);
+  var lbl = clip_el('clip-trim-openlabel');
+  if (lbl) lbl.textContent = 'Adjust the cut';
+  clip_trimSay('');
   clip_playerLoadVideo();
   clip_el('clip-play-title').textContent =
     (c.caption || (c.kills + ' kill' + (c.kills === 1 ? '' : 's')));
@@ -1310,6 +1316,11 @@ function clip_trimSync() {
   t.ready = !!(t.source && isFinite(a) && isFinite(b) && b > a);
   if (!t.ready) return;
   t.was = [a, b];
+  /* Cuts this clip already carries, so they show as chips and are not
+     silently re-applied on top of themselves. */
+  t.drop = (c.drop || []).map(function (d) {
+    return [Number(d[0]), Number(d[1])];
+  }).filter(function (d) { return isFinite(d[0]) && isFinite(d[1]); });
   /* A first guess at the window, so the bar can be drawn before the app has
      answered. The app's own answer replaces it, because only the app knows
      how much recording there actually is either side. */
@@ -1671,10 +1682,14 @@ async function clip_playerApply() {
      itself -- there is no way to say "three seconds earlier" in a number that
      starts counting at the clip's first frame. */
   var t = p.edit;
-  if (t && t.ready) {
-    if (t.in != null) body.start_at = t.in;
-    if (t.out != null) body.end_at = t.out;
-    if (t.drop.length) body.drop = t.drop.map(function (d) { return [d[0], d[1]]; });
+  if (t && t.ready && t.on) {
+    /* Always explicit while the panel is open, never only-when-changed. The
+       app falls back to what the clip already is when a field is missing, and
+       "what it already is" and "what is on screen" have to be the same thing
+       or the two disagree the moment anything else is edited. */
+    body.start_at = clip_trimIn();
+    body.end_at = clip_trimOut();
+    body.drop = t.drop.map(function (d) { return [d[0], d[1]]; });
   }
   var btn = clip_el('clip-play-apply');
   if (btn) btn.disabled = true;
@@ -1724,6 +1739,11 @@ function clip_renderEdit(ed) {
       if (res.duration) c.duration = res.duration;
       if (res.vertical) c.vertical = res.vertical;
       if (res.master) c.master = res.master;
+      /* What the clip has become. Without this the next adjustment would
+         start from the original cut and quietly throw this one away. */
+      if (res.start) c.start = res.start;
+      if (res.end) c.end = res.end;
+      if (res.drop) c.drop = res.drop;
       var seg = clip_el('clip-play-vert');
       var on = seg ? seg.querySelector('.is-on') : null;
       if (on) c.vertical_mode = on.getAttribute('data-vert');
