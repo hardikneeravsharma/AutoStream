@@ -1607,6 +1607,26 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 }
 #set-ver-noteswrap>summary:hover{color:var(--text-primary)}
 
+.set-diag-text{
+  width:100%;
+  min-height:220px;
+  max-height:420px;
+  resize:vertical;
+  padding:var(--space-4);
+  font-family:var(--font-mono);
+  font-size:12px;
+  line-height:1.55;
+  color:var(--text-secondary);
+  background:var(--surface-sunken);
+  border:var(--border-hair) solid var(--border-subtle);
+  border-radius:var(--radius-sm);
+  white-space:pre;
+  overflow:auto;
+}
+#set-diag-msg{margin:0}
+#set-diag-msg.is-warn{color:var(--warn)}
+#set-diag-body{display:flex;flex-direction:column;gap:var(--space-4)}
+
 /* Advanced disclosure. */
 .settings-body details{
   border-top:var(--border-hair) solid var(--border-subtle);
@@ -2134,6 +2154,12 @@ ol.steps-list li{margin-block:var(--space-4)}
    band behind, what will actually be kept as solid blocks in front, and the
    playhead as a line. Everything is positioned in percentages of the window,
    so the same markup works whether the window is forty seconds or four. */
+.clip-gone{
+  display:flex;align-items:center;gap:var(--space-4);
+  flex-wrap:wrap;
+  margin:0 0 var(--space-4);
+}
+
 .clip-trim-bar{
   position:relative;
   height:26px;

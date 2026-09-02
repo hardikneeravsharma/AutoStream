@@ -80,6 +80,12 @@ CLIPS_HTML: str = (
   <span class="muted" id="clip-count"></span>
 </div>
 
+<p class="field-help clip-gone hide" id="clip-gone">
+  <span id="clip-gone-text"></span>
+  <button class="btn btn-sm btn-ghost" type="button" id="clip-gone-clear">
+    Remove them from the list</button>
+</p>
+
 <div class="panel" id="clip-listwrap">
   <div class="clip-list" id="clip-list"></div>
 </div>
@@ -638,6 +644,27 @@ function clip_row(s, i) {
     '</button>';
 }
 
+async function clip_goneClear() {
+  var btn = clip_el('clip-gone-clear');
+  if (btn) btn.disabled = true;
+  try {
+    var r = await API.post('/api/clips/forget', {missing_only: true});
+    if (r && r.error) {
+      toast(r.error, 'error');
+    } else if (r && r.removed) {
+      toast(r.removed === 1 ? 'One stream removed from the list.'
+                            : r.removed + ' streams removed from the list.', 'ok');
+      /* The recordings themselves are untouched; only the journal changed. */
+      await clip_load();
+    } else {
+      toast((r && r.detail) || 'Nothing to remove.', 'ok');
+    }
+  } catch (e) {
+    toast('Could not update the list.', 'error');
+  }
+  if (btn) btn.disabled = false;
+}
+
 function clip_renderList() {
   var host = clip_el('clip-list');
   if (!host) return;
@@ -647,6 +674,20 @@ function clip_renderList() {
   }
   clip_state.shown = rows;
   host.innerHTML = rows.map(clip_row).join('');
+
+  /* Streams whose footage has been deleted can never be cut again. They are
+     still shown, because knowing a stream happened is worth something, but
+     until now there was no way to dismiss them and the list filled up. */
+  var gone = clip_state.sessions.filter(function (r) {
+    return !r.has_recording;
+  }).length;
+  var line = clip_el('clip-gone-text');
+  if (line) {
+    line.textContent = gone === 1
+      ? 'One stream no longer has its recording, so it cannot be cut.'
+      : gone + ' streams no longer have their recordings, so they cannot be cut.';
+  }
+  clip_show('clip-gone', gone > 0);
 
   var none = clip_state.sessions.length === 0;
   clip_show('clip-empty', none);
@@ -2676,6 +2717,9 @@ function clip_wire() {
     var b = e.target.closest ? e.target.closest('[data-uncut]') : null;
     if (b) clip_trimUncut(Number(b.getAttribute('data-uncut')));
   });
+
+  var goneBtn = clip_el('clip-gone-clear');
+  if (goneBtn) goneBtn.addEventListener('click', clip_goneClear);
 
   var vid = clip_el('clip-video');
   if (vid) {

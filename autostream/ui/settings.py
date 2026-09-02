@@ -58,6 +58,28 @@ SETTINGS_HTML = r"""
       </div>
     </div>
 
+    <div class="card set-about" id="set-trouble">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Something is not working</h2>
+          <p class="card-sub">A report about this install: versions, whether
+             OBS and ffmpeg were found, your settings with the secrets taken
+             out, and the last forty lines of the log.</p>
+        </div>
+        <div class="field-inline">
+          <button class="btn btn-sm" type="button" id="set-diag-get">
+            <span>Build a report</span></button>
+          <button class="btn btn-sm hide" type="button" id="set-diag-copy">
+            <span>Copy it</span></button>
+        </div>
+      </div>
+      <div class="card-body hide" id="set-diag-body">
+        <p class="muted" id="set-diag-msg"></p>
+        <textarea class="set-diag-text hide" id="set-diag-text" readonly
+                  spellcheck="false" aria-label="Diagnostic report"></textarea>
+      </div>
+    </div>
+
     <div class="settings-actions hide" id="set-actions">
       <span class="muted" id="set-count">No unsaved changes</span>
       <div class="field-inline">
@@ -976,6 +998,10 @@ function set_wireUpdates(){
   if (check) check.addEventListener('click', set_verCheck);
   var get = set_el('set-ver-get');
   if (get) get.addEventListener('click', set_verGet);
+  var diag = set_el('set-diag-get');
+  if (diag) diag.addEventListener('click', set_diagGet);
+  var copy = set_el('set-diag-copy');
+  if (copy) copy.addEventListener('click', set_diagCopy);
   var open = set_el('set-ver-open');
   if (open) open.addEventListener('click', async function(){
     open.disabled = true;
@@ -1115,5 +1141,75 @@ function set_verProgress(u) {
                + 'Installing it will close AutoStream, replace this version '
                + 'and start it again.');
   }
+}
+
+/* ------------------------------------------------------- a paste-able report
+
+   Every problem this app has had reported to it arrived as a photograph of a
+   screen, and a photograph cannot say which OBS version, which build, or what
+   the log said thirty seconds earlier. The endpoint that answers all of that
+   has existed for a while with nothing able to call it.
+
+   The secrets are removed server-side -- passwords, tokens, and any URL
+   carrying one, in the config and in the log lines alike -- so what lands in
+   the box is safe to paste anywhere. */
+
+function set_diagSay(text, kind) {
+  var el = set_el('set-diag-msg');
+  if (el) {
+    el.textContent = text || '';
+    el.classList.toggle('is-warn', kind === 'warn');
+  }
+  set_show('set-diag-body', !!text);
+}
+
+async function set_diagGet() {
+  var btn = set_el('set-diag-get');
+  if (btn) btn.disabled = true;
+  set_diagSay('Collecting...');
+  try {
+    var r = await API.post('/api/diagnostics', {});
+    if (!r || r.error || !r.text) {
+      set_diagSay((r && r.error) || 'Could not build a report.', 'warn');
+    } else {
+      var box = set_el('set-diag-text');
+      if (box) box.value = r.text;
+      set_show('set-diag-text', true);
+      set_show('set-diag-copy', true);
+      var lines = r.text.split('\n').length;
+      set_diagSay(lines + ' lines. The secrets have been removed, so this is '
+                  + 'safe to paste anywhere.');
+    }
+  } catch (e) {
+    set_diagSay('Could not build a report.', 'warn');
+  }
+  if (btn) btn.disabled = false;
+}
+
+async function set_diagCopy() {
+  var box = set_el('set-diag-text');
+  if (!box || !box.value) return;
+  /* Two ways, because a WebView is not a browser tab: the clipboard API needs
+     a permission this host may not grant, and selecting the text at least
+     leaves it where Ctrl+C can reach it. */
+  try {
+    await navigator.clipboard.writeText(box.value);
+    toast('Report copied.', 'ok');
+    return;
+  } catch (e) {
+    /* fall through */
+  }
+  try {
+    box.focus();
+    box.select();
+    if (document.execCommand && document.execCommand('copy')) {
+      toast('Report copied.', 'ok');
+      return;
+    }
+  } catch (e2) {
+    /* fall through */
+  }
+  set_diagSay('This window would not let me reach the clipboard. The report '
+              + 'is selected above - press Ctrl+C.', 'warn');
 }
 """
