@@ -351,3 +351,29 @@ def test_every_setting_offered_has_a_default_and_the_other_way_round():
         f"the page offers settings with no default: {sorted(offered - defaults)}")
     assert not defaults - offered, (
         f"settings only reachable by editing YAML: {sorted(defaults - offered)}")
+
+
+def test_the_trim_bar_layers_are_in_the_right_paint_order(ui):
+    """None of the three carry a z-index, so the markup decides what covers
+    what. Wrong order hides the blocks that say what the clip will contain,
+    behind the faint band that says what it used to be -- which looks like a
+    bar that does not work rather than a bar drawn back to front.
+    """
+    body = ui["clips"]
+    order = [body.index(f'id="clip-trim-{part}"')
+             for part in ("was", "keep", "head")]
+    assert order == sorted(order), (
+        "the trim bar's layers are out of order: the original span must come "
+        "first, what will be kept second, the playhead last")
+
+    from autostream.ui import css
+
+    for part in ("was", "keep", "head"):
+        assert f".clip-trim-{part}" in css.CSS, f"{part} has lost its styling"
+    # If anyone adds a z-index later this test stops being the thing that
+    # guarantees it, so say so loudly rather than passing on a stale reason.
+    where = css.CSS[css.CSS.index(".clip-trim-was"):]
+    where = where[:where.index(".clip-trim-chips")]
+    assert "z-index" not in where, (
+        "a z-index appeared on the trim bar -- decide the order there and "
+        "rewrite this test, rather than leaving two rules that disagree")
