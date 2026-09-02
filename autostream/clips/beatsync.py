@@ -47,6 +47,11 @@ WIN = 1024
 
 BPM_MIN, BPM_MAX = 70.0, 180.0
 
+# How good a half-length lag has to be before it is preferred over the one the
+# autocorrelation liked best. See estimate_bpm: this is what stops a track
+# being reported at half its real tempo.
+OCTAVE_TRUST = 0.55
+
 # The drop is compared over this much music either side. Long enough that one
 # loud bar cannot fake it.
 DROP_WINDOW = 6.0
@@ -129,19 +134,65 @@ def onset_envelope(x: np.ndarray) -> np.ndarray:
     return np.maximum(env - base, 0.0)
 
 
+def search_lags(length: int) -> tuple[int, int]:
+    """Which autocorrelation lags cover BPM_MIN..BPM_MAX. -> (lo, hi) for a slice.
+
+    A FUNCTION RATHER THAN TWO LINES INSIDE estimate_bpm, so a test can hold
+    the module to its own declared range instead of re-deriving the arithmetic
+    and agreeing with itself.
+
+    A lag is a whole number of frames, 23 ms apart, and the bounds used to be
+    truncated with int() -- which moved both of them inwards:
+
+        70 bpm  is lag 36.91  ->  int() gave 36, and ac[lo:36] stops at 35
+        180 bpm is lag 14.36  ->  int() gave 14, which is 184.57 bpm
+
+    So the range really searched was 73.8 to 184.6, not 70 to 180. One frame
+    beyond each true bound, because the sub-frame refinement in estimate_bpm
+    needs the peak's neighbours to fit a parabola through.
+    """
+    fps = SR / HOP
+    lo = max(1, int(np.floor(fps * 60.0 / BPM_MAX)) - 1)
+    hi = min(max(length - 1, lo + 1), int(np.ceil(fps * 60.0 / BPM_MIN)) + 2)
+    return lo, hi
+
+
 def estimate_bpm(env: np.ndarray) -> float:
     if env.size < 64:
         return 0.0
     e = env - env.mean()
     ac = np.correlate(e, e, mode="full")[len(e) - 1:]
     fps = SR / HOP
-    lo = int(fps * 60.0 / BPM_MAX)
-    hi = min(len(ac) - 1, int(fps * 60.0 / BPM_MIN))
+    lo, hi = search_lags(len(ac))
     if hi <= lo:
         return 0.0
     lag = lo + int(np.argmax(ac[lo:hi]))
     if not lag:
         return 0.0
+
+    # HALVE IT WHILE HALVING STILL EXPLAINS THE MUSIC.
+    #
+    # Autocorrelation cannot tell a beat from every second beat: if a track
+    # repeats every 0.43s it also repeats every 0.86s, and the longer lag often
+    # scores marginally higher because more of the pattern lines up. Taken at
+    # face value that reports half the real tempo, and a reel cut on it lands a
+    # cut on every OTHER beat -- which reads as sluggish rather than as wrong,
+    # so nobody would report it as a bug.
+    #
+    # Measured on click tracks every 2 bpm from 70 to 180: without this, seven
+    # tempos between 148 and 180 came back at half speed. The threshold is
+    # deliberately below 1: the shorter lag only has to be nearly as good, not
+    # better, because when both explain the signal the faster one is the beat.
+    for _ in range(2):                       # halve at most twice
+        half = lag / 2.0
+        if half < lo:
+            break
+        near = int(round(half))
+        if near <= 0 or near >= len(ac):
+            break
+        if float(ac[near]) < OCTAVE_TRUST * float(ac[int(round(lag))]):
+            break
+        lag = near
     # Sub-frame refinement. The autocorrelation peak is quantised to whole
     # frames (23 ms), and a lag error of one frame is over a BPM -- which
     # compounds into a third of a second of drift by the eightieth beat.
@@ -152,7 +203,12 @@ def estimate_bpm(env: np.ndarray) -> float:
         denom = y0 - 2 * y1 + y2
         if abs(denom) > 1e-9:
             lag += max(-0.5, min(0.5, 0.5 * (y0 - y2) / denom))
-    return float(60.0 * fps / lag)
+    if lag <= 0:
+        return 0.0
+    # Held inside the declared range. The search deliberately looks one frame
+    # beyond each end so the refinement has neighbours to work with; that must
+    # not turn into a tempo this module says it never returns.
+    return float(min(BPM_MAX, max(BPM_MIN, 60.0 * fps / lag)))
 
 
 def beat_grid(env: np.ndarray, bpm: float) -> list[float]:
