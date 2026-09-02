@@ -317,3 +317,37 @@ def test_no_route_exists_that_nothing_can_reach():
     assert not orphaned, (
         f"nothing in the UI reaches: {sorted(orphaned)} -- wire it up, delete "
         f"it, or add it to `deliberate` above with a reason")
+
+
+# ------------------------------------------------------------------ settings
+
+def test_every_setting_offered_has_a_default_and_the_other_way_round():
+    """The Settings page and the config defaults are two lists of the same
+    thing, kept in two files.
+
+    A field with no default writes a key nothing knows how to read. A default
+    with no field is a behaviour only reachable by editing YAML. Both are
+    invisible: the page renders either way.
+    """
+    from autostream import cfg, schema
+
+    def flat(d, prefix=""):
+        out = set()
+        for k, v in (d or {}).items():
+            key = f"{prefix}{k}"
+            if isinstance(v, dict):
+                out |= flat(v, key + ".")
+            else:
+                out.add(key)
+        return out
+
+    offered = set(schema.FIELDS_BY_PATH)
+    defaults = flat(cfg.DEFAULTS)
+    assert len(offered) > 50, (
+        f"only {len(offered)} settings found -- FIELDS_BY_PATH has changed "
+        f"shape and this test is checking nothing")
+
+    assert not offered - defaults, (
+        f"the page offers settings with no default: {sorted(offered - defaults)}")
+    assert not defaults - offered, (
+        f"settings only reachable by editing YAML: {sorted(defaults - offered)}")
