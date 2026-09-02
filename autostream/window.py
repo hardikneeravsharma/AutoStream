@@ -17,13 +17,22 @@ Two hard-won rules live here:
    that lets a close through, and it is wired to the tray's Quit and to SIGINT.
    As a backstop, repeatedly vetoing a close gives up and lets the window shut,
    so a user can always escape.
+
+The window also remembers its size and position between runs, and refuses to
+restore one that is no longer reachable -- a saved position outlives the
+monitor it was saved on, and a window restored onto a screen that has been
+unplugged looks exactly like an app that failed to start.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 import time
 import webbrowser
+
+from . import atomic, paths
 
 log = logging.getLogger("autostream.window")
 
@@ -37,9 +46,117 @@ except ImportError:  # pragma: no cover
 VETO_LIMIT = 4          # consecutive vetoes before we stop fighting the user
 VETO_WINDOW = 8.0       # seconds
 
+# Windows groups taskbar buttons, pins them and picks their icon by this
+# string. Without one, a Python process gets the interpreter's identity: the
+# button says Python, carries Python's icon, and pinning it pins Python.
+APP_ID = "YuvaNeta.AutoStream"
+
+DEFAULT_SIZE = (1120, 860)
+MIN_SIZE = (420, 560)
+GEOMETRY_FILE = "window.json"
+
 
 def available() -> bool:
     return _HAS
+
+
+def name_this_app() -> bool:
+    """Tell Windows which app this process is. -> whether it worked.
+
+    Has to happen before any window exists, so the taskbar button is created
+    with the right identity rather than inheriting the interpreter's.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
+        return True
+    except Exception as e:                              # noqa: BLE001
+        log.debug("could not set the taskbar identity: %s", e)
+        return False
+
+
+def _screen() -> tuple[int, int, int, int]:
+    """The whole desktop across every monitor: (left, top, width, height)."""
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            m = ctypes.windll.user32.GetSystemMetrics
+            # 76/77 are the virtual screen origin, 78/79 its size. The origin
+            # is NEGATIVE when a second monitor sits left of the primary one,
+            # which is exactly the case a naive 0,0-based check gets wrong.
+            return (m(76), m(77), m(78), m(79))
+        except Exception:                               # noqa: BLE001
+            pass
+    return (0, 0, 1920, 1080)
+
+
+def on_screen(x: int, y: int, w: int, h: int) -> bool:
+    """Would a window there actually be reachable?
+
+    A saved position outlives the monitor it was saved on. Restoring a window
+    onto a screen that has since been unplugged puts it somewhere the user
+    cannot see or drag it back from, and the app looks like it failed to
+    start. Requiring a decent piece of the title bar to be on the desktop is
+    enough: a window that overhangs an edge can still be moved.
+    """
+    left, top, sw, sh = _screen()
+    right, bottom = left + sw, top + sh
+    # At least this much of the top strip has to be visible to grab it.
+    need_w, bar = 120, 32
+    return (x + w - need_w > left and x + need_w < right
+            and y + bar > top and y < bottom - bar)
+
+
+def _geometry_path():
+    return paths.DATA_HOME / GEOMETRY_FILE
+
+
+def load_geometry() -> dict:
+    """Where the window was last time, or {} for anything unusable."""
+    f = _geometry_path()
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    try:
+        w = int(data["width"])
+        h = int(data["height"])
+        x = int(data["x"])
+        y = int(data["y"])
+    except (KeyError, TypeError, ValueError):
+        return {}
+    if w < MIN_SIZE[0] or h < MIN_SIZE[1]:
+        return {}
+    left, top, sw, sh = _screen()
+    if w > sw or h > sh:
+        return {}
+    if not on_screen(x, y, w, h):
+        log.info("the window was last on a screen that is not here now, "
+                 "so it opens in the middle again")
+        return {"width": w, "height": h}
+    return {"width": w, "height": h, "x": x, "y": y}
+
+
+def save_geometry(win) -> bool:
+    """Remember where the window is. -> whether anything was written."""
+    try:
+        w, h = int(win.width), int(win.height)
+        x, y = int(win.x), int(win.y)
+    except (AttributeError, TypeError, ValueError):
+        return False
+    if w < MIN_SIZE[0] or h < MIN_SIZE[1]:
+        return False           # a minimised window reports nonsense
+    try:
+        atomic.write_json(_geometry_path(),
+                          {"width": w, "height": h, "x": x, "y": y})
+        return True
+    except OSError as e:
+        log.debug("could not remember the window position: %s", e)
+        return False
 
 
 class MainWindow:
@@ -77,6 +194,7 @@ class MainWindow:
         never failed.
         """
         log.info("quit requested: %s", reason or "no reason given")
+        save_geometry(self.win)
         self._quit = True
         self._show.set()          # wake the worker so it exits promptly
         try:
@@ -89,6 +207,9 @@ class MainWindow:
 
     def _on_closing(self):
         """Return False to veto. MUST NOT touch the window itself."""
+        # Reading position is not touching it, and this is the last moment the
+        # window is still where the user put it.
+        save_geometry(self.win)
         if self._quit:
             return True
 
@@ -106,6 +227,16 @@ class MainWindow:
 
     def _on_minimized(self):
         self._hide.set()
+
+    def _on_moved(self, *_):
+        """Remembered on the way, not only on the way out.
+
+        Closing is not the only way this window stops existing -- a machine
+        that sleeps badly, an update that restarts the app, or a crash all end
+        it without a `closing` event. Saving as it moves means the position
+        survives those too.
+        """
+        save_geometry(self.win)
 
     # ---------------- worker ----------------
 
@@ -167,10 +298,18 @@ class MainWindow:
             self._to_browser()
             return
 
+        name_this_app()
+        where = load_geometry()
         try:
             self.win = webview.create_window(
                 self.title, self.url,
-                width=1120, height=860, min_size=(420, 560),
+                width=where.get("width", DEFAULT_SIZE[0]),
+                height=where.get("height", DEFAULT_SIZE[1]),
+                # Omitted rather than passed as None: pywebview centres the
+                # window when there is no x/y, which is what a first run and a
+                # vanished monitor should both get.
+                **({"x": where["x"], "y": where["y"]} if "x" in where else {}),
+                min_size=MIN_SIZE,
                 hidden=hidden, background_color="#0d1117",
             )
         except Exception as e:  # noqa: BLE001
@@ -180,7 +319,9 @@ class MainWindow:
 
         self._visible = not hidden
         for name, handler in (("closing", self._on_closing),
-                              ("minimized", self._on_minimized)):
+                              ("minimized", self._on_minimized),
+                              ("moved", self._on_moved),
+                              ("resized", self._on_moved)):
             try:
                 getattr(self.win.events, name).__iadd__(handler)
             except (AttributeError, TypeError):
