@@ -2154,6 +2154,89 @@ ol.steps-list li{margin-block:var(--space-4)}
    band behind, what will actually be kept as solid blocks in front, and the
    playhead as a line. Everything is positioned in percentages of the window,
    so the same markup works whether the window is forty seconds or four. */
+/* The preview drawn over the player. Positioned in PERCENTAGES of the video
+   box so it lands where the burnt-in version will, whatever size the window
+   is -- the renderer places captions at fractions of the height too. */
+.clip-play-stage{position:relative}
+.clip-fx-stage{
+  position:absolute;inset:0;
+  pointer-events:none;
+  display:block;
+  overflow:hidden;
+}
+.clip-fx-cap{
+  position:absolute;left:5%;right:5%;
+  text-align:center;
+  font-family:Impact,"Arial Black","Segoe UI",sans-serif;
+  font-weight:900;
+  letter-spacing:.01em;
+  line-height:1.1;
+  color:#fff;
+  text-shadow:
+    -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000,
+    0 3px 6px rgba(0,0,0,.6);
+  font-size:clamp(15px, 4.4cqw, 46px);
+  opacity:0;
+  transition:opacity .12s linear;
+}
+/* cqw needs a container; without one the clamp falls back to its middle
+   value, which is still readable. */
+.clip-play-stage{container-type:inline-size}
+.clip-fx-cap.is-on{opacity:1}
+#clip-fx-cap-top{top:12%}
+#clip-fx-cap-middle{top:44%}
+#clip-fx-cap-bottom{top:68%}
+.clip-fx-held{
+  position:absolute;top:var(--space-5);left:50%;transform:translateX(-50%);
+  padding:var(--space-3) var(--space-5);
+  font-size:11px;font-weight:700;letter-spacing:.12em;
+  color:#fff;background:rgba(0,0,0,.62);
+  border-radius:999px;
+}
+#clip-video{transition:transform .05s linear;transform-origin:center center}
+
+/* The strip under the player: where each effect sits along the clip. */
+.clip-fx-timeline{
+  position:relative;
+  height:34px;
+  margin-top:var(--space-3);
+  border-radius:var(--radius-sm);
+  background:var(--surface-sunken);
+  border:var(--border-hair) solid var(--border-subtle);
+  overflow:hidden;
+}
+.clip-fx-lanes{position:absolute;inset:0}
+.clip-fx-bar{
+  position:absolute;top:4px;height:26px;
+  display:flex;align-items:center;
+  padding-inline:6px;
+  border-radius:3px;
+  font-size:10px;
+  color:#fff;
+  cursor:pointer;
+  overflow:hidden;
+  opacity:.9;
+}
+.clip-fx-bar>i{
+  font-style:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.clip-fx-bar:hover{opacity:1;outline:1px solid var(--text-primary)}
+.clip-fx-bar.is-captions{background:var(--accent);top:2px;height:13px}
+.clip-fx-bar.is-zooms{background:var(--ok, #2ea043);top:16px;height:13px}
+.clip-fx-bar.is-freezes{background:var(--warn);top:2px;height:13px}
+.clip-fx-bar.is-sounds{background:#8957e5;top:16px;height:13px}
+.clip-fx-playhead{
+  position:absolute;top:0;bottom:0;width:2px;
+  background:var(--text-primary);
+  pointer-events:none;
+}
+.clip-fx-grab{
+  padding-inline:var(--space-3);
+  font-size:13px;line-height:1;
+  flex:0 0 auto;
+}
+.clip-fx-grab:hover{color:var(--accent)}
+
 /* The effects list. One row per effect, each a label, its fields and a way
    to take it off again. Rows wrap rather than scroll sideways: the panel is
    already the narrow column beside the video. */

@@ -538,3 +538,40 @@ def test_a_bad_effect_is_caught_before_any_encoding_happens(run):
     assert "spans" not in run or run.get("spans") is None or True
     # Nothing was handed to the effects stage.
     assert "effects" not in run
+
+
+# --------------------------------------------------------- clearing a caption
+
+def test_clearing_the_caption_box_removes_the_caption(run_with_manifest):
+    """Reported from use: deleting the words and re-rendering put the app's
+    own caption back, burnt in, with nothing to say why.
+
+    `"".strip() or caption_for(...)` reads nicely and means the opposite of
+    what an empty box means.
+    """
+    run = run_with_manifest
+    res = edit.recut(_spec(run, caption=True, caption_text=""))
+    assert res.ok
+    assert res.caption == "", f"it came back as {res.caption!r}"
+
+
+def test_a_caller_that_says_nothing_still_gets_a_caption_chosen(run_with_manifest):
+    """None and "" are different answers. None is the first cut of a clip, or
+    an edit that only touches the trim -- that is when choosing one is what is
+    wanted."""
+    run = run_with_manifest
+    res = edit.recut(_spec(run, caption=True))
+    assert res.ok
+    assert res.caption, "an untouched clip should still get its caption"
+
+
+def test_the_caption_switch_turns_it_off_too(run_with_manifest):
+    run = run_with_manifest
+    res = edit.recut(_spec(run, caption=False))
+    assert res.ok and res.caption == ""
+
+
+def test_typed_words_win_over_the_chosen_ones(run_with_manifest):
+    run = run_with_manifest
+    res = edit.recut(_spec(run, caption=True, caption_text="  my own words  "))
+    assert res.ok and res.caption == "my own words"

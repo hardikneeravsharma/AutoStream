@@ -128,6 +128,22 @@ CLIPS_HTML: str = (
     <div class="clip-play-left">
       <div class="clip-play-stage">
         <video id="clip-video" playsinline preload="metadata"></video>
+        <!-- What the effects will look like, drawn over the player rather
+             than encoded. Outside the video element on purpose: the zoom
+             scales the VIDEO, and in the render the captions are drawn after
+             the zoom, so they must not scale with it. -->
+        <div class="clip-fx-stage" id="clip-fx-stage" aria-hidden="true">
+          <div class="clip-fx-cap" id="clip-fx-cap-top"></div>
+          <div class="clip-fx-cap" id="clip-fx-cap-middle"></div>
+          <div class="clip-fx-cap" id="clip-fx-cap-bottom"></div>
+          <div class="clip-fx-held hide" id="clip-fx-held">FROZEN</div>
+        </div>
+      </div>
+
+      <!-- Where the effects sit along the clip. Clicking jumps there. -->
+      <div class="clip-fx-timeline hide" id="clip-fx-timeline">
+        <div class="clip-fx-lanes" id="clip-fx-lanes"></div>
+        <span class="clip-fx-playhead" id="clip-fx-playhead"></span>
       </div>
 
       <div class="clip-play-bar">
@@ -208,8 +224,17 @@ CLIPS_HTML: str = (
 
       <div class="panel">
         <h3 class="clip-play-h">Effects</h3>
-        <p class="field-help">Scrub to the moment, then add. Everything is
-           placed where the playhead is and can be nudged afterwards.</p>
+        <p class="field-help">Scrub to the moment, then add. Use
+           <strong>&#8676;</strong> and <strong>&#8677;</strong> on any row to
+           set its start and end from where the player is, so nothing has to be
+           guessed. What you see over the video is what will be rendered.</p>
+        <div class="field-inline">
+          <button class="switch is-on" type="button" role="switch"
+                  id="clip-fx-preview" aria-checked="true"
+                  aria-label="Show the effects while playing">
+            <span class="switch-dot"></span></button>
+          <span class="muted">Show them while playing</span>
+        </div>
         <div class="field-inline">
           <button class="btn btn-sm" type="button" data-fxadd="caption">
             + Caption</button>
@@ -1778,7 +1803,9 @@ function clip_trimHead() {
 var CLIP_FX_KINDS = ['captions', 'zooms', 'freezes', 'sounds'];
 
 function clip_fxBlank() {
-  return {captions: [], zooms: [], freezes: [], sounds: []};
+  return {captions: [], zooms: [], freezes: [], sounds: [],
+          /* the preview's own bookkeeping, not part of what is saved */
+          holding: false, lastHeld: null, played: {}};
 }
 
 /* What a clip already carries, from the manifest. */
@@ -1906,11 +1933,44 @@ function clip_fxSummary() {
   clip_fxSay(bits.join('  -  '));
 }
 
-function clip_fxTimeBox(kind, i, field, value) {
-  return '<input class="input clip-fx-num" type="number" step="0.1" min="0"'
+function clip_fxTimeBox(kind, i, field, value, mark) {
+  var box = '<input class="input clip-fx-num" type="number" step="0.1" min="0"'
        + ' value="' + (Number(value) || 0).toFixed(1) + '"'
        + ' data-fxkind="' + kind + '" data-fxi="' + i + '"'
        + ' data-fxfield="' + field + '" aria-label="' + field + '">';
+  if (mark === false) return box;
+  /* The point of the button: nobody can judge "4.3 seconds" by eye. Watch to
+     the moment, press it, and the number is the moment. */
+  return box + '<button class="btn btn-sm btn-ghost clip-fx-grab" type="button"'
+       + ' data-fxgrab="' + kind + '" data-fxi="' + i + '"'
+       + ' data-fxfield="' + field + '"'
+       + ' title="Use the player\'s position">'
+       + (field === 'until' ? '&#8677;' : '&#8676;') + '</button>';
+}
+
+/* Take the number from where the player is. */
+function clip_fxGrab(kind, i, field) {
+  var p = clip_state.player;
+  var at = clip_fxNow();
+  if (!p || !p.fx[kind] || !p.fx[kind][i]) return;
+  if (at == null) {
+    toast('Close "Adjust the cut" first.', 'error');
+    return;
+  }
+  var row = p.fx[kind][i];
+  if (field === 'seconds') {
+    /* A freeze has a length, not an end: from its start to here. */
+    row.seconds = Math.max(0.1, Math.round((at - (Number(row.at) || 0)) * 10) / 10);
+  } else {
+    row[field] = Math.round(at * 10) / 10;
+    if (field === 'at' && row.until != null && row.until <= row.at) {
+      row.until = Math.round((row.at + 1.5) * 10) / 10;
+    }
+    if (field === 'until' && row.at != null && row.until <= row.at) {
+      row.at = Math.max(0, Math.round((row.until - 1.5) * 10) / 10);
+    }
+  }
+  clip_fxRender();
 }
 
 function clip_fxRow(kind, i, inner) {
@@ -1993,6 +2053,7 @@ function clip_fxRender() {
 
   host.innerHTML = html;
   clip_fxSummary();
+  clip_fxLanes();
 }
 
 /* The sounds folder's contents, fetched once and reused. */
@@ -2006,6 +2067,215 @@ async function clip_fxLoadSounds() {
     clip_state.sounds = [];
   }
   clip_fxRender();
+}
+
+/* ------------------------------------------------- seeing it before making it
+
+   THE PROBLEM WITH TYPING NUMBERS
+     A caption from 4.3s to 6.1s is not something anybody can picture, and the
+     only way to find out was to re-render and watch -- a minute a guess. So
+     the effects are drawn over the player as it plays: the caption appears
+     when it will appear, the zoom pushes in, the freeze holds, the sound
+     plays. Nothing is encoded until it looks right.
+
+   IT IS A PREVIEW, NOT THE RENDER
+     Deliberately the same arithmetic as the filter graph -- the same trapezoid
+     for the zoom, the same window for a caption -- because a preview that
+     disagrees with the render is worse than none. What it cannot show exactly
+     is the font: the burnt-in caption is Impact through drawtext, and this is
+     the browser's nearest match. Position and timing are exact; the letters
+     are approximate. */
+
+function clip_fxPreviewOn() {
+  var el = clip_el('clip-fx-preview');
+  return !el || el.classList.contains('is-on');
+}
+
+/* The zoom factor at a moment, from the same trapezoid the renderer uses. */
+function clip_fxZoomAt(t) {
+  var f = (clip_state.player && clip_state.player.fx) || null;
+  if (!f) return 1;
+  var best = 1;
+  for (var i = 0; i < f.zooms.length; i++) {
+    var z = f.zooms[i];
+    var a = Number(z.at) || 0, b = Number(z.until) || 0;
+    var to = Number(z.to) || 1.35;
+    if (b <= a || to <= 1) continue;
+    var r = Math.min(0.35, (b - a) / 2);
+    if (r <= 0) continue;
+    var lift = (to - 1)
+             * Math.min(1, Math.max(0, (t - a) / r))
+             * Math.min(1, Math.max(0, (b - t) / r));
+    best = Math.max(best, 1 + lift);
+  }
+  return best;
+}
+
+function clip_fxCaptionsAt(t) {
+  var f = (clip_state.player && clip_state.player.fx) || null;
+  var out = {top: '', middle: '', bottom: ''};
+  if (!f) return out;
+  for (var i = 0; i < f.captions.length; i++) {
+    var c = f.captions[i];
+    var a = Number(c.at) || 0, b = Number(c.until) || 0;
+    if (t >= a && t <= b && String(c.text || '').trim()) {
+      var slot = (c.where in out) ? c.where : 'top';
+      out[slot] = String(c.text);
+    }
+  }
+  return out;
+}
+
+/* Runs on every frame while the player is up. Cheap: it reads currentTime and
+   sets a few styles, and returns immediately when there is nothing to draw. */
+function clip_fxTick() {
+  var v = clip_el('clip-video');
+  var stage = clip_el('clip-fx-stage');
+  var p = clip_state.player;
+  if (!v || !stage || !p) return;
+
+  var live = clip_fxPreviewOn() && !(p.edit && p.edit.on);
+  if (!live) {
+    stage.classList.add('hide');
+    v.style.transform = '';
+    return;
+  }
+  stage.classList.remove('hide');
+  var t = isFinite(v.currentTime) ? v.currentTime : 0;
+
+  var z = clip_fxZoomAt(t);
+  v.style.transform = z > 1.001 ? 'scale(' + z.toFixed(4) + ')' : '';
+
+  var caps = clip_fxCaptionsAt(t);
+  var slots = ['top', 'middle', 'bottom'];
+  for (var i = 0; i < slots.length; i++) {
+    var el = clip_el('clip-fx-cap-' + slots[i]);
+    if (!el) continue;
+    if (el.textContent !== caps[slots[i]]) el.textContent = caps[slots[i]];
+    el.classList.toggle('is-on', !!caps[slots[i]]);
+  }
+
+  clip_fxPlayhead(t);
+  clip_fxFreezeCheck(v, t);
+  clip_fxSoundCheck(t);
+}
+
+/* A freeze is a pause of its own length. The player is stopped, the badge is
+   shown, and it starts again by itself -- which is what the rendered clip will
+   do to whoever watches it. */
+function clip_fxFreezeCheck(v, t) {
+  var p = clip_state.player;
+  if (!p || v.paused || p.fx.holding) return;
+  var f = p.fx.freezes;
+  for (var i = 0; i < f.length; i++) {
+    var at = Number(f[i].at) || 0;
+    var hold = Math.max(0.1, Number(f[i].seconds) || 0.7);
+    /* Only on the way past it, and only once per pass. */
+    if (t >= at && t < at + 0.25 && p.fx.lastHeld !== i) {
+      p.fx.holding = true;
+      p.fx.lastHeld = i;
+      v.pause();
+      clip_show('clip-fx-held', true);
+      setTimeout(function () {
+        clip_show('clip-fx-held', false);
+        p.fx.holding = false;
+        var vv = clip_el('clip-video');
+        if (vv && clip_state.player === p) vv.play().catch(function () {});
+      }, hold * 1000);
+      return;
+    }
+  }
+  /* Left the neighbourhood of the last one, so it can hold again next pass. */
+  if (p.fx.lastHeld != null) {
+    var last = f[p.fx.lastHeld];
+    if (!last || t < (Number(last.at) || 0) - 0.3
+        || t > (Number(last.at) || 0) + 0.6) {
+      p.fx.lastHeld = null;
+    }
+  }
+}
+
+function clip_fxSoundCheck(t) {
+  var p = clip_state.player;
+  if (!p) return;
+  var list = p.fx.sounds;
+  for (var i = 0; i < list.length; i++) {
+    var at = Number(list[i].at) || 0;
+    var key = 'snd' + i;
+    if (t >= at && t < at + 0.2 && p.fx.played[key] !== true) {
+      p.fx.played[key] = true;
+      clip_fxPlaySound(list[i]);
+    } else if (t < at - 0.3 || t > at + 1.5) {
+      p.fx.played[key] = false;
+    }
+  }
+}
+
+function clip_fxPlaySound(row) {
+  try {
+    /* Its own route: the video one serves the clips folder and a sound
+       lives in the sounds folder. */
+    var a = new Audio('/api/clips/sound?k=' + encodeURIComponent(SHELL_K)
+                      + '&path=' + encodeURIComponent(row.path));
+    a.volume = Math.max(0, Math.min(1, (Number(row.gain) || 1) / 3));
+    a.play().catch(function () { /* the window may refuse until a click */ });
+  } catch (e) { /* a preview that cannot play is not worth an error */ }
+}
+
+/* --------------------------------------------------------- the timeline strip */
+
+function clip_fxPlayhead(t) {
+  var el = clip_fx_el = clip_el('clip-fx-playhead');
+  var dur = clip_fxDuration();
+  if (!el || !dur) return;
+  el.style.left = Math.max(0, Math.min(100, 100 * t / dur)) + '%';
+}
+
+var clip_fx_el = null;
+
+function clip_fxLanes() {
+  var host = clip_el('clip-fx-lanes');
+  var p = clip_state.player;
+  if (!host || !p) return;
+  var dur = clip_fxDuration();
+  clip_show('clip-fx-timeline', !!(dur && clip_fxCount()));
+  if (!dur || !clip_fxCount()) { host.innerHTML = ''; return; }
+
+  var pct = function (x) {
+    return Math.max(0, Math.min(100, 100 * x / dur));
+  };
+  var rows = [];
+  var add = function (kind, i, a, b, label) {
+    var left = pct(a);
+    var width = Math.max(0.8, pct(b) - left);
+    rows.push('<span class="clip-fx-bar is-' + kind + '"'
+      + ' style="left:' + left.toFixed(2) + '%;width:' + width.toFixed(2) + '%"'
+      + ' data-fxseek="' + a + '" data-fxkind="' + kind + '" data-fxi="' + i + '"'
+      + ' title="' + esc(label) + ' - click to jump here"><i>'
+      + esc(label) + '</i></span>');
+  };
+
+  var f = p.fx;
+  for (var i = 0; i < f.captions.length; i++) {
+    add('captions', i, Number(f.captions[i].at) || 0,
+        Number(f.captions[i].until) || 0,
+        String(f.captions[i].text || 'caption'));
+  }
+  for (var j = 0; j < f.zooms.length; j++) {
+    add('zooms', j, Number(f.zooms[j].at) || 0, Number(f.zooms[j].until) || 0,
+        (Number(f.zooms[j].to) || 1.35).toFixed(2) + 'x');
+  }
+  for (var k = 0; k < f.freezes.length; k++) {
+    var at = Number(f.freezes[k].at) || 0;
+    add('freezes', k, at, at + Math.max(0.15, Number(f.freezes[k].seconds) || 0),
+        'freeze');
+  }
+  for (var m = 0; m < f.sounds.length; m++) {
+    var sa = Number(f.sounds[m].at) || 0;
+    var name = String(f.sounds[m].path || '').split('\\').pop().split('/').pop();
+    add('sounds', m, sa, sa + 0.4, name);
+  }
+  host.innerHTML = rows.join('');
 }
 
 async function clip_playerApply() {
@@ -3051,9 +3321,39 @@ function clip_wire() {
       if (b) {
         clip_fxRemove(b.getAttribute('data-fxdel'),
                       Number(b.getAttribute('data-fxi')));
+        return;
+      }
+      var g = e.target.closest ? e.target.closest('[data-fxgrab]') : null;
+      if (g) {
+        clip_fxGrab(g.getAttribute('data-fxgrab'),
+                    Number(g.getAttribute('data-fxi')),
+                    g.getAttribute('data-fxfield'));
       }
     });
   }
+  var lanes = clip_el('clip-fx-lanes');
+  if (lanes) lanes.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('[data-fxseek]') : null;
+    if (!b) return;
+    var v = clip_el('clip-video');
+    var at = Number(b.getAttribute('data-fxseek'));
+    if (v && isFinite(at)) {
+      /* A moment before it, so what happens there can be watched happening
+         rather than being already over. */
+      v.currentTime = Math.max(0, at - 0.6);
+      var p = clip_state.player;
+      if (p) { p.fx.lastHeld = null; p.fx.played = {}; }
+    }
+  });
+
+  var pv = clip_el('clip-fx-preview');
+  if (pv) pv.addEventListener('click', function () {
+    var on = !pv.classList.contains('is-on');
+    pv.classList.toggle('is-on', on);
+    pv.setAttribute('aria-checked', on ? 'true' : 'false');
+    clip_fxTick();
+  });
+
   var pcardfx = clip_el('clip-player-card');
   if (pcardfx) {
     pcardfx.addEventListener('click', function (e) {
@@ -3076,8 +3376,23 @@ function clip_wire() {
   var goneBtn = clip_el('clip-gone-clear');
   if (goneBtn) goneBtn.addEventListener('click', clip_goneClear);
 
+  /* Every frame, not on timeupdate: timeupdate fires about four times a
+     second, and a zoom that moves four times a second is a stutter rather than
+     a push-in. requestAnimationFrame costs nothing when there is nothing to
+     draw, because clip_fxTick returns immediately then. */
+  (function fxFrame() {
+    try { clip_fxTick(); } catch (e) { /* never kill the loop */ }
+    window.requestAnimationFrame(fxFrame);
+  })();
+
   var vid = clip_el('clip-video');
   if (vid) {
+    /* Scrubbing has to forget what already played, or a sound never fires
+       again after it has fired once. */
+    vid.addEventListener('seeking', function () {
+      var p = clip_state.player;
+      if (p) { p.fx.lastHeld = null; p.fx.played = {}; }
+    });
     vid.addEventListener('timeupdate', clip_trimHead);
     vid.addEventListener('seeked', clip_trimHead);
     vid.addEventListener('timeupdate', clip_playerTick);
