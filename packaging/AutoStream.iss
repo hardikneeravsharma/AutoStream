@@ -26,6 +26,7 @@
 #define AppPublisher "Hardik Sharma"
 #define AppURL       "https://github.com/hardikneeravsharma/AutoStream"
 #define AppExe       "AutoStream.exe"
+#define AppUserModelID "YuvaNeta.AutoStream"
 
 ; Passed in by scripts\build.ps1 so the version is never hand-edited here.
 #ifndef AppVersion
@@ -86,10 +87,15 @@ Name: "startup"; Description: "Start {#AppName} when I sign in"; GroupDescriptio
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
+; AppUserModelID has to match what the PROCESS sets for itself -- see
+; window.py APP_ID. Windows uses it to decide which taskbar button belongs to
+; which app, so when the shortcut and the running window disagree, pinning the
+; shortcut produces a second button that never lights up and the real window
+; sits beside it unpinnable. Same string in both places, or neither works.
+Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"; AppUserModelID: "{#AppUserModelID}"
 Name: "{group}\{#AppName} on GitHub"; Filename: "{#AppURL}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
-Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: startup
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon; AppUserModelID: "{#AppUserModelID}"
+Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: startup; AppUserModelID: "{#AppUserModelID}"
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Start {#AppName}"; Flags: nowait postinstall skipifsilent
