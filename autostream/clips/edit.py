@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import atomic
-from . import cutter, overlay, plan, voice
+from . import cutter, effects as fx, overlay, plan, voice
 
 log = logging.getLogger("autostream.clips.edit")
 
@@ -75,6 +75,12 @@ class Spec:
     # two fights can come out and leave one clip rather than two.
     drop: list[tuple[float, float]] | None = None
 
+    # Captions, punch-ins, freezes and sounds a person placed by hand, in
+    # seconds into the FINISHED VERTICAL -- which is what the player shows, so
+    # it is the only timeline they can point at. Built at the API boundary so
+    # nothing further in has to parse anything.
+    effects: "fx.Effects | None" = None
+
 
 @dataclass
 class Result:
@@ -87,6 +93,11 @@ class Result:
     duration: float = 0.0
     spans: list[tuple[float, float]] = field(default_factory=list)
     removed: float = 0.0             # seconds taken out of the middle
+    # The vertical can be LONGER than the master: a freeze holds a frame, and
+    # effects are applied to the vertical alone. Reported separately because
+    # `duration` is what was cut out of the recording and this is what plays.
+    vertical_seconds: float = 0.0
+    effects: dict = field(default_factory=dict)
 
 
 def _session(folder: Path) -> dict:
@@ -129,6 +140,53 @@ def _find(data: dict, name: str) -> dict:
         if p.get("name") == name:
             return p
     raise KeyError(f"no clip called {name!r} in this run")
+
+
+def to_manifest(e: "fx.Effects") -> dict:
+    """An Effects -> plain JSON for clips.json."""
+    return {
+        "captions": [{"text": c.text, "at": round(c.at, 3),
+                      "until": round(c.until, 3), "where": c.where,
+                      "size": c.size} for c in e.captions],
+        "zooms": [{"at": round(z.at, 3), "until": round(z.until, 3),
+                   "to": z.to} for z in e.zooms],
+        "freezes": [{"at": round(f.at, 3), "seconds": f.seconds}
+                    for f in e.freezes],
+        "sounds": [{"path": str(s.path), "at": round(s.at, 3),
+                    "gain": s.gain} for s in e.sounds],
+    }
+
+
+def from_manifest(d: dict) -> "fx.Effects":
+    """...and back. Anything unreadable is dropped rather than raised on.
+
+    This reads what a PREVIOUS run wrote, so a bad value here is a bug in this
+    app, not a person making a mistake -- and refusing to edit a clip because
+    its own record is malformed helps nobody. What arrives from the page is
+    checked properly, at the boundary, where a person can be told.
+    """
+    def num(v, fallback=0.0):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return fallback
+
+    d = d or {}
+    return fx.Effects(
+        captions=[fx.Caption(text=str(c.get("text") or ""), at=num(c.get("at")),
+                             until=num(c.get("until"), 3.0),
+                             where=str(c.get("where") or "top"),
+                             size=num(c.get("size"), 1.0))
+                  for c in (d.get("captions") or []) if isinstance(c, dict)],
+        zooms=[fx.Zoom(at=num(z.get("at")), until=num(z.get("until"), 2.0),
+                       to=num(z.get("to"), 1.35))
+               for z in (d.get("zooms") or []) if isinstance(z, dict)],
+        freezes=[fx.Freeze(at=num(f.get("at")), seconds=num(f.get("seconds"), 0.7))
+                 for f in (d.get("freezes") or []) if isinstance(f, dict)],
+        sounds=[fx.Sound(path=Path(str(s.get("path") or "")), at=num(s.get("at")),
+                         gain=num(s.get("gain"), 1.0))
+                for s in (d.get("sounds") or []) if isinstance(s, dict)],
+    )
 
 
 def keep_spans(start: float, end: float,
@@ -213,6 +271,11 @@ def recut(spec: Spec) -> Result:
     if spec.drop is None and now.get("drop"):
         spec = replace(spec, drop=[(float(a), float(b))
                                    for a, b in now["drop"]])
+    # Same reasoning as the removals: an edit that says nothing about the
+    # effects means "leave them", not "throw them away". Fixing a typo in a
+    # caption must not delete the freeze somebody placed last time.
+    if spec.effects is None and now.get("effects"):
+        spec = replace(spec, effects=from_manifest(now["effects"]))
     if spec.start_at is not None:
         start = float(spec.start_at)
     else:
@@ -239,6 +302,14 @@ def recut(spec: Spec) -> Result:
     if not spans or kept < 1.0:
         return Result(False, error="that removes almost the whole clip")
     removed = (end - start) - kept
+
+    # Checked BEFORE anything is encoded. fx.apply checks again on the real
+    # file, but by then a minute of encoding has been spent to be told that a
+    # caption is past the end of the clip -- which is knowable right here.
+    if spec.effects is not None and spec.effects.any():
+        wrong = fx.problems(spec.effects, kept)
+        if wrong:
+            return Result(False, error=" ".join(wrong))
 
     kills = [k for k in (data.get("kills") or [])
              if any(a <= float(k["time"]) <= b for a, b in spans)]
@@ -293,6 +364,16 @@ def recut(spec: Spec) -> Result:
     vert = cutter.vertical(master, spec.folder / "vertical", mode=mode,
                            encoder=enc)
     if vert is None:
+        # No vertical to put anything on. Effects belong to the export, so
+        # asking for both is asking for two things that cannot both happen --
+        # said out loud rather than rendered without them, because a freeze
+        # that quietly did not occur is indistinguishable from one that did
+        # not save.
+        if spec.effects is not None and spec.effects.any():
+            return Result(False, error="Effects go on the vertical export, and "
+                                       "this clip is set to make none. Choose "
+                                       "a vertical framing, or remove the "
+                                       "effects.")
         return Result(True, master=str(master), caption=caption,
                       duration=kept, spans=spans, removed=removed)
 
@@ -314,13 +395,37 @@ def recut(spec: Spec) -> Result:
             said = ""
         speech.path.unlink(missing_ok=True)
 
+    # LAST, on the finished vertical. Everything the app adds by itself --
+    # branding, the caption it wrote, the spoken hook -- is already in place,
+    # so what a person places lands on top of what they were actually looking
+    # at in the player. Any other order would mean effect times referred to a
+    # version of the clip that was never on screen.
+    vert_seconds = kept
+    applied: dict = {}
+    if spec.effects is not None:
+        # Written whether or not there are any. An empty SHAPE means "none on
+        # this clip"; a missing key means "nobody has said". Collapsing the
+        # two would make removing the last effect indistinguishable from never
+        # having had one, and the next edit would put it back.
+        applied = to_manifest(spec.effects)
+    if spec.effects is not None and spec.effects.any():
+        try:
+            fx.apply(vert, vert, spec.effects, encoder=enc)
+            vert_seconds = fx.output_seconds(kept, spec.effects.freezes)
+        except ValueError as e:
+            return Result(False, error=str(e))
+        except Exception as e:                          # noqa: BLE001
+            log.exception("effects failed on %s", spec.name)
+            return Result(False, error=f"The effects could not be applied: {e}")
+
     log.info("re-cut %s: %.1fs of recording %.1f-%.1f%s, %s, caption %r%s",
              spec.name, kept, start, end,
              f", less {removed:.1f}s in {len(spans) - 1} cut" if removed else "",
              mode, caption, f", says {said!r}" if said else "")
     return Result(True, vertical=str(vert), master=str(master),
                   caption=caption, said=said, duration=kept,
-                  spans=spans, removed=removed)
+                  spans=spans, removed=removed,
+                  vertical_seconds=vert_seconds, effects=applied)
 
 
 def apply_to_manifest(folder: Path, res: Result, name: str) -> None:
@@ -350,6 +455,11 @@ def apply_to_manifest(folder: Path, res: Result, name: str) -> None:
             row["said"] = res.said
             if res.duration:
                 row["duration"] = round(res.duration, 2)
+            # Written even when empty, so clearing every effect is recorded
+            # as "none" rather than read back as "unchanged" next time.
+            row["effects"] = res.effects
+            if res.vertical_seconds:
+                row["vertical_seconds"] = round(res.vertical_seconds, 2)
             if res.spans:
                 row["start"] = round(res.spans[0][0], 3)
                 row["end"] = round(res.spans[-1][1], 3)
@@ -421,7 +531,9 @@ class Editor:
                            "start": round(res.spans[0][0], 3) if res.spans else 0,
                            "end": round(res.spans[-1][1], 3) if res.spans else 0,
                            "drop": [[round(a[1], 3), round(b[0], 3)]
-                                    for a, b in zip(res.spans, res.spans[1:])]}
+                                    for a, b in zip(res.spans, res.spans[1:])],
+                           "effects": res.effects,
+                           "vertical_seconds": round(res.vertical_seconds, 2)}
 
     def snapshot(self) -> dict:
         with self._lock:

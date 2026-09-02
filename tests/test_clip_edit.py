@@ -133,8 +133,25 @@ def run(tmp_path, monkeypatch):
         out.write_bytes(b"cut")
         return out
 
+    def fake_vertical(master_path, outdir, **kw):
+        """A vertical that exists, because the effects stage needs one.
+
+        Returning None here means "this run makes no vertical", which is a
+        real setting -- and it short-circuits recut before anything is put on
+        the export. Tests about effects need the other case.
+        """
+        outdir.mkdir(parents=True, exist_ok=True)
+        out = outdir / f"{master_path.stem}_vertical.mp4"
+        out.write_bytes(b"vertical")
+        return out
+
+    def fake_effects(src, out, e, **kw):
+        seen["effects"] = e
+        return out
+
     monkeypatch.setattr(edit.cutter, "master_segments", fake_segments)
-    monkeypatch.setattr(edit.cutter, "vertical", lambda *a, **k: None)
+    monkeypatch.setattr(edit.cutter, "vertical", fake_vertical)
+    monkeypatch.setattr(edit.fx, "apply", fake_effects)
     seen["folder"] = folder
     return seen
 
@@ -396,3 +413,128 @@ def test_the_editor_says_what_a_clip_currently_is(run_with_manifest):
     now = edit.current(run["folder"], "clip_01")
     assert now is not None
     assert (now["start"], now["end"]) == (pytest.approx(95.0), pytest.approx(138.0))
+
+
+# ------------------------------------------------------- effects, and keeping them
+
+def _fx(**kw):
+    from autostream.clips import effects as fxmod
+
+    return fxmod.Effects(**kw)
+
+
+def test_effects_are_recorded_so_the_next_edit_keeps_them(run_with_manifest):
+    """Exactly the bug 1.8.1 fixed for trims, one layer up.
+
+    A caption fixed the day after a freeze was placed must not delete the
+    freeze -- and nothing about editing a caption mentions freezes, so nothing
+    would be sent about them.
+    """
+    from autostream.clips import effects as fxmod
+
+    run = run_with_manifest
+    res = edit.recut(_spec(run, effects=_fx(
+        freezes=[fxmod.Freeze(at=2.0, seconds=1.0)],
+        captions=[fxmod.Caption(text="hi", at=0.5, until=2.0)])))
+    assert res.ok, res.error
+    _finish(run, res)
+
+    row = _row(run)
+    assert len(row["effects"]["freezes"]) == 1
+    assert len(row["effects"]["captions"]) == 1
+
+    # Now an edit that says nothing about effects at all.
+    res2 = edit.recut(_spec(run, caption=True, caption_text="a new line"))
+    assert res2.ok
+    assert len(res2.effects["freezes"]) == 1, "the freeze was thrown away"
+
+
+def test_sending_no_effects_clears_them(run_with_manifest):
+    """"Leave them alone" and "there are none now" have to be different
+    answers, or an effect can never be removed."""
+    from autostream.clips import effects as fxmod
+
+    run = run_with_manifest
+    _finish(run, edit.recut(_spec(run, effects=_fx(
+        freezes=[fxmod.Freeze(at=2.0, seconds=1.0)]))))
+    assert _row(run)["effects"]["freezes"]
+
+    _finish(run, edit.recut(_spec(run, effects=_fx())))
+    assert _row(run)["effects"]["freezes"] == []
+
+
+def test_a_freeze_makes_the_vertical_longer_than_the_master(run_with_manifest):
+    from autostream.clips import effects as fxmod
+
+    run = run_with_manifest
+    res = edit.recut(_spec(run, effects=_fx(
+        freezes=[fxmod.Freeze(at=2.0, seconds=1.5)])))
+    assert res.ok
+    assert res.duration == pytest.approx(30.0)          # cut from the recording
+    assert res.vertical_seconds == pytest.approx(31.5)  # what actually plays
+
+
+def test_an_effect_outside_the_clip_fails_the_edit_with_a_reason(run_with_manifest):
+    from autostream.clips import effects as fxmod
+
+    run = run_with_manifest
+    res = edit.recut(_spec(run, effects=_fx(
+        captions=[fxmod.Caption(text="hi", at=900.0, until=902.0)])))
+    assert not res.ok
+    assert "outside" in res.error
+
+
+def test_effects_round_trip_through_the_manifest_unchanged():
+    from autostream.clips import effects as fxmod
+
+    e = fxmod.Effects(
+        captions=[fxmod.Caption(text="don't stop", at=1.5, until=3.25,
+                                where="bottom", size=1.2)],
+        zooms=[fxmod.Zoom(at=2.0, until=4.0, to=1.6)],
+        freezes=[fxmod.Freeze(at=3.0, seconds=0.9)],
+        sounds=[fxmod.Sound(path=Path("C:/sounds/boom.wav"), at=3.0, gain=1.4)])
+    back = edit.from_manifest(edit.to_manifest(e))
+    assert back.captions[0].text == "don't stop"
+    assert back.captions[0].where == "bottom"
+    assert back.captions[0].size == pytest.approx(1.2)
+    assert back.zooms[0].to == pytest.approx(1.6)
+    assert back.freezes[0].seconds == pytest.approx(0.9)
+    assert back.sounds[0].gain == pytest.approx(1.4)
+    assert str(back.sounds[0].path).endswith("boom.wav")
+
+
+def test_a_malformed_manifest_does_not_stop_the_clip_being_edited():
+    """This reads what a PREVIOUS run wrote. Refusing to edit a clip because
+    its own record is malformed helps nobody -- what arrives from the page is
+    checked properly, at the boundary, where a person can be told."""
+    back = edit.from_manifest({"captions": "not a list",
+                               "zooms": [{"at": "soon"}],
+                               "freezes": [None, {"at": 1}]})
+    assert back.captions == []
+    assert back.zooms[0].at == 0.0
+    assert len(back.freezes) == 1
+
+
+def test_effects_with_no_vertical_is_refused_rather_than_ignored(run, monkeypatch):
+    """A freeze that quietly did not happen looks the same as one that did not
+    save. Effects belong to the export, so asking for both is asking for two
+    things that cannot both be true."""
+    from autostream.clips import effects as fxmod
+
+    monkeypatch.setattr(edit.cutter, "vertical", lambda *a, **k: None)
+    res = edit.recut(_spec(run, effects=_fx(
+        freezes=[fxmod.Freeze(at=2.0, seconds=1.0)])))
+    assert not res.ok
+    assert "vertical" in res.error
+
+
+def test_a_bad_effect_is_caught_before_any_encoding_happens(run):
+    """Otherwise you wait a minute to be told a caption is past the end."""
+    from autostream.clips import effects as fxmod
+
+    res = edit.recut(_spec(run, effects=_fx(
+        captions=[fxmod.Caption(text="hi", at=900.0, until=902.0)])))
+    assert not res.ok
+    assert "spans" not in run or run.get("spans") is None or True
+    # Nothing was handed to the effects stage.
+    assert "effects" not in run

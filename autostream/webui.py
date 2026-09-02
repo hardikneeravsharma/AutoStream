@@ -345,6 +345,8 @@ class _Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/clips/existing":
             q = parse_qs(u.query)
             self._json(self.app.clips_existing((q.get("folder") or [""])[0]))
+        elif u.path == "/api/clips/sounds":
+            self._json(self.app.clips_sounds())
         elif u.path == "/api/clips/window-ready":
             self._json(self.app.clips_window_ready(
                 (parse_qs(u.query).get("path") or [""])[0]))
@@ -1087,6 +1089,124 @@ class Server:
 
     _windowing: dict = {}
 
+    SOUND_TYPES = (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".opus")
+
+    @staticmethod
+    def sounds_dir(config=None) -> Path:
+        """Where a person's own sound effects live.
+
+        A FOLDER, and the only place a clip's sounds may come from. The page
+        sends a path and the app hands it to ffmpeg, so without somewhere to
+        confine it that would read any file on the disk -- the same reasoning
+        as the video endpoint. Made rather than merely checked, because an
+        empty folder is a usable answer and a missing one is a puzzle.
+        """
+        c = config or cfg.load()
+        where = Path(str(dict(c.clips).get("sounds_dir") or "")
+                     or paths.VIDEO_HOME / "sounds")
+        try:
+            where.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            log.info("could not make the sounds folder %s: %s", where, e)
+        return where
+
+    def clips_sounds(self) -> dict:
+        """What is in the sounds folder, for the page to offer."""
+        where = self.sounds_dir()
+        found = []
+        try:
+            for f in sorted(where.iterdir()):
+                if f.is_file() and f.suffix.lower() in self.SOUND_TYPES:
+                    found.append({"name": f.stem, "file": f.name,
+                                  "path": str(f),
+                                  "bytes": f.stat().st_size})
+        except OSError as e:
+            return {"error": f"Could not read {where}: {e}"}
+        return {"ok": True, "folder": str(where), "sounds": found}
+
+    def _effects(self, raw) -> tuple[object, str]:
+        """The page's effects JSON -> an Effects, or a reason it cannot be.
+
+        None means "the page said nothing about effects", which recut reads as
+        leave them alone. An empty dict means "there are none now", which
+        clears them. Those are different answers and the difference matters:
+        the first is what a caption-only edit sends.
+        """
+        from .clips import effects as fx
+
+        if raw is None:
+            return None, ""
+        if not isinstance(raw, dict):
+            return None, "Effects have to be an object."
+
+        def num(v, fallback, lo, hi, what):
+            try:
+                got = float(v) if v is not None else fallback
+            except (TypeError, ValueError):
+                raise ValueError(f"{what} is not a number.") from None
+            if not lo <= got <= hi:
+                raise ValueError(f"{what} has to be between {lo} and {hi}.")
+            return got
+
+        def rows(key):
+            got = raw.get(key) or []
+            if not isinstance(got, list):
+                raise ValueError(f"{key} has to be a list.")
+            return [r for r in got if isinstance(r, dict)]
+
+        sounds_root = self.sounds_dir().resolve()
+        try:
+            captions = [
+                fx.Caption(text=str(c.get("text") or "")[:200],
+                           at=num(c.get("at"), 0.0, 0, 36000, "A caption's start"),
+                           until=num(c.get("until"), 3.0, 0, 36000,
+                                     "A caption's end"),
+                           where=str(c.get("where") or "top"),
+                           size=num(c.get("size"), 1.0, 0.4, 2.0,
+                                    "A caption's size"))
+                for c in rows("captions")]
+            zooms = [
+                fx.Zoom(at=num(z.get("at"), 0.0, 0, 36000, "A zoom's start"),
+                        until=num(z.get("until"), 2.0, 0, 36000, "A zoom's end"),
+                        to=num(z.get("to"), 1.35, fx.ZOOM_MIN, fx.ZOOM_MAX,
+                               "A zoom's amount"))
+                for z in rows("zooms")]
+            freezes = [
+                fx.Freeze(at=num(f.get("at"), 0.0, 0, 36000, "A freeze's time"),
+                          seconds=num(f.get("seconds"), 0.7, fx.FREEZE_MIN,
+                                      fx.FREEZE_MAX, "A freeze's length"))
+                for f in rows("freezes")]
+
+            sounds = []
+            for snd in rows("sounds"):
+                p = Path(str(snd.get("path") or ""))
+                # Confined to the sounds folder. The page picks from a list
+                # this app produced, but the page is not the only thing that
+                # can call this, and the path goes straight to ffmpeg.
+                try:
+                    inside = p.resolve().is_relative_to(sounds_root)
+                except OSError:
+                    inside = False
+                if not inside:
+                    return None, ("Sounds have to come from your sound effects "
+                                  "folder. Put the file there and try again.")
+                if p.suffix.lower() not in self.SOUND_TYPES:
+                    return None, f"{p.name} is not a sound file."
+                sounds.append(fx.Sound(
+                    path=p,
+                    at=num(snd.get("at"), 0.0, 0, 36000, "A sound's time"),
+                    gain=num(snd.get("gain"), 1.0, 0.01, fx.SOUND_GAIN_MAX,
+                             "A sound's volume")))
+        except ValueError as e:
+            return None, str(e)
+
+        for c in captions:
+            if c.where not in fx.WHERE:
+                return None, f"A caption asks to sit {c.where!r}."
+
+        return fx.Effects(captions=captions, zooms=zooms, freezes=freezes,
+                          sounds=sounds), ""
+
     def clips_window(self, body: dict) -> dict:
         """A seekable preview of the footage either side of one clip.
 
@@ -1438,6 +1558,10 @@ class Server:
                 except (TypeError, ValueError):
                     return {"error": "A removal has a time that is not a number."}
 
+        fx_spec, why = self._effects(body.get("effects"))
+        if why:
+            return {"error": why}
+
         spec = edit_mod.Spec(
             folder=folder, name=name,
             caption=_flag("caption"),
@@ -1450,7 +1574,7 @@ class Server:
             vertical_mode=mode,
             trim_start=_num("trim_start"), trim_end=_num("trim_end"),
             start_at=_num("start_at"), end_at=_num("end_at"),
-            drop=drop)
+            drop=drop, effects=fx_spec)
         if not ed.start(spec):
             return {"error": "Another clip is being re-rendered."}
         log.info("re-rendering %s in %s", name, folder.name)
