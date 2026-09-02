@@ -330,8 +330,23 @@ def recut(spec: Spec) -> Result:
     want_cap = opt.get("captions", True) if spec.caption is None else spec.caption
     caption = ""
     if want_cap:
-        caption = (spec.caption_text or "").strip() or \
-            overlay.caption_for(fresh, kills, list(row.get("tags") or []))
+        # AN EMPTY BOX MEANS NO CAPTION, NOT "PICK ONE FOR ME".
+        #
+        # This used to be `text.strip() or caption_for(...)`, which reads
+        # nicely and is wrong: clearing the caption and re-rendering put the
+        # app's own caption straight back, so the words somebody had just
+        # deleted reappeared burnt into the clip. Nothing distinguished that
+        # from the feature simply not working.
+        #
+        # None and "" are different answers. None is a caller that said
+        # nothing about the caption -- the first cut of a clip, or an edit
+        # that only touches the trim -- and that is when choosing one is
+        # wanted. "" is a person who cleared the box.
+        if spec.caption_text is None:
+            caption = overlay.caption_for(fresh, kills,
+                                          list(row.get("tags") or []))
+        else:
+            caption = spec.caption_text.strip()
 
     # ---- the spoken line
     want_say = bool(opt.get("voice")) if spec.speak is None else spec.speak

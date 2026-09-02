@@ -137,6 +137,16 @@ def page(theme_id: str) -> str:
     )
 
 
+# What each extension is served as. A browser will usually sniff it anyway,
+# but an <audio> handed video/mp4 can refuse before it tries.
+_CONTENT_TYPES = {
+    ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm",
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4",
+    ".ogg": "audio/ogg", ".opus": "audio/ogg", ".flac": "audio/flac",
+    ".aac": "audio/aac",
+}
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = "AutoStream"
     protocol_version = "HTTP/1.1"
@@ -199,7 +209,30 @@ class _Handler(BaseHTTPRequestHandler):
             self.app.request_finished()
 
     def _video(self, path: str) -> None:
-        """Stream one clip to a <video> tag, honouring Range.
+        """Stream one clip to a <video> tag."""
+        self._media(path, self.app._clips_dir(cfg.load()),
+                    (".mp4", ".m4v", ".webm"), "video")
+
+    def _sound(self, path: str) -> None:
+        """Stream one sound effect, so the effects preview can play it.
+
+        Its own root and its own list of types. The alternative was letting
+        _video serve the sounds folder too, which widens the thing that
+        streams files to a second directory for the sake of one <audio> tag --
+        and every widening of that is one more place to be careful about
+        forever. A parameter costs nothing.
+        """
+        self._media(path, self.app.sounds_dir(cfg.load()),
+                    self.app.SOUND_TYPES, "audio")
+
+    def _media(self, path: str, root: Path, kinds, what: str) -> None:
+        """Stream a file from `root` to a media tag, honouring Range.
+
+        RANGE IS NOT OPTIONAL HERE. Without it the browser can play a clip from
+        the start and nothing else: dragging the scrub bar, stepping a frame,
+        or starting anywhere but zero all need a byte range, and a player that
+        cannot seek is not a player. Chrome also re-requests the tail of an mp4
+        to find the moov atom before it will play at all.
 
         RANGE IS NOT OPTIONAL HERE. Without it the browser can play a clip from
         the start and nothing else: dragging the scrub bar, stepping a frame,
@@ -208,28 +241,30 @@ class _Handler(BaseHTTPRequestHandler):
         to find the moov atom before it will play at all.
         """
         p = Path(path)
-        # Only ever inside the clips folder. The page builds these paths, but
-        # the page is not the only thing that can call this.
+        # Only ever inside the folder the caller named. The page builds these
+        # paths, but the page is not the only thing that can call this.
         #
-        # The recordings folder is deliberately NOT included. Adjusting where
-        # a clip starts needs footage either side of it, but that arrives as a
-        # small preview cut into the run's own folder -- so nothing here has
-        # to reach a 47 GB source file, and this guard stays as narrow as it
-        # has always been.
-        root = self.app._clips_dir(cfg.load()).resolve()
+        # For clips, the RECORDINGS folder is deliberately not among them.
+        # Adjusting where a clip starts needs footage either side of it, but
+        # that arrives as a small preview cut into the run's own folder -- so
+        # nothing here has to reach a 47 GB source file, and this guard stays
+        # as narrow as it has always been.
         try:
-            if not p.resolve().is_relative_to(root):
-                self._json({"error": "That file is not in the clips folder."}, 403)
-                return
+            here = p.resolve()
+            inside = here.is_relative_to(root.resolve())
         except OSError:
             self._json({"error": "No such file."}, 404)
             return
-        if not p.is_file() or p.suffix.lower() not in (".mp4", ".m4v", ".webm"):
-            self._json({"error": "No such clip."}, 404)
+        if not inside:
+            self._json({"error": f"That file is not in the {what} folder."}, 403)
+            return
+        if not p.is_file() or p.suffix.lower() not in kinds:
+            self._json({"error": f"No such {what}."}, 404)
             return
 
         size = p.stat().st_size
-        ctype = "video/webm" if p.suffix.lower() == ".webm" else "video/mp4"
+        ctype = _CONTENT_TYPES.get(p.suffix.lower(),
+                                   "video/mp4" if what == "video" else "audio/mpeg")
         rng = self.headers.get("Range", "")
         start, end = 0, size - 1
         partial = False
@@ -345,6 +380,8 @@ class _Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/clips/existing":
             q = parse_qs(u.query)
             self._json(self.app.clips_existing((q.get("folder") or [""])[0]))
+        elif u.path == "/api/clips/sound":
+            self._sound((parse_qs(u.query).get("path") or [""])[0])
         elif u.path == "/api/clips/sounds":
             self._json(self.app.clips_sounds())
         elif u.path == "/api/clips/window-ready":

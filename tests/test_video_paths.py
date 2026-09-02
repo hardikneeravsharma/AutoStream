@@ -134,3 +134,83 @@ def test_a_missing_file_is_refused(serve):
     what, answer = serve(serve.clips / "gone.mp4")
     assert what == "REFUSED"
     assert answer[0] == 404
+
+
+# ------------------------------------------------------------ sound effects
+
+@pytest.fixture
+def serve_sound(tmp_path, monkeypatch):
+    """The same shape as `serve`, for the route that streams sound effects."""
+    sounds = tmp_path / "Videos" / "AutoStream" / "sounds"
+    clips = tmp_path / "Videos" / "AutoStream" / "clips"
+    elsewhere = tmp_path / "Documents"
+    for d in (sounds, clips, elsewhere):
+        d.mkdir(parents=True, exist_ok=True)
+
+    app = webui.Server.__new__(webui.Server)
+    app._clips_dir = staticmethod(lambda _c: clips).__func__
+    app.sounds_dir = staticmethod(lambda _c=None: sounds).__func__
+
+    h = webui._Handler.__new__(webui._Handler)
+    h.app = app
+    h.headers = {}
+
+    said: list[tuple] = []
+    monkeypatch.setattr(webui._Handler, "_json",
+                        lambda self, obj, code=200: said.append((code, obj)))
+
+    def stop_here(self, *a, **k):
+        raise _Served()
+
+    monkeypatch.setattr(webui._Handler, "send_response", stop_here)
+    monkeypatch.setattr(webui.cfg, "load", lambda: types.SimpleNamespace())
+
+    def call(path):
+        said.clear()
+        try:
+            h._sound(str(path))
+        except _Served:
+            return ("SERVED", None)
+        return ("REFUSED", said[0] if said else None)
+
+    call.sounds = sounds
+    call.clips = clips
+    call.elsewhere = elsewhere
+    return call
+
+
+def _sound(where: Path, name: str) -> Path:
+    f = where / name
+    f.write_bytes(b"\x00" * 64)
+    return f
+
+
+def test_a_sound_in_the_sounds_folder_is_served(serve_sound):
+    what, _ = serve_sound(_sound(serve_sound.sounds, "boom.mp3"))
+    assert what == "SERVED"
+
+
+def test_a_sound_anywhere_else_is_refused(serve_sound):
+    """The whole reason this route has its own root instead of widening the
+    video one to a second directory."""
+    what, answer = serve_sound(_sound(serve_sound.elsewhere, "private.mp3"))
+    assert what == "REFUSED" and answer[0] == 403
+
+
+def test_the_sound_route_will_not_serve_a_clip(serve_sound):
+    what, answer = serve_sound(_sound(serve_sound.clips, "clip.mp4"))
+    assert what == "REFUSED" and answer[0] == 403
+
+
+def test_climbing_out_of_the_sounds_folder_is_refused(serve_sound):
+    _sound(serve_sound.elsewhere, "private.mp3")
+    sneaky = serve_sound.sounds / ".." / ".." / ".." / "Documents" / "private.mp3"
+    what, answer = serve_sound(sneaky)
+    assert what == "REFUSED" and answer[0] == 403
+
+
+def test_something_that_is_not_a_sound_is_refused(serve_sound):
+    token = serve_sound.sounds / "token.json"
+    token.write_text("{}", encoding="utf-8")
+    what, answer = serve_sound(token)
+    assert what == "REFUSED" and answer[0] == 404
