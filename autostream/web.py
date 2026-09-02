@@ -233,8 +233,20 @@ class _Handler(BaseHTTPRequestHandler):
     # ---------------- helpers ----------------
 
     def _authed(self, query) -> bool:
+        """Is the request carrying the right token?
+
+        COMPARED AS BYTES, NOT TEXT. hmac.compare_digest raises TypeError on
+        str arguments containing non-ASCII characters, so a URL with an accent
+        or an emoji anywhere in ?k= did not come back 403 -- it raised inside
+        the handler, dropped the connection with no response at all, and wrote
+        a traceback. Anyone who could reach the port could do it by mistake.
+
+        Encoding both sides first keeps the comparison constant-time and makes
+        every wrong token, however written, an ordinary refusal.
+        """
         given = (parse_qs(query).get("k") or [""])[0]
-        return hmac.compare_digest(given, self.token)
+        return hmac.compare_digest(given.encode("utf-8", "surrogatepass"),
+                                   self.token.encode("utf-8", "surrogatepass"))
 
     def _send(self, code, body: bytes, ctype="application/json"):
         self.send_response(code)
