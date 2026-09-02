@@ -184,3 +184,35 @@ def test_with_nothing_saved_the_window_is_left_to_centre_itself(home, monkeypatc
 
     assert "x" not in made and "y" not in made
     assert made["width"], made["height"] == window.DEFAULT_SIZE
+
+
+def test_the_installer_and_the_app_claim_the_same_identity():
+    """Windows decides which taskbar button belongs to which app by this string.
+
+    It is set in two places that cannot see each other: the process sets it at
+    startup, and the installer stamps it on the shortcuts. When they disagree,
+    pinning the shortcut produces a second button that never lights up while
+    the real window sits beside it, unpinnable -- and nothing anywhere reports
+    a problem.
+    """
+    import re
+
+    iss = Path(__file__).resolve().parent.parent / "packaging" / "AutoStream.iss"
+    if not iss.exists():                       # a source checkout without it
+        import pytest as _pytest
+
+        _pytest.skip("no installer script in this checkout")
+
+    text = iss.read_text(encoding="utf-8")
+    m = re.search(r'#define\s+AppUserModelID\s+"([^"]+)"', text)
+    assert m, "the installer no longer defines an AppUserModelID"
+    assert m.group(1) == window.APP_ID, (
+        f"the installer stamps {m.group(1)!r} on its shortcuts but the app "
+        f"calls itself {window.APP_ID!r}")
+
+    # ...and every shortcut to the exe actually carries it. A shortcut without
+    # one is the same bug, just quieter.
+    for line in text.splitlines():
+        if line.startswith("Name:") and "{#AppExe}" in line:
+            assert "AppUserModelID:" in line, (
+                f"this shortcut has no AppUserModelID:\n  {line.strip()}")
