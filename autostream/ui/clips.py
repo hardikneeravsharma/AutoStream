@@ -218,8 +218,13 @@ CLIPS_HTML: str = (
            middle.</p>
         <div class="hide" id="clip-trim-panel">
           <div class="clip-trim-bar" id="clip-trim-bar">
-            <span class="clip-trim-keep" id="clip-trim-keep"></span>
+            <!-- Order is paint order: the original span sits BEHIND what
+                 will actually be kept, and the playhead in front of both.
+                 None of these carry a z-index, so the markup is the only
+                 thing deciding, and getting it wrong hides the blocks that
+                 say what the clip will contain. -->
             <span class="clip-trim-was" id="clip-trim-was"></span>
+            <span class="clip-trim-keep" id="clip-trim-keep"></span>
             <span class="clip-trim-head" id="clip-trim-head"></span>
           </div>
           <div class="field-inline" style="margin-top:.5rem">
@@ -1371,6 +1376,19 @@ function clip_trimSync() {
   t.win = [lo, hi];
 }
 
+/* Is the player showing the recording yet?
+
+   t.on goes true the moment the button is pressed, but the preview takes a
+   few seconds to cut and until it arrives the element is still playing the
+   CLIP. Reading currentTime then and calling it a recording position would
+   mark a point six seconds into the clip as a point six seconds into the
+   recording -- clamped into the window, so it would not throw, it would just
+   quietly be wrong. Every marking action asks this first. */
+function clip_trimLive() {
+  var t = clip_state.player && clip_state.player.edit;
+  return !!(t && t.on && t.preview && !t.building);
+}
+
 /* Where the player is, in RECORDING seconds. */
 function clip_trimAt() {
   var t = clip_state.player && clip_state.player.edit;
@@ -1420,8 +1438,15 @@ function clip_trimToggle() {
         + 'stretch out of the middle.';
   }
   if (!v) return;
-  if (t.on) clip_trimWindow();
-  else clip_playerLoadVideo();
+  if (t.on) {
+    clip_trimWindow();
+  } else {
+    t.preview = '';
+    t.at = 0;
+    t.building = false;
+    clip_trimSay('');
+    clip_playerLoadVideo();
+  }
   clip_trimRender();
 }
 
@@ -1493,6 +1518,7 @@ function clip_trimPlay() {
   t.building = false;
   clip_trimSay('');
   v.src = clip_videoURL(t.preview);
+  clip_trimRender();          /* the marking buttons become usable here */
   v.load();
   /* Seeking before the metadata lands is ignored, so wait for it once. */
   var go = function () {
@@ -1516,6 +1542,7 @@ function clip_trimSay(text) {
 function clip_trimSetIn(at) {
   var t = clip_state.player && clip_state.player.edit;
   if (!t || !t.on) return;
+  if (!clip_trimLive()) { clip_trimSay('Wait for the footage to open.'); return; }
   var v = Math.max(t.win[0], Math.min(at, t.win[1] - 1));
   if (v >= clip_trimOut()) {
     toast('The start has to come before the end.', 'error');
@@ -1528,6 +1555,7 @@ function clip_trimSetIn(at) {
 function clip_trimSetOut(at) {
   var t = clip_state.player && clip_state.player.edit;
   if (!t || !t.on) return;
+  if (!clip_trimLive()) { clip_trimSay('Wait for the footage to open.'); return; }
   var v = Math.max(t.win[0] + 1, Math.min(at, t.win[1]));
   if (v <= clip_trimIn()) {
     toast('The end has to come after the start.', 'error');
@@ -1544,6 +1572,7 @@ function clip_trimSetOut(at) {
 function clip_trimCut() {
   var t = clip_state.player && clip_state.player.edit;
   if (!t || !t.on) return;
+  if (!clip_trimLive()) { clip_trimSay('Wait for the footage to open.'); return; }
   var at = clip_trimAt();
   if (t.pending == null) {
     if (at <= clip_trimIn() || at >= clip_trimOut()) {
@@ -1686,6 +1715,14 @@ function clip_trimRender() {
 
   var cut = clip_el('clip-trim-cut');
   if (cut) cut.textContent = t.pending == null ? 'Cut from here' : 'Cut to here';
+
+  /* A button that looks pressable and refuses is worse than one that is
+     visibly not ready yet. */
+  var live = clip_trimLive();
+  var bar = clip_el('clip-trim-panel');
+  var marks = bar ? bar.querySelectorAll('[data-play="setin"],[data-play="setout"],'
+                                         + '#clip-trim-cut') : [];
+  for (var m = 0; m < marks.length; m++) marks[m].disabled = !live;
 }
 
 /* Just the playhead, which moves on every frame of playback. Split out so the
@@ -1693,7 +1730,7 @@ function clip_trimRender() {
 function clip_trimHead() {
   var t = clip_state.player && clip_state.player.edit;
   var head = clip_el('clip-trim-head');
-  if (!t || !head || !t.on) return;
+  if (!t || !head || !clip_trimLive()) return;
   var span = t.win[1] - t.win[0];
   var at = span > 0 ? (100 * (clip_trimAt() - t.win[0]) / span) : 0;
   head.style.left = Math.max(0, Math.min(100, at)) + '%';
