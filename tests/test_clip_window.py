@@ -232,7 +232,10 @@ def test_the_scan_rate_for_round_mode_is_not_the_plain_killfeed_rate():
     from autostream.clips import jobs
 
     assert jobs.scan_rate("killfeed", rounds=False) == 4.5
-    assert jobs.scan_rate("killfeed", rounds=True) == 1.5
+    # Two real runs measured 1.46x and 1.19x. The lower is used, because this
+    # number's whole job is to be quoted BEFORE the run and the estimate that
+    # undersells is the one that gets somebody to press the button.
+    assert jobs.scan_rate("killfeed", rounds=True) == 1.2
     assert jobs.scan_rate("killfeed", rounds=True) < jobs.scan_rate("killfeed")
 
 
@@ -283,3 +286,138 @@ def test_every_demo_outcome_says_what_happened():
         "no match, matched by the probe, matched after the scan -- has to say "
         "so, or the slow path looks like the only path")
     assert '"demo_note": self.demo_note' in src, "and it has to reach the page"
+
+
+# ------------------------------------------ stopping instead of falling back
+#
+# Reported from a real run: the replay was downloaded, it still did not match,
+# and the job quietly spent forty minutes reading 48 minutes of Counter-Strike
+# off the screen -- for a worse answer than the demo would have given. The
+# expensive decision was being made silently, on the user's behalf.
+
+def test_a_stopped_run_is_distinguishable_from_a_failed_one(tmp_path):
+    """The page shows a sharing-code box on one and a stack trace hint on the
+    other, so they must not arrive looking the same."""
+    import threading
+    import time as _t
+
+    from autostream.clips import jobs
+
+    job = ClipJob.__new__(ClipJob)
+    job._lock = threading.Lock()
+    job._cancel = threading.Event()
+    job._proc = None
+    job.cancel_at = None
+    job.state, job.step = "running", "scan"
+    job.done, job.total = 0, 1
+    job.message, job.error = "", None
+    job.game, job.folder = "Counter-Strike 2", Path("x")
+    job.results, job.preview, job.summary = [], [], {}
+    job.montage_path = job.reel_path = job.promo_path = None
+    job.started_at = job.step_started = _t.time()
+    job.source = Path("rec.mp4")
+    job.source_seconds = job.scan_seconds = 2640.0
+    job.scan_mode, job.clip_count, job.scan_rounds = "killfeed", 0, True
+    job.demo, job.demo_note, job.needs_demo = {}, "", False
+    job.finished_at = None
+
+    def boom(self):
+        raise jobs.NeedsDemo("no replay matched")
+
+    job._run = boom.__get__(job)
+    job._write_manifest = lambda: None
+    job.run()
+
+    snap = job.snapshot()
+    assert snap["state"] == "failed"
+    assert snap["needs_demo"] is True, (
+        "without this the page shows 'Could not finish' and none of the two "
+        "things that actually move it forward")
+    assert "replay" in snap["message"].lower()
+    assert snap["error"] == "no replay matched"
+
+
+def test_an_ordinary_failure_does_not_ask_for_a_replay(tmp_path):
+    import threading
+    import time as _t
+
+    job = ClipJob.__new__(ClipJob)
+    job._lock = threading.Lock()
+    job._cancel = threading.Event()
+    job._proc = None
+    job.cancel_at = None
+    job.state, job.step = "running", "scan"
+    job.done, job.total = 0, 1
+    job.message, job.error = "", None
+    job.game, job.folder = "Counter-Strike 2", Path("x")
+    job.results, job.preview, job.summary = [], [], {}
+    job.montage_path = job.reel_path = job.promo_path = None
+    job.started_at = job.step_started = _t.time()
+    job.source = Path("rec.mp4")
+    job.source_seconds = job.scan_seconds = 10.0
+    job.scan_mode, job.clip_count, job.scan_rounds = "killfeed", 0, False
+    job.demo, job.demo_note, job.needs_demo = {}, "", False
+    job.finished_at = None
+
+    def boom(self):
+        raise RuntimeError("something else went wrong")
+
+    job._run = boom.__get__(job)
+    job._write_manifest = lambda: None
+    job.run()
+    assert job.snapshot()["needs_demo"] is False
+
+
+# ------------------------------------------------- the probe is kept
+#
+# The answer to "no replay matched" is to download the replay and run again.
+# Re-reading the same twelve minutes to rebuild an identical seed is about nine
+# minutes spent to learn nothing.
+
+def _probe_job(tmp_path, start=0.0):
+    job = ClipJob.__new__(ClipJob)
+    job.source = tmp_path / "rec.mp4"
+    job.source.write_bytes(b"x")
+    job.win_start = start
+    job.folder = tmp_path / "runs" / "one"
+    return job
+
+
+def test_a_probe_is_remembered_and_read_back(tmp_path):
+    job = _probe_job(tmp_path)
+    seed = [{"time": 10.0}, {"time": 20.0}]
+    job._remember_probe(seed, 720.0)
+
+    again = _probe_job(tmp_path)
+    again.folder = tmp_path / "runs" / "two"
+    assert again._recall_probe(720.0) == seed
+
+
+def test_a_probe_of_a_different_part_is_not_reused(tmp_path):
+    job = _probe_job(tmp_path, start=0.0)
+    job._remember_probe([{"time": 10.0}], 720.0)
+
+    other = _probe_job(tmp_path, start=1800.0)
+    other.folder = tmp_path / "runs" / "two"
+    assert other._recall_probe(720.0) is None, (
+        "a probe of the first twelve minutes says nothing about a selection "
+        "that starts half an hour in")
+
+
+def test_a_shorter_probe_is_not_reused_for_a_longer_one(tmp_path):
+    job = _probe_job(tmp_path)
+    job._remember_probe([{"time": 10.0}], 300.0)
+
+    other = _probe_job(tmp_path)
+    other.folder = tmp_path / "runs" / "two"
+    assert other._recall_probe(720.0) is None
+
+
+def test_a_probe_of_another_file_is_not_reused(tmp_path):
+    job = _probe_job(tmp_path)
+    job._remember_probe([{"time": 10.0}], 720.0)
+
+    other = _probe_job(tmp_path)
+    other.source = tmp_path / "different.mp4"
+    other.folder = tmp_path / "runs" / "two"
+    assert other._recall_probe(720.0) is None

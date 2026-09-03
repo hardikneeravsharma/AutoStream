@@ -202,3 +202,41 @@ def test_the_scan_estimate_comes_from_the_rate_not_a_rule_of_thumb():
     body = _func("clip_renderOptions")
     assert "s.scan_rate" in body
     assert "span / 10" not in body
+
+
+# ------------------------------------- stopping rather than reading the screen
+
+def test_the_stopped_run_offers_both_ways_forward():
+    """A sharing-code box to fetch the right replay, and a button that takes
+    the slow read deliberately. Neither is any use without the other."""
+    from autostream.ui import clips as ui
+
+    assert 'id="clip-needsdemo"' in ui.CLIPS_HTML
+    assert 'id="clip-needsdemo-codes"' in ui.CLIPS_HTML
+    assert 'data-act="demo-anyway"' in ui.CLIPS_HTML
+    assert 'data-act="needsdemo-get"' in ui.CLIPS_HTML
+
+
+def test_the_slow_read_button_carries_its_cost():
+    """The cost is the entire reason the run stopped, so it goes ON the button
+    rather than in prose beside it."""
+    body = _func("clip_renderJob")
+    assert "clip-needsdemo-anyway" in body
+    assert "clip_dur(span / rate)" in body, (
+        "the button has to say how long reading the screen would take")
+
+
+def test_the_deliberate_slow_read_is_a_flag_on_the_same_run():
+    """Not a second form. The selection, style and round types were already
+    chosen, and asking for them again is how a slow path gets a wrong one."""
+    body = _func("clip_runAnyway")
+    assert "demo_fallback = true" in body
+    assert "clip_runBody(s)" in body
+
+
+def test_a_picked_file_carries_the_scan_rate():
+    """It did not, so the page fell back to the plain kill-feed figure and
+    advertised a 43-minute selection at 9 minutes of scanning. It took 40."""
+    body = _func("clip_useLocal")
+    assert "scan_rate: g.scan_rate" in body
+    assert "demos: g.demos" in body

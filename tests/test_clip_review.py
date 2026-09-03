@@ -217,6 +217,9 @@ def _stub_job():
     # tests are about a template scan.
     j.scan_rounds = False
     j.demo, j.demo_note = {}, ""
+    # Set only when a run stops for want of a replay; the page shows the
+    # sharing-code box on it rather than a generic failure.
+    j.needs_demo = False
     return j
 
 

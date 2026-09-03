@@ -510,6 +510,27 @@ One per line - a long session often covers several matches."></textarea>
     + _svg("folder")
     + """<span>Open folder</span></button>
   </div>
+  <!-- The run stopped because no replay matched. Two ways forward and both
+       are here: fetch the right replay, or take the slow read deliberately
+       with its cost written on the button. -->
+  <div class="panel clip-warn hide" id="clip-needsdemo">
+    <p class="muted" id="clip-needsdemo-why"></p>
+    <p class="muted">Open the match in Counter-Strike &rarr; Watch, download it,
+       then run this again - the twelve minutes already read are kept, so the
+       second run goes straight to matching. Or paste its sharing code here and
+       AutoStream will ask the game to fetch it.</p>
+    <textarea class="textarea mono" id="clip-needsdemo-codes" rows="2"
+              spellcheck="false"
+              placeholder="Paste the match sharing code, or the whole steam:// link."></textarea>
+    <div class="field-inline" style="margin-top:8px">
+      <button class="btn" type="button" data-act="needsdemo-get">
+        Download in Counter-Strike</button>
+      <button class="btn btn-ghost" type="button" id="clip-needsdemo-anyway"
+              data-act="demo-anyway"><span>Read the screen instead</span></button>
+      <span class="muted" id="clip-needsdemo-msg"></span>
+    </div>
+  </div>
+
   <div class="clip-results" id="clip-res-list"></div>
 
   <div class="panel hide" id="clip-up" style="margin-top:12px">
@@ -1107,9 +1128,34 @@ function clip_renderJob(j) {
   clip_show('clip-results', done);
   if (!done) return;
 
+  /* STOPPED FOR A REPLAY IS NOT A FAILURE. Nothing went wrong; the run needs
+     something only the user can supply, and the alternative it declined to
+     take on their behalf costs about forty minutes for three quarters of an
+     hour of footage. Calling that "Could not finish" would read as a fault
+     and hide the two things that actually move it forward. */
+  clip_show('clip-needsdemo', !!j.needs_demo);
+  if (j.needs_demo) {
+    var nd = clip_el('clip-needsdemo-why');
+    if (nd) nd.textContent = j.error || '';
+    var anyway = clip_el('clip-needsdemo-anyway');
+    if (anyway) {
+      var s = clip_state.pick;
+      var rate = Number(s && s.scan_rate) || 1.2;
+      var win = clip_stripWindow();
+      var span = win ? ((win.scan_end || (s && s.duration) || 0) - win.scan_start)
+                     : ((s && s.duration) || 0);
+      /* The cost goes ON the button. It is the whole reason the run stopped. */
+      anyway.querySelector('span').textContent = span > 0
+        ? 'Read the screen instead (about ' + clip_dur(span / rate) + ')'
+        : 'Read the screen instead';
+      anyway.disabled = false;
+    }
+  }
+
   clip_el('clip-res-title').textContent =
-    j.state === 'done' ? 'Clips ready' :
-    (j.state === 'cancelled' ? 'Cancelled' : 'Could not finish');
+    j.needs_demo ? 'Waiting for the replay' :
+    (j.state === 'done' ? 'Clips ready' :
+    (j.state === 'cancelled' ? 'Cancelled' : 'Could not finish'));
 
   var sum = j.summary || {};
   var sub;
@@ -2843,6 +2889,30 @@ function clip_runBody(s) {
   });
 }
 
+/* "Read the screen instead." The same run with one flag, so nothing about the
+   selection, the style or the round types has to be chosen again -- and the
+   flag is the only thing that separates a deliberate slow read from the
+   silent one this replaced. */
+async function clip_runAnyway() {
+  var s = clip_state.pick;
+  if (!s) return;
+  var b = clip_el('clip-needsdemo-anyway');
+  if (b) b.disabled = true;
+  var body = clip_runBody(s);
+  body.demo_fallback = true;
+  try {
+    var r = await API.post('/api/clips/run', body);
+    if (r && r.error) { toast(r.error, 'error'); if (b) b.disabled = false; return; }
+    clip_state.busy = true;
+    clip_show('clip-results', false);
+    clip_show('clip-needsdemo', false);
+    toast('Reading the screen. This is the slow way.', 'ok');
+  } catch (e) {
+    toast('Could not start.', 'error');
+    if (b) b.disabled = false;
+  }
+}
+
 async function clip_run() {
   var s = clip_state.pick;
   if (!s) return;
@@ -3284,6 +3354,13 @@ function clip_useLocal() {
     duration: f.duration || 0, recording_bytes: f.bytes || 0,
     game: g.game, game_key: g.game_key, profile: g.profile,
     can_scan: g.can_scan, scan_mode: g.scan_mode, rounds: g.rounds,
+    /* EVERY FIELD THE OPTIONS CARD READS HAS TO BE COPIED, and the ones that
+       are missing fail quietly rather than loudly. scan_rate was left off and
+       the estimate silently fell back to the plain kill-feed figure: a
+       43-minute selection was advertised at 9 minutes of scanning and took
+       40. This is the same shape as the has_recording bug above -- a key the
+       games list provides and this object forgot. */
+    scan_rate: g.scan_rate, demos: g.demos,
     counts_assists: g.counts_assists, blocked: g.blocked, player: g.player,
     started: f.started || null, display_started: null, local: true
   };
@@ -3436,14 +3513,19 @@ function clip_renderMatchLine() {
     + 'while the game is running, so the next session is the one that fixes it.';
 }
 
-async function clip_getDemos() {
-  var box = clip_el('clip-democodes');
+/* Two boxes ask this now -- the one on the options card, and the one on a run
+   that stopped for want of a replay -- so which pair of elements to read is a
+   parameter rather than a second copy of the function. */
+async function clip_getDemos(boxId, msgId) {
+  boxId = boxId || 'clip-democodes';
+  msgId = msgId || 'clip-demomsg';
+  var box = clip_el(boxId);
   var text = box ? String(box.value || '').trim() : '';
   if (!text) { toast('Paste a sharing code first.', 'warn'); return; }
-  clip_say('clip-demomsg', 'Asking Counter-Strike...');
+  clip_say(msgId, 'Asking Counter-Strike...');
   var r = await API.post('/api/clips/demos', {text: text});
-  if (r && r.error) { clip_say('clip-demomsg', ''); toast(r.error, 'error'); return; }
-  clip_say('clip-demomsg', r.hint || '');
+  if (r && r.error) { clip_say(msgId, ''); toast(r.error, 'error'); return; }
+  clip_say(msgId, r.hint || '');
   toast('Counter-Strike is downloading ' + r.sent + ' match'
         + (r.sent === 1 ? '' : 'es') + '.', 'ok');
 }
@@ -4103,6 +4185,10 @@ function clip_wire() {
       clip_useLocal();
     } else if (act === 'get-demos') {
       clip_getDemos();
+    } else if (act === 'needsdemo-get') {
+      clip_getDemos('clip-needsdemo-codes', 'clip-needsdemo-msg');
+    } else if (act === 'demo-anyway') {
+      clip_runAnyway();
     } else if (act === 'install-tools') {
       clip_installTools();
     } else if (act === 'strip-all') {

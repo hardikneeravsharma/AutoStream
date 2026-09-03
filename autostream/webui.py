@@ -1560,6 +1560,11 @@ class Server:
         if start > 0 or end > 0:
             opt["scan_start"] = max(0.0, start)
             opt["scan_end"] = max(0.0, end)
+        # "Read the screen anyway." A Counter-Strike run stops rather than
+        # spending forty minutes on OCR when no replay matched, so this is how
+        # the page says the user has chosen that cost with their eyes open.
+        if body.get("demo_fallback"):
+            opt["demo_fallback"] = True
         # Round mode, for games whose profile reads the scoreboard. Absent for
         # every other game, so nothing changes for them.
         if body.get("rounds") is not None:
