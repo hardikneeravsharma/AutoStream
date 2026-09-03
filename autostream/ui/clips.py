@@ -1410,6 +1410,7 @@ function clip_openPlayer(list, i, folder) {
   clip_show('clip-player-card', true);
   /* Not awaited: the panel draws now and the chooser fills itself in when the
      voices land -- see clip_fillVoiceSelects. */
+  clip_loadRunFor(folder || '');
   clip_loadVoices();
   clip_fxLoadSounds();
   clip_playerLoad();
@@ -1601,6 +1602,32 @@ function clip_trimBlank() {
           preview: '', at: 0, building: false, tries: 0};
 }
 
+/* WHICH RECORDING A RUN CAME FROM, for any run the player can be opened on.
+
+   Cached per folder, because it is asked on every clip change and the answer
+   cannot move for a run that has finished. `null` means asked and unavailable;
+   `undefined` means not asked yet, which is what stops the fetch repeating. */
+function clip_runFor(folder) {
+  var got = (clip_state.runs || {})[folder];
+  return got || null;
+}
+
+async function clip_loadRunFor(folder) {
+  if (!folder) return;
+  clip_state.runs = clip_state.runs || {};
+  if (clip_state.runs[folder] !== undefined) return;
+  clip_state.runs[folder] = null;
+  try {
+    var r = await API.get('/api/clips/existing?folder=' +
+                          encodeURIComponent(folder));
+    clip_state.runs[folder] = (r && !r.error && r.source) ? r : null;
+  } catch (e) {
+    clip_state.runs[folder] = null;
+  }
+  /* The panel was drawn before this landed, so it has to be told. */
+  clip_trimSync();
+}
+
 /* What the current clip's editable window is, from the row and the run. */
 function clip_trimSync() {
   var p = clip_state.player, c = clip_playerClip();
@@ -1611,6 +1638,14 @@ function clip_trimSync() {
      that is not the one on screen. */
   var run = clip_state.made;
   if (!run || run.folder !== p.folder) run = null;
+  /* THE RUN JUST FINISHED IS NOT clip_state.made. That holds the clips a
+     PREVIOUS run left for the selected stream, and the player is just as often
+     opened from the results of the run that has this second ended -- at which
+     point the folder does not match, the source comes out empty, and Adjust
+     the cut refuses with "that run did not keep its recording" about a
+     recording it has just finished reading. Every run's folder can answer for
+     itself; see clip_runInfo. */
+  if (!run) run = clip_runFor(p.folder);
   var a = Number(c.start), b = Number(c.end);
   t.source = run ? String(run.source || '') : '';
   t.srcSeconds = run ? Number(run.source_seconds || 0) : 0;
@@ -1674,8 +1709,14 @@ function clip_trimToggle() {
   var p = clip_state.player, t = p && p.edit;
   if (!t) return;
   if (!t.ready) {
-    toast('That run did not keep its recording, so the cut cannot be moved.',
-          'error');
+    /* Two different situations, and the old message asserted the wrong one of
+       them at somebody whose recording was plainly still there. */
+    var known = clip_runFor(p.folder);
+    toast(known
+      ? 'The recording this run came from is no longer on disk, so the cut '
+        + 'cannot be moved.'
+      : 'Still reading which recording this run came from - try again in a '
+        + 'moment.', 'error');
     return;
   }
   t.on = !t.on;

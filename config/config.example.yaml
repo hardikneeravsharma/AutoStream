@@ -79,8 +79,6 @@ rules:
   quota_reserve: 500
   # The notification-area icon with the current phase, pause and force stop. Turning it off leaves this window as your only way in.
   tray_icon: true
-  # The small always-on-top panel with the current phase and a stop button, so you can see what AutoStream is doing without leaving the game.
-  control_panel: true
   # Turning this off stops the local web server that draws this page, on the next start. You would then have to edit config.yaml by hand to get back in.
   # WRITTEN BY SETUP - editing this by hand breaks streaming.
   web_dashboard: true

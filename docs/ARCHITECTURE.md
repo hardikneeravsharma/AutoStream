@@ -47,7 +47,6 @@ The UI layer (panel, tray, web dashboard) never calls OBS/YouTube directly. It c
 | [`titles.py`](../autostream/titles.py) | Pure string templating for stream title/description |
 | [`notify.py`](../autostream/notify.py) | Windows toast notifications (no-ops if `winotify` missing) |
 | [`catalog.py`](../autostream/catalog.py) | Discovers launchable apps (Steam/Epic/Start-Menu) for the dashboard's "Open"/"Open & stream" buttons; stored in `apps.yaml` |
-| [`panel.py`](../autostream/panel.py) | Tkinter always-on-top overlay HUD (phase, timer, Stop/Pause) |
 | [`tray.py`](../autostream/tray.py) | System tray icon with status menu |
 | [`window.py`](../autostream/window.py) | Native app window via pywebview, falls back to default browser |
 | [`webui.py`](../autostream/webui.py) | Current stdlib HTTP server: themed dashboard + first-run setup wizard (JSON API + HTML) |

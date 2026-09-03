@@ -235,11 +235,56 @@ def test_last_alive_against_two_or_more_and_winning_is_a_clutch():
 
 def test_the_same_situation_lost_is_kept_but_named_differently():
     # A 1v3 lost at the last moment is often better viewing than a 1v2 won, so
-    # it is not thrown away -- but it must not claim to be a clutch.
-    r = _labelled(my_kills=1, last_stand_at=40.0, enemies_at_last_stand=3,
-                  won=False)
-    assert "ALMOST 1v3" in r.labels
+    # it is not thrown away -- but it must not claim to be a clutch, and it
+    # must not claim to be ALMOST one either unless it nearly was.
+    r = _labelled(my_kills=1, last_stand_at=40.0, kill_times=[55.0],
+                  enemies_at_last_stand=3, won=False)
+    assert "LAST ALIVE 1v3" in r.labels
     assert not any("CLUTCH" in l for l in r.labels)
+    assert not any("ALMOST" in l for l in r.labels)
+
+
+# ------------------------------------- what "ALMOST" is allowed to mean
+#
+# FROM THE APP. Two clips out of one match came out named ALMOST A 1v4 and were
+# neither. Measured against the demo that produced them:
+#
+#   round 20  the 1v4 lasted 5s and the round's only kill happened 4.5s BEFORE
+#             it began, while the team-mates were still alive. Nobody was
+#             killed during the 1v4 at all.
+#   round 23  the 1v4 lasted 9s and took one of the four.
+#
+# The rule asked for one kill anywhere in the round. Both promised a
+# near-clutch and delivered a death.
+
+def test_almost_needs_one_opponent_left_standing():
+    r = _labelled(my_kills=3, last_stand_at=40.0, kill_times=[45.0, 50.0, 55.0],
+                  enemies_at_last_stand=4, won=False)
+    assert "ALMOST 1v4" in r.labels, "three of four, dying to the last, is almost"
+
+
+def test_one_of_four_is_not_almost_a_1v4():
+    r = _labelled(my_kills=1, last_stand_at=40.0, kill_times=[45.0],
+                  enemies_at_last_stand=4, won=False)
+    assert not any("ALMOST" in l for l in r.labels)
+    assert "LAST ALIVE 1v4" in r.labels, "still a fight, still worth keeping"
+
+
+def test_a_kill_before_the_last_stand_is_not_part_of_it():
+    """Round 20 exactly: the only kill came while the team was still alive, so
+    nothing at all happened during the 1v4."""
+    r = _labelled(my_kills=1, last_stand_at=40.0, kill_times=[35.0],
+                  enemies_at_last_stand=4, won=False)
+    assert not any("1v4" in l for l in r.labels), (
+        "a kill scored before the team-mates died says nothing about how the "
+        "1vN went")
+
+
+def test_a_won_clutch_still_needs_no_kills_of_its_own():
+    """Defusing under the nose of two opponents is the clip. Unchanged."""
+    r = _labelled(my_kills=0, last_stand_at=40.0, enemies_at_last_stand=2,
+                  won=True)
+    assert "CLUTCH 1v2" in r.labels
 
 
 def test_last_alive_against_one_is_not_a_clutch():

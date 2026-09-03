@@ -499,15 +499,6 @@ CONFIG_SCHEMA: list[Section] = [
                 restart=True,
             ),
             _field(
-                "rules.control_panel",
-                "Show the floating overlay",
-                "The small always-on-top panel with the current phase and a stop "
-                "button, so you can see what AutoStream is doing without leaving the "
-                "game.",
-                "toggle",
-                restart=True,
-            ),
-            _field(
                 "rules.web_dashboard",
                 "Serve this dashboard",
                 "Turning this off stops the local web server that draws this page, on "
