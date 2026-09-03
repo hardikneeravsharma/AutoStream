@@ -613,6 +613,13 @@ async function setup_wantClips(){
     'Ready to clip',
     'That is the whole setup. AutoStream will not touch YouTube and will never ' +
     'ask you to sign in.',
+    /* THE TOOLS, NAMED HERE RATHER THAN DISCOVERED LATER. The clipper needs
+       two programs that are not part of AutoStream, and both used to be found
+       out about at the moment they were first used -- ffmpeg when the first
+       clip was cut, and Tesseract several minutes into a scan, after the file
+       had been picked and the run started. Somebody who has just been told
+       "that is the whole setup" and then hits either has been misled. */
+    '<div id="setup-tools"></div>' +
     '<div class="note ok"><b>Start AutoStream again</b>, open <b>Clips</b>, and ' +
     'choose <b>Clip a video file</b>. Pick the video, pick the game, and it cuts ' +
     'the highlights.</div>' +
@@ -624,6 +631,84 @@ async function setup_wantClips(){
   if (n) n.textContent = 'Done';
   const cnt = setup_$('setup-stepcount');
   if (cnt) cnt.textContent = 'Clips only';
+  setup_checkTools();
+}
+
+/* ---------------- the two programs that are not AutoStream ----------------
+
+   ffmpeg reads the recording and writes every clip. Tesseract reads a kill
+   feed, which is how Counter-Strike kills are found -- games with a marker on
+   screen do not need it, so its absence is reported and never treated as a
+   wall. Both are offered rather than installed quietly: they are machine-wide
+   installs that raise a UAC prompt, and a prompt from a process the user
+   asked nothing of is how software gets mistaken for something worse. */
+
+let setup_toolTimer = 0;
+
+async function setup_checkTools(){
+  const box = setup_$('setup-tools');
+  if (!box) return;
+  let r;
+  try { r = await API.get('/api/clips/tools'); }
+  catch (e) { box.innerHTML = ''; return; }
+  if (!r || !r.tools){ box.innerHTML = ''; return; }
+
+  const job = r.job;
+  const busy = !!(job && job.state === 'running');
+  const gaps = r.tools.filter(t => !t.found);
+  if (!gaps.length && !busy){
+    /* Everything is here. One line saying so, because "nothing appeared" is
+       indistinguishable from "the check did not run". */
+    box.innerHTML = '<div class="note ok">FFmpeg and Tesseract OCR are both ' +
+      'installed, so every game the clipper knows can be read.</div>';
+    return;
+  }
+  const rows = r.tools.map(t =>
+    '<li><b>' + esc(t.label) + '</b> &mdash; ' +
+    (t.found ? 'installed' : 'not installed, about ' + t.size_mb + ' MB') +
+    '<br><span class="muted">' + esc(t.why) + '</span></li>').join('');
+  box.innerHTML =
+    '<div class="note' + (busy ? '' : ' warn') + '">' +
+    '<b>' + (busy ? 'Installing' : (gaps.length === 1
+        ? 'One more thing to install' : 'Two more things to install')) +
+    '</b>' +
+    '<ul class="steps-list">' + rows + '</ul>' +
+    (busy
+      ? '<p class="muted">' + esc(job.message || '') + ' Windows may ask for ' +
+        'permission &mdash; say yes.</p>'
+      : (r.can_install
+          ? '<button type="button" class="btn btn-block" data-act="installTools">' +
+            'Install ' + (gaps.length === 1 ? 'it' : 'them') + ' now</button>' +
+            '<p class="muted">AutoStream installs ' +
+            (gaps.length === 1 ? 'it' : 'them') + ' with winget. Windows will ' +
+            'ask for permission.</p>'
+          : '<p class="muted">winget is not on this PC, so install ' +
+            (gaps.length === 1 ? 'it' : 'them') + ' by hand:</p>' +
+            '<pre class="mono">' + gaps.map(t =>
+              'winget install --id ' + esc(t.winget)).join('\n') + '</pre>')) +
+    '<p class="muted" id="setup-toolmsg">' +
+      esc((job && job.state === 'failed' && job.error) || '') + '</p>' +
+    '</div>';
+
+  /* Polled rather than pushed: the wizard runs before there is a configured
+     engine whose status poll it could ride. */
+  if (busy && !setup_toolTimer){
+    setup_toolTimer = setInterval(setup_checkTools, 3000);
+  } else if (!busy && setup_toolTimer){
+    clearInterval(setup_toolTimer);
+    setup_toolTimer = 0;
+  }
+}
+
+async function setup_installTools(){
+  setup_say('setup-toolmsg', '', setup_spin('Asking Windows...'));
+  const r = await setup_post('/api/clips/install', {});
+  if (!r || r.error){
+    setup_say('setup-toolmsg', 'bad', esc((r && r.error) || 'Could not start.'));
+    return;
+  }
+  setup_say('setup-toolmsg', '', esc(r.hint || ''));
+  setup_checkTools();
 }
 
 /* Without the Edge WebView2 runtime there is no native window, so the UI opens
@@ -666,6 +751,7 @@ const setup_ACTIONS = {
   next:       () => setup_go(setup_step + 1),
   wantStream: () => setup_go(1),
   wantClips:  setup_wantClips,
+  installTools: setup_installTools,
   saveSecret: setup_saveSecret,
   doAuth:     setup_doAuth,
   detectObs:  setup_detectObs,

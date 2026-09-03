@@ -67,12 +67,13 @@ The UI layer (panel, tray, web dashboard) never calls OBS/YouTube directly. It c
 Imported lazily behind `clips.available()`; needs numpy and ffmpeg, neither of which is
 bundled. A missing dependency renders a setup card on the Clips page and changes nothing
 else about the app. Reading a kill feed additionally needs Tesseract and `pytesseract`;
-without them that one detector mode reports what to install and every other game still
-works.
+without them that one detector mode is greyed out **with a button that installs it**,
+and every other game still works.
 
 | Module | Responsibility |
 |---|---|
 | [`tools.py`](../autostream/clips/tools.py) | ffmpeg/ffprobe discovery (PATH, then winget's versioned package dirs), subprocess helpers, encoder selection |
+| [`deps.py`](../autostream/clips/deps.py) | The tools that are **not** pip packages — ffmpeg and Tesseract. Discovery (Tesseract's installer does not touch PATH, so its own directories are searched), what each absence costs, and a winget installer on a worker thread whose progress rides the status poll. Import-light on purpose: `clips.status()` calls it on every Clips page load and must answer before numpy is imported. Nothing installs without being asked — these are machine-wide installs that raise a UAC prompt |
 | [`profiles.py`](../autostream/clips/profiles.py) | Per-game detector profiles: search band, **detector mode**, template file, **reference height**, match threshold, whether the game writes a readable demo (`demos`), and per-game floors under the timing style (`pre_roll_min` / `tail_min`). Also **declares what each mode needs** — `requirements()` / `missing()` — so a gap is caught before a scan starts rather than minutes into one, and anything that can be measured off the user's own footage is never asked for. Built-ins plus `config/clip_profiles.yaml` |
 | [`detect.py`](../autostream/clips/detect.py) | Normalised cross-correlation scan for the marker. Chunked across a thread pool; rescales every band to the profile's reference height before matching. Dispatches `mode: killfeed` to `killfeed.py` |
 | [`killfeed.py`](../autostream/clips/killfeed.py) | For games that draw no kill marker (Counter-Strike 2): OCRs the kill feed, finds the player's own name, and reads kill/death/assist off *where* it sits on the line. Needs Tesseract |

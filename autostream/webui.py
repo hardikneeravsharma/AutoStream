@@ -370,6 +370,8 @@ class _Handler(BaseHTTPRequestHandler):
                           for x in tail_lines(paths.LOG_FILE, max(1, min(n, _TAIL_MAX)))],
                 "path": str(paths.LOG_FILE),
             })
+        elif u.path == "/api/clips/tools":
+            self._json(self.app.clips_tools())
         elif u.path == "/api/clips/games":
             self._json(self.app.clips_games())
         elif u.path == "/api/clips/sessions":
@@ -402,7 +404,8 @@ class _Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/clips/frame":
             q = parse_qs(u.query)
             png, err = self.app.clip_frame(
-                (q.get("path") or [""])[0], _float((q.get("t") or ["0"])[0], 0.0))
+                (q.get("path") or [""])[0], _float((q.get("t") or ["0"])[0], 0.0),
+                _int((q.get("w") or ["0"])[0], 0))
             if err:
                 self._json({"error": err}, 400)
             else:
@@ -612,6 +615,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.diagnostics())
             elif p == "/api/clips/pick":
                 self._json(self.app.clips_pick())
+            elif p == "/api/clips/probe":
+                self._json(self.app.clips_probe(b))
+            elif p == "/api/clips/install":
+                self._json(self.app.clips_install(b))
             elif p == "/api/setup/scan":
                 self._json(self.app.setup.scan())
             elif p == "/api/setup/apps":
@@ -840,6 +847,9 @@ class Server:
             # The Clips page rides this poll rather than having its own. It
             # costs nothing when idle and means progress survives a reload.
             "clips": self._clips_status(),
+            # None until something has actually been installed this run, so an
+            # idle poll carries nothing extra.
+            "tools": self._tools_status(),
             "edit": self._edit_status(),
             "update": self.update_status(),
             "upload": self._upload_status(),
@@ -858,6 +868,48 @@ class Server:
         # Only the live job needs the two-second heartbeat. A finished one is
         # kept so a reload still shows the result, but it must not look busy.
         return snap
+
+    def _tools_status(self) -> dict | None:
+        from .clips import deps
+
+        return deps.installer().status()
+
+    def clips_tools(self) -> dict:
+        """What the clipper needs from outside Python, and what is here.
+
+        Carries the install job too. The Clips page reads progress off the
+        status poll it already makes, but the setup wizard runs before there
+        is a configured engine to poll -- so one endpoint answers both.
+        """
+        from .clips import deps
+
+        deps.forget()          # so a hand-install is seen without a restart
+        return {"ok": True, **deps.state(), "job": deps.installer().status()}
+
+    def clips_install(self, body: dict) -> dict:
+        """Install the named tools with winget, at the user's request.
+
+        Never on its own initiative: these are machine-wide installs that
+        raise a UAC prompt, and a prompt from a process the user did not ask
+        anything of is how software gets mistaken for something worse.
+        """
+        from .clips import deps
+
+        want = body.get("tools")
+        keys = ([str(x) for x in want] if isinstance(want, list) and want
+                else deps.missing_keys())
+        if not keys:
+            return {"ok": True, "already": True,
+                    "hint": "Everything the clipper needs is already here."}
+        started, why = deps.installer().start(keys)
+        if not started:
+            return {"error": why}
+        log.info("installing clip tools: %s", ", ".join(keys))
+        names = [t["label"] for t in deps.TOOLS if t["key"] in keys]
+        return {"ok": True, "installing": keys,
+                "hint": (f"Installing {' and '.join(names)}. Windows will ask "
+                         f"for permission - say yes. This page shows the "
+                         f"progress.")}
 
     def _upload_status(self) -> dict | None:
         from .clips import upload as up
@@ -909,6 +961,34 @@ class Server:
         log.info("upload job started: %d clip(s), %s", len(clips), privacy)
         return {"ok": True, "count": len(clips)}
 
+    @staticmethod
+    def _scan_ready(prof) -> tuple[bool, str, bool]:
+        """Can this profile be run on THIS machine? -> (yes, why not, ocr).
+
+        Two different questions, answered together because the page only has
+        one button to grey out. `prof.exists()` is about the profile's own
+        configuration -- is there a template, is there an in-game name -- and
+        travels with the profile. Tesseract is about the PC, and until now was
+        discovered several minutes into a scan, after the file had been picked
+        and the run started.
+
+        The third value says which it was, because they need different
+        buttons: a missing name is typed in, a missing tool is installed.
+        """
+        if prof is None:
+            return False, "", False
+        if not prof.exists():
+            return False, prof.why_not(), False
+        if getattr(prof, "needs_ocr", False):
+            from . import clips as clips_mod
+
+            if not clips_mod.ocr_ready():
+                return False, (
+                    f"{prof.label} finds your kills by reading the kill feed, "
+                    f"which needs Tesseract OCR. It is not on this PC yet - "
+                    f"AutoStream can install it for you."), True
+        return True, "", False
+
     def clips_sessions(self) -> dict:
         """Past streams, plus what the Clips page needs to decide about each."""
         from . import clips, history
@@ -930,7 +1010,9 @@ class Server:
         for r in rows:
             prof = profiles.for_game(r.get("game_key"), r.get("game"))
             r["profile"] = prof.label if prof else None
-            r["can_scan"] = bool(prof and prof.exists())
+            ready, why, ocr = self._scan_ready(prof)
+            r["can_scan"] = ready
+            r["needs_ocr"] = ocr
             here = self._same_file(r.get("recording_path") or "")
             r["kills_known"] = found.get(here)
             # What a previous run already produced. Cutting a stream again is
@@ -950,7 +1032,7 @@ class Server:
             r["scan_mode"] = prof.mode if prof else None
             # Whether this game is clipped by round rather than by kill burst.
             r["rounds"] = bool(prof and getattr(prof, "rounds", False))
-            r["blocked"] = prof.why_not() if prof else ""
+            r["blocked"] = why
             # Whether a replay for this match looks to be on disk. Only games
             # that HAVE replays get an answer -- "no demo" against Valorant
             # would read as a fault rather than as not applicable.
@@ -1001,6 +1083,10 @@ class Server:
             "can_upload": bool(self.engine is not None
                                and getattr(self.engine, "streaming", True)
                                and cfg_now.youtube.stream_id),
+            # Whether this install streams at all. A clips-only one never
+            # will, so the page must not explain an empty stream list by
+            # telling the user to go and stream.
+            "streaming": bool(cfg_now.youtube.enabled),
             "upload_daily_max": int(getattr(cfg_now.rules, "upload_daily_max", 5)),
             "upload_privacy": cfg_now.clips.upload_privacy,
             "upload_title": cfg_now.clips.upload_title,
@@ -1445,6 +1531,16 @@ class Server:
             "promo_caption": str(body.get("promo_caption")
                                  or c.clips.promo_caption),
         }
+        # WHICH PART OF THE FILE. Chosen on the Clips page against a filmstrip
+        # of the recording, because one file routinely holds more than one
+        # game. Absent or zero means the whole thing, which is what every run
+        # did before this existed. The job sanitises the pair -- backwards,
+        # negative or absurdly short windows are ignored there, in one place.
+        start = _float(body.get("scan_start"), 0.0)
+        end = _float(body.get("scan_end"), 0.0)
+        if start > 0 or end > 0:
+            opt["scan_start"] = max(0.0, start)
+            opt["scan_end"] = max(0.0, end)
         # Round mode, for games whose profile reads the scoreboard. Absent for
         # every other game, so nothing changes for them.
         if body.get("rounds") is not None:
@@ -1474,7 +1570,8 @@ class Server:
             # what makes the review honest: the same plan gets cut.
             opt["plan_only"] = True
 
-        cached = self._cached_kills(path, c)
+        cached = self._cached_kills(
+            path, c, (opt.get("scan_start", 0.0), opt.get("scan_end", 0.0)))
         if cached and not body.get("rescan") and not opt.get("rounds"):
             # Not reused in round mode: the cache holds kills, and a round also
             # needs the scoreboard, which is only read during a scan.
@@ -1495,13 +1592,21 @@ class Server:
         return {"ok": True, "folder": str(job.folder),
                 "reused_kills": bool(cached and not body.get("rescan"))}
 
-    def _cached_kills(self, source: Path, config=None) -> list | None:
+    def _cached_kills(self, source: Path, config=None,
+                      window: tuple[float, float] | None = None) -> list | None:
         """Kills found by an earlier run of the same recording.
 
         Scanning is by far the slowest step, so re-cutting the same stream with
         different lengths or thresholds should not pay for it twice.
+
+        `window` is the part of the file this run cares about. A scan that
+        only read part of the file has a kill list that is complete only
+        inside that part, so it is reused only when it covers the whole of
+        what is being asked for now -- otherwise the run would be handed an
+        empty-looking stretch and report "no kills" for footage it never read.
         """
         root = self._clips_dir(config or cfg.load())
+        want_a, want_b = window or (0.0, 0.0)
         try:
             # NEWEST FIRST. Sorted by name, the first match is the run whose
             # folder has no "_2" suffix -- the OLDEST scan of that recording.
@@ -1517,8 +1622,22 @@ class Server:
                 # Windows does not care about case and the journal and OBS do
                 # not agree on it -- see _same_file.
                 if (self._same_file(data.get("source") or "")
-                        == self._same_file(str(source)) and data.get("kills")):
-                    return data["kills"]
+                        != self._same_file(str(source)) or not data.get("kills")):
+                    continue
+                # [0, 0], or no key at all, means the whole file was read --
+                # which is what every run before windows existed did, so an
+                # old sidecar reads correctly without being rewritten.
+                got = data.get("scanned") or [0.0, 0.0]
+                if len(got) == 2 and (got[0] or got[1]):
+                    # want_b of 0 means "to the end of the file", which no
+                    # windowed scan can cover.
+                    covers = got[0] <= want_a and want_b and got[1] >= want_b
+                    if not covers:
+                        log.info("%s only read %.0fs-%.0fs of that recording, "
+                                 "which does not cover this run -- scanning "
+                                 "again", sidecar.parent.name, got[0], got[1])
+                        continue
+                return data["kills"]
         except (OSError, ValueError, json.JSONDecodeError):
             pass
         return None
@@ -1818,8 +1937,14 @@ class Server:
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
-    def clip_frame(self, path: str, at: float) -> tuple[bytes, str | None]:
-        """One PNG frame, for the calibrator's frame picker."""
+    def clip_frame(self, path: str, at: float,
+                   width: int = 0) -> tuple[bytes, str | None]:
+        """One PNG frame, for the calibrator's frame picker.
+
+        `width` because the filmstrip asks for twelve of these at once and a
+        960px still is about 900 KB. At 240 they are a tenth of that, which is
+        the difference between a strip that appears and one that crawls in.
+        """
         from . import clips
 
         clips.set_ffmpeg_path(cfg.load().clips.ffmpeg_path or None)
@@ -1840,7 +1965,8 @@ class Server:
 
         tmp = Path(tempfile.mkdtemp(prefix="asframe_"))
         try:
-            png = poster(src, max(0.0, at), tmp / "f.png", width=960)
+            png = poster(src, max(0.0, at), tmp / "f.png",
+                         width=min(1920, width) if width > 0 else 960)
             return png.read_bytes(), None
         except Exception as e:  # noqa: BLE001
             return b"", str(e)
@@ -1980,8 +2106,88 @@ class Server:
         path = Path(chosen)
         if not path.is_file():
             return {"error": "That file is not there any more."}
-        return {"ok": True, "path": str(path), "name": path.name,
-                "size_mb": round(path.stat().st_size / (1024 * 1024))}
+        out = {"ok": True, "path": str(path), "name": path.name,
+               "bytes": path.stat().st_size,
+               "size_mb": round(path.stat().st_size / (1024 * 1024))}
+        out.update(self.clips_probe({"path": str(path)}))
+        return out
+
+    def clips_probe(self, body: dict) -> dict:
+        """What a file the user picked is, without starting anything.
+
+        The page needs three things before it can offer the same options a
+        recorded session gets: how long the file is (the timeline and the
+        calibrator are both ranges over it), when it was recorded (which is
+        what finds a replay for it), and whether a replay looks to be there.
+
+        Never an error. A file that cannot be probed is still perfectly
+        clippable -- the run probes it again itself -- so a failure here costs
+        the timeline and nothing else.
+        """
+        from . import history
+
+        src = Path(str(body.get("path") or ""))
+        out: dict = {"duration": 0.0, "started": None}
+        if not src.is_file():
+            return out
+
+        c = cfg.load()
+        from . import clips
+
+        clips.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+        try:
+            from .clips.tools import media_info
+
+            out["duration"] = float(media_info(src).get("duration") or 0.0)
+        except Exception as e:  # noqa: BLE001
+            log.info("could not probe %s: %s", src.name, e)
+
+        # WHEN IT WAS RECORDED, not when the file was written. OBS stamps its
+        # filenames, which is exact; mtime is when writing FINISHED, so the
+        # duration comes off it to get back to the start. Without that
+        # subtraction a two-hour recording looks two hours newer than it is,
+        # and every demo played during it is rejected as "written before the
+        # match" -- see cs2_demo.demo_state.
+        started = history._started_from_name(str(src))       # noqa: SLF001
+        if started is None:
+            try:
+                started = src.stat().st_mtime - (out["duration"] or 0.0)
+            except OSError:
+                started = None
+        out["started"] = started
+
+        # Only for a game that HAS replays, and only once one is chosen -- the
+        # page asks again with the game once the user picks it.
+        key = str(body.get("game_key") or "")
+        if key and started:
+            from .clips import profiles
+
+            prof = profiles.for_game(key)
+            if prof is not None and getattr(prof, "demos", False):
+                from .clips import cs2_demo
+
+                got = cs2_demo.demo_state(cs2_demo.demo_folder(""), started,
+                                          out["duration"])
+                out["demo_state"] = got["state"]
+                out["demo_file"] = got["file"]
+                out["has_demo"] = got["state"] == "have"
+            else:
+                out["demo_state"] = None
+                out["has_demo"] = None
+            # The same question for a game whose record of the match lives on
+            # the publisher's servers rather than in a file. A recorded
+            # session got this answer and a picked file did not, which is the
+            # same gap the demo box had.
+            if prof is not None and getattr(prof, "matches", False):
+                from .clips import valorant_match
+
+                got = valorant_match.state(started, out["duration"])
+                out["match_state"] = got["state"]
+                out["match_count"] = got["matches"]
+                out["match_why"] = got.get("why", "")
+            else:
+                out["match_state"] = None
+        return out
 
     def clips_games(self) -> dict:
         """Games the clipper can read, for the local-file picker.
@@ -1997,15 +2203,18 @@ class Server:
             prof = profiles.for_game(row["key"])
             if prof is None:
                 continue
+            ready, why, ocr = self._scan_ready(prof)
             out.append({
                 "game_key": prof.key,
                 "game": prof.label,
                 "profile": prof.label,
-                "can_scan": prof.exists(),
+                "can_scan": ready,
+                "needs_ocr": ocr,
+                "demos": bool(getattr(prof, "demos", False)),
                 "scan_mode": prof.mode,
                 "rounds": bool(getattr(prof, "rounds", False)),
                 "counts_assists": bool(prof.counts_assists),
-                "blocked": prof.why_not(),
+                "blocked": why,
                 "player": prof.player or profiles.username_for(prof.key, prof.label),
                 # Killfeed games are blocked by a MISSING NAME, not a missing
                 # template, and the two have completely different fixes. Saying

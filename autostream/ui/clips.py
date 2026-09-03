@@ -38,6 +38,25 @@ CLIPS_HTML: str = (
   <pre class="clip-pre mono" id="clip-setup-detail"></pre>
 </div>
 
+<!-- The two tools that are not pip packages. Shown only when one of them is
+     absent: on a machine where both are installed this card never appears. -->
+<div class="card hide" id="clip-tools">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title" id="clip-tools-title">Two tools to install first</h2>
+      <p class="card-sub" id="clip-tools-sub"></p>
+    </div>
+    <button class="btn btn-primary" type="button" id="clip-tools-go"
+            data-act="install-tools">"""
+    + _svg("save")
+    + """<span>Install them</span></button>
+  </div>
+  <div class="card-body">
+    <div class="clip-tools-list" id="clip-tools-list"></div>
+    <p class="muted" id="clip-tools-msg"></p>
+  </div>
+</div>
+
 <div class="card" id="clip-local">
   <div class="card-head">
     <div>
@@ -90,11 +109,15 @@ CLIPS_HTML: str = (
   <div class="clip-list" id="clip-list"></div>
 </div>
 
+<!-- Two different people see this. Somebody who streams has an empty list
+     because they have not streamed yet; somebody running the clipper on its
+     own has one because they never will, and telling them to go and stream is
+     advice for an app they did not install. -->
 <div class="empty hide" id="clip-empty">"""
     + _svg("film", 20)
-    + """<p>No finished streams yet.</p>
-  <p class="muted">Turn on <strong>Record while streaming</strong> in Settings, then
-     stream once. When it ends, the recording shows up here.</p>
+    + """<p id="clip-empty-head">No finished streams yet.</p>
+  <p class="muted" id="clip-empty-sub">Turn on <strong>Record while streaming</strong>
+     in Settings, then stream once. When it ends, the recording shows up here.</p>
 </div>
 
 <div class="card hide" id="clip-made-card">
@@ -315,6 +338,37 @@ CLIPS_HTML: str = (
       </div>
     </div>
     <div class="clip-review-list" id="clip-review-list"></div>
+  </div>
+</div>
+
+<!-- WHICH PART OF THE FILE TO CLIP.
+     A recording is not one game. It holds a menu, a warm-up, the tail of the
+     last match, and often a completely different game after it -- and a scan
+     reads one game at a time. Without a way to say "this bit", the only
+     options were to read the whole file, at eleven seconds of work per minute
+     of video, or to trim it in a video editor first.
+     The frames are the point: a timeline of numbers cannot tell you where one
+     game ends, and a filmstrip can be read at a glance. -->
+<div class="card hide" id="clip-strip-card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Choose the part to clip</h2>
+      <p class="card-sub" id="clip-strip-sub">&nbsp;</p>
+    </div>
+    <div class="field-inline">
+      <button class="btn btn-sm btn-ghost" type="button" data-act="strip-all">
+        <span>Whole video</span></button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="clip-strip" id="clip-strip"></div>
+    <div class="clip-range" id="clip-range">
+      <input class="clip-range-in" type="range" id="clip-from" min="0" max="1000"
+             value="0" step="1" aria-label="Start of the part to clip">
+      <input class="clip-range-in" type="range" id="clip-to" min="0" max="1000"
+             value="1000" step="1" aria-label="End of the part to clip">
+    </div>
+    <p class="muted" id="clip-strip-msg"></p>
   </div>
 </div>
 
@@ -560,6 +614,13 @@ var clip_state = {
   player: null,              /* {list, i, folder, trim} while the player is up */
   editing: false,            /* a re-render is in flight */
   stopping: false,           /* Cancel pressed, job not finished yet */
+  tools: null,               /* ffmpeg and Tesseract: what is on this PC */
+  toolsBusy: false,          /* an install is running */
+  localFile: null,           /* the file the picker handed back */
+  /* The part of the recording to read. `to` of 0 means "to the end", which is
+     what an untouched selection is -- so a run body carries nothing at all
+     unless the user actually moved a handle. */
+  strip: {path: '', dur: 0, from: 0, to: 0, frames: [], drawn: ''},
   cal: {open: false, t: 0, dur: 0, box: null, drag: null, path: '', busy: false}
 };
 
@@ -742,6 +803,26 @@ function clip_renderList() {
   var none = clip_state.sessions.length === 0;
   clip_show('clip-empty', none);
   clip_show('clip-listwrap', !none);
+  if (none) {
+    /* An install with streaming switched off has no streams and never will.
+       "Stream once and it shows up here" is then instructions for an app the
+       user deliberately did not set up, and it reads as though the clipper
+       needs one. */
+    var solo = clip_state.streaming === false;
+    var eh = clip_el('clip-empty-head'), es = clip_el('clip-empty-sub');
+    if (eh) {
+      eh.textContent = solo ? 'Nothing recorded here - and nothing needs to be.'
+                            : 'No finished streams yet.';
+    }
+    if (es) {
+      es.innerHTML = solo
+        ? 'This list is for streams AutoStream recorded itself. Use <strong>' +
+          'Clip a video file</strong> above for a recording you already have - ' +
+          'everything below it works the same either way.'
+        : 'Turn on <strong>Record while streaming</strong> in Settings, then ' +
+          'stream once. When it ends, the recording shows up here.';
+    }
+  }
   var c = clip_el('clip-count');
   if (c) {
     c.textContent = none ? '' :
@@ -807,7 +888,7 @@ function clip_renderTypes() {
 function clip_renderOptions() {
   var s = clip_state.pick;
   clip_show('clip-options', !!s);
-  if (!s) return;
+  if (!s) { clip_show('clip-strip-card', false); return; }
 
   clip_el('clip-chosen').textContent = s.game || 'Unknown game';
   var bits = [clip_when(s.display_started || s.started)];
@@ -918,8 +999,26 @@ function clip_renderOptions() {
     note = 'Kills for ' + esc(s.game || 'this game') + ' are read out of the ' +
            'kill feed, which is slower than a marker scan - roughly a minute ' +
            'per 10 minutes of footage. Assists are detected and not clipped.';
+    /* And how long THIS run will be, which is the number the warning is
+       really about. Choosing part of the file is the fix for a scan that is
+       too slow, so the panel that says it is slow should say what the choice
+       just bought. */
+    var win = clip_stripWindow();
+    if (win) {
+      var span = (win.scan_end || s.duration || 0) - win.scan_start;
+      if (span > 0) {
+        note += ' You have chosen ' + clip_dur(span) + ' of it, so about ' +
+                clip_dur(span / 10) + ' of scanning.';
+      }
+    }
   }
   if (go) go.disabled = !!why;
+  /* THE SAME REASON, ON BOTH BUTTONS. Review clips first runs the identical
+     scan and was never gated at all, so a pick the page refused to cut could
+     still be reviewed -- and the review then worked, which is a page arguing
+     with itself. Whatever stops one has to stop the other. */
+  var rev = clip_el('clip-review');
+  if (rev) rev.disabled = !!why;
   if (hint) hint.textContent = why || note;
 }
 
@@ -1115,6 +1214,7 @@ async function clip_load() {
     clip_state.games = (r && r.games) || [];
     clip_state.outputDir = (r && r.output_dir) || '';
     clip_state.canUpload = !!(r && r.can_upload);
+    clip_state.streaming = r ? r.streaming !== false : true;
     clip_state.upDailyMax = (r && r.upload_daily_max) || 0;
     clip_state.upPrivacy = (r && r.upload_privacy) || 'unlisted';
     clip_state.upTitle = (r && r.upload_title) || '';
@@ -1147,8 +1247,14 @@ async function clip_load() {
       clip_el('clip-setup-detail').textContent = clip_state.status.detail || '';
     }
 
-    /* Keep the selection across a refresh if that stream is still listed. */
-    if (clip_state.pick) {
+    /* Keep the selection across a refresh if that stream is still listed.
+
+       A FILE THE USER PICKED IS NOT IN THE HISTORY, so matching it against
+       the session list finds nothing and this used to drop it -- silently
+       replacing it with whichever stream happened to be first. This runs on
+       every refresh and again the moment a review finishes, so reviewing a
+       picked file and then cutting it cut a different video. */
+    if (clip_state.pick && !clip_state.pick.local) {
       var want = clip_state.pick.recording_path;
       clip_state.pick = clip_state.sessions.filter(function (s) {
         return s.recording_path === want;
@@ -1162,6 +1268,8 @@ async function clip_load() {
     clip_renderGames();
     clip_renderList();
     clip_renderOptions();
+    clip_stripOpen();
+    clip_renderTools();
     clip_loadMade(clip_state.pick);
   } catch (e) {
     toast('Could not read the stream history.', 'error');
@@ -2484,9 +2592,10 @@ function clip_openReview(j) {
   }
 }
 
-function clip_frameURL(path, at) {
+function clip_frameURL(path, at, w) {
   return '/api/clips/frame?k=' + encodeURIComponent(SHELL_K) +
-         '&path=' + encodeURIComponent(path) + '&t=' + encodeURIComponent(at);
+         '&path=' + encodeURIComponent(path) + '&t=' + encodeURIComponent(at) +
+         (w ? '&w=' + encodeURIComponent(w) : '');
 }
 
 function clip_reviewRowHTML(r, i) {
@@ -2691,7 +2800,8 @@ async function clip_reviewCut() {
 }
 
 function clip_runBody(s) {
-  return {
+  var win = clip_stripWindow();
+  return Object.assign(win || {}, {
     /* `source` wins server-side. A file the user picked is not in the
        history, so there is no row to look it up by. */
     source: s.source || '',
@@ -2707,7 +2817,7 @@ function clip_runBody(s) {
     rounds: clip_state.rounds !== false,
     whole_round: clip_state.whole !== false,
     round_types: clip_state.types || null
-  };
+  });
 }
 
 async function clip_run() {
@@ -2727,6 +2837,271 @@ async function clip_run() {
     toast('Could not start.', 'error');
     if (go) go.disabled = false;
   }
+}
+
+/* ----------------------------------------- the tools that are not Python
+
+   ffmpeg and Tesseract are not pip packages, and both used to be discovered
+   at the moment they were first USED. For Tesseract that is several minutes
+   into a scan -- after the file was picked, the game chosen and the run
+   started -- and the fix it named was a command line to paste. So they are
+   named here, before anything is offered, and installed from this button. */
+
+function clip_renderTools() {
+  var t = clip_state.tools;
+  var card = clip_el('clip-tools');
+  if (!card) return;
+  if (!t || !t.tools || !t.tools.length) { card.classList.add('hide'); return; }
+  var gaps = t.tools.filter(function (x) { return !x.found; });
+  /* Nothing missing and nothing running: the card has no reason to exist. A
+     standing "everything is fine" panel is noise on every later visit. */
+  if (!gaps.length && !clip_state.toolsBusy) { card.classList.add('hide'); return; }
+  card.classList.remove('hide');
+
+  var title = clip_el('clip-tools-title');
+  if (title) {
+    title.textContent = !gaps.length ? 'Clipping tools'
+      : (gaps.length === 1 ? 'One tool to install' : 'Two tools to install');
+  }
+  var sub = clip_el('clip-tools-sub');
+  if (sub) {
+    sub.textContent = !gaps.length
+      ? 'Everything the clipper needs is on this PC.'
+      : (t.can_install
+          ? 'AutoStream can install ' + (gaps.length === 1 ? 'it' : 'them') +
+            ' for you with winget. Windows will ask for permission - say yes.'
+          : 'winget is not on this PC, so these have to be installed by hand.');
+  }
+  var host = clip_el('clip-tools-list');
+  if (host) {
+    host.innerHTML = t.tools.map(function (x) {
+      return '' +
+        '<div class="clip-tool' + (x.found ? ' is-ok' : '') + '">' +
+          '<span class="clip-tool-tag">' +
+            (x.found ? 'installed' : 'missing') + '</span>' +
+          '<div>' +
+            '<strong>' + esc(x.label) + '</strong> ' +
+            '<span class="muted">' + (x.found ? '' : '~' + x.size_mb + ' MB') +
+            '</span>' +
+            '<p class="muted">' + esc(x.why) + '</p>' +
+            (x.found ? '<p class="muted mono small">' + esc(x.path) + '</p>'
+                     : '<p class="muted mono small">winget install --id ' +
+                       esc(x.winget) + '</p>') +
+          '</div>' +
+        '</div>';
+    }).join('');
+  }
+  var go = clip_el('clip-tools-go');
+  if (go) {
+    go.classList.toggle('hide', !gaps.length || !t.can_install);
+    go.disabled = clip_state.toolsBusy;
+    go.querySelector('span').textContent = clip_state.toolsBusy
+      ? 'Installing...' : 'Install ' + (gaps.length === 1 ? 'it' : 'them');
+  }
+}
+
+async function clip_loadTools() {
+  try {
+    var r = await API.get('/api/clips/tools');
+    if (r && r.tools) clip_state.tools = r;
+  } catch (e) { /* the page works without knowing; the run still says so */ }
+  clip_renderTools();
+}
+
+async function clip_installTools() {
+  var go = clip_el('clip-tools-go');
+  if (go) go.disabled = true;
+  clip_say('clip-tools-msg', 'Asking Windows...');
+  try {
+    var r = await API.post('/api/clips/install', {});
+    if (r && r.error) {
+      clip_say('clip-tools-msg', '');
+      toast(r.error, 'error');
+      if (go) go.disabled = false;
+      return;
+    }
+    clip_state.toolsBusy = true;
+    clip_say('clip-tools-msg', r.hint || '');
+    clip_renderTools();
+  } catch (e) {
+    clip_say('clip-tools-msg', '');
+    toast('Could not start the install.', 'error');
+    if (go) go.disabled = false;
+  }
+}
+
+/* Progress rides the status poll, like every other long job on this page. */
+function clip_renderToolJob(j) {
+  if (!j) return;
+  var was = clip_state.toolsBusy;
+  clip_state.toolsBusy = j.state === 'running';
+  if (j.state === 'running') {
+    clip_say('clip-tools-msg', j.message + '  (' + clip_fmtTime(j.elapsed || 0) + ')');
+    clip_renderTools();
+    return;
+  }
+  if (!was) return;                     /* a finished install already handled */
+  clip_say('clip-tools-msg', j.error || j.message || '');
+  toast(j.state === 'done'
+        ? 'Installed. The clipper has everything it needs.'
+        : (j.error || 'Could not install everything.'),
+        j.state === 'done' ? 'ok' : 'error');
+  /* Both lists change: what is installed, and which games can now be scanned
+     because of it. */
+  clip_loadTools();
+  clip_loadGames();
+  clip_load();
+}
+
+/* ------------------------------------------- which part of the file to cut
+
+   A recording is not one game. It holds a menu, a warm-up, the tail of the
+   last match, and often a different game entirely after it -- and a scan
+   reads one game at a time. The frames are what make this usable: a pair of
+   times cannot tell you where one game ends and the next begins, and a strip
+   of stills can be read at a glance. */
+
+var CLIP_STRIP_FRAMES = 12;
+
+function clip_stripOpen() {
+  var s = clip_state.pick;
+  var card = clip_el('clip-strip-card');
+  if (!card) return;
+  var dur = s ? Number(s.duration || 0) : 0;
+  /* Under two minutes there is nothing to choose between, and a filmstrip of
+     a 90-second clip is a row of nearly identical frames. */
+  if (!s || !s.has_recording || dur < 120) {
+    card.classList.add('hide');
+    clip_state.strip = {path: '', dur: 0, from: 0, to: 0, frames: [], drawn: ''};
+    return;
+  }
+  card.classList.remove('hide');
+  var st = clip_state.strip;
+  if (st.path !== s.recording_path || st.dur !== dur) {
+    clip_state.strip = {path: s.recording_path, dur: dur, from: 0, to: 0,
+                        frames: [], drawn: ''};
+  }
+  clip_stripFrames();
+  clip_stripSync();
+  clip_stripRender();
+}
+
+/* The frames themselves, evenly spread. Each is one request to the same
+   endpoint the calibrator and the review list already use. */
+function clip_stripFrames() {
+  var st = clip_state.strip;
+  if (!st.path || !st.dur || st.drawn === st.path) return;
+  st.drawn = st.path;
+  st.frames = [];
+  for (var i = 0; i < CLIP_STRIP_FRAMES; i++) {
+    /* Offset by half a step so the first frame is not the very first frame of
+       the file, which on an OBS recording is usually black. */
+    st.frames.push(st.dur * (i + 0.5) / CLIP_STRIP_FRAMES);
+  }
+  var host = clip_el('clip-strip');
+  if (!host) return;
+  host.innerHTML = st.frames.map(function (at, i) {
+    return '<button class="clip-frame" type="button" data-frame="' + i + '"' +
+           ' title="' + esc(clip_fmtTime(at)) + ' - click to start here,' +
+           ' shift-click to end here">' +
+           '<img alt="" loading="lazy" src="' +
+             esc(clip_frameURL(st.path, at, 240)) + '">' +
+           '<span class="clip-frame-t">' + esc(clip_fmtTime(at)) + '</span>' +
+           '</button>';
+  }).join('');
+}
+
+/* The two sliders are positions per thousand, so one markup works for a file
+   of any length. */
+function clip_stripSync() {
+  var st = clip_state.strip;
+  var a = clip_el('clip-from'), b = clip_el('clip-to');
+  if (!a || !b || !st.dur) return;
+  a.value = String(Math.round(1000 * st.from / st.dur));
+  b.value = String(Math.round(1000 * (st.to || st.dur) / st.dur));
+}
+
+function clip_stripRead() {
+  var st = clip_state.strip;
+  var a = clip_el('clip-from'), b = clip_el('clip-to');
+  if (!a || !b || !st.dur) return;
+  var from = st.dur * Number(a.value) / 1000;
+  var to = st.dur * Number(b.value) / 1000;
+  /* Either handle may be dragged past the other. Swapping is kinder than
+     refusing to move: the user gets the span they drew either way. */
+  st.from = Math.min(from, to);
+  st.to = Math.max(from, to);
+  if (st.to >= st.dur - 0.5) st.to = 0;        /* 0 means "to the end" */
+  clip_stripRender();
+}
+
+function clip_stripAll() {
+  clip_state.strip.from = 0;
+  clip_state.strip.to = 0;
+  clip_stripSync();
+  clip_stripRender();
+  clip_renderOptions();
+}
+
+/* Click a frame to move the nearer handle to it. Faster than dragging, and it
+   is the gesture the thumbnails invite. */
+function clip_stripPick(i, toEnd) {
+  var st = clip_state.strip;
+  if (!st.dur || !st.frames.length) return;
+  /* Each frame stands for the slice of the file around it, and the whole
+     slice is what the click means. Starting HERE starts at the slice's
+     beginning; ending HERE takes the slice with it, rather than stopping just
+     before the frame the user pointed at. */
+  var slice = st.dur / CLIP_STRIP_FRAMES;
+  var at = Math.max(0, Math.min(i * slice + (toEnd ? slice : 0), st.dur));
+  if (toEnd) st.to = (at >= st.dur - 0.5) ? 0 : at;
+  else st.from = at;
+  if (st.to && st.to < st.from) { var t = st.from; st.from = st.to; st.to = t; }
+  clip_stripSync();
+  clip_stripRender();
+  clip_renderOptions();
+}
+
+function clip_stripRender() {
+  var st = clip_state.strip;
+  var host = clip_el('clip-strip');
+  var end = st.to || st.dur;
+  if (host && st.dur) {
+    var kids = host.children;
+    var step = st.dur / CLIP_STRIP_FRAMES;
+    for (var i = 0; i < kids.length; i++) {
+      var a = i * step, b = a + step;
+      /* A frame is "in" when its slice overlaps the selection at all, so the
+         edges read as included rather than as a gap. */
+      kids[i].classList.toggle('is-out', b <= st.from || a >= end);
+    }
+  }
+  var sub = clip_el('clip-strip-sub');
+  if (sub) {
+    sub.textContent = st.dur
+      ? ('This file is ' + clip_dur(st.dur) + ' long. Drag the handles, or ' +
+         'click a frame to start there and shift-click to end there.')
+      : '';
+  }
+  var msg = clip_el('clip-strip-msg');
+  if (msg) {
+    var whole = !st.from && !st.to;
+    msg.textContent = whole
+      ? 'Reading all of it.'
+      : ('Reading ' + clip_fmtTime(st.from) + ' to ' + clip_fmtTime(end) +
+         ' - ' + clip_dur(end - st.from) + ' of ' + clip_dur(st.dur) +
+         '. Nothing outside that is scanned or cut.');
+  }
+}
+
+/* What the run is told. 0 and 0 is the whole file, which the server treats as
+   no window at all. */
+function clip_stripWindow() {
+  var st = clip_state.strip;
+  var s = clip_state.pick;
+  if (!s || !st.path || st.path !== s.recording_path) return null;
+  if (!st.from && !st.to) return null;
+  return {scan_start: st.from, scan_end: st.to};
 }
 
 /* ------------------------------------------------- a file the user picked */
@@ -2812,6 +3187,37 @@ function clip_renderGamesLocal() {
   clip_renderNamePrompt();
 }
 
+/* WHEN THE FILE WAS RECORDED, AND WHETHER A REPLAY EXISTS FOR IT.
+
+   A recorded session knows its own start, so the demo box could always answer
+   for one. A file the user picked knows nothing -- so Counter-Strike footage
+   dropped in from outside got no demo box at all, and was read in full at
+   eleven seconds a minute while the replay of that exact match sat in the
+   Steam folder. The server works the start out from OBS's filename stamp, or
+   from the file's own timestamps, and looks for a demo from that. The share
+   code is only asked for when that comes up empty. */
+async function clip_probeLocal() {
+  var s = clip_state.pick;
+  if (!s || !s.local) return;
+  try {
+    var r = await API.post('/api/clips/probe',
+                           {path: s.recording_path, game_key: s.game_key});
+    if (!r || r.error) return;
+    var cur = clip_state.pick;
+    if (!cur || cur.recording_path !== s.recording_path) return;  /* moved on */
+    if (r.duration) cur.duration = r.duration;
+    if (r.started) cur.started = r.started;
+    cur.demo_state = r.demo_state || null;
+    cur.demo_file = r.demo_file || null;
+    cur.has_demo = r.has_demo;
+    cur.match_state = r.match_state || null;
+    cur.match_count = r.match_count || 0;
+    cur.match_why = r.match_why || '';
+    clip_stripOpen();
+    clip_renderOptions();
+  } catch (e) { /* the run finds the demo by fingerprint regardless */ }
+}
+
 async function clip_pickLocal() {
   var r;
   try {
@@ -2839,16 +3245,29 @@ function clip_useLocal() {
   }
   if (!g) return;
   /* Shaped like a history row so clip_renderOptions needs no special case.
-     `source` is what marks it as not-from-history. */
+     `source` is what marks it as not-from-history.
+
+     has_recording IS NOT OPTIONAL. Every gate on this page asks it first --
+     the Make clips button, the calibrator, the row's "Recording gone" tag --
+     and a key that is simply absent reads as false. Leaving it off disabled
+     Make clips on every file anybody picked, under the one hint that could
+     not be true of a file chosen from a picker thirty seconds earlier: "the
+     recording for this stream is no longer on disk". Review clips first was
+     never gated the same way, so the page offered a scan it claimed it could
+     not do, and then did it. */
   clip_state.pick = {
     source: f.path, recording_path: f.path,
+    has_recording: true,
+    duration: f.duration || 0, recording_bytes: f.bytes || 0,
     game: g.game, game_key: g.game_key, profile: g.profile,
     can_scan: g.can_scan, scan_mode: g.scan_mode, rounds: g.rounds,
     counts_assists: g.counts_assists, blocked: g.blocked, player: g.player,
-    started: null, display_started: null, local: true
+    started: f.started || null, display_started: null, local: true
   };
   clip_renderList();
   clip_renderOptions();
+  clip_probeLocal();
+  clip_stripOpen();
   var card = clip_el('clip-options');
   if (card && card.scrollIntoView) card.scrollIntoView({behavior: 'smooth', block: 'start'});
 }
@@ -2927,14 +3346,22 @@ function clip_renderDemoBox() {
   if (!want) return;
   var t = clip_el('clip-demotext');
   if (t) {
+    /* THE SEARCH IS AUTOMATIC AND SAYING SO MATTERS. A run reads a few
+       minutes, then matches those kill times against every recent demo in the
+       Steam replays folder -- it never needs to be told which one. What the
+       box below is for is the case where the demo is not on disk at all, and
+       asking for a sharing code without saying that reads as "AutoStream
+       cannot find your demos", which is the opposite of true. */
     t.textContent = s.demo_state === 'listed'
       ? 'This match is in your Counter-Strike history but the demo has not '
         + 'finished downloading. Paste its sharing code and AutoStream will ask '
         + 'the game to fetch it again.'
-      : 'No demo for this recording. With one it is read in about twelve '
-        + 'minutes instead of in full, and the clips carry real round context. '
-        + 'Copy the sharing code from the match in Counter-Strike and paste it '
-        + 'here.';
+      : 'AutoStream looks for the demo itself - it reads a few minutes and '
+        + 'matches those kills against the replays on disk, so it never has to '
+        + 'be told which one. There is no replay here it could match. With one '
+        + 'the recording is read in about twelve minutes instead of in full, '
+        + 'and the clips carry real round context. Copy the sharing code from '
+        + 'the match in Counter-Strike and paste it here to download it.';
   }
 }
 
@@ -3250,6 +3677,25 @@ function clip_wire() {
 
   var lg = clip_el('clip-local-game');
   if (lg) lg.addEventListener('change', clip_renderNamePrompt);
+
+  /* The two range handles and the filmstrip. `input` rather than `change` for
+     the strip itself, so the selection reads back while the handle is still
+     moving -- otherwise the numbers only catch up after letting go and the
+     drag is a guess.
+
+     The options card is redrawn on `change` instead: it rebuilds the whole
+     card, and doing that on every pixel of a drag is jank for a panel whose
+     only stake in the window is one sentence about how long a scan takes. */
+  var rfrom = clip_el('clip-from'), rto = clip_el('clip-to');
+  if (rfrom) rfrom.addEventListener('input', clip_stripRead);
+  if (rto) rto.addEventListener('input', clip_stripRead);
+  if (rfrom) rfrom.addEventListener('change', clip_renderOptions);
+  if (rto) rto.addEventListener('change', clip_renderOptions);
+  var strip = clip_el('clip-strip');
+  if (strip) strip.addEventListener('click', function (ev) {
+    var b = ev.target.closest ? ev.target.closest('[data-frame]') : null;
+    if (b) clip_stripPick(Number(b.getAttribute('data-frame')), ev.shiftKey);
+  });
 
   var rf = clip_el('clip-refresh');
   if (rf) rf.addEventListener('click', clip_load);
@@ -3586,7 +4032,7 @@ function clip_wire() {
       clip_renderOptions();
     } else if (act === 'pick') {
       clip_state.pick = clip_state.shown[Number(b.getAttribute('data-i'))] || null;
-      clip_renderList(); clip_renderOptions();
+      clip_renderList(); clip_renderOptions(); clip_stripOpen();
     } else if (act === 'min') {
       clip_state.min = b.getAttribute('data-val'); clip_renderOptions();
     } else if (act === 'len') {
@@ -3617,6 +4063,10 @@ function clip_wire() {
       clip_useLocal();
     } else if (act === 'get-demos') {
       clip_getDemos();
+    } else if (act === 'install-tools') {
+      clip_installTools();
+    } else if (act === 'strip-all') {
+      clip_stripAll();
     } else if (act === 'save-name') {
       clip_saveName();
     } else if (act === 'upload') {
@@ -3709,12 +4159,13 @@ function clip_calPaint() {
 window.PAGE_CLIPS = {
   onShow: function () {
     clip_wire();
-    if (!clip_state.loaded) { clip_load(); clip_loadGames(); }
-    else clip_renderOptions();
+    if (!clip_state.loaded) { clip_load(); clip_loadGames(); clip_loadTools(); }
+    else { clip_renderOptions(); clip_loadTools(); }
   },
   onTick: function (status) {
     clip_renderUploadJob(status && status.upload);
     clip_renderEdit(status && status.edit);
+    clip_renderToolJob(status && status.tools);
     var j = status && status.clips;
     if (!j) { clip_state.busy = false; return; }
     var wasBusy = clip_state.busy;

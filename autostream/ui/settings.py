@@ -1054,12 +1054,30 @@ function set_verSay(text, kind) {
   if (el) el.classList.toggle('is-warn', kind === 'warn');
 }
 
+/* A version that is NEWER than the newest release is a build from source, not
+   an error -- and it is the one case where "no update" is genuinely puzzling
+   rather than reassuring, so it says so in as many words. */
+function set_verAhead(r) {
+  return !!(r && r.latest && r.current &&
+            set_verNum(r.current) > set_verNum(r.latest));
+}
+
+/* "1.10.0" -> 1001000. Not a string compare: "1.9.1" sorts above "1.10.0"
+   that way, which is exactly backwards. */
+function set_verNum(text) {
+  var p = String(text || '').match(/\d+/g) || ['0'];
+  return (Number(p[0]) || 0) * 1e6 + (Number(p[1]) || 0) * 1e3 +
+         (Number(p[2]) || 0);
+}
+
 function set_verRender(r) {
   var sub = set_el('set-ver-sub');
+  var ahead = set_verAhead(r);
   if (sub) {
     sub.textContent = 'AutoStream ' + (r.current || '?') +
       (r.available ? '  -  ' + r.latest + ' is available'
-                   : (r.latest ? '  -  up to date' : ''));
+                   : (r.latest ? (ahead ? '  -  newer than the latest release'
+                                        : '  -  up to date') : ''));
   }
   set_show('set-ver-get', !!r.available);
   var notes = set_el('set-ver-notes');
@@ -1074,8 +1092,32 @@ function set_verRender(r) {
       (r.installable ? '' : ' This release ships as a zip, so it has to be '
                           + 'unpacked by hand once it is downloaded.'));
   } else if (r.latest) {
-    set_verSay('');
+    /* THE ANSWER "NOTHING TO DO" HAS TO BE VISIBLE.
+       This used to clear the message, which also hides the panel it sits in --
+       so pressing Check for updates showed "Asking GitHub...", then wiped it,
+       and the only trace left was three words in the subtitle above. Being
+       told nothing is indistinguishable from a button that does not work, and
+       it got reported as exactly that. */
+    set_verSay(ahead
+      ? ('You are running ' + r.current + ', which is NEWER than the latest '
+         + 'release (' + r.latest + '). This is a build from source, so there '
+         + 'is nothing to update to - the release will catch up when ' +
+         r.current + ' is published.')
+      : ('You have the latest release. ' + r.latest + ' was published ' +
+         set_verWhen(r.published) + ', and nothing newer exists yet.'));
   }
+}
+
+/* "2026-09-02T16:02:16Z" -> "on 2 September". Whatever the browser makes of
+   the date, because the point is only to show the answer moved. */
+function set_verWhen(iso) {
+  if (!iso) return 'earlier';
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return 'earlier';
+  try {
+    return 'on ' + d.toLocaleDateString(undefined,
+                                        {day: 'numeric', month: 'long'});
+  } catch (e) { return 'earlier'; }
 }
 
 async function set_verCheck() {

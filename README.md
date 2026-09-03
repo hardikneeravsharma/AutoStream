@@ -398,6 +398,21 @@ a mic that was too quiet can be fixed afterwards in an editor instead of being b
 Then it records for five seconds and runs `ffprobe` over the result to prove the tracks
 actually landed.
 
+**You do not have to have recorded it here.** **Clips → Clip a video file** takes any
+recording you already have — pick the file, say which game it is, and everything below
+it works exactly as it does for a stream: the same styles, the same review, the same
+verticals and montage. Nothing about the clipper needs a YouTube account or OBS, and the
+first-run wizard has a **Just make clips** fork that skips both.
+
+**Choosing the part.** A recording is not one game. It holds a menu, a warm-up, the tail
+of the last match, and often a different game entirely after it — and a scan reads one
+game at a time. So a picked file gets a **filmstrip of the whole video with two
+handles**: drag them, or click a frame to start there and shift-click to end there, and
+only that stretch is read. On a two-hour file holding half an hour of Counter-Strike
+that is the difference between a twenty-minute scan and a three-minute one. A pair of
+timecodes could not do this job — you cannot tell where one game ends by looking at
+numbers.
+
 **Finding the kills.** Most shooters confirm your own kill with a fixed glyph on the HUD
 — Delta Force draws a skull under the crosshair. That is much better to detect than the
 kill feed, which lists everyone's kills and needs OCR plus fuzzy name matching to work
@@ -424,7 +439,13 @@ wAcKyPrAnKsTeR     [rifle]  YUVANETA   <- your name last: you died
 
 Assists are detected and deliberately **not** clipped, so "3 kills" in a filename means
 three. Reading the feed is slower than matching a glyph — roughly a minute per ten
-minutes of footage — and it needs Tesseract:
+minutes of footage — and it needs Tesseract, which is **not** part of AutoStream.
+
+You do not have to go and get it. The Clips page names what is missing and installs it
+for you, and so does the last step of the clips-only setup; Windows asks for permission
+and that is the whole of it. Counter-Strike is greyed out with that reason until it is
+there, rather than failing four minutes into a scan the way it used to. By hand, if you
+would rather:
 
 ```powershell
 winget install --id UB-Mannheim.TesseractOCR
