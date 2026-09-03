@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+
+  "//": "Shared, checked-in Claude Code settings for AutoStream. Machine-specific grants belong in .claude/settings.local.json, which is gitignored and overrides this file. Do NOT put a permissive defaultMode here - this repo is public.",
+
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(.venv/Scripts/python.exe -m pytest:*)",
+      "Bash(.venv/Scripts/python.exe -m autostream detect:*)",
+      "Bash(.venv/Scripts/python.exe -m autostream status:*)"
+    ],
+    "deny": [
+      "Read(./secrets/**)",
+      "Read(./config/config.yaml)",
+      "Read(./dist/AutoStream/secrets/**)",
+      "Read(./dist/AutoStream/config/config.yaml)"
+    ]
+  }
+}
