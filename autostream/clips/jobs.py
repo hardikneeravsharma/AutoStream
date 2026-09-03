@@ -47,11 +47,26 @@ log = logging.getLogger("autostream.clips.jobs")
 #   cardcount (CS2 cards)  30 min in 170s  -> 10x        (same pass as the HUD)
 #   template  (Delta Force) faster than any of them; treated as feedbar
 #
-# A demo changes the picture completely: the scan stops after the probe window,
-# so only PROBE_SECONDS of the recording is ever read.
+# ROUND MODE IS A DIFFERENT PASS AND A MUCH SLOWER ONE. scan_with_hud reads the
+# feed AND the scoreboard, which is two crops OCR'd per sampled frame instead
+# of one, so the 4.5x above does not describe it and must not be used for it.
+# Measured on a real run: 44 minutes of footage in 22 chunks reporting 82s a
+# chunk -> 1.5x, a third of the plain-killfeed rate. The number mattered
+# because the page quoted it before the run: a 43-minute selection was
+# advertised as "about 4m of scanning" against a real 30.
 SCAN_RATE = {"feedbar": 14.0, "killfeed": 4.5, "cardcount": 10.0,
              "template": 14.0, "colour": 14.0}
+# Keyed separately rather than overwriting "killfeed": the same profile scans
+# at either rate depending on whether rounds are switched on for the run.
+ROUND_SCAN_RATE = {"killfeed": 1.5}
 DEFAULT_SCAN_RATE = 8.0
+
+
+def scan_rate(mode: str | None, rounds: bool = False) -> float:
+    """Seconds of recording read per second of work, for an estimate."""
+    if rounds and mode in ROUND_SCAN_RATE:
+        return ROUND_SCAN_RATE[mode]
+    return SCAN_RATE.get(mode or "", DEFAULT_SCAN_RATE)
 
 # Seconds per clip for everything after the scan: cutting the master, the
 # vertical, the caption pass and the voice. Measured across the runs in this
@@ -150,6 +165,13 @@ class ClipJob:
         # against it. Recorded because it is the only place the detector's
         # accuracy is ever actually measured.
         self.demo: dict = {}
+        # WHY THE RUN IS TAKING THE SLOW PATH, in one sentence that survives
+        # the next step's progress message. A probe that reads twelve minutes
+        # and then finds nothing is the difference between a three-minute run
+        # and a thirty-minute one, and it used to be visible only in the log --
+        # so from the outside a demo that did not match was indistinguishable
+        # from a demo that was never looked for.
+        self.demo_note: str = ""
         self.started_at = time.time()
         self.finished_at: float | None = None
         # For the estimate: when the current step began, how long the recording
@@ -157,6 +179,9 @@ class ClipJob:
         self.step_started = self.started_at
         self.source_seconds = 0.0
         self.scan_mode = ""
+        # Round mode reads the scoreboard as well as the feed, at a third of
+        # the rate, so the estimate has to know which pass this run is.
+        self.scan_rounds = False
         self.scan_seconds = 0.0        # how much of the recording will be read
         self.clip_count = 0            # known once the plan exists
         self.eta_at: float | None = None
@@ -199,6 +224,7 @@ class ClipJob:
             step, done, total = self.step, self.done, self.total
             begun, clips = self.step_started, self.clip_count
             scan_seconds, mode = self.scan_seconds, self.scan_mode
+            rounds = self.scan_rounds
         if self.state not in ("running", "queued"):
             return None
         now = time.time()
@@ -211,7 +237,7 @@ class ClipJob:
                 per = (now - begun) / done
                 return int(per * (total - done) + after_scan)
             if scan_seconds:
-                rate = SCAN_RATE.get(mode, DEFAULT_SCAN_RATE)
+                rate = scan_rate(mode, rounds)
                 left = scan_seconds / rate - (now - begun)
                 return int(max(0.0, left) + after_scan)
             return None
@@ -244,6 +270,8 @@ class ClipJob:
                 "eta": None,          # filled in below, outside the lock
                 "source": self.source.name,
                 "scan_mode": self.scan_mode,
+                "demo_note": self.demo_note,
+                "demo_file": self.demo.get("demo", "") if self.demo else "",
                 # Cancelled but not finished yet: ffmpeg has to be waited on
                 # and any chunk already decoding runs to its end.
                 "stopping": bool(self.cancel_at
@@ -349,6 +377,7 @@ class ClipJob:
         # either and doing it twice would add ten minutes for nothing.
         use_rounds = bool(prof and getattr(prof, "rounds", False)
                           and opt.get("rounds", True))
+        self._set(scan_rounds=use_rounds)
         round_list: list = []
 
         # Clips that fall below min_kills. Swept into one promo reel instead of
@@ -487,9 +516,20 @@ class ClipJob:
             if got:
                 kills, round_list = got["kills"], got["rounds"]
                 self.demo = got["about"]
+                self._set(demo_note=(
+                    "Matched the replay after the scan, so the kills and "
+                    "rounds come from the demo rather than off the screen."))
             else:
                 log.info("carrying on with the %d kills the detector found",
                          len(kills))
+                # Only if nothing earlier already explained the slow path --
+                # the probe's reason is the more useful of the two.
+                if not self.demo_note:
+                    self._set(demo_note=(
+                        "No replay on disk matched this recording, so the "
+                        "kills come from the screen. Download the match in "
+                        "Counter-Strike and run this again for exact kills "
+                        "and real round context."))
 
         # ---- 2. decide what to cut ---------------------------------------
         if use_rounds and not round_list:
@@ -1039,6 +1079,9 @@ class ClipJob:
             log.info("no demo newer than this recording (the last one was "
                      "written %.1f hours before it started), so there is "
                      "nothing to search for", (started - newest) / 3600.0)
+            self._set(demo_note=(
+                "No replay on disk is newer than this recording, so there is "
+                "none for it to use. The whole selection is being read."))
             return None
 
         def prog(d, t):
@@ -1068,12 +1111,23 @@ class ClipJob:
             log.info("only %d kill(s) in the first %.0f minutes -- not enough to "
                      "find the demo, so the whole recording is read",
                      len(seed), self.PROBE_SECONDS / 60)
+            self._set(demo_note=(
+                f"Only {len(seed)} kill(s) in the first "
+                f"{self.PROBE_SECONDS / 60:.0f} minutes of what you chose - too "
+                f"few to identify the match, so the whole selection is being "
+                f"read. Starting the selection at the gameplay rather than the "
+                f"menu is what fixes this."))
             return None
 
         got = self._from_demo(seed)
         if not got:
             log.info("no demo matched the first %.0f minutes; reading the whole "
                      "recording", self.PROBE_SECONDS / 60)
+            self._set(demo_note=(
+                f"Read the first {self.PROBE_SECONDS / 60:.0f} minutes and no "
+                f"replay on disk matched them, so the whole selection is being "
+                f"read instead. The replay for this match may not be "
+                f"downloaded in Counter-Strike yet."))
             # THE ESTIMATE STARTS AGAIN HERE. The probe and the demo search are
             # not chunks, and leaving their minute and three quarters inside the
             # per-chunk average made the first estimate of the full scan about a
@@ -1085,6 +1139,10 @@ class ClipJob:
             return None
         log.info("the demo was found from the first %.0f minutes, so the rest of "
                  "the recording did not need reading", self.PROBE_SECONDS / 60)
+        self._set(demo_note=(
+            f"Matched the replay from the first {self.PROBE_SECONDS / 60:.0f} "
+            f"minutes, so the rest of the recording did not need reading. The "
+            f"kills and rounds come from the demo."))
         return got
 
     def _source_started(self) -> float | None:

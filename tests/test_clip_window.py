@@ -216,3 +216,70 @@ def test_trimming_nothing_is_not_an_error(tmp_path):
     job.win_start, job.win_end, job.win_whole = 600.0, 1200.0, False
     assert job._trim_cached(None) is None
     assert job._trim_cached([]) == []
+
+
+# ------------------------------------------------------- the demo, out loud
+#
+# Three things were invisible from the outside on a real run, all reported
+# from one screenshot: a replay WAS on disk and the page showed nothing; the
+# probe read twelve minutes, matched nothing, and fell back silently; and the
+# card quoted "about 4m of scanning" for a run that took thirty.
+
+def test_the_scan_rate_for_round_mode_is_not_the_plain_killfeed_rate():
+    """scan_with_hud reads the scoreboard as well as the feed -- two crops
+    OCR'd per frame instead of one. Measured at 1.5x against plain killfeed's
+    4.5x, and quoting the wrong one advertised a 30-minute run as 4."""
+    from autostream.clips import jobs
+
+    assert jobs.scan_rate("killfeed", rounds=False) == 4.5
+    assert jobs.scan_rate("killfeed", rounds=True) == 1.5
+    assert jobs.scan_rate("killfeed", rounds=True) < jobs.scan_rate("killfeed")
+
+
+def test_a_mode_without_a_round_rate_is_unaffected():
+    from autostream.clips import jobs
+
+    assert jobs.scan_rate("feedbar", rounds=True) == jobs.scan_rate("feedbar")
+    assert jobs.scan_rate("nonsense") == jobs.DEFAULT_SCAN_RATE
+
+
+def test_the_estimate_uses_the_round_rate_when_rounds_are_on(tmp_path):
+    """The number the page and the progress bar both quote before any chunk
+    has finished."""
+    import threading
+    import time as _t
+
+    job = ClipJob.__new__(ClipJob)
+    job._lock = threading.Lock()
+    job.state, job.step = "running", "scan"
+    job.done, job.total = 0, 1
+    job.clip_count = 0
+    job.scan_seconds = 3600.0
+    job.scan_mode = "killfeed"
+    job.started_at = job.step_started = _t.time()
+
+    job.scan_rounds = False
+    fast = job.eta()
+    job.scan_rounds = True
+    slow = job.eta()
+    assert fast is not None and slow is not None
+    assert slow > fast * 2, (
+        "an hour of round-mode footage must not be estimated at the "
+        "plain-killfeed rate")
+
+
+def test_every_demo_outcome_says_what_happened():
+    """A probe that finds nothing costs twelve minutes and used to leave no
+    trace outside the log, so a demo that did not match was indistinguishable
+    from one that was never looked for."""
+    import inspect
+
+    from autostream.clips import jobs
+
+    src = inspect.getsource(jobs.ClipJob)
+    # Every branch that decides the demo question sets the note.
+    assert src.count("demo_note=") >= 5, (
+        "each way the demo search can end -- nothing newer, too few kills, "
+        "no match, matched by the probe, matched after the scan -- has to say "
+        "so, or the slow path looks like the only path")
+    assert '"demo_note": self.demo_note' in src, "and it has to reach the page"

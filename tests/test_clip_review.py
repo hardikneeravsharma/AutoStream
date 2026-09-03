@@ -212,6 +212,11 @@ def _stub_job():
     j.source = Path("rec.mp4")
     j.source_seconds, j.scan_seconds = 6660.0, 6660.0
     j.scan_mode, j.clip_count = "template", 0
+    # Round mode reads the scoreboard as well as the feed, at a third of the
+    # rate, so the estimate has to know which pass a run is. Off here: these
+    # tests are about a template scan.
+    j.scan_rounds = False
+    j.demo, j.demo_note = {}, ""
     return j
 
 

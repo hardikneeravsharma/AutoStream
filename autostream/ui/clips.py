@@ -388,7 +388,7 @@ CLIPS_HTML: str = (
     <textarea class="textarea mono" id="clip-democodes" rows="3" spellcheck="false"
               placeholder="Paste the match sharing code, or the whole steam:// link.
 One per line - a long session often covers several matches."></textarea>
-    <div class="field-inline" style="margin-top:8px">
+    <div class="field-inline" id="clip-demoask" style="margin-top:8px">
       <button class="btn" type="button" data-act="get-demos">Download in Counter-Strike</button>
       <span class="muted" id="clip-demomsg"></span>
     </div>
@@ -494,6 +494,10 @@ One per line - a long session often covers several matches."></textarea>
   <div class="meter" id="clip-meter" role="progressbar" aria-valuemin="0"
        aria-valuemax="100" aria-valuenow="0"><span class="meter-fill" id="clip-fill"></span></div>
   <p class="muted" id="clip-prog-msg"></p>
+  <!-- Why this run took the path it did: whether a replay matched, and if not,
+       what would make one match next time. Separate from the message above,
+       which is overwritten on every poll. -->
+  <p class="muted clip-prog-demo hide" id="clip-prog-demo"></p>
 </div>
 
 <div class="card hide" id="clip-results">
@@ -996,20 +1000,28 @@ function clip_renderOptions() {
      said before the button is pressed than discovered afterwards. */
   var note = '';
   if (!why && s.scan_mode === 'killfeed') {
-    note = 'Kills for ' + esc(s.game || 'this game') + ' are read out of the ' +
-           'kill feed, which is slower than a marker scan - roughly a minute ' +
-           'per 10 minutes of footage. Assists are detected and not clipped.';
-    /* And how long THIS run will be, which is the number the warning is
-       really about. Choosing part of the file is the fix for a scan that is
-       too slow, so the panel that says it is slow should say what the choice
-       just bought. */
+    /* HOW LONG IT WILL ACTUALLY TAKE, from the rate the job itself uses.
+       This said "roughly a minute per 10 minutes of footage" for every
+       killfeed run. Round mode reads the scoreboard as well as the feed and
+       manages about 1.5x realtime, so a 43-minute selection was advertised at
+       4 minutes and took 30. A number that is wrong is worse than no number. */
+    var rate = Number(s.scan_rate) || 4.5;
     var win = clip_stripWindow();
-    if (win) {
-      var span = (win.scan_end || s.duration || 0) - win.scan_start;
-      if (span > 0) {
-        note += ' You have chosen ' + clip_dur(span) + ' of it, so about ' +
-                clip_dur(span / 10) + ' of scanning.';
-      }
+    var span = win ? ((win.scan_end || s.duration || 0) - win.scan_start)
+                   : (s.duration || 0);
+    note = 'Kills for ' + esc(s.game || 'this game') + ' are read out of the ' +
+           'kill feed' + (s.rounds && clip_state.rounds !== false
+              ? ', with the scoreboard alongside it for the rounds' : '') +
+           ', which is slower than a marker scan. Assists are detected and ' +
+           'not clipped.';
+    if (span > 0) {
+      note += ' ' + (win ? 'You have chosen ' + clip_dur(span) + ' of it, so a'
+                         : 'That is a') +
+              'bout ' + clip_dur(span / rate) + ' of scanning' +
+              (s.demo_state === 'have'
+                 ? ' - or about ' + clip_dur(Math.min(span, 720) / rate) +
+                   ', if the replay on disk turns out to be this match.'
+                 : '.');
     }
   }
   if (go) go.disabled = !!why;
@@ -1059,6 +1071,17 @@ function clip_renderJob(j) {
       ? ' - about ' + clip_fmtTime(j.eta) + ' left'
       : (j.eta === 0 ? ' - nearly done' : '');
     if (msg) msg.textContent = (j.message || '') + '  (' + run + eta + ')';
+    /* WHY THIS RUN IS ON THE PATH IT IS ON. A probe that reads twelve minutes
+       and finds no replay is the difference between a three-minute run and a
+       thirty-minute one, and it used to be visible only in the log -- so a
+       demo that did not match looked exactly like a demo that was never
+       looked for. Kept separate from the step message, which is overwritten
+       every two seconds. */
+    var dn = clip_el('clip-prog-demo');
+    if (dn) {
+      dn.textContent = j.demo_note || '';
+      dn.classList.toggle('hide', !j.demo_note);
+    }
     var fill = clip_el('clip-fill'), meter = clip_el('clip-meter');
     if (fill) fill.style.width = j.percent + '%';
     if (meter) meter.setAttribute('aria-valuenow', String(j.percent));
@@ -3339,11 +3362,22 @@ function clip_renderDemoBox() {
   var s = clip_state.pick;
   var wrap = clip_el('clip-demowrap');
   if (!wrap) return;
-  /* Only where a demo would help and there is not already one: the panel is an
-     answer to "this will be slow", not a permanent fixture. */
-  var want = !!s && s.demo_state && s.demo_state !== 'have';
+  /* SHOWN FOR EVERY GAME THAT HAS REPLAYS, INCLUDING WHEN ONE IS FOUND.
+     This used to appear only when something was missing, on the reasoning
+     that it is "an answer to 'this will be slow', not a permanent fixture".
+     That reasoning holds for a recorded stream, whose row in the list above
+     already carries a "demo on disk" tag -- but a file the user picked has no
+     row, so the one arrangement where a demo halves the run reported nothing
+     at all. Whether a replay is on hand is the single biggest thing about a
+     Counter-Strike run, and it should never have to be inferred from a panel
+     that is not there. */
+  var want = !!s && !!s.demo_state;
   wrap.classList.toggle('hide', !want);
   if (!want) return;
+  /* Nothing to ask for when the replay is already there. */
+  var have = s.demo_state === 'have';
+  clip_show('clip-democodes', !have);
+  clip_show('clip-demoask', !have);
   var t = clip_el('clip-demotext');
   if (t) {
     /* THE SEARCH IS AUTOMATIC AND SAYING SO MATTERS. A run reads a few
@@ -3352,7 +3386,13 @@ function clip_renderDemoBox() {
        box below is for is the case where the demo is not on disk at all, and
        asking for a sharing code without saying that reads as "AutoStream
        cannot find your demos", which is the opposite of true. */
-    t.textContent = s.demo_state === 'listed'
+    t.textContent = have
+      ? ('A replay is on disk for this recording (' + esc(s.demo_file || '') +
+         '). The run reads about twelve minutes, matches those kills against '
+         + 'it, and then takes the exact kills and rounds from the demo - so '
+         + 'the rest of the recording is never read. If it turns out not to be '
+         + 'this match, the run says so and reads the whole thing instead.')
+      : s.demo_state === 'listed'
       ? 'This match is in your Counter-Strike history but the demo has not '
         + 'finished downloading. Paste its sharing code and AutoStream will ask '
         + 'the game to fetch it again.'
