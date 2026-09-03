@@ -1316,7 +1316,14 @@ class ClipJob:
 
         def search():
             try:
-                got["r"] = cs2_demo.pick_demo(folder, vod)
+                # WHEN the recording was made, so the search can ask which
+                # match was played during it before asking which one its kills
+                # resemble. Counter-Strike writes that time beside every demo
+                # and it was going unread -- see cs2_demo.match_time.
+                got["r"] = cs2_demo.pick_demo(
+                    folder, vod,
+                    started=self._source_started(),
+                    seconds=self.source_seconds or 0.0)
             except RuntimeError as e:      # demoparser2 not installed
                 got["skip"] = str(e)
             except Exception as e:         # noqa: BLE001

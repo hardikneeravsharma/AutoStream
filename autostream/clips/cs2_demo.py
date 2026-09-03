@@ -50,6 +50,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -74,6 +75,27 @@ MIN_ALIGNED = 0.6
 # denominator a share can be computed from very few pairs, and "2 of 2" is a
 # perfect score that means nothing at all.
 MIN_MATCHED = 6
+# The floor when the demo is ALREADY KNOWN to belong to this recording, because
+# its own match time falls inside it -- see match_time(). The floor exists to
+# rule out coincidence between unrelated demos, and a timestamp rules that out
+# far better than a kill count can: measured on a real failure, a 22 August
+# match and one from 22 November BOTH scored 5 matched at share 0.62 on the
+# same six kills, and nothing about those numbers separated them. The date
+# did, instantly. So where the date has already decided, the fingerprint is
+# only being asked WHERE the match sits, and three kills fix an offset.
+MIN_MATCHED_DATED = 3
+# How far the fitted offset may sit from where the match time says the match
+# begins. Demo t=0 is the start of the recording of the match, which precedes
+# round one by the warm-up, and the match time itself is when the server was
+# allocated -- measured at 149s apart on a real pair. Ten minutes is loose
+# enough for that and tight enough to be decisive: the WRONG match from the
+# same session, forty minutes later, was out by 3195s.
+#
+# THIS IS WHAT MAKES THE LOWER FLOOR SAFE. Without it, dropping the floor for
+# a dated demo let the second match of the same session win on five
+# coincidental timings, under another player's name, at an offset that would
+# have placed the match fourteen minutes before the recording started.
+OFFSET_TOL = 600.0
 # Below this share of the demo, the recording is a sample of the match rather
 # than a truncated copy of it, and the floor above applies.
 WINDOW_MINORITY = 0.5
@@ -510,7 +532,10 @@ class Sync:
 
 
 def align(demo_times: list[float], vod_times: list[float], *,
-          tol: float = MATCH_TOL, min_share: float = MIN_ALIGNED) -> Sync:
+          tol: float = MATCH_TOL, min_share: float = MIN_ALIGNED,
+          floor: int = MIN_MATCHED,
+          expect_offset: float | None = None,
+          offset_tol: float = OFFSET_TOL) -> Sync:
     """Find where a demo sits inside a recording, from the kills alone.
 
     Not a search over plausible offsets: every difference between a demo kill
@@ -578,7 +603,24 @@ def align(demo_times: list[float], vod_times: list[float], *,
     # has to clear a real count as well. A demo fully inside the recording is
     # judged exactly as it always was, floor and all left out of it, because
     # a genuinely short match is not a suspicious one.
-    if windowed and s.matched < MIN_MATCHED:
+    # WHERE THE CLOCK SAYS THE MATCH IS. A fingerprint judged only on how many
+    # kills line up will happily find five coincidences at any offset at all --
+    # including one that places the match before the recording began. When the
+    # match time is known, that is a fact about the answer and not merely about
+    # the candidate, so it is checked before anything else.
+    # A demo the clock could place came from Valve's matchmaking, which is 64
+    # tick -- so the rate search has nothing to find there, and a half or
+    # double rate is the search fitting noise. Measured: a wrong player scored
+    # four "kills" at rate 0.5, mapping demo 771s onto recording 156s.
+    if expect_offset is not None and s.scale != 1.0:
+        s.why = (f"only fits at {s.scale}x speed, which a matchmaking demo "
+                 f"cannot be")
+        return s
+    if expect_offset is not None and abs(s.offset - expect_offset) > offset_tol:
+        s.why = (f"lines up {abs(s.offset - expect_offset) / 60:.0f} minutes "
+                 f"from where this match was played -- not this one")
+        return s
+    if windowed and s.matched < floor:
         s.why = (f"only {s.matched} kill(s) line up in the part scanned so far "
                  f"-- is this the right match?")
         return s
@@ -613,12 +655,103 @@ def identify(match: Match, vod_times: list[float],
     So the demo path needs no in-game name either, which is the same bar the
     Valorant bar detector already meets.
     """
+    expect = kw.get("expect_offset")
+
+    def rank(s: "Sync") -> tuple:
+        """Better is larger. Ties on `matched` are the whole difficulty here.
+
+        Two players in one demo routinely align the same NUMBER of a handful
+        of probe kills -- measured: the local player and a team-mate both hit
+        4 -- and the old comparison was a strict `>`, so the tie went to
+        whichever came first out of match.players(). That is alphabetical
+        order deciding whose kills get clipped.
+
+        So the tie-breaks are the two things that actually distinguish a real
+        alignment from a coincidental one: how close it puts the match to
+        where the clock says it is, and how much of the demo it explains.
+        """
+        near = -abs(s.offset - expect) if expect is not None else 0.0
+        return (s.matched, near, s.share, -s.residual)
+
     best: tuple[str, Sync] = ("", Sync(why="no player matched"))
     for who in match.players():
         got = align([k.time for k in match.by(who)], vod_times, **kw)
-        if got.ok and got.matched > best[1].matched:
+        if got.ok and (not best[0] or rank(got) > rank(best[1])):
             best = (who, got)
     return best
+
+
+def match_time(path: Path) -> float | None:
+    """WHEN THE MATCH WAS PLAYED, from the .dem.info beside the demo.
+
+    THE STRONGEST SIGNAL THERE IS, and it was going unread. A demo's file
+    timestamp is when it was DOWNLOADED -- which is why the folder is full of
+    August matches stamped September -- so choosing between demos was left
+    entirely to the kill fingerprint. That fails exactly when it matters: on a
+    real recording, a match from 22 August and one from 22 November both
+    aligned 5 of the same 6 kills at share 0.62, and nothing in those numbers
+    told them apart. Their match times are three months apart.
+
+    Counter-Strike writes a `.dem.info` beside each demo -- a protobuf holding
+    the match record, whose match time is a plain unix timestamp. Rather than
+    depend on a protobuf library for one integer, every varint in the blob is
+    read and the ones that land in a plausible range are considered. A match
+    cannot be played after it was downloaded, so where more than one candidate
+    survives, the latest one at or before the file's own timestamp wins.
+
+    -> the unix time the match was played, or None if it cannot be read. None
+    is a real answer: an old .info may not carry one, and the caller falls
+    back to the fingerprint alone.
+    """
+    info = Path(str(path) + ".info") if not str(path).endswith(".info") else Path(path)
+    try:
+        raw = info.read_bytes()
+        downloaded = info.stat().st_mtime
+    except OSError:
+        return None
+
+    # Nothing before Counter-Strike 2 existed, and nothing in the future.
+    lo, hi = 1_600_000_000.0, time.time() + 86_400
+    seen: set[int] = set()
+    for i in range(len(raw)):
+        val, shift, j = 0, 0, i
+        while j < len(raw) and shift <= 35:
+            b = raw[j]
+            val |= (b & 0x7F) << shift
+            j += 1
+            if not b & 0x80:
+                break
+            shift += 7
+        if lo < val < hi:
+            seen.add(val)
+    # A match is played before its demo is fetched. Where the blob offers
+    # several plausible numbers, that invariant picks the right one.
+    before = [v for v in seen if v <= downloaded + 3600]
+    if not before:
+        return None
+    return float(max(before))
+
+
+def demos_for_recording(folder, started: float, seconds: float,
+                        slack: float = 900.0) -> list[Path]:
+    """The demos whose match was played DURING this recording, newest first.
+
+    `slack` covers the ordinary sloppiness at both ends: OBS started a few
+    minutes after the match did, or the match time being the moment the server
+    was allocated rather than the first round. Fifteen minutes either side is
+    generous enough to catch those and far too tight to admit a match from
+    another day, which is the only thing this has to exclude.
+    """
+    if not folder or not started:
+        return []
+    lo = started - slack
+    hi = started + (seconds or 0) + slack
+    out = []
+    for p in Path(folder).glob("*.dem"):
+        when = match_time(p)
+        if when is not None and lo <= when <= hi:
+            out.append((when, p))
+    return [p for _, p in sorted(out, reverse=True)]
 
 
 def newest_demo_time(folder: Path) -> float | None:
@@ -727,6 +860,46 @@ def demo_state(folder, started: float, duration: float = 0.0) -> dict:
     out = {"state": "none", "file": None}
     if not folder or not started:
         return out
+
+    # THE MATCH TIME, WHERE THERE IS ONE. Everything below reasons about when a
+    # file was DOWNLOADED, which is the wrong question asked because the right
+    # one looked unavailable -- Counter-Strike writes the match time beside
+    # every demo. Where it can be read, "is there a demo for this recording"
+    # stops being a hopeful inference and becomes a fact: 16 demos in the
+    # folder, exactly 2 played during a 46-minute recording.
+    dated = demos_for_recording(folder, started, duration)
+    if dated:
+        return {"state": "have", "file": dated[0].name}
+
+    # NO DEMO WAS PLAYED DURING THIS RECORDING, and where the match times can
+    # be read that is a fact rather than a guess. The reasoning below -- "a
+    # demo exists that is newer than the recording, so there may be one for
+    # it" -- was written when the match time looked unavailable, and it
+    # over-reports by design: it told a user their replay was on disk when the
+    # sixteen demos there belonged to other matches, and the run then spent
+    # twelve minutes proving it.
+    #
+    # A .dem.info whose match IS in the window, with no .dem beside it, is the
+    # precise meaning of "listed": Counter-Strike knows about this match and
+    # has not finished downloading it.
+    lo, hi = started - 900.0, started + (duration or 0) + 900.0
+    readable = listed_here = False
+    try:
+        for info in Path(folder).glob("*.dem.info"):
+            when = match_time(info)
+            if when is None:
+                continue
+            readable = True
+            if lo <= when <= hi and not Path(str(info)[:-5]).exists():
+                listed_here = True
+    except OSError:
+        pass
+    if listed_here:
+        return {"state": "listed", "file": None}
+    if readable:
+        # Counter-Strike's own record of what was played, and none of it is
+        # this recording.
+        return out
     try:
         entries = list(Path(folder).glob("*.dem")) + list(Path(folder).glob("*.dem.info"))
     except OSError:
@@ -752,17 +925,47 @@ def demo_state(folder, started: float, duration: float = 0.0) -> dict:
 
 
 def pick_demo(folder: Path, vod_times: list[float], *,
-              newest: int = 12) -> tuple[Match | None, str, "Sync"]:
-    """Choose which demo in a folder belongs to a recording, by fingerprint.
+              newest: int = 12, started: float | None = None,
+              seconds: float = 0.0) -> tuple[Match | None, str, "Sync"]:
+    """Choose which demo in a folder belongs to a recording.
 
-    Cheap enough to be automatic: the map comes from the header without a
-    parse, and only the newest few are parsed at all. Returns the best match
-    along with who the local player turned out to be.
+    BY THE CLOCK FIRST, then by fingerprint. Counter-Strike writes the match
+    time beside every demo, and when the recording's own start is known that
+    answers "which match is this" outright -- 16 demos narrowed to the 2 played
+    during a 46-minute recording, in a directory listing, with nothing parsed.
+
+    It was doing the hard half only. On a real failure the probe read six kills
+    and the right demo -- the match played one minute into the recording --
+    aligned four of them PERFECTLY, share 1.00, and was thrown away for being
+    two short of a floor that exists to rule out coincidence between unrelated
+    demos. Two unrelated demos, one of them from three months earlier, scored
+    identically on the same six kills. The floor could not tell them apart and
+    was never going to; the timestamp did it instantly.
+
+    So where the clock has already decided, the fingerprint is only asked
+    WHERE inside the recording the match sits, and it is judged on that
+    lighter bar -- see MIN_MATCHED_DATED. Demos the clock cannot place are
+    still judged on the strict one, because there coincidence is the risk.
     """
     folder = Path(folder)
-    dems = sorted(folder.glob("*.dem"), key=lambda p: -p.stat().st_mtime)
+    dated = demos_for_recording(folder, started or 0.0, seconds)
+    rest = sorted((p for p in folder.glob("*.dem") if p not in dated),
+                  key=lambda p: -p.stat().st_mtime)[:newest]
+    if dated:
+        log.info("%d demo(s) were played during this recording, by their own "
+                 "match time: %s", len(dated),
+                 ", ".join(p.name for p in dated))
     best: tuple[Match | None, str, Sync] = (None, "", Sync(why="no demo fits"))
-    for p in dems[:newest]:
+    for p in list(dated) + rest:
+        is_dated = p in dated
+        floor = MIN_MATCHED_DATED if is_dated else MIN_MATCHED
+        # Where this match should land inside the recording, if the clock is
+        # to be believed. None for a demo it cannot place, which is then
+        # judged on the fingerprint alone as it always was.
+        expect = None
+        if is_dated and started:
+            when = match_time(p)
+            expect = (when - started) if when is not None else None
         try:
             m = parse(p)
         except BaseException as e:                 # noqa: BLE001
@@ -772,7 +975,7 @@ def pick_demo(folder: Path, vod_times: list[float], *,
             log.warning("could not parse %s: %s: %s",
                         p.name, type(e).__name__, str(e)[:200])
             continue
-        who, s = identify(m, vod_times)
+        who, s = identify(m, vod_times, floor=floor, expect_offset=expect)
         # A SHARE IS NOT ENOUGH WHEN CHOOSING BETWEEN DEMOS. align() judges one
         # candidate on its own terms, and a player with seven kills in a demo
         # needs only five to clear 0.6 -- so a demo from two days earlier was
@@ -782,9 +985,10 @@ def pick_demo(folder: Path, vod_times: list[float], *,
         #
         # So the CHOICE demands a real count as well. align stays permissive,
         # because it is also used to audit a demo already known to be right.
-        if s.ok and s.matched < MIN_MATCHED:
-            log.info("%s lines up on only %d kill(s) -- too few to trust",
-                     p.name, s.matched)
+        if s.ok and s.matched < floor:
+            log.info("%s lines up on only %d kill(s) -- too few to trust%s",
+                     p.name, s.matched,
+                     "" if is_dated else " for a demo the clock cannot place")
             continue
         if s.ok and s.matched > best[2].matched:
             best = (m, who, s)
