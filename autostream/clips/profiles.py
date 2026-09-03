@@ -182,6 +182,21 @@ class Profile:
         return [r for r in self.requirements()
                 if not r["auto"] and not r["value"]]
 
+    @property
+    def needs_ocr(self) -> bool:
+        """Whether reading this game's kills needs Tesseract on the machine.
+
+        A fact about the DETECTOR, not about this PC -- whether the tool is
+        actually installed is deps.have_tesseract(), and the two are kept apart
+        because a profile is copied between machines and its calibration is not
+        a statement about any of them.
+
+        Only the kill feed is read as text. Delta Force matches a glyph,
+        VALORANT reads coloured bars and CS2's card counter reads a tally of
+        shapes -- none of them touch OCR.
+        """
+        return self.mode == "killfeed"
+
     def exists(self) -> bool:
         """Whether this profile can actually be run.
 

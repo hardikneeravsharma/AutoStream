@@ -354,8 +354,14 @@ def _extract_two(video: Path, start: float, duration: float, fps: float,
     return tmp
 
 
-def measure_hue(video: Path, duration: float, samples: int = 12) -> float | None:
-    """Sample frames spread across the recording and measure the HUD colour."""
+def measure_hue(video: Path, duration: float, samples: int = 12,
+                start: float = 0.0) -> float | None:
+    """Sample frames spread across the recording and measure the HUD colour.
+
+    `start` keeps the samples inside the part being scanned. On a file holding
+    two games, frames from the other one carry a different HUD -- or none --
+    and measuring the colour off those is measuring the wrong game.
+    """
     from PIL import Image
 
     from .killfeed import _extract
@@ -363,7 +369,7 @@ def measure_hue(video: Path, duration: float, samples: int = 12) -> float | None
     step = max(30.0, duration / (samples + 1))
     frames = []
     for i in range(1, samples + 1):
-        at = min(duration - 1.0, step * i)
+        at = start + min(duration - 1.0, step * i)
         tmp = _extract(video, HUD_STRIP, at, 0.5, 1.0)
         try:
             got = sorted(tmp.glob("f_*.png"))
@@ -442,7 +448,7 @@ def refine(video: Path, events: list[Event], hue: float, *,
     return events
 
 
-def scan(video: Path, *, duration: float | None = None,
+def scan(video: Path, *, duration: float | None = None, start: float = 0.0,
          fps: float = SAMPLE_FPS, chunk: float = 120.0,
          hue: float | None = None, frame_height: int = REF_HEIGHT,
          progress: Callable[[int, int], None] | None = None,
@@ -455,7 +461,7 @@ def scan(video: Path, *, duration: float | None = None,
     total = duration if duration is not None else media_info(video)["duration"]
     _sweep_stale_temp()
     if hue is None:
-        hue = measure_hue(video, total)
+        hue = measure_hue(video, total, start=start)
         if hue is None:
             raise RuntimeError(
                 "Could not work out your CS2 HUD colour from this recording. "
@@ -463,9 +469,12 @@ def scan(video: Path, *, duration: float | None = None,
                 "more gameplay in it.")
         log.info("measured CS2 HUD colour: hue %.0f", hue)
 
-    spans, t = [], 0.0
-    while t < total:
-        spans.append((t, min(chunk, total - t)))
+    # `start` shifts the window; every event still carries its position in
+    # the recording, so nothing downstream has to know a window was used.
+    end = start + total
+    spans, t = [], float(start)
+    while t < end:
+        spans.append((t, min(chunk, end - t)))
         t += chunk
     seen: list[Reading] = []
     if progress:

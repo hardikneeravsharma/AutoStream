@@ -46,6 +46,10 @@ def a_job(tmp_path) -> ClipJob:
     job.state = "running"
     job.done = job.total = 0
     job.message = ""
+    # The part of the file being read. A real job settles this from the run's
+    # options before the probe is reached; these tests are about the probe, so
+    # they use the default -- the whole recording.
+    job.win_start, job.win_end, job.win_whole = 0.0, 0.0, True
     return job
 
 

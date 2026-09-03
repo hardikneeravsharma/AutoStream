@@ -2567,6 +2567,126 @@ ol.steps-list li{margin-block:var(--space-4)}
 .clip-review-field>.input:disabled,
 .clip-review-voice:disabled{opacity:.5}
 
+/* ------------------------------------------ the tools that are not Python
+
+   One row per tool, and the state leads it. Whether ffmpeg is there is the
+   whole question the card answers, so it is read first and the explanation
+   second. */
+.clip-tools-list{display:flex;flex-direction:column;gap:var(--space-3)}
+.clip-tool{
+  display:grid;
+  grid-template-columns:6.5rem minmax(0,1fr);
+  gap:var(--space-3);
+  align-items:start;
+  padding:var(--space-3);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  background:var(--surface-sunken);
+}
+.clip-tool p{margin:.25rem 0 0}
+.clip-tool-tag{
+  justify-self:start;
+  padding:.1rem .5rem;
+  border-radius:999px;
+  font-size:.75rem;
+  font-weight:600;
+  text-transform:uppercase;
+  letter-spacing:.03em;
+  background:var(--warn-bg,rgba(210,153,34,.16));
+  color:var(--warn,#d29922);
+}
+.clip-tool.is-ok .clip-tool-tag{
+  background:var(--ok-bg,rgba(63,185,80,.16));
+  color:var(--ok,#3fb950);
+}
+
+/* -------------------------------------------- choosing the part to clip
+
+   A strip of stills across the whole file, with the part that will NOT be
+   read dimmed rather than hidden -- the frames on either side are how you
+   know the selection is in the right place. */
+.clip-strip{
+  display:grid;
+  grid-auto-flow:column;
+  grid-auto-columns:1fr;
+  gap:2px;
+  border-radius:var(--radius-sm);
+  overflow:hidden;
+  background:var(--surface-sunken);
+}
+.clip-frame{
+  position:relative;
+  display:block;
+  padding:0;
+  border:0;
+  background:none;
+  cursor:pointer;
+  line-height:0;
+  transition:opacity .12s ease;
+}
+.clip-frame img{
+  width:100%;
+  aspect-ratio:16/9;
+  object-fit:cover;
+  display:block;
+  background:var(--surface-raised);
+}
+.clip-frame-t{
+  position:absolute;
+  left:0;
+  bottom:0;
+  padding:.05rem .3rem;
+  font-size:.7rem;
+  line-height:1.4;
+  font-variant-numeric:tabular-nums;
+  color:#fff;
+  background:rgba(0,0,0,.55);
+}
+.clip-frame.is-out{opacity:.28}
+.clip-frame.is-out .clip-frame-t{opacity:.7}
+.clip-frame:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+/* The two handles sit in the same track, so the span between them reads as
+   one selection rather than as two unrelated sliders. Stacking them means
+   only the top one can be grabbed, so pointer events are turned off on the
+   track and back on for the thumbs alone. */
+.clip-range{position:relative;height:2rem;margin-top:var(--space-2)}
+.clip-range-in{
+  position:absolute;
+  left:0;
+  right:0;
+  top:.5rem;
+  width:100%;
+  margin:0;
+  background:none;
+  pointer-events:none;
+  -webkit-appearance:none;
+  appearance:none;
+}
+.clip-range-in::-webkit-slider-runnable-track{
+  height:4px;border-radius:2px;background:var(--border);
+}
+.clip-range-in::-moz-range-track{
+  height:4px;border-radius:2px;background:var(--border);
+}
+.clip-range-in::-webkit-slider-thumb{
+  -webkit-appearance:none;
+  pointer-events:auto;
+  width:16px;height:16px;margin-top:-6px;
+  border-radius:50%;
+  border:2px solid var(--surface);
+  background:var(--accent);
+  cursor:ew-resize;
+}
+.clip-range-in::-moz-range-thumb{
+  pointer-events:auto;
+  width:16px;height:16px;
+  border-radius:50%;
+  border:2px solid var(--surface);
+  background:var(--accent);
+  cursor:ew-resize;
+}
+
 /* The window is 1120 wide and the rail takes 216, so the options grid has to
    fold well before a phone. */
 @media (max-width:880px){
@@ -2575,6 +2695,10 @@ ol.steps-list li{margin-block:var(--space-4)}
   .clip-row-when{display:none}
   .clip-review-row{grid-template-columns:minmax(0,1fr)}
   .clip-review-thumb{width:100%}
+  .clip-tool{grid-template-columns:minmax(0,1fr)}
+  /* Twelve stills across a narrow window are twelve smears. Half of them at
+     twice the width still says where each part of the file is. */
+  .clip-strip>.clip-frame:nth-child(even){display:none}
   .clip-play-body{grid-template-columns:minmax(0,1fr)}
   .clip-made-row{grid-template-columns:minmax(0,1fr) auto}
 }

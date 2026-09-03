@@ -68,6 +68,11 @@ def clip_key(start: float) -> str:
     return f"{float(start):.1f}"
 
 
+def _hms(seconds: float) -> str:
+    s = int(max(0.0, seconds))
+    return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}"
+
+
 def _kill_tags(kill) -> list[str]:
     """What was remarkable about one demo kill, for the caption layer."""
     out = []
@@ -155,6 +160,12 @@ class ClipJob:
         self.scan_seconds = 0.0        # how much of the recording will be read
         self.clip_count = 0            # known once the plan exists
         self.eta_at: float | None = None
+        # The part of the file being read. Settled by _window() once the source
+        # has been probed; until then the whole thing, so anything that asks
+        # early gets an answer that is true of every run without a window.
+        self.win_start = 0.0
+        self.win_end = 0.0
+        self.win_whole = True
 
         # When Cancel was pressed. A cancelled scan does not stop at once --
         # the chunks already running finish on their own -- so the page has to
@@ -294,13 +305,43 @@ class ClipJob:
         # ---- 1. find the kills -------------------------------------------
         self._set(step="scan", done=0, total=1, message="Looking for kills...")
         prof = profiles.for_game(self.game_key, self.game)
+
+        # BEFORE ANY DECODING. A killfeed profile reads the feed as text, and
+        # the OCR binary was previously discovered inside the scan -- which on
+        # a feature-length recording is minutes of work thrown away to arrive
+        # at a sentence a directory listing could have produced immediately.
+        if prof is not None and getattr(prof, "needs_ocr", False):
+            from . import deps
+
+            why = deps.ocr_why_not()
+            if why:
+                raise RuntimeError(
+                    f"{why} Install it from the Clips page - AutoStream can "
+                    f"do it for you - then run this again.")
+
         kills: list[dict] = []
-        # What the estimate needs. The whole recording gets read unless a demo
-        # turns up, and that is decided later -- so this starts pessimistic and
-        # is corrected the moment the probe is chosen.
-        self._set(source_seconds=float(info.get("duration") or 0.0),
+        # ---- the window -------------------------------------------------
+        #
+        # WHICH PART OF THE FILE TO READ. One recording routinely holds more
+        # than one game -- and a menu, a warm-up and the tail of the previous
+        # match besides -- so a file the user picked is not necessarily one
+        # session of one game. Chosen on the Clips page against a filmstrip of
+        # the file; absent, it is the whole thing and nothing changes.
+        #
+        # Everything below works in the FILE's clock, not the window's: the
+        # scanners return absolute times and the cutter seeks the source, so
+        # the window is applied here and then never thought about again.
+        total = float(info.get("duration") or 0.0)
+        self.win_start, self.win_end = self._window(info)
+        self.win_whole = self.win_start <= 0 and self.win_end >= total
+        span = self.win_end - self.win_start
+        self._set(source_seconds=total,
                   scan_mode=(prof.mode if prof else ""),
-                  scan_seconds=float(info.get("duration") or 0.0))
+                  scan_seconds=span)
+        if not self.win_whole:
+            log.info("clipping part of %s only: %s to %s of %s",
+                     self.source.name, _hms(self.win_start),
+                     _hms(self.win_end), _hms(total))
 
         # Counter-Strike is clipped per ROUND, which needs the scoreboard as
         # well as the feed. Both are read from ONE decode pass -- see
@@ -330,7 +371,9 @@ class ClipJob:
                      asked_tail, tail)
         opt["pre_roll"], opt["tail_seconds"] = pre_roll, tail
 
-        cached = opt.get("kills")
+        cached = self._trim_cached(opt.get("kills"))
+        if cached is not None:
+            opt["kills"] = cached
         # Cached kills are enough for a game that writes a demo even in round
         # mode: what the detector found is only ever the fingerprint that
         # locates the demo, and the rounds come out of the demo itself. Without
@@ -371,7 +414,7 @@ class ClipJob:
                                   f"{d} of {t} chunks")
             events, readings = killfeed.scan_with_hud(
                 self.source, prof.band, prof.player,
-                duration=info["duration"], fps=prof.scan_fps,
+                duration=span, start=self.win_start, fps=prof.scan_fps,
                 hud_regions=prof.hud_regions or None,
                 progress=prog, cancelled=lambda: self._cancel.is_set())
             if self._cancel.is_set():
@@ -389,7 +432,7 @@ class ClipJob:
                           message=f"Scanning for kills - {d} of {t} chunks")
             found = detect.scan(self.source, prof, progress=prog,
                                 cancelled=lambda: self._cancel.is_set(),
-                                duration=info["duration"])
+                                duration=span, start=self.win_start)
             # `end` must survive into session.json: the planner reserves its
             # tail from when the marker CLEARED, and without this key it silently
             # falls back to the appearance time and clips cut early again.
@@ -535,6 +578,16 @@ class ClipJob:
         atomic.write_json(self.folder / "session.json", {
             "source": str(self.source), "game": self.game,
             "game_key": self.game_key, "options": opt,
+            # WHAT WAS ACTUALLY READ, recorded separately from the options
+            # because the next run reuses these kills and has to know whether
+            # they cover the part it cares about. A windowed scan's kill list
+            # is complete only inside its window, and reusing it for the whole
+            # file would report "no kills" for everything outside it.
+            # [0, 0] means the whole file, which is what every run before
+            # windows existed did -- so an old sidecar with no key at all
+            # reads the same way.
+            "scanned": ([0.0, 0.0] if self.win_whole else
+                        [round(self.win_start, 1), round(self.win_end, 1)]),
             "kills": kills, "plans": [p.as_dict() for p in plans],
             **({"demo": self.demo} if self.demo else {}),
             **({"promo_clips": [p.as_dict() for p in spare]} if spare else {}),
@@ -900,6 +953,54 @@ class ClipJob:
     # of the previous match, and those minutes contribute nothing.
     PROBE_SECONDS = 12 * 60.0
 
+    # The shortest window worth honouring. Below this there is not room for a
+    # clip plus its run-up and tail, so a selection that small is a slip of the
+    # hand rather than an instruction.
+    MIN_WINDOW = 30.0
+
+    def _window(self, info: dict) -> tuple[float, float]:
+        """The part of the file to read. -> (start, end) in the file's clock.
+
+        Sanitised rather than trusted: a window that is backwards, negative,
+        past the end, or too short to hold a clip is treated as no window at
+        all. Getting this wrong silently produces "no kills in this recording"
+        for a file that is full of them, which is the least debuggable failure
+        this job has.
+        """
+        total = float(info.get("duration") or 0.0)
+        try:
+            a = float(self.options.get("scan_start") or 0.0)
+            b = float(self.options.get("scan_end") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0, total
+        if not total:
+            return 0.0, 0.0
+        a = max(0.0, min(a, total))
+        b = total if b <= 0 else max(0.0, min(b, total))
+        if b - a < self.MIN_WINDOW:
+            if a or b < total:
+                log.warning("the chosen part of %s is only %.0fs long, which "
+                            "is too short to clip -- reading all of it instead",
+                            self.source.name, b - a)
+            return 0.0, total
+        return a, b
+
+    def _trim_cached(self, cached: list | None) -> list | None:
+        """Cached kills, cut down to the window. -> the list, or None.
+
+        A CACHED SCAN COVERS THE WHOLE FILE. Reusing it inside a window would
+        plan clips from the part the user deliberately left out -- and the
+        cache is keyed on the recording rather than on the window, so this is
+        the normal case the second time a file is clipped, not an edge one.
+        """
+        if not cached or self.win_whole:
+            return cached
+        kept = [k for k in cached
+                if self.win_start <= float(k.get("time") or 0.0) <= self.win_end]
+        log.info("%d of %d cached kills are inside the chosen part",
+                 len(kept), len(cached))
+        return kept
+
     def _probe_for_demo(self, prof, opt: dict, info: dict) -> dict | None:
         """Read a few minutes, then take the whole match from the demo it finds.
 
@@ -913,7 +1014,10 @@ class ClipJob:
             return None
         if opt.get("kills"):
             return None                 # a cached scan is already free
-        total = float(info.get("duration") or 0)
+        # The window, not the file: the probe reads the FIRST few minutes of
+        # whatever is being clipped, and on a file holding two games the first
+        # few minutes of the file can be the other one.
+        total = (self.win_end or float(info.get("duration") or 0)) - self.win_start
         if total <= self.PROBE_SECONDS * 1.5:
             return None                 # short enough that a full read is cheap
         folder = cs2_demo.demo_folder(str(opt.get("demo_folder") or ""))
@@ -943,17 +1047,17 @@ class ClipJob:
                               f"{d} of {t} chunks")
         # The probe reads a window, not the recording, which changes the
         # estimate by an order of magnitude on a two-hour stream.
-        self._set(scan_seconds=min(self.PROBE_SECONDS,
-                                   float(info.get("duration") or 0.0)))
+        self._set(scan_seconds=min(self.PROBE_SECONDS, total))
         try:
             found = detect.scan(self.source, prof, progress=prog,
                                 cancelled=lambda: self._cancel.is_set(),
-                                duration=self.PROBE_SECONDS)
+                                duration=min(self.PROBE_SECONDS, total),
+                                start=self.win_start)
         except detect.Cancelled:
             raise
         except Exception as e:  # noqa: BLE001
             log.info("the probe scan failed (%s); reading the whole recording", e)
-            self._set(scan_seconds=float(info.get("duration") or 0.0))
+            self._set(scan_seconds=total)
             return None
         if self._cancel.is_set():
             raise detect.Cancelled("cancelled")
@@ -976,7 +1080,7 @@ class ClipJob:
             # fifth too pessimistic -- measured on a 111-minute recording:
             # 13m24s claimed against 10m54s actual, converging only near the
             # end. Reading the whole file is new work, so it is timed as such.
-            self._set(scan_seconds=float(info.get("duration") or 0.0),
+            self._set(scan_seconds=total,
                       step_started=time.time(), done=0, total=1)
             return None
         log.info("the demo was found from the first %.0f minutes, so the rest of "

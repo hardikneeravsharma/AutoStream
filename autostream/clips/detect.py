@@ -234,22 +234,31 @@ def scan_span(video: Path, profile: Profile, start: float, duration: float,
 def scan(video: Path, profile: Profile, *,
          progress: Callable[[int, int], None] | None = None,
          cancelled: Callable[[], bool] | None = None,
-         duration: float | None = None) -> list[Kill]:
-    """Scan a whole recording for kill markers. -> kills in time order."""
+         duration: float | None = None, start: float = 0.0) -> list[Kill]:
+    """Scan a recording for kill markers. -> kills in time order.
+
+    `start` and `duration` are a WINDOW into the file: read `duration`
+    seconds beginning at `start`. One recording routinely holds more than one
+    game -- and a menu, a warm-up and the tail of the last match besides -- and
+    reading the part that matters is the difference between a four-minute run
+    and a forty-minute one. Every Kill still carries its time in the file, so
+    nothing downstream needs to know a window was used.
+    """
     video = Path(video)
     info = media_info(video)
     total = duration if duration is not None else info["duration"]
     if not total:
         return []
+    start = max(0.0, float(start))
 
     if profile.mode == "killfeed":
-        return scan_killfeed(video, profile, total, progress, cancelled)
+        return scan_killfeed(video, profile, total, progress, cancelled, start)
     if profile.mode == "feedbar":
         return scan_feedbar(video, profile, total, info["height"], progress,
-                            cancelled)
+                            cancelled, start)
     if profile.mode == "cardcount":
         return scan_cardcount(video, profile, total, info["height"], progress,
-                              cancelled)
+                              cancelled, start)
 
     if info["height"] < profile.ref_height:
         # Not fatal: upscaling a smaller frame still matches, just with less to
@@ -265,9 +274,10 @@ def scan(video: Path, profile: Profile, *,
              geom[0], geom[1])
 
     spans = []
-    t = 0.0
-    while t < total:
-        spans.append((t, min(CHUNK_SECONDS, total - t)))
+    t = start
+    end = start + total
+    while t < end:
+        spans.append((t, min(CHUNK_SECONDS, end - t)))
         t += CHUNK_SECONDS
 
     done = 0
@@ -315,7 +325,8 @@ def scan(video: Path, profile: Profile, *,
 
 def scan_killfeed(video: Path, profile: Profile, total: float,
                   progress: Callable[[int, int], None] | None,
-                  cancelled: Callable[[], bool] | None) -> list[Kill]:
+                  cancelled: Callable[[], bool] | None,
+                  start: float = 0.0) -> list[Kill]:
     """Kills read out of the feed rather than matched as a glyph.
 
     Kept behind the same signature as the template path so everything
@@ -329,7 +340,7 @@ def scan_killfeed(video: Path, profile: Profile, total: float,
 
     log.info("reading the %s kill feed for %r", profile.label, profile.player)
     events = killfeed.scan(video, profile.band, profile.player,
-                           duration=total, fps=profile.scan_fps,
+                           duration=total, start=start, fps=profile.scan_fps,
                            progress=progress, cancelled=cancelled)
     if cancelled and cancelled():
         raise Cancelled("scan cancelled")
@@ -358,7 +369,8 @@ def scan_killfeed(video: Path, profile: Profile, total: float,
 
 def scan_feedbar(video: Path, profile: Profile, total: float, height: int,
                  progress: Callable[[int, int], None] | None,
-                 cancelled: Callable[[], bool] | None) -> list[Kill]:
+                 cancelled: Callable[[], bool] | None,
+                 start: float = 0.0) -> list[Kill]:
     """Kills read off the feed's coloured bars -- no OCR, no in-game name.
 
     Same signature as the template path, so bursts, windows, the tail
@@ -368,6 +380,7 @@ def scan_feedbar(video: Path, profile: Profile, total: float, height: int,
 
     log.info("reading the %s kill feed bars", profile.label)
     events = valorant_feed.scan(video, profile.band, duration=total,
+                                start=start,
                                 fps=profile.scan_fps, frame_height=height,
                                 progress=progress, cancelled=cancelled)
     if cancelled and cancelled():
@@ -397,7 +410,8 @@ def scan_feedbar(video: Path, profile: Profile, total: float, height: int,
 
 def scan_cardcount(video: Path, profile: Profile, total: float, height: int,
                    progress: Callable[[int, int], None] | None,
-                   cancelled: Callable[[], bool] | None) -> list[Kill]:
+                   cancelled: Callable[[], bool] | None,
+                   start: float = 0.0) -> list[Kill]:
     """Kills read off CS2's round kill tally -- no OCR, no in-game name.
 
     Same signature as the template path, so bursts, windows, the tail
@@ -410,7 +424,7 @@ def scan_cardcount(video: Path, profile: Profile, total: float, height: int,
     if hue is None:
         # Measured off this recording rather than asked for, then cached so
         # only the first scan of the game ever pays for it.
-        hue = cs2_cards.measure_hue(video, total)
+        hue = cs2_cards.measure_hue(video, total, start=start)
         if hue is None:
             raise RuntimeError(
                 f"Could not work out your {profile.label} HUD colour from this "
@@ -419,7 +433,8 @@ def scan_cardcount(video: Path, profile: Profile, total: float, height: int,
         from .profiles import remember
         remember(profile.key, hud_hue=hue)
 
-    events = cs2_cards.scan(video, duration=total, fps=profile.scan_fps,
+    events = cs2_cards.scan(video, duration=total, start=start,
+                            fps=profile.scan_fps,
                             hue=hue, frame_height=height,
                             progress=progress, cancelled=cancelled)
     if cancelled and cancelled():

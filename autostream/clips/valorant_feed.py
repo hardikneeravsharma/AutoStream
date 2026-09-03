@@ -841,7 +841,7 @@ def _span(args) -> list[Row]:
 
 
 def scan(video: Path, band, *, duration: float | None = None,
-         fps: float = SAMPLE_FPS, chunk: float = 120.0,
+         start: float = 0.0, fps: float = SAMPLE_FPS, chunk: float = 120.0,
          frame_height: int = REF_HEIGHT,
          progress: Callable[[int, int], None] | None = None,
          cancelled: Callable[[], bool] | None = None) -> list[Event]:
@@ -856,9 +856,13 @@ def scan(video: Path, band, *, duration: float | None = None,
 
     total = duration if duration is not None else media_info(video)["duration"]
     _sweep_stale_temp()
-    spans, t = [], 0.0
-    while t < total:
-        spans.append((t, min(chunk, total - t)))
+    # `start` shifts the window without changing anything downstream: every
+    # event carries its position in the RECORDING, so a scan of the last forty
+    # minutes of a file produces times in that file's own clock.
+    end = start + total
+    spans, t = [], float(start)
+    while t < end:
+        spans.append((t, min(chunk, end - t)))
         t += chunk
 
     seen: list[Row] = []

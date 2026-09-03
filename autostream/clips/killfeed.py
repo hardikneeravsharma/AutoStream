@@ -61,7 +61,6 @@ CALIBRATION
 from __future__ import annotations
 
 import difflib
-import functools
 import logging
 import os
 import re
@@ -73,38 +72,19 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import deps
 from .tools import _NO_WINDOW, binary, has_cuda
 
 log = logging.getLogger("autostream.clips.killfeed")
 
 TESSERACT_HINT = "winget install --id UB-Mannheim.TesseractOCR"
 
-
-class TesseractMissing(RuntimeError):
-    pass
-
-
-@functools.lru_cache(maxsize=1)
-def tesseract() -> str:
-    """Where Tesseract is.
-
-    Not tools.binary(): that one searches ffmpeg's install locations and its
-    failure message tells you to install ffmpeg, which would be actively
-    misleading here. The UB-Mannheim installer -- the usual Windows build --
-    does not put itself on PATH, so its own directory has to be checked.
-    """
-    found = shutil.which("tesseract")
-    if found:
-        return found
-    for root in (Path(r"C:/Program Files/Tesseract-OCR"),
-                 Path(r"C:/Program Files (x86)/Tesseract-OCR"),
-                 Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/Tesseract-OCR"):
-        exe = root / ("tesseract.exe" if os.name == "nt" else "tesseract")
-        if exe.is_file():
-            return str(exe)
-    raise TesseractMissing(
-        f"Tesseract OCR was not found, and reading the kill feed needs it. "
-        f"Install it with:  {TESSERACT_HINT}\nThen reopen AutoStream.")
+# Finding it lives in deps.py, next to ffmpeg's discovery and the installer
+# that puts it there -- so the Clips page can ask the same question BEFORE a
+# run rather than discovering the answer several minutes into one. The names
+# stay here because this is where every caller already looks for them.
+TesseractMissing = deps.ToolMissing
+tesseract = deps.tesseract
 
 
 # 4x, and greyscale is NOT an option. Measured against known frames: 4x colour
@@ -591,7 +571,8 @@ def _extract_pair(video: Path, band, start: float, duration: float,
 
 
 def scan_with_hud(video: Path, band, player: str, *,
-                  duration: float | None = None, fps: float = SAMPLE_FPS,
+                  duration: float | None = None, start: float = 0.0,
+                  fps: float = SAMPLE_FPS,
                   chunk: float = 120.0, workers: int = 0,
                   hud_regions: dict | None = None,
                   progress=None, cancelled=None):
@@ -606,10 +587,13 @@ def scan_with_hud(video: Path, band, player: str, *,
     workers = workers or default_workers()
     _sweep_stale_temp()
 
+    # `start` moves the window without changing anything downstream: every
+    # sighting and every reading carries its position in the RECORDING.
+    end = start + total
     spans = []
-    t = 0.0
-    while t < total:
-        spans.append((t, min(chunk, total - t)))
+    t = float(start)
+    while t < end:
+        spans.append((t, min(chunk, end - t)))
         t += chunk
 
     seen: list[Sighting] = []
@@ -813,7 +797,8 @@ def collapse(sightings: list[Sighting]) -> list[FeedEvent]:
 
 
 def scan(video: Path, band, player: str, *, duration: float | None = None,
-         fps: float = SAMPLE_FPS, chunk: float = 120.0, workers: int = 0,
+         start: float = 0.0, fps: float = SAMPLE_FPS, chunk: float = 120.0,
+         workers: int = 0,
          progress=None, cancelled=None) -> list[FeedEvent]:
     """Read the whole recording's feed. -> events in time order.
 
@@ -825,10 +810,14 @@ def scan(video: Path, band, player: str, *, duration: float | None = None,
     total = duration if duration is not None else media_info(video)["duration"]
     workers = workers or default_workers()
     _sweep_stale_temp()
+    # `start` moves the window. Every sighting keeps its position in the
+    # RECORDING, so a scan of one game inside a two-game file still produces
+    # times that file's own clock agrees with.
+    end = start + total
     spans = []
-    t = 0.0
-    while t < total:
-        spans.append((t, min(chunk, total - t)))
+    t = float(start)
+    while t < end:
+        spans.append((t, min(chunk, end - t)))
         t += chunk
 
     seen: list[Sighting] = []

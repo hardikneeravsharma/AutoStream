@@ -19,7 +19,7 @@ import sys
 
 log = logging.getLogger("autostream.clips")
 
-__all__ = ["available", "status", "set_ffmpeg_path", "runner"]
+__all__ = ["available", "status", "set_ffmpeg_path", "runner", "ocr_ready"]
 
 _runner = None
 
@@ -75,11 +75,29 @@ def status() -> dict:
         missing.append("ffmpeg")
 
     out: dict = {"ok": not missing, "missing": missing, "detail": detail}
+
+    # THE OUTSIDE TOOLS, REPORTED WHETHER OR NOT ANYTHING IS WRONG. Tesseract
+    # is deliberately NOT added to `missing`: without it exactly one family of
+    # games cannot be read, and folding that into the page's "one thing
+    # missing" card would tell every Delta Force user that the clipper does
+    # not work when it works perfectly. The page decides what to say with it.
+    from . import deps
+
+    out["tools"] = deps.state()
+    out["ocr"] = deps.have_tesseract() and deps.have_pytesseract()
+
     if not missing:
         from .tools import binary, has_nvenc
         out["ffmpeg"] = binary("ffmpeg")
         out["nvenc"] = has_nvenc()
     return out
+
+
+def ocr_ready() -> bool:
+    """Can a kill feed be read on this machine right now?"""
+    from . import deps
+
+    return deps.ocr_ready()
 
 
 def runner():
