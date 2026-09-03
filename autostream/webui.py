@@ -2310,12 +2310,21 @@ class Server:
         return {
             "ok": True, "sent": len(sent), "failed": len(failed),
             "have": len(before),
-            # Counter-Strike does the downloading on its own schedule, and the
-            # file appearing is the only completion signal there is.
-            "hint": (f"Counter-Strike is downloading {len(sent)} match"
-                     f"{'' if len(sent) == 1 else 'es'}. It has to be running, "
-                     f"and the files appear in your replays folder when it is "
-                     f"done - refresh this page then."),
+            # WHAT WAS ACTUALLY DONE, WHICH IS LESS THAN IT SOUNDS. All that
+            # happened is that Windows accepted a steam:// link -- whether
+            # Counter-Strike downloads anything is entirely up to
+            # Counter-Strike, and it was reported here as "downloading N
+            # matches" regardless. A user watched it open the game, play a
+            # replay, and fetch nothing, while this said it was working.
+            #
+            # The file appearing in the replays folder is the only completion
+            # signal there is, so that is what the message points at.
+            "hint": (f"Sent {len(sent)} code{'' if len(sent) == 1 else 's'} to "
+                     f"Counter-Strike. It has to be running, and it decides "
+                     f"what to do with them - so check Watch > Your Matches "
+                     f"for a Download button, and press Refresh here once a "
+                     f"replay has landed. If nothing arrives, downloading it "
+                     f"from that screen by hand does the same job."),
         }
 
     def clips_setname(self, body: dict) -> dict:

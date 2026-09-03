@@ -350,3 +350,154 @@ def test_map_of_reads_the_header_without_parsing(tmp_path):
     p.write_bytes(b"PBDEMS2\x00" + b"\x00" * 40 + b"de_anubis2" + b"\x00" * 900)
     assert cd.map_of(p) == "de_anubis2"
     assert cd.map_of(tmp_path / "missing.dem") == ""
+
+
+# ============================================ which match, decided by the clock
+#
+# FROM A REAL FAILURE. A 46-minute recording, sixteen demos in the folder, and
+# the right one sitting there unread: the probe found six kills, the correct
+# demo aligned four of them PERFECTLY (share 1.00), and it was thrown away for
+# being two short of MIN_MATCHED.
+#
+# The floor exists to stop an unrelated demo winning on coincidence, and it
+# cannot be simply lowered: on those same six kills a match from 22 August and
+# one from 22 NOVEMBER both scored 5 at share 0.62. Nothing in those numbers
+# separates them.
+#
+# Counter-Strike writes the match time in a .dem.info beside every demo, and it
+# was going unread. That separates them instantly.
+
+import struct  # noqa: E402
+
+
+def _info_blob(when: int) -> bytes:
+    """A .dem.info-shaped blob carrying `when` as a protobuf varint."""
+    out = bytearray(b"\x08\x96\x01\x12\x20")      # some plausible leading fields
+    out.append(0x28)                              # field 5, varint
+    v = when
+    while True:
+        b = v & 0x7F
+        v >>= 7
+        out.append(b | (0x80 if v else 0))
+        if not v:
+            break
+    out += b"\x32\x10" + b"\x00" * 16
+    return bytes(out)
+
+
+def _demo_with_info(tmp_path, name: str, when: int):
+    dem = tmp_path / f"{name}.dem"
+    dem.write_bytes(b"not a real demo")
+    info = tmp_path / f"{name}.dem.info"
+    info.write_bytes(_info_blob(when))
+    return dem
+
+
+def test_the_match_time_is_read_out_of_the_info_file(tmp_path):
+    from autostream.clips import cs2_demo
+
+    played = int(__import__("time").time()) - 3600
+    dem = _demo_with_info(tmp_path, "match730_1", played)
+    assert cs2_demo.match_time(dem) == pytest.approx(played, abs=1)
+
+
+def test_an_unreadable_info_is_not_an_error(tmp_path):
+    """An older .info may carry no timestamp, and the caller then falls back to
+    the fingerprint alone rather than refusing to look."""
+    from autostream.clips import cs2_demo
+
+    dem = tmp_path / "match730_x.dem"
+    dem.write_bytes(b"x")
+    assert cs2_demo.match_time(dem) is None
+    (tmp_path / "match730_x.dem.info").write_bytes(b"\x00\x01\x02")
+    assert cs2_demo.match_time(dem) is None
+
+
+def test_only_the_demos_played_during_the_recording_are_offered(tmp_path):
+    """The whole point: sixteen demos in a folder, and a directory listing says
+    which two belong to a 46-minute recording."""
+    import time as _t
+
+    from autostream.clips import cs2_demo
+
+    started = _t.time() - 7 * 86400
+    _demo_with_info(tmp_path, "during_1", int(started + 60))     # a minute in
+    _demo_with_info(tmp_path, "during_2", int(started + 2400))   # 40 minutes in
+    _demo_with_info(tmp_path, "before", int(started - 86400))    # the day before
+    _demo_with_info(tmp_path, "after", int(started + 86400))     # the day after
+    _demo_with_info(tmp_path, "months_later", int(started + 90 * 86400))
+
+    got = [p.name for p in cs2_demo.demos_for_recording(tmp_path, started, 46 * 60)]
+    assert sorted(got) == ["during_1.dem", "during_2.dem"]
+
+
+def test_a_recording_with_no_match_says_none_rather_than_hoping(tmp_path):
+    """It used to answer "have" for any demo newer than the recording, and told
+    a user their replay was on disk when all sixteen belonged to other
+    matches -- who then spent twelve minutes proving it."""
+    import time as _t
+
+    from autostream.clips import cs2_demo
+
+    started = _t.time() - 7 * 86400
+    _demo_with_info(tmp_path, "another_day", int(started + 5 * 86400))
+    assert cs2_demo.demo_state(tmp_path, started, 46 * 60)["state"] == "none"
+
+
+def test_a_match_in_the_window_with_no_demo_is_listed(tmp_path):
+    """The precise meaning of "listed": Counter-Strike knows about this match
+    and has not finished downloading it."""
+    import time as _t
+
+    from autostream.clips import cs2_demo
+
+    started = _t.time() - 7 * 86400
+    (tmp_path / "m.dem.info").write_bytes(_info_blob(int(started + 60)))
+    assert cs2_demo.demo_state(tmp_path, started, 46 * 60)["state"] == "listed"
+
+
+# ------------------------------------------- the clock constrains WHERE, too
+
+def test_an_offset_the_clock_forbids_is_refused():
+    """Lowering the floor for a dated demo is only safe because of this. Without
+    it, the SECOND match of the same session won on five coincidental timings,
+    under another player's name, at an offset placing the match fourteen
+    minutes before the recording started."""
+    from autostream.clips import cs2_demo
+
+    demo = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
+    vod = [x + 100.0 for x in demo]
+    good = cs2_demo.align(demo, vod, expect_offset=100.0)
+    assert good.ok, good.why
+
+    bad = cs2_demo.align(demo, vod, expect_offset=100.0 + 3 * cs2_demo.OFFSET_TOL)
+    assert not bad.ok
+    assert "from where this match was played" in bad.why
+
+
+def test_a_dated_demo_may_align_on_fewer_kills():
+    """Four kills that line up perfectly are enough to place a match the clock
+    has already identified. Six were demanded, and the right demo was thrown
+    away for having four."""
+    from autostream.clips import cs2_demo
+
+    demo = [10.0, 20.0, 30.0, 40.0, 100.0, 200.0, 300.0, 400.0, 500.0, 600.0]
+    vod = [x + 50.0 for x in demo[:4]]
+    strict = cs2_demo.align(demo, vod)
+    loose = cs2_demo.align(demo, vod, floor=cs2_demo.MIN_MATCHED_DATED,
+                           expect_offset=50.0)
+    assert not strict.ok, "the strict floor is what rejected the right demo"
+    assert loose.ok and loose.matched == 4
+
+
+def test_identify_does_not_break_a_tie_alphabetically():
+    """Two players in one demo routinely align the same NUMBER of a handful of
+    probe kills -- measured, the local player and a team-mate both hit 4 -- and
+    the tie went to whoever came first out of players(). That is alphabetical
+    order deciding whose kills get clipped."""
+    from autostream.clips import cs2_demo
+
+    import inspect
+    src = inspect.getsource(cs2_demo.identify)
+    assert "rank(" in src, "identify still compares on matched alone"
+    assert "expect_offset" in src
