@@ -240,3 +240,170 @@ def test_a_picked_file_carries_the_scan_rate():
     body = _func("clip_useLocal")
     assert "scan_rate: g.scan_rate" in body
     assert "demos: g.demos" in body
+
+
+# ================================================================= THE CLASS
+#
+# Three times now the same shape: an object describing the selected recording
+# is assembled field by field in one place, a field is added to what the server
+# sends, and the other place is not updated. Nothing raises -- every one of
+# those fields is falsy-when-absent and plausible-when-stale, so the page just
+# answers wrong.
+#
+#   1.10.0  has_recording  missing from a picked file  -> Make clips dead
+#   1.11.0  scan_rate      missing from a picked file  -> 9m quoted for 40m
+#           ready          computed unresolved         -> Make clips dead again
+#
+# These tests are the audit, kept.
+
+def _pick_literal() -> str:
+    body = _func("clip_useLocal")
+    i = body.index("clip_state.pick = {")
+    j = body.index("{", i)
+    depth = 0
+    for k in range(j, len(body)):
+        if body[k] == "{":
+            depth += 1
+        elif body[k] == "}":
+            depth -= 1
+            if depth == 0:
+                return body[j:k + 1]
+    raise AssertionError("unbalanced")
+
+
+# What the games list sends about a game, and which of those the picked-file
+# object has to carry. Anything the server learns about a game that the page
+# reads off the selection belongs here.
+GAME_FIELDS = ("can_scan", "scan_mode", "rounds", "demos", "scan_rate",
+               "counts_assists", "player", "blocked")
+
+
+def test_a_picked_file_carries_every_field_the_games_list_describes():
+    """The audit that found scan_rate. A field the server sends about a game
+    and the pick omits reads as undefined -- falsy, and therefore a wrong
+    answer rather than an error."""
+    import re
+
+    literal = _pick_literal()
+    have = set(re.findall(r"[{,]\s*(\w+)\s*:", literal))
+    have |= set(re.findall(r"^\s*(\w+):", literal, re.M))
+    missing = [f for f in GAME_FIELDS if f not in have]
+    assert not missing, (
+        f"clip_useLocal does not copy {missing} from the games list. Every one "
+        f"of those is read off the pick somewhere, and an absent key is falsy "
+        f"-- which is a wrong answer, not an error")
+
+
+def test_switching_game_refreshes_every_field_that_describes_it():
+    """The same audit, in the other direction. Retargeting used to refresh five
+    fields and leave the rest describing the game before -- so Counter-Strike
+    inherited Delta Force's scan rate, four times too fast."""
+    body = _func("clip_useGameLocally")
+    for f in ("rounds", "scan_mode", "can_scan", "scan_rate", "demos",
+              "needs_ocr", "counts_assists"):
+        assert f"s.{f} =" in body, (
+            f"s.{f} is left describing the previous game after a switch")
+
+
+def test_the_two_payloads_answer_can_this_be_scanned_the_same_way():
+    """The games list and the profile rows both describe a game, and the page
+    reads whichever it has. They disagreed: profiles.listing() computed
+    exists() on an UNRESOLVED profile, so a kill-feed game whose in-game name
+    was set came back not-ready and greyed out Make clips the moment it was
+    chosen from the dropdown."""
+    from autostream.clips import profiles
+
+    app = webui.Server.__new__(webui.Server)
+    rows = {r["key"]: r for r in app._profile_rows()}
+    for row in app.clips_games()["games"]:
+        other = rows.get(row["game_key"])
+        assert other, row["game_key"]
+        assert other["ready"] == row["can_scan"], (
+            f"{row['game']}: the games list says can_scan={row['can_scan']} "
+            f"and the profile listing says ready={other['ready']}")
+        for f in ("scan_rate", "needs_ocr", "demos", "rounds"):
+            assert other[f] == row[f], f"{row['game']}: {f} disagrees"
+
+
+def test_the_profile_listing_resolves_the_in_game_name():
+    """The root of it. load_all() reads the profile files; the name lives in
+    games.yaml and only for_game() merges it, so exists() on an unresolved
+    kill-feed profile is False even when the name is plainly set."""
+    from autostream.clips import profiles
+
+    for row in profiles.listing():
+        prof = profiles.for_game(row["key"])
+        if prof is None:
+            continue
+        assert row["ready"] == prof.exists(), (
+            f"{row['label']}: listing says ready={row['ready']}, the resolved "
+            f"profile says {prof.exists()}")
+        assert row["player"] == prof.player
+
+
+def test_a_picked_file_can_have_its_game_changed():
+    """One file routinely holds more than one game -- the whole reason the
+    filmstrip exists. The control that changes it was only ever shown for a
+    recorded session, though clip_setGame already had the branch for a picked
+    one."""
+    body = _func("clip_renderOptions")
+    assert "|| !!s.local" in body, (
+        "the game switcher is hidden for picked files, so the only way to "
+        "change the game is to re-pick the video")
+
+
+# Fields a recorded session has and a picked file cannot. Listed rather than
+# left to be re-derived: an audit that has to be repeated from scratch every
+# time is an audit nobody repeats.
+SESSION_ONLY = {
+    # OBS was already recording before the session began. There is no session
+    # behind a picked file, so there is nothing for it to predate.
+    "game_uncertain": "no session to have started late",
+    "pre_session_seconds": "same",
+    # Which games were played during the session. Unknowable for a file
+    # somebody handed us -- which is what the filmstrip and the game switcher
+    # are for instead.
+    "games": "the journal's record of a session",
+    # A starting rectangle for a game with NO profile yet. A picked file's game
+    # is chosen from a list of games that have one, so this is always None.
+    "seed": "only offered for an uncalibrated game",
+}
+
+
+def test_the_only_gaps_left_are_ones_a_picked_file_cannot_have():
+    """The audit, kept. Every field the page reads off the selection is either
+    supplied for a picked file, set at runtime, or listed above with a reason.
+
+    A new field arriving on a history row and not on a picked file has been
+    the same bug three times, and it never raises."""
+    import re
+
+    js = clips_ui.CLIPS_JS
+    reads = set()
+    for m in re.finditer(r"\bvar\s+(\w+)\s*=\s*clip_state\.pick\b", js):
+        name = m.group(1)
+        start = js.rfind("function ", 0, m.start())
+        b = js.index("{", start)
+        depth = 0
+        for k in range(b, len(js)):
+            if js[k] == "{":
+                depth += 1
+            elif js[k] == "}":
+                depth -= 1
+                if depth == 0:
+                    reads |= set(re.findall(rf"\b{name}\.(\w+)", js[start:k]))
+                    break
+    reads |= set(re.findall(r"clip_state\.pick\.(\w+)", js))
+
+    literal = _pick_literal()
+    supplied = set(re.findall(r"[{,]\s*(\w+)\s*:", literal))
+    supplied |= set(re.findall(r"^\s*(\w+):", literal, re.M))
+    # Filled in after the file is probed, or as the page runs.
+    supplied |= {"demo_state", "demo_file", "has_demo", "match_state",
+                 "match_count", "match_why", "duration", "started"}
+
+    unexplained = sorted(reads - supplied - set(SESSION_ONLY))
+    assert not unexplained, (
+        f"the page reads {unexplained} off the selection, and a picked file "
+        f"supplies none of them. Either copy them in clip_useLocal or add "
+        f"them to SESSION_ONLY with the reason a picked file cannot have them")

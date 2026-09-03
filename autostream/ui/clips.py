@@ -400,7 +400,8 @@ One per line - a long session often covers several matches."></textarea>
     <p class="muted" id="clip-wrongtext"></p>
     <div class="field-inline">
       <select class="select" id="clip-gamefix" aria-label="Correct the game"></select>
-      <button class="btn btn-sm" type="button" data-act="setgame">Use this game</button>
+      <button class="btn btn-sm" type="button" data-act="setgame"
+              id="clip-setgame">Use this game</button>
     </div>
   </div>
 
@@ -475,6 +476,14 @@ One per line - a long session often covers several matches."></textarea>
       <button class="btn btn-ghost btn-sm" type="button" data-act="calibrate">"""
     + _svg("wand")
     + """<span>Calibrate a game</span></button>
+      <!-- Shown only when THIS game is the one blocked on OCR. The reason
+           above says "AutoStream can install it for you", and a promise made
+           beside a disabled button should be actionable there rather than
+           somewhere the reader has to go and find. -->
+      <button class="btn btn-primary btn-sm hide" type="button"
+              id="clip-ocr-go" data-act="install-tools">"""
+    + _svg("save")
+    + """<span>Install Tesseract</span></button>
       <button class="btn btn-ghost" type="button" id="clip-review">"""
     + _svg("wand")
     + """<span>Review clips first</span></button>
@@ -976,17 +985,27 @@ function clip_renderOptions() {
 
   var played = (s.games || []).filter(function (g) { return !!g; });
   var multi = played.length > 1;
-  clip_show('clip-wrongwrap', !!s.game_uncertain || multi);
-  if (s.game_uncertain || multi) {
+  /* ALSO FOR A FILE THE USER PICKED. A picked file's game is a guess made from
+     a dropdown before any of it was looked at, and one file routinely holds
+     more than one game -- which is the whole reason the filmstrip above exists.
+     Changing it meant scrolling back and pressing "Use this video" again.
+     clip_setGame already had a branch for a local pick; nothing ever showed
+     the control that reaches it. */
+  clip_show('clip-wrongwrap', !!s.game_uncertain || multi || !!s.local);
+  if (s.game_uncertain || multi || s.local) {
     clip_el('clip-wrongtext').textContent = s.game_uncertain
       ? ('OBS was already recording ' + clip_dur(s.pre_session_seconds) +
          ' before this session started, so most of this file is footage AutoStream ' +
          'never saw. It is labelled ' + (s.game || 'unknown') +
          ' because that is what was running at the end. If that is wrong, correct it here.')
-      : ('This session covered ' + played.join(' and ') + '. A scan reads one ' +
+      : multi
+      ? ('This session covered ' + played.join(' and ') + '. A scan reads one ' +
          'game at a time, and this file is set to ' + (s.game || 'unknown') +
          ' because that is what you finished on. Pick another to cut its ' +
-         'highlights instead.');
+         'highlights instead.')
+      : ('This file is being read as ' + (s.game || 'unknown') + '. A scan ' +
+         'reads one game at a time, so if the part you have chosen above is a ' +
+         'different game, set it here and run it again for that stretch.');
     var sel = clip_el('clip-gamefix');
     if (sel) {
       /* The games actually played come first: on a multi-game recording they
@@ -1001,6 +1020,11 @@ function clip_renderOptions() {
                (multi && here ? ' (played this session)' : '') + '</option>';
       }).join('');
       sel.innerHTML = opts || '<option value="">no calibrated games</option>';
+      /* "Use this game" writes the correction back to the stream's record.
+         A picked file has no record, and choosing from the dropdown has
+         already retargeted the options -- so a button that looks like it does
+         something more is a button that appears to do nothing. */
+      clip_show('clip-setgame', !s.local);
     }
   }
 
@@ -1052,6 +1076,12 @@ function clip_renderOptions() {
      with itself. Whatever stops one has to stop the other. */
   var rev = clip_el('clip-review');
   if (rev) rev.disabled = !!why;
+  /* The fix for THIS reason, beside this reason. Only when OCR is what is in
+     the way -- a missing in-game name is typed in, not installed, and offering
+     an install there would send someone to the wrong place. */
+  clip_show('clip-ocr-go', !!s.needs_ocr && !!why);
+  var ocrBtn = clip_el('clip-ocr-go');
+  if (ocrBtn) ocrBtn.disabled = !!clip_state.toolsBusy;
   if (hint) hint.textContent = why || note;
 }
 
@@ -3360,7 +3390,7 @@ function clip_useLocal() {
        43-minute selection was advertised at 9 minutes of scanning and took
        40. This is the same shape as the has_recording bug above -- a key the
        games list provides and this object forgot. */
-    scan_rate: g.scan_rate, demos: g.demos,
+    scan_rate: g.scan_rate, demos: g.demos, needs_ocr: g.needs_ocr,
     counts_assists: g.counts_assists, blocked: g.blocked, player: g.player,
     started: f.started || null, display_started: null, local: true
   };
@@ -3559,11 +3589,28 @@ function clip_useGameLocally(key, label) {
   s.game_key = key;
   s.game = label || (prof && prof.label) || key;
   if (prof) {
+    /* EVERY FIELD THAT DESCRIBES THE GAME, not the handful this started with.
+       Retargeting used to refresh five of them and leave the rest describing
+       the game before -- so switching to Counter-Strike kept Delta Force's
+       scan rate (a 4x optimistic estimate), its demo answer and its OCR
+       answer. The same shape as the fields a picked file forgot to copy: what
+       is stale is invisible, because every one of them is a plausible value
+       for some game. */
     s.rounds = !!prof.rounds;
     s.scan_mode = prof.mode || s.scan_mode;
     s.profile = prof.label;
     s.can_scan = !!prof.ready;
-    s.blocked = prof.ready ? '' : s.blocked;
+    s.blocked = prof.ready ? '' : (prof.blocked || s.blocked);
+    s.needs_ocr = !!prof.needs_ocr;
+    s.scan_rate = prof.scan_rate;
+    s.demos = !!prof.demos;
+    s.counts_assists = !!prof.counts_assists;
+    s.player = prof.player || '';
+    /* The demo question belongs to the GAME as much as to the file, so a
+       recording re-pointed at Counter-Strike has to be asked again. */
+    s.demo_state = null;
+    s.has_demo = null;
+    if (s.local) clip_probeLocal();
   }
   clip_renderOptions();
 }
@@ -3574,10 +3621,12 @@ async function clip_setGame() {
   if (!s || !sel || !sel.value) return;
   var label = sel.options[sel.selectedIndex].getAttribute('data-label') || sel.value;
   if (s.local) {
-    /* Nothing to correct in the journal: this file was never a session. */
-    s.game_key = sel.value;
-    s.game = label;
-    clip_renderOptions();
+    /* Nothing to correct in the journal: this file was never a session, and
+       choosing from the dropdown has already retargeted the options. Routed
+       through the same function rather than setting two fields here -- doing
+       it by hand left the scan rate, the demo answer and the OCR answer
+       describing the game before. */
+    clip_useGameLocally(sel.value, label);
     return;
   }
   var r = await API.post('/api/clips/setgame', {
