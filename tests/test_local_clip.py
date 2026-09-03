@@ -164,3 +164,41 @@ def test_a_game_with_no_replays_is_not_asked_about_demos(app, tmp_path,
     out = app.clips_probe({"path": str(f), "game_key": "deltaforceclient.exe"})
     assert out["demo_state"] is None
     assert out["has_demo"] is None
+
+
+# ------------------------------------------- the demo panel, for a picked file
+#
+# demo_state came back "have" for a real recording, and the page showed nothing
+# at all -- the panel only ever appeared when something was MISSING. That works
+# for a recorded stream, whose row in the list carries a "demo on disk" tag,
+# but a picked file has no row, so the one arrangement where a replay halves
+# the run reported nothing.
+
+def test_the_demo_panel_is_shown_even_when_a_replay_was_found():
+    body = _func("clip_renderDemoBox")
+    assert "s.demo_state !== 'have'" not in body, (
+        "hiding the panel on 'have' leaves a picked file with no way to know "
+        "a replay was found, because it has no row in the list to carry a tag")
+    assert "!!s.demo_state" in body
+
+
+def test_the_found_case_says_which_replay_and_drops_the_code_box():
+    body = _func("clip_renderDemoBox")
+    assert "demo_file" in body, "say WHICH replay, so a wrong one is spottable"
+    assert "clip-democodes" in body and "clip-demoask" in body, (
+        "there is nothing to ask for once the replay is on disk")
+
+
+def test_the_progress_card_explains_which_path_the_run_took():
+    from autostream.ui import clips as ui
+
+    assert 'id="clip-prog-demo"' in ui.CLIPS_HTML
+    assert "j.demo_note" in ui.CLIPS_JS
+
+
+def test_the_scan_estimate_comes_from_the_rate_not_a_rule_of_thumb():
+    """It said 'roughly a minute per 10 minutes' for every killfeed run and
+    quoted 4 minutes for one that took 30."""
+    body = _func("clip_renderOptions")
+    assert "s.scan_rate" in body
+    assert "span / 10" not in body

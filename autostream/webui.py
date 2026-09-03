@@ -962,6 +962,21 @@ class Server:
         return {"ok": True, "count": len(clips)}
 
     @staticmethod
+    def _scan_rate(prof) -> float:
+        """How fast this profile reads footage, for the page's estimate.
+
+        Round mode is a different and much slower pass -- the scoreboard is
+        read alongside the feed -- so a profile that supports rounds is quoted
+        at that rate. The page would otherwise repeat a rule of thumb that was
+        three times too optimistic for exactly the game people use it on.
+        """
+        if prof is None:
+            return 0.0
+        from .clips.jobs import scan_rate
+
+        return scan_rate(prof.mode, bool(getattr(prof, "rounds", False)))
+
+    @staticmethod
     def _scan_ready(prof) -> tuple[bool, str, bool]:
         """Can this profile be run on THIS machine? -> (yes, why not, ocr).
 
@@ -1032,6 +1047,10 @@ class Server:
             r["scan_mode"] = prof.mode if prof else None
             # Whether this game is clipped by round rather than by kill burst.
             r["rounds"] = bool(prof and getattr(prof, "rounds", False))
+            # Seconds of recording read per second of work, so the page can
+            # quote a real number for the part of the file that is selected
+            # rather than a rule of thumb that is wrong for this mode.
+            r["scan_rate"] = self._scan_rate(prof)
             r["blocked"] = why
             # Whether a replay for this match looks to be on disk. Only games
             # that HAVE replays get an answer -- "no demo" against Valorant
@@ -2212,6 +2231,7 @@ class Server:
                 "needs_ocr": ocr,
                 "demos": bool(getattr(prof, "demos", False)),
                 "scan_mode": prof.mode,
+                "scan_rate": self._scan_rate(prof),
                 "rounds": bool(getattr(prof, "rounds", False)),
                 "counts_assists": bool(prof.counts_assists),
                 "blocked": why,
