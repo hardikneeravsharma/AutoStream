@@ -79,9 +79,9 @@ if ($initPy -match '__version__\s*=\s*"([^"]+)"') {
 }
 
 # ---- 2. sanity: does the app import at all? --------------------------
-if ((Invoke-Native $vpy @("-c", "import autostream.__main__, autostream.web, autostream.panel")) -ne 0) {
+if ((Invoke-Native $vpy @("-c", "import autostream.__main__, autostream.web, autostream.tray")) -ne 0) {
     Write-Bad "the package does not import - fix that before building:"
-    Invoke-Native $vpy @("-c", "import autostream.__main__, autostream.web, autostream.panel") -Echo | Out-Null
+    Invoke-Native $vpy @("-c", "import autostream.__main__, autostream.web, autostream.tray") -Echo | Out-Null
     exit 1
 }
 Write-Ok "package imports cleanly"
@@ -343,7 +343,7 @@ Write-Host ""
 Write-Host "  Test it:" -ForegroundColor White
 Write-Host "    .\dist\AutoStream\AutoStream.exe"
 Write-Host ""
-Write-Host "  It runs windowless - look for the tray icon and the panel." -ForegroundColor DarkGray
+Write-Host "  It runs windowless - look for the tray icon." -ForegroundColor DarkGray
 Write-Host "  If nothing appears: dist\AutoStream\logs\crash.log" -ForegroundColor DarkGray
 Write-Host ""
 Write-Warn "SmartScreen warns on first run (unsigned): More info -> Run anyway"
