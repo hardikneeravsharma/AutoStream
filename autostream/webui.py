@@ -2174,6 +2174,19 @@ class Server:
             else:
                 out["demo_state"] = None
                 out["has_demo"] = None
+            # The same question for a game whose record of the match lives on
+            # the publisher's servers rather than in a file. A recorded
+            # session got this answer and a picked file did not, which is the
+            # same gap the demo box had.
+            if prof is not None and getattr(prof, "matches", False):
+                from .clips import valorant_match
+
+                got = valorant_match.state(started, out["duration"])
+                out["match_state"] = got["state"]
+                out["match_count"] = got["matches"]
+                out["match_why"] = got.get("why", "")
+            else:
+                out["match_state"] = None
         return out
 
     def clips_games(self) -> dict:

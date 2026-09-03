@@ -3206,6 +3206,9 @@ async function clip_probeLocal() {
     cur.demo_state = r.demo_state || null;
     cur.demo_file = r.demo_file || null;
     cur.has_demo = r.has_demo;
+    cur.match_state = r.match_state || null;
+    cur.match_count = r.match_count || 0;
+    cur.match_why = r.match_why || '';
     clip_stripOpen();
     clip_renderOptions();
   } catch (e) { /* the run finds the demo by fingerprint regardless */ }
