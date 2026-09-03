@@ -242,8 +242,8 @@ def cmd_scan(_args) -> int:
 
 
 def _engine_loop(engine, tray, interval, log) -> None:
-    """The poll loop. Runs on the main thread, or on a worker thread when the
-    control panel owns the main thread (tkinter requires it)."""
+    """The poll loop, on a worker thread. The main thread belongs to the app
+    window -- see win.run() -- which is what pywebview requires."""
     last_phase = None
     while not engine._stop_requested:  # noqa: SLF001
         try:
@@ -308,19 +308,17 @@ SETUP_LINGER = 10.0
 
 
 def cmd_run(args) -> int:
-    """Main entry: web UI + native window + overlay + tray + engine.
+    """Main entry: web UI + native window + tray + engine.
 
-    Thread layout, because three libraries all want to own a thread:
+    Thread layout, because these libraries all want to own a thread:
       main    - pywebview native window (it insists on the main thread)
       worker  - the engine poll loop
-      worker  - the tkinter overlay panel
       worker  - the HTTP server, the tray icon
     """
     import secrets as _secrets
     import threading
 
     from .engine import Engine
-    from .panel import ControlPanel, available as panel_available
     from .tray import Tray
     from .webui import Server, is_configured
     from .window import MainWindow, available as window_available
@@ -384,16 +382,10 @@ def cmd_run(args) -> int:
     if not window_available():
         log.info("pywebview unavailable - the UI is at %s", server.url())
 
-    # --- overlay panel + tray, only once configured ---
-    pnl = None
+    # --- tray, only once configured ---
     tray = None
     if engine is not None:
-        use_panel = (config.rules.control_panel and panel_available()
-                     and not args.no_panel)
-        pnl = ControlPanel(engine) if use_panel else None
-        if pnl is not None:
-            pnl.open_window = win.request_show
-        tray = Tray(engine, pnl)
+        tray = Tray(engine)
         tray.window = win
         tray.start()
 
@@ -416,11 +408,6 @@ def cmd_run(args) -> int:
                          args=(engine, tray, interval, log),
                          name="autostream-engine", daemon=True).start()
 
-        if pnl is not None:
-            # tkinter is happy off-main as long as every Tk call is on the
-            # thread that created the root, which panel.run() guarantees.
-            threading.Thread(target=_safe_panel, args=(pnl, log),
-                             name="autostream-panel", daemon=True).start()
 
     # blocks until the window is destroyed (or returns at once without pywebview)
     win.run()
@@ -472,13 +459,6 @@ def cmd_run(args) -> int:
     return 0
 
 
-def _safe_panel(pnl, log) -> None:
-    try:
-        pnl.run()
-    except Exception as e:  # noqa: BLE001
-        log.warning("overlay panel unavailable (%s) - tray and window still work", e)
-
-
 # ---------------------------------------------------------------- entry
 
 def main(argv=None) -> int:
@@ -514,10 +494,7 @@ def main(argv=None) -> int:
         ("voice", cmd_voice, "check or download the spoken-hook voice model"),
     ):
         sp = sub.add_parser(name, help=helptext, parents=[common])
-        sp.set_defaults(func=fn, no_panel=False)
-        if name == "run":
-            sp.add_argument("--no-panel", action="store_true",
-                            help="run without the control panel window")
+        sp.set_defaults(func=fn)
         if name == "voice":
             sp.add_argument("--download", action="store_true",
                             help="fetch the Kokoro model (177 MB)")

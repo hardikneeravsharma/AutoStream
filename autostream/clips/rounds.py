@@ -468,6 +468,18 @@ def annotate(rounds: list[Round], readings: Sequence[Reading],
 
 # ------------------------------------------------------------------- labels
 
+def _stand_kills(rd: Round) -> list[float]:
+    """The player's kills made DURING the last stand, not merely in the round.
+
+    A kill scored while the team was still alive says nothing about how the
+    1vN went, and counting it as though it did is how a round whose last stand
+    took five seconds and nobody with it came out labelled ALMOST A 1v4.
+    """
+    if rd.last_stand_at is None:
+        return []
+    return [t for t in rd.kill_times if t >= rd.last_stand_at]
+
+
 def label(rounds: list[Round]) -> list[Round]:
     """Attach every label a round earns, strongest first."""
     for rd in rounds:
@@ -480,14 +492,38 @@ def label(rounds: list[Round]) -> list[Round]:
                 # A 1vN WON needs no kills of its own: defusing under the nose
                 # of two opponents, or running the clock out, is the clip.
                 got.append(f"CLUTCH 1v{n}")
-            elif rd.my_kills >= 1:
+            elif len(_stand_kills(rd)) >= n - 1:
+                # "ALMOST" HAS TO MEAN ALMOST -- one opponent left standing.
+                #
+                # This asked for one kill anywhere in the round, and two real
+                # clips came out of a match labelled ALMOST A 1v4 for rounds
+                # that were neither. Measured against the demo:
+                #
+                #   round 20  the 1v4 lasted 5s, and the round's only kill
+                #             happened 4.5s BEFORE it began -- while the
+                #             team-mates were still alive. Nobody was killed
+                #             during the 1v4 at all.
+                #   round 23  the 1v4 lasted 9s and took one of the four.
+                #
+                # Both promise a near-clutch and deliver a death. One of four
+                # is not almost, and a kill from before the last stand is not
+                # part of it -- so the count is now of kills DURING the stand,
+                # and it has to leave a single opponent alive.
                 got.append(f"ALMOST 1v{n}")
-            # A 1vN LOST with no kills is not a highlight, it is the end of a
-            # bad round. Found by reading a demo, where alive counts are exact:
-            # a real match produced "ALMOST 1v4" for a round in which the
-            # player did nothing at all and then died. The pixel path could
-            # never surface it, because it needed kills to infer the counts in
-            # the first place.
+            elif _stand_kills(rd):
+                # It fell short of "almost" and is still worth watching: a 1v3
+                # taken down to a 1v2 before dying is a fight. LAST ALIVE
+                # rather than a new word, because it is the type the page
+                # already offers as a filter and the honest description of
+                # what happened -- you were the last one alive, against four,
+                # and took one of them.
+                got.append(f"LAST ALIVE 1v{n}")
+            # A 1vN LOST with nothing done during it is not a highlight, it is
+            # the end of a bad round -- and a kill scored BEFORE the team-mates
+            # died is not part of the 1vN at all. Measured on a real match: a
+            # round whose last stand lasted five seconds and took nobody with
+            # it was labelled ALMOST A 1v4 on the strength of a kill 4.5s
+            # before the stand began.
         if ACE_KILLS > rd.my_kills >= MULTI_KILLS:
             got.append(f"{rd.my_kills} KILLS")
         if rd.last_stand_at is not None and (rd.enemies_at_last_stand or 0) < 2:

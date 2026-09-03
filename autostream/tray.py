@@ -40,9 +40,8 @@ def _icon_image(colour):  # pragma: no cover
 class Tray:
     """Runs pystray on its own thread; the engine keeps the main thread."""
 
-    def __init__(self, engine, panel=None):
+    def __init__(self, engine):
         self.engine = engine
-        self.panel = panel
         self.window = None
         self.icon = None
         self._thread = None
@@ -57,8 +56,6 @@ class Tray:
                              None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Open AutoStream", self._open_window, default=True),
-            pystray.MenuItem("Show overlay", self._show_panel,
-                             visible=self.panel is not None),
             pystray.MenuItem(
                 lambda i: "Resume" if self.engine.state.paused else "Pause",
                 self._toggle_pause),
@@ -89,11 +86,6 @@ class Tray:
     def _open_window(self, *_):
         if self.window is not None:
             self.window.request_show()
-
-    def _show_panel(self, *_):
-        # tkinter is not thread-safe; the panel polls this flag on its own thread
-        if self.panel is not None:
-            self.panel.show_requested = True
 
     def _toggle_pause(self, *_):
         self.engine.submit("toggle_pause")

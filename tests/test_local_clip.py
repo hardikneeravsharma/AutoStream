@@ -407,3 +407,43 @@ def test_the_only_gaps_left_are_ones_a_picked_file_cannot_have():
         f"the page reads {unexplained} off the selection, and a picked file "
         f"supplies none of them. Either copy them in clip_useLocal or add "
         f"them to SESSION_ONLY with the reason a picked file cannot have them")
+
+
+# ------------------------------------------- Adjust the cut, on a fresh run
+#
+# FROM THE APP. A run finished, its clips were played from the results card,
+# and Adjust the cut refused with "that run did not keep its recording" -- of a
+# 111-minute recording it had just finished reading, still on disk.
+#
+# clip_state.made holds the clips a PREVIOUS run left for the selected stream.
+# The player is just as often opened on the run that has this second ended, and
+# the folder then does not match, so the source came out empty. The same shape
+# as the picked-file bugs: state assembled in one place and read from another.
+
+def test_the_trim_panel_can_learn_the_run_it_was_opened_on():
+    body = _func("clip_trimSync")
+    assert "clip_runFor(p.folder)" in body, (
+        "clip_state.made only covers a run reached from the stream list; the "
+        "player is also opened straight off the results of the run that just "
+        "finished, and that folder has to be able to answer for itself")
+
+
+def test_opening_the_player_asks_which_recording_the_run_used():
+    body = _func("clip_openPlayer")
+    assert "clip_loadRunFor" in body
+
+
+def test_the_run_lookup_does_not_refetch_on_every_clip_change():
+    """It is consulted on every clip change and the answer cannot move for a
+    finished run. `undefined` means not asked; `null` means asked and there is
+    no answer -- which is what stops the fetch repeating forever."""
+    body = _func("clip_loadRunFor")
+    assert "!== undefined" in body
+
+
+def test_the_refusal_does_not_assert_a_missing_recording_it_has_not_checked():
+    """The old message stated as fact that the recording was gone, to somebody
+    whose recording was plainly there."""
+    body = _func("clip_trimToggle")
+    assert "did not keep its recording" not in body
+    assert "clip_runFor" in body, "it has to distinguish 'gone' from 'not yet known'"

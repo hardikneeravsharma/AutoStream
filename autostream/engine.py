@@ -108,8 +108,8 @@ class Engine:
         # the dashboard, so "Open" and "Open & stream" behave differently.
         # Cleared when that executable is no longer running.
         self.launch_intent: dict[str, str] = {}
-        # Why we are sitting idle while a game IS running. Surfaced in the
-        # panel and dashboard - a silent refusal looks identical to a bug.
+        # Why we are sitting idle while a game IS running. Surfaced on the
+        # dashboard - a silent refusal looks identical to a bug.
         self.blocked_reason: str | None = None
 
     # ================= lifecycle =================
@@ -313,7 +313,7 @@ class Engine:
                 elif cmd == "launch":
                     self._launch(payload or {})
                 elif cmd == "stop":
-                    self.force_stop("control panel")
+                    self.force_stop("stop button")
                 elif cmd == "pause":
                     if not self.state.paused:
                         self.toggle_pause("pause button")
