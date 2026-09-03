@@ -3048,8 +3048,12 @@ function clip_stripAll() {
 function clip_stripPick(i, toEnd) {
   var st = clip_state.strip;
   if (!st.dur || !st.frames.length) return;
-  var at = st.frames[i] - (st.dur / CLIP_STRIP_FRAMES) / 2;   /* the frame's start */
-  at = Math.max(0, Math.min(at, st.dur));
+  /* Each frame stands for the slice of the file around it, and the whole
+     slice is what the click means. Starting HERE starts at the slice's
+     beginning; ending HERE takes the slice with it, rather than stopping just
+     before the frame the user pointed at. */
+  var slice = st.dur / CLIP_STRIP_FRAMES;
+  var at = Math.max(0, Math.min(i * slice + (toEnd ? slice : 0), st.dur));
   if (toEnd) st.to = (at >= st.dur - 0.5) ? 0 : at;
   else st.from = at;
   if (st.to && st.to < st.from) { var t = st.from; st.from = st.to; st.to = t; }
