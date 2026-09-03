@@ -237,3 +237,50 @@ def test_the_newest_installer_wins_if_a_release_carries_several(monkeypatch):
     # Sorted by name, so 1.8.0 sorts after 1.7.9; the point is that one is
     # picked deterministically rather than by dictionary order.
     assert updates.latest().asset_name == "AutoStream-1.8.0-setup.exe"
+
+
+# ------------------------------------------------ saying so when there is
+# nothing to say
+#
+# "Check for updates" answering with silence was reported as the button being
+# broken. It was not: the machine was running a build newer than the newest
+# release, so there was correctly nothing to offer -- and the page then
+# cleared its own message, which also hides the panel the message sits in. An
+# answer nobody can see is the same as no answer.
+
+def _settings_js() -> str:
+    from autostream.ui import settings
+
+    return settings.SETTINGS_JS
+
+
+def test_the_up_to_date_answer_is_not_cleared():
+    js = _settings_js()
+    i = js.index("function set_verRender(")
+    j = js.index("\nfunction ", i + 1)
+    body = js[i:j]
+    # The branch that runs when there is no update must SAY something.
+    assert "set_verSay('')" not in body, (
+        "clearing the message also hides the panel it is in, so the answer "
+        "'you are up to date' arrives as a button that appears to do nothing")
+    assert "latest release" in body
+
+
+def test_a_build_newer_than_the_release_is_explained():
+    """The case that prompted this: 1.10.0 running against a 1.9.1 release.
+    'No update' is true and baffling, so it is spelled out."""
+    js = _settings_js()
+    assert "set_verAhead" in js
+    assert "NEWER than the latest" in js
+
+
+def test_versions_are_compared_as_numbers_in_the_page_too():
+    """1.9.1 sorts ABOVE 1.10.0 as text, which is exactly backwards -- and
+    would have claimed the newer build was the older one."""
+    js = _settings_js()
+    i = js.index("function set_verNum(")
+    j = js.index("\nfunction ", i + 1)
+    body = js[i:j]
+    assert "Number(" in body and "1e6" in body, (
+        "set_verNum must parse the parts as numbers rather than comparing "
+        "version strings")
