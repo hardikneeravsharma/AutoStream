@@ -50,15 +50,20 @@ log = logging.getLogger("autostream.clips.jobs")
 # ROUND MODE IS A DIFFERENT PASS AND A MUCH SLOWER ONE. scan_with_hud reads the
 # feed AND the scoreboard, which is two crops OCR'd per sampled frame instead
 # of one, so the 4.5x above does not describe it and must not be used for it.
-# Measured on a real run: 44 minutes of footage in 22 chunks reporting 82s a
-# chunk -> 1.5x, a third of the plain-killfeed rate. The number mattered
-# because the page quoted it before the run: a 43-minute selection was
-# advertised as "about 4m of scanning" against a real 30.
+# Measured twice on real runs, both about three quarters of an hour of CS2:
+#
+#   22 chunks reporting 82s a chunk                    -> 1.46x
+#   44 min of footage read in ~37 min after the probe  -> 1.19x
+#
+# 1.2 is the lower of the two, because this number's whole job is to be quoted
+# BEFORE the run and an estimate that undersells is the one that gets somebody
+# to press the button. The page advertised a 43-minute selection as "about 4m
+# of scanning" against a real 40.
 SCAN_RATE = {"feedbar": 14.0, "killfeed": 4.5, "cardcount": 10.0,
              "template": 14.0, "colour": 14.0}
 # Keyed separately rather than overwriting "killfeed": the same profile scans
 # at either rate depending on whether rounds are switched on for the run.
-ROUND_SCAN_RATE = {"killfeed": 1.5}
+ROUND_SCAN_RATE = {"killfeed": 1.2}
 DEFAULT_SCAN_RATE = 8.0
 
 
@@ -75,6 +80,23 @@ CUT_SECONDS_PER_CLIP = 16.0
 MONTAGE_SECONDS = 25.0
 
 STEPS = ("scan", "cut", "vertical", "montage")
+
+
+class NeedsDemo(RuntimeError):
+    """The replay could not be found, and reading the screen instead is dear.
+
+    RAISED RATHER THAN FALLEN BACK FROM. Counter-Strike read off the screen
+    costs about forty minutes for three quarters of an hour of footage and
+    produces a worse answer than the demo would have: measured on a real run,
+    the screen gave up 10 kills where the demo held 24. Spending that on
+    somebody's behalf, because a replay they may simply not have downloaded
+    yet did not match, is the expensive decision made silently.
+
+    So the run stops and says what it needs. `demo_fallback` in the options is
+    the deliberate "read the screen anyway", which the page offers as a button
+    next to the sharing-code box.
+    """
+
 
 # Per-clip settings are keyed on the clip's START, to a tenth of a second.
 # Not on its index: the list is re-planned between reviewing it and cutting
@@ -172,6 +194,10 @@ class ClipJob:
         # so from the outside a demo that did not match was indistinguishable
         # from a demo that was never looked for.
         self.demo_note: str = ""
+        # Set when the run stopped because no replay could be matched. The
+        # page turns this into the sharing-code box plus a button that says
+        # what reading the screen instead would cost.
+        self.needs_demo: bool = False
         self.started_at = time.time()
         self.finished_at: float | None = None
         # For the estimate: when the current step began, how long the recording
@@ -271,6 +297,7 @@ class ClipJob:
                 "source": self.source.name,
                 "scan_mode": self.scan_mode,
                 "demo_note": self.demo_note,
+                "needs_demo": self.needs_demo,
                 "demo_file": self.demo.get("demo", "") if self.demo else "",
                 # Cancelled but not finished yet: ffmpeg has to be waited on
                 # and any chunk already decoding runs to its end.
@@ -313,6 +340,14 @@ class ClipJob:
         except detect.Cancelled:
             self._set(state="cancelled", message="Cancelled")
             log.info("clip job cancelled")
+        except NeedsDemo as e:
+            # Not "failed - see the log": nothing went wrong, the run needs
+            # something only the user can supply. The page shows the
+            # sharing-code box and the "read the screen anyway" button on
+            # this, so it must be distinguishable from a real failure.
+            self._set(state="failed", needs_demo=True, error=str(e),
+                      message="Waiting for the replay")
+            log.info("stopped for a demo: %s", e)
         except FfmpegMissing as e:
             self._set(state="failed", error=str(e), message="ffmpeg not found")
             log.error("clip job failed: %s", e)
@@ -1041,6 +1076,74 @@ class ClipJob:
                  len(kept), len(cached))
         return kept
 
+    def _stop_for_demo(self, opt: dict, why: str, total: float) -> None:
+        """Refuse to read the screen instead, unless asked to. Raises.
+
+        Falls through silently only when `demo_fallback` says the user has
+        chosen the screen with their eyes open -- which the page offers as a
+        button beside the sharing-code box, with the cost on it.
+        """
+        if opt.get("demo_fallback"):
+            self._set(demo_note=why + " Reading the screen instead, as asked.")
+            # THE ESTIMATE STARTS AGAIN HERE. The probe and the demo search
+            # are not chunks, and leaving their minutes inside the per-chunk
+            # average made the first estimate of the full scan about a fifth
+            # too pessimistic -- measured on a 111-minute recording: 13m24s
+            # claimed against 10m54s actual. Reading the whole file is new
+            # work, so it is timed as such.
+            self._set(scan_seconds=total, step_started=time.time(),
+                      done=0, total=1)
+            return
+        self._set(demo_note=why)
+        raise NeedsDemo(why)
+
+    # ---- the probe's own kills, kept ----------------------------------
+    #
+    # THE WHOLE POINT IS THE SECOND RUN. The probe costs about nine minutes on
+    # a long recording, and the answer to "no replay matched" is to download
+    # the replay and go again -- at which point the seed the first probe built
+    # is exactly what the search needs and paying for it twice is pure waste.
+    # Keyed on the source AND the window start, because a probe of a different
+    # part of the file is a different seed.
+
+    def _remember_probe(self, seed: list, seconds: float) -> None:
+        try:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            atomic.write_json(self.folder / "probe.json", {
+                "source": str(self.source),
+                "start": round(self.win_start, 1),
+                "seconds": round(seconds, 1),
+                "kills": seed,
+            })
+        except OSError as e:
+            log.info("could not keep the probe's kills: %s", e)
+
+    def _recall_probe(self, seconds: float) -> list | None:
+        want = str(self.source).lower()
+        try:
+            saved = sorted(self.folder.parent.glob("*/probe.json"),
+                           key=lambda f: f.stat().st_mtime, reverse=True)
+        except OSError:
+            return None
+        for f in saved:
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if str(d.get("source") or "").lower() != want:
+                continue
+            if abs(float(d.get("start") or 0) - self.win_start) > 1.0:
+                continue
+            # A shorter probe than this run wants is not enough to reuse.
+            if float(d.get("seconds") or 0) + 1 < seconds:
+                continue
+            kills = d.get("kills") or []
+            if kills:
+                log.info("reusing the %d kills a previous probe of this file "
+                         "already found", len(kills))
+                return kills
+        return None
+
     def _probe_for_demo(self, prof, opt: dict, info: dict) -> dict | None:
         """Read a few minutes, then take the whole match from the demo it finds.
 
@@ -1079,9 +1182,11 @@ class ClipJob:
             log.info("no demo newer than this recording (the last one was "
                      "written %.1f hours before it started), so there is "
                      "nothing to search for", (started - newest) / 3600.0)
-            self._set(demo_note=(
+            self._stop_for_demo(
+                opt,
                 "No replay on disk is newer than this recording, so there is "
-                "none for it to use. The whole selection is being read."))
+                "none that could belong to it.",
+                total)
             return None
 
         def prog(d, t):
@@ -1090,44 +1195,59 @@ class ClipJob:
                               f"{d} of {t} chunks")
         # The probe reads a window, not the recording, which changes the
         # estimate by an order of magnitude on a two-hour stream.
-        self._set(scan_seconds=min(self.PROBE_SECONDS, total))
-        try:
-            found = detect.scan(self.source, prof, progress=prog,
-                                cancelled=lambda: self._cancel.is_set(),
-                                duration=min(self.PROBE_SECONDS, total),
-                                start=self.win_start)
-        except detect.Cancelled:
-            raise
-        except Exception as e:  # noqa: BLE001
-            log.info("the probe scan failed (%s); reading the whole recording", e)
-            self._set(scan_seconds=total)
-            return None
-        if self._cancel.is_set():
-            raise detect.Cancelled("cancelled")
+        window = min(self.PROBE_SECONDS, total)
+        self._set(scan_seconds=window)
 
-        seed = [{"time": k.time, "end": k.end, "score": k.score,
-                 "count": k.count} for k in found]
+        # An earlier probe of this same stretch already built the seed. The
+        # usual way to reach here twice is "no replay matched" -> download it
+        # -> run again, and re-reading the same twelve minutes to rebuild an
+        # identical list is nine minutes spent to learn nothing new.
+        seed = self._recall_probe(window)
+        if seed is None:
+            try:
+                found = detect.scan(self.source, prof, progress=prog,
+                                    cancelled=lambda: self._cancel.is_set(),
+                                    duration=window, start=self.win_start)
+            except detect.Cancelled:
+                raise
+            except Exception as e:  # noqa: BLE001
+                log.info("the probe scan failed (%s); reading the whole "
+                         "recording", e)
+                self._set(scan_seconds=total)
+                return None
+            if self._cancel.is_set():
+                raise detect.Cancelled("cancelled")
+            seed = [{"time": k.time, "end": k.end, "score": k.score,
+                     "count": k.count} for k in found]
+            self._remember_probe(seed, window)
+        else:
+            self._set(message=f"Using the {len(seed)} kills a previous run "
+                              f"already read from these minutes")
         if len(seed) < 3:
             log.info("only %d kill(s) in the first %.0f minutes -- not enough to "
                      "find the demo, so the whole recording is read",
                      len(seed), self.PROBE_SECONDS / 60)
-            self._set(demo_note=(
+            self._stop_for_demo(
+                opt,
                 f"Only {len(seed)} kill(s) in the first "
                 f"{self.PROBE_SECONDS / 60:.0f} minutes of what you chose - too "
-                f"few to identify the match, so the whole selection is being "
-                f"read. Starting the selection at the gameplay rather than the "
-                f"menu is what fixes this."))
+                f"few to identify the match. If the selection starts on a menu "
+                f"or a warm-up, drag the start handle to where the play "
+                f"begins and the probe will have something to match.",
+                total)
             return None
 
         got = self._from_demo(seed)
         if not got:
             log.info("no demo matched the first %.0f minutes; reading the whole "
                      "recording", self.PROBE_SECONDS / 60)
-            self._set(demo_note=(
+            self._stop_for_demo(
+                opt,
                 f"Read the first {self.PROBE_SECONDS / 60:.0f} minutes and no "
-                f"replay on disk matched them, so the whole selection is being "
-                f"read instead. The replay for this match may not be "
-                f"downloaded in Counter-Strike yet."))
+                f"replay on disk matched them. The replay for THIS match is "
+                f"probably not downloaded yet - the ones that are belong to "
+                f"other matches.",
+                total)
             # THE ESTIMATE STARTS AGAIN HERE. The probe and the demo search are
             # not chunks, and leaving their minute and three quarters inside the
             # per-chunk average made the first estimate of the full scan about a

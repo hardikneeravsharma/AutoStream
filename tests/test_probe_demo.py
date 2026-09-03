@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest                                                    # noqa: E402
 
+from autostream.clips import jobs                                 # noqa: E402
 from autostream.clips.jobs import ClipJob                         # noqa: E402
 
 
@@ -50,6 +51,11 @@ def a_job(tmp_path) -> ClipJob:
     # options before the probe is reached; these tests are about the probe, so
     # they use the default -- the whole recording.
     job.win_start, job.win_end, job.win_whole = 0.0, 0.0, True
+    job.demo_note, job.needs_demo = "", False
+    # The probe keeps its kills so a second run does not re-read the same
+    # twelve minutes. Pointed at the tmp dir so nothing here touches the real
+    # clips folder.
+    job.folder = tmp_path / "run"
     return job
 
 
@@ -91,16 +97,41 @@ def test_demo_turned_off_skips_the_probe(tmp_path):
     assert job._probe_for_demo(Prof(), {"demo": False}, LONG) is None
 
 
-def test_too_few_kills_in_the_window_falls_back(tmp_path, monkeypatch):
+def test_too_few_kills_in_the_window_stops_and_asks(tmp_path, monkeypatch):
     """Two kills cannot fingerprint a match, and guessing from them would
-    mis-cut every clip. The whole recording gets read instead."""
+    mis-cut every clip.
+
+    It used to read the whole recording instead. That is about forty minutes
+    for three quarters of an hour of Counter-Strike, for a worse answer than
+    the demo would have given -- spent on the user's behalf because a replay
+    they may simply not have downloaded yet did not match. So it stops.
+    """
     import autostream.clips.detect as detect
     import autostream.clips.cs2_demo as cs2_demo
 
     job = a_job(tmp_path)
     monkeypatch.setattr(cs2_demo, "demo_folder", lambda *a, **k: "C:/demos")
     monkeypatch.setattr(detect, "scan", lambda *a, **k: [])
-    assert job._probe_for_demo(Prof(), {}, LONG) is None
+    with pytest.raises(jobs.NeedsDemo):
+        job._probe_for_demo(Prof(), {}, LONG)
+    assert "0 kill" in job.demo_note
+    assert "start handle" in job.demo_note, (
+        "the usual cause is a selection that opens on a menu, so the note has "
+        "to name the fix")
+
+
+def test_the_slow_read_still_happens_when_it_is_asked_for(tmp_path, monkeypatch):
+    """The escape hatch. Nobody loses the ability to read the screen -- they
+    just have to choose it, with the cost on the button."""
+    import autostream.clips.detect as detect
+    import autostream.clips.cs2_demo as cs2_demo
+
+    job = a_job(tmp_path)
+    monkeypatch.setattr(cs2_demo, "demo_folder", lambda *a, **k: "C:/demos")
+    monkeypatch.setattr(detect, "scan", lambda *a, **k: [])
+    assert job._probe_for_demo(Prof(), {"demo_fallback": True}, LONG) is None
+    assert not job.needs_demo
+    assert "as asked" in job.demo_note
 
 
 def test_a_failing_probe_costs_the_run_nothing(tmp_path, monkeypatch):
@@ -115,7 +146,11 @@ def test_a_failing_probe_costs_the_run_nothing(tmp_path, monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("ffmpeg fell over")
     monkeypatch.setattr(detect, "scan", boom)
+    # Still a fall-back, not a stop: the probe could not ASK the question, so
+    # it has learnt nothing about whether a replay exists. Refusing to run on
+    # the strength of a crash would be refusing for the wrong reason.
     assert job._probe_for_demo(Prof(), {}, LONG) is None
+    assert not job.needs_demo
 
 
 def test_cancelling_during_the_probe_still_cancels(tmp_path, monkeypatch):
@@ -202,8 +237,10 @@ def test_the_probe_is_skipped_when_no_demo_is_newer(tmp_path, monkeypatch):
     monkeypatch.setattr(ClipJob, "_source_started", lambda self: 200_000.0)
     monkeypatch.setattr(detect, "scan", lambda *a, **k: scanned.append(1) or [])
 
-    assert job._probe_for_demo(Prof(), {}, LONG) is None
+    with pytest.raises(jobs.NeedsDemo):
+        job._probe_for_demo(Prof(), {}, LONG)
     assert scanned == [], "it scanned anyway"
+    assert "newer than this recording" in job.demo_note
 
 
 def test_a_demo_newer_than_the_recording_is_still_searched(tmp_path, monkeypatch):
@@ -219,7 +256,8 @@ def test_a_demo_newer_than_the_recording_is_still_searched(tmp_path, monkeypatch
     monkeypatch.setattr(detect, "scan",
                         lambda *a, **k: scanned.append(1) or [])
 
-    job._probe_for_demo(Prof(), {}, LONG)
+    with pytest.raises(jobs.NeedsDemo):
+        job._probe_for_demo(Prof(), {}, LONG)
     assert scanned == [1], "it skipped a search that could have succeeded"
 
 
@@ -236,7 +274,8 @@ def test_an_unknown_recording_time_does_not_skip(tmp_path, monkeypatch):
     monkeypatch.setattr(ClipJob, "_source_started", lambda self: None)
     monkeypatch.setattr(detect, "scan", lambda *a, **k: scanned.append(1) or [])
 
-    job._probe_for_demo(Prof(), {}, LONG)
+    with pytest.raises(jobs.NeedsDemo):
+        job._probe_for_demo(Prof(), {}, LONG)
     assert scanned == [1]
 
 
