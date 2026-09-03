@@ -738,16 +738,30 @@ def delete(key: str) -> bool:
 
 
 def listing() -> list[dict]:
-    """For the UI: every profile with whether its template is actually present."""
+    """For the UI: every profile, with whether it could actually be run.
+
+    RESOLVED, not raw. load_all() reads the profile files and nothing else --
+    the in-game name lives in games.yaml and is merged in by for_game(), so
+    `exists()` on an unresolved killfeed profile is False even when the name
+    IS set. That answer reached the page as `ready`, and choosing Counter-
+    Strike from the game dropdown greyed out Make clips on a game that was
+    perfectly scannable.
+
+    Whether the machine can run it -- Tesseract for a kill feed -- is a
+    separate question, answered where the page is served, because it is about
+    this PC rather than about the profile.
+    """
     out = []
     for p in sorted(load_all().values(), key=lambda x: x.label.lower()):
+        whole = for_game(p.key) or p
         out.append({
             "key": p.key,
             "label": p.label,
             "ref_height": p.ref_height,
             "match_min": p.match_min,
             "builtin": p.key in BUILTIN,
-            "ready": p.exists(),
+            "ready": whole.exists(),
+            "player": whole.player,
             "notes": p.notes,
             # What KIND of game this is, so the Clips page can offer the right
             # controls the moment a game is chosen. Without these it could only

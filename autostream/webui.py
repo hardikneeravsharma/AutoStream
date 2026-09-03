@@ -961,6 +961,21 @@ class Server:
         log.info("upload job started: %d clip(s), %s", len(clips), privacy)
         return {"ok": True, "count": len(clips)}
 
+    def _profile_rows(self) -> list[dict]:
+        """profiles.listing(), told what this machine can actually do."""
+        from .clips import profiles
+
+        rows = profiles.listing()
+        for row in rows:
+            prof = profiles.for_game(row["key"])
+            ready, why, ocr = self._scan_ready(prof)
+            row["ready"] = ready
+            row["blocked"] = why
+            row["needs_ocr"] = ocr
+            row["scan_rate"] = self._scan_rate(prof)
+            row["counts_assists"] = bool(prof and prof.counts_assists)
+        return rows
+
     @staticmethod
     def _scan_rate(prof) -> float:
         """How fast this profile reads footage, for the page's estimate.
@@ -1089,7 +1104,13 @@ class Server:
                                                             r.get("game"))
         return {
             "sessions": rows,
-            "profiles": profiles.listing(),
+            # ONE ANSWER TO "CAN THIS GAME BE SCANNED". The listing knows
+            # about the profile; only here is it known whether this PC has the
+            # OCR a kill feed needs, and at what rate it would read. Two
+            # payloads describing the same game differently is how the game
+            # dropdown came to grey out a button the game list had just
+            # enabled.
+            "profiles": self._profile_rows(),
             "status": clips.status(),
             "defaults": {k: v for k, v in schema.flatten(cfg_now).items()
                          if k.startswith("clips.")},
