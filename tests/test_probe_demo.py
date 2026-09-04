@@ -258,7 +258,10 @@ def test_a_demo_newer_than_the_recording_is_still_searched(tmp_path, monkeypatch
 
     with pytest.raises(jobs.NeedsDemo):
         job._probe_for_demo(Prof(), {}, LONG)
-    assert scanned == [1], "it skipped a search that could have succeeded"
+    # At least one -- the probe widens and tries again when a window turns up
+    # too few kills to fingerprint with, so the count is a budget, not a fact.
+    assert scanned, "it skipped a search that could have succeeded"
+    assert len(scanned) <= jobs.ClipJob.PROBE_TRIES
 
 
 def test_an_unknown_recording_time_does_not_skip(tmp_path, monkeypatch):
@@ -276,7 +279,8 @@ def test_an_unknown_recording_time_does_not_skip(tmp_path, monkeypatch):
 
     with pytest.raises(jobs.NeedsDemo):
         job._probe_for_demo(Prof(), {}, LONG)
-    assert scanned == [1]
+    assert scanned
+    assert len(scanned) <= jobs.ClipJob.PROBE_TRIES
 
 
 def test_an_empty_demo_folder_does_not_skip_on_time(tmp_path, monkeypatch):
@@ -285,3 +289,76 @@ def test_an_empty_demo_folder_does_not_skip_on_time(tmp_path, monkeypatch):
     import autostream.clips.cs2_demo as cs2_demo
 
     assert cs2_demo.newest_demo_time(tmp_path) is None
+
+
+# --------------------------------------------- the probe widens before giving up
+#
+# FROM A REAL RUN. The chosen window began at 20m22s, the match's first kill
+# was at 31m14s, and the probe read the eleven minutes of nothing in between --
+# ONE of the demo's sixteen kills fell inside it. The fingerprint had nothing to
+# work with and the run stopped, asking for a replay that was on disk.
+#
+# Twelve more minutes would have covered nine of them.
+
+def test_a_thin_window_is_widened_rather_than_abandoned(tmp_path, monkeypatch):
+    import autostream.clips.cs2_demo as cs2_demo
+    import autostream.clips.detect as detect
+
+    class K:
+        def __init__(self, t):
+            self.time = self.end = t
+            self.score, self.count = 1.0, 1
+
+    job = a_job(tmp_path)
+    monkeypatch.setattr(cs2_demo, "demo_folder", lambda *a, **k: str(tmp_path))
+    monkeypatch.setattr(cs2_demo, "newest_demo_time", lambda f: None)
+
+    windows = []
+
+    def scan(video, prof, *, duration=None, start=0.0, **kw):
+        windows.append((start, duration))
+        # Nothing in the first window, plenty in the second -- the shape of the
+        # failure this exists for.
+        return [] if len(windows) == 1 else [K(900.0), K(930.0), K(980.0)]
+
+    monkeypatch.setattr(detect, "scan", scan)
+    answer = {"kills": [{"time": 9.0}], "rounds": [], "about": {"demo": "x.dem"}}
+    monkeypatch.setattr(ClipJob, "_from_demo", lambda self, kills: answer)
+
+    got = job._probe_for_demo(Prof(), {}, LONG)
+    assert got is answer, "a second window found it and the run carried on"
+    assert len(windows) == 2, "it should have widened exactly once"
+
+
+def test_each_window_reads_only_what_the_last_one_did_not(tmp_path, monkeypatch):
+    """Re-reading the first twelve minutes to extend to twenty-four would
+    double the cost of the thing that exists to be cheap."""
+    import autostream.clips.cs2_demo as cs2_demo
+    import autostream.clips.detect as detect
+
+    job = a_job(tmp_path)
+    monkeypatch.setattr(cs2_demo, "demo_folder", lambda *a, **k: str(tmp_path))
+    monkeypatch.setattr(cs2_demo, "newest_demo_time", lambda f: None)
+    windows = []
+
+    def scan(video, prof, *, duration=None, start=0.0, **kw):
+        windows.append((start, duration))
+        return []
+
+    monkeypatch.setattr(detect, "scan", scan)
+    with pytest.raises(jobs.NeedsDemo):
+        job._probe_for_demo(Prof(), {}, LONG)
+
+    assert windows[0][0] == 0.0
+    covered = 0.0
+    for start, dur in windows:
+        assert start == pytest.approx(covered), "a window overlapped the last"
+        covered += dur
+    assert covered <= jobs.ClipJob.PROBE_SECONDS * jobs.ClipJob.PROBE_TRIES
+
+
+def test_widening_stops_well_short_of_reading_everything(tmp_path):
+    """The whole point is to be cheaper than the full read it avoids."""
+    budget = jobs.ClipJob.PROBE_SECONDS * jobs.ClipJob.PROBE_TRIES
+    assert budget < LONG["duration"] / 2, (
+        "a probe that can read half the recording is not a probe")

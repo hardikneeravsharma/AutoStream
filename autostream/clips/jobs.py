@@ -1029,6 +1029,22 @@ class ClipJob:
     # of the previous match, and those minutes contribute nothing.
     PROBE_SECONDS = 12 * 60.0
 
+    # HOW MANY TIMES THE PROBE MAY TRY AGAIN, WIDER, before giving up.
+    #
+    # Twelve minutes is enough when the match is under them and useless when it
+    # is not. Measured on a real failure: the chosen window began at 20m22s,
+    # the match's first kill was at 31m14s, and the probe read the eleven
+    # minutes of nothing in between -- one of the demo's sixteen kills fell
+    # inside it, the fingerprint had nothing to work with, and the run stopped
+    # asking for a replay that was sitting on disk. Reading twelve more minutes
+    # would have covered NINE of them.
+    #
+    # Three windows is 36 minutes of footage, about 8 minutes of work at the
+    # kill-feed rate, against 92 for reading the 111-minute recording whole. So
+    # widening is cheap in exactly the case it is needed, and it stops well
+    # short of the full read it exists to avoid.
+    PROBE_TRIES = 3
+
     # The shortest window worth honouring. Below this there is not room for a
     # clip plus its run-up and tail, so a selection that small is a slip of the
     # hand rather than an instruction.
@@ -1230,56 +1246,79 @@ class ClipJob:
                               f"{d} of {t} chunks")
         # The probe reads a window, not the recording, which changes the
         # estimate by an order of magnitude on a two-hour stream.
-        window = min(self.PROBE_SECONDS, total)
-        self._set(scan_seconds=window)
+        # WIDER, NOT LONGER. Each attempt reads the NEXT twelve minutes and
+        # adds to the seed, so nothing is read twice and a match that starts
+        # late is reached without paying for the whole recording.
+        seed: list = []
+        read = 0.0
+        got = None
+        for attempt in range(1, self.PROBE_TRIES + 1):
+            window = min(self.PROBE_SECONDS * attempt, total)
+            if window <= read:
+                break
+            self._set(scan_seconds=window)
 
-        # An earlier probe of this same stretch already built the seed. The
-        # usual way to reach here twice is "no replay matched" -> download it
-        # -> run again, and re-reading the same twelve minutes to rebuild an
-        # identical list is nine minutes spent to learn nothing new.
-        seed = self._recall_probe(window)
-        if seed is None:
-            try:
-                found = detect.scan(self.source, prof, progress=prog,
-                                    cancelled=lambda: self._cancel.is_set(),
-                                    duration=window, start=self.win_start)
-            except detect.Cancelled:
-                raise
-            except Exception as e:  # noqa: BLE001
-                log.info("the probe scan failed (%s); reading the whole "
-                         "recording", e)
-                self._set(scan_seconds=total)
-                return None
-            if self._cancel.is_set():
-                raise detect.Cancelled("cancelled")
-            seed = [{"time": k.time, "end": k.end, "score": k.score,
-                     "count": k.count} for k in found]
-            self._remember_probe(seed, window)
-        else:
-            self._set(message=f"Using the {len(seed)} kills a previous run "
-                              f"already read from these minutes")
+            # An earlier probe of this same stretch already built the seed. The
+            # usual way to reach here twice is "no replay matched" -> download
+            # it -> run again, and re-reading the same twelve minutes to
+            # rebuild an identical list is nine minutes spent to learn nothing.
+            recalled = self._recall_probe(window) if attempt == 1 else None
+            if recalled is not None:
+                seed = recalled
+                read = window
+                self._set(message=f"Using the {len(seed)} kills a previous run "
+                                  f"already read from these minutes")
+            else:
+                if attempt > 1:
+                    self._set(message=f"Reading {(window - read) / 60:.0f} more "
+                                      f"minutes to find the match",
+                              step_started=time.time(), done=0, total=1)
+                try:
+                    found = detect.scan(
+                        self.source, prof, progress=prog,
+                        cancelled=lambda: self._cancel.is_set(),
+                        duration=window - read, start=self.win_start + read)
+                except detect.Cancelled:
+                    raise
+                except Exception as e:  # noqa: BLE001
+                    log.info("the probe scan failed (%s); reading the whole "
+                             "recording", e)
+                    self._set(scan_seconds=total)
+                    return None
+                if self._cancel.is_set():
+                    raise detect.Cancelled("cancelled")
+                seed = seed + [{"time": k.time, "end": k.end, "score": k.score,
+                                "count": k.count} for k in found]
+                read = window
+                self._remember_probe(seed, window)
+
+            if len(seed) < 3:
+                log.info("only %d kill(s) in the first %.0f minutes",
+                         len(seed), read / 60)
+                continue                  # a wider window may find some
+            got = self._from_demo(seed)
+            if got:
+                break
+            log.info("no demo matched the first %.0f minutes (%d kills)",
+                     read / 60, len(seed))
+
         if len(seed) < 3:
-            log.info("only %d kill(s) in the first %.0f minutes -- not enough to "
-                     "find the demo, so the whole recording is read",
-                     len(seed), self.PROBE_SECONDS / 60)
             self._stop_for_demo(
                 opt,
-                f"Only {len(seed)} kill(s) in the first "
-                f"{self.PROBE_SECONDS / 60:.0f} minutes of what you chose - too "
-                f"few to identify the match. If the selection starts on a menu "
-                f"or a warm-up, drag the start handle to where the play "
-                f"begins and the probe will have something to match.",
+                f"Only {len(seed)} kill(s) in the first {read / 60:.0f} "
+                f"minutes of what you chose - too few to identify the match. "
+                f"If the selection starts on a menu or a warm-up, drag the "
+                f"start handle to where the play begins.",
                 total)
             return None
 
-        got = self._from_demo(seed)
         if not got:
             log.info("no demo matched the first %.0f minutes; reading the whole "
                      "recording", self.PROBE_SECONDS / 60)
             self._stop_for_demo(
                 opt,
-                f"Read the first {self.PROBE_SECONDS / 60:.0f} minutes and no "
-                f"replay on disk matched them. The replay for THIS match is "
+                f"Read {read / 60:.0f} minutes and found {len(seed)} kills, and "
+                f"no replay on disk matched them. The replay for THIS match is "
                 f"probably not downloaded yet - the ones that are belong to "
                 f"other matches.",
                 total)

@@ -556,8 +556,15 @@ def align(demo_times: list[float], vod_times: list[float], *,
         return Sync(total=len(demo_times), why="too few kills to align")
 
     demo, vod = sorted(demo_times), sorted(vod_times)
+    # A DEMO THE CLOCK COULD PLACE CAME FROM VALVE'S MATCHMAKING, which is 64
+    # tick -- so there is no rate to search and searching anyway is actively
+    # harmful. With a handful of detected kills a half or double rate wins on
+    # luck, and refusing it afterwards throws away the correct 1.0 alignment
+    # that was never allowed to compete. Measured: three separate players all
+    # "only fit at 0.5x", and at 1.0 the right one had the best share.
+    rates = (1.0,) if expect_offset is not None else RATES
     best_off, best_rate, best_hits = 0.0, 1.0, -1
-    for rate in RATES:
+    for rate in rates:
         for d in demo:
             for v in vod:
                 off = v - d * rate
@@ -608,14 +615,6 @@ def align(demo_times: list[float], vod_times: list[float], *,
     # including one that places the match before the recording began. When the
     # match time is known, that is a fact about the answer and not merely about
     # the candidate, so it is checked before anything else.
-    # A demo the clock could place came from Valve's matchmaking, which is 64
-    # tick -- so the rate search has nothing to find there, and a half or
-    # double rate is the search fitting noise. Measured: a wrong player scored
-    # four "kills" at rate 0.5, mapping demo 771s onto recording 156s.
-    if expect_offset is not None and s.scale != 1.0:
-        s.why = (f"only fits at {s.scale}x speed, which a matchmaking demo "
-                 f"cannot be")
-        return s
     if expect_offset is not None and abs(s.offset - expect_offset) > offset_tol:
         s.why = (f"lines up {abs(s.offset - expect_offset) / 60:.0f} minutes "
                  f"from where this match was played -- not this one")
