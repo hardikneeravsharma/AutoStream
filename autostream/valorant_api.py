@@ -64,9 +64,34 @@ PLATFORM = base64.b64encode(json.dumps({
 }, separators=(",", ":")).encode()).decode()
 
 # Some regions play on another region's servers, so the host is not just the
-# region lowercased. Anything not listed is assumed to be its own shard, which
-# is true for every region Riot has added so far.
-SHARDS = {"latam": "na", "br": "na", "pbe": "pbe"}
+# region lowercased.
+#
+# AND THE CLIENT DOES NOT ANSWER IN VALORANT REGIONS. /riotclient/region-locale
+# is a RIOT-wide endpoint, so it replies with the account's Riot region -- which
+# for Europe is a League of Legends code. Measured on a real client:
+#
+#     {"region": "EUW", "webRegion": "EUW"}
+#
+# Both fields, so there is no better one to read. Valorant's European shard is
+# "eu", and "pd.euw.a.pvp.net" does not resolve -- which is exactly what
+# happened: a 43-minute session cached no match record at all, every poll
+# failing with getaddrinfo, and the clips lost their round context with nothing
+# on screen to say why.
+#
+# So the League regions are mapped onto the four shards Valorant actually has.
+# Anything still unlisted is assumed to be its own shard, which is true of
+# na, eu, ap and kr themselves.
+SHARDS = {
+    # Europe, Middle East, Russia and Türkiye all play on the EU shard.
+    "euw": "eu", "eune": "eu", "eun": "eu", "ru": "eu", "tr": "eu",
+    "me": "eu",
+    # The Americas.
+    "latam": "na", "lan": "na", "las": "na", "br": "na",
+    # Asia-Pacific. Korea has its own shard; Japan and Oceania do not.
+    "jp": "ap", "oce": "ap", "oc1": "ap", "sg": "ap", "ph": "ap",
+    "th": "ap", "tw": "ap", "vn": "ap", "id": "ap",
+    "pbe": "pbe",
+}
 
 TIMEOUT = 15.0
 HISTORY_MAX = 20          # how many recent matches to consider
@@ -90,12 +115,28 @@ class Session:
     def pd(self) -> str:
         return f"https://pd.{self.shard}.a.pvp.net"
 
+    def user_agent(self) -> str:
+        """What the game calls itself. `release-13.05-shipping-11-5350494`
+        becomes `ShooterGame/13.05.11`, which is the shape the client sends."""
+        ver = self.version.replace("release-", "").split("-shipping-")[0]
+        build = self.version.rsplit("-", 1)[-1] if "-" in self.version else ""
+        return (f"ShooterGame/{ver}.{build} "
+                f"Windows/10.0.19042.1.256.64bit").strip()
+
     def headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self.access}",
             "X-Riot-Entitlements-JWT": self.entitlements,
             "X-Riot-ClientPlatform": PLATFORM,
             "X-Riot-ClientVersion": self.version,
+            # WITHOUT THIS, CLOUDFLARE REFUSES THE REQUEST BEFORE RIOT SEES IT.
+            # urllib announces itself as "Python-urllib/3.12", and the edge in
+            # front of pd.*.a.pvp.net answers 403 with error 1010,
+            # "browser_signature_banned" -- nothing to do with the tokens,
+            # which are fine. Measured: with no User-Agent every call is 403;
+            # with this one the same call reaches Riot's own API and is
+            # answered by it.
+            "User-Agent": self.user_agent(),
             "Accept": "application/json",
         }
 
@@ -180,7 +221,43 @@ def session() -> Session:
                    region=region, shard=shard, version=client_version())
 
 
+def shard_from_log(log_file: Path | None = None) -> tuple[str, str]:
+    """The region and shard the GAME is actually talking to. ("", "") if unknown.
+
+    THE ACCOUNT'S REGION DOES NOT DECIDE THE SHARD. /riotclient/region-locale
+    reports where the RIOT ACCOUNT lives, which for a European account is a
+    League of Legends code -- and a player can perfectly well hold a EUW
+    account and play VALORANT in Asia-Pacific. Measured on a real machine:
+
+        region-locale says   EUW
+        match history is on  ap        (29 matches; eu, na and kr all 404)
+
+    No mapping from region to shard can be right about that, because the two
+    are not related. The game writes the host it uses into its own log on
+    every call, so it is read from there -- the same file, and the same
+    reasoning, as client_version() above.
+    """
+    f = log_file or GAME_LOG
+    try:
+        text = f.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return "", ""
+    # "https://glz-ap-1.ap.a.pvp.net/..." gives both at once.
+    m = re.search(r"glz-([a-z0-9]+)-\d+\.([a-z0-9]+)\.a\.pvp\.net", text)
+    if m:
+        return m.group(1), m.group(2)
+    # Otherwise the shard alone, off any pd call.
+    m = re.search(r"https://pd\.([a-z0-9]+)\.a\.pvp\.net", text)
+    if m:
+        return m.group(1), m.group(1)
+    return "", ""
+
+
 def _region() -> tuple[str, str]:
+    # What the game is doing beats what the account says, every time.
+    region, shard = shard_from_log()
+    if shard:
+        return region or shard, shard
     got = _local("/riotclient/region-locale")
     region = str(got.get("region") or got.get("webRegion") or "").lower()
     if not region:
