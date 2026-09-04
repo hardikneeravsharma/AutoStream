@@ -51,6 +51,10 @@ def a_job(tmp_path) -> ClipJob:
     # options before the probe is reached; these tests are about the probe, so
     # they use the default -- the whole recording.
     job.win_start, job.win_end, job.win_whole = 0.0, 0.0, True
+    # How long the recording is. A real job probes it before the demo search
+    # ever runs; it is here because _source_started subtracts it from mtime to
+    # date a file OBS did not name -- see test_source_started.py.
+    job.source_seconds = 0.0
     job.demo_note, job.needs_demo = "", False
     # The probe keeps its kills so a second run does not re-read the same
     # twelve minutes. Pointed at the tmp dir so nothing here touches the real
