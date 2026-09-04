@@ -1342,9 +1342,18 @@ class ClipJob:
     def _source_started(self) -> float | None:
         """When the recording began, by OBS's own filename stamp.
 
-        Falls back to the file's modification time, which is when writing
-        FINISHED -- close enough to reject a demo from days earlier, and the
-        only thing available for a file OBS did not name.
+        Falls back to the file's modification time LESS ITS DURATION, because
+        mtime is when writing FINISHED. That subtraction is the whole story for
+        a file this app did not record. Without it a 43-minute video dropped in
+        by hand looks 43 minutes newer than it is, so `for_recording` searches a
+        window opening after the match ended -- and EDGE_SLACK is 90 seconds, so
+        it finds NOTHING, however good the cached record is. The same shift
+        rejects every CS2 demo written during the recording as "written before
+        the match started".
+
+        The Clips page already subtracted it when probing the file, which is
+        the worst version of this: the page said the record was there and the
+        job then went looking with a different number and did not find it.
         """
         from .. import history
 
@@ -1352,7 +1361,7 @@ class ClipJob:
         if stamp is not None:
             return stamp
         try:
-            return self.source.stat().st_mtime
+            return self.source.stat().st_mtime - max(0.0, self.source_seconds)
         except OSError:
             return None
 

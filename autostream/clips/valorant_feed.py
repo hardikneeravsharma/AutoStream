@@ -649,6 +649,23 @@ def collapse(seen: list[Row], min_seen: int = MIN_SEEN) -> list[Event]:
             t["kinds"].append(r.kind)
             t["victims"].append(r.victim)
             if r.kind in ("kill", "death"):
+                # ONE SIGHTING IS ENOUGH HERE, AND IT WAS MEASURED. A single
+                # stray frame promoting a junk track to "this is a kill" does
+                # happen -- it is how one kill came out twice at 19m48s and
+                # 36m34s of a real match -- so requiring two or three agreeing
+                # sightings was tried and scored against Riot's own record of
+                # two sessions, 63 kills between them:
+                #
+                #   needing 1 (this)  P=71% R=56% F1=0.625   3 duplicates
+                #   needing 2         P=74% R=54% F1=0.624   2
+                #   needing 3         P=75% R=52% F1=0.617   1
+                #
+                # It buys precision and pays more in recall, and on the second
+                # session -- held back precisely to catch this -- three was
+                # worse on both counts. On the first session alone it looked
+                # like a clear win, which is what fitting to one match looks
+                # like. The duplicates are the visible fault; the misses are
+                # the bigger one, and this does not touch them.
                 t["hard"] = r.kind
         else:
             log.debug("t=%.2f y0=%3d x0=%3d %-6s -> NEW TRACK", r.time, r.y0,
