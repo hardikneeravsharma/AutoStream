@@ -160,6 +160,10 @@ CLIPS_HTML: str = (
           <div class="clip-fx-cap" id="clip-fx-cap-middle"></div>
           <div class="clip-fx-cap" id="clip-fx-cap-bottom"></div>
           <div class="clip-fx-held hide" id="clip-fx-held">FROZEN</div>
+          <!-- Where the zoom under the playhead is aimed. Drawn on the
+               stage rather than inside the video, so it does not scale
+               with the punch-in it is describing. -->
+          <span class="clip-fx-aimdot hide" id="clip-fx-aimdot"></span>
         </div>
       </div>
 
@@ -528,14 +532,22 @@ One per line - a long session often covers several matches."></textarea>
        then run this again - the twelve minutes already read are kept, so the
        second run goes straight to matching. Or paste its sharing code here and
        AutoStream will ask the game to fetch it.</p>
+    <p class="muted">Without a replay it has to be read off the screen, and
+       there are two ways. <strong>Kills only</strong> reads the kill tally
+       under the crosshair - fast, and clips are named by their kill count.
+       <strong>Full rounds</strong> reads the scoreboard as well, which is what
+       CLUTCH, PISTOL ROUND and the rest are worked out from, and it is about
+       eight times slower.</p>
     <textarea class="textarea mono" id="clip-needsdemo-codes" rows="2"
               spellcheck="false"
               placeholder="Paste the match sharing code, or the whole steam:// link."></textarea>
     <div class="field-inline" style="margin-top:8px">
       <button class="btn" type="button" data-act="needsdemo-get">
         Download in Counter-Strike</button>
+      <button class="btn btn-ghost" type="button" id="clip-needsdemo-cards"
+              data-act="demo-cards"><span>Kills only, fast</span></button>
       <button class="btn btn-ghost" type="button" id="clip-needsdemo-anyway"
-              data-act="demo-anyway"><span>Read the screen instead</span></button>
+              data-act="demo-anyway"><span>Full rounds, slower</span></button>
       <span class="muted" id="clip-needsdemo-msg"></span>
     </div>
   </div>
@@ -648,6 +660,8 @@ var clip_state = {
   player: null,              /* {list, i, folder, trim} while the player is up */
   editing: false,            /* a re-render is in flight */
   stopping: false,           /* Cancel pressed, job not finished yet */
+  fxAim: null,               /* the zoom waiting for a click on the video */
+  fxDrag: null,              /* an effect bar being dragged on the timeline */
   tools: null,               /* ffmpeg and Tesseract: what is on this PC */
   toolsBusy: false,          /* an install is running */
   localFile: null,           /* the file the picker handed back */
@@ -1167,19 +1181,26 @@ function clip_renderJob(j) {
   if (j.needs_demo) {
     var nd = clip_el('clip-needsdemo-why');
     if (nd) nd.textContent = j.error || '';
-    var anyway = clip_el('clip-needsdemo-anyway');
-    if (anyway) {
-      var s = clip_state.pick;
-      var rate = Number(s && s.scan_rate) || 1.2;
-      var win = clip_stripWindow();
-      var span = win ? ((win.scan_end || (s && s.duration) || 0) - win.scan_start)
-                     : ((s && s.duration) || 0);
-      /* The cost goes ON the button. It is the whole reason the run stopped. */
-      anyway.querySelector('span').textContent = span > 0
-        ? 'Read the screen instead (about ' + clip_dur(span / rate) + ')'
-        : 'Read the screen instead';
-      anyway.disabled = false;
-    }
+    var s = clip_state.pick;
+    var win = clip_stripWindow();
+    var span = win ? ((win.scan_end || (s && s.duration) || 0) - win.scan_start)
+                   : ((s && s.duration) || 0);
+    /* THE COST GOES ON EACH BUTTON. It is the whole reason the run stopped,
+       and the two readers differ by about eight times -- which is the only
+       thing that makes this a choice rather than a formality. */
+    var slow = Number(s && s.scan_rate) || 1.2;
+    var fast = Number(s && s.cards_rate) || 10.0;
+    var lbl = function (id, text, rate) {
+      var b = clip_el(id);
+      if (!b) return;
+      b.querySelector('span').textContent = span > 0
+        ? text + ' (about ' + clip_dur(span / rate) + ')' : text;
+      b.disabled = false;
+    };
+    lbl('clip-needsdemo-cards', 'Kills only', fast);
+    lbl('clip-needsdemo-anyway', 'Full rounds', slow);
+    /* Only Counter-Strike has a second reader. */
+    clip_show('clip-needsdemo-cards', !!(s && s.demos));
   }
 
   clip_el('clip-res-title').textContent =
@@ -2263,9 +2284,22 @@ function clip_fxRender() {
       + '<span class="clip-fx-to">to</span>'
       + clip_fxTimeBox('zooms', j, 'until', z.until)
       + '<input class="input clip-fx-num" type="number" step="0.05" min="1.05"'
-      + ' max="2.5" value="' + (Number(z.to) || 1.35).toFixed(2) + '"'
+      + ' max="4" value="' + (Number(z.to) || 1.35).toFixed(2) + '"'
       + ' data-fxkind="zooms" data-fxi="' + j + '" data-fxfield="to"'
-      + ' aria-label="How much"><span class="clip-fx-to">x</span>');
+      + ' aria-label="How much"><span class="clip-fx-to">x</span>'
+      /* WHERE it punches in to. A zoom always went to the middle of the
+         frame, which is the crosshair and almost nothing else -- so a kill in
+         a corner, the kill feed, or the scoreboard could not be zoomed to at
+         all. Aiming is a click on the video rather than two more number
+         boxes, because the thing being described is a place. */
+      + '<button class="btn btn-sm btn-ghost clip-fx-aim'
+      + (clip_state.fxAim === j ? ' is-on' : '') + '" type="button"'
+      + ' data-fxaim="' + j + '"'
+      + ' title="Aim this zoom - then click the video">'
+      + (clip_state.fxAim === j ? 'click the video'
+         : (clip_fxAimed(z) ? 'aimed ' + Math.round((Number(z.x) || 0.5) * 100)
+            + '/' + Math.round((Number(z.y) || 0.5) * 100) : 'centre'))
+      + '</button>');
   }
 
   for (var k = 0; k < f.freezes.length; k++) {
@@ -2392,7 +2426,15 @@ function clip_fxTick() {
   var t = isFinite(v.currentTime) ? v.currentTime : 0;
 
   var z = clip_fxZoomAt(t);
+  /* AND WHERE IT PUNCHES IN TO. Without the origin the preview zooms to
+     the middle while the render zooms where it was aimed, so the one
+     thing the preview exists to show would be the one thing it got
+     wrong. */
+  var aim = clip_fxAimAt_(t);
+  v.style.transformOrigin = (100 * aim[0]).toFixed(2) + '% '
+                          + (100 * aim[1]).toFixed(2) + '%';
   v.style.transform = z > 1.001 ? 'scale(' + z.toFixed(4) + ')' : '';
+  clip_fxMarker();
 
   var caps = clip_fxCaptionsAt(t);
   var slots = ['top', 'middle', 'bottom'];
@@ -2481,6 +2523,79 @@ function clip_fxPlayhead(t) {
 
 var clip_fx_el = null;
 
+/* Is this zoom pointed anywhere but the middle? */
+/* The aim in force at time `t`, as [x, y]. Centre when no aimed zoom covers
+   it -- which matches _focus_expr, whose default is the middle. */
+function clip_fxAimAt_(t) {
+  var p = clip_state.player;
+  if (!p) return [0.5, 0.5];
+  for (var i = 0; i < p.fx.zooms.length; i++) {
+    var z = p.fx.zooms[i];
+    if (t >= (Number(z.at) || 0) && t <= (Number(z.until) || 0)) {
+      return [Number(z.x) || 0.5, Number(z.y) || 0.5];
+    }
+  }
+  return [0.5, 0.5];
+}
+
+function clip_fxAimed(z) {
+  return Math.abs((Number(z.x) || 0.5) - 0.5) > 0.01
+      || Math.abs((Number(z.y) || 0.5) - 0.5) > 0.01;
+}
+
+/* Arm aiming for one zoom. The next click on the video sets its point. */
+function clip_fxAim(j) {
+  clip_state.fxAim = (clip_state.fxAim === j) ? null : j;
+  clip_fxRender();
+  clip_fxMarker();
+  if (clip_state.fxAim === j) {
+    toast('Click the video where the zoom should point.', 'ok');
+  }
+}
+
+/* The click that lands the aim. Fractions of the frame, so it survives the
+   player being any size and the render being any resolution. */
+function clip_fxAimAt(ev) {
+  var j = clip_state.fxAim;
+  var p = clip_state.player;
+  if (j == null || !p || !p.fx.zooms[j]) return false;
+  var v = clip_el('clip-video');
+  if (!v) return false;
+  var b = v.getBoundingClientRect();
+  if (!b.width || !b.height) return false;
+  var z = p.fx.zooms[j];
+  z.x = Math.max(0, Math.min(1, (ev.clientX - b.left) / b.width));
+  z.y = Math.max(0, Math.min(1, (ev.clientY - b.top) / b.height));
+  clip_state.fxAim = null;
+  clip_fxRender();
+  clip_fxMarker();
+  clip_fxTick();
+  return true;
+}
+
+/* A dot on the stage showing where the zoom under the playhead is aimed, so
+   the answer is visible without pressing render. */
+function clip_fxMarker() {
+  var el = clip_el('clip-fx-aimdot');
+  var p = clip_state.player;
+  if (!el || !p) return;
+  var j = clip_state.fxAim;
+  var z = (j != null) ? p.fx.zooms[j] : null;
+  if (!z) {
+    /* Not aiming: show the aim of whichever zoom the playhead is inside. */
+    var at = clip_fxNow() || 0;
+    for (var i = 0; i < p.fx.zooms.length; i++) {
+      var q = p.fx.zooms[i];
+      if (at >= (Number(q.at) || 0) && at <= (Number(q.until) || 0)
+          && clip_fxAimed(q)) { z = q; break; }
+    }
+  }
+  if (!z) { el.classList.add('hide'); return; }
+  el.classList.remove('hide');
+  el.style.left = (100 * (Number(z.x) || 0.5)).toFixed(2) + '%';
+  el.style.top = (100 * (Number(z.y) || 0.5)).toFixed(2) + '%';
+}
+
 function clip_fxLanes() {
   var host = clip_el('clip-fx-lanes');
   var p = clip_state.player;
@@ -2496,11 +2611,21 @@ function clip_fxLanes() {
   var add = function (kind, i, a, b, label) {
     var left = pct(a);
     var width = Math.max(0.8, pct(b) - left);
+    /* DRAGGABLE, NOT JUST CLICKABLE. Every effect was placed by typing two
+       numbers into boxes -- which is the one interaction a timeline exists to
+       replace. The bar moves as a whole, and its two edges resize it; a
+       freeze and a sound have no end to drag, so they get no handles. */
+    var span = (kind === 'freezes' || kind === 'sounds') ? '' :
+      '<b class="clip-fx-grip is-a" data-fxdrag="a" data-fxkind="' + kind
+      + '" data-fxi="' + i + '"></b>'
+      + '<b class="clip-fx-grip is-b" data-fxdrag="b" data-fxkind="' + kind
+      + '" data-fxi="' + i + '"></b>';
     rows.push('<span class="clip-fx-bar is-' + kind + '"'
       + ' style="left:' + left.toFixed(2) + '%;width:' + width.toFixed(2) + '%"'
       + ' data-fxseek="' + a + '" data-fxkind="' + kind + '" data-fxi="' + i + '"'
-      + ' title="' + esc(label) + ' - click to jump here"><i>'
-      + esc(label) + '</i></span>');
+      + ' data-fxdrag="move"'
+      + ' title="' + esc(label) + ' - drag to move, drag an edge to resize">'
+      + '<i>' + esc(label) + '</i>' + span + '</span>');
   };
 
   var f = p.fx;
@@ -2524,6 +2649,77 @@ function clip_fxLanes() {
     add('sounds', m, sa, sa + 0.4, name);
   }
   host.innerHTML = rows.join('');
+}
+
+/* ---------------------------------------------- dragging on the timeline
+
+   THE TIMELINE WAS READ-ONLY. Every effect was positioned by typing two
+   numbers into boxes underneath it, while the bar showing where it sat could
+   only be clicked to seek. Dragging the thing you are looking at is the
+   interaction a timeline exists for, and typing "4.35" is the one it exists
+   to replace.
+
+   The numbers stay: they are exact, and an effect that has to line up with a
+   kill to a tenth of a second is easier typed than dragged. The two edit the
+   same state, so whichever is used the other updates. */
+
+var CLIP_FX_MIN = 0.15;         /* the shortest an effect may be dragged to */
+
+function clip_fxDragStart(ev, what, kind, i) {
+  var lanes = clip_el('clip-fx-lanes');
+  var p = clip_state.player;
+  var dur = clip_fxDuration();
+  if (!lanes || !p || !dur) return;
+  var row = (p.fx[kind] || [])[i];
+  if (!row) return;
+  var isPoint = (kind === 'freezes' || kind === 'sounds');
+  clip_state.fxDrag = {
+    what: what, kind: kind, i: i, dur: dur,
+    x0: ev.clientX, width: lanes.getBoundingClientRect().width,
+    a0: Number(row.at) || 0,
+    b0: isPoint ? null : (Number(row.until) || 0),
+    moved: false
+  };
+  try { lanes.setPointerCapture(ev.pointerId); } catch (e) {}
+  ev.preventDefault();
+}
+
+function clip_fxDragMove(ev) {
+  var d = clip_state.fxDrag;
+  var p = clip_state.player;
+  if (!d || !p) return;
+  var row = (p.fx[d.kind] || [])[d.i];
+  if (!row || !d.width) return;
+  var shift = ((ev.clientX - d.x0) / d.width) * d.dur;
+  /* A click that never moved must stay a click -- it is how you seek. */
+  if (!d.moved && Math.abs(ev.clientX - d.x0) < 3) return;
+  d.moved = true;
+
+  var lo = 0, hi = d.dur;
+  if (d.what === 'move') {
+    var len = (d.b0 == null) ? 0 : d.b0 - d.a0;
+    var a = Math.max(lo, Math.min(hi - len, d.a0 + shift));
+    row.at = a;
+    if (d.b0 != null) row.until = a + len;
+  } else if (d.what === 'a') {
+    row.at = Math.max(lo, Math.min((d.b0 || hi) - CLIP_FX_MIN, d.a0 + shift));
+  } else {
+    row.until = Math.min(hi, Math.max(d.a0 + CLIP_FX_MIN, d.b0 + shift));
+  }
+  clip_fxLanes();
+  clip_fxRender();
+  clip_fxTick();
+}
+
+function clip_fxDragEnd(ev) {
+  var d = clip_state.fxDrag;
+  clip_state.fxDrag = null;
+  if (!d) return false;
+  var lanes = clip_el('clip-fx-lanes');
+  try { if (lanes) lanes.releasePointerCapture(ev.pointerId); } catch (e) {}
+  /* Tell the caller whether this was a drag, so a plain click can still seek
+     rather than seeking at the end of every drag. */
+  return d.moved;
 }
 
 async function clip_playerApply() {
@@ -2964,20 +3160,24 @@ function clip_runBody(s) {
    selection, the style or the round types has to be chosen again -- and the
    flag is the only thing that separates a deliberate slow read from the
    silent one this replaced. */
-async function clip_runAnyway() {
+async function clip_runAnyway(mode) {
   var s = clip_state.pick;
   if (!s) return;
-  var b = clip_el('clip-needsdemo-anyway');
+  var b = clip_el(mode === 'cards' ? 'clip-needsdemo-cards'
+                                   : 'clip-needsdemo-anyway');
   if (b) b.disabled = true;
   var body = clip_runBody(s);
   body.demo_fallback = true;
+  if (mode) body.fallback_mode = mode;
   try {
     var r = await API.post('/api/clips/run', body);
     if (r && r.error) { toast(r.error, 'error'); if (b) b.disabled = false; return; }
     clip_state.busy = true;
     clip_show('clip-results', false);
     clip_show('clip-needsdemo', false);
-    toast('Reading the screen. This is the slow way.', 'ok');
+    toast(mode === 'cards'
+      ? 'Reading the kill tally. Kills only, and much faster.'
+      : 'Reading the feed and the scoreboard. This is the slow way.', 'ok');
   } catch (e) {
     toast('Could not start.', 'error');
     if (b) b.disabled = false;
@@ -3431,7 +3631,8 @@ function clip_useLocal() {
        43-minute selection was advertised at 9 minutes of scanning and took
        40. This is the same shape as the has_recording bug above -- a key the
        games list provides and this object forgot. */
-    scan_rate: g.scan_rate, demos: g.demos, needs_ocr: g.needs_ocr,
+    scan_rate: g.scan_rate, cards_rate: g.cards_rate,
+    demos: g.demos, needs_ocr: g.needs_ocr,
     counts_assists: g.counts_assists, blocked: g.blocked, player: g.player,
     started: f.started || null, display_started: null, local: true
   };
@@ -3644,6 +3845,7 @@ function clip_useGameLocally(key, label) {
     s.blocked = prof.ready ? '' : (prof.blocked || s.blocked);
     s.needs_ocr = !!prof.needs_ocr;
     s.scan_rate = prof.scan_rate;
+    s.cards_rate = prof.cards_rate;
     s.demos = !!prof.demos;
     s.counts_assists = !!prof.counts_assists;
     s.player = prof.player || '';
@@ -3986,22 +4188,50 @@ function clip_wire() {
         clip_fxGrab(g.getAttribute('data-fxgrab'),
                     Number(g.getAttribute('data-fxi')),
                     g.getAttribute('data-fxfield'));
+        return;
       }
+      var aim = e.target.closest ? e.target.closest('[data-fxaim]') : null;
+      if (aim) clip_fxAim(Number(aim.getAttribute('data-fxaim')));
     });
   }
   var lanes = clip_el('clip-fx-lanes');
-  if (lanes) lanes.addEventListener('click', function (e) {
-    var b = e.target.closest ? e.target.closest('[data-fxseek]') : null;
-    if (!b) return;
-    var v = clip_el('clip-video');
-    var at = Number(b.getAttribute('data-fxseek'));
-    if (v && isFinite(at)) {
-      /* A moment before it, so what happens there can be watched happening
-         rather than being already over. */
-      v.currentTime = Math.max(0, at - 0.6);
-      var p = clip_state.player;
-      if (p) { p.fx.lastHeld = null; p.fx.played = {}; }
-    }
+  if (lanes) {
+    /* Pointer events, not mouse: the same code then works for a touchscreen
+       and a pen, and setPointerCapture keeps the drag alive when the cursor
+       leaves the bar -- which it does immediately, because the bar is moving
+       out from under it. */
+    lanes.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      var g = e.target.closest ? e.target.closest('[data-fxdrag]') : null;
+      if (!g) return;
+      clip_fxDragStart(e, g.getAttribute('data-fxdrag'),
+                       g.getAttribute('data-fxkind'),
+                       Number(g.getAttribute('data-fxi')));
+    });
+    lanes.addEventListener('pointermove', clip_fxDragMove);
+    lanes.addEventListener('pointerup', function (e) {
+      /* A drag that moved must not also seek: the playhead would jump to
+         wherever the bar was let go, every single time. */
+      if (clip_fxDragEnd(e)) return;
+      var b = e.target.closest ? e.target.closest('[data-fxseek]') : null;
+      if (!b) return;
+      var v = clip_el('clip-video');
+      var at = Number(b.getAttribute('data-fxseek'));
+      if (v && isFinite(at)) {
+        /* A moment before it, so what happens there can be watched happening
+           rather than being already over. */
+        v.currentTime = Math.max(0, at - 0.6);
+        var p = clip_state.player;
+        if (p) { p.fx.lastHeld = null; p.fx.played = {}; }
+      }
+    });
+    lanes.addEventListener('pointercancel', clip_fxDragEnd);
+  }
+
+  /* Aiming a zoom: arm it on the row, land it on the video. */
+  var vid = clip_el('clip-video');
+  if (vid) vid.addEventListener('click', function (e) {
+    if (clip_fxAimAt(e)) { e.preventDefault(); e.stopPropagation(); }
   });
 
   var pv = clip_el('clip-fx-preview');
@@ -4278,7 +4508,9 @@ function clip_wire() {
     } else if (act === 'needsdemo-get') {
       clip_getDemos('clip-needsdemo-codes', 'clip-needsdemo-msg');
     } else if (act === 'demo-anyway') {
-      clip_runAnyway();
+      clip_runAnyway('');
+    } else if (act === 'demo-cards') {
+      clip_runAnyway('cards');
     } else if (act === 'install-tools') {
       clip_installTools();
     } else if (act === 'strip-all') {

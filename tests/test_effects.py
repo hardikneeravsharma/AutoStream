@@ -291,3 +291,71 @@ def test_everything_at_once_produces_one_graph_and_one_encode(tmp_path):
     for expected in ("tpad", "concat", "scale=w=", "drawtext", "amix"):
         assert expected in graph, f"{expected} is missing from the graph"
     assert vlabel.startswith("cap") and alabel == "amixed"
+
+
+# ================================================ zooming somewhere specific
+#
+# A punch-in could reach 2.5x and always went to the middle of the frame --
+# which is where the crosshair is and almost nothing else. A kill in a corner,
+# the kill feed, the scoreboard: none of them could be zoomed to at all.
+
+def test_a_zoom_can_go_past_two_and_a_half():
+    from autostream.clips import effects as fx
+
+    assert fx.ZOOM_MAX == 4.0
+
+
+def test_a_centred_zoom_writes_no_focus_expression():
+    """The default has to stay exactly what it was, or every clip anybody has
+    already made would re-render differently."""
+    from autostream.clips import effects as fx
+
+    z = [fx.Zoom(at=0.0, until=2.0, to=2.0)]
+    assert fx._focus_expr(z, [], "x") == ""
+    assert fx._focus_expr(z, [], "y") == ""
+
+
+def test_an_aimed_zoom_puts_the_crop_where_it_was_aimed():
+    from autostream.clips import effects as fx
+
+    z = [fx.Zoom(at=1.0, until=4.0, to=3.0, x=0.82, y=0.2)]
+    ex = fx._focus_expr(z, [], "x")
+    assert "0.8200" in ex
+    # Outside the zoom it must read as centred, or the crop would jump to the
+    # aim before the punch-in has started arriving.
+    assert ex.endswith("0.5)")
+    assert "between(t,1.000,4.000)" in ex
+
+
+def test_two_zooms_aimed_differently_do_not_average_into_the_corner():
+    """The factor expression takes a max() of overlapping terms, which is
+    right for a SIZE. Doing that to a POSITION would drift the crop towards
+    the bottom-right whenever two zooms overlapped."""
+    from autostream.clips import effects as fx
+
+    z = [fx.Zoom(at=0.0, until=2.0, to=2.0, x=0.1),
+         fx.Zoom(at=3.0, until=5.0, to=2.0, x=0.9)]
+    ex = fx._focus_expr(z, [], "x")
+    assert "max(" not in ex
+    assert "0.1000" in ex and "0.9000" in ex
+
+
+def test_an_aim_out_of_range_is_clamped_to_the_frame():
+    """The same treatment the zoom FACTOR already gets a few lines above --
+    max(ZOOM_MIN, min(ZOOM_MAX, ...)). The API refuses anything outside 0..1
+    before it reaches here, so this only covers a Zoom built in code."""
+    from autostream.clips import effects as fx
+
+    assert "1.0000" in fx._focus_expr([fx.Zoom(at=0, until=2, to=2, x=42.0)],
+                                      [], "x")
+    assert "0.0000" in fx._focus_expr([fx.Zoom(at=0, until=2, to=2, x=-9.0)],
+                                      [], "x")
+
+
+def test_an_unreadable_aim_is_treated_as_centred():
+    """A string where a number should be is a broken payload, not an aim."""
+    from autostream.clips import effects as fx
+
+    z = fx.Zoom(at=0.0, until=2.0, to=2.0)
+    z.x = "middle-ish"
+    assert fx._focus_expr([z], [], "x") == ""

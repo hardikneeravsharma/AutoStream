@@ -2221,6 +2221,47 @@ ol.steps-list li{margin-block:var(--space-4)}
   font-style:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .clip-fx-bar:hover{opacity:1;outline:1px solid var(--text-primary)}
+/* DRAGGABLE. The body moves the effect and the two edges resize it, which is
+   what the timeline is for -- the number boxes underneath stay for the times
+   that have to be exact. A freeze and a sound have no end, so they get no
+   grips and keep the plain cursor. */
+.clip-fx-bar[data-fxdrag]{cursor:grab;touch-action:none}
+.clip-fx-bar[data-fxdrag]:active{cursor:grabbing}
+.clip-fx-grip{
+  position:absolute;top:0;bottom:0;width:7px;
+  cursor:ew-resize;
+  background:rgba(255,255,255,.55);
+  opacity:0;
+  transition:opacity .1s ease;
+}
+.clip-fx-grip.is-a{left:0;border-radius:3px 0 0 3px}
+.clip-fx-grip.is-b{right:0;border-radius:0 3px 3px 0}
+.clip-fx-bar:hover .clip-fx-grip{opacity:1}
+/* The bars are 13px tall, so a 7px grip is most of the width of a short one.
+   Below this the whole bar is a move handle and the edges are unreachable --
+   which is the right trade: nudging a 0.2s effect by dragging its edge is not
+   a gesture anyone can land. */
+.clip-fx-bar{min-width:6px}
+
+/* Where a zoom is aimed. On the stage rather than inside the video, so it
+   does not scale with the punch-in it describes. */
+.clip-fx-aimdot{
+  position:absolute;
+  width:18px;height:18px;
+  margin:-9px 0 0 -9px;
+  border-radius:50%;
+  border:2px solid #fff;
+  box-shadow:0 0 0 2px rgba(0,0,0,.55), 0 0 8px rgba(0,0,0,.5);
+  pointer-events:none;
+}
+.clip-fx-aimdot::after{
+  content:"";position:absolute;inset:6px;
+  border-radius:50%;background:#fff;
+}
+.clip-fx-aim.is-on{
+  background:var(--accent);
+  color:#fff;
+}
 .clip-fx-bar.is-captions{background:var(--accent);top:2px;height:13px}
 .clip-fx-bar.is-zooms{background:var(--ok, #2ea043);top:16px;height:13px}
 .clip-fx-bar.is-freezes{background:var(--warn);top:2px;height:13px}
