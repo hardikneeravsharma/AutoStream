@@ -39,6 +39,7 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
 - [Before you start](#before-you-start)
 - [Install](#install-the-easy-way)
 - [Your first week](#your-first-week)
+- [**Clipping a recording**](docs/CLIPPING.md) — the walkthrough, if clips are all you want
 - [Install from source](#install-from-source)
 - [How it works](#how-it-works)
 - [Troubleshooting](#troubleshooting)
@@ -78,6 +79,11 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
   exact kills, deaths and rounds — plus kills *through smoke* and *while flashed*,
   which no amount of looking at the screen can tell you. It finds the right demo
   itself and works out which player is you.
+- **Reads Valorant's match record the same way.** There is no demo, but the running
+  Riot client will hand over the match — exact kill times, and who was still alive
+  at each one, *counted* rather than guessed, which is what tells a 3-kill round
+  from a 1v3. It is fetched while you play, because the credentials go when the
+  game closes.
 - **Clips Counter-Strike by the round, not by the kill**, and takes the rounds from
   the demo when there is one.
   - Aces, 1vN clutches won *and* nearly won, multi-kill rounds, last-one-alive,
@@ -127,15 +133,26 @@ See [docs/PROGRESS.md](docs/PROGRESS.md) for what has been measured so far and
 why each choice was made. The three items that used to be listed here — rounds
 from the demo, spoken hooks, and montages that tell the story — are done.
 
-**Valorant round context.** Valorant can label a triple kill but not a 1v3,
-because it cannot yet see who is alive. The information is in the feed — every
-row is coloured by both players' teams, so each one says which side lost
-somebody — but reading it reliably is still to do.
+The two that used to be listed here — Valorant round context, and a faster demo
+sync — are also done. Valorant now reads Riot's own match record, which *counts*
+who was alive at each kill rather than inferring it, so 1v3 and CLUTCH are
+labelled the same way Counter-Strike's are. And the demo search now reads twelve
+minutes to build its fingerprint instead of the whole recording, widening only if
+that is not enough.
 
-**A faster demo sync.** Finding the demo inside a recording needs only a handful
-of detected kills, but the confidence test is a share of *all* of them, so the
-whole recording still gets scanned. Making that test window-aware would take a
-Counter-Strike clip job from about four minutes to under one.
+**Kills the Valorant screen reader misses.** When no match record was cached — an
+older recording, or a session played with AutoStream closed — kills are found by
+reading the feed's coloured bars, and that path is measurably incomplete: across
+two sessions totalling 145 minutes and 63 kills, it reported 71% correctly and
+found 56% of them. The duplicates are the fault people notice; the misses are the
+larger one. Raising the agreement threshold was measured and made recall worse,
+so the fix is not a constant — see the comment in
+[`clips/valorant_feed.py`](autostream/clips/valorant_feed.py) for the numbers.
+
+**A clipping page built for clipping.** The Clips page grew out of a page for
+reviewing streams, and most people who use the clipper never stream. What it
+should look like for someone who only ever hands it a recording is an open
+question.
 
 ## What you can use it for
 
@@ -403,6 +420,12 @@ recording you already have — pick the file, say which game it is, and everythi
 it works exactly as it does for a stream: the same styles, the same review, the same
 verticals and montage. Nothing about the clipper needs a YouTube account or OBS, and the
 first-run wizard has a **Just make clips** fork that skips both.
+
+> **If clips are the only reason you installed this**, read
+> **[docs/CLIPPING.md](docs/CLIPPING.md)** instead of the rest of this section. It is the
+> walkthrough end to end — what to do while you are still playing, how to hand over a
+> file, and what each game gives you. The one step with a deadline is Valorant's match
+> record, which can only be fetched while the game is open.
 
 **Choosing the part.** A recording is not one game. It holds a menu, a warm-up, the tail
 of the last match, and often a different game entirely after it — and a scan reads one
