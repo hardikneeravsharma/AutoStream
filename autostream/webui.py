@@ -973,8 +973,23 @@ class Server:
             row["blocked"] = why
             row["needs_ocr"] = ocr
             row["scan_rate"] = self._scan_rate(prof)
+            row["cards_rate"] = self._cards_rate(prof)
             row["counts_assists"] = bool(prof and prof.counts_assists)
         return rows
+
+    @staticmethod
+    def _cards_rate(prof) -> float:
+        """How fast the SECOND reader is, for games that have one. 0 if not.
+
+        Counter-Strike can be read by the kill tally instead of the feed and
+        scoreboard, and the page puts both costs on their buttons -- which is
+        the only thing that makes it a choice rather than a formality.
+        """
+        if prof is None or not getattr(prof, "demos", False):
+            return 0.0
+        from .clips.jobs import scan_rate
+
+        return scan_rate("cardcount", False)
 
     @staticmethod
     def _scan_rate(prof) -> float:
@@ -1066,6 +1081,7 @@ class Server:
             # quote a real number for the part of the file that is selected
             # rather than a rule of thumb that is wrong for this mode.
             r["scan_rate"] = self._scan_rate(prof)
+            r["cards_rate"] = self._cards_rate(prof)
             r["blocked"] = why
             # Whether a replay for this match looks to be on disk. Only games
             # that HAVE replays get an answer -- "no demo" against Valorant
@@ -1332,7 +1348,15 @@ class Server:
                 fx.Zoom(at=num(z.get("at"), 0.0, 0, 36000, "A zoom's start"),
                         until=num(z.get("until"), 2.0, 0, 36000, "A zoom's end"),
                         to=num(z.get("to"), 1.35, fx.ZOOM_MIN, fx.ZOOM_MAX,
-                               "A zoom's amount"))
+                               "A zoom's amount"),
+                        # Where it aims, as a fraction of the frame. Refused
+                        # outside 0..1 like every other number here -- the page
+                        # clamps the click to the video's own rectangle, so a
+                        # value outside it did not come from a click.
+                        x=num(z.get("x"), fx.FOCUS_MID, 0.0, 1.0,
+                              "A zoom's horizontal aim"),
+                        y=num(z.get("y"), fx.FOCUS_MID, 0.0, 1.0,
+                              "A zoom's vertical aim"))
                 for z in rows("zooms")]
             freezes = [
                 fx.Freeze(at=num(f.get("at"), 0.0, 0, 36000, "A freeze's time"),
@@ -1586,6 +1610,12 @@ class Server:
         # the page says the user has chosen that cost with their eyes open.
         if body.get("demo_fallback"):
             opt["demo_fallback"] = True
+            # WHICH reader to fall back TO. "cards" reads the kill tally under
+            # the crosshair -- about eight times faster than the feed and the
+            # scoreboard, and kills only. Anything else means the full read,
+            # which is what produces the round labels.
+            if str(body.get("fallback_mode") or "") == "cards":
+                opt["fallback_mode"] = "cards"
         # Round mode, for games whose profile reads the scoreboard. Absent for
         # every other game, so nothing changes for them.
         if body.get("rounds") is not None:
@@ -2258,6 +2288,7 @@ class Server:
                 "demos": bool(getattr(prof, "demos", False)),
                 "scan_mode": prof.mode,
                 "scan_rate": self._scan_rate(prof),
+                "cards_rate": self._cards_rate(prof),
                 "rounds": bool(getattr(prof, "rounds", False)),
                 "counts_assists": bool(prof.counts_assists),
                 "blocked": why,

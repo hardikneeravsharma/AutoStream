@@ -53,7 +53,18 @@ WHERE = {"top": 0.15, "middle": 0.46, "bottom": 0.70}
 # How long a punch-in takes to arrive and to let go. Fast enough to feel like
 # an edit rather than a drift, slow enough not to look like a glitch.
 ZOOM_RAMP = 0.35
-ZOOM_MIN, ZOOM_MAX = 1.05, 2.5
+# 4x, not 2.5. A punch-in is the one effect that turns a wide gunfight into a
+# readable moment on a phone, and 2.5 was not enough to isolate a duel across a
+# 1920-wide frame. At 4x a 1080p source is sampling a 480x270 region, which is
+# soft but still watchable at Shorts size; past that it is mush, so this is the
+# floor of "too soft" rather than an arbitrary round number.
+ZOOM_MIN, ZOOM_MAX = 1.05, 4.0
+
+# Where a punch-in is aimed, as a fraction of the frame: 0.5, 0.5 is the middle.
+# Zooming always went to the centre, which is where a crosshair is and almost
+# nothing else -- so a kill in the corner of the screen, or a scoreboard, or the
+# kill feed, could not be zoomed to at all.
+FOCUS_MID = 0.5
 
 FREEZE_MIN, FREEZE_MAX = 0.1, 5.0
 SOUND_GAIN_MAX = 3.0
@@ -77,10 +88,16 @@ class Caption:
 
 @dataclass
 class Zoom:
-    """A punch-in that arrives, holds, and lets go again."""
+    """A punch-in that arrives, holds, and lets go again.
+
+    `x` and `y` are where it aims, as fractions of the frame -- 0.5, 0.5 being
+    the middle, which is what every zoom did before they existed.
+    """
     at: float = 0.0
     until: float = 2.0
     to: float = 1.35
+    x: float = FOCUS_MID
+    y: float = FOCUS_MID
 
 
 @dataclass
@@ -298,6 +315,42 @@ def _zoom_expr(zooms: list[Zoom], freezes: list[Freeze]) -> str:
     return f"1+{lift}"
 
 
+def _focus_expr(zooms: list[Zoom], freezes: list[Freeze], axis: str) -> str:
+    """Where the crop sits at any moment, as a fraction of the slack. 
+
+    Returns an expression in 0..1 -- 0.5 being centred, which is what it reads
+    everywhere no zoom is active. It has to be an expression rather than a
+    number for the same reason the factor does: two zooms in one clip can aim
+    at different things, and the crop follows the ramp in and out with them.
+
+    The nesting is `if(between(t,a,b), aim, rest)` rather than a max() of
+    terms, because these are POSITIONS. Taking the largest of two positions
+    would drift the crop towards the bottom-right of the frame whenever two
+    zooms overlapped, instead of choosing one of them.
+    """
+    aims = []
+    for z in zooms:
+        a = at_output(z.at, freezes)
+        b = at_output(z.until, freezes)
+        if b <= a or z.to <= 1.0:
+            continue
+        f = getattr(z, axis, FOCUS_MID)
+        try:
+            f = max(0.0, min(1.0, float(f)))
+        except (TypeError, ValueError):
+            f = FOCUS_MID
+        aims.append((a, b, f))
+    if not aims or all(abs(f - FOCUS_MID) < 1e-3 for _, _, f in aims):
+        return ""                     # every one of them is centred anyway
+    expr = f"{FOCUS_MID}"
+    # Later zooms are written outermost so an earlier one cannot shadow them;
+    # they do not overlap in the ordinary case and this is a stable rule when
+    # they do.
+    for a, b, f in reversed(aims):
+        expr = f"if(between(t,{a:.3f},{b:.3f}),{f:.4f},{expr})"
+    return expr
+
+
 def _caption_parts(captions: list[Caption], freezes: list[Freeze],
                    width: int, height: int, label: str) -> tuple[list[str], str]:
     """drawtext per caption, each gated to its own stretch of time."""
@@ -379,10 +432,21 @@ def build(fx: Effects, width: int, height: int, clip_seconds: float,
         # alternative -- cropping a smaller box each frame -- cannot work: a
         # filter's output size is fixed when it is set up, so an animated crop
         # is not something ffmpeg will accept.
+        # WHERE the crop sits. Left out, crop centres itself -- which is the
+        # crosshair and almost nothing else. `iw`/`ih` inside crop are the
+        # SCALED dimensions, so (iw-ow) is the slack at that instant and the
+        # aim follows the ramp without being told about it.
+        fx_x = _focus_expr(fx.zooms, fx.freezes, "x")
+        fy_y = _focus_expr(fx.zooms, fx.freezes, "y")
+        crop = f"crop={width}:{height}"
+        if fx_x or fy_y:
+            crop = (f"crop=w={width}:h={height}"
+                    f":x='(iw-ow)*({fx_x or FOCUS_MID})'"
+                    f":y='(ih-oh)*({fy_y or FOCUS_MID})'")
         parts.append(
             f"[{vlabel}]scale=w='2*round(iw*({zoom})/2)'"
             f":h='2*round(ih*({zoom})/2)':eval=frame,"
-            f"crop={width}:{height}[zoomed]")
+            f"{crop}[zoomed]")
         vlabel = "zoomed"
 
     cap_parts, vlabel = _caption_parts(fx.captions, fx.freezes, width, height,

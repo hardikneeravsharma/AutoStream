@@ -368,6 +368,7 @@ class ClipJob:
         # ---- 1. find the kills -------------------------------------------
         self._set(step="scan", done=0, total=1, message="Looking for kills...")
         prof = profiles.for_game(self.game_key, self.game)
+        prof = self._as_asked(prof, opt)
 
         # BEFORE ANY DECODING. A killfeed profile reads the feed as text, and
         # the OCR binary was previously discovered inside the scan -- which on
@@ -1075,6 +1076,40 @@ class ClipJob:
         log.info("%d of %d cached kills are inside the chosen part",
                  len(kept), len(cached))
         return kept
+
+    def _as_asked(self, prof, opt: dict):
+        """The profile with the reader the user chose, when they chose one.
+
+        WHY THERE IS A CHOICE AT ALL. Counter-Strike read off the screen is
+        two passes in one: the kill feed says what you killed, and the
+        scoreboard beside it is what turns a round into "1v3 CLUTCH" rather
+        than "2 kills". The scoreboard is the whole cost -- measured, 1.2x
+        real time against 10x for the kill tally under the crosshair, so a
+        48-minute recording is 40 minutes of scanning against 5.
+
+        With a demo none of that matters, because the rounds come from the
+        demo and the scan stops after twelve minutes. Without one it is a real
+        trade and only the user can make it, so they are asked rather than
+        charged 35 extra minutes for labels they may not want.
+
+        cs2_cards.py was written for exactly this and was never reachable: the
+        profile sets rounds, rounds force the scoreboard, and nothing could
+        say otherwise.
+        """
+        if prof is None or opt.get("fallback_mode") != "cards":
+            return prof
+        if not getattr(prof, "demos", False):
+            return prof            # only Counter-Strike has the second reader
+        import dataclasses
+
+        log.info("reading %s by the kill tally rather than the feed, as asked "
+                 "-- kills only, no round labels", prof.label)
+        self._set(demo_note=(
+            "Reading the kill tally under the crosshair, which is about eight "
+            "times faster than the kill feed and the scoreboard. Clips are "
+            "named by their kill count; round labels like CLUTCH and PISTOL "
+            "need the scoreboard, which is what the slower read is for."))
+        return dataclasses.replace(prof, mode="cardcount", rounds=False)
 
     def _stop_for_demo(self, opt: dict, why: str, total: float) -> None:
         """Refuse to read the screen instead, unless asked to. Raises.

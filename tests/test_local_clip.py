@@ -447,3 +447,45 @@ def test_the_refusal_does_not_assert_a_missing_recording_it_has_not_checked():
     body = _func("clip_trimToggle")
     assert "did not keep its recording" not in body
     assert "clip_runFor" in body, "it has to distinguish 'gone' from 'not yet known'"
+
+
+# ------------------------------------------- editing effects on the timeline
+#
+# Every effect was positioned by typing two numbers into boxes, while the bar
+# showing where it sat could only be clicked to seek. Dragging the thing you
+# are looking at is what a timeline is for.
+
+def test_effect_bars_can_be_dragged_and_resized():
+    body = _func("clip_fxLanes")
+    assert 'data-fxdrag="move"' in body, "the bar itself has to move"
+    assert 'data-fxdrag="a"' in body and 'data-fxdrag="b"' in body, (
+        "both edges have to resize it")
+
+
+def test_a_freeze_and_a_sound_get_no_resize_grips():
+    """They are points in time, not spans. Offering an edge to drag would
+    promise a length they do not have."""
+    body = _func("clip_fxLanes")
+    assert "'freezes'" in body and "'sounds'" in body
+    assert "? '' :" in body, "the grips must be omitted for the point effects"
+
+
+def test_a_drag_that_moved_does_not_also_seek():
+    """The playhead would jump to wherever the bar was let go, every time."""
+    body = _func("clip_fxDragEnd")
+    assert "return d.moved" in body
+
+
+def test_a_click_that_never_moved_is_still_a_click():
+    body = _func("clip_fxDragMove")
+    assert "d.moved" in body and "< 3" in body, (
+        "a few pixels of jitter while clicking must not count as a drag")
+
+
+def test_the_preview_punches_in_where_the_render_will():
+    """Without the origin the preview zooms to the middle while the render
+    zooms where it was aimed - so the one thing the preview exists to show
+    would be the one thing it got wrong."""
+    body = _func("clip_fxTick")
+    assert "transformOrigin" in body
+    assert "clip_fxAimAt_" in body

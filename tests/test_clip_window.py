@@ -421,3 +421,66 @@ def test_a_probe_of_another_file_is_not_reused(tmp_path):
     other.source = tmp_path / "different.mp4"
     other.folder = tmp_path / "runs" / "two"
     assert other._recall_probe(720.0) is None
+
+
+# ------------------------------------- two ways to read a match with no demo
+#
+# Counter-Strike off the screen is two passes in one: the kill feed says what
+# you killed, and the scoreboard beside it turns a round into "1v3 CLUTCH"
+# rather than "2 kills". The scoreboard is the whole cost -- 1.2x real time
+# against 10x for the kill tally, so 48 minutes of footage is 40 minutes of
+# scanning against 5.
+#
+# cs2_cards.py was written for exactly this and was unreachable: the profile
+# sets rounds, rounds force the scoreboard, and nothing could say otherwise.
+
+def _job_for(tmp_path):
+    import threading
+    job = ClipJob.__new__(ClipJob)
+    job._lock = threading.Lock()
+    job.demo_note = ""
+    return job
+
+
+def test_asking_for_the_fast_reader_swaps_the_mode(tmp_path):
+    from autostream.clips import jobs, profiles
+
+    prof = profiles.for_game("cs2.exe")
+    assert prof.mode == "killfeed" and prof.rounds, "the shipped CS2 profile"
+
+    alt = _job_for(tmp_path)._as_asked(prof, {"fallback_mode": "cards"})
+    assert alt.mode == "cardcount"
+    assert alt.rounds is False, (
+        "rounds are what force the scoreboard pass; leaving them on would "
+        "make the choice do nothing")
+    assert jobs.scan_rate(alt.mode, alt.rounds) > \
+           jobs.scan_rate(prof.mode, prof.rounds) * 5
+
+
+def test_not_asking_changes_nothing(tmp_path):
+    from autostream.clips import profiles
+
+    prof = profiles.for_game("cs2.exe")
+    same = _job_for(tmp_path)._as_asked(prof, {})
+    assert same.mode == prof.mode and same.rounds == prof.rounds
+
+
+def test_a_game_with_no_second_reader_is_left_alone(tmp_path):
+    """Only Counter-Strike draws a kill tally. Swapping Delta Force to a mode
+    it has no HUD for would find nothing at all."""
+    from autostream.clips import profiles
+
+    df = profiles.for_game("deltaforceclient.exe")
+    same = _job_for(tmp_path)._as_asked(df, {"fallback_mode": "cards"})
+    assert same.mode == df.mode
+
+
+def test_the_fast_reader_says_what_it_gives_up(tmp_path):
+    """A run that quietly produced no CLUTCH labels would read as the round
+    detection having broken."""
+    job = _job_for(tmp_path)
+    from autostream.clips import profiles
+
+    job._as_asked(profiles.for_game("cs2.exe"), {"fallback_mode": "cards"})
+    assert "kill tally" in job.demo_note
+    assert "CLUTCH" in job.demo_note
