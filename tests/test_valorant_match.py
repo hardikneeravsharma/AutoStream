@@ -297,9 +297,16 @@ def test_a_cached_record_says_which_player_it_was_fetched_for(tmp_path, monkeypa
     assert vm.puuid_of(got[0]) == ME
 
 
-def test_the_in_game_name_is_the_fallback_for_a_record_from_elsewhere():
+def test_the_in_game_name_is_the_fallback_for_a_record_from_elsewhere(monkeypatch):
     m = _m()
     assert vm.puuid_of(m, "YuvaNeta") == ME
+    # THE THIRD FALLBACK IS THE RUNNING CLIENT, so "no name matched" only
+    # comes back empty when there is no client to ask. Without this the test
+    # passed with VALORANT closed and failed with it open, which is a test
+    # that depends on what the machine happens to be doing.
+    monkeypatch.setattr(valorant_api, "session",
+                        lambda: (_ for _ in ()).throw(
+                            valorant_api.Unavailable("client closed")))
     assert vm.puuid_of(m, "nobody") == ""
 
 
@@ -320,3 +327,165 @@ def test_a_record_that_cannot_be_attributed_is_reported_as_such(tmp_path, monkey
     got = vm.state(REC_STARTED, 1800.0)
     assert got["state"] == "have" and got["matches"] == 1
     assert "which player" in got.get("why", "")
+
+
+# ============================================ reaching Riot at all
+#
+# FROM A REAL SESSION. 43 minutes of VALORANT recorded, and not one match
+# record cached -- so the clips would have come off the screen with no round
+# context, and nothing on the page said why. Two separate faults, both silent
+# because collect() is deliberately quiet: it must never cost a run.
+
+def test_the_shard_is_read_from_the_game_not_guessed_from_the_account():
+    """THE ACCOUNT'S REGION DOES NOT DECIDE THE SHARD, and this cost a whole
+    session's match record before anybody noticed.
+
+    /riotclient/region-locale reports where the RIOT ACCOUNT lives. Measured on
+    a real machine it said EUW -- and the player's 29 VALORANT matches were on
+    ap; eu, na and kr all answered 404. A EUW account playing in Asia-Pacific
+    is an ordinary thing, and no region-to-shard table can be right about it
+    because the two are not related.
+
+    The game writes the host it uses into its own log on every call, so that is
+    what is read -- the same file client_version() already reads.
+    """
+    import tempfile
+
+    from autostream import valorant_api as va
+
+    log = ("URL [GET https://pd.ap.a.pvp.net/store/v1/wallet/abc]\n"
+           "URL [GET https://glz-ap-1.ap.a.pvp.net/session/v1/sessions/abc]")
+    f = Path(tempfile.mkdtemp()) / "ShooterGame.log"
+    f.write_text(log, encoding="utf-8")
+    assert va.shard_from_log(f) == ("ap", "ap")
+
+
+def test_the_shard_is_found_from_a_pd_call_alone():
+    """A log that has not made a glz call yet still names the shard."""
+    import tempfile
+
+    from autostream import valorant_api as va
+
+    f = Path(tempfile.mkdtemp()) / "ShooterGame.log"
+    f.write_text("URL [GET https://pd.eu.a.pvp.net/mmr/v1/players/x]",
+                 encoding="utf-8")
+    assert va.shard_from_log(f) == ("eu", "eu")
+
+
+def test_no_log_is_not_an_error():
+    """It falls back to the account's region -- a guess, but a better one than
+    refusing to look at all."""
+    from autostream import valorant_api as va
+
+    assert va.shard_from_log(Path("Z:/nowhere/ShooterGame.log")) == ("", "")
+
+
+def test_the_region_fallback_still_maps_the_known_ones():
+    """Only reached when the log cannot be read."""
+    from autostream import valorant_api as va
+
+    for region, shard in (("euw", "eu"), ("tr", "eu"), ("br", "na"),
+                          ("oce", "ap")):
+        assert va.SHARDS.get(region) == shard, region
+    for own in ("na", "eu", "ap", "kr"):
+        assert va.SHARDS.get(own, own) == own, own
+
+def test_every_shard_is_one_valorant_actually_serves():
+    from autostream import valorant_api as va
+
+    assert set(va.SHARDS.values()) <= {"na", "eu", "ap", "kr", "pbe"}
+
+
+def test_the_request_says_what_it_is():
+    """Cloudflare sits in front of pd.*.a.pvp.net and answers 403 error 1010,
+    "browser_signature_banned", to a request with no User-Agent -- which is
+    what urllib sends. Nothing to do with the tokens, which were fine.
+    Measured: no User-Agent is 403 every time; with one the same call reaches
+    Riot's own API and is answered by it."""
+    from autostream import valorant_api as va
+
+    s = va.Session(puuid="p", access="a", entitlements="e", region="euw",
+                   shard="eu", version="release-13.05-shipping-11-5350494")
+    h = s.headers()
+    assert "User-Agent" in h, (
+        "without one, every call is refused by the edge before Riot sees it")
+    ua = h["User-Agent"]
+    assert "Python" not in ua
+    assert ua.startswith("ShooterGame/"), ua
+    assert "13.05" in ua, "it has to carry the version the client is on"
+
+
+def test_the_user_agent_survives_an_odd_version_string():
+    """It is parsed out of a log line, so it must not raise on a shape nobody
+    anticipated -- a failure here would take out every Riot call."""
+    from autostream import valorant_api as va
+
+    for version in ("release-13.05-shipping-11-5350494", "release-13.05",
+                    "13.05", "", "weird"):
+        s = va.Session(puuid="p", access="a", entitlements="e", region="eu",
+                       shard="eu", version=version)
+        assert s.user_agent().startswith("ShooterGame/")
+
+
+# ------------------------------- the clock says WHICH match, not where it starts
+#
+# FROM A REAL MATCH. Sixteen of the player's kills aligned to within 1.41s, and
+# the alignment was thrown away because the wall clock disagreed by 109s.
+#
+# match.started is when the match was CREATED. Agent select, loading and the
+# first buy phase all happen after it, so the clock is systematically early --
+# Counter-Strike's demos show the same lag, measured there at 130-149s. A
+# twenty-second tolerance assumed the two meant the same instant.
+
+def test_the_clock_may_lag_the_first_round_by_minutes():
+    from autostream.clips import valorant_match as vm
+
+    assert vm.DISAGREE_MAX >= 120, (
+        "agent select alone is longer than this; a strong fingerprint would "
+        "be refused on every match")
+    # ...and still far below the gap between two matches, which is what the
+    # check exists to catch.
+    assert vm.DISAGREE_MAX < 20 * 60
+
+
+def test_a_strong_fingerprint_survives_the_usual_lag(monkeypatch):
+    """The exact numbers from the run that failed: fingerprint +159.3s,
+    clock +50.3s, 109s apart."""
+    from autostream.clips import cs2_demo, valorant_match as vm
+
+    started = 1_000_000.0
+    mine = [100.0 + 30 * i for i in range(12)]
+
+    class M:
+        id = "b645186b-x"
+        started = 1_000_050.3          # the clock: match created
+
+        def my_kill_times(self, puuid):
+            return mine
+
+    # detected at the fingerprint's offset, which is 109s later than the clock
+    detected = [t + 159.3 for t in mine]
+    s = vm.align(M(), "p", started, detected)
+    assert s.ok, s.why
+    assert abs(s.offset - 159.3) < 2.0, "it must keep the fingerprint's answer"
+
+
+def test_a_fingerprint_that_disagrees_by_a_whole_match_is_still_refused():
+    """The thing the check is for: two VALORANT games are half an hour apart,
+    and cutting on the wrong one mis-places every clip."""
+    from autostream.clips import valorant_match as vm
+
+    started = 1_000_000.0
+    mine = [100.0 + 30 * i for i in range(12)]
+
+    class M:
+        id = "wrongone"
+        started = 1_000_050.0
+
+        def my_kill_times(self, puuid):
+            return mine
+
+    detected = [t + 2400.0 for t in mine]      # forty minutes out
+    s = vm.align(M(), "p", started, detected)
+    assert not s.ok
+    assert "disagree" in s.why

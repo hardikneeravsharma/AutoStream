@@ -53,7 +53,20 @@ EDGE_SLACK = 90.0
 
 # How far the fingerprint may disagree with the wall clock before the pair is
 # treated as suspect rather than as a refinement.
-DISAGREE_MAX = 20.0
+#
+# TWENTY SECONDS ASSUMED match.started IS WHEN THE FIRST ROUND GOES LIVE. It is
+# not: it is when the match was CREATED, and agent select, loading and the
+# first buy phase all happen after it. Measured on a real match -- 16 of the
+# player's kills aligned to within 1.41s, and the clock was 109s behind that.
+# Counter-Strike's demos show the same lag for the same reason, measured there
+# at 130-149s.
+#
+# So the clock's job is to say WHICH match, not to second-guess a fingerprint
+# built from sixteen agreeing kills. Five minutes covers the lag with room to
+# spare and is still nowhere near the gap between two matches, which is the
+# thing this has to catch: consecutive VALORANT games are thirty minutes and
+# more apart.
+DISAGREE_MAX = 300.0
 
 # Riot's own name for what made a round notable. These are the values the
 # client sends; the mapping is to the words this app already uses elsewhere so
@@ -252,7 +265,12 @@ def align(match: Match, puuid: str, started: float,
     if fitted.ok:
         drift = abs(fitted.offset - clock)
         if drift <= DISAGREE_MAX:
-            log.info("match %s: fingerprint agrees with the clock to %.1fs; %s",
+            # "agrees to 109s" would be an odd thing to say. The clock is
+            # systematically early -- it is when the match was created -- so
+            # the drift being within tolerance means the fingerprint is
+            # describing the same match, not that the two numbers are close.
+            log.info("match %s: the clock places it %.0fs earlier, which is "
+                     "the usual lag before the first round; %s",
                      match.id[:8], drift, fitted.why)
             return fitted
         # The two disagree. That means either the clocks are not what they seem
