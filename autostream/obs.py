@@ -757,7 +757,16 @@ class Obs:
             log.warning("could not set record directory: %s", e)
 
     def start_recording(self) -> None:
-        self.connect()
+        # wait=True FOR THE SAME REASON start() HAS IT, and it was missing.
+        # With streaming off -- record and clip only, which is how most people
+        # who came here for the clipper run it -- start() is never called, so
+        # this was the only thing that ever tried to reach OBS at the beginning
+        # of a session, and an ordinary connect() may not launch OBS. Nothing
+        # else would, so on a machine where OBS was not already open the
+        # recording could never start: three failures in a row, then the engine
+        # pauses itself until restart, and the user is told to "check OBS" for
+        # an app that was waiting to be told to open it.
+        self.connect(wait=True)
         if self.ws.get_record_status().output_active:
             log.info("OBS already recording — reusing output")
             return

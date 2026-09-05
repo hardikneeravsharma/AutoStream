@@ -220,3 +220,51 @@ def test_coming_back_clears_the_memory(monkeypatch):
     o._down_until = 0.0          # as it would be once the window passed
     o.connect()
     assert o.ws is not None
+
+
+def test_starting_a_recording_may_launch_obs(monkeypatch, no_sleep):
+    """The record-only session's start, and it has to be allowed to open OBS.
+
+    With streaming off there is no start() call, so this is the only thing
+    that reaches OBS when a session begins. It used to connect without
+    waiting, which never launches -- so on a machine where OBS was not already
+    open, recording could not start at all. The engine gave up after three
+    tries and paused itself, having told the user to check an application it
+    had never asked to run.
+    """
+    launched = []
+    monkeypatch.setattr(obsmod, "_obs_process_alive", lambda: False)
+    monkeypatch.setattr(Obs, "_launch", lambda self: launched.append(1))
+    monkeypatch.setattr(Obs, "_connect",
+                        lambda self, timeout=5: (_ for _ in ()).throw(OSError("no")))
+
+    with pytest.raises(ObsUnavailable):
+        an_obs().start_recording()
+
+    assert launched, "starting a recording did not launch OBS"
+
+
+def test_starting_a_recording_ignores_a_remembered_failure(monkeypatch, no_sleep):
+    """A failure moments earlier must not veto the session's own attempt.
+
+    Every call in _start_recording -- reading the directory, setting it,
+    asking whether OBS is already rolling -- runs before this one and arms the
+    remembered-failure shortcut. If start_recording honoured it too, the
+    attempt that is allowed to launch OBS would be skipped every time, which
+    is exactly how it failed in practice.
+    """
+    monkeypatch.setattr(obsmod, "_obs_process_alive", lambda: True)
+    tries = []
+
+    def boom(self, timeout=5):
+        tries.append(1)
+        raise OSError("refused")
+    monkeypatch.setattr(Obs, "_connect", boom)
+
+    o = an_obs()
+    with pytest.raises(ObsUnavailable):
+        o.connect()                      # arms the shortcut
+    assert len(tries) == 1
+    with pytest.raises(ObsUnavailable):
+        o.start_recording()
+    assert len(tries) > 1, "the session's own attempt was skipped"
