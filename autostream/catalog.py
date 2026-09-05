@@ -27,7 +27,11 @@ APPS_FILE = paths.CONFIG_DIR / "apps.yaml"
 # Executables that are never the thing a human means by "launch this"
 HELPER_MARKERS = (
     "unins", "setup", "install", "vcredist", "dxsetup", "directx",
-    "crashreport", "crashhandler", "errorreporter", "helper", "redist",
+    # "crashpad" is Chromium's crash reporter, which Unity ships beside the
+    # game. It is not caught by "crashhandler" or "crashreport", and at ~980 KB
+    # it is BIGGER than a Unity player stub -- so it won the largest-exe contest
+    # and became the game's executable. See the size floor below for the rest.
+    "crashreport", "crashhandler", "crashpad", "errorreporter", "helper", "redist",
     "dotnet", "oalinst", "vconsole", "editor", "benchmark",
     "updater", "update", "patch", "service", "activation", "cleanup",
     "diagnos", "report", "anticheat", "battleye", "prereq", "dependencies",
@@ -182,7 +186,17 @@ def discover_steam() -> list[App]:
                     score = size + (10 ** 12 if f.lower().endswith("-shipping.exe") else 0)
                     if best is None or score > best[0]:
                         best = (score, full)
-            if best and os.path.getsize(best[1]) > 1_000_000:
+            # A FLOOR OF 1 MB HID EVERY UNITY GAME. Unity's IL2CPP build puts
+            # the code in GameAssembly.dll and ships a player stub for the
+            # .exe, and that stub is 667,648 bytes -- measured, and byte for
+            # byte identical across two unrelated games on the same machine.
+            # Both were dropped here in silence, so a game that streamed
+            # perfectly well never appeared in the Library.
+            # 250 KB is a backstop against a launcher stub, not the thing doing
+            # the real filtering: is_helper is. On the library this was measured
+            # against, every floor from 500 KB down admitted exactly the same
+            # seven games, so there is nothing sitting just under the line.
+            if best and os.path.getsize(best[1]) > 250_000:
                 out.append(App(key=slug(folder), name=folder, path=best[1],
                                exe=ntpath.basename(best[1]).lower(), source="steam"))
     return out

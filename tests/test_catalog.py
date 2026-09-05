@@ -96,3 +96,55 @@ def test_discovery_dedupes_libraries_scanned_under_two_spellings():
     apps = catalog.discover_steam()
     paths = [ntpath.normcase(a.path) for a in apps]
     assert len(paths) == len(set(paths))
+
+
+# ------------------------------------------------- games with a small .exe
+
+def _fake_steam(tmp_path, folder: str, exes: dict[str, int]):
+    """A Steam library holding one game, with each .exe at a chosen size."""
+    common = tmp_path / "steamapps" / "common" / folder
+    common.mkdir(parents=True)
+    for name, size in exes.items():
+        with open(common / name, "wb") as fh:
+            fh.truncate(size)          # sparse: no need to write a megabyte
+    return tmp_path
+
+
+def test_crashpad_is_a_helper():
+    """Chromium's crash reporter, which Unity ships beside the game.
+
+    Not caught by "crashhandler" or "crashreport", and at ~980 KB it is BIGGER
+    than a Unity player stub -- so it won the largest-exe contest and became
+    the game's executable.
+    """
+    assert catalog.is_helper("crashpad_handler.exe") is True
+
+
+def test_a_unity_game_is_found_despite_its_small_exe(tmp_path, monkeypatch):
+    """The bug this pair of fixes came from, end to end.
+
+    Unity's IL2CPP build puts the code in GameAssembly.dll and ships a 667,648
+    byte player stub as the .exe. Two things then went wrong at once: the
+    crashpad binary beside it is larger, so it was chosen as the game; and it
+    is under a megabyte, so the old size floor threw the whole folder away.
+    The game vanished from the Library without a word.
+    """
+    root = _fake_steam(tmp_path, "BOMBANANA!", {
+        "BOMBANANA.exe": 667_648,             # the real game: a Unity stub
+        "crashpad_handler.exe": 980_992,      # bigger, and not the game
+        "UnityCrashHandler64.exe": 1_609_640,
+    })
+    monkeypatch.setattr(catalog, "_steam_roots", lambda: [str(root)])
+
+    found = catalog.discover_steam()
+
+    assert [a.exe for a in found] == ["bombanana.exe"], \
+        f"expected the game, got {[(a.name, a.exe) for a in found]}"
+
+
+def test_a_launcher_stub_is_still_too_small_to_count(tmp_path, monkeypatch):
+    """The floor is lowered, not removed. Something tiny is still not a game."""
+    root = _fake_steam(tmp_path, "Stubby", {"launch.exe": 40_000})
+    monkeypatch.setattr(catalog, "_steam_roots", lambda: [str(root)])
+
+    assert catalog.discover_steam() == []
