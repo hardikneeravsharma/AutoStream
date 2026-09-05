@@ -32,7 +32,7 @@ def _kill(round_no, at_s, killer, victim, alive):
             "playerLocations": [{"subject": p} for p in alive]}
 
 
-def _match(rounds=2, ceremony="CeremonyClutch"):
+def _match(rounds=2, ceremony="CeremonyClutch", won_by="Blue"):
     kills = [
         # round 0: an ordinary two-kill round, team alive
         _kill(0, 30.0, ME, FOE1, [ME, MATE, FOE1, FOE2, FOE3]),
@@ -58,7 +58,7 @@ def _match(rounds=2, ceremony="CeremonyClutch"):
         "roundResults": [
             {"roundNum": 0, "roundResult": "Eliminated", "winningTeam": "Blue",
              "roundCeremony": "CeremonyDefault"},
-            {"roundNum": 1, "roundResult": "Eliminated", "winningTeam": "Blue",
+            {"roundNum": 1, "roundResult": "Eliminated", "winningTeam": won_by,
              "roundCeremony": ceremony, "plantRoundTime": 40000},
         ][:rounds],
         "kills": kills,
@@ -170,12 +170,18 @@ def test_alive_counts_are_counted_rather_than_inferred():
     assert by_num[1].min_my_alive == 2
 
 
-def test_riots_own_ceremony_leads_the_labels():
-    """CLUTCH is not computed here -- it is what Riot called that round."""
+def test_riots_ceremony_follows_the_counted_label_rather_than_leading():
+    """It used to lead always, and that named a 4-0 round "CLOSER".
+
+    True -- they did get the last kill -- and a far duller description than
+    "4 KILLS". The counted labels are the specific ones, so they lead where
+    they exist and Riot's word follows as the extra detail it is.
+    """
     m = _m()
     rds = vm.rounds_from(m, ME, _sync(m))
     second = [r for r in rds if r.number == 2][0]
-    assert second.labels and second.labels[0] == "CLUTCH"
+    assert second.labels[0] != "CLUTCH", "the ceremony displaced what was counted"
+    assert "CLUTCH" in second.labels, "the ceremony was dropped instead of demoted"
     assert "PLANT" in second.flags
 
 
@@ -489,3 +495,28 @@ def test_a_fingerprint_that_disagrees_by_a_whole_match_is_still_refused():
     s = vm.align(M(), "p", started, detected)
     assert not s.ok
     assert "disagree" in s.why
+
+
+def test_the_enemys_flawless_is_not_the_players():
+    """The fault that produced two captioned FLAWLESS clips of nothing.
+
+    roundCeremony describes the ROUND and never says whose it was. Measured on
+    a real match: rounds 6 and 7 were CeremonyFlawless won by Red while the
+    player was Blue, took no kills and died in both. Both were cut and
+    captioned FLAWLESS.
+    """
+    m = _m(ceremony="CeremonyFlawless", won_by="Red")
+    rds = vm.rounds_from(m, ME, _sync(m))
+    second = [r for r in rds if r.number == 2][0]
+    assert second.won is False
+    assert "FLAWLESS" not in second.flags
+    assert "FLAWLESS" not in (second.labels or [])
+
+
+def test_a_ceremony_for_a_round_the_player_won_still_counts():
+    """The guard must not throw away the real ones."""
+    m = _m(ceremony="CeremonyFlawless")
+    rds = vm.rounds_from(m, ME, _sync(m))
+    second = [r for r in rds if r.number == 2][0]
+    assert second.won is True
+    assert "FLAWLESS" in second.flags

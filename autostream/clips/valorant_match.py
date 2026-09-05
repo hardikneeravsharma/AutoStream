@@ -390,9 +390,31 @@ def rounds_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list:
             rd.last_stand_at = rd.kill_times[0] if rd.kill_times else rd.started
             rd.enemies_at_last_stand = at_low
 
+        # WHOSE CEREMONY WAS IT? roundCeremony describes the ROUND, and never
+        # says which player or which side earned it -- so taken at face value
+        # it credits the player with the enemy's achievements. Measured on a
+        # real match: rounds 6 and 7 were CeremonyFlawless won by Red while
+        # the player was Blue, got no kills and died in both, and each was cut
+        # and captioned FLAWLESS.
+        #
+        # Every one of these needs the player's team to have won the round.
+        # The three that name a single player need more than that, because
+        # that player may well have been on the other side.
         cer = CEREMONIES.get(str(r.get("roundCeremony") or ""))
-        if cer:
-            rd.flags = list(rd.flags) + [cer]
+        if cer and rd.won:
+            last_kill_is_mine = bool(kills) and kills[-1].get("killer") == puuid
+            earned = {
+                # Team achievements: winning the round is the whole test.
+                "FLAWLESS": True,
+                "TEAM ACE": True,
+                "THRIFTY": True,
+                # Personal ones, checked against what the player actually did.
+                "ACE": len(mine_k) >= rounds_mod.ACE_KILLS,
+                "CLUTCH": rd.last_stand_at is not None,
+                "CLOSER": last_kill_is_mine,
+            }.get(cer, False)
+            if earned:
+                rd.flags = list(rd.flags) + [cer]
         if r.get("plantRoundTime"):
             rd.flags = list(rd.flags) + ["PLANT"]
         if r.get("defuseRoundTime"):
@@ -402,13 +424,18 @@ def rounds_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list:
         out.append(rd)
 
     rounds_mod.label(out)
-    # Riot's own word for what made a round notable outranks anything counted
-    # here, so it leads the labels rather than joining them.
+    # RIOT'S WORD ONLY LEADS WHEN THERE IS NOTHING BETTER. It used to lead
+    # always, on the reasoning that the game's own name for a round outranks
+    # anything counted here. It does not: a round where the player went 4-0
+    # came out named CLOSER -- true, they got the last kill, and a far duller
+    # description of it than "4 KILLS". The counted labels are already ordered
+    # strongest first and are the specific ones, so they lead where they exist
+    # and the ceremony follows as the extra detail it is.
     for rd in out:
         named = [f for f in rd.flags if f in set(CEREMONIES.values())]
         extra = [f for f in ("OVERTIME",) if f in rd.flags]
-        rd.labels = named + extra + [l for l in rd.labels
-                                     if l not in named and l not in extra]
+        counted = [l for l in rd.labels if l not in named and l not in extra]
+        rd.labels = (counted + named + extra) if counted else (named + extra)
     log.info("%d round(s) from Valorant match %s: %d earned a label",
              len(out), match.id[:8], len(rounds_mod.highlights(out)))
     return out
