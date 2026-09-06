@@ -511,6 +511,10 @@ class _Handler(BaseHTTPRequestHandler):
             # already polling - see clips/jobs.py.
             elif p == "/api/clips/window":
                 self._json(self.app.clips_window(b))
+            elif p == "/api/clips/cards/samples":
+                self._json(self.app.cards_samples(b))
+            elif p == "/api/clips/cards/check":
+                self._json(self.app.cards_check(b))
             elif p == "/api/update/install":
                 self._json(self.app.update_install())
             elif p == "/api/update/download":
@@ -2011,6 +2015,102 @@ class Server:
             return b"", str(e)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    def _cards_args(self, body: dict) -> tuple:
+        """(path, start, seconds, size, height) for the two card endpoints."""
+        from .clips.tools import media_info
+
+        src = Path(str(body.get("path") or ""))
+        if not src.is_file():
+            raise FileNotFoundError("That recording is not on disk.")
+        info = media_info(src)
+        total = float(info.get("duration") or 0.0)
+        w, h = int(info.get("width") or 0), int(info.get("height") or 0)
+        start = max(0.0, float(body.get("start") or 0.0))
+        secs = float(body.get("seconds") or 0.0) or (total - start)
+        return src, start, max(1.0, min(secs, total - start)), (w, h), h
+
+    def cards_samples(self, body: dict) -> dict:
+        """Frames from this recording that probably show a kill tally.
+
+        The point is that they are the USER'S OWN frames. Calibrating against
+        a picture of somebody else's HUD is how the shipped region came to be
+        wrong for anyone not on 16:9 at this HUD scale.
+        """
+        from .clips import cs2_cards
+
+        try:
+            src, start, secs, size, h = self._cards_args(body)
+        except (FileNotFoundError, OSError, ValueError) as e:
+            return {"ok": False, "error": str(e)}
+        try:
+            hue = cs2_cards.measure_hue(src, secs, start=start)
+            if hue is None:
+                return {"ok": False,
+                        "error": "Could not work out your HUD colour from this "
+                                 "stretch. Choose a part with more gameplay in it."}
+            shots = cs2_cards.sample_tallies(src, secs, hue, start=start,
+                                             size=size, frame_height=h)
+        except Exception as e:                       # noqa: BLE001
+            log.info("card sampling failed: %s", e)
+            return {"ok": False, "error": f"Could not read the recording: {e}"}
+        x1, y1, x2, y2 = cs2_cards.CARDS
+        return {
+            "ok": True, "hue": round(hue, 1),
+            "box": {"x": x1, "y": y1, "w": x2 - x1, "h": y2 - y1},
+            "shots": [{"time": round(s.time, 2), "kills": s.kills or 0,
+                       "mask": s.mask} for s in shots],
+        }
+
+    def cards_check(self, body: dict) -> dict:
+        """Does the card reader actually work on this recording?
+
+        Answered BEFORE a scan, because a scan that finds nothing is
+        indistinguishable from a quiet session -- which is how one user got 2
+        kills out of 17 with nothing on the page saying why.
+        """
+        from .clips import cs2_cards
+
+        try:
+            src, start, secs, size, h = self._cards_args(body)
+        except (FileNotFoundError, OSError, ValueError) as e:
+            return {"ok": False, "error": str(e)}
+        band = cs2_cards.CARDS
+        box = body.get("box")
+        if isinstance(box, dict):
+            try:
+                x, y = float(box["x"]), float(box["y"])
+                band = (x, y, x + float(box["w"]), y + float(box["h"]))
+            except (KeyError, TypeError, ValueError):
+                band = cs2_cards.CARDS
+        try:
+            hue = cs2_cards.measure_hue(src, secs, start=start)
+            if hue is None:
+                return {"ok": True, "pass": False, "looked": 0, "present": 0,
+                        "read": 0,
+                        "why": "Your HUD colour could not be measured from this "
+                               "stretch, so nothing can be read from it."}
+            got = cs2_cards.check(src, secs, hue, band=band, start=start,
+                                  size=size, frame_height=h)
+        except Exception as e:                       # noqa: BLE001
+            log.info("card check failed: %s", e)
+            return {"ok": False, "error": f"The check could not run: {e}"}
+        # A CHECK THAT PASSES IS THE CALIBRATION. Making someone press Check
+        # and then Save invites them to do the first and not the second, and
+        # then wonder why the scan still finds nothing. A box that failed is
+        # never saved, so the shipped default stays until something better is
+        # proven against the user's own footage.
+        saved = False
+        if got.ok and band != cs2_cards.CARDS:
+            from .clips import profiles
+
+            saved = profiles.remember(
+                "cs2.exe", card_box=[round(float(v), 4) for v in band])
+            if saved:
+                log.info("saved the calibrated CS2 card area %s", band)
+        return {"ok": True, "pass": got.ok, "why": got.why, "hue": round(hue, 1),
+                "saved": saved, "looked": got.looked, "present": got.present,
+                "read": got.read}
 
     def clip_frame(self, path: str, at: float,
                    width: int = 0) -> tuple[bytes, str | None]:

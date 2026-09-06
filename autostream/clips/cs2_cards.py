@@ -116,6 +116,18 @@ CONFIRM_WINDOW = 2.5  # s. How long a count has, to say itself twice.
 # with about 25 rounds in it.
 SPECTATE_HOLD = 4
 
+# Decode only keyframes during the sweep. See _pipe_two: eight times faster --
+# 1.2s against 9.7s for a 120s span -- at the cost of seeing the tally every
+# few seconds rather than twice a second.
+#
+# OFF UNTIL IT IS SCORED. The speed is measured; the ACCURACY is not, and this
+# reader now has a baseline to be judged against (precision 70%, recall 79%
+# over a 30-minute match against Valve's own demo). Turning on an
+# accuracy-affecting default without scoring it is the exact mistake that
+# nearly shipped a Valorant threshold tuned on a single match. Flip this to
+# True only with the numbers beside it.
+KEYFRAME_SCAN = False
+
 
 def _hsv(a: np.ndarray):
     """-> (hue in degrees, saturation, value), all 0-1 except hue."""
@@ -319,7 +331,8 @@ def tally(events: list[Event]) -> dict[str, int]:
 # ------------------------------------------------------------------ scanning
 
 def _pipe_two(video: Path, start: float, duration: float, fps: float,
-              a: tuple, b: tuple, size: tuple[int, int]):
+              a: tuple, b: tuple, size: tuple[int, int],
+              keyframes: bool = False):
     """The two crops as raw arrays, straight off ffmpeg's stdout.
 
     NO FILES. This used to write a PNG per crop per sampled frame and read
@@ -356,6 +369,20 @@ def _pipe_two(video: Path, start: float, duration: float, fps: float,
     proc = subprocess.Popen([
         binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
         *(["-hwaccel", "cuda"] if has_cuda() else []),
+        # DECODE ONLY KEYFRAMES, AND LET THE fps FILTER FILL IN. Decoding is
+        # the whole cost of this scan -- raw decode of a 120s span takes 9.7s
+        # against the scan's 8.2s -- and only about one frame in 200 is
+        # actually sampled. Skipping to keyframes decodes 35 frames instead of
+        # 7200 for that span: 1.2s against 9.7s, eight times faster.
+        #
+        # The fps filter then duplicates each keyframe forward, so the output
+        # is still evenly spaced and every constant downstream -- MAX_GAP,
+        # CONFIRM_WINDOW, SPECTATE_HOLD -- keeps the meaning it was measured
+        # with. What is genuinely lost is temporal resolution: the tally is
+        # seen every ~3.4s rather than every 0.5s. That costs nothing on the
+        # COUNT, which is what this reader is for and which holds for the whole
+        # round, and `refine` re-scans each kill at 8 fps for the timing.
+        *(["-skip_frame", "nokey"] if keyframes else []),
         "-ss", f"{start:.3f}",
         # -t BEFORE -i, as an input option: after it, it binds to the output.
         "-t", f"{max(0.5, duration):.3f}",
@@ -449,8 +476,9 @@ def measure_hue(video: Path, duration: float, samples: int = 12,
 
 
 def _span(video: Path, start: float, dur: float, fps: float, hue: float,
-          frame_height: int, size: tuple[int, int] | None = None
-          ) -> list[Reading]:
+          frame_height: int, size: tuple[int, int] | None = None,
+          keyframes: bool = False,
+          band: tuple = CARDS) -> list[Reading]:
     if size is None:
         from .tools import media_info
 
@@ -458,7 +486,7 @@ def _span(video: Path, start: float, dur: float, fps: float, hue: float,
         size = (int(info["width"]), int(info["height"]))
     out: list[Reading] = []
     for i, (c, p) in enumerate(
-            _pipe_two(video, start, dur, fps, CARDS, PANEL, size)):
+            _pipe_two(video, start, dur, fps, band, PANEL, size, keyframes)):
         out.append(read_frame(c, p, hue, start + i / fps, frame_height))
     return out
 
@@ -514,6 +542,8 @@ def refine(video: Path, events: list[Event], hue: float, *,
 def scan(video: Path, *, duration: float | None = None, start: float = 0.0,
          fps: float = SAMPLE_FPS, chunk: float = 120.0,
          hue: float | None = None, frame_height: int = REF_HEIGHT,
+         band: tuple | None = None,
+         keyframes: bool = KEYFRAME_SCAN,
          progress: Callable[[int, int], None] | None = None,
          cancelled: Callable[[], bool] | None = None) -> list[Event]:
     """Read the whole recording's kill tally. -> events in time order."""
@@ -549,7 +579,8 @@ def scan(video: Path, *, duration: float | None = None, start: float = 0.0,
     for i, (at, dur) in enumerate(spans, 1):
         if cancelled and cancelled():
             break
-        seen.extend(_span(video, at, dur, fps, hue, frame_height, size))
+        seen.extend(_span(video, at, dur, fps, hue, frame_height,
+                          size, keyframes, band or CARDS))
         if progress:
             progress(i, len(spans))
 

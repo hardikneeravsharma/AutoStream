@@ -433,9 +433,17 @@ def scan_cardcount(video: Path, profile: Profile, total: float, height: int,
         from .profiles import remember
         remember(profile.key, hud_hue=hue)
 
+    # THE CALIBRATED CARD AREA, WHERE THERE IS ONE. The shipped region was
+    # measured on a single 16:9 1080p HUD; 4:3 stretched is ordinary in
+    # Counter-Strike and hud_scaling moves the tally as well. A user who has
+    # dragged the box onto their own footage gets theirs from here, and a scan
+    # that would otherwise have found almost nothing finds their kills.
+    band = tuple(profile.card_box) if len(profile.card_box) == 4 else None
+    if band:
+        log.info("using the calibrated card area %s", band)
     events = cs2_cards.scan(video, duration=total, start=start,
                             fps=profile.scan_fps,
-                            hue=hue, frame_height=height,
+                            hue=hue, frame_height=height, band=band,
                             progress=progress, cancelled=cancelled)
     if cancelled and cancelled():
         raise Cancelled("scan cancelled")
