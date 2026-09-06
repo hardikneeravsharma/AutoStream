@@ -64,7 +64,7 @@ CLIPS_HTML: str = (
      user could not tell whether they had finished choosing or forgotten
      something. The rail is orientation, not navigation: it reports, it does
      not gate. -->
-<ol class="clip-rail" id="clip-rail" aria-label="Where you are"></ol>
+<ol class="clip-rail hide" id="clip-rail" aria-label="Where you are"></ol>
 
 <div class="card" id="clip-local">
   <div class="card-head">
@@ -1231,7 +1231,15 @@ async function clip_calCheck() {
 function clip_renderOptions() {
   var s = clip_state.pick;
   clip_show('clip-options', !!s);
-  if (!s) { clip_show('clip-strip-card', false); return; }
+  if (!s) {
+    /* Everything downstream of a selection goes with it. Leaving the reading
+       choice or the calibration on screen after the file they belong to has
+       gone is the same shape of bug as a Make clips button that stayed
+       enabled for a recording no longer on disk. */
+    ['clip-strip-card', 'clip-read-card', 'clip-cal-card',
+     'clip-rail'].forEach(function (id) { clip_show(id, false); });
+    return;
+  }
 
   clip_el('clip-chosen').textContent = s.game || 'Unknown game';
   var bits = [clip_when(s.display_started || s.started)];

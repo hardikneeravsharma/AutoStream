@@ -598,3 +598,14 @@ def test_a_failed_check_never_saves_the_box():
     i = src.index("def cards_check")
     body = src[i:i + 4000]
     assert "if got.ok and band != cs2_cards.CARDS:" in body
+
+
+def test_the_new_cards_go_when_the_selection_does():
+    """A reading choice or a calibration left on screen after its file has
+    gone is the same shape of bug as a Make clips button that stayed enabled
+    for a recording no longer on disk."""
+    js = clips_ui.CLIPS_JS
+    i = js.index("clip_show('clip-options', !!s);")
+    early = js[i:i + 500]
+    for card in ("clip-read-card", "clip-cal-card", "clip-rail"):
+        assert card in early, f"{card} survives losing the selection"

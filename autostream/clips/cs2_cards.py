@@ -116,16 +116,31 @@ CONFIRM_WINDOW = 2.5  # s. How long a count has, to say itself twice.
 # with about 25 rounds in it.
 SPECTATE_HOLD = 4
 
-# Decode only keyframes during the sweep. See _pipe_two: eight times faster --
-# 1.2s against 9.7s for a 120s span -- at the cost of seeing the tally every
-# few seconds rather than twice a second.
+# Decode only keyframes during the sweep. MEASURED AND REJECTED -- left here
+# with its numbers so the idea is not had again.
 #
-# OFF UNTIL IT IS SCORED. The speed is measured; the ACCURACY is not, and this
-# reader now has a baseline to be judged against (precision 70%, recall 79%
-# over a 30-minute match against Valve's own demo). Turning on an
-# accuracy-affecting default without scoring it is the exact mistake that
-# nearly shipped a Valorant threshold tuned on a single match. Flip this to
-# True only with the numbers beside it.
+# The speed is real and enormous. Decoding is the whole cost of this scan (raw
+# decode of a 120s span is 9.7s against the scan's 8.2s), and skipping to
+# keyframes decodes 35 frames instead of 7200: the full 30-minute recording
+# read in 0.2 minutes at 121x realtime, against 2.4 minutes at 12.6x.
+#
+# It is also useless. Scored against Valve's own demo on that same recording:
+#
+#   full decode   reported 27   correct 19  invented 7  missed 5   P 70%  R 79%
+#   keyframes     reported 10   correct  2  invented 8  missed 5   P 20%  R 29%
+#
+# The reasoning that made it look safe was wrong in one specific way. The
+# tally does persist for the whole round, so the COUNT survives coarse
+# sampling -- but the information only exists at keyframe boundaries, about
+# 3.4s apart, and every constant downstream is tighter than that: MAX_GAP is
+# 3.0s, CONFIRM_WINDOW 2.5s, and refine only looks 1.5s back for the flash.
+# So a count change is located to worse than the tolerances that have to
+# accept it, tracks break, and the kills that do survive are placed so badly
+# that the demo fingerprint then aligns to the wrong match -- which is why the
+# run above thinks the demo holds 7 kills when it holds 24.
+#
+# Making this work would mean retuning those three constants together and
+# re-scoring, for a scan that already costs 2.4 minutes. Not worth it.
 KEYFRAME_SCAN = False
 
 
