@@ -65,6 +65,8 @@ class Watcher:
         self._candidates: dict[str, float] = {}   # game key -> first seen (monotonic)
         self._unknown_seen: dict[str, float] = {}
         self._last_running: dict[str, GameHit] = {}
+        # So the background-match line is logged once per exe, not every tick.
+        self._said_bg = ""
 
     # ------------------------------------------------------------------
 
@@ -118,6 +120,26 @@ class Watcher:
             hit = seen[fg]
         else:
             hit = seen[min(seen)]   # lowest PID ~= earliest started
+            # A GUESS FROM THE PUBLIC INDEX, ABOUT SOMETHING NOT ON SCREEN, IS
+            # NOT ENOUGH TO BROADCAST. The index matches on the bare executable
+            # name and short names collide badly with ordinary tools: gh.exe is
+            # the GitHub CLI and Green Hell, rg.exe is ripgrep and Retro
+            # Gadgets, dotnet.exe is the .NET runtime and tModLoader. Running
+            # one command in a terminal was enough to put a public stream on
+            # somebody's channel -- which happened, with `gh`.
+            #
+            # An override is the user's own word and a Steam hit is corroborated
+            # by Steam, so both still stand on their own. Only the public guess
+            # needs the window, and a game actually being played has it: this
+            # costs nothing in the case it is meant to serve.
+            if hit.source == "public":
+                if self._said_bg != hit.key:
+                    self._said_bg = hit.key
+                    log.info("%s (%s) matches the public index but is not the "
+                             "foreground window, so it is not treated as a "
+                             "game", hit.name, hit.key)
+                return None
+        self._said_bg = ""
 
         # Steam can name a game our index missed
         if hit.source == "public" or hit.name.lower().endswith(".exe"):
