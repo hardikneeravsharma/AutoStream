@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import logging
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -115,6 +115,33 @@ CONFIRM_WINDOW = 2.5  # s. How long a count has, to say itself twice.
 # panel test does flicker, and undebounced it reported 73 deaths in a match
 # with about 25 rounds in it.
 SPECTATE_HOLD = 4
+
+# Decode only keyframes during the sweep. MEASURED AND REJECTED -- left here
+# with its numbers so the idea is not had again.
+#
+# The speed is real and enormous. Decoding is the whole cost of this scan (raw
+# decode of a 120s span is 9.7s against the scan's 8.2s), and skipping to
+# keyframes decodes 35 frames instead of 7200: the full 30-minute recording
+# read in 0.2 minutes at 121x realtime, against 2.4 minutes at 12.6x.
+#
+# It is also useless. Scored against Valve's own demo on that same recording:
+#
+#   full decode   reported 27   correct 19  invented 7  missed 5   P 70%  R 79%
+#   keyframes     reported 10   correct  2  invented 8  missed 5   P 20%  R 29%
+#
+# The reasoning that made it look safe was wrong in one specific way. The
+# tally does persist for the whole round, so the COUNT survives coarse
+# sampling -- but the information only exists at keyframe boundaries, about
+# 3.4s apart, and every constant downstream is tighter than that: MAX_GAP is
+# 3.0s, CONFIRM_WINDOW 2.5s, and refine only looks 1.5s back for the flash.
+# So a count change is located to worse than the tolerances that have to
+# accept it, tracks break, and the kills that do survive are placed so badly
+# that the demo fingerprint then aligns to the wrong match -- which is why the
+# run above thinks the demo holds 7 kills when it holds 24.
+#
+# Making this work would mean retuning those three constants together and
+# re-scoring, for a scan that already costs 2.4 minutes. Not worth it.
+KEYFRAME_SCAN = False
 
 
 def _hsv(a: np.ndarray):
@@ -318,12 +345,95 @@ def tally(events: list[Event]) -> dict[str, int]:
 
 # ------------------------------------------------------------------ scanning
 
+def _pipe_two(video: Path, start: float, duration: float, fps: float,
+              a: tuple, b: tuple, size: tuple[int, int],
+              keyframes: bool = False):
+    """The two crops as raw arrays, straight off ffmpeg's stdout.
+
+    NO FILES. This used to write a PNG per crop per sampled frame and read
+    them back with PIL -- for a 45-minute recording at 2 fps that is about
+    eleven thousand files encoded, written, read and deleted, to carry regions
+    of 130x62 and 115x37 pixels. The encode was costing more than the decode it
+    was there to serve.
+
+    The two crops are padded to a common width and stacked into one frame so a
+    single output stream carries both; the exact rows and columns are known
+    here, so numpy slices them back apart with nothing resampled. Card widths
+    are measured in pixels against calibrated levels, so nothing may scale.
+
+    -> yields (cards, panel) RGB arrays in order.
+    """
+    import subprocess
+
+    from .killfeed import _NO_WINDOW
+    from .tools import binary, has_cuda
+
+    w, h = size
+
+    def box(band):
+        x1, y1, x2, y2 = band
+        return (max(1, int(w * (x2 - x1))), max(1, int(h * (y2 - y1))),
+                int(w * x1), int(h * y1))
+
+    aw, ah, ax, ay = box(a)
+    bw, bh, bx, by = box(b)
+    pad = max(aw, bw)
+    row = pad * 3
+    frame_bytes = row * (ah + bh)
+
+    proc = subprocess.Popen([
+        binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
+        *(["-hwaccel", "cuda"] if has_cuda() else []),
+        # DECODE ONLY KEYFRAMES, AND LET THE fps FILTER FILL IN. Decoding is
+        # the whole cost of this scan -- raw decode of a 120s span takes 9.7s
+        # against the scan's 8.2s -- and only about one frame in 200 is
+        # actually sampled. Skipping to keyframes decodes 35 frames instead of
+        # 7200 for that span: 1.2s against 9.7s, eight times faster.
+        #
+        # The fps filter then duplicates each keyframe forward, so the output
+        # is still evenly spaced and every constant downstream -- MAX_GAP,
+        # CONFIRM_WINDOW, SPECTATE_HOLD -- keeps the meaning it was measured
+        # with. What is genuinely lost is temporal resolution: the tally is
+        # seen every ~3.4s rather than every 0.5s. That costs nothing on the
+        # COUNT, which is what this reader is for and which holds for the whole
+        # round, and `refine` re-scans each kill at 8 fps for the timing.
+        *(["-skip_frame", "nokey"] if keyframes else []),
+        "-ss", f"{start:.3f}",
+        # -t BEFORE -i, as an input option: after it, it binds to the output.
+        "-t", f"{max(0.5, duration):.3f}",
+        "-i", str(video), "-an", "-sn",
+        "-filter_complex",
+        f"[0:v]fps={fps},split=2[p][q];"
+        f"[p]crop={aw}:{ah}:{ax}:{ay},pad={pad}:{ah}:0:0[at];"
+        f"[q]crop={bw}:{bh}:{bx}:{by},pad={pad}:{bh}:0:0[bt];"
+        f"[at][bt]vstack=inputs=2[out]",
+        "-map", "[out]", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+    ], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        creationflags=_NO_WINDOW)
+    try:
+        while True:
+            buf = proc.stdout.read(frame_bytes)
+            if len(buf) < frame_bytes:
+                break
+            f = np.frombuffer(buf, np.uint8).reshape(ah + bh, pad, 3)
+            yield f[:ah, :aw], f[ah:, :bw]
+    finally:
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass
+        proc.wait(timeout=10)
+
+
 def _extract_two(video: Path, start: float, duration: float, fps: float,
                  a: tuple, b: tuple) -> Path:
     """One decode, two crops -- the card tally and the spectator panel.
 
     Separately they would decode the recording twice, and decoding is the whole
     cost here: the two crops together are under 1% of the frame.
+
+    Kept for the calibration screens, which want real PNGs to show a person.
+    The scan itself pipes raw frames instead -- see `_pipe_two`.
     """
     import subprocess
     import tempfile
@@ -381,22 +491,18 @@ def measure_hue(video: Path, duration: float, samples: int = 12,
 
 
 def _span(video: Path, start: float, dur: float, fps: float, hue: float,
-          frame_height: int) -> list[Reading]:
-    from PIL import Image
+          frame_height: int, size: tuple[int, int] | None = None,
+          keyframes: bool = False,
+          band: tuple = CARDS) -> list[Reading]:
+    if size is None:
+        from .tools import media_info
 
+        info = media_info(video)
+        size = (int(info["width"]), int(info["height"]))
     out: list[Reading] = []
-    tmp = _extract_two(video, start, dur, fps, CARDS, PANEL)
-    try:
-        cards = sorted(tmp.glob("c_*.png"))
-        panels = sorted(tmp.glob("p_*.png"))
-        for i, cp in enumerate(cards):
-            at = start + (int(cp.stem.split("_")[1]) - 1) / fps
-            c = np.asarray(Image.open(cp).convert("RGB"))
-            p = (np.asarray(Image.open(panels[i]).convert("RGB"))
-                 if i < len(panels) else None)
-            out.append(read_frame(c, p, hue, at, frame_height))
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    for i, (c, p) in enumerate(
+            _pipe_two(video, start, dur, fps, band, PANEL, size, keyframes)):
+        out.append(read_frame(c, p, hue, start + i / fps, frame_height))
     return out
 
 
@@ -451,6 +557,8 @@ def refine(video: Path, events: list[Event], hue: float, *,
 def scan(video: Path, *, duration: float | None = None, start: float = 0.0,
          fps: float = SAMPLE_FPS, chunk: float = 120.0,
          hue: float | None = None, frame_height: int = REF_HEIGHT,
+         band: tuple | None = None,
+         keyframes: bool = KEYFRAME_SCAN,
          progress: Callable[[int, int], None] | None = None,
          cancelled: Callable[[], bool] | None = None) -> list[Event]:
     """Read the whole recording's kill tally. -> events in time order."""
@@ -479,10 +587,15 @@ def scan(video: Path, *, duration: float | None = None, start: float = 0.0,
     seen: list[Reading] = []
     if progress:
         progress(0, len(spans))
+    # Once, not once per chunk: the crop geometry is fixed for the file, and
+    # media_info is a subprocess.
+    info = media_info(video)
+    size = (int(info["width"]), int(info["height"]))
     for i, (at, dur) in enumerate(spans, 1):
         if cancelled and cancelled():
             break
-        seen.extend(_span(video, at, dur, fps, hue, frame_height))
+        seen.extend(_span(video, at, dur, fps, hue, frame_height,
+                          size, keyframes, band or CARDS))
         if progress:
             progress(i, len(spans))
 
@@ -494,3 +607,192 @@ def scan(video: Path, *, duration: float | None = None, start: float = 0.0,
     log.info("%s: %d kill(s) and %d death(s) from the card tally (%d frames)",
              video.name, t["kill"], t["death"], len(seen))
     return events
+
+
+# ===================================================================
+# Calibration: proving the reader works on THIS person's footage
+# ===================================================================
+#
+# WHY THIS EXISTS. The card region is a fraction of the frame, measured on one
+# person's 16:9 1080p HUD. A different aspect ratio -- 4:3 stretched is normal
+# in Counter-Strike -- or a different hud_scaling puts the tally somewhere the
+# crop does not look, and the scan then reports almost nothing. It did exactly
+# that for a real user: 2 kills out of 17, and the two were wrong.
+#
+# Nothing in the run said so. A scan that finds nothing looks identical to a
+# quiet session, so the first sign was clips that were not there. These two
+# functions make it visible BEFORE the scan: one finds frames likely to hold a
+# tally so a person can see what the reader sees, and the other says whether
+# the reader can actually read them.
+
+SAMPLE_TRIES = 40         # single-frame seeks across the recording
+# MEASURED, not chosen. On a 30-minute match with the region and hue correct,
+# 24 seeks found HUD colour in 8 frames and read a real tally from 3 of them --
+# most seeks land between rounds, or on a round with no kills yet. The same 24
+# seeks against a wrong hue, a region shifted 12% left, and a region moved up
+# into the HUD bar read a tally from ZERO. So the discriminator is that a tally
+# was read at all, not the share: a width has to land within 3px of one of five
+# levels, which junk does about a quarter of the time, so three of them is a
+# bar chance does not clear.
+CHECK_MIN_READ = 3
+CHECK_MIN_SHARE = 0.25
+
+
+@dataclass
+class Sighting:
+    """One sampled frame, and what the reader made of it."""
+    time: float
+    kills: int | None
+    width: int
+    mask: int
+    why: str = ""
+
+
+@dataclass
+class Check:
+    """Whether the card reader works on this recording."""
+    ok: bool
+    why: str
+    hue: float = 0.0
+    looked: int = 0        # frames sampled
+    present: int = 0       # frames with something in the HUD colour there
+    read: int = 0          # ...of those, frames that gave a usable count
+    counts: dict = field(default_factory=dict)
+    sightings: list = field(default_factory=list)
+
+    @property
+    def share(self) -> float:
+        """How often a tally that was THERE could actually be read.
+
+        The number that matters. A region pointed at the wrong part of the
+        screen still catches HUD-coloured pixels -- the health number, the
+        ammo counter -- so "present" alone proves nothing. Only a width that
+        lands on a real card level says the reader is looking at the tally.
+        """
+        return (self.read / self.present) if self.present else 0.0
+
+
+def _one_frame(video: Path, at: float, band: tuple,
+               size: tuple[int, int]) -> np.ndarray | None:
+    """One frame's crop, by seek. Fast: no decoding up to it."""
+    import subprocess
+
+    from .killfeed import _NO_WINDOW
+    from .tools import binary
+
+    w, h = size
+    x1, y1, x2, y2 = band
+    cw, ch = max(1, int(w * (x2 - x1))), max(1, int(h * (y2 - y1)))
+    cx, cy = int(w * x1), int(h * y1)
+    try:
+        p = subprocess.run([
+            binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-ss", f"{at:.3f}", "-i", str(video), "-an", "-sn",
+            "-frames:v", "1", "-filter:v", f"crop={cw}:{ch}:{cx}:{cy}",
+            "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+        ], capture_output=True, check=False, creationflags=_NO_WINDOW)
+    except OSError:
+        return None
+    if len(p.stdout) < cw * ch * 3:
+        return None
+    return np.frombuffer(p.stdout[:cw * ch * 3], np.uint8).reshape(ch, cw, 3)
+
+
+def sample_tallies(video: Path, duration: float, hue: float, *,
+                   band: tuple = CARDS, start: float = 0.0,
+                   tries: int = SAMPLE_TRIES, want: int = 6,
+                   size: tuple[int, int] | None = None,
+                   frame_height: int = REF_HEIGHT,
+                   cancelled: Callable[[], bool] | None = None
+                   ) -> list[Sighting]:
+    """Find moments the tally is likely on screen, best first.
+
+    Sampled by SEEK rather than by decoding the file, because this runs in
+    front of somebody waiting: forty seeks across a 45-minute recording cost
+    seconds where a decode costs minutes.
+
+    Sorted by how much of the tally is showing, so the frames handed to a
+    person to look at are the ones with the most cards in them -- a one-kill
+    tally is a poor thing to calibrate against, and an empty one is useless.
+    """
+    if size is None:
+        from .tools import media_info
+
+        info = media_info(video)
+        size = (int(info["width"]), int(info["height"]))
+    out: list[Sighting] = []
+    # Skipping the first and last slice: a match starts in a warm-up and ends
+    # on a scoreboard, and neither has a tally.
+    step = max(1.0, duration / (tries + 2))
+    for i in range(1, tries + 1):
+        if cancelled and cancelled():
+            break
+        at = start + step * (i + 0.5)
+        a = _one_frame(video, at, band, size)
+        if a is None:
+            continue
+        r = read_frame(a, None, hue, at, frame_height)
+        out.append(Sighting(time=at, kills=r.kills, width=r.width,
+                            mask=r.mask, why=r.why))
+    # A real tally first, biggest first; then anything that at least had HUD
+    # colour in it, so a failed calibration still has something to show.
+    out.sort(key=lambda s: (s.kills or 0, s.mask), reverse=True)
+    return out[:want] if want else out
+
+
+def check(video: Path, duration: float, hue: float, *,
+          band: tuple = CARDS, start: float = 0.0,
+          tries: int = SAMPLE_TRIES,
+          size: tuple[int, int] | None = None,
+          frame_height: int = REF_HEIGHT,
+          cancelled: Callable[[], bool] | None = None) -> Check:
+    """Can the card reader read THIS recording? -> a Check, never raises.
+
+    The test is the reader's own strongest invariant: a real tally is exactly
+    `CARD_W0 + CARD_PITCH * kills` pixels wide, and every sample of a given
+    count measures the identical width. Point the region somewhere else, or
+    give it the wrong hue, and HUD-coloured pixels are still found -- but
+    their width lands between the levels, which `read_frame` already rejects
+    as a flash. So the share of sightings that produce a usable count
+    separates a working calibration from a broken one, with nothing to tune.
+    """
+    try:
+        seen = sample_tallies(video, duration, hue, band=band, start=start,
+                              tries=tries, want=0, size=size,
+                              frame_height=frame_height, cancelled=cancelled)
+    except Exception as e:                          # noqa: BLE001
+        return Check(ok=False, why=f"could not read the recording: {e}",
+                     hue=hue)
+
+    present = [s for s in seen if s.mask >= MASK_MIN or s.width]
+    read = [s for s in present if s.kills]
+    counts: dict[int, int] = {}
+    for s in read:
+        counts[s.kills] = counts.get(s.kills, 0) + 1
+
+    got = Check(ok=False, why="", hue=hue, looked=len(seen),
+                present=len(present), read=len(read), counts=counts,
+                sightings=seen[:12])
+    if not seen:
+        got.why = ("Nothing could be read from this recording at all -- "
+                   "check the file plays.")
+    elif not present:
+        got.why = ("No part of the card area is in your HUD colour. Either "
+                   "the area is in the wrong place for your HUD scale or "
+                   "aspect ratio, or the colour is wrong.")
+    elif len(read) < CHECK_MIN_READ:
+        got.why = (f"Found HUD colour in the card area {len(present)} time(s) "
+                   f"but could only read a kill tally from {len(read)}. That "
+                   f"usually means the area is near the tally but not on it.")
+    elif got.share < CHECK_MIN_SHARE:
+        got.why = (f"Only {got.share:.0%} of what was found reads as a real "
+                   f"tally, so the area is probably catching something else "
+                   f"on the HUD as well.")
+    else:
+        got.ok = True
+        shown = ", ".join(
+            "{} kill{} x{}".format(k, "s" if k > 1 else "", n)
+            for k, n in sorted(counts.items()))
+        got.why = ("Read a kill tally in {} of {} frames that had HUD colour "
+                   "in them ({}).".format(len(read), len(present), shown))
+    return got

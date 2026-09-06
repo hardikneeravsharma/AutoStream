@@ -542,6 +542,10 @@ class Engine:
             # Pushed here rather than at startup so it survives someone editing
             # it in OBS: the config is the source of truth every session.
             self.obs.set_record_directory(want)
+        # Same reasoning as the directory above, and the same failure: a
+        # setting the config owns, which OBS will happily have wrong. Left to
+        # an install-time script it was simply never applied here.
+        self.obs.split_audio_tracks()
         free = self._free_gb()
         if free is not None and free < self.cfg.record.min_free_gb:
             # Refuse rather than make room. Deleting the user's video files to

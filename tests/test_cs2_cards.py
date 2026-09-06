@@ -10,6 +10,8 @@ Cases marked FROM FOOTAGE reproduce a specific measurement or a specific bug.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -324,3 +326,67 @@ def test_detect_routes_cardcount_to_the_tally_reader(monkeypatch, tmp_path):
     # Deaths are not clipped, and the two kills stay TWO Kills for the planner.
     assert [(k.time, k.count) for k in kills] == [(10.0, 1), (11.0, 1),
                                                   (60.0, 1)]
+
+
+# --------------------------------------------------- is the calibration right
+
+def _sight(kills=None, mask=0, width=0, t=0.0):
+    return cc.Sighting(time=t, kills=kills, width=width, mask=mask)
+
+
+def _checked(monkeypatch, seen):
+    monkeypatch.setattr(cc, "sample_tallies", lambda *a, **k: seen)
+    return cc.check(Path("x.mp4"), 600.0, 340.0)
+
+
+def test_a_working_calibration_passes(monkeypatch):
+    """Six readable tallies out of ten sightings is what a correct region and
+    hue measured on a real 30-minute match."""
+    seen = [_sight(kills=k, mask=300, width=18 + 16 * k) for k in (1, 2, 1, 3, 2, 1)]
+    seen += [_sight(mask=200, width=40) for _ in range(4)]
+    got = _checked(monkeypatch, seen)
+    assert got.ok is True
+    assert got.read == 6 and got.present == 10
+
+
+def test_the_wrong_hue_finds_nothing_and_says_so(monkeypatch):
+    """Measured: a wrong hue put HUD colour in the card area zero times."""
+    got = _checked(monkeypatch, [_sight() for _ in range(24)])
+    assert got.ok is False
+    assert "colour" in got.why
+
+
+def test_a_region_off_the_tally_is_caught(monkeypatch):
+    """The failure that matters. A region near the tally still catches HUD
+    colour -- the health number, the ammo counter -- so "something is there"
+    proves nothing. Only a width on a real card level does."""
+    seen = [_sight(mask=250, width=41) for _ in range(8)]
+    got = _checked(monkeypatch, seen)
+    assert got.ok is False
+    assert got.present == 8 and got.read == 0
+
+
+def test_one_lucky_reading_is_not_enough(monkeypatch):
+    """A width lands within tolerance of one of five levels about a quarter of
+    the time by chance, so a single hit must not pass."""
+    seen = [_sight(kills=2, mask=300, width=50)] + [_sight(mask=250, width=41)
+                                                    for _ in range(9)]
+    got = _checked(monkeypatch, seen)
+    assert got.ok is False
+
+
+def test_the_check_never_raises(monkeypatch):
+    def boom(*a, **k):
+        raise OSError("no such file")
+    monkeypatch.setattr(cc, "sample_tallies", boom)
+    got = cc.check(Path("x.mp4"), 600.0, 340.0)
+    assert got.ok is False and "could not read" in got.why
+
+
+def test_the_sample_puts_the_fullest_tally_first():
+    """The frames shown to a person should be the ones worth looking at: a
+    three-card tally proves the region, an empty one proves nothing."""
+    rows = [_sight(kills=1, mask=100, t=1.0), _sight(mask=10, t=2.0),
+            _sight(kills=3, mask=300, t=3.0), _sight(kills=2, mask=200, t=4.0)]
+    rows.sort(key=lambda s: (s.kills or 0, s.mask), reverse=True)
+    assert [r.time for r in rows] == [3.0, 4.0, 1.0, 2.0]

@@ -268,3 +268,78 @@ def test_starting_a_recording_ignores_a_remembered_failure(monkeypatch, no_sleep
     with pytest.raises(ObsUnavailable):
         o.start_recording()
     assert len(tries) > 1, "the session's own attempt was skipped"
+
+
+# ------------------------------------------------- audio tracks
+
+class _FakeWs:
+    """Enough of obs-websocket to exercise the track split."""
+
+    def __init__(self, tracks=None):
+        self.inputs = [
+            {"inputName": "Mic", "inputKind": "wasapi_input_capture"},
+            {"inputName": "Desktop Audio", "inputKind": "wasapi_output_capture"},
+            {"inputName": "Game Capture", "inputKind": "game_capture"},
+        ]
+        all_on = {str(i): True for i in range(1, 7)}
+        self.tracks = tracks or {"Mic": dict(all_on),
+                                 "Desktop Audio": dict(all_on)}
+        self.writes = []
+
+    def get_version(self):
+        return type("V", (), {"obs_version": "30", "rpc_version": 1})()
+
+    def get_input_list(self):
+        return type("R", (), {"inputs": self.inputs})()
+
+    def get_input_audio_tracks(self, name):
+        return type("R", (), {"input_audio_tracks": self.tracks[name]})()
+
+    def set_input_audio_tracks(self, name, want):
+        self.writes.append((name, want))
+        self.tracks[name] = dict(want)
+
+
+def _obs_with(ws):
+    o = an_obs()
+    o.ws = ws
+    return o
+
+
+def test_the_mic_and_the_game_get_their_own_tracks():
+    """OBS ships both inputs on all six tracks, which makes a three-track
+    recording the same mix three times over -- and the one thing that could
+    rescue a quiet mic afterwards is then not in the file."""
+    ws = _FakeWs()
+    _obs_with(ws).split_audio_tracks()
+
+    assert ws.tracks["Mic"]["2"] is True and ws.tracks["Mic"]["3"] is False
+    assert ws.tracks["Desktop Audio"]["3"] is True
+    assert ws.tracks["Desktop Audio"]["2"] is False
+    # Track 1 stays the mix, which is what every player and the clipper read.
+    assert ws.tracks["Mic"]["1"] is True and ws.tracks["Desktop Audio"]["1"] is True
+
+
+def test_nothing_is_written_when_the_tracks_are_already_right():
+    """It runs at the start of every session, so the usual case is a read."""
+    ws = _FakeWs()
+    _obs_with(ws).split_audio_tracks()
+    ws.writes.clear()
+
+    _obs_with(ws).split_audio_tracks()
+    assert ws.writes == []
+
+
+def test_a_source_that_is_not_audio_is_left_alone():
+    ws = _FakeWs()
+    _obs_with(ws).split_audio_tracks()
+    assert all(name != "Game Capture" for name, _ in ws.writes)
+
+
+def test_the_split_never_raises(monkeypatch):
+    """It runs inside the session start; a failure here must not stop it."""
+    class Boom(_FakeWs):
+        def get_input_list(self):
+            raise OSError("obs went away")
+
+    _obs_with(Boom()).split_audio_tracks()      # no exception

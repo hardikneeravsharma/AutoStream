@@ -2780,3 +2780,85 @@ ol.steps-list li{margin-block:var(--space-4)}
   :focus-visible{outline:2px solid Highlight;outline-offset:2px;box-shadow:none}
 }
 """
+
+CLIPS_FLOW_CSS = """
+/* ---------------------------------------------------------------- clips rail
+   Orientation, not navigation. The clips page shows one column of cards, most
+   hidden until they apply -- correct, because the choices interact, and also
+   disorienting the first time. The rail says where you are and scrolls to a
+   step; it never hides one. */
+.clip-rail{
+  display:flex;flex-wrap:wrap;gap:var(--space-2);
+  list-style:none;margin:0 0 var(--space-6);padding:0;
+}
+.clip-rail-step button{
+  display:inline-flex;align-items:center;gap:var(--space-2);
+  padding:6px 12px 6px 6px;border:var(--border-hair) solid var(--border-subtle);
+  border-radius:999px;background:var(--surface);color:var(--text-secondary);
+  font-size:12px;cursor:pointer;
+}
+.clip-rail-step button:hover{background:var(--surface-hover)}
+.clip-rail-dot{
+  display:inline-grid;place-items:center;width:20px;height:20px;
+  border-radius:50%;background:var(--surface-active);
+  color:var(--text-secondary);font-size:11px;font-weight:600;
+}
+.clip-rail-step.is-done button{color:var(--text-primary)}
+.clip-rail-step.is-done .clip-rail-dot{background:var(--accent);color:#fff}
+.clip-rail-step.is-now button{
+  border-color:var(--accent);color:var(--text-primary);
+}
+
+/* ------------------------------------------------------- how to read a match
+   Three ways that differ by an order of magnitude in both time and quality,
+   so each one carries its real cost against the stretch actually selected.
+   "Fast" and "slow" is not a choice anybody can make; "about 40 minutes" is. */
+.clip-ways{display:grid;gap:var(--space-3)}
+@media (min-width:900px){.clip-ways{grid-template-columns:repeat(3,1fr)}}
+.clip-way{
+  display:flex;flex-direction:column;gap:var(--space-2);text-align:left;
+  padding:var(--space-4);border:var(--border-hair) solid var(--border-subtle);
+  border-radius:var(--radius-md);background:var(--surface);cursor:pointer;
+  color:var(--text-secondary);font:inherit;
+}
+.clip-way:hover{background:var(--surface-hover)}
+.clip-way.is-on{border-color:var(--accent);background:var(--surface-active)}
+.clip-way-top{display:flex;flex-direction:column;gap:2px}
+.clip-way-top b{color:var(--text-primary);font-size:14px}
+.clip-way-cost{color:var(--accent);font-size:12px;font-variant-numeric:tabular-nums}
+.clip-way-why{font-size:12px;line-height:1.45}
+
+/* ------------------------------------------------------- card calibration
+   The frames are the user's own, chosen because a tally is probably in them.
+   Calibrating against a picture of somebody else's HUD is how the shipped
+   region came to be wrong for anyone not on 16:9 at this HUD scale. */
+.clip-cal-shots{display:grid;gap:var(--space-3)}
+@media (min-width:760px){.clip-cal-shots{grid-template-columns:repeat(3,1fr)}}
+.clip-cal-shot{position:relative;margin:0}
+.clip-cal-shot img{
+  display:block;width:100%;border-radius:var(--radius-sm);
+  border:var(--border-hair) solid var(--border-subtle);
+}
+.clip-cal-shot figcaption{
+  margin-top:4px;font-size:11px;color:var(--text-secondary);
+  font-variant-numeric:tabular-nums;
+}
+.clip-cal-box{
+  position:absolute;border:2px solid var(--accent);border-radius:2px;
+  box-shadow:0 0 0 9999px rgba(0,0,0,.35);pointer-events:none;
+}
+.clip-cal-verdict{
+  padding:var(--space-4);border-radius:var(--radius-sm);
+  border:var(--border-hair) solid var(--border-subtle);font-size:13px;
+}
+.clip-cal-verdict.is-good{border-color:var(--ok,#3fb950)}
+.clip-cal-verdict.is-bad{border-color:var(--warn)}
+.clip-cal-nums{
+  display:block;margin-top:6px;font-size:11px;color:var(--text-secondary);
+  font-variant-numeric:tabular-nums;
+}
+"""
+
+# Appended rather than inlined above so the clips-flow rules stay one
+# readable block: the rail, the three reading choices and the calibration.
+CSS = CSS + CLIPS_FLOW_CSS

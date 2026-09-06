@@ -756,6 +756,53 @@ class Obs:
         except Exception as e:  # noqa: BLE001
             log.warning("could not set record directory: %s", e)
 
+    # Track 1 is the mix -- what every player and the clipper read. Track 2 is
+    # the mic alone and track 3 the game alone, so a mic that was too quiet can
+    # be lifted afterwards in an editor instead of being baked into the only
+    # copy. OBS ships both inputs enabled on all six tracks, which makes a
+    # three-track recording the same mix three times over.
+    MIC_TRACKS = {"1": True, "2": True, "3": False,
+                  "4": False, "5": False, "6": False}
+    DESKTOP_TRACKS = {"1": True, "2": False, "3": True,
+                      "4": False, "5": False, "6": False}
+    MIC_KINDS = ("wasapi_input_capture",)
+    DESKTOP_KINDS = ("wasapi_output_capture",)
+
+    def split_audio_tracks(self) -> None:
+        """Route the mic and the game onto their own tracks. Never raises.
+
+        PUSHED EVERY SESSION, for the same reason the record directory is: the
+        config is the source of truth and OBS is not. scripts/configure_recording
+        sets this at install time, but it is a script most people never run --
+        and nothing afterwards ever checked. Measured on the developer's own
+        machine weeks in: both inputs were still on all six tracks, so every
+        recording made so far has the mic welded to the game audio, and the one
+        thing that would have rescued a quiet mic was never there.
+
+        Only writes what is wrong, so the usual case costs one read.
+        """
+        try:
+            self.connect()
+            inputs = self.ws.get_input_list().inputs
+        except Exception as e:  # noqa: BLE001
+            log.debug("could not list inputs to split the audio tracks: %s", e)
+            return
+        for kinds, want, what in ((self.MIC_KINDS, self.MIC_TRACKS, "mic"),
+                                  (self.DESKTOP_KINDS, self.DESKTOP_TRACKS, "game")):
+            for i in inputs:
+                if str(i.get("inputKind") or "") not in kinds:
+                    continue
+                name = str(i.get("inputName") or "")
+                try:
+                    now = self.ws.get_input_audio_tracks(name).input_audio_tracks
+                    if {k: bool(v) for k, v in now.items()} == want:
+                        continue
+                    self.ws.set_input_audio_tracks(name, dict(want))
+                    log.info("%s (%s) -> track %s, so it can be separated later",
+                             name, what, "2" if what == "mic" else "3")
+                except Exception as e:  # noqa: BLE001
+                    log.info("could not set the audio tracks for %s: %s", name, e)
+
     def start_recording(self) -> None:
         # wait=True FOR THE SAME REASON start() HAS IT, and it was missing.
         # With streaming off -- record and clip only, which is how most people

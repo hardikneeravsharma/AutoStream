@@ -82,6 +82,12 @@ class Profile:
     # because it can be measured off the recording itself. 0 means "not
     # measured yet"; the scan works it out and it is cached from then on.
     hud_hue: float = 0.0
+    # cardcount mode: where the kill tally sits, as fractions of the frame.
+    # Empty means the shipped default, which was measured on ONE 16:9 1080p
+    # HUD -- 4:3 stretched is normal in Counter-Strike and hud_scaling moves it
+    # too, so a person who calibrates it on their own footage overrides it here
+    # and every later scan uses theirs.
+    card_box: tuple = ()
 
     # Counter-Strike only: read the scoreboard as well as the feed, and clip
     # ROUNDS rather than bursts of kills. See clips/rounds.py for why the round
@@ -260,6 +266,8 @@ class Profile:
             # Cached once measured, so the cost is paid on the first scan only.
             if self.hud_hue:
                 out["hud_hue"] = round(self.hud_hue, 1)
+            if self.card_box:
+                out["card_box"] = [round(float(v), 4) for v in self.card_box]
         elif self.mode == "feedbar":
             # Nothing else to carry: no template, no name, no threshold. The
             # band is the whole configuration.
@@ -532,6 +540,7 @@ def _build(key: str, raw: dict) -> Profile | None:
             demos=bool(raw.get("demos", False)),
             matches=bool(raw.get("matches", False)),
             hud_hue=float(raw.get("hud_hue", 0.0)),
+            card_box=tuple(float(v) for v in (raw.get("card_box") or ()))[:4],
             hud_regions={str(k): [float(v) for v in vals]
                          for k, vals in (raw.get("hud_regions") or {}).items()},
             pre_roll_min=float(raw.get("pre_roll_min", 0.0)),

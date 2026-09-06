@@ -489,3 +489,123 @@ def test_the_preview_punches_in_where_the_render_will():
     body = _func("clip_fxTick")
     assert "transformOrigin" in body
     assert "clip_fxAimAt_" in body
+
+
+# ------------------------------------------------- the redesigned flow
+
+def test_every_control_on_the_page_has_a_handler():
+    """The redesign guard. Every data-act in the markup must be handled in the
+    click switch, or the button is dead -- which is exactly the class of bug
+    that shipped a greyed-out Make clips and a filmstrip nothing reached.
+    """
+    import re
+
+    acts = set(re.findall(r'data-act="([a-z-]+)"', clips_ui.CLIPS_HTML))
+    handled = set(re.findall(r"act === '([a-z-]+)'", clips_ui.CLIPS_JS))
+    # `pick` and the like are attached in JS rather than in the static markup.
+    missing = acts - handled
+    assert not missing, f"controls with no handler: {sorted(missing)}"
+
+
+def test_the_three_reading_choices_are_all_offered():
+    """Counter-Strike can be read three ways and they differ by an order of
+    magnitude. The choice used to be made silently and only surfaced after a
+    run had already stopped."""
+    for way in ("demo", "cards", "rounds"):
+        assert "'" + way + "'" in clips_ui.CLIPS_JS
+    assert 'id="clip-read-card"' in clips_ui.CLIPS_HTML
+    # The three buttons are rendered by clip_renderWays, because each carries
+    # a cost worked out from the stretch actually selected.
+    assert 'data-act="way"' in clips_ui.CLIPS_JS
+    assert "CLIP_WAYS" in clips_ui.CLIPS_JS
+
+
+def test_the_card_calibration_is_reachable_and_checkable():
+    assert 'id="clip-cal-card"' in clips_ui.CLIPS_HTML
+    assert 'data-act="cal-check"' in clips_ui.CLIPS_HTML
+    assert "/api/clips/cards/samples" in clips_ui.CLIPS_JS
+    assert "/api/clips/cards/check" in clips_ui.CLIPS_JS
+
+
+def test_the_rail_reports_and_never_gates():
+    """It scrolls to a step. If it ever hid one, the page would become a
+    wizard -- and the choices on it interact, so a wizard would mean guessing
+    at the result."""
+    assert 'id="clip-rail"' in clips_ui.CLIPS_HTML
+    assert "scrollIntoView" in clips_ui.CLIPS_JS
+    assert "clip_renderRail" in clips_ui.CLIPS_JS
+
+
+def test_the_reading_choice_reaches_the_run():
+    """Choosing "kill tally only" must actually send the flag the job reads,
+    otherwise the choice is decoration."""
+    assert "fallback_mode = 'cards'" in clips_ui.CLIPS_JS
+    assert "card_box" in clips_ui.CLIPS_JS
+
+
+def test_the_page_javascript_is_balanced():
+    """No JS engine here, so this is the crude check that still catches the
+    real thing: an unclosed brace in a page file is a SyntaxError that takes
+    the WHOLE dashboard down, not just the clips page -- every page shares one
+    scope. Strings and comments are skipped so braces inside them do not count.
+    """
+    js = clips_ui.CLIPS_JS
+    depth = {"{": 0, "(": 0, "[": 0}
+    close = {"}": "{", ")": "(", "]": "["}
+    i, n = 0, len(js)
+    quote = None
+    while i < n:
+        c = js[i]
+        if quote:
+            if c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c in "\"'`":
+            quote = c
+        elif c == "/" and i + 1 < n and js[i + 1] == "/":
+            i = js.find("\n", i)
+            if i < 0:
+                break
+        elif c == "/" and i + 1 < n and js[i + 1] == "*":
+            i = js.find("*/", i) + 2
+            continue
+        elif c in depth:
+            depth[c] += 1
+        elif c in close:
+            depth[close[c]] -= 1
+            assert depth[close[c]] >= 0, f"unbalanced {c} at offset {i}"
+        i += 1
+    assert depth == {"{": 0, "(": 0, "[": 0}, f"unclosed brackets: {depth}"
+
+
+def test_the_calibrated_card_area_reaches_the_reader():
+    """Otherwise calibration is decoration: the person drags a box, the check
+    passes, and every scan still reads the shipped region."""
+    from autostream.clips import cs2_cards, detect, profiles
+
+    assert "band" in cs2_cards.scan.__code__.co_varnames
+    assert "card_box" in profiles.Profile.__dataclass_fields__
+    src = Path(detect.__file__).read_text(encoding="utf-8")
+    assert "profile.card_box" in src and "band=band" in src
+
+
+def test_a_failed_check_never_saves_the_box():
+    """The shipped default has to survive a wrong box, or one bad drag makes
+    every later scan worse with nothing saying so."""
+    src = Path(webui.__file__).read_text(encoding="utf-8")
+    i = src.index("def cards_check")
+    body = src[i:i + 4000]
+    assert "if got.ok and band != cs2_cards.CARDS:" in body
+
+
+def test_the_new_cards_go_when_the_selection_does():
+    """A reading choice or a calibration left on screen after its file has
+    gone is the same shape of bug as a Make clips button that stayed enabled
+    for a recording no longer on disk."""
+    js = clips_ui.CLIPS_JS
+    i = js.index("clip_show('clip-options', !!s);")
+    early = js[i:i + 500]
+    for card in ("clip-read-card", "clip-cal-card", "clip-rail"):
+        assert card in early, f"{card} survives losing the selection"

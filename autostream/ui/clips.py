@@ -57,6 +57,15 @@ CLIPS_HTML: str = (
   </div>
 </div>
 
+<!-- WHERE YOU ARE. The page shows one long column of cards, most of them
+     hidden until they apply, which is right -- the choices interact and
+     hiding them behind a wizard would mean guessing at the result. What it
+     never had was any sense of PROGRESS through that column, so a first-time
+     user could not tell whether they had finished choosing or forgotten
+     something. The rail is orientation, not navigation: it reports, it does
+     not gate. -->
+<ol class="clip-rail hide" id="clip-rail" aria-label="Where you are"></ol>
+
 <div class="card" id="clip-local">
   <div class="card-head">
     <div>
@@ -376,6 +385,54 @@ CLIPS_HTML: str = (
   </div>
 </div>
 
+<!-- HOW COUNTER-STRIKE SHOULD BE READ, chosen BEFORE the run rather than
+     after it fails.
+     There are three ways and they differ by an order of magnitude in both
+     time and quality, so this is the most consequential choice on the page --
+     and until now it was made FOR the user, silently, and only surfaced as a
+     dialog once a scan had already stopped twelve minutes in. -->
+<div class="card hide" id="clip-read-card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">How should this match be read?</h2>
+      <p class="card-sub" id="clip-read-sub">Counter-Strike can be read three
+         ways. They are not equal, and the fastest is not the worst.</p>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="clip-ways" id="clip-ways"></div>
+    <p class="muted" id="clip-read-why"></p>
+  </div>
+</div>
+
+<!-- PROVING THE CARD READER CAN SEE THIS PERSON'S HUD.
+     The card region is a fraction of the frame measured on one 16:9 1080p
+     HUD. 4:3 stretched is normal in Counter-Strike, and hud_scaling moves it
+     too -- point the crop at the wrong pixels and the scan reports almost
+     nothing, which looks exactly like a quiet session. One real user got 2
+     kills out of 17 and nothing on the page said why. -->
+<div class="card hide" id="clip-cal-card">
+  <div class="card-head">
+    <div>
+      <h2 class="card-title">Where is your kill tally?</h2>
+      <p class="card-sub" id="clip-cal-sub">These frames are from your own
+         recording, picked because a tally is probably showing. Drag the box
+         onto the fan of cards above your rank badge.</p>
+    </div>
+    <div class="field-inline">
+      <button class="btn btn-sm btn-ghost" type="button" data-act="cal-reset">
+        <span>Reset box</span></button>
+      <button class="btn btn-primary" type="button" id="clip-cal-check"
+              data-act="cal-check"><span>Check it works</span></button>
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="clip-cal-shots" id="clip-cal-shots"></div>
+    <div class="clip-cal-verdict hide" id="clip-cal-verdict"></div>
+    <p class="muted" id="clip-cal-msg"></p>
+  </div>
+</div>
+
 <div class="card hide" id="clip-options">
   <div class="card-head">
     <div>
@@ -668,6 +725,13 @@ var clip_state = {
   /* The part of the recording to read. `to` of 0 means "to the end", which is
      what an untouched selection is -- so a run body carries nothing at all
      unless the user actually moved a handle. */
+  /* Counter-Strike only: 'demo' | 'cards' | 'rounds'. Chosen before the run,
+     not offered after one has already stopped. */
+  way: 'demo',
+  calShots: null,            /* sample frames for the card calibration */
+  calDrag: null,             /* a box being drawn on one of them */
+  calBox: null,              /* the card area, as fractions of the frame */
+  calHue: 0,
   strip: {path: '', dur: 0, from: 0, to: 0, frames: [], drawn: ''},
   cal: {open: false, t: 0, dur: 0, box: null, drag: null, path: '', busy: false}
 };
@@ -933,10 +997,249 @@ function clip_renderTypes() {
   }).join('');
 }
 
+/* WHERE YOU ARE IN THE JOB. Reports, never gates: every step is marked done
+   the moment it actually is, and clicking one scrolls to it rather than
+   hiding the others. A page whose cards appear and disappear as they apply
+   is right, and is also disorienting the first time -- this is the missing
+   half of that, not a replacement for it. */
+function clip_renderRail() {
+  var host = clip_el('clip-rail');
+  if (!host) return;
+  var s = clip_state.pick;
+  var j = clip_state.lastJob;
+  var win = clip_stripWindow();
+  var running = !!(j && (j.state === 'running' || j.state === 'queued'));
+  var steps = [
+    ['clip-local', 'Pick a video', !!s],
+    ['clip-strip-card', 'Choose the part', !!(s && win)],
+    ['clip-read-card', 'How to read it', !!(s && s.demos && clip_state.way)],
+    ['clip-options', 'Style', !!s],
+    ['clip-review-card', 'Review', !!(clip_state.review)],
+    ['clip-results', 'Clips', !!(j && j.state === 'done')]
+  ].filter(function (st) {
+    /* The reading choice is Counter-Strike's alone; showing a step that can
+       never light up would be a permanent unfinished tick. */
+    return st[0] !== 'clip-read-card' || !!(s && s.demos);
+  });
+  var at = -1;
+  steps.forEach(function (st, i) { if (st[2]) at = i; });
+  host.innerHTML = steps.map(function (st, i) {
+    var cls = st[2] ? 'is-done' : (i === at + 1 ? 'is-now' : '');
+    if (running && st[0] === 'clip-options') cls = 'is-now';
+    return '<li class="clip-rail-step ' + cls + '">'
+      + '<button type="button" data-act="rail" data-val="' + esc(st[0]) + '">'
+      + '<span class="clip-rail-dot">' + (st[2] ? '&#10003;' : (i + 1)) + '</span>'
+      + esc(st[1]) + '</button></li>';
+  }).join('');
+  clip_show('clip-rail', !!s || !!j);
+}
+
+/* THE THREE WAYS COUNTER-STRIKE CAN BE READ, with what each one costs.
+   The numbers are measured scan rates from clips/jobs.py, turned into a real
+   duration against the stretch actually selected -- a choice between "fast"
+   and "slow" is not a choice anybody can make, and "about 40 minutes" is. */
+var CLIP_WAYS = [
+  ['demo', 'From the replay', 'exact',
+   'Valve’s own record of the match: every kill to the tick, real rounds, '
+   + 'and clutches and wallbangs no camera can see. Needs the .dem on disk, '
+   + 'or its sharing code.'],
+  ['cards', 'Kill tally only', 'cards',
+   'Reads the fan of cards above your rank badge. Your kills and nothing '
+   + 'else, so assists cannot leak in. No round labels.'],
+  ['rounds', 'Read the whole HUD', 'rounds',
+   'Reads the kill feed and the scoreboard, which is where CLUTCH and PISTOL '
+   + 'ROUND come from. Much the slowest, and needs your in-game name.']
+];
+
+function clip_wayCost(id) {
+  var s = clip_state.pick;
+  if (!s) return '';
+  var win = clip_stripWindow();
+  var span = win ? ((win.scan_end || s.duration || 0) - win.scan_start)
+                 : (s.duration || 0);
+  if (!(span > 0)) return '';
+  if (id === 'demo') return 'seconds, once the replay is found';
+  var rate = id === 'cards' ? (Number(s.cards_rate) || 10)
+                            : (Number(s.scan_rate) || 1.2);
+  return 'about ' + clip_dur(span / rate) + ' of reading';
+}
+
+function clip_renderWays() {
+  var s = clip_state.pick;
+  var on = !!(s && s.demos);        /* Counter-Strike is the only game with a choice */
+  clip_show('clip-read-card', on);
+  if (!on) return;
+  var host = clip_el('clip-ways');
+  if (!host) return;
+  var chosen = clip_state.way || 'demo';
+  host.innerHTML = CLIP_WAYS.map(function (w) {
+    var is = w[0] === chosen;
+    return '<button class="clip-way' + (is ? ' is-on' : '') + '" type="button"'
+      + ' data-act="way" data-val="' + esc(w[0]) + '"'
+      + ' aria-pressed="' + (is ? 'true' : 'false') + '">'
+      + '<span class="clip-way-top"><b>' + esc(w[1]) + '</b>'
+      + '<span class="clip-way-cost">' + esc(clip_wayCost(w[0])) + '</span></span>'
+      + '<span class="clip-way-why">' + esc(w[3]) + '</span></button>';
+  }).join('');
+  /* The calibration screen belongs to the card reader and nothing else. */
+  clip_show('clip-cal-card', chosen === 'cards' && !!clip_state.calShots);
+  var why = clip_el('clip-read-why');
+  if (why) {
+    why.textContent = chosen === 'demo'
+      ? 'If no replay matches this recording you will be asked for its sharing '
+        + 'code before anything is read, rather than after.'
+      : chosen === 'cards'
+      ? 'Check the tally area first if you have never done it on this PC — '
+        + 'a card box pointed at the wrong pixels finds almost nothing.'
+      : '';
+  }
+}
+
+/* CALIBRATING THE CARD AREA ON THE USER'S OWN FOOTAGE.
+   Sample frames come from the recording being clipped, chosen because a tally
+   is probably in them, so the person is dragging a box over the thing itself
+   rather than over a picture of somebody else's HUD. */
+async function clip_calOpen() {
+  var s = clip_state.pick;
+  if (!s || !s.recording_path) return;
+  var msg = clip_el('clip-cal-msg');
+  if (msg) msg.textContent = 'Looking through the recording for a kill tally…';
+  clip_show('clip-cal-card', true);
+  var win = clip_stripWindow() || {};
+  var r = await API.post('/api/clips/cards/samples', {
+    path: s.recording_path,
+    start: win.scan_start || 0,
+    seconds: (win.scan_end || s.duration || 0) - (win.scan_start || 0)
+  });
+  if (!r || !r.ok) {
+    if (msg) msg.textContent = (r && r.error) || 'Could not read the recording.';
+    return;
+  }
+  clip_state.calShots = r.shots || [];
+  clip_state.calBox = r.box || null;
+  clip_state.calHue = r.hue || 0;
+  if (msg) {
+    msg.textContent = clip_state.calShots.length
+      ? ''
+      : 'No frame in this stretch looked like it had a tally in it. Pick a '
+        + 'part of the video where you were getting kills.';
+  }
+  clip_renderCal();
+}
+
+function clip_renderCal() {
+  var host = clip_el('clip-cal-shots');
+  if (!host) return;
+  var shots = clip_state.calShots || [];
+  var box = clip_state.calBox || {};
+  var s = clip_state.pick;
+  host.innerHTML = shots.map(function (sh, i) {
+    /* The same frame endpoint the filmstrip uses, at the same small width --
+       a full-size still is about 900 KB and there are six of these. */
+    var url = '/api/clips/frame?k=' + encodeURIComponent(SHELL_K)
+      + '&path=' + encodeURIComponent(s ? s.recording_path : '')
+      + '&at=' + encodeURIComponent(sh.time) + '&width=640';
+    return '<figure class="clip-cal-shot" data-i="' + i + '">'
+      + '<img src="' + url + '" alt="Frame at ' + clip_dur(sh.time) + '">'
+      + '<span class="clip-cal-box" style="left:' + (box.x * 100) + '%;top:'
+      + (box.y * 100) + '%;width:' + (box.w * 100) + '%;height:'
+      + (box.h * 100) + '%"></span>'
+      + '<figcaption>' + clip_dur(sh.time)
+      + (sh.kills ? ' · read ' + sh.kills + ' kill'
+                    + (sh.kills > 1 ? 's' : '') : '')
+      + '</figcaption></figure>';
+  }).join('');
+}
+
+/* DRAG A NEW BOX STRAIGHT ONTO THE FRAME. Nudging four numbers is how the
+   shipped region got trusted for years without anyone checking it against a
+   4:3 HUD -- if a person can draw the box on their own footage, the geometry
+   stops being an assumption. Drawn on ANY of the sample frames, because the
+   tally is in the same place in all of them. */
+function clip_calDown(ev) {
+  var shot = ev.target.closest('.clip-cal-shot');
+  var img = shot && shot.querySelector('img');
+  if (!img) return;
+  ev.preventDefault();
+  var r = img.getBoundingClientRect();
+  clip_state.calDrag = {
+    el: shot, r: r,
+    x0: (ev.clientX - r.left) / r.width,
+    y0: (ev.clientY - r.top) / r.height
+  };
+  window.addEventListener('pointermove', clip_calMove);
+  window.addEventListener('pointerup', clip_calUp, {once: true});
+}
+
+function clip_calMove(ev) {
+  var d = clip_state.calDrag;
+  if (!d) return;
+  var clamp = function (v) { return Math.max(0, Math.min(1, v)); };
+  var x1 = clamp((ev.clientX - d.r.left) / d.r.width);
+  var y1 = clamp((ev.clientY - d.r.top) / d.r.height);
+  clip_state.calBox = {
+    x: Math.min(d.x0, x1), y: Math.min(d.y0, y1),
+    w: Math.abs(x1 - d.x0), h: Math.abs(y1 - d.y0)
+  };
+  clip_renderCal();
+}
+
+function clip_calUp() {
+  window.removeEventListener('pointermove', clip_calMove);
+  var b = clip_state.calBox;
+  clip_state.calDrag = null;
+  /* A stray click is a zero-sized box, which would pass nothing and read as a
+     broken calibration rather than as a slip. */
+  if (b && (b.w < 0.005 || b.h < 0.005)) clip_state.calBox = null;
+  var out = clip_el('clip-cal-verdict');
+  if (out) clip_show('clip-cal-verdict', false);
+  var msg = clip_el('clip-cal-msg');
+  if (msg && clip_state.calBox) {
+    msg.textContent = 'Now press "Check it works" — it reads the tally from '
+      + 'this recording and tells you whether the box is right.';
+  }
+  clip_renderCal();
+}
+
+async function clip_calCheck() {
+  var s = clip_state.pick;
+  var btn = clip_el('clip-cal-check');
+  var out = clip_el('clip-cal-verdict');
+  if (!s || !out) return;
+  if (btn) { btn.disabled = true; btn.querySelector('span').textContent = 'Checking…'; }
+  var win = clip_stripWindow() || {};
+  var r = await API.post('/api/clips/cards/check', {
+    path: s.recording_path,
+    start: win.scan_start || 0,
+    seconds: (win.scan_end || s.duration || 0) - (win.scan_start || 0),
+    box: clip_state.calBox || null
+  });
+  if (btn) { btn.disabled = false; btn.querySelector('span').textContent = 'Check it works'; }
+  clip_show('clip-cal-verdict', true);
+  if (!r || !r.ok) {
+    out.className = 'clip-cal-verdict is-bad';
+    out.textContent = (r && r.error) || 'The check could not run.';
+    return;
+  }
+  out.className = 'clip-cal-verdict ' + (r.pass ? 'is-good' : 'is-bad');
+  out.innerHTML = '<b>' + (r.pass ? 'This will work.' : 'This will not work yet.')
+    + '</b> ' + esc(r.why || '')
+    + '<span class="clip-cal-nums">looked at ' + r.looked + ' frames · '
+    + r.present + ' had your HUD colour · ' + r.read + ' read as a real tally</span>';
+}
+
 function clip_renderOptions() {
   var s = clip_state.pick;
   clip_show('clip-options', !!s);
-  if (!s) { clip_show('clip-strip-card', false); return; }
+  if (!s) {
+    /* Everything downstream of a selection goes with it. Leaving the reading
+       choice or the calibration on screen after the file they belong to has
+       gone is the same shape of bug as a Make clips button that stayed
+       enabled for a recording no longer on disk. */
+    ['clip-strip-card', 'clip-read-card', 'clip-cal-card',
+     'clip-rail'].forEach(function (id) { clip_show(id, false); });
+    return;
+  }
 
   clip_el('clip-chosen').textContent = s.game || 'Unknown game';
   var bits = [clip_when(s.display_started || s.started)];
@@ -994,8 +1297,10 @@ function clip_renderOptions() {
      with the LAST of them, and a scan only ever reads one game -- so without
      this the other games in the file are silently unreachable, which is what
      happened to a session holding both Counter-Strike 2 and Delta Force. */
+  clip_renderWays();
   clip_renderDemoBox();
   clip_renderMatchLine();
+  clip_renderRail();
 
   var played = (s.games || []).filter(function (g) { return !!g; });
   var multi = played.length > 1;
@@ -3137,7 +3442,17 @@ async function clip_reviewCut() {
 
 function clip_runBody(s) {
   var win = clip_stripWindow();
-  return Object.assign(win || {}, {
+  /* THE READING CHOICE, TRANSLATED INTO THE FLAGS THE RUN ALREADY TAKES.
+     "From the replay" is the plain run: it looks for the demo and stops to
+     ask for a sharing code if it cannot find one. The other two are the same
+     deliberate "read the screen instead" the needs-demo panel offers, chosen
+     up front rather than after a run has already spent twelve minutes. */
+  var way = (s && s.demos) ? (clip_state.way || 'demo') : '';
+  var extra = {};
+  if (way === 'cards') { extra.demo_fallback = true; extra.fallback_mode = 'cards'; }
+  else if (way === 'rounds') { extra.demo_fallback = true; extra.fallback_mode = ''; }
+  if (way === 'cards' && clip_state.calBox) extra.card_box = clip_state.calBox;
+  return Object.assign(win || {}, extra, {
     /* `source` wins server-side. A file the user picked is not in the
        history, so there is no row to look it up by. */
     source: s.source || '',
@@ -4070,6 +4385,11 @@ function clip_wire() {
   if (clip_state.wired) return;
   clip_state.wired = true;
 
+  /* Delegated, because the sample frames are rebuilt every time the reader
+     goes looking for a tally. */
+  var shots = clip_el('clip-cal-shots');
+  if (shots) shots.addEventListener('pointerdown', clip_calDown);
+
   var g = clip_el('clip-game');
   if (g) g.addEventListener('change', function () {
     clip_state.game = g.value; clip_renderList();
@@ -4511,6 +4831,21 @@ function clip_wire() {
       clip_runAnyway('');
     } else if (act === 'demo-cards') {
       clip_runAnyway('cards');
+    } else if (act === 'way') {
+      clip_state.way = b.getAttribute('data-val') || 'demo';
+      /* Opening the calibration is the point of choosing the card reader:
+         it is the one path whose geometry can be wrong on this PC. */
+      if (clip_state.way === 'cards' && !clip_state.calShots) clip_calOpen();
+      clip_renderWays();
+      clip_renderOptions();
+    } else if (act === 'cal-check') {
+      clip_calCheck();
+    } else if (act === 'cal-reset') {
+      clip_state.calBox = null;
+      clip_calOpen();
+    } else if (act === 'rail') {
+      var target = clip_el(b.getAttribute('data-val'));
+      if (target) target.scrollIntoView({behavior: 'smooth', block: 'start'});
     } else if (act === 'install-tools') {
       clip_installTools();
     } else if (act === 'strip-all') {
