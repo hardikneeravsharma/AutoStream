@@ -46,6 +46,39 @@ def foreground_pid() -> int | None:
         return None
 
 
+def foreground_title() -> str:
+    """The title of the window in front. "" when it cannot be read."""
+    if not _HAS_WIN32:
+        return ""
+    try:
+        hwnd = win32gui.GetForegroundWindow()
+        return win32gui.GetWindowText(hwnd) if hwnd else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+# GAMES WHOSE PROCESS CANNOT BE SEEN AT ALL, matched on the window title
+# instead. Valorant runs behind Vanguard, a kernel anti-cheat driver that hides
+# the process from ordinary enumeration -- psutil simply never lists it. So the
+# only two facts available are that SOMETHING owns the foreground window and
+# what that window is called.
+#
+# This is not a general fallback and must not become one: a title is a much
+# weaker signal than an executable name, and "VALORANT" in a browser tab would
+# match. It is a short list of games that genuinely cannot be detected any
+# other way, and every entry needs a reason.
+#
+# What it cost to not have: a 174-minute session was labelled Counter-Strike 2
+# throughout, because a leftover cs2.exe was the only thing visible while
+# Valorant was actually on screen. The stream was titled and thumbnailed for
+# the wrong game, and -- worse -- Valorant's match records are only fetched
+# while its own profile is the current game, so three hours of exact kill data
+# was never asked for while the client sat there able to answer.
+TITLE_HINTS: dict[str, str] = {
+    "valorant": "valorant-win64-shipping.exe",
+}
+
+
 def steam_running_appid() -> str | None:
     """Non-zero means Steam believes a game is running."""
     if not _HAS_REG:
@@ -67,6 +100,10 @@ class Watcher:
         self._last_running: dict[str, GameHit] = {}
         # So the background-match line is logged once per exe, not every tick.
         self._said_bg = ""
+        # Games that have owned the foreground window since AutoStream started.
+        # A match that has never been in front is not what you are playing.
+        self._fg_ever: set[str] = set()
+        self._said_title = ""
 
     # ------------------------------------------------------------------
 
@@ -118,27 +155,39 @@ class Watcher:
         fg = foreground_pid()
         if fg is not None and fg in seen:
             hit = seen[fg]
+            self._fg_ever.add(hit.key)
+        elif (hidden := self._hidden_foreground()) is not None:
+            hit = hidden
+            self._fg_ever.add(hit.key)
         else:
-            hit = seen[min(seen)]   # lowest PID ~= earliest started
-            # A GUESS FROM THE PUBLIC INDEX, ABOUT SOMETHING NOT ON SCREEN, IS
-            # NOT ENOUGH TO BROADCAST. The index matches on the bare executable
-            # name and short names collide badly with ordinary tools: gh.exe is
-            # the GitHub CLI and Green Hell, rg.exe is ripgrep and Retro
-            # Gadgets, dotnet.exe is the .NET runtime and tModLoader. Running
-            # one command in a terminal was enough to put a public stream on
-            # somebody's channel -- which happened, with `gh`.
+            # NOTHING RECOGNISED IS ON SCREEN. What used to happen here was
+            # that the longest-running match won, which meant a background
+            # process with no window became "the game you are playing". Two
+            # real incidents came out of that: `gh` in a terminal started a
+            # public broadcast titled Green Hell, and a leftover cs2.exe
+            # labelled a three-hour Valorant session as Counter-Strike 2.
             #
-            # An override is the user's own word and a Steam hit is corroborated
-            # by Steam, so both still stand on their own. Only the public guess
-            # needs the window, and a game actually being played has it: this
-            # costs nothing in the case it is meant to serve.
-            if hit.source == "public":
-                if self._said_bg != hit.key:
-                    self._said_bg = hit.key
-                    log.info("%s (%s) matches the public index but is not the "
-                             "foreground window, so it is not treated as a "
-                             "game", hit.name, hit.key)
+            # A game may legitimately be behind another window -- you alt-tab
+            # to Discord mid-match -- so this cannot simply refuse. What it can
+            # require is that the game was IN FRONT at some point since
+            # AutoStream started. Alt-tabbing away does not change what you are
+            # playing; a tool you never looked at was never a game.
+            #
+            # Deliberately not limited to public-index hits. The first version
+            # of this exempted overrides, on the grounds that an override is
+            # the user's own word -- but an override only says the NAME is
+            # right, not that a stale copy of it is what you are playing now,
+            # and the Valorant session above was lost to exactly that hole.
+            live = {p: h for p, h in seen.items() if h.key in self._fg_ever}
+            if not live:
+                first = seen[min(seen)]
+                if self._said_bg != first.key:
+                    self._said_bg = first.key
+                    log.info("%s (%s) is running but has never been the "
+                             "foreground window, so it is not treated as the "
+                             "game being played", first.name, first.key)
                 return None
+            hit = live[min(live)]
         self._said_bg = ""
 
         # Steam can name a game our index missed
@@ -152,6 +201,37 @@ class Watcher:
 
         self._last_running = {h.key: h for h in seen.values()}
         return hit
+
+    def _hidden_foreground(self) -> GameHit | None:
+        """The foreground game when its process cannot be enumerated.
+
+        Only for the handful in TITLE_HINTS, and only when the title is a
+        whole word in the window name -- so a browser tab reading "valorant
+        pro settings" does not count as playing it.
+        """
+        title = foreground_title().strip().lower()
+        if not title:
+            return None
+        # WHOLE WORDS, not a substring. A browser tab reading
+        # "valorantstrategies.gg" contains "valorant" and is not somebody
+        # playing it. Split on anything not alphanumeric rather than reach
+        # for a regex: the test that matters is membership, and this says so.
+        words = set("".join(c if c.isalnum() else " " for c in title).split())
+
+        for needle, exe in TITLE_HINTS.items():
+            if needle not in words:
+                continue
+            if self.index.is_blocked(exe) or self.index.is_veto(exe):
+                return None
+            hit = self.index.lookup(exe)
+            if hit:
+                if self._said_title != exe:
+                    self._said_title = exe
+                    log.info("%s is the foreground window (%r); its process is "
+                             "hidden by anti-cheat, so it is identified by "
+                             "title", hit.name, title[:40])
+                return hit
+        return None
 
     def armed_game(self) -> GameHit | None:
         """Same as active_game(), but only after it survives arm_delay."""
