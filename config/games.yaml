@@ -40,6 +40,18 @@ games:
   valorant-win64-shipping.exe:
     username: YuvaNeta#IN1
 blocklist:
+# DEVELOPER TOOLS THE PUBLIC INDEX CALLS GAMES. Short executable names collide,
+# and the index matches on the bare name with nothing to corroborate it -- so a
+# terminal command was enough to start a public broadcast. This happened for
+# real: `gh` (the GitHub CLI) went live as Green Hell.
+#   gh.exe      -> Green Hell        the GitHub CLI
+#   rg.exe      -> Retro Gadgets     ripgrep
+#   dotnet.exe  -> tModLoader        the .NET runtime, which idles on many PCs
+#   ninja.exe   -> Mini Ninjas       the build tool
+- gh.exe
+- rg.exe
+- dotnet.exe
+- ninja.exe
 - battle.net helper.exe
 - battle.net.exe
 - battleye.exe
