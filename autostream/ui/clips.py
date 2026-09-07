@@ -1516,10 +1516,14 @@ function clip_renderJob(j) {
   var sum = j.summary || {};
   var sub;
   if (j.state === 'done') {
+    /* A run that planned nothing explains itself. "0 clips" alone reads as a
+       failure even when the kills were found and swept into the promo reel,
+       and the run already knows exactly why -- see summary.why in jobs.py. */
     sub = j.clips + (j.clips === 1 ? ' clip' : ' clips') +
           (sum.kills ? '  ·  ' + sum.covered + ' of ' + sum.kills +
                        ' kills (' + sum.coverage + '%)' : '') +
           '  ·  ' + (j.folder || '');
+    if (!j.clips && sum.why) sub = sum.why + '  ·  ' + (j.folder || '');
   } else {
     sub = j.error || j.message || '';
   }

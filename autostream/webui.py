@@ -1649,8 +1649,24 @@ class Server:
             # what makes the review honest: the same plan gets cut.
             opt["plan_only"] = True
 
+        # SCAN_END OF 0 MEANS "TO THE END OF THE FILE", and it has to be
+        # resolved to a real number before the cache can be asked about it.
+        # Unresolved, the coverage test read `... and want_b and ...`, which is
+        # False for 0 -- so a window that ran to the end could never reuse its
+        # own scan. Reviewing a clip and then cutting it rescanned the whole
+        # stretch, which is minutes, and the review exists precisely so that
+        # cutting afterwards is cheap.
+        want_b = 0.0
+        try:
+            want_b = float(opt.get("scan_end") or 0.0)
+            if want_b <= 0:
+                from .clips.tools import media_info
+
+                want_b = float(media_info(path).get("duration") or 0.0)
+        except Exception:                            # noqa: BLE001
+            want_b = 0.0                             # fall back to rescanning
         cached = self._cached_kills(
-            path, c, (opt.get("scan_start", 0.0), opt.get("scan_end", 0.0)))
+            path, c, (opt.get("scan_start", 0.0), want_b))
         if cached and not body.get("rescan") and not opt.get("rounds"):
             # Not reused in round mode: the cache holds kills, and a round also
             # needs the scoreboard, which is only read during a scan.
@@ -1708,9 +1724,19 @@ class Server:
                 # old sidecar reads correctly without being rewritten.
                 got = data.get("scanned") or [0.0, 0.0]
                 if len(got) == 2 and (got[0] or got[1]):
-                    # want_b of 0 means "to the end of the file", which no
-                    # windowed scan can cover.
-                    covers = got[0] <= want_a and want_b and got[1] >= want_b
+                    # want_b is resolved to a real end by the caller; 0 here
+                    # only means the duration could not be read, and then
+                    # nothing windowed may be reused. The tolerance is for the
+                    # tenth-of-a-second rounding the sidecar stores.
+                    # TOLERANCE ON BOTH ENDS, because the sidecar stores these
+                    # rounded to a tenth. A window starting at 7917.68 is
+                    # written as 7917.7, which is LATER than what is being
+                    # asked for, so an exact `got[0] <= want_a` rejected a scan
+                    # of exactly the right stretch by two hundredths of a
+                    # second. A second of slack cannot hide a real shortfall:
+                    # the smallest window this job will accept is 30s.
+                    covers = (want_b > 0 and got[0] <= want_a + 1.0
+                              and got[1] >= want_b - 1.0)
                     if not covers:
                         log.info("%s only read %.0fs-%.0fs of that recording, "
                                  "which does not cover this run -- scanning "
