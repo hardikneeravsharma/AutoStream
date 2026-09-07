@@ -54,6 +54,33 @@ MIN_BOX_PX = 8
 MAX_BOX_AREA = 0.06
 MAX_BOX_SIDE = 0.35
 
+# AND CAPPED IN ABSOLUTE PIXELS, because the two limits above cannot catch what
+# actually goes wrong. ncc slides the template over a band that _band_from_box
+# grows in step with the box, so the work per frame is QUARTIC in the box's
+# linear size -- both the number of candidate positions and the area compared
+# at each one grow with it.
+#
+# Measured on a 2h54m 1920x1080 recording. The 277x213 row is TIMED end to end
+# through evaluate(); the rest are scaled from a timed single sample span:
+#
+#      58x58 box    1.2e7 MACs/frame    whole check      6s   (timed: 16.6s)
+#      96x96        9.2e7                               ~50s
+#     134x134       3.5e8                              ~3 min
+#     277x213       1.9e9                    TIMED: 715s = 11m56s
+#
+# That last row is a box a user actually drew, and it was inside BOTH limits
+# above: area 0.0285 against 0.06, sides 0.14 and 0.20 against 0.35. So the
+# dialog accepted it and worked for twelve minutes behind a spinner -- and it
+# did finish, and the answer was 'good'. Nothing was broken and nothing was
+# logged; it was reported as a button that does nothing, which is exactly what
+# twelve minutes of no feedback looks like.
+#
+# Absolute rather than fractional, deliberately: the cost is driven by pixel
+# counts, so the same FRACTION of a 4K frame costs 16x what it does at 1080p.
+# The same marker at 4K is only twice the pixels it is at 1080p, so one
+# absolute cap is the right shape of limit at every resolution.
+MAX_TMPL_PX = 96
+
 
 def _grab_gray(video: Path, at: float, box, height: int, width: int) -> np.ndarray:
     """The boxed region of one frame, greyscale, at native scale."""
@@ -123,6 +150,16 @@ def from_request(body: dict) -> dict:
         return {"error": "That box covers too much of the screen to be a kill "
                          "marker. Draw it around the marker itself - usually a "
                          "small icon near the middle or the crosshair."}
+    # Refused BEFORE a frame is decoded, so the answer is instant. Accepting it
+    # and letting the check grind is the failure this replaces: the request was
+    # working the whole time and looked like a dead button. See MAX_TMPL_PX.
+    if max(bw, bh) > MAX_TMPL_PX:
+        return {"error": f"That box is {bw:.0f}x{bh:.0f} pixels, and a kill "
+                         f"marker is nearer {MAX_TMPL_PX} across. Checking a "
+                         f"box this big takes minutes rather than seconds, and "
+                         f"would slow every scan afterwards. Draw it tightly "
+                         f"around the marker itself - the icon, not the area "
+                         f"it sits in."}
 
     try:
         patch = _grab_gray(src, at, box, H, W)

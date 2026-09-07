@@ -26,10 +26,18 @@ NOSTREAM
 # recording it came from.
 /clips/
 
-# Kill-marker profiles the user calibrated on their own footage. The shipped
-# Delta Force profile lives in clips/profiles.py:BUILTIN and its template in
-# config/clip_templates/, both of which ARE tracked.
+# Kill-marker profiles the user calibrated on their own footage, and the
+# template patches that go with them -- each one is a crop of somebody's own
+# recording, and the repo is public.
+#
+# The shipped profiles live in clips/profiles.py:BUILTIN and their templates in
+# autostream/clips/templates/, which IS tracked. config/clip_templates/ is
+# where calibration writes, and holds nothing else -- an earlier version of
+# this comment said the shipped template lived there too, which was wrong: git
+# has never tracked a file under it, so every .npy the calibrator wrote there
+# showed up as a new untracked file waiting to be committed by accident.
 **/config/clip_profiles.yaml
+**/config/clip_templates/
 
 # ---------------------------------------------------------------- build
 build/

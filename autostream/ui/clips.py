@@ -1101,7 +1101,12 @@ function clip_renderWays() {
    Sample frames come from the recording being clipped, chosen because a tally
    is probably in them, so the person is dragging a box over the thing itself
    rather than over a picture of somebody else's HUD. */
-async function clip_calOpen() {
+/* clip_cardsOpen, NOT clip_calOpen. This and the kill-marker calibrator were
+   both declared with that name, and every page in this bundle shares one
+   top-level scope -- so the later declaration won and this function became
+   unreachable. Choosing the card reader opened the marker dialog instead: a
+   different dialog answering a different question, with no error anywhere. */
+async function clip_cardsOpen() {
   var s = clip_state.pick;
   if (!s || !s.recording_path) return;
   var msg = clip_el('clip-cal-msg');
@@ -4352,10 +4357,14 @@ async function clip_calSave() {
   clip_calSaveState();
   clip_calErr('');
   var v = clip_el('clip-cal-verdict');
+  /* The wait is named. This check samples nine stretches of the recording and
+     takes tens of seconds on a long one; a bare spinner with no idea of how
+     long left it looking like the button had done nothing. */
   if (v) { v.classList.remove('hide'); v.className = 'clip-verdict';
            v.innerHTML = '<span class="spin"></span> ' + (clip_calMode() === 'killfeed'
              ? 'Checking your name is readable in that box...'
-             : 'Checking the marker stands out...'); }
+             : 'Checking the marker stands out - up to a minute on a long '
+               + 'recording...'); }
   try {
     var player = clip_el('clip-cal-player');
     var r = await API.post('/api/clips/calibrate', {
@@ -4841,14 +4850,14 @@ function clip_wire() {
       clip_state.way = b.getAttribute('data-val') || 'demo';
       /* Opening the calibration is the point of choosing the card reader:
          it is the one path whose geometry can be wrong on this PC. */
-      if (clip_state.way === 'cards' && !clip_state.calShots) clip_calOpen();
+      if (clip_state.way === 'cards' && !clip_state.calShots) clip_cardsOpen();
       clip_renderWays();
       clip_renderOptions();
     } else if (act === 'cal-check') {
       clip_calCheck();
     } else if (act === 'cal-reset') {
       clip_state.calBox = null;
-      clip_calOpen();
+      clip_cardsOpen();
     } else if (act === 'rail') {
       var target = clip_el(b.getAttribute('data-val'));
       if (target) target.scrollIntoView({behavior: 'smooth', block: 'start'});
