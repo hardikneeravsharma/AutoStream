@@ -1141,11 +1141,15 @@ function clip_renderCal() {
   var box = clip_state.calBox || {};
   var s = clip_state.pick;
   host.innerHTML = shots.map(function (sh, i) {
-    /* The same frame endpoint the filmstrip uses, at the same small width --
-       a full-size still is about 900 KB and there are six of these. */
-    var url = '/api/clips/frame?k=' + encodeURIComponent(SHELL_K)
-      + '&path=' + encodeURIComponent(s ? s.recording_path : '')
-      + '&at=' + encodeURIComponent(sh.time) + '&width=640';
+    /* THROUGH clip_frameURL, not a third hand-rolled copy of it. This one
+       asked for `at` and `width`; the route reads `t` and `w` and silently
+       ignores anything else, so `t` fell back to ZERO and every one of these
+       six frames was the first frame of the recording -- six identical
+       pictures, at full size, in a panel whose entire job is to show the tally
+       at six different moments. The captions come from the JSON and read
+       correctly ("1h 45m - read 2 kills"), which is what made it look like the
+       sampling had failed rather than the images. */
+    var url = clip_frameURL(s ? s.recording_path : '', sh.time, 640);
     return '<figure class="clip-cal-shot" data-i="' + i + '">'
       + '<img src="' + url + '" alt="Frame at ' + clip_dur(sh.time) + '">'
       + '<span class="clip-cal-box" style="left:' + (box.x * 100) + '%;top:'

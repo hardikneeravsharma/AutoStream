@@ -404,3 +404,74 @@ def test_no_two_functions_in_the_bundle_share_a_name():
     assert dupes == [], (
         "declared more than once in the shared scope, so the earlier one is "
         f"dead code the callers cannot reach: {dupes}")
+
+
+# A query parameter the server is MEANT to ignore. Everything else the page
+# puts in a URL has to be read, or it is silently discarded.
+URL_PARAMS_NOT_READ = {
+    "v": "cache-buster on /api/clips/video; defeats the browser cache after a "
+         "re-render writes the same filename, and the server has no use for it",
+}
+
+
+def test_every_query_parameter_the_page_sends_is_read():
+    """A NAME THE SERVER DOES NOT READ IS A SILENT DEFAULT, not an error.
+
+    The tally calibrator asked /api/clips/frame for `at` and `width`. The
+    route reads `t` and `w`, so both were dropped and `t` fell back to zero:
+    all six sample frames came back as the FIRST frame of the recording, at
+    full size, in the one panel whose job is to show the tally at six
+    different moments. Verified against a real recording -- `at=3600` returned
+    the "STREAM ENDED" card from t=0, `t=3600` returned the gameplay.
+
+    Nothing failed. No status code, no log line, no empty response: a 200 and
+    a valid PNG of the wrong moment. The captions beside them came from JSON
+    and read correctly, which made it look like the sampling had gone wrong
+    rather than the pictures.
+    """
+    import re
+    from pathlib import Path
+
+    from autostream import webui
+
+    ui_dir = Path(webui.__file__).resolve().parent / "ui"
+    web = Path(webui.__file__).read_text(encoding="utf-8", errors="ignore")
+    pat = re.compile(r"[?&]([A-Za-z_][A-Za-z0-9_]*)=")
+
+    sent: dict[str, set[str]] = {}
+    for f in sorted(ui_dir.glob("*.py")):
+        if f.stem in ("css", "icons", "__init__"):
+            continue
+        for line in f.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if "?" not in line and "&" not in line:
+                continue
+            for m in pat.finditer(line):
+                sent.setdefault(m.group(1), set()).add(f.stem)
+
+    assert len(sent) >= 6, (
+        f"only found {len(sent)} URL parameters; the pattern has gone stale")
+
+    # READ OUT OF THE QUERY STRING, not merely mentioned somewhere in the
+    # file. A bare substring search passes on `info["width"]` -- an ffprobe
+    # field with nothing to do with URLs -- and that is exactly how the first
+    # version of this test declared the `at`/`width` bug fixed while it was
+    # still there. Query parameters are read in the GET dispatch and read with
+    # .get(), so that is what is required.
+    lo = min(web.index("    def do_GET(self):"), web.index("    def _get(self, u):"))
+    get_region = web[lo:web.index("    def do_POST(self):")]
+    # Plus _authed, which reads the token for every request rather than in a
+    # route -- included rather than exempted, so a token that stopped being
+    # checked would still fail here.
+    auth = web[web.index("    def _authed(self, query)"):]
+    get_region += auth[:auth.index("\n    def ", 10)]
+    assert len(get_region) > 2000, "the GET dispatch could not be located"
+
+    unread = sorted(
+        name for name in sent
+        if name not in URL_PARAMS_NOT_READ
+        and f'.get("{name}")' not in get_region
+        and f".get('{name}')" not in get_region)
+    assert unread == [], (
+        "the page sends these in a URL and the GET dispatch never reads them, "
+        "so each is silently replaced by a default: "
+        + ", ".join(f"{n} (from {sorted(sent[n])})" for n in unread))
