@@ -192,9 +192,17 @@ class _Handler(BaseHTTPRequestHandler):
     def _body(self) -> dict:
         try:
             n = int(self.headers.get("Content-Length") or 0)
-            return json.loads(self.rfile.read(min(n, 1 << 20)) or b"{}")
+            parsed = json.loads(self.rfile.read(min(n, 1 << 20)) or b"{}")
         except (ValueError, TypeError):
             return {}
+        # Unparseable JSON was already handled. This is the other half: `[]`,
+        # `null` and a bare number are all VALID json that is not an object,
+        # so they parsed cleanly and then blew up at the first b.get() in
+        # do_POST -- reaching the user as a 500 carrying a Python traceback,
+        # on every one of the POST routes rather than any particular one.
+        # Every caller wants a mapping; anything else is the same "nothing
+        # usable was submitted" that a syntax error means.
+        return parsed if isinstance(parsed, dict) else {}
 
     # ---------------- GET ----------------
 
@@ -224,6 +232,29 @@ class _Handler(BaseHTTPRequestHandler):
         """
         self._media(path, self.app.sounds_dir(cfg.load()),
                     self.app.SOUND_TYPES, "audio")
+
+    def _reel_audio(self, path: str) -> None:
+        """Stream the song the reel flow is working on, and nothing else.
+
+        A WHITELIST OF EXACTLY ONE FILE. The song is chosen through the OS
+        dialog so it can be anywhere on the disk, which means the root-confined
+        rule every other media route follows cannot apply -- and serving an
+        arbitrary path because a query string asked for it is how a local
+        server becomes a file browser. So this serves the one song the user has
+        already picked and this process has already analysed, and refuses
+        everything else including a second real song.
+        """
+        want = Path(path or "")
+        cached = getattr(self.app, "_reel_cache", None)
+        allowed = Path(cached[1].path) if cached else None
+        try:
+            ok = bool(allowed) and want.resolve() == allowed.resolve()
+        except OSError:
+            ok = False
+        if not ok:
+            self.send_error(404, "no such song")
+            return
+        self._media(want.name, allowed.parent, self.app.SOUND_TYPES, "audio")
 
     def _media(self, path: str, root: Path, kinds, what: str) -> None:
         """Stream a file from `root` to a media tag, honouring Range.
@@ -382,6 +413,8 @@ class _Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/clips/existing":
             q = parse_qs(u.query)
             self._json(self.app.clips_existing((q.get("folder") or [""])[0]))
+        elif u.path == "/api/reel/audio":
+            self._reel_audio((parse_qs(u.query).get("path") or [""])[0])
         elif u.path == "/api/clips/sound":
             self._sound((parse_qs(u.query).get("path") or [""])[0])
         elif u.path == "/api/clips/sounds":
@@ -515,6 +548,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.cards_samples(b))
             elif p == "/api/clips/cards/check":
                 self._json(self.app.cards_check(b))
+            elif p == "/api/reel/song":
+                self._json(self.app.reel_song(b))
+            elif p == "/api/reel/plan":
+                self._json(self.app.reel_plan(b))
+            elif p == "/api/reel/run":
+                self._json(self.app.reel_run(b))
             elif p == "/api/update/install":
                 self._json(self.app.update_install())
             elif p == "/api/update/download":
@@ -618,7 +657,7 @@ class _Handler(BaseHTTPRequestHandler):
             elif p == "/api/diagnostics":
                 self._json(self.app.diagnostics())
             elif p == "/api/clips/pick":
-                self._json(self.app.clips_pick())
+                self._json(self.app.clips_pick(str(b.get("kind") or "video")))
             elif p == "/api/clips/probe":
                 self._json(self.app.clips_probe(b))
             elif p == "/api/clips/install":
@@ -679,6 +718,20 @@ def _trim_previews(where: Path, keep: int = KEEP_PREVIEWS) -> int:
     if gone:
         log.info("cleared %d old preview(s) from %s", gone, where.parent.name)
     return gone
+
+
+def _free_reel(root: Path, name: str) -> Path:
+    """`name`.mp4, or name_2 and so on. Two goes at the same song are a
+    deliberate redo, and silently replacing the first loses whichever of the
+    two the person actually preferred."""
+    p = root / f"{name}.mp4"
+    if not p.exists():
+        return p
+    for i in range(2, 100):
+        alt = root / f"{name}_{i}.mp4"
+        if not alt.exists():
+            return alt
+    return root / f"{name}_{int(time.time())}.mp4"
 
 
 class Server:
@@ -1081,6 +1134,23 @@ class Server:
             r["scan_mode"] = prof.mode if prof else None
             # Whether this game is clipped by round rather than by kill burst.
             r["rounds"] = bool(prof and getattr(prof, "rounds", False))
+            # WHETHER THE GAME HAS REPLAYS AT ALL, which is not the same
+            # question as `has_demo` below -- that one is whether a replay for
+            # THIS session is on disk. The page needs the capability, because
+            # it is what decides whether there is a choice of reader to offer:
+            # the demo, the scoreboard cards, or the kill feed.
+            #
+            # It was absent, and an absent key reads as false in the browser,
+            # so clip_renderWays() hid the whole picker for every session --
+            # Counter-Strike included, which is the only game that HAS a
+            # choice. The reading step vanished from the rail with it. Same
+            # shape as the has_recording bug in tests/test_local_clip.py: no
+            # error anywhere, just a control that never appears.
+            r["demos"] = bool(prof and getattr(prof, "demos", False))
+            # And whether the card reader is usable, which for a game that has
+            # one is always: it needs no name, no OCR and no template. See the
+            # note beside cards_ready in clips_games.
+            r["cards_ready"] = bool(prof and getattr(prof, "demos", False))
             # Seconds of recording read per second of work, so the page can
             # quote a real number for the part of the file that is selected
             # rather than a rule of thumb that is wrong for this mode.
@@ -2088,6 +2158,154 @@ class Server:
                        "mask": s.mask} for s in shots],
         }
 
+    # ------------------------------------------------------------ reels
+
+    def _reel_song(self, body: dict):
+        """The analysed song for this request, cached by path and length.
+
+        Analysing is a decode plus an FFT of the whole track, and the page asks
+        about the same song repeatedly as the user tries templates. Doing it
+        once per song rather than once per question is the difference between a
+        flow that answers instantly and one that thinks for two seconds every
+        time a radio button moves.
+        """
+        from .clips import reel
+
+        src = Path(str(body.get("song") or ""))
+        if not src.is_file():
+            raise FileNotFoundError("That song is not on disk.")
+        seconds = float(body.get("song_seconds") or 0.0)
+        key = (str(src.resolve()), round(seconds, 2))
+        cached = getattr(self, "_reel_cache", None)
+        if cached and cached[0] == key:
+            return cached[1]
+        shape = reel.analyse(src, seconds=seconds)
+        self._reel_cache = (key, shape)
+        return shape
+
+    def reel_song(self, body: dict) -> dict:
+        """Everything the page needs to draw a song and reason about it."""
+        try:
+            shape = self._reel_song(body)
+        except (FileNotFoundError, OSError, RuntimeError) as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:                       # noqa: BLE001
+            log.info("reel song analysis failed: %s", e)
+            return {"ok": False, "error": f"Could not read that song: {e}"}
+        from .clips import reel
+
+        return {"ok": True, "song": shape.as_dict(),
+                "templates": [{"key": t.key, "label": t.label, "blurb": t.blurb}
+                              for t in reel.TEMPLATES.values()],
+                "default_template": reel.DEFAULT_TEMPLATE}
+
+    def _reel_kills(self, body: dict) -> list[dict]:
+        """The kills to use, in the order they were played.
+
+        `kills` from the page wins: choosing which moments go in is the whole
+        point of the picker, and a run that silently used a different set would
+        make the preview a lie.
+        """
+        rows = body.get("kills")
+        if isinstance(rows, list) and rows:
+            out = []
+            for r in rows[:200]:
+                if not isinstance(r, dict):
+                    continue
+                try:
+                    out.append({"time": float(r.get("time")),
+                                "round": r.get("round"),
+                                "labels": list(r.get("labels") or [])})
+                except (TypeError, ValueError):
+                    continue
+            return sorted(out, key=lambda k: k["time"])
+        return []
+
+    def reel_plan(self, body: dict) -> dict:
+        """Where every kill would land, without encoding anything.
+
+        The same arithmetic the run uses, so what is previewed is what gets
+        cut -- the review step on the clips page earns its keep the same way.
+        """
+        from .clips import reel
+
+        try:
+            shape = self._reel_song(body)
+        except (FileNotFoundError, OSError, RuntimeError) as e:
+            return {"ok": False, "error": str(e)}
+        kills = self._reel_kills(body)
+        if not kills:
+            return {"ok": False, "error": "No kills chosen for the reel."}
+
+        main = float(body.get("main") or shape.seconds)
+        fade = float(body.get("fade") or 0.0)
+        marked = body.get("beats")
+        if isinstance(marked, list) and marked:
+            # HAND-MARKED BEATS WIN OUTRIGHT. The template is a guess at taste
+            # and this is the answer, so nothing recalculates over the top.
+            slots = sorted(float(t) for t in marked
+                           if isinstance(t, (int, float)))[:len(kills)]
+        else:
+            slots = reel.layout(shape, want=len(kills),
+                                template=str(body.get("template")
+                                             or reel.DEFAULT_TEMPLATE),
+                                start=body.get("start"), until=main)
+        drift = reel.Drift.fit([(float(a), float(b)) for a, b in
+                                (body.get("drift_marks") or [])])
+        try:
+            shots = reel.shots(slots, kills, total=main + fade, drift=drift)
+        except RuntimeError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "song": shape.as_dict(),
+                "slots": [round(t, 4) for t in slots],
+                "shots": [s.as_dict() for s in shots],
+                "used": len(shots), "available": len(kills),
+                "drift": {"intercept": round(drift.intercept, 4),
+                          "slope": drift.slope}}
+
+    def reel_run(self, body: dict) -> dict:
+        """Render the reel. Returns as soon as the job is queued."""
+        from .clips import reel
+
+        plan = self.reel_plan(body)
+        if not plan.get("ok"):
+            return plan
+        source = Path(str(body.get("source") or ""))
+        if not source.is_file():
+            return {"ok": False, "error": "That recording is not on disk."}
+        c = cfg.load()
+        outdir = self._clips_dir(c) / "reels"
+        outdir.mkdir(parents=True, exist_ok=True)
+        name = str(body.get("name") or "reel").strip() or "reel"
+        from .clips import plan as plan_mod
+
+        out = _free_reel(outdir, plan_mod.slug(name))
+
+        shots = [reel.Shot(index=s["index"], reel_in=s["reel_in"],
+                           duration=s["duration"], source_in=s["source_in"],
+                           kill_at=s["kill_at"], kill_source=s["kill_source"],
+                           round_no=s["round"], labels=s["labels"])
+                 for s in plan["shots"]]
+        main = float(body.get("main") or plan["song"]["seconds"])
+        fade = float(body.get("fade") or 0.0)
+        argv = reel.command(source, Path(str(body.get("song"))), shots, out,
+                            main=main, fade=fade)
+        log.info("reel: %d shots -> %s", len(shots), out.name)
+        try:
+            import subprocess
+
+            from .clips.killfeed import _NO_WINDOW
+
+            r = subprocess.run(argv, capture_output=True, text=True,
+                               creationflags=_NO_WINDOW)
+        except OSError as e:
+            return {"ok": False, "error": f"Could not run ffmpeg: {e}"}
+        if r.returncode != 0:
+            log.warning("reel render failed: %s", r.stderr[-800:])
+            return {"ok": False, "error": "The render failed. See the log."}
+        return {"ok": True, "path": str(out), "shots": len(shots),
+                "seconds": round(main + fade, 2)}
+
     def cards_check(self, body: dict) -> dict:
         """Does the card reader actually work on this recording?
 
@@ -2262,10 +2480,29 @@ class Server:
 
     def _scrub(self, text: str, config) -> str:
         """Remove secret VALUES wherever they appear, prose included."""
-        for value in (config.obs.password, config.rules.web_token,
-                      config.youtube.stream_id, config.youtube.ingestion_address,
-                      config.obs.get("password_env", "")):
-            v = str(value or "")
+        def secret(*path: str) -> str:
+            """A dotted lookup that survives a MISSING SECTION.
+
+            Reaching config.rules.web_token on a config with no `rules:` block
+            raises AttributeError, and diagnostics are precisely what somebody
+            opens when the config is in a state like that -- half written, or
+            hand-edited. A section being absent is not an error to report; it
+            means there is no secret of that kind to remove.
+            """
+            node = config
+            for key in path:
+                if node is None:
+                    return ""
+                try:
+                    node = node.get(key) if hasattr(node, "get") else getattr(node, key)
+                except (AttributeError, KeyError, TypeError):
+                    return ""
+            return str(node or "")
+
+        for v in (secret("obs", "password"), secret("rules", "web_token"),
+                  secret("youtube", "stream_id"),
+                  secret("youtube", "ingestion_address"),
+                  secret("obs", "password_env")):
             if len(v) >= 6:          # short values would scrub ordinary words
                 text = text.replace(v, "(removed)")
         # Any token-bearing URL, including one from a config this process has
@@ -2273,8 +2510,11 @@ class Server:
         return re.sub(r"([?&]k=)[^\s&\"']+",
                       lambda m: m.group(1) + "(removed)", text)
 
-    def clips_pick(self) -> dict:
-        """Ask the OS for a video file. -> {ok, path} or {error}.
+    def clips_pick(self, kind: str = "video") -> dict:
+        """Ask the OS for a file. -> {ok, path} or {error}.
+
+        `kind` only changes the filter and the title: a reel needs a song
+        and everything else about choosing one is identical.
 
         A browser file input hands back a NAME, never a path, and these files
         run to tens of gigabytes so uploading one is not an option either. The
@@ -2294,11 +2534,15 @@ class Server:
             root = tk.Tk()
             root.withdraw()
             root.attributes("-topmost", True)   # or it opens behind the browser
+            audio = kind == "audio"
             chosen = filedialog.askopenfilename(
                 parent=root,
-                title="Choose a video to clip",
-                filetypes=[("Video", "*.mp4 *.mkv *.mov *.flv *.avi *.ts *.webm"),
-                           ("All files", "*.*")])
+                title="Choose a track for the reel" if audio
+                      else "Choose a video to clip",
+                filetypes=[("Audio", "*.mp3 *.flac *.m4a *.wav *.aac *.ogg *.opus")]
+                if audio else
+                [("Video", "*.mp4 *.mkv *.mov *.flv *.avi *.ts *.webm"),
+                 ("All files", "*.*")])
             root.destroy()
         except Exception as e:  # noqa: BLE001
             return {"error": f"Could not open the file picker: {str(e)[:160]}"}
@@ -2412,6 +2656,18 @@ class Server:
                 "can_scan": ready,
                 "needs_ocr": ocr,
                 "demos": bool(getattr(prof, "demos", False)),
+                # THE CARD READER NEEDS NO SETUP OF ANY KIND -- no in-game
+                # name, no OCR, no template. clips/cs2_cards.py says so at the
+                # top and it is measured: it reads the fan of cards in the
+                # player's OWN HUD, finding the HUD colour by measuring it.
+                #
+                # `can_scan` above cannot speak for it, because it is answered
+                # for the profile's own mode, and Counter-Strike's is the kill
+                # feed, which needs both a name and OCR. So a new user with a
+                # raw recording was told to type an in-game name before they
+                # could reach the one reader that never wanted one, and Make
+                # clips stayed grey whichever reader they picked.
+                "cards_ready": bool(getattr(prof, "demos", False)),
                 "scan_mode": prof.mode,
                 "scan_rate": self._scan_rate(prof),
                 "cards_rate": self._cards_rate(prof),
@@ -2550,6 +2806,12 @@ class Server:
 
     def reveal(self, path: str) -> dict:
         """Open a folder (or select a file) in Explorer."""
+        # Path("") is Path("."), which exists -- so an empty path fell through
+        # the check below and opened an Explorer window on the working
+        # directory. Harmless-looking, but it is a window the user did not ask
+        # for, from a button that was pointed at a clip that is not there.
+        if not str(path).strip():
+            return {"error": "That path no longer exists."}
         p = Path(path)
         if not p.exists():
             return {"error": "That path no longer exists."}

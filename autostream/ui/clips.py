@@ -337,6 +337,8 @@ CLIPS_HTML: str = (
     <div class="field-inline">
       <button class="btn btn-sm btn-ghost" type="button" id="clip-review-close">
         <span>Discard</span></button>
+      <button class="btn" type="button" data-act="reel-open">
+        <span>Make a reel</span></button>
       <button class="btn btn-primary" type="button" id="clip-review-cut">
         <span>Cut these clips</span></button>
     </div>
@@ -1099,7 +1101,12 @@ function clip_renderWays() {
    Sample frames come from the recording being clipped, chosen because a tally
    is probably in them, so the person is dragging a box over the thing itself
    rather than over a picture of somebody else's HUD. */
-async function clip_calOpen() {
+/* clip_cardsOpen, NOT clip_calOpen. This and the kill-marker calibrator were
+   both declared with that name, and every page in this bundle shares one
+   top-level scope -- so the later declaration won and this function became
+   unreachable. Choosing the card reader opened the marker dialog instead: a
+   different dialog answering a different question, with no error anywhere. */
+async function clip_cardsOpen() {
   var s = clip_state.pick;
   if (!s || !s.recording_path) return;
   var msg = clip_el('clip-cal-msg');
@@ -1350,8 +1357,20 @@ function clip_renderOptions() {
   var go = clip_el('clip-go');
   var hint = clip_el('clip-hint');
   var why = '';
+  /* THE CHOSEN READER DECIDES WHAT HAS TO BE SET UP, not the profile's own
+     mode. can_scan answers for the mode the profile ships with -- for
+     Counter-Strike the kill feed, which needs an in-game name and OCR. The
+     card tally needs neither: it reads the fan of cards in your own HUD and
+     measures the HUD colour itself.
+
+     Without this, a new user with a raw Counter-Strike recording who chose
+     "Kill tally only" was still told to type an in-game name, and Make clips
+     stayed grey. The one reader that needs no configuration at all was the
+     one they could not reach, and the message named a fix that would not have
+     helped: the name is for a reader they had just declined. */
+  var byCards = !!(s.demos && s.cards_ready && clip_state.way === 'cards');
   if (!s.has_recording) why = 'The recording for this stream is no longer on disk.';
-  else if (!s.can_scan) {
+  else if (!s.can_scan && !byCards) {
     /* The profile knows exactly what is missing, so say that rather than the
        generic line - the two causes need completely different fixes. */
     why = s.blocked || ('No kill marker is calibrated for ' +
@@ -1363,7 +1382,30 @@ function clip_renderOptions() {
      match runs thousands, so an hour of footage takes minutes to scan. Better
      said before the button is pressed than discovered afterwards. */
   var note = '';
-  if (!why && s.scan_mode === 'killfeed') {
+  if (!why && byCards) {
+    /* THE NOTE HAS TO DESCRIBE THE READER THAT WAS CHOSEN. This branch used
+       to be skipped entirely, so a cards run was described by the block below
+       as reading the kill feed "which is slower than a marker scan", and
+       quoted the FEED's rate -- 1.2x against the tally's 10x. On a 2h13m
+       selection that advertised 1h 51m of scanning for a job that takes about
+       thirteen minutes, and named a mechanism the run was not going to use. */
+    var crate = Number(s.cards_rate) || 10.0;
+    var cwin = clip_stripWindow();
+    var cspan = cwin ? ((cwin.scan_end || s.duration || 0) - cwin.scan_start)
+                     : (s.duration || 0);
+    note = 'Kills for ' + esc(s.game || 'this game') + ' are counted off the ' +
+           'card tally in your own HUD, so no in-game name and no OCR are ' +
+           'needed and assists cannot be counted. There are no round labels.';
+    if (cspan > 0) {
+      note += ' ' + (cwin ? 'You have chosen ' + clip_dur(cspan) + ' of it, so a'
+                          : 'That is a') +
+              'bout ' + clip_dur(cspan / crate) + ' of scanning.';
+    }
+    if (!clip_state.calBox) {
+      note += ' Check the tally area first if you have never done it on this ' +
+              'PC - a card box pointed at the wrong pixels finds almost nothing.';
+    }
+  } else if (!why && s.scan_mode === 'killfeed') {
     /* HOW LONG IT WILL ACTUALLY TAKE, from the rate the job itself uses.
        This said "roughly a minute per 10 minutes of footage" for every
        killfeed run. Round mode reads the scoreboard as well as the feed and
@@ -3951,7 +3993,7 @@ function clip_useLocal() {
        40. This is the same shape as the has_recording bug above -- a key the
        games list provides and this object forgot. */
     scan_rate: g.scan_rate, cards_rate: g.cards_rate,
-    demos: g.demos, needs_ocr: g.needs_ocr,
+    demos: g.demos, cards_ready: g.cards_ready, needs_ocr: g.needs_ocr,
     counts_assists: g.counts_assists, blocked: g.blocked, player: g.player,
     started: f.started || null, display_started: null, local: true
   };
@@ -4350,10 +4392,14 @@ async function clip_calSave() {
   clip_calSaveState();
   clip_calErr('');
   var v = clip_el('clip-cal-verdict');
+  /* The wait is named. This check samples nine stretches of the recording and
+     takes tens of seconds on a long one; a bare spinner with no idea of how
+     long left it looking like the button had done nothing. */
   if (v) { v.classList.remove('hide'); v.className = 'clip-verdict';
            v.innerHTML = '<span class="spin"></span> ' + (clip_calMode() === 'killfeed'
              ? 'Checking your name is readable in that box...'
-             : 'Checking the marker stands out...'); }
+             : 'Checking the marker stands out - up to a minute on a long '
+               + 'recording...'); }
   try {
     var player = clip_el('clip-cal-player');
     var r = await API.post('/api/clips/calibrate', {
@@ -4839,17 +4885,21 @@ function clip_wire() {
       clip_state.way = b.getAttribute('data-val') || 'demo';
       /* Opening the calibration is the point of choosing the card reader:
          it is the one path whose geometry can be wrong on this PC. */
-      if (clip_state.way === 'cards' && !clip_state.calShots) clip_calOpen();
+      if (clip_state.way === 'cards' && !clip_state.calShots) clip_cardsOpen();
       clip_renderWays();
       clip_renderOptions();
     } else if (act === 'cal-check') {
       clip_calCheck();
     } else if (act === 'cal-reset') {
       clip_state.calBox = null;
-      clip_calOpen();
+      clip_cardsOpen();
     } else if (act === 'rail') {
       var target = clip_el(b.getAttribute('data-val'));
       if (target) target.scrollIntoView({behavior: 'smooth', block: 'start'});
+    } else if (act === 'reel-open') {
+      /* The reel cuts the moments the review just found, so it opens from
+         here with those rows rather than detecting anything again. */
+      if (window.PAGE_REEL) PAGE_REEL.open(((clip_state.review || {}).rows) || []);
     } else if (act === 'install-tools') {
       clip_installTools();
     } else if (act === 'strip-all') {

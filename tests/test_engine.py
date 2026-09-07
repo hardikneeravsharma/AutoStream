@@ -19,132 +19,9 @@ from autostream import cfg                                   # noqa: E402
 from autostream.engine import Engine                         # noqa: E402
 from autostream.gameindex import GameHit                      # noqa: E402
 from autostream.state import IDLE, LIVE, State                # noqa: E402
+from fakes import (FakeObs, FakeWatcher, FakeYouTube,       # noqa: E402,F401
+                   a_game, clips_only, engine)
 
-
-class FakeObs:
-    def __init__(self, recording=True, streaming=False, can_pause=True):
-        self.recording, self.streaming = recording, streaming
-        # can_pause=False stands in for an OBS that refuses the verb, which is
-        # the only route back to "pausing stops the session instead".
-        self.can_pause, self.rec_paused = can_pause, False
-        self.audio_watching = False
-        self.started = self.stopped = 0
-        self.scene = None
-        self.built = []
-
-    def is_streaming(self):
-        return self.streaming
-
-    def recording_active(self):
-        return self.recording
-
-    def recording_paused(self):
-        return self.rec_paused
-
-    def pause_recording(self):
-        if not self.recording or not self.can_pause:
-            return False
-        self.rec_paused = True
-        return True
-
-    def resume_recording(self):
-        if not self.recording:
-            return False
-        self.rec_paused = False
-        return True
-
-    def set_overlay_text(self, text):
-        pass
-
-    def audio_watch_start(self):
-        self.audio_watching = True
-
-    def audio_watch_stop(self):
-        self.audio_watching = False
-
-    def silent_for(self):
-        # None is "cannot tell", which is what an OBS with no metering
-        # reports -- and what must never read as silence.
-        return None
-
-    def screenshot(self, width=160, height=90, scene=None):
-        # None short-circuits the black-output check, which is a real OBS
-        # answer (no frame available) and not a case worth faking pixels for.
-        return None
-
-    def set_scene(self, scene):
-        self.scene = scene
-
-    def ensure_media_scene(self, scene, source, path, loop=True):
-        self.built.append(("media", scene, path))
-        return True
-
-    def ensure_browser_scene(self, scene, source, url):
-        self.built.append(("browser", scene, url))
-        return True
-
-    def start(self, scene=None, overlay=None):
-        self.started += 1
-        self.streaming = True
-
-    def stop(self):
-        self.stopped += 1
-        self.streaming = False
-
-
-class FakeWatcher:
-    def __init__(self, running: dict | None = None):
-        self.running = running or {}
-        self.debounce_resets = 0
-
-    def reset_debounce(self):
-        self.debounce_resets += 1
-
-    def snapshot(self):
-        return self.running, [], False
-
-
-def engine(phase: str = IDLE, paused: bool = False,
-           running: dict | None = None) -> Engine:
-    """An Engine with no __init__: only the pause machinery is under test."""
-    eng = Engine.__new__(Engine)
-    # The convenience guards are switched off so these tests say the same thing
-    # at three in the morning on a laptop as they do at noon on a desktop.
-    c = cfg.load()
-    c["rules"] = dict(c["rules"])
-    c["rules"]["quiet_hours"] = []
-    c["rules"]["require_ac_power"] = False
-    eng.cfg = cfg.Config(c)
-    eng.state = State(phase=phase, paused=paused)
-    eng.state.save = lambda: None            # type: ignore[method-assign]
-    eng.launch_intent = {}
-    eng.watcher = FakeWatcher(running)
-    eng.blocked_reason = None
-    eng._screen_until = None
-    eng._ending_until = None
-    eng.obs = FakeObs()
-    # The plain attributes __init__ sets and the tick path reads. Listed here
-    # rather than per test so a new test does not fail on bookkeeping.
-    import collections
-    eng.streaming = True
-    eng._obs_down_since = None
-    eng._switch_candidate = None
-    eng._start_failures = 0
-    eng._phase_since = 0.0
-    eng.viewers = eng.likes = eng.views = None
-    eng.obs_health = {}
-    eng.chat = collections.deque(maxlen=120)
-    eng._chat_id = eng._chat_token = None
-    eng._details_checked = 0.0
-    eng.pending_scan = None
-    eng._last_title = None
-    eng._blank_checked = 0.0
-    eng._blank_strikes = 0
-    return eng
-
-
-def a_game(exe: str = "cs2.exe", name: str = "Counter-Strike 2") -> dict:
-    return {1234: GameHit(key=exe, name=name, source="test")}
 
 
 # ------------------------------------------------------------------ pausing
@@ -277,25 +154,6 @@ def test_pause_and_resume_round_trip():
 
 
 # ------------------------------------------------------- clips-only mode
-
-class FakeYouTube:
-    """Every call is a failure, because none of them should happen."""
-    def __getattr__(self, name):
-        def boom(*a, **kw):
-            raise AssertionError(f"YouTube.{name} called with streaming off")
-        return boom
-
-
-def clips_only(phase: str = IDLE, **kw) -> Engine:
-    eng = engine(phase=phase, **kw)
-    eng.streaming = False
-    eng.yt = FakeYouTube()
-    eng.index = None
-    eng._start_failures = 0
-    eng._phase_since = 0.0
-    eng._obs_down_since = None
-    eng._switch_candidate = None
-    return eng
 
 
 def test_a_clips_only_session_never_calls_youtube():

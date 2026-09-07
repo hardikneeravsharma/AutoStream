@@ -2862,3 +2862,64 @@ CLIPS_FLOW_CSS = """
 # Appended rather than inlined above so the clips-flow rules stay one
 # readable block: the rail, the three reading choices and the calibration.
 CSS = CSS + CLIPS_FLOW_CSS
+
+
+REEL_CSS = """
+/* ------------------------------------------------------------------ reels
+   Five choices in order, each narrowing the next. The rail reports; it does
+   not gate, because changing the song after picking moments should not send
+   somebody back to the start. */
+.reel-steps{display:flex;flex-wrap:wrap;gap:6px;list-style:none;margin:0 0 4px;padding:0}
+.reel-step-chip{
+  padding:3px 10px;border-radius:999px;font-size:12px;
+  border:var(--border-hair) solid var(--border-subtle);
+  background:var(--surface);color:var(--text-secondary);
+}
+.reel-step-chip.is-done{border-color:var(--accent);color:var(--text-primary)}
+.reel-step{
+  padding-top:var(--space-5);margin-top:var(--space-5);
+  border-top:var(--border-hair) solid var(--border-subtle);
+}
+.reel-h{font-size:13px;margin:0 0 var(--space-3);color:var(--text-secondary);
+        text-transform:uppercase;letter-spacing:.04em}
+.reel-wave{
+  width:100%;height:120px;display:block;border-radius:var(--radius-sm);
+  background:#0b0d11;cursor:crosshair;
+  border:var(--border-hair) solid var(--border-subtle);
+}
+.reel-clock{font-variant-numeric:tabular-nums;font-size:18px;font-weight:600;
+            min-width:92px}
+/* The moments. A checkbox each, because "which of these" is the question and
+   a grid of thumbnails would answer a different one. */
+.reel-kills{display:grid;gap:6px;margin-top:var(--space-3)}
+@media (min-width:760px){.reel-kills{grid-template-columns:repeat(3,1fr)}}
+.reel-kill{
+  display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;
+  border:var(--border-hair) solid var(--border-subtle);
+  border-radius:var(--radius-sm);background:var(--surface);cursor:pointer;
+}
+.reel-kill:hover{background:var(--surface-hover)}
+.reel-kill.is-on{border-color:var(--accent)}
+.reel-kill-n{font-weight:600;color:var(--text-primary)}
+.reel-kill-when{color:var(--text-secondary);font-variant-numeric:tabular-nums}
+.reel-kill-lab{
+  margin-left:auto;color:var(--accent);font-size:11px;
+  text-transform:uppercase;letter-spacing:.03em;
+}
+.reel-templates{display:grid;gap:var(--space-3)}
+@media (min-width:900px){.reel-templates{grid-template-columns:repeat(2,1fr)}}
+.reel-tpl{
+  display:flex;flex-direction:column;gap:4px;text-align:left;font:inherit;
+  padding:var(--space-4);border-radius:var(--radius-md);cursor:pointer;
+  border:var(--border-hair) solid var(--border-subtle);
+  background:var(--surface);color:var(--text-secondary);
+}
+.reel-tpl:hover{background:var(--surface-hover)}
+.reel-tpl.is-on{border-color:var(--accent);background:var(--surface-active)}
+.reel-tpl b{color:var(--text-primary);font-size:14px}
+.reel-tpl span{font-size:12px;line-height:1.45}
+#reel-audio{width:100%;margin:var(--space-3) 0}
+"""
+
+# Appended so the reel rules stay one readable block.
+CSS = CSS + REEL_CSS

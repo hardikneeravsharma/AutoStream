@@ -1,0 +1,162 @@
+{
+  "clips": {
+    "valorant_01_busy": {
+      "kind": "busy",
+      "source_name": "2026-09-05 00-46-48.mp4",
+      "source_offset": 201.0,
+      "seconds": 100.8,
+      "truth": [
+        25.7,
+        44,
+        65
+      ],
+      "rejected": [
+        28.38
+      ],
+      "measured": {
+        "tp": 2,
+        "fn": 1,
+        "fp": 1,
+        "recall": 0.6667,
+        "precision": 0.6667,
+        "f1": 0.6667
+      },
+      "floor": {
+        "recall": 0.6666,
+        "precision": 0.6666,
+        "max_false_positives": 1
+      },
+      "target": {
+        "recall": 0.85,
+        "precision": 0.95
+      }
+    },
+    "valorant_02_busy": {
+      "kind": "busy",
+      "source_name": "2026-09-05 00-46-48.mp4",
+      "source_offset": 313.9,
+      "seconds": 103.07,
+      "truth": [
+        28,
+        75.1
+      ],
+      "rejected": [],
+      "measured": {
+        "tp": 1,
+        "fn": 1,
+        "fp": 0,
+        "recall": 0.5,
+        "precision": 1.0,
+        "f1": 0.6667
+      },
+      "floor": {
+        "recall": 0.5,
+        "precision": 1.0,
+        "max_false_positives": 0
+      },
+      "target": {
+        "recall": 0.85,
+        "precision": 0.95
+      }
+    },
+    "valorant_03_busy": {
+      "kind": "busy",
+      "source_name": "2026-09-05 00-46-48.mp4",
+      "source_offset": 669.3,
+      "seconds": 102.59,
+      "truth": [
+        26.9,
+        89.5,
+        90.6,
+        98.5
+      ],
+      "rejected": [],
+      "measured": {
+        "tp": 1,
+        "fn": 3,
+        "fp": 0,
+        "recall": 0.25,
+        "precision": 1.0,
+        "f1": 0.4
+      },
+      "floor": {
+        "recall": 0.25,
+        "precision": 1.0,
+        "max_false_positives": 0
+      },
+      "target": {
+        "recall": 0.85,
+        "precision": 0.95
+      }
+    },
+    "valorant_04_quiet": {
+      "kind": "quiet",
+      "source_name": "2026-09-05 00-46-48.mp4",
+      "source_offset": 826.0,
+      "seconds": 100.65,
+      "truth": [],
+      "rejected": [],
+      "measured": {
+        "tp": 0,
+        "fn": 0,
+        "fp": 0,
+        "recall": 1.0,
+        "precision": 1.0,
+        "f1": 1.0
+      },
+      "floor": {
+        "recall": 1.0,
+        "precision": 1.0,
+        "max_false_positives": 0
+      },
+      "target": {
+        "recall": 0.85,
+        "precision": 0.95
+      }
+    },
+    "valorant_05_busy": {
+      "kind": "busy",
+      "source_name": "2026-09-05 00-46-48.mp4",
+      "source_offset": 1008.8,
+      "seconds": 101.97,
+      "truth": [
+        1.6,
+        26
+      ],
+      "rejected": [],
+      "measured": {
+        "tp": 1,
+        "fn": 1,
+        "fp": 0,
+        "recall": 0.5,
+        "precision": 1.0,
+        "f1": 0.6667
+      },
+      "floor": {
+        "recall": 0.5,
+        "precision": 1.0,
+        "max_false_positives": 0
+      },
+      "target": {
+        "recall": 0.85,
+        "precision": 0.95
+      }
+    }
+  },
+  "measured": {
+    "tp": 5,
+    "fp": 1,
+    "fn": 6,
+    "recall": 0.4545,
+    "precision": 0.8333
+  },
+  "floor": {
+    "recall": 0.4545,
+    "precision": 0.8333
+  },
+  "target": {
+    "recall": 0.85,
+    "precision": 0.95
+  },
+  "note": "Reviewed by hand against the excerpt. `truth` is what a person confirmed plus what they said was missed; `rejected` is what the detector reported that is not there. `floor` is what the detector scored on the day this was imported, so tier 4 is a REGRESSION gate: it fails on any drop, not on failing to reach `target`. Regenerate with review.py import, never by hand."
+}

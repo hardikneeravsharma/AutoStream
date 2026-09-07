@@ -1,3 +1,9 @@
+# NO `username` IN HERE. This file is tracked and seeds a fresh install, so a
+# name left in it is one person's in-game handle published in a public repo AND
+# handed to every stranger who installs the app -- whose kill-feed detector
+# would then go looking for somebody else's name in their own feed. Three were
+# in here. The app asks once on first use for the game that needs it and writes
+# the answer to the install's OWN games.yaml, which is not this file.
 games:
   dirt5.exe:
     name: DIRT 5
@@ -11,7 +17,6 @@ games:
     name: Counter-Strike 2
     scene: null
     blurb: ''
-    username: YUVANETA
   rainbowsix.exe:
     name: Rainbow Six Siege
     scene: null
@@ -28,7 +33,6 @@ games:
     name: Delta Force
     scene: null
     blurb: ''
-    username: YuvaNeta
   deltaforceclient.exe:
     name: Delta Force
     scene: null
@@ -37,8 +41,18 @@ games:
     name: Serial Cleaner
     scene: null
     blurb: ''
+  # The name matters here, not just as a label. catalog._game_exe resolves a
+  # launcher-started game to the process it will actually run under by matching
+  # this display name -- and VALORANT is started by RiotClientServices.exe, so
+  # without the mapping "Open + stream" launches the game and then never goes
+  # live, because launch_intent is keyed on the wrong executable.
+  #
+  # It was resolving through the PUBLIC index instead, which is a download. On
+  # any machine that had not fetched it yet -- every fresh install, and every
+  # clone of this repo -- the lookup came back empty and fell through to the
+  # launcher's own name. Tracked here, it works offline and on first run.
   valorant-win64-shipping.exe:
-    username: YuvaNeta#IN1
+    name: VALORANT
 blocklist:
 # DEVELOPER TOOLS THE PUBLIC INDEX CALLS GAMES. Short executable names collide,
 # and the index matches on the bare name with nothing to corroborate it -- so a

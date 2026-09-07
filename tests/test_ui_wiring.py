@@ -377,3 +377,30 @@ def test_the_trim_bar_layers_are_in_the_right_paint_order(ui):
     assert "z-index" not in where, (
         "a z-index appeared on the trim bar -- decide the order there and "
         "rewrite this test, rather than leaving two rules that disagree")
+
+
+def test_no_two_functions_in_the_bundle_share_a_name():
+    """One top-level scope, so a duplicated name is not an error -- the later
+    declaration silently wins and the earlier function becomes unreachable.
+
+    This happened: the CS2 card calibrator and the kill-marker calibrator were
+    both declared `clip_calOpen`, 3100 lines apart in the same file. Choosing
+    the card reader called the name and got the marker dialog -- a different
+    dialog, answering a different question, with nothing logged and no error
+    anywhere. Every other check passed, because the id existed, the route
+    existed, and the call reached A function.
+    """
+    import collections
+    import re
+
+    from autostream import ui
+
+    seen = collections.Counter(
+        re.findall(r"^\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(",
+                   ui.JS, re.M))
+    dupes = sorted(n for n, c in seen.items() if c > 1)
+    assert seen, "the function pattern matched nothing -- it has gone stale"
+    assert len(seen) > 250, f"only found {len(seen)} functions; pattern drifted"
+    assert dupes == [], (
+        "declared more than once in the shared scope, so the earlier one is "
+        f"dead code the callers cannot reach: {dupes}")
