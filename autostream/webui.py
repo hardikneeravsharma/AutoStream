@@ -2463,10 +2463,29 @@ class Server:
 
     def _scrub(self, text: str, config) -> str:
         """Remove secret VALUES wherever they appear, prose included."""
-        for value in (config.obs.password, config.rules.web_token,
-                      config.youtube.stream_id, config.youtube.ingestion_address,
-                      config.obs.get("password_env", "")):
-            v = str(value or "")
+        def secret(*path: str) -> str:
+            """A dotted lookup that survives a MISSING SECTION.
+
+            Reaching config.rules.web_token on a config with no `rules:` block
+            raises AttributeError, and diagnostics are precisely what somebody
+            opens when the config is in a state like that -- half written, or
+            hand-edited. A section being absent is not an error to report; it
+            means there is no secret of that kind to remove.
+            """
+            node = config
+            for key in path:
+                if node is None:
+                    return ""
+                try:
+                    node = node.get(key) if hasattr(node, "get") else getattr(node, key)
+                except (AttributeError, KeyError, TypeError):
+                    return ""
+            return str(node or "")
+
+        for v in (secret("obs", "password"), secret("rules", "web_token"),
+                  secret("youtube", "stream_id"),
+                  secret("youtube", "ingestion_address"),
+                  secret("obs", "password_env")):
             if len(v) >= 6:          # short values would scrub ordinary words
                 text = text.replace(v, "(removed)")
         # Any token-bearing URL, including one from a config this process has
