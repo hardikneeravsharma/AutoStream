@@ -183,3 +183,39 @@ def test_the_budget_is_a_wait_a_person_will_sit_through():
     assert 30.0 <= seconds <= 75.0, (
         f"the worst box the cap allows takes {seconds:.0f}s, against a "
         "spinner that promises about a minute")
+
+
+# --------------------------------------------------- what the failure SAYS
+
+def test_a_killfeed_failure_is_not_described_as_a_marker():
+    """ASKED DIRECTLY: "what does this marker is not distinct enough means???"
+
+    The user was in kill-feed mode, where there is no marker. calibrate returns
+    the real reason -- "'NAME' was not readable anywhere in that box ... make
+    sure the box covers the whole feed including the names at both ends" --
+    and the page replaced it with a sentence about marker contrast, which
+    sends someone off to redraw a box whose contrast was never the problem.
+    """
+    from autostream.ui import clips as ui
+
+    js = ui.CLIPS_JS
+    i = js.index("r.separation === 'bad'")
+    branch = js[i:i + 900]
+    assert "clip_calMode() === 'killfeed'" in branch, (
+        "the failure toast does not distinguish the two modes, so a kill-feed "
+        "failure is still reported as a marker that lacks contrast")
+    assert "read your name" in branch, (
+        "kill-feed mode must say the NAME could not be read; that is the "
+        "actual failure and the only one the user can act on")
+
+
+def test_the_servers_own_reason_reaches_the_panel():
+    """Four different causes, each with its own sentence and its own numbers.
+    Discarding them for one generic line is how a precise diagnosis becomes
+    'what does this mean'."""
+    from autostream.ui import clips as ui
+
+    js = ui.CLIPS_JS
+    i = js.index("r.separation === 'bad'")
+    assert "v.textContent = r.note" in js[max(0, i - 400):i], (
+        "the note calibrate returns must be rendered, not summarised away")

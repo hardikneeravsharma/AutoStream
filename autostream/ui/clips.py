@@ -4416,7 +4416,21 @@ async function clip_calSave() {
       v.className = 'clip-verdict is-' + (r.separation || 'weak');
       v.textContent = r.note || '';
       if (r.separation === 'bad') {
-        toast('That marker is not distinct enough - try again.', 'warn');
+        /* THE REASON, NOT A CATCH-ALL. This check fails in four distinct ways
+           and the toast named one of them for all four. The worst case is
+           kill-feed mode, which has no marker at all: there the failure is
+           that the in-game name could not be READ inside the box that was
+           drawn, and being told "that marker is not distinct enough" sends
+           someone off to redraw a box whose contrast was never the problem.
+           Asked directly: "what does this marker is not distinct enough means
+           ???" -- by a user in kill-feed mode.
+
+           The panel carries the server's own sentence, with the numbers in
+           it; this only has to point at the right question. */
+        toast(clip_calMode() === 'killfeed'
+          ? 'Could not read your name in that box - see the note below.'
+          : 'That marker is not distinct enough - see the note below.', 'warn');
+        if (v.scrollIntoView) v.scrollIntoView({block: 'nearest'});
       } else {
         toast('Saved a profile for ' + r.label + '.', 'ok');
         await clip_load();

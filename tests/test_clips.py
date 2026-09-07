@@ -820,3 +820,78 @@ def test_a_round_cut_on_kill_count_is_named_after_its_kills():
     names = [p.name for p in got]
     assert any("2-KILLS_r3" in n for n in names), names
     assert any("3K-IN-5s_r2" in n for n in names), names
+
+
+# ------------------------------- a recalibration must not disarm the game
+#
+# REPORTED AS: "the 3 way clipping type picker is not there to select".
+#
+# load_all replaced the built-in entry with the user's wholesale, so one
+# successful Test and save on Counter-Strike dropped every key the calibrator
+# does not write. Measured on the real config that caused the report: 8 keys
+# saved against the built-in's 13.
+
+def _calibrated_cs2(tmp_path, monkeypatch):
+    """A hand-calibrated cs2.exe template on disk, exactly as saved."""
+    import yaml
+
+    from autostream import paths
+    from autostream.clips import profiles
+
+    f = tmp_path / "clip_profiles.yaml"
+    f.write_text(yaml.safe_dump({"cs2.exe": {
+        "band": [0.4314, 0.8161, 0.5623, 1.0],
+        "label": "Counter-Strike 2", "match_min": 0.75, "merge_gap": 3.0,
+        "notes": "Calibrated from a recording.", "ref_height": 1080,
+        "scan_fps": 2.0, "template": "counter-strike-2.npy"}}), encoding="utf-8")
+    monkeypatch.setattr(paths, "CLIP_PROFILES", f)
+    profiles.load_all.cache_clear() if hasattr(profiles.load_all, "cache_clear") else None
+    return profiles.for_game("cs2.exe", "Counter-Strike 2")
+
+
+def test_calibrating_a_marker_keeps_the_games_own_capabilities(tmp_path,
+                                                               monkeypatch):
+    """Drawing a box says where a marker is. It cannot say whether the game
+    writes a replay or is scored by the round, so an entry that does not
+    mention those must not be read as denying them.
+
+    demos going false is what removed the reader choice from the page, made
+    the card tally unreachable, and stopped the run looking for the .dem --
+    the one source of exact truth Counter-Strike has.
+    """
+    p = _calibrated_cs2(tmp_path, monkeypatch)
+    assert p is not None
+    assert p.demos is True, (
+        "the game still writes replays; a recalibration cannot change that, "
+        "and losing it takes the reader choice and the card tally with it")
+    assert p.rounds is True, "Counter-Strike is still scored by the round"
+    assert p.pre_roll_min == 3.0, "the game's measured clip padding survived"
+    assert p.tail_min == 4.0
+
+
+def test_the_calibration_itself_still_wins(tmp_path, monkeypatch):
+    """The other half. Inheriting the built-in `mode` would run the kill-feed
+    reader against a profile that has a template and no in-game name, so mode
+    is deliberately not a game fact."""
+    p = _calibrated_cs2(tmp_path, monkeypatch)
+    assert p.mode == "template", "the user just calibrated a template"
+    assert p.template == "counter-strike-2.npy"
+    assert p.band == (0.4314, 0.8161, 0.5623, 1.0)
+    assert p.scan_fps == 2.0
+
+
+def test_a_game_fact_the_user_sets_is_still_theirs(tmp_path, monkeypatch):
+    """The fallback fills a GAP; it does not override an answer."""
+    import yaml
+
+    from autostream import paths
+    from autostream.clips import profiles
+
+    f = tmp_path / "clip_profiles.yaml"
+    f.write_text(yaml.safe_dump({"cs2.exe": {
+        "label": "Counter-Strike 2", "template": "x.npy", "ref_height": 1080,
+        "band": [0.1, 0.1, 0.2, 0.2], "rounds": False}}), encoding="utf-8")
+    monkeypatch.setattr(paths, "CLIP_PROFILES", f)
+    p = profiles.for_game("cs2.exe", "Counter-Strike 2")
+    assert p.rounds is False, "an explicit false must not be overwritten"
+    assert p.demos is True, "and the one they left out still falls back"
