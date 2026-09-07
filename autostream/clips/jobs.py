@@ -649,7 +649,30 @@ class ClipJob:
 
         # Now the plan is known, so the rest of the run can be estimated: a
         # clip costs about the same as any other clip.
-        self._set(summary=plan.summarise(kills, plans), clip_count=len(plans))
+        summary = plan.summarise(kills, plans)
+        # WHY THERE ARE NO CLIPS, in the run's own words. A finished job that
+        # says "0 clips" and nothing else is the most confusing thing this can
+        # produce: it found 13 kills, planned nothing because every one of them
+        # was a single and the minimum was 2, swept them all into a promo reel,
+        # and reported a number that made the whole run look like a failure.
+        # Everything needed to explain that was already in hand.
+        if not plans:
+            floor = int(opt.get("min_kills", 2))
+            most = max((int(getattr(p, "kills", 0)) for p in spare), default=0)
+            if spare:
+                summary["why"] = (
+                    f"{len(kills)} kill(s) found, but none of them landed in a "
+                    f"burst of {floor} or more — the biggest was {most}. They "
+                    f"are all in the promo reel instead. Set the minimum to 1 "
+                    f"to cut them one by one.")
+            elif use_rounds:
+                summary["why"] = ("No round matched the highlight types you "
+                                  "chose.")
+            else:
+                summary["why"] = (
+                    f"{len(kills)} kill(s) found, but none reached your "
+                    f"minimum of {floor}.")
+        self._set(summary=summary, clip_count=len(plans))
         self.folder.mkdir(parents=True, exist_ok=True)
         atomic.write_json(self.folder / "session.json", {
             "source": str(self.source), "game": self.game,
