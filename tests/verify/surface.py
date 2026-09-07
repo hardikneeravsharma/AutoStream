@@ -26,19 +26,35 @@ REPO = Path(__file__).resolve().parents[2]
 UI_DIR = REPO / "autostream" / "ui"
 WEBUI = REPO / "autostream" / "webui.py"
 
-# The pages that make up the single-document UI. shell is the frame; the rest
-# are the views the rail switches between, plus the first-run wizard.
-PAGES = ("shell", "settings", "clips", "dashboard", "library", "logs", "setup")
+# The pages that make up the single-document UI: the shell frame, the views the
+# rail switches between, cards those views open, and the first-run wizard.
+#
+# DERIVED, NOT LISTED. Spelled out by hand this was a silent hole rather than a
+# failure. The reel card shipped as autostream/ui/reel.py with four routes and
+# fifteen actions, and because no line here named the module, every check built
+# on it -- routes catalogued, buttons wired, exemptions still real -- inspected
+# a UI that did not contain the card and passed. A completeness check must not
+# be the thing that decides what it is complete over.
+#
+# css and icons are excluded because they render no controls: one is the
+# stylesheet, the other an SVG dictionary.
+_NOT_A_PAGE = frozenset({"css", "icons"})
 
 
 @lru_cache(maxsize=1)
 def ui_source() -> dict[str, str]:
     """Every rendered string each UI module exposes, keyed by page."""
     out = {}
-    for name in PAGES:
-        text = (UI_DIR / f"{name}.py").read_text(encoding="utf-8", errors="ignore")
-        out[name] = text
+    for path in sorted(UI_DIR.glob("*.py")):
+        if path.stem.startswith("_") or path.stem in _NOT_A_PAGE:
+            continue
+        out[path.stem] = path.read_text(encoding="utf-8", errors="ignore")
     return out
+
+
+def pages() -> tuple[str, ...]:
+    """The page names, in the order ui_source() found them."""
+    return tuple(ui_source())
 
 
 # ------------------------------------------------------------- endpoints

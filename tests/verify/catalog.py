@@ -260,6 +260,40 @@ CONTROLS: list[Control] = [
     Control("/api/clips/install", "POST", STATIC, "Install them", "clips",
             why="runs winget and raises a UAC prompt"),
 
+    # ------------------------------------------------------------- reels
+    # Every one of these answers 200 with ok:false rather than an HTTP error,
+    # because each is a step in a five-step card: the page has to render the
+    # reason beside the step the user is standing on, not replace the card
+    # with an error.
+    Control("/api/reel/song", "POST", CALL, "analyse the chosen song", "clips",
+            body={"song": ""}, expect=_has("ok"),
+            reject={"song": r"C:\verify\no\such\song.flac"}, reject_soft=True,
+            acts=("reel-song",),
+            why="tempo, phase, downbeat and the drum entry come from here; "
+                "the page draws the whole grid off this one answer"),
+    Control("/api/reel/plan", "POST", CALL, "where every kill would land",
+            "clips", body={"song": "", "kills": []}, expect=_has("ok"),
+            reject={"song": "", "kills": []}, reject_soft=True,
+            acts=("reel-tpl", "reel-usemarks"),
+            why="the same arithmetic the render uses, so the preview cannot "
+                "disagree with the reel; no kills chosen is refused here "
+                "rather than after an encode"),
+    Control("/api/reel/run", "POST", CALL, "Make the reel", "clips",
+            body={"song": "", "kills": [], "source": ""}, expect=_has("ok"),
+            reject={"song": "", "kills": [], "source": ""}, reject_soft=True,
+            acts=("reel-build",),
+            why="queues the encode; a missing recording is refused before "
+                "ffmpeg is spawned"),
+    Control("/api/reel/audio", "GET", STATIC, "the song, for the mark page",
+            "clips",
+            why="A WHITELIST OF EXACTLY ONE FILE -- the song this process has "
+                "already analysed, because the song is chosen through the OS "
+                "dialog and so cannot be root-confined like every other media "
+                "route. With no song chosen that whitelist is empty, so the "
+                "only honest answer to any path is 404 -- which is also what "
+                "an unwired route answers. Calling it here could not tell the "
+                "two apart, so its existence is asserted from the source"),
+
     # ------------------------------------------------------------ update
     Control("/api/update/check", "GET", STATIC, "Check for updates",
             "settings", acts=("set-ver-check",),
@@ -342,4 +376,21 @@ NOT_A_FLOW: dict[str, str] = {
     "demo-anyway": "sets demo_fallback on the next /api/clips/run",
     "cal-reset": "clears the calibration box in the browser",
     "cal-close": "closes the calibration panel",
+    # --- the reel card. Opening it, picking moments and tapping a beat are
+    # all local: nothing is sent until Make the reel, which is what lets a
+    # person try four templates and re-tap the grid without queueing an
+    # encode each time.
+    "reel-open": "opens the reel card over the Clips page",
+    "reel-close": "closes it; no state leaves the browser",
+    "reel-all": "ticks every moment in the picker",
+    "reel-none": "unticks every moment in the picker",
+    "reel-best": "ticks the multi-kills and aces only",
+    "reel-mark": "opens the tap-the-beat panel",
+    "reel-tap": "records one tap against the playing song",
+    "reel-untap": "drops the last tap",
+    "reel-clearmarks": "drops every tap",
+    "reel-seedmarks": "fills the taps from the template, to correct rather "
+                      "than start from nothing",
+    "reel-show": "reveals the finished file in Explorer via clip_reveal",
+    "reel-again": "returns the card to the moment picker for another take",
 }

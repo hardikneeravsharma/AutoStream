@@ -86,7 +86,11 @@ def test_a_bad_payload_is_refused(server, c):
         body = r.json() or {}
         assert body.get("ok") is not True, (
             f"{_id(c)} accepted {c.reject!r}. {c.why}")
-        assert body.get("errors"), (
+        # Either key. `errors` is a map of field -> message, which is what a
+        # form needs; `error` is one sentence, which is what a step in a card
+        # needs. Requiring the plural fitted the one route that had it and
+        # would have called a perfectly explained refusal a silent one.
+        assert body.get("errors") or body.get("error"), (
             f"{_id(c)} rejected {c.reject!r} without saying which field or why")
         return
     assert r.status in c.reject_status, (
