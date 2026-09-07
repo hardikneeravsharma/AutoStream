@@ -56,6 +56,47 @@ def _id(e: dict) -> str:
     return e["clip"]
 
 
+def _names() -> dict[str, str]:
+    """In-game names for the profiles that need one, from BESIDE THE CORPUS.
+
+    A kill-feed profile cannot be measured without the name it looks for, and
+    that name is personal data. It used to arrive from the tracked
+    config/games.yaml -- which meant one person's handle sat in a public repo
+    and seeded every install, so it was removed. This tier then silently began
+    SKIPPING Counter-Strike rather than measuring it, which is the worse
+    failure of the two: a tier that measures nothing still reports success.
+
+    So the name lives next to the corpus, which is already private,
+    machine-specific and never committed. Absent, the tier skips exactly as it
+    would have anyway, and says where to put it.
+    """
+    p = CORPUS / "names.json"
+    if not p.is_file():
+        return {}
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k).lower(): str(v) for k, v in (raw or {}).items() if v}
+
+
+def _prof(game_key: str):
+    """The profile, with a name filled in from beside the corpus if it needs one.
+
+    dataclasses.replace, never profiles.remember: running the tier must not
+    write anybody's name into the config as a side effect.
+    """
+    import dataclasses
+
+    prof = profiles.for_game(game_key)
+    if prof is None:
+        return None
+    name = _names().get(game_key.lower())
+    if name and not prof.player:
+        prof = dataclasses.replace(prof, player=name)
+    return prof
+
+
 @pytest.fixture(scope="session")
 def scanned() -> dict:
     """Every reviewed excerpt, scanned once, by the detector as it is now.
@@ -67,11 +108,16 @@ def scanned() -> dict:
     """
     out: dict[str, list[float]] = {}
     for e in REVIEWED:
-        prof = profiles.for_game(e["game_key"])
+        prof = _prof(e["game_key"])
         assert prof is not None, f"no profile for {e['game_key']}"
         missing = prof.missing()
         if missing:
-            pytest.skip(f"{e['game_key']} is not set up on this machine: {missing}")
+            pytest.skip(
+                f"{e['game_key']} is not set up on this machine: "
+                f"{[m['key'] for m in missing]}. An in-game name belongs in "
+                f"{CORPUS / 'names.json'}, as "
+                f'{{"{e["game_key"]}": "YourName"}} -- never in the repo, '
+                f"which is public.")
         kills = detect.scan(CORPUS / e["file"], prof)
         out[e["clip"]] = [round(float(k.time), 2) for k in kills]
     return out
@@ -79,7 +125,7 @@ def scanned() -> dict:
 
 def _score(e: dict, scanned: dict) -> tuple[dict, dict, dict]:
     base = score.baseline(e["game"])["clips"][e["clip"]]
-    prof = profiles.for_game(e["game_key"])
+    prof = _prof(e["game_key"])
     tol = base.get("tolerance") or score.TOLERANCE.get(prof.mode, 2.0)
     m = score.match(scanned[e["clip"]], base.get("truth", []), tol)
     return base, m, score.metrics(m)
