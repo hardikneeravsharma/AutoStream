@@ -17,6 +17,7 @@ from __future__ import annotations
 import collections
 import contextlib
 import json
+import queue
 import socket
 import threading
 import urllib.error
@@ -164,6 +165,10 @@ def engine(phase: str = IDLE, paused: bool = False,
     eng._last_title = None
     eng._blank_checked = 0.0
     eng._blank_strikes = 0
+    # tick() drains the command queue before it does anything else, so an
+    # engine built this way could not be ticked at all without these two.
+    eng._commands = queue.Queue()
+    eng._stop_requested = False
     return eng
 
 

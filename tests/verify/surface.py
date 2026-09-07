@@ -140,6 +140,53 @@ def server_routes() -> set[str]:
     return routes
 
 
+# ------------------------------------------------------- the state machine
+
+ENGINE = REPO / "autostream" / "engine.py"
+
+_DEF = re.compile(r"    (?:async )?def (\w+)")
+_GOTO = re.compile(r"self\._goto\(st\.(\w+)\)")
+
+
+@lru_cache(maxsize=1)
+def transitions() -> dict[tuple[str, str], int]:
+    """(the method that moves the phase, the phase it moves to) -> line count.
+
+    engine.py has no transition table; the phase graph exists only as calls to
+    _goto scattered through the tick methods. Deriving it means the tier 3
+    completeness check cannot go stale: add an edge to the engine and the
+    scenario list is short one entry until somebody writes it.
+    """
+    out: dict[tuple[str, str], int] = {}
+    method = "<module>"
+    for line in ENGINE.read_text(encoding="utf-8", errors="ignore").split("\n"):
+        d = _DEF.match(line)
+        if d:
+            method = d.group(1)
+        g = _GOTO.search(line)
+        if g:
+            key = (method, g.group(1))
+            out[key] = out.get(key, 0) + 1
+    return out
+
+
+@lru_cache(maxsize=1)
+def preflight_reasons() -> set[str]:
+    """The block strings _preflight can answer with, as format templates.
+
+    These are what /api/status reports as `blocked`, and the dashboard shows
+    verbatim -- so each one is user-facing text with no other test.
+    """
+    src = ENGINE.read_text(encoding="utf-8", errors="ignore")
+    start = src.index("    def _preflight(")
+    end = src.index("    def _goto(", start)
+    body = src[start:end]
+    found = set()
+    for m in re.finditer(r'return\s+f?"([^"]+)"', body):
+        found.add(m.group(1))
+    return found
+
+
 @lru_cache(maxsize=1)
 def server_methods() -> dict[str, set[str]]:
     """Route -> {'GET'} / {'POST'}, by which dispatcher the literal sits in.

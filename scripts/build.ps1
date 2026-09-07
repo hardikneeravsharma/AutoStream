@@ -86,6 +86,30 @@ if ((Invoke-Native $vpy @("-c", "import autostream.__main__, autostream.web, aut
 }
 Write-Ok "package imports cleanly"
 
+# ---- 2b. verify: does the app still WORK? ----------------------------
+#
+# Before PyInstaller, not after. These tiers need nothing from dist\, so a
+# regression stops the build here rather than four minutes later -- and a
+# build that never started cannot leave a half-written dist\ behind.
+#
+# Tiers 5 and 6 need the built binary and so run further down, inside -Dist.
+$verify = Join-Path $PSScriptRoot "verify.ps1"
+if (Test-Path $verify) {
+    $vargs = @("-ExecutionPolicy", "Bypass", "-File", $verify)
+    # A plain build runs the offline tiers only: they are 25 seconds and
+    # nobody will wait ten minutes to test a one-line change. -Dist is the
+    # one that leaves this machine, so it gets the detectors measured too.
+    if (-not $Dist) { $vargs += "-Quick" }
+    & powershell @vargs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Bad "verify failed - not building. Fix it, or run:"
+        Write-Host "       powershell -ExecutionPolicy Bypass -File scripts\verify.ps1 -Quick" -ForegroundColor Red
+        exit 1
+    }
+} else {
+    Write-Warn "scripts\verify.ps1 is missing - building without the gate"
+}
+
 # A running copy of the previous build keeps logs\autostream.log open, and
 # PyInstaller clears dist\ before it writes. Without this check that surfaces as
 # a shutil.rmtree traceback ending in WinError 32, which says nothing about the
