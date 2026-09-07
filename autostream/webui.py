@@ -1134,6 +1134,19 @@ class Server:
             r["scan_mode"] = prof.mode if prof else None
             # Whether this game is clipped by round rather than by kill burst.
             r["rounds"] = bool(prof and getattr(prof, "rounds", False))
+            # WHETHER THE GAME HAS REPLAYS AT ALL, which is not the same
+            # question as `has_demo` below -- that one is whether a replay for
+            # THIS session is on disk. The page needs the capability, because
+            # it is what decides whether there is a choice of reader to offer:
+            # the demo, the scoreboard cards, or the kill feed.
+            #
+            # It was absent, and an absent key reads as false in the browser,
+            # so clip_renderWays() hid the whole picker for every session --
+            # Counter-Strike included, which is the only game that HAS a
+            # choice. The reading step vanished from the rail with it. Same
+            # shape as the has_recording bug in tests/test_local_clip.py: no
+            # error anywhere, just a control that never appears.
+            r["demos"] = bool(prof and getattr(prof, "demos", False))
             # Seconds of recording read per second of work, so the page can
             # quote a real number for the part of the file that is selected
             # rather than a rule of thumb that is wrong for this mode.

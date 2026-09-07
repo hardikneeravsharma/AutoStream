@@ -609,3 +609,40 @@ def test_the_new_cards_go_when_the_selection_does():
     early = js[i:i + 500]
     for card in ("clip-read-card", "clip-cal-card", "clip-rail"):
         assert card in early, f"{card} survives losing the selection"
+
+
+def test_a_session_row_carries_the_reader_choice_flag():
+    """THE WAY PICKER VANISHED because of an absent key, not an error.
+
+    clip_renderWays() decides whether to offer a choice of reader -- the
+    replay, the scoreboard cards, or the kill feed -- from `s.demos`, meaning
+    "this GAME has replays at all". clips_sessions never set it. It set
+    `has_demo`, which answers a different question: whether a replay for THIS
+    session is on disk.
+
+    An absent key reads as false in the browser, so the picker was hidden for
+    every session ever recorded, Counter-Strike included -- the only game that
+    has a choice to make. The "How to read it" step disappeared from the rail
+    with it, because its gate reads the same flag. Nothing logged, nothing
+    thrown; a control that simply never appeared.
+
+    Asserted on the source rather than on a live row, because reaching the
+    live path needs a session journal and a profile: the bug was a missing
+    assignment, and this is the assignment.
+    """
+    src = Path(webui.__file__).read_text(encoding="utf-8")
+    body = src[src.index("    def clips_sessions(self)"):]
+    body = body[:body.index("\n    def ", 10)]
+
+    assert 'r["demos"]' in body, (
+        "clips_sessions does not set `demos`, so clip_renderWays hides the "
+        "reader choice for every session")
+    assert 'r["has_demo"]' in body, "the per-session answer went missing too"
+    # The two must stay distinguishable: `demos` is a capability and cannot be
+    # written from the per-session lookup, or a Counter-Strike session with no
+    # replay on disk would lose the picker again -- which is exactly the case
+    # the user hit.
+    demos_at, has_at = body.index('r["demos"]'), body.index('r["has_demo"]')
+    assert demos_at < has_at, (
+        "`demos` must be set unconditionally, before the has_demo branch that "
+        "only runs for games with replays")
