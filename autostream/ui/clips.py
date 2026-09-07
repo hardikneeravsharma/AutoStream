@@ -1357,8 +1357,20 @@ function clip_renderOptions() {
   var go = clip_el('clip-go');
   var hint = clip_el('clip-hint');
   var why = '';
+  /* THE CHOSEN READER DECIDES WHAT HAS TO BE SET UP, not the profile's own
+     mode. can_scan answers for the mode the profile ships with -- for
+     Counter-Strike the kill feed, which needs an in-game name and OCR. The
+     card tally needs neither: it reads the fan of cards in your own HUD and
+     measures the HUD colour itself.
+
+     Without this, a new user with a raw Counter-Strike recording who chose
+     "Kill tally only" was still told to type an in-game name, and Make clips
+     stayed grey. The one reader that needs no configuration at all was the
+     one they could not reach, and the message named a fix that would not have
+     helped: the name is for a reader they had just declined. */
+  var byCards = !!(s.demos && s.cards_ready && clip_state.way === 'cards');
   if (!s.has_recording) why = 'The recording for this stream is no longer on disk.';
-  else if (!s.can_scan) {
+  else if (!s.can_scan && !byCards) {
     /* The profile knows exactly what is missing, so say that rather than the
        generic line - the two causes need completely different fixes. */
     why = s.blocked || ('No kill marker is calibrated for ' +
@@ -1370,7 +1382,30 @@ function clip_renderOptions() {
      match runs thousands, so an hour of footage takes minutes to scan. Better
      said before the button is pressed than discovered afterwards. */
   var note = '';
-  if (!why && s.scan_mode === 'killfeed') {
+  if (!why && byCards) {
+    /* THE NOTE HAS TO DESCRIBE THE READER THAT WAS CHOSEN. This branch used
+       to be skipped entirely, so a cards run was described by the block below
+       as reading the kill feed "which is slower than a marker scan", and
+       quoted the FEED's rate -- 1.2x against the tally's 10x. On a 2h13m
+       selection that advertised 1h 51m of scanning for a job that takes about
+       thirteen minutes, and named a mechanism the run was not going to use. */
+    var crate = Number(s.cards_rate) || 10.0;
+    var cwin = clip_stripWindow();
+    var cspan = cwin ? ((cwin.scan_end || s.duration || 0) - cwin.scan_start)
+                     : (s.duration || 0);
+    note = 'Kills for ' + esc(s.game || 'this game') + ' are counted off the ' +
+           'card tally in your own HUD, so no in-game name and no OCR are ' +
+           'needed and assists cannot be counted. There are no round labels.';
+    if (cspan > 0) {
+      note += ' ' + (cwin ? 'You have chosen ' + clip_dur(cspan) + ' of it, so a'
+                          : 'That is a') +
+              'bout ' + clip_dur(cspan / crate) + ' of scanning.';
+    }
+    if (!clip_state.calBox) {
+      note += ' Check the tally area first if you have never done it on this ' +
+              'PC - a card box pointed at the wrong pixels finds almost nothing.';
+    }
+  } else if (!why && s.scan_mode === 'killfeed') {
     /* HOW LONG IT WILL ACTUALLY TAKE, from the rate the job itself uses.
        This said "roughly a minute per 10 minutes of footage" for every
        killfeed run. Round mode reads the scoreboard as well as the feed and
@@ -3958,7 +3993,7 @@ function clip_useLocal() {
        40. This is the same shape as the has_recording bug above -- a key the
        games list provides and this object forgot. */
     scan_rate: g.scan_rate, cards_rate: g.cards_rate,
-    demos: g.demos, needs_ocr: g.needs_ocr,
+    demos: g.demos, cards_ready: g.cards_ready, needs_ocr: g.needs_ocr,
     counts_assists: g.counts_assists, blocked: g.blocked, player: g.player,
     started: f.started || null, display_started: null, local: true
   };

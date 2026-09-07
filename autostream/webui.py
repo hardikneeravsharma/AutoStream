@@ -1147,6 +1147,10 @@ class Server:
             # shape as the has_recording bug in tests/test_local_clip.py: no
             # error anywhere, just a control that never appears.
             r["demos"] = bool(prof and getattr(prof, "demos", False))
+            # And whether the card reader is usable, which for a game that has
+            # one is always: it needs no name, no OCR and no template. See the
+            # note beside cards_ready in clips_games.
+            r["cards_ready"] = bool(prof and getattr(prof, "demos", False))
             # Seconds of recording read per second of work, so the page can
             # quote a real number for the part of the file that is selected
             # rather than a rule of thumb that is wrong for this mode.
@@ -2652,6 +2656,18 @@ class Server:
                 "can_scan": ready,
                 "needs_ocr": ocr,
                 "demos": bool(getattr(prof, "demos", False)),
+                # THE CARD READER NEEDS NO SETUP OF ANY KIND -- no in-game
+                # name, no OCR, no template. clips/cs2_cards.py says so at the
+                # top and it is measured: it reads the fan of cards in the
+                # player's OWN HUD, finding the HUD colour by measuring it.
+                #
+                # `can_scan` above cannot speak for it, because it is answered
+                # for the profile's own mode, and Counter-Strike's is the kill
+                # feed, which needs both a name and OCR. So a new user with a
+                # raw recording was told to type an in-game name before they
+                # could reach the one reader that never wanted one, and Make
+                # clips stayed grey whichever reader they picked.
+                "cards_ready": bool(getattr(prof, "demos", False)),
                 "scan_mode": prof.mode,
                 "scan_rate": self._scan_rate(prof),
                 "cards_rate": self._cards_rate(prof),

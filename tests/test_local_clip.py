@@ -646,3 +646,43 @@ def test_a_session_row_carries_the_reader_choice_flag():
     assert demos_at < has_at, (
         "`demos` must be set unconditionally, before the has_demo branch that "
         "only runs for games with replays")
+
+
+def test_the_card_reader_is_reachable_with_nothing_configured():
+    """A NEW USER WITH A RAW COUNTER-STRIKE RECORDING COULD NOT USE IT.
+
+    cs2_cards.py opens by saying the card tally "needs no name, so there is
+    nothing to configure" and "needs no OCR, so Tesseract is not required at
+    all". Measured: it runs on a fresh install and never raises.
+
+    But `can_scan` is answered for the profile's OWN mode, and Counter-Strike
+    ships as killfeed -- which does need a name and OCR. The page disabled
+    Make clips off can_scan alone, so the one reader that needs no setup was
+    the only one a new user could not reach, under a message telling them to
+    configure a name for the reader they had just declined.
+
+    cards_ready is the separate answer. It has to stay independent of
+    can_scan: a game can be unready for its own mode and perfectly ready for
+    the tally, which is exactly Counter-Strike on day one.
+    """
+    src = Path(webui.__file__).read_text(encoding="utf-8")
+    body = src[src.index("    def clips_games(self)"):]
+    body = body[:body.index("\n    def ", 10)]
+    assert '"cards_ready"' in body, (
+        "clips_games does not report cards_ready, so the page cannot tell "
+        "that the tally needs no setup")
+
+    js = clips_ui.CLIPS_JS
+    # The gate must consult the chosen way, not just can_scan.
+    gate = js[js.index("var why = ''"):]
+    gate = gate[:gate.index("go.disabled")]
+    assert "byCards" in gate, (
+        "the Make clips gate ignores which reader was chosen, so a cards run "
+        "is refused for missing a name the cards reader never uses")
+    assert "!s.can_scan && !byCards" in gate, (
+        "can_scan must not disable a cards run on its own")
+    # And the flag has to survive onto a picked file, which is the whole
+    # point: these users have raw recordings, not recorded sessions.
+    assert "cards_ready: g.cards_ready" in js, (
+        "clip_useLocal drops cards_ready, so a PICKED Counter-Strike file is "
+        "still refused -- the same absent-key bug as has_recording above")
