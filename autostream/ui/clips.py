@@ -404,6 +404,15 @@ CLIPS_HTML: str = (
   <div class="card-body">
     <div class="clip-ways" id="clip-ways"></div>
     <p class="muted" id="clip-read-why"></p>
+    <!-- AN INSTRUCTION NEEDS SOMETHING TO PRESS. The line above said "check
+         the tally area first if you have never done it on this PC" and there
+         was nothing to click: the panel opened by itself when the tally was
+         first chosen, and if that sampling found nothing, or the choice was
+         made in an earlier session, it was simply absent. Asked directly:
+         "where is the button to check the tally area?" -- with the tally
+         already selected and no panel on the page. -->
+    <button class="btn btn-sm hide" type="button" id="clip-read-tally"
+            data-act="cards-open">Check the tally area</button>
   </div>
 </div>
 
@@ -731,6 +740,7 @@ var clip_state = {
      not offered after one has already stopped. */
   way: 'demo',
   calShots: null,            /* sample frames for the card calibration */
+  calOpen: false,            /* the tally panel was asked for and stays up */
   calDrag: null,             /* a box being drawn on one of them */
   calBox: null,              /* the card area, as fractions of the frame */
   calHue: 0,
@@ -1083,17 +1093,34 @@ function clip_renderWays() {
       + '<span class="clip-way-cost">' + esc(clip_wayCost(w[0])) + '</span></span>'
       + '<span class="clip-way-why">' + esc(w[3]) + '</span></button>';
   }).join('');
-  /* The calibration screen belongs to the card reader and nothing else. */
-  clip_show('clip-cal-card', chosen === 'cards' && !!clip_state.calShots);
+  /* The calibration screen belongs to the card reader and nothing else -- but
+     once it has been asked for it stays until another reader is chosen. See
+     clip_state.calOpen in clip_cardsOpen. */
+  clip_show('clip-cal-card',
+            chosen === 'cards'
+            && (clip_state.calOpen || !!clip_state.calShots));
   var why = clip_el('clip-read-why');
   if (why) {
     why.textContent = chosen === 'demo'
       ? 'If no replay matches this recording you will be asked for its sharing '
         + 'code before anything is read, rather than after.'
       : chosen === 'cards'
-      ? 'Check the tally area first if you have never done it on this PC — '
-        + 'a card box pointed at the wrong pixels finds almost nothing.'
+      ? 'A card box pointed at the wrong pixels finds almost nothing, so '
+        + 'check it once on this PC. It reads about a minute of the recording '
+        + 'to find frames with a tally in them.'
       : '';
+  }
+  /* THE BUTTON IS ALWAYS THERE WHILE THE TALLY IS CHOSEN, whether or not the
+     panel happens to be open. It was the panel's own controls or nothing, and
+     they are inside the panel -- so once it was hidden, by a failed sampling
+     or simply by choosing the tally in an earlier session, there was no way
+     back to it and the instruction above had nothing to press. */
+  var tally = clip_el('clip-read-tally');
+  if (tally) {
+    clip_show('clip-read-tally', chosen === 'cards');
+    tally.textContent = clip_state.calShots
+      ? 'Check the tally area again'
+      : 'Check the tally area';
   }
 }
 
@@ -1110,7 +1137,15 @@ async function clip_cardsOpen() {
   var s = clip_state.pick;
   if (!s || !s.recording_path) return;
   var msg = clip_el('clip-cal-msg');
-  if (msg) msg.textContent = 'Looking through the recording for a kill tally…';
+  if (msg) {
+    msg.textContent = 'Looking through the recording for a kill tally - about '
+      + 'a minute. It samples the stretch you have chosen above.';
+  }
+  /* STAYS OPEN ONCE ASKED FOR. clip_renderWays used to hide this card whenever
+     calShots was empty, and every status poll re-renders -- so the panel
+     disappeared a second or two into the minute this takes, and again if the
+     sampling came back with nothing, taking its own error message with it. */
+  clip_state.calOpen = true;
   clip_show('clip-cal-card', true);
   var win = clip_stripWindow() || {};
   var r = await API.post('/api/clips/cards/samples', {
@@ -4899,6 +4934,16 @@ function clip_wire() {
       clip_runAnyway('');
     } else if (act === 'demo-cards') {
       clip_runAnyway('cards');
+    } else if (act === 'cards-open') {
+      /* Explicitly asked for, so it re-samples even when shots are already
+         held: the reason to press it a second time is that the first answer
+         was wrong. clip_cardsOpen shows the panel before it starts, which is
+         what makes the minute it takes visible rather than mysterious. */
+      clip_cardsOpen();
+      var cc = clip_el('clip-cal-card');
+      if (cc && cc.scrollIntoView) {
+        cc.scrollIntoView({behavior: 'smooth', block: 'start'});
+      }
     } else if (act === 'way') {
       clip_state.way = b.getAttribute('data-val') || 'demo';
       /* Opening the calibration is the point of choosing the card reader:
