@@ -686,3 +686,109 @@ def test_the_card_reader_is_reachable_with_nothing_configured():
     assert "cards_ready: g.cards_ready" in js, (
         "clip_useLocal drops cards_ready, so a PICKED Counter-Strike file is "
         "still refused -- the same absent-key bug as has_recording above")
+
+
+# ------------------------------------------- the shape of a pick, as a contract
+#
+# THE BUG CLASS THIS EXISTS FOR. Every gate on the Clips page reads a key off
+# the selected pick, and a key that is simply ABSENT reads as false in the
+# browser. So each time a new gate was added and one of the two pick-builders
+# was not updated, a control silently vanished or refused, with nothing thrown
+# and nothing logged:
+#
+#   has_recording   missing -> Make clips disabled on every picked file
+#   scan_rate       missing -> a 43-minute scan advertised as 9 minutes
+#   demos           missing -> the reader choice gone for every session
+#   cards_ready     missing -> the card tally unreachable on a fresh install
+#
+# Four instances of one mistake. Each was found by a person using the app.
+#
+# A pick is built in exactly two places -- clips_sessions on the server and
+# clip_useLocal in the page -- and clip_probeLocal fills in a few more once the
+# file has been probed. Anything the page reads has to come from one of those,
+# or be listed below as session-only with the reason. Adding a new gate now
+# forces that decision instead of leaving it to be discovered.
+
+PICK_LOCAL_ONLY = {
+    "local": "the flag that MARKS a pick as a picked file; a session row is "
+             "not one, and several gates key off exactly that",
+    "source": "the path that marks a pick as not-from-history -- it is what "
+              "the run uses instead of a history index",
+}
+
+PICK_SESSION_ONLY = {
+    "games": "the list of games played in one session; a picked file is one "
+             "stretch the user has already told us the game of",
+    "game_uncertain": "whether the session's game changed part-way through",
+    "pre_session_seconds": "recording that predates the session's start",
+    "kills_known": "kills a PREVIOUS run of this session found",
+    "made_clips": "how many clips a previous run of this session produced",
+    "made_folder": "where that previous run put them",
+    "seed": "a starting scan-mode hint attached to a recorded session",
+}
+
+
+def test_every_key_the_page_reads_off_a_pick_is_actually_set():
+    """The contract between the two pick-builders and every gate that reads one.
+
+    Session-only keys are exempt BY NAME and with a reason, so a new one
+    cannot be waved through: the exemption list is asserted to be real below.
+    """
+    src = Path(webui.__file__).read_text(encoding="utf-8")
+    sess = src[src.index("    def clips_sessions(self)"):]
+    sess = sess[:sess.index("\n    def ", 10)]
+    server = set(re.findall(r'r\["([a-z_]+)"\]\s*=', sess))
+
+    hist = Path(webui.__file__).with_name("history.py").read_text(encoding="utf-8")
+    server |= set(re.findall(r'"([a-z_]+)":', hist))
+    server |= set(re.findall(r'r\["([a-z_]+)"\]\s*=', hist))
+
+    js = clips_ui.CLIPS_JS
+    local = set(re.findall(r"([a-z_]+):", _func("clip_useLocal")))
+    probed = set(re.findall(r"cur\.([a-z_]+)\s*=", _func("clip_probeLocal")))
+
+    reads = set(re.findall(r"\bs\.([a-z_][a-z0-9_]*)\b", js))
+    reads |= set(re.findall(r"clip_state\.pick\.([a-z_][a-z0-9_]*)\b", js))
+    assert len(reads) > 25, f"only found {len(reads)} pick reads; pattern stale"
+
+    missing = sorted(
+        k for k in reads
+        if k not in PICK_SESSION_ONLY
+        and k not in local and k not in probed and k not in server)
+    assert missing == [], (
+        "the page reads these off a pick and NEITHER builder sets them, so "
+        "each reads as false and silently disables whatever it gates: "
+        + ", ".join(missing))
+
+    # A picked file is the path these users are on: raw recordings, not
+    # sessions AutoStream made. So anything the server sets must also reach a
+    # picked file, unless it is session-only.
+    absent_locally = sorted(
+        k for k in reads
+        if k not in PICK_SESSION_ONLY and k not in local and k not in probed)
+    assert absent_locally == [], (
+        "set for a recorded session but not for a PICKED FILE, so the gate "
+        "behaves differently depending on how the recording arrived: "
+        + ", ".join(absent_locally))
+
+    # AND THE OTHER DIRECTION. `demos` was set for a picked file and not for a
+    # session row, which hid the reader choice on every recorded session while
+    # working perfectly on a picked one -- so a one-way check declared it
+    # fixed. A gate must not depend on how the recording arrived, whichever
+    # side is the one that forgot.
+    absent_on_sessions = sorted(
+        k for k in reads
+        if k not in PICK_LOCAL_ONLY and k in local and k not in server)
+    assert absent_on_sessions == [], (
+        "set for a PICKED FILE but not for a recorded session, so the gate "
+        "behaves differently depending on how the recording arrived: "
+        + ", ".join(absent_on_sessions))
+
+
+def test_the_session_only_exemptions_are_all_still_read():
+    """An exemption for a key nothing reads any more is a note nobody will
+    delete, and it hides the next key that takes the same name."""
+    js = clips_ui.CLIPS_JS
+    stale = sorted(k for k in {**PICK_SESSION_ONLY, **PICK_LOCAL_ONLY}
+                   if f"s.{k}" not in js)
+    assert stale == [], f"exempted but no longer read off a pick: {stale}"
