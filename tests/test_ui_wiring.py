@@ -544,3 +544,49 @@ def test_the_loader_is_a_spinner_and_placeholders_not_just_words():
     assert (ui.CLIPS_HTML.index('id="clip-cal-busy"')
             < ui.CLIPS_HTML.index('id="clip-cal-shots"')), (
         "a status line below six frames is a status line nobody sees")
+
+
+def test_the_scrolling_view_is_not_a_composited_layer():
+    """A GREYED-OUT PAGE, DIAGNOSED FROM A SCREEN RECORDING.
+
+    Measured off the video by luminance, down the content column:
+
+        y    0-120   bright   the top bar and the sticky streams row
+        y  120-440   DARK     p99 4-39 -- a band that was never painted
+        y  440-680   bright   p99 133-141
+
+    The rail and top bar sit outside .view and were fine throughout, so this
+    was a stale composited layer rather than a colour: the near-white "be
+    right back" still inside the band measured 42 where the same image below
+    it measured 150.
+
+    Animating opacity on .view promotes the whole scrolling page to its own
+    layer every time a view is shown, and WebView2 under pywebview is where
+    that goes wrong -- especially around hiding to the tray and back, which
+    this app does on every close.
+
+    So: nothing that forces a layer on the scroll container. A fade is
+    decoration; a page that looks disabled is not a trade worth making.
+    """
+    from autostream.ui import css
+
+    block = css.CSS[css.CSS.index(".view.is-active{"):]
+    block = block[:block.index("}")]
+    for forces_a_layer in ("animation:", "transform:", "will-change:", "filter:",
+                           "opacity:"):
+        assert forces_a_layer not in block, (
+            f".view.is-active sets {forces_a_layer} -- that promotes the whole "
+            "scrolling page to a compositing layer, which is what left a band "
+            "of it unpainted")
+
+
+def test_the_tally_frames_reserve_their_space():
+    """Six 1080p stills arriving one at a time re-laid out everything below
+    them, six times, on a scrolling page -- the other half of the same bug."""
+    from autostream.ui import css
+
+    block = css.CSS[css.CSS.index(".clip-cal-shot img{"):]
+    block = block[:block.index("}")]
+    assert "aspect-ratio" in block, (
+        "the tally frames have no reserved height, so each one that loads "
+        "shifts everything under it")
