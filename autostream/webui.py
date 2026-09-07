@@ -192,9 +192,17 @@ class _Handler(BaseHTTPRequestHandler):
     def _body(self) -> dict:
         try:
             n = int(self.headers.get("Content-Length") or 0)
-            return json.loads(self.rfile.read(min(n, 1 << 20)) or b"{}")
+            parsed = json.loads(self.rfile.read(min(n, 1 << 20)) or b"{}")
         except (ValueError, TypeError):
             return {}
+        # Unparseable JSON was already handled. This is the other half: `[]`,
+        # `null` and a bare number are all VALID json that is not an object,
+        # so they parsed cleanly and then blew up at the first b.get() in
+        # do_POST -- reaching the user as a 500 carrying a Python traceback,
+        # on every one of the POST routes rather than any particular one.
+        # Every caller wants a mapping; anything else is the same "nothing
+        # usable was submitted" that a syntax error means.
+        return parsed if isinstance(parsed, dict) else {}
 
     # ---------------- GET ----------------
 
@@ -2550,6 +2558,12 @@ class Server:
 
     def reveal(self, path: str) -> dict:
         """Open a folder (or select a file) in Explorer."""
+        # Path("") is Path("."), which exists -- so an empty path fell through
+        # the check below and opened an Explorer window on the working
+        # directory. Harmless-looking, but it is a window the user did not ask
+        # for, from a button that was pointed at a clip that is not there.
+        if not str(path).strip():
+            return {"error": "That path no longer exists."}
         p = Path(path)
         if not p.exists():
             return {"error": "That path no longer exists."}
