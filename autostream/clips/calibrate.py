@@ -54,18 +54,18 @@ MIN_BOX_PX = 8
 MAX_BOX_AREA = 0.06
 MAX_BOX_SIDE = 0.35
 
-# AND CAPPED IN ABSOLUTE PIXELS, because the two limits above cannot catch what
-# actually goes wrong. ncc slides the template over a band that _band_from_box
-# grows in step with the box, so the work per frame is QUARTIC in the box's
-# linear size -- both the number of candidate positions and the area compared
-# at each one grow with it.
+# AND CAPPED BY WHAT IT COSTS TO MATCH, which neither limit above can see. ncc
+# slides the template over a band that _band_from_box grows in step with the
+# box, so the work per frame is the number of candidate positions times the
+# area compared at each one -- and the box drives both.
 #
 # Measured on a 2h54m 1920x1080 recording. The 277x213 row is TIMED end to end
 # through evaluate(); the rest are scaled from a timed single sample span:
 #
-#      58x58 box    1.2e7 MACs/frame    whole check      6s   (timed: 16.6s)
-#      96x96        9.2e7                               ~50s
-#     134x134       3.5e8                              ~3 min
+#      58x58 box    1.2e7 MACs/frame    whole check      5s   (timed: 16.6s)
+#     200x20        1.8e7                                 7s
+#      96x96        9.2e7                                35s
+#      79x125       1.0e8                                40s
 #     277x213       1.9e9                    TIMED: 715s = 11m56s
 #
 # That last row is a box a user actually drew, and it was inside BOTH limits
@@ -75,11 +75,45 @@ MAX_BOX_SIDE = 0.35
 # logged; it was reported as a button that does nothing, which is exactly what
 # twelve minutes of no feedback looks like.
 #
-# Absolute rather than fractional, deliberately: the cost is driven by pixel
-# counts, so the same FRACTION of a 4K frame costs 16x what it does at 1080p.
-# The same marker at 4K is only twice the pixels it is at 1080p, so one
-# absolute cap is the right shape of limit at every resolution.
-MAX_TMPL_PX = 96
+# THE COST ITSELF, NEVER A PROXY FOR IT. This was first written as a cap on the
+# box's longest side, and that refused boxes which are perfectly cheap: the
+# 79x125 row is a tight box round a TALL icon and costs 40 seconds, and 200x20
+# costs seven. Both were rejected as "too big" by a rule that cannot tell a
+# sliver from a square -- and the 79x125 was a real box a real user drew
+# correctly, told to draw it tighter than it already was. A guard on a proxy
+# for the measurement is not the measurement.
+#
+# The budget is the wait a person will sit through, about a minute, expressed
+# in the units the work is really done in.
+MAX_NCC_WORK = 1.6e8
+
+# From the timed run above: 1.89e9 multiply-adds per frame took 715.3 seconds
+# across the 144 frames evaluate() samples. Used only to put a number of
+# seconds in front of the user, never to decide anything.
+NCC_WORK_PER_SECOND = 1.89e9 / 715.3
+
+
+def ncc_work(box, width: int, height: int) -> float:
+    """Multiply-adds per frame that matching this box would cost.
+
+    The geometry comes from detect.band_geometry rather than being recomputed
+    here, so this estimate cannot drift away from the geometry the scan will
+    actually use.
+    """
+    from . import detect
+    from .profiles import Profile
+
+    x1, y1, x2, y2 = box
+    tw, th = round((x2 - x1) * width), round((y2 - y1) * height)
+    if tw <= 0 or th <= 0:
+        return 0.0
+    probe = Profile(key="_probe", label="_probe", band=_band_from_box(box),
+                    template="_probe.npy", ref_height=height,
+                    match_min=0.75, notes="")
+    (_, _, _, _), (rw, rh) = detect.band_geometry(width, height, probe)
+    if rh < th or rw < tw:
+        return 0.0            # nothing to slide over; ncc declines it anyway
+    return float((rh - th + 1) * (rw - tw + 1) * th * tw)
 
 
 def _grab_gray(video: Path, at: float, box, height: int, width: int) -> np.ndarray:
@@ -152,14 +186,15 @@ def from_request(body: dict) -> dict:
                          "small icon near the middle or the crosshair."}
     # Refused BEFORE a frame is decoded, so the answer is instant. Accepting it
     # and letting the check grind is the failure this replaces: the request was
-    # working the whole time and looked like a dead button. See MAX_TMPL_PX.
-    if max(bw, bh) > MAX_TMPL_PX:
-        return {"error": f"That box is {bw:.0f}x{bh:.0f} pixels, and a kill "
-                         f"marker is nearer {MAX_TMPL_PX} across. Checking a "
-                         f"box this big takes minutes rather than seconds, and "
-                         f"would slow every scan afterwards. Draw it tightly "
-                         f"around the marker itself - the icon, not the area "
-                         f"it sits in."}
+    # working the whole time and looked like a dead button. See MAX_NCC_WORK.
+    work = ncc_work(box, W, H)
+    if work > MAX_NCC_WORK:
+        mins = work / NCC_WORK_PER_SECOND / 60.0
+        return {"error": f"That box is {bw:.0f}x{bh:.0f} pixels, which would "
+                         f"take about {mins:.0f} minutes to check and would "
+                         f"slow every scan afterwards by as much. Draw it "
+                         f"tightly around the marker itself - the icon, not "
+                         f"the area it sits in."}
 
     try:
         patch = _grab_gray(src, at, box, H, W)

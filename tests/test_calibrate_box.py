@@ -73,13 +73,14 @@ def test_the_box_from_the_report_is_refused_and_says_what_to_do(video):
     assert "277x213" in r["error"], (
         "the refusal must quote what they drew; 'too big' with no number "
         f"leaves them guessing: {r['error']}")
-    assert str(calibrate.MAX_TMPL_PX) in r["error"], "it must say what to aim for"
+    assert "minutes to check" in r["error"], (
+        f"it must say what the cost would be, in time: {r['error']}")
     assert "tightly" in r["error"], "it must say which way to change it"
 
 
 def test_the_old_limits_really_did_let_that_box_through(video):
     """The floor under the fix. If a later change to MAX_BOX_AREA or
-    MAX_BOX_SIDE happens to catch this box, the pixel cap stops being the
+    MAX_BOX_SIDE happens to catch this box, the cost cap stops being the
     thing under test and this file quietly proves nothing."""
     x1, y1, x2, y2 = px_box(277, 213)
     assert (x2 - x1) * (y2 - y1) < calibrate.MAX_BOX_AREA
@@ -101,11 +102,38 @@ def test_a_marker_sized_box_is_not_refused(video):
         "it failed for some reason other than reaching the decode")
 
 
-def test_the_cap_is_on_the_longest_side_not_the_area(video):
-    """A thin box can be cheap and a square one expensive at the same area.
-    The cost follows the sliding extent, so the limit has to as well."""
+def test_a_tight_box_round_a_TALL_icon_is_not_refused(video):
+    """79x125 -- A REAL BOX A REAL USER DREW, correctly, round a tall marker.
+
+    The first version of this cap was on the box's longest side, at 96px. That
+    refused this box and told the user to draw it tighter than it already was.
+    It costs 1.0e8 multiply-adds a frame, which is about forty seconds: well
+    inside the budget. A rule that cannot tell a tall sliver from a square is
+    not measuring the thing it claims to measure.
+    """
+    assert calibrate.ncc_work(px_box(79, 125), 1920, 1080) < calibrate.MAX_NCC_WORK
+    r = ask(video, px_box(79, 125))
+    assert "Could not read that frame" in r.get("error", ""), (
+        f"a tight box round a tall icon was refused before being looked at: {r}")
+
+
+def test_a_long_thin_box_is_cheap_and_is_allowed(video):
+    """200x20 is a fifth of the screen wide and costs seven seconds, because
+    a 20px-tall template has almost nothing to slide down. Area and longest
+    side both call this large; the cost knows better."""
+    assert calibrate.ncc_work(px_box(200, 20), 1920, 1080) < calibrate.MAX_NCC_WORK
     r = ask(video, px_box(200, 20))
-    assert "error" in r and "200x20" in r["error"]
+    assert "Could not read that frame" in r.get("error", ""), (
+        f"a cheap thin box was refused: {r}")
+
+
+def test_the_estimate_matches_the_one_timed_measurement(video):
+    """The budget is only meaningful if the arithmetic behind it reproduces
+    the run that was actually timed: 277x213 took 715.3s end to end."""
+    work = calibrate.ncc_work(px_box(277, 213), 1920, 1080)
+    seconds = work / calibrate.NCC_WORK_PER_SECOND
+    assert seconds == pytest.approx(715.3, rel=0.05), (
+        f"the model says {seconds:.0f}s where the timed run took 715.3s")
 
 
 # ----------------------------------------------- the limits that were there
@@ -144,26 +172,14 @@ def test_the_killfeed_mode_is_not_capped(video, monkeypatch):
 
 # --------------------------------------------------------------- the cost
 
-def test_the_cap_keeps_the_check_inside_a_minute():
-    """The number is chosen from a measurement, so it is asserted against one.
+def test_the_budget_is_a_wait_a_person_will_sit_through():
+    """The cap is a number of multiply-adds, so its meaning is a duration.
 
-    715s came from a template of 277x213 over a band of 693x288, which is
-    1.87e9 multiply-adds for each of 144 sampled frames. The cap has to leave
-    the worst box it allows well inside a wait a person will sit through, and
-    the spinner promises 'up to a minute'.
+    The dialog's spinner promises "up to a minute on a long recording", and a
+    cap that allowed three would make that line a lie -- which is the same
+    failure as the original bug, just smaller.
     """
-    W, H = 1920, 1080
-    from autostream.clips import detect
-    from autostream.clips.profiles import Profile
-
-    side = calibrate.MAX_TMPL_PX
-    fw, fh = side / W, side / H
-    box = (0.5 - fw / 2, 0.9 - fh / 2, 0.5 + fw / 2, 0.9 + fh / 2)
-    prof = Profile(key="p", label="p", band=calibrate._band_from_box(box),
-                   template="t.npy", ref_height=H, match_min=0.75, notes="")
-    (_, _, _, _), (rw, rh) = detect.band_geometry(W, H, prof)
-    macs = (rh - side + 1) * (rw - side + 1) * side * side
-    seconds = macs / 1.87e9 * 715.3
-    assert seconds < 60.0, (
-        f"the largest box the cap allows would take {seconds:.0f}s, and the "
-        "dialog promises up to a minute")
+    seconds = calibrate.MAX_NCC_WORK / calibrate.NCC_WORK_PER_SECOND
+    assert 30.0 <= seconds <= 75.0, (
+        f"the worst box the cap allows takes {seconds:.0f}s, against a "
+        "spinner that promises about a minute")
