@@ -52,6 +52,66 @@ BPM_MIN, BPM_MAX = 70.0, 180.0
 # being reported at half its real tempo.
 OCTAVE_TRUST = 0.55
 
+# METRICAL RELATIVES OF WHATEVER THE AUTOCORRELATION LIKED.
+#
+# Halving alone is not enough. Autocorrelation cannot tell a beat from a
+# SUBDIVISION of it either, and on a track built out of triplets it will
+# happily lock onto the dotted eighth -- three quarters of the real beat, which
+# is not a factor of two and so survives every octave check.
+#
+# Measured on SICKO MODE: reported 103.41 BPM where the beat is 77.6, exactly a
+# 4:3 error. A person tapping the beat produced gaps of 0.7725s and 3.09s --
+# one beat and four beats at 77.6 -- and against a 103.41 grid those taps sat
+# 123ms off on average, against 40ms at 77.6.
+#
+# So each relative of the peak is scored on how well its grid explains the
+# onsets, and the winner is taken. Both directions, because the peak can land
+# on a subdivision (too fast) or on a bar (too slow).
+# NO OCTAVES HERE, DELIBERATELY. Halving is already handled above by
+# OCTAVE_TRUST, against click tracks every 2 BPM from 70 to 180, and the two
+# mechanisms must not both reach for it: on a plain click track a half-tempo
+# grid hits every other identical click and scores a dead heat (measured 0.962
+# to 1.002 of the true tempo), so including x2 here put the octave decision
+# back into a scoring rule that cannot see the difference. Seven click tempos
+# came back halved. These are the NON-octave relatives only.
+# ONLY THE 4:3 PAIR, because that is the error there is evidence for. Adding
+# the 3:2 relatives also changed The Weeknd's Timeless from 80 to 121 BPM and
+# Dhurandhar from 74 to 110, and nothing available here says whether either is
+# right. A tempo rule that moves three tracks to fix one, with two of the three
+# unverifiable, is not a fix -- it is a coin toss with extra steps.
+METRICAL = (1.0, 4 / 3, 3 / 4)
+
+# WHY A PERCENTILE AND NOT THE MEAN. A subdivision grid puts half its points on
+# real onsets and half between them, so its MEAN can beat the true beat's --
+# measured on SICKO MODE, mean energy ranked 155 BPM above 77.6 and 77.6 last
+# of three. What distinguishes the beat is that its points are CONSISTENTLY
+# strong, which is a statement about the weaker ones.
+#
+# The median, not the lower quartile. The envelope is sparse by design -- a
+# median is subtracted from it, so on a click track only 116 of 1290 frames are
+# non-zero -- and at the quartile every candidate scored exactly 0.0 because a
+# quarter of any grid's points land in the gaps.
+GRID_PERCENTILE = 50
+# Grid points are sampled with a tolerance of this many frames either side
+# (~46 ms). Without it a point one frame off its onset reads as silence: at
+# zero tolerance a quarter of every grid's points scored 0 and the whole
+# comparison collapsed to noise.
+GRID_TOL = 2
+GRID_PHASES = 24               # phase offsets tried per candidate
+GRID_DRIFT = 0.02              # each candidate is searched +/-2% in tempo
+GRID_DRIFT_STEPS = 9
+GRID_MIN_POINTS = 6            # fewer than this is not a grid worth scoring
+# How much better a relative has to score before it displaces what the
+# autocorrelation actually found. The peak is the default and has to be BEATEN,
+# not merely matched -- measured, a real 4:3 error is beaten by 1.09x to 1.22x
+# (SICKO MODE 1.215, synthetic triplets 1.090 and 1.144) while on regular
+# music a wrong relative scores far below the true tempo: measured on click
+# tracks from 70 to 180 BPM, the best wrong 4:3 relative reached only 0.631 of
+# the true score, and on six of the eight under 0.4. So the bar does not need
+# to be high -- it needs to be above 1.0, and 1.01 catches a real 4:3 error
+# whose margin is as thin as 1.017x while a wrong one never comes close.
+METRICAL_GAIN = 1.01
+
 # The drop is compared over this much music either side. Long enough that one
 # loud bar cannot fake it.
 DROP_WINDOW = 6.0
@@ -157,6 +217,66 @@ def search_lags(length: int) -> tuple[int, int]:
     return lo, hi
 
 
+def grid_salience(env: np.ndarray, bpm: float) -> float:
+    """How well a steady grid at `bpm` explains where the onsets are.
+
+    The best phase is searched, and the score is the GRID_PERCENTILE of the
+    onset strength at its points -- see the constant for why that rather than
+    the mean. 0.0 when the tempo cannot make a grid worth scoring.
+    """
+    if bpm <= 0 or env.size < 16:
+        return 0.0
+    n = env.size
+    base = 60.0 / bpm * (SR / HOP)
+    if base < 4 or base > n / 3:
+        return 0.0
+    best = 0.0
+    # A LOCAL TEMPO SEARCH, not just a phase search. The candidates are exact
+    # ratios of a tempo that came from a whole-frame lag, so they are a fraction
+    # of a percent out -- and half a percent of drift over thirty seconds is
+    # nine frames, far more than the sampling tolerance. A rigid grid walks off
+    # the beats it is meant to be measuring, which is what made every candidate
+    # score zero.
+    for step in base * (1.0 + np.linspace(-GRID_DRIFT, GRID_DRIFT, GRID_DRIFT_STEPS)):
+      for phase in np.arange(0.0, step, max(1.0, step / GRID_PHASES)):
+        centres = np.arange(phase, n - 1, step).astype(int)
+        if centres.size < GRID_MIN_POINTS:
+            continue
+        # The max within a couple of frames of each point, vectorised: an
+        # index matrix of (points x window) clipped into range.
+        offs = np.arange(-GRID_TOL, GRID_TOL + 1)
+        idx = np.clip(centres[:, None] + offs[None, :], 0, n - 1)
+        strengths = env[idx].max(axis=1)
+        best = max(best, float(np.percentile(strengths, GRID_PERCENTILE)))
+    return best
+
+
+def _best_metrical(env: np.ndarray, bpm: float) -> float:
+    """`bpm` or whichever of its metrical relatives the onsets prefer."""
+    if bpm <= 0:
+        return bpm
+    scored = []
+    for ratio in METRICAL:
+        cand = bpm / ratio
+        if not (BPM_MIN <= cand <= BPM_MAX):
+            continue
+        scored.append((grid_salience(env, cand), cand))
+    base = grid_salience(env, bpm)
+    if base <= 0:
+        return bpm
+    # THE PEAK IS THE DEFAULT. A relative only wins if it explains the onsets
+    # clearly better -- see METRICAL_GAIN. Anything less and the autocorrelation
+    # keeps its answer, which is what stops this rule second-guessing tempos it
+    # has no evidence about.
+    best_score, best = max(scored)
+    if best_score < base * METRICAL_GAIN:
+        return bpm
+    if abs(best - bpm) > 0.01:
+        log.info("tempo %.2f BPM reads better as %.2f (a %.3fx relative)",
+                 bpm, best, bpm / best)
+    return best
+
+
 def estimate_bpm(env: np.ndarray) -> float:
     if env.size < 64:
         return 0.0
@@ -208,7 +328,10 @@ def estimate_bpm(env: np.ndarray) -> float:
     # Held inside the declared range. The search deliberately looks one frame
     # beyond each end so the refinement has neighbours to work with; that must
     # not turn into a tempo this module says it never returns.
-    return float(min(BPM_MAX, max(BPM_MIN, 60.0 * fps / lag)))
+    bpm = float(min(BPM_MAX, max(BPM_MIN, 60.0 * fps / lag)))
+    # LAST, on the refined number rather than on the raw lag, because the
+    # relatives are exact ratios of the tempo and a whole-frame lag is not.
+    return float(min(BPM_MAX, max(BPM_MIN, _best_metrical(env, bpm))))
 
 
 def beat_grid(env: np.ndarray, bpm: float) -> list[float]:
