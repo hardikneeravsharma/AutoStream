@@ -411,9 +411,26 @@ svg{flex:0 0 auto;display:block}
   display:block;
   padding:var(--space-8) var(--gutter) var(--space-10);
   max-width:calc(var(--content-max) + var(--gutter) * 2);
-  animation:as-view-in var(--dur-base) var(--ease-standard);
 }
-@keyframes as-view-in{from{opacity:0}to{opacity:1}}
+
+/* NO FADE-IN ON THE VIEW ITSELF, deliberately.
+   Reported as the page looking greyed out, and sent as a screen recording.
+   Measured off that video by luminance, down the content column:
+
+       y    0-120   bright   the top bar and the sticky streams row
+       y  120-440   DARK     p99 4-39 -- a band that was never painted
+       y  440-680   bright   p99 133-141
+
+   The rail and the top bar, which are outside this element, were fine
+   throughout. So it is a stale composited layer rather than a colour: the
+   near-white "be right back" still inside the band measured 42 where the same
+   image below the band measured 150.
+
+   Animating opacity here promotes the WHOLE scrolling page into its own
+   compositing layer every time a view is shown, and WebView2 under pywebview
+   is where that goes wrong -- particularly around hiding the window to the
+   tray and showing it again, which this app does on every close. A fade is
+   decoration. A page that looks disabled is not a trade worth making. */
 
 #view-settings.is-active{max-width:calc(880px + var(--gutter) * 2)}
 #view-logs.is-active{
@@ -2880,6 +2897,15 @@ CLIPS_FLOW_CSS = """
 .clip-cal-shot img{
   display:block;width:100%;border-radius:var(--radius-sm);
   border:var(--border-hair) solid var(--border-subtle);
+  /* THE SAME SHAPE AS THE PLACEHOLDER IT REPLACES. Six stills of a 1080p
+     recording arrive one at a time over a slow connection to a local server,
+     and with no reserved height each arrival re-laid out everything below it
+     -- six reflows of a scrolling page, which is the other half of what
+     leaves a band of it unpainted. Reserved, the grid never moves, and the
+     frames simply appear where the placeholders were. */
+  aspect-ratio:16/9;
+  object-fit:cover;
+  background:var(--surface-sunken);
 }
 .clip-cal-shot figcaption{
   margin-top:4px;font-size:11px;color:var(--text-secondary);
