@@ -26,6 +26,7 @@ from .dashboard import DASH_HTML, DASH_JS
 from .icons import ICONS, LOGO_LOCKUP, LOGO_MARK
 from .library import LIBRARY_HTML, LIBRARY_JS
 from .logs import LOGS_HTML, LOGS_JS
+from .reel import REEL_HTML, REEL_JS
 from .settings import SETTINGS_HTML, SETTINGS_JS
 from .setup import SETUP_HTML, SETUP_JS
 from .shell import SHELL_HTML, SHELL_JS
@@ -34,6 +35,7 @@ _VIEWS = {
     "{{DASH_HTML}}": DASH_HTML,
     "{{LIBRARY_HTML}}": LIBRARY_HTML,
     "{{CLIPS_HTML}}": CLIPS_HTML,
+    "{{REEL_HTML}}": REEL_HTML,
     "{{SETTINGS_HTML}}": SETTINGS_HTML,
     "{{LOGS_HTML}}": LOGS_HTML,
     "{{SETUP_HTML}}": SETUP_HTML,
@@ -56,6 +58,7 @@ JS = "\n".join((
     DASH_JS,
     LIBRARY_JS,
     CLIPS_JS,
+    REEL_JS,
     SETTINGS_JS,
     LOGS_JS,
     SETUP_JS,

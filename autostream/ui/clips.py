@@ -337,6 +337,8 @@ CLIPS_HTML: str = (
     <div class="field-inline">
       <button class="btn btn-sm btn-ghost" type="button" id="clip-review-close">
         <span>Discard</span></button>
+      <button class="btn" type="button" data-act="reel-open">
+        <span>Make a reel</span></button>
       <button class="btn btn-primary" type="button" id="clip-review-cut">
         <span>Cut these clips</span></button>
     </div>
@@ -4850,6 +4852,10 @@ function clip_wire() {
     } else if (act === 'rail') {
       var target = clip_el(b.getAttribute('data-val'));
       if (target) target.scrollIntoView({behavior: 'smooth', block: 'start'});
+    } else if (act === 'reel-open') {
+      /* The reel cuts the moments the review just found, so it opens from
+         here with those rows rather than detecting anything again. */
+      if (window.PAGE_REEL) PAGE_REEL.open(((clip_state.review || {}).rows) || []);
     } else if (act === 'install-tools') {
       clip_installTools();
     } else if (act === 'strip-all') {
