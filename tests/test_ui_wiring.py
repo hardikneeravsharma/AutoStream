@@ -475,3 +475,72 @@ def test_every_query_parameter_the_page_sends_is_read():
         "the page sends these in a URL and the GET dispatch never reads them, "
         "so each is silently replaced by a default: "
         + ", ".join(f"{n} (from {sorted(sent[n])})" for n in unread))
+
+
+# --------------------------------------------------- waiting must look busy
+#
+# ASKED, after being shown a panel that sat still for a minute: "if the user
+# have to wait for somethign WHY THERE IS NO LOADER FOR THAT DURATION???, do
+# you expect the user to ready every text on the screen???"
+#
+# Both of these routes read the recording again -- 57.7s for the sampling and
+# 26s for the check, measured -- and the whole of the feedback was a line of
+# grey prose in one case and a disabled button in the other.
+
+LONG_ROUTES = {
+    "/api/clips/cards/samples": "clip_cardsOpen",
+    "/api/clips/cards/check": "clip_calCheck",
+}
+
+
+def _fn_source(js: str, name: str) -> str:
+    """One function's body, brace-counted (these contain object literals)."""
+    i = js.index(f"function {name}(")
+    j = js.index("{", i)
+    depth = 0
+    for k in range(j, len(js)):
+        if js[k] == "{":
+            depth += 1
+        elif js[k] == "}":
+            depth -= 1
+            if depth == 0:
+                return js[i:k + 1]
+    raise AssertionError(f"{name} has unbalanced braces")
+
+
+@pytest.mark.parametrize("route,fn", sorted(LONG_ROUTES.items()))
+def test_a_slow_request_shows_a_loader_for_its_whole_duration(route, fn):
+    """A spinner the user cannot miss, not a sentence they have to find."""
+    from autostream.ui import clips as ui
+
+    body = _fn_source(ui.CLIPS_JS, fn)
+    assert route in body, f"{fn} no longer calls {route}; retarget this test"
+    assert "clip_cardsBusy(true" in body, (
+        f"{fn} waits on {route} without turning the loader on, so the panel "
+        "sits still for the whole request and reads as broken")
+    assert "clip_cardsBusy(false)" in body, "the loader is never turned off"
+    assert "finally" in body, (
+        f"{fn} must clear the loader in a finally, or a thrown request leaves "
+        "a spinner up for ever and a button disabled with nothing behind it")
+    assert "clip_state.calBusy" in body, (
+        "a minute-long request must refuse to start twice over")
+
+
+def test_the_loader_is_a_spinner_and_placeholders_not_just_words():
+    """The complaint was not that the wait was unexplained -- there WAS a line
+    of prose saying it takes a minute. It was that nothing moved, so the only
+    way to know the app was working was to read the card."""
+    from autostream.ui import clips as ui
+    from autostream.ui import css
+
+    assert 'id="clip-cal-busy"' in ui.CLIPS_HTML, "no busy line in the markup"
+    assert 'class="spin"' in ui.CLIPS_HTML, "the busy line has no spinner"
+    assert "clip-cal-skel" in ui.CLIPS_JS, (
+        "nothing fills the frame grid while it loads, so the panel tells you "
+        "to drag a box onto six frames that are not there")
+    assert ".clip-cal-skel{" in css.CSS and "as-shimmer" in css.CSS, (
+        "the placeholders are not animated, which is the whole point")
+    # Above the grid: this panel is taller than the window on most screens.
+    assert (ui.CLIPS_HTML.index('id="clip-cal-busy"')
+            < ui.CLIPS_HTML.index('id="clip-cal-shots"')), (
+        "a status line below six frames is a status line nobody sees")

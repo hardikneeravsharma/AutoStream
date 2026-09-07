@@ -438,6 +438,13 @@ CLIPS_HTML: str = (
     </div>
   </div>
   <div class="card-body">
+    <!-- The loader, above the grid rather than under it: this panel is taller
+         than the window on most screens, and a status line below six frames
+         is a status line nobody sees. -->
+    <p class="clip-cal-busy hide" id="clip-cal-busy">
+      <span class="spin"></span>
+      <span id="clip-cal-busy-text"></span>
+    </p>
     <div class="clip-cal-shots" id="clip-cal-shots"></div>
     <div class="clip-cal-verdict hide" id="clip-cal-verdict"></div>
     <p class="muted" id="clip-cal-msg"></p>
@@ -741,6 +748,7 @@ var clip_state = {
   way: 'demo',
   calShots: null,            /* sample frames for the card calibration */
   calOpen: false,            /* the tally panel was asked for and stays up */
+  calBusy: false,            /* a sampling or a check is in flight */
   calDrag: null,             /* a box being drawn on one of them */
   calBox: null,              /* the card area, as fractions of the frame */
   calHue: 0,
@@ -1118,9 +1126,15 @@ function clip_renderWays() {
   var tally = clip_el('clip-read-tally');
   if (tally) {
     clip_show('clip-read-tally', chosen === 'cards');
-    tally.textContent = clip_state.calShots
-      ? 'Check the tally area again'
-      : 'Check the tally area';
+    /* NOT WHILE IT IS RUNNING. Every status poll re-renders this, and
+       retitling the button mid-request would wipe the "Checking..." label off
+       the control the user just pressed -- which is the one place they are
+       looking for a sign that anything happened. */
+    if (!clip_state.calBusy) {
+      tally.textContent = clip_state.calShots
+        ? 'Check the tally area again'
+        : 'Check the tally area';
+    }
   }
 }
 
@@ -1133,27 +1147,86 @@ function clip_renderWays() {
    top-level scope -- so the later declaration won and this function became
    unreachable. Choosing the card reader opened the marker dialog instead: a
    different dialog answering a different question, with no error anywhere. */
+/* THE LOADER. A minute of work needs something moving on screen for the whole
+   minute -- a sentence of prose is not a loader, and expecting anyone to read
+   the card to find out whether it is busy is not a design.
+
+   Three things at once, because each answers a different question:
+     the button      goes disabled and says "Checking..." -- the thing you
+                     pressed reacted, so you do not press it again
+     the busy line   a spinner and what it is doing, accented rather than
+                     muted, above the grid because this panel is taller than
+                     the window
+     the skeletons   six shimmering tiles in the grid the frames will land in,
+                     so the wait is visible without reading a word and nothing
+                     jumps when they arrive
+*/
+function clip_cardsBusy(on, what) {
+  var line = clip_el('clip-cal-busy');
+  var text = clip_el('clip-cal-busy-text');
+  if (text && what) text.textContent = what;
+  clip_show('clip-cal-busy', !!on);
+  if (line) line.setAttribute('aria-busy', on ? 'true' : 'false');
+  var host = clip_el('clip-cal-shots');
+  if (on && host && !(clip_state.calShots || []).length) {
+    var cells = '';
+    for (var i = 0; i < 6; i++) cells += '<div class="clip-cal-skel"></div>';
+    host.innerHTML = cells;
+  }
+  [['clip-read-tally', 'Checking the tally area...'],
+   ['clip-cal-check', 'Checking...']].forEach(function (pair) {
+    var b = clip_el(pair[0]);
+    if (!b) return;
+    /* Some of these buttons wrap their label in a span for the icon layout.
+       Writing textContent on the button would delete that span. */
+    var label = b.querySelector('span') || b;
+    if (on) {
+      if (!b.dataset.was) b.dataset.was = label.textContent;
+      label.textContent = pair[1];
+      b.disabled = true;
+    } else {
+      if (b.dataset.was) {
+        label.textContent = b.dataset.was;
+        delete b.dataset.was;
+      }
+      b.disabled = false;
+    }
+  });
+}
+
+
 async function clip_cardsOpen() {
   var s = clip_state.pick;
   if (!s || !s.recording_path) return;
+  if (clip_state.calBusy) return;          /* one at a time; it takes a minute */
+  clip_state.calBusy = true;
   var msg = clip_el('clip-cal-msg');
-  if (msg) {
-    msg.textContent = 'Looking through the recording for a kill tally - about '
-      + 'a minute. It samples the stretch you have chosen above.';
-  }
+  if (msg) msg.textContent = '';
   /* STAYS OPEN ONCE ASKED FOR. clip_renderWays used to hide this card whenever
      calShots was empty, and every status poll re-renders -- so the panel
      disappeared a second or two into the minute this takes, and again if the
      sampling came back with nothing, taking its own error message with it. */
   clip_state.calOpen = true;
   clip_show('clip-cal-card', true);
+  clip_cardsBusy(true, 'Reading about a minute of the recording, looking for '
+                       + 'frames with a kill tally on screen...');
   var win = clip_stripWindow() || {};
-  var r = await API.post('/api/clips/cards/samples', {
-    path: s.recording_path,
-    start: win.scan_start || 0,
-    seconds: (win.scan_end || s.duration || 0) - (win.scan_start || 0)
-  });
+  var r;
+  try {
+    r = await API.post('/api/clips/cards/samples', {
+      path: s.recording_path,
+      start: win.scan_start || 0,
+      seconds: (win.scan_end || s.duration || 0) - (win.scan_start || 0)
+    });
+  } finally {
+    /* In a finally, so a thrown request cannot leave the spinner up for ever
+       or the button disabled with nothing running behind it. */
+    clip_state.calBusy = false;
+    clip_cardsBusy(false);
+  }
   if (!r || !r.ok) {
+    var host = clip_el('clip-cal-shots');
+    if (host && !(clip_state.calShots || []).length) host.innerHTML = '';
     if (msg) msg.textContent = (r && r.error) || 'Could not read the recording.';
     return;
   }
@@ -1249,18 +1322,29 @@ function clip_calUp() {
 
 async function clip_calCheck() {
   var s = clip_state.pick;
-  var btn = clip_el('clip-cal-check');
   var out = clip_el('clip-cal-verdict');
   if (!s || !out) return;
-  if (btn) { btn.disabled = true; btn.querySelector('span').textContent = 'Checking…'; }
+  if (clip_state.calBusy) return;
+  clip_state.calBusy = true;
+  /* The same loader as the sampling. This reads the recording again -- 26
+     seconds, measured -- and a disabled button with no spinner was the whole
+     of the feedback. */
+  clip_show('clip-cal-verdict', false);
+  clip_cardsBusy(true, 'Counting how often that box reads as a real kill '
+                       + 'tally across the recording...');
   var win = clip_stripWindow() || {};
-  var r = await API.post('/api/clips/cards/check', {
-    path: s.recording_path,
-    start: win.scan_start || 0,
-    seconds: (win.scan_end || s.duration || 0) - (win.scan_start || 0),
-    box: clip_state.calBox || null
-  });
-  if (btn) { btn.disabled = false; btn.querySelector('span').textContent = 'Check it works'; }
+  var r;
+  try {
+    r = await API.post('/api/clips/cards/check', {
+      path: s.recording_path,
+      start: win.scan_start || 0,
+      seconds: (win.scan_end || s.duration || 0) - (win.scan_start || 0),
+      box: clip_state.calBox || null
+    });
+  } finally {
+    clip_state.calBusy = false;
+    clip_cardsBusy(false);
+  }
   clip_show('clip-cal-verdict', true);
   if (!r || !r.ok) {
     out.className = 'clip-cal-verdict is-bad';
