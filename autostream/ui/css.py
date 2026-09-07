@@ -2835,6 +2835,48 @@ CLIPS_FLOW_CSS = """
 .clip-cal-shots{display:grid;gap:var(--space-3)}
 @media (min-width:760px){.clip-cal-shots{grid-template-columns:repeat(3,1fr)}}
 .clip-cal-shot{position:relative;margin:0}
+
+/* WAITING, SHOWN AS WAITING.
+   Sampling this panel's frames reads about a minute of the recording --
+   measured at 57.7s on a 1h51m file -- and while it ran the card showed its
+   title, a subtitle telling you to drag a box, and one line of grey prose.
+   Nothing moved and nothing was reserved, so it read as broken rather than
+   busy, and the instruction was for frames that were not there yet.
+   Six placeholders in the same grid the frames land in: the space is held,
+   the shimmer says work is happening without anyone reading a word, and
+   nothing jumps when the real frames arrive. */
+.clip-cal-skel{
+  aspect-ratio:16/9;
+  border-radius:var(--radius-sm);
+  border:var(--border-hair) solid var(--border-subtle);
+  background:linear-gradient(100deg,
+    var(--surface-sunken) 30%, var(--surface-raised) 50%,
+    var(--surface-sunken) 70%);
+  background-size:220% 100%;
+  animation:as-shimmer 1.4s var(--ease-linear) infinite;
+}
+@keyframes as-shimmer{to{background-position:-120% 0}}
+
+/* The status line while it works. NOT .muted: this is the one thing on the
+   card that is true at that moment, and it was the same grey as the prose
+   around it. */
+.clip-cal-busy{
+  display:flex;
+  align-items:center;
+  gap:var(--space-3);
+  margin:0 0 var(--space-4);
+  padding:var(--space-3) var(--space-4);
+  border-left:3px solid var(--accent);
+  border-radius:var(--radius-sm);
+  background:var(--surface-sunken);
+  color:var(--text-primary);
+  font-size:13px;
+}
+.clip-cal-busy .spin{flex:0 0 auto}
+
+@media (prefers-reduced-motion:reduce){
+  .clip-cal-skel{animation:none}
+}
 .clip-cal-shot img{
   display:block;width:100%;border-radius:var(--radius-sm);
   border:var(--border-hair) solid var(--border-subtle);
