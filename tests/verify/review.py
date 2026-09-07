@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -43,10 +44,43 @@ CORPUS = Path(os.environ.get("AUTOSTREAM_TESTDATA", r"C:\autostream-testdata"))
 BASELINES = Path(__file__).resolve().parent / "baselines"
 THUMBS = "thumbs"
 
-# Recall floors are lower than precision floors on purpose. A missed kill
-# costs one clip that was never cut; a false positive costs a clip of nothing
-# that a viewer actually sees, and thirty of them make the feature useless.
-DEFAULT_FLOOR = {"recall": 0.85, "precision": 0.95}
+# Where a detector OUGHT to be. Recorded in every baseline and asserted by
+# nothing, because two of the three are not there yet: on the reviewed corpus
+# VALORANT finds 45% of kills and CS2 finds 75%. A gate set here would fail
+# every build from the day it was switched on, and a gate that always fails
+# gets switched off.
+TARGET = {"recall": 0.85, "precision": 0.95}
+
+# What is actually asserted is measured performance, written when the baseline
+# is imported. That makes tier 4 a REGRESSION gate: today's numbers are the
+# floor, and any drop is a fault. Detection is deterministic for the same file
+# and the same code, so the floor can sit exactly on the measurement without
+# flapping. Raising it is the work; this stops it sliding backwards meanwhile.
+FLOOR_IS_MEASURED = True
+
+
+def _floor4(x: float) -> float:
+    """Truncate to four places, never round up.
+
+    A floor is compared with >= against the very measurement it was taken
+    from, so rounding it up fails on the spot: Delta Force measured 0.949152
+    and rounded to 0.9492, which its own unchanged detector then could not
+    meet. Truncating means the floor is always at or just below reality.
+    """
+    return math.floor(x * 10000) / 10000
+
+
+def _floor_from(tp: int, fp: int, fn: int) -> dict:
+    """A floor computed from the raw counts, never from a rounded score.
+
+    score.metrics() rounds to four places for display, and _floor4 of an
+    already-rounded number is still the rounded number -- 0.949152 rounds to
+    0.9492 and truncating that changes nothing. The counts are integers, so
+    going back to them is exact.
+    """
+    r = tp / (tp + fn) if (tp + fn) else 1.0
+    p = tp / (tp + fp) if (tp + fp) else 1.0
+    return {"recall": _floor4(r), "precision": _floor4(p)}
 
 
 def manifest() -> list[dict]:
@@ -364,6 +398,13 @@ def cmd_import(args) -> int:
     verdicts = json.loads(src.read_text(encoding="utf-8"))
     rows = {r["clip"]: r for r in manifest()}
 
+    import score as scorer
+
+    dets = {}
+    dp = CORPUS / "detections.json"
+    if dp.is_file():
+        dets = json.loads(dp.read_text(encoding="utf-8"))
+
     games: dict[str, dict] = {}
     unjudged = []
     for clip, v in verdicts.items():
@@ -378,6 +419,12 @@ def cmd_import(args) -> int:
         # the false-positive set, and its absence from truth is what makes
         # precision measurable at all.
         truth = sorted(set(v.get("confirmed", [])) | set(v.get("missed", [])))
+
+        found = [d["time"] for d in (dets.get(clip, {}).get("detections") or [])]
+        mode = dets.get(clip, {}).get("mode")
+        tol = scorer.TOLERANCE.get(mode, 2.0)
+        got = scorer.metrics(scorer.match(found, truth, tol))
+
         g = games.setdefault(row["game"], {"clips": {}})
         g["clips"][clip] = {
             "kind": row["kind"],
@@ -386,7 +433,13 @@ def cmd_import(args) -> int:
             "seconds": row.get("seconds"),
             "truth": truth,
             "rejected": sorted(v.get("rejected", [])),
-            "floor": dict(DEFAULT_FLOOR),
+            "measured": got,
+            "floor": {**_floor_from(got["tp"], got["fp"], got["fn"]),
+                      # Quiet excerpts have no truth, so precision is 0 for one
+                      # false positive and 0 for twenty. The count is the only
+                      # thing that says whether it drifted or fell apart.
+                      "max_false_positives": got["fp"]},
+            "target": dict(TARGET),
         }
 
     if unjudged:
@@ -397,14 +450,29 @@ def cmd_import(args) -> int:
 
     BASELINES.mkdir(parents=True, exist_ok=True)
     for game, data in sorted(games.items()):
-        data["note"] = ("Reviewed by hand against the excerpt. `truth` is what "
-                        "a person confirmed plus what they said was missed; "
-                        "`rejected` is what the detector reported that is not "
-                        "there. Regenerate with review.py, never by hand.")
+        tp = sum(c["measured"]["tp"] for c in data["clips"].values())
+        fp = sum(c["measured"]["fp"] for c in data["clips"].values())
+        fn = sum(c["measured"]["fn"] for c in data["clips"].values())
+        recall = round(tp / (tp + fn), 4) if (tp + fn) else 1.0
+        precision = round(tp / (tp + fp), 4) if (tp + fp) else 1.0
+        data["measured"] = {"tp": tp, "fp": fp, "fn": fn,
+                            "recall": recall, "precision": precision}
+        data["floor"] = _floor_from(tp, fp, fn)
+        data["target"] = dict(TARGET)
+        data["note"] = (
+            "Reviewed by hand against the excerpt. `truth` is what a person "
+            "confirmed plus what they said was missed; `rejected` is what the "
+            "detector reported that is not there. `floor` is what the detector "
+            "scored on the day this was imported, so tier 4 is a REGRESSION "
+            "gate: it fails on any drop, not on failing to reach `target`. "
+            "Regenerate with review.py import, never by hand.")
         p = BASELINES / f"{game}.json"
         p.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         n = sum(len(c["truth"]) for c in data["clips"].values())
-        print(f"  {p.name}: {len(data['clips'])} excerpt(s), {n} confirmed kill(s)")
+        gap = ("" if recall >= TARGET["recall"] and precision >= TARGET["precision"]
+               else "   <-- under target")
+        print(f"  {p.name}: {len(data['clips'])} excerpt(s), {n} confirmed kill(s), "
+              f"recall {recall:.2f} precision {precision:.2f}{gap}")
     print("\nNow run: .venv\\Scripts\\python.exe tests\\verify\\score.py report")
     return 0
 

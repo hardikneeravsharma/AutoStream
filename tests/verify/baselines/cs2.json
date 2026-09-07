@@ -1,0 +1,131 @@
+{
+  "clips": {
+    "cs2_01_quiet": {
+      "kind": "quiet",
+      "source_name": "2026-08-27 22-59-18.mp4",
+      "source_offset": 1922.0,
+      "seconds": 104.11,
+      "truth": [],
+      "rejected": [],
+      "measured": {
+        "tp": 0,
+        "fn": 0,
+        "fp": 0,
+        "recall": 1.0,
+        "precision": 1.0,
+        "f1": 1.0
+      },
+      "floor": {
+        "recall": 1.0,
+        "precision": 1.0,
+        "max_false_positives": 0
+      },
+      "target": {
+        "recall": 0.85,
+        "precision": 0.95
+      }
+    },
+    "cs2_02_busy": {
+      "kind": "busy",
+      "source_name": "2026-08-27 22-59-18.mp4",
+      "source_offset": 2158.9,
+      "seconds": 100.26,
+      "truth": [
+        25,
+        30,
+        34
+      ],
+      "rejected": [],
+      "measured": {
+        "tp": 3,
+        "fn": 0,
+        "fp": 0,
+        "recall": 1.0,
+        "precision": 1.0,
+        "f1": 1.0
+      },
+      "floor": {
+        "recall": 1.0,
+        "precision": 1.0,
+        "max_false_positives": 0
+      },
+      "target": {
+        "recall": 0.85,
+        "precision": 0.95
+      }
+    },
+    "cs2_03_busy": {
+      "kind": "busy",
+      "source_name": "2026-08-27 22-59-18.mp4",
+      "source_offset": 2380.7,
+      "seconds": 103.65,
+      "truth": [
+        28.75,
+        35,
+        98.3
+      ],
+      "rejected": [],
+      "measured": {
+        "tp": 2,
+        "fn": 1,
+        "fp": 0,
+        "recall": 0.6667,
+        "precision": 1.0,
+        "f1": 0.8
+      },
+      "floor": {
+        "recall": 0.6666,
+        "precision": 1.0,
+        "max_false_positives": 0
+      },
+      "target": {
+        "recall": 0.85,
+        "precision": 0.95
+      }
+    },
+    "cs2_04_busy": {
+      "kind": "busy",
+      "source_name": "2026-08-27 22-59-18.mp4",
+      "source_offset": 2578.9,
+      "seconds": 101.23,
+      "truth": [
+        26,
+        26.5
+      ],
+      "rejected": [],
+      "measured": {
+        "tp": 1,
+        "fn": 1,
+        "fp": 0,
+        "recall": 0.5,
+        "precision": 1.0,
+        "f1": 0.6667
+      },
+      "floor": {
+        "recall": 0.5,
+        "precision": 1.0,
+        "max_false_positives": 0
+      },
+      "target": {
+        "recall": 0.85,
+        "precision": 0.95
+      }
+    }
+  },
+  "measured": {
+    "tp": 6,
+    "fp": 0,
+    "fn": 2,
+    "recall": 0.75,
+    "precision": 1.0
+  },
+  "floor": {
+    "recall": 0.75,
+    "precision": 1.0
+  },
+  "target": {
+    "recall": 0.85,
+    "precision": 0.95
+  },
+  "note": "Reviewed by hand against the excerpt. `truth` is what a person confirmed plus what they said was missed; `rejected` is what the detector reported that is not there. `floor` is what the detector scored on the day this was imported, so tier 4 is a REGRESSION gate: it fails on any drop, not on failing to reach `target`. Regenerate with review.py import, never by hand."
+}

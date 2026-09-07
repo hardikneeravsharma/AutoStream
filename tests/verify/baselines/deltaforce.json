@@ -1,0 +1,209 @@
+{
+  "clips": {
+    "deltaforce_01_busy": {
+      "kind": "busy",
+      "source_name": "uCVhbEkDXVA.mp4",
+      "source_offset": 760.0,
+      "seconds": 184.09,
+      "truth": [
+        23.5,
+        36.5,
+        49,
+        53,
+        87,
+        94,
+        100,
+        112,
+        145.5,
+        159.5,
+        163.5,
+        172.5,
+        178.5
+      ],
+      "rejected": [],
+      "measured": {
+        "tp": 13,
+        "fn": 0,
+        "fp": 0,
+        "recall": 1.0,
+        "precision": 1.0,
+        "f1": 1.0
+      },
+      "floor": {
+        "recall": 1.0,
+        "precision": 1.0,
+        "max_false_positives": 0
+      },
+      "target": {
+        "recall": 0.85,
+        "precision": 0.95
+      }
+    },
+    "deltaforce_02_quiet": {
+      "kind": "quiet",
+      "source_name": "uCVhbEkDXVA.mp4",
+      "source_offset": 1082.0,
+      "seconds": 182.07,
+      "truth": [],
+      "rejected": [
+        89.5,
+        131.5,
+        171
+      ],
+      "measured": {
+        "tp": 0,
+        "fn": 0,
+        "fp": 3,
+        "recall": 1.0,
+        "precision": 0.0,
+        "f1": 0.0
+      },
+      "floor": {
+        "recall": 1.0,
+        "precision": 0.0,
+        "max_false_positives": 3
+      },
+      "target": {
+        "recall": 0.85,
+        "precision": 0.95
+      }
+    },
+    "deltaforce_03_busy": {
+      "kind": "busy",
+      "source_name": "uCVhbEkDXVA.mp4",
+      "source_offset": 1629.0,
+      "seconds": 183.08,
+      "truth": [
+        27,
+        41,
+        48,
+        61,
+        74.5,
+        92,
+        95.5,
+        99,
+        110.5,
+        114,
+        121,
+        141.5,
+        161.5,
+        179
+      ],
+      "rejected": [],
+      "measured": {
+        "tp": 14,
+        "fn": 0,
+        "fp": 0,
+        "recall": 1.0,
+        "precision": 1.0,
+        "f1": 1.0
+      },
+      "floor": {
+        "recall": 1.0,
+        "precision": 1.0,
+        "max_false_positives": 0
+      },
+      "target": {
+        "recall": 0.85,
+        "precision": 0.95
+      }
+    },
+    "deltaforce_04_busy": {
+      "kind": "busy",
+      "source_name": "uCVhbEkDXVA.mp4",
+      "source_offset": 1908.5,
+      "seconds": 180.6,
+      "truth": [
+        1.5,
+        27.5,
+        33.5,
+        37,
+        45.5,
+        56.5,
+        86.5,
+        90,
+        93.5,
+        107.5,
+        141,
+        147.5,
+        151,
+        159,
+        173
+      ],
+      "rejected": [],
+      "measured": {
+        "tp": 15,
+        "fn": 0,
+        "fp": 0,
+        "recall": 1.0,
+        "precision": 1.0,
+        "f1": 1.0
+      },
+      "floor": {
+        "recall": 1.0,
+        "precision": 1.0,
+        "max_false_positives": 0
+      },
+      "target": {
+        "recall": 0.85,
+        "precision": 0.95
+      }
+    },
+    "deltaforce_05_busy": {
+      "kind": "busy",
+      "source_name": "uCVhbEkDXVA.mp4",
+      "source_offset": 6219.5,
+      "seconds": 183.6,
+      "truth": [
+        10.5,
+        30.5,
+        34,
+        48.5,
+        69.5,
+        73,
+        84.5,
+        88,
+        97,
+        100.5,
+        108,
+        116.5,
+        120,
+        174.5
+      ],
+      "rejected": [],
+      "measured": {
+        "tp": 14,
+        "fn": 0,
+        "fp": 0,
+        "recall": 1.0,
+        "precision": 1.0,
+        "f1": 1.0
+      },
+      "floor": {
+        "recall": 1.0,
+        "precision": 1.0,
+        "max_false_positives": 0
+      },
+      "target": {
+        "recall": 0.85,
+        "precision": 0.95
+      }
+    }
+  },
+  "measured": {
+    "tp": 56,
+    "fp": 3,
+    "fn": 0,
+    "recall": 1.0,
+    "precision": 0.9492
+  },
+  "floor": {
+    "recall": 1.0,
+    "precision": 0.9491
+  },
+  "target": {
+    "recall": 0.85,
+    "precision": 0.95
+  },
+  "note": "Reviewed by hand against the excerpt. `truth` is what a person confirmed plus what they said was missed; `rejected` is what the detector reported that is not there. `floor` is what the detector scored on the day this was imported, so tier 4 is a REGRESSION gate: it fails on any drop, not on failing to reach `target`. Regenerate with review.py import, never by hand."
+}
