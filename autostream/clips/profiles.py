@@ -551,12 +551,55 @@ def _build(key: str, raw: dict) -> Profile | None:
         return None
 
 
+# WHAT A DRAWN BOX CANNOT KNOW.
+#
+# These are properties of the GAME, not of a calibration. Whether Counter-
+# Strike writes a replay, whether Valorant keeps a server-side match record,
+# whether a game is scored by the round, how much run-up its clips need -- none
+# of that is discoverable by dragging a rectangle round a HUD glyph, and a user
+# entry that simply does not mention them must not be read as denying them.
+#
+# THE BUG THIS FIXES. load_all replaced the built-in entry wholesale, so one
+# successful "Test and save" on Counter-Strike silently dropped every key the
+# calibrator does not write. Measured on a real config: the saved entry had 8
+# keys against the built-in's 13, and what went missing was
+#
+#   demos: True   -> the reader choice vanished from the page, the card tally
+#                    became unreachable, and the run stopped looking for the
+#                    .dem at all -- which is the one source of exact truth
+#   rounds: True  -> no round layer, so no CLUTCH, PISTOL ROUND or ACE labels
+#   pre_roll_min  -> clips cut tighter than Counter-Strike was measured to need
+#   tail_min
+#
+# So calibrating a kill marker turned the best-instrumented game in the app
+# into the worst, and said nothing. Reported as "the 3 way clipping type picker
+# is not there to select".
+#
+# `mode` is deliberately NOT in here. It has to be taken wholesale from the
+# entry in force: someone who has just calibrated a template means template,
+# and inheriting the built-in's "killfeed" would run a reader their profile
+# cannot serve.
+GAME_FACTS = ("demos", "matches", "rounds", "counts_assists",
+              "pre_roll_min", "tail_min")
+
+
 def load_all() -> dict[str, Profile]:
-    """Built-ins, then the user's file on top so a recalibration wins."""
+    """Built-ins, then the user's file on top so a recalibration wins.
+
+    On top, key by key -- not instead of. See GAME_FACTS for the difference
+    and for what replacing the whole entry cost.
+    """
     merged: dict[str, dict] = {k: dict(v) for k, v in BUILTIN.items()}
     for k, v in _load_file().items():
-        if isinstance(v, dict):
-            merged[str(k).lower()] = v
+        if not isinstance(v, dict):
+            continue
+        k = str(k).lower()
+        entry = dict(v)
+        base = merged.get(k) or {}
+        for fact in GAME_FACTS:
+            if fact not in entry and fact in base:
+                entry[fact] = base[fact]
+        merged[k] = entry
     out = {}
     for k, raw in merged.items():
         p = _build(k, raw)
