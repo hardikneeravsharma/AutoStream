@@ -233,8 +233,12 @@ CONTROLS: list[Control] = [
             body={}, expect=_dict, acts=("calibrate",),
             why="refuses a template that matches everything"),
     Control("/api/clips/cards/samples", "POST", CALL, "CS2 card samples",
-            "clips", body={}, expect=_dict, acts=("demo-cards",),
-            why="candidate frames for the kill-tally calibration"),
+            "clips", body={}, expect=_dict,
+            acts=("demo-cards", "cards-open"),
+            why="candidate frames for the kill-tally calibration. cards-open "
+                "is the explicit button beside the reader choice; the panel "
+                "used to open only by itself, so there was nothing to press "
+                "when it was not on the page"),
     Control("/api/clips/cards/check", "POST", CALL, "CS2 card check", "clips",
             body={}, expect=_dict, acts=("cal-check",),
             why="a verdict before a six-minute scan, not after"),
