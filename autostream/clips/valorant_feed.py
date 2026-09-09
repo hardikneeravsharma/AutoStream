@@ -469,6 +469,26 @@ SETTLE_GAP = 0.75     # s. One frame at the 2 fps this scans at, with slack.
 # artefact without being near a real row's length. This is the rule CS2 taught:
 # no single frame's verdict may become an event.
 MIN_SEEN = 3
+# ...AND IT COUNTS FRAMES, SO IT ONLY MEANS WHAT IT SAYS AT SAMPLE_FPS. Raising
+# the scan rate without raising this silently halves the evidence a row needs:
+# three frames is 1.5s of agreement at 2 fps and 0.75s at 4 fps, which is short
+# enough for a transient false row to clear it. Measured -- going to 4 fps on
+# its own dropped precision to 0.73 against a reviewed baseline of 0.83 and
+# invented three kills across five excerpts, all of them in BUSY stretches
+# where there is most for a spurious row to be built out of.
+#
+# So the bar is a DURATION and the frame count is derived from the rate the
+# scan actually ran at. A faster scan then buys what it was meant to buy --
+# more looks at a real row, so its first appearance is caught sooner -- without
+# also lowering what a row has to survive to be believed.
+MIN_AGREE_S = MIN_SEEN / SAMPLE_FPS       # 1.5s, the bar the baseline was set at
+
+
+def min_seen_for(fps: float) -> int:
+    """Frames that must agree at `fps` to be the evidence MIN_SEEN meant at 2 fps."""
+    return max(MIN_SEEN, int(round(MIN_AGREE_S * max(fps, 0.1))))
+
+
 # How far a row's TOP may wander and still be the same slot. A row jitters a
 # few scanlines frame to frame (3px was enough to break the JOIN_GAP of 2 that
 # was used here first), while consecutive slots are a whole PITCH apart -- so a
@@ -918,8 +938,10 @@ def scan(video: Path, band, *, duration: float | None = None,
             progress(i, len(spans))
 
     # Collapsed only once every span is in, so a row straddling a chunk
-    # boundary is one event rather than two.
-    events = collapse(seen)
+    # boundary is one event rather than two. The floor is derived from the rate
+    # this scan actually ran at, so a faster scan does not quietly believe rows
+    # on less evidence -- see min_seen_for.
+    events = collapse(seen, min_seen=min_seen_for(fps))
     # Then each kill's time is pulled back to when its row really appeared.
     # Cheap next to the scan, and it is what keeps the kill inside the clip
     # that gets cut around it.
