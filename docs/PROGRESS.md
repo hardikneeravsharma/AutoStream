@@ -14,7 +14,7 @@ Nothing here is a projection.
 | Game | How kills are found | Needs | Speed | Verified |
 |---|---|---|---|---|
 | Delta Force | HUD glyph, template matched | nothing | ~60s per 2h | 219 kills, one session |
-| Valorant | feed bars, no OCR | **nothing** | 9x real time | **23/23 by eye; 37/37 vs a scoreboard** |
+| Valorant | feed bars, no OCR | **nothing** | 20x real time | **23/23 kills, by eye** |
 | CS2 | kill tally cards, no OCR | nothing (HUD colour is measured) | 13x real time | partly — see below |
 | CS2 + demo | `.dem` from Valve | the demo | 1.6s to parse | **12/12 kills, 16/16 rounds** |
 

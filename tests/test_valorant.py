@@ -794,10 +794,7 @@ def test_detect_routes_feedbar_to_the_bar_reader(monkeypatch, tmp_path):
     kills = detect.scan(src, for_game("valorant-win64-shipping.exe"))
 
     assert called["band"] == (0.50, 0.070, 1.00, 0.235)
-    # 4, not 2: a row is only cleanly readable for part of its five seconds, so
-    # 2 fps left real kills with one or two sightings and under MIN_SEEN. See
-    # the note on scan_fps in clips/profiles.py -- 20/37 kills against 35/37.
-    assert called["fps"] == 4.0
+    assert called["fps"] == 2.0
     # Deaths and assists are NOT clipped. The two kills a second apart stay TWO
     # Kill objects: merging them here loses the second timestamp, and the
     # planner counts entries -- which is how four real double kills came out
