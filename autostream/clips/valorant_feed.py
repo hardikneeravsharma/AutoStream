@@ -253,6 +253,58 @@ def _split_tall(y0: int, y1: int, prof: np.ndarray, pitch: int,
     return [(cuts[i], cuts[i + 1]) for i in range(len(cuts) - 1)]
 
 
+def _rows_by_margin(bar: np.ndarray, y0: int, y1: int, min_h: int, max_h: int,
+                    edge: int) -> list[tuple[int, int]]:
+    """Find the row inside a run that scenery has stuck itself to.
+
+    A FEED ROW HAS A RIGHT MARGIN AND SCENERY DOES NOT. Every row ends at the
+    same place -- 0.978-0.986 of the band, and 1878-1906 in frame pixels over
+    every row measured here -- while a wall simply runs to whatever the band's
+    edge is, 1920. So the scanlines belonging to the row are the ones whose
+    rightmost lit pixel lands inside that margin, and the wall's do not.
+    """
+    w = bar.shape[1]
+    lo, hi = RIGHT_MIN * w, w - edge
+    ok = np.zeros(y1 - y0, dtype=bool)
+    for i, y in enumerate(range(y0, y1)):
+        idx = np.flatnonzero(bar[y])
+        if len(idx):
+            x = int(idx[-1]) + 1
+            ok[i] = lo <= x <= hi
+    return [(y0 + s, y0 + e) for s, e in _runs(ok, JOIN_GAP)
+            if min_h <= e - s <= max_h]
+
+
+def _fit_rows(bar: np.ndarray, ry0: int, ry1: int, prof: np.ndarray,
+              pitch: int, min_h: int, max_h: int, k: float
+              ) -> list[tuple[int, int]]:
+    """The row windows inside one scanline run. -> [(y0, y1)]"""
+    out: list[tuple[int, int]] = []
+    for y0, y1 in _split_tall(ry0, ry1, prof, pitch, min_h):
+        if min_h <= y1 - y0 <= max_h:
+            out.append((y0, y1))
+        elif y1 - y0 > max_h:
+            # TOO TALL FOR ONE ROW AND TOO SHORT FOR TWO. _split_tall counts
+            # rows by PITCH, so a run of 52-58px against a pitch of 39 rounds
+            # to one row, comes back whole, and is then thrown away by the
+            # height cap -- TAKING THE REAL ROW WITH IT.
+            #
+            # What sticks to a row is warm scenery. Sandstone passes the red
+            # test: r-g measured 28-34 against a TEAM_MIN of 30, on the wall
+            # the player was facing at 27m18s. A wall directly above a row is
+            # contiguous with it in the density profile, so the two arrive as
+            # a single run, and _two_tone -- which exists to reject exactly
+            # this wall -- never gets to see it, because the row was already
+            # gone on height.
+            #
+            # Measured on that recording: a kill row plainly on screen for two
+            # seconds produced no sighting at all, and over one 20s window 77
+            # of 218 candidates were being discarded this way.
+            out.extend(_rows_by_margin(bar, y0, y1, min_h, max_h,
+                                       max(1, int(EDGE_MARGIN * k))))
+    return out
+
+
 def _row_runs(flags: np.ndarray, max_h: int) -> list[tuple[int, int]]:
     """Scanline runs, joining a gap only when the result is still ONE row.
 
@@ -393,9 +445,7 @@ def read_frame(a: np.ndarray, at: float = 0.0, ref_height: int = REF_HEIGHT,
 
     out: list[Row] = []
     for ry0, ry1 in _row_runs(prof >= DENSE_MIN, max_h):
-        for y0, y1 in _split_tall(ry0, ry1, prof, pitch, min_h):
-            if not (min_h <= y1 - y0 <= max_h):
-                continue
+        for y0, y1 in _fit_rows(bar, ry0, ry1, prof, pitch, min_h, max_h, k):
             strip = slice(y0, y1)
             on = bar[strip].mean(axis=0) >= 0.30
             if not on.any():
