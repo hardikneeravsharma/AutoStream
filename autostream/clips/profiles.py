@@ -408,7 +408,31 @@ BUILTIN: dict[str, dict[str, Any]] = {
         "band": [0.50, 0.070, 1.00, 0.235],
         "template": "",
         "ref_height": 1080,
-        "scan_fps": 2.0,
+        # FOUR, NOT TWO. A row lives about five seconds, so 2 fps looks like ten
+        # looks at it -- but a row is only cleanly readable for part of that
+        # life: the slide-in animation is rejected on purpose (see EDGE_MARGIN
+        # in clips/valorant_feed.py, which threw out 59 of 493 candidates on a
+        # sampled minute) and the frames where the feed shifts read "other" or
+        # "assist". Real kills therefore arrive with one or two clean sightings
+        # and fall under MIN_SEEN.
+        #
+        # Scored against a 33-minute match whose end-of-match scoreboard says
+        # 37 kills, with every threshold left alone:
+        #
+        #     2 fps   20/37 kills   54%
+        #     4 fps   35/37 kills   95%
+        #
+        # and 37/37 once the vote in clips/valorant_feed.py stopped letting a
+        # row's own degraded tail outvote it. Deaths went 16 -> 17 of 19 and
+        # assists 17 -> 13 of 11 across the same two changes: all three moved
+        # towards the scoreboard, which is the check that they are reading the
+        # feed better rather than just being told to say "kill" more often.
+        #
+        # This buys recall by taking MORE LOOKS, not by loosening a test, which
+        # is why it does not cost the precision that dropping MIN_SEEN to 1
+        # does (34 kills at 2 fps, but 15 pairs of them less than 7s apart).
+        # Costs a scan 117s -> 230s on that match, still about 9x real time.
+        "scan_fps": 4.0,
         "merge_gap": 3.0,
         "notes": "Reads the kill feed's coloured bars. Your own rows carry a "
                  "yellow border: at the left of the row you got the kill, at "
@@ -417,7 +441,11 @@ BUILTIN: dict[str, dict[str, Any]] = {
                  "kills, and killing yourself is counted as a death. Needs no "
                  "in-game name and no OCR. Measured on one 46-minute 1080p "
                  "recording: all 23 kills it reported were checked against the "
-                 "footage and all 23 were real. Regions were measured at one "
+                 "footage and all 23 were real. On a second, 33-minute match "
+                 "it found 37 of the 37 kills the end-of-match scoreboard "
+                 "credits, up from 20 before the scan rate and the vote were "
+                 "fixed -- that is a count matching, not every clip checked by "
+                 "eye. Regions were measured at one "
                  "person's HUD scale; a different scale needs recalibrating "
                  "from the Clips page.",
     },

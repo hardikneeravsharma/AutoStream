@@ -551,15 +551,20 @@ row, at full opacity in a fixed colour. Which end it is on is the whole answer:
 ```
 
 So the bars are read instead of the text. There is nothing to configure, Tesseract is
-not needed, and the scan runs at about **20x real time** — a 46-minute recording in
-under two and a half minutes, against roughly 3.5x for the OCR path.
+not needed, and the scan runs at about **9x real time** — a 46-minute recording in
+around five minutes, against roughly 3.5x for the OCR path. It used to be twice that
+fast and it read the feed twice as often now, because at the old rate a row that is
+only cleanly readable for part of its life arrived with too few sightings to count.
 
 Assists are the case worth getting right: your portrait appears on rows you only
 assisted, but as a separate tile sitting clear of the bar, while on your own kill it
 touches your name. Killing yourself puts you at both ends, and is counted as a death.
 
 Measured on one 46-minute 1080p recording, every one of the **23 kills it reported was
-checked against the footage and all 23 were real**. Deaths and assists are detected too
+checked against the footage and all 23 were real**. On a second, 33-minute match it
+found **37 of the 37 kills** the end-of-match scoreboard credits, up from 20 before the
+scan rate and the vote were fixed — that is a count agreeing, not every clip watched.
+Deaths and assists are detected too
 but are not clipped, and have not been audited that thoroughly. The feed regions were
 measured at one person's HUD scale; a different scale needs recalibrating from the Clips
 page. Valorant is clipped by kill bursts, not by round — the round layer is CS2 only.
