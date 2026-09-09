@@ -694,6 +694,16 @@ def collapse(seen: list[Row], min_seen: int = MIN_SEEN) -> list[Event]:
         n_other = kinds.count("other")
         n_assist = kinds.count("assist")
         hard = max(("kill", "death"), key=kinds.count)
+        # A VERDICT IS JUDGED ON ITS OWN FRAMES, WHICH ARE THE ONES UP TO ITS
+        # LAST SIGHTING. The yellow is brightest when a row arrives and decays
+        # as the row ages and slides up the feed, so the tail of a long track
+        # is degraded frames rather than evidence against it. Measured on a
+        # 33-minute match whose scoreboard says 37 kills: a real kill voting
+        # "kkkkaaoooaaoao" was outvoted 5-4 by its own tail, and two more
+        # voting "kaaka" and "kkkoaaaa" lost to the assist test below.
+        last_hard = max((i for i, k in enumerate(kinds)
+                         if k in ("kill", "death")), default=-1)
+        head = kinds[:last_hard + 1]
         # A hard verdict has to beat "other" AND not be outvoted by "assist".
         # Testing it only against "other" meant a SINGLE stray kill frame won
         # outright whenever no frame had read "other": FROM FOOTAGE at 43m43s a
@@ -702,7 +712,22 @@ def collapse(seen: list[Row], min_seen: int = MIN_SEEN) -> list[Event]:
         # one. Ties still go to the hard verdict, which is what rescues the
         # "kkkaaa" row above: a degraded frame reads as an assist, never the
         # other way round, so assists can only ever be the noise here.
-        if kinds.count(hard) > n_other and kinds.count(hard) >= n_assist:
+        #
+        # TWO agreeing frames, never one. Trimming the tail lets a verdict be
+        # judged on its own frames, but a single stray sighting must still not
+        # become an event -- that is the CS2 lesson, and it is what keeps the
+        # "aaka" false kill above still filed as an assist. Tracks voting "koo"
+        # and "kooooooooo" stay "other" here for the same reason.
+        # TWO TO ONE inside that window, not merely ahead. A row that decays
+        # looks like a solid run of one verdict followed by degraded frames;
+        # a row two tracks are fighting over looks like an ALTERNATION, and
+        # trimming its tail would hand every such tie to the hard verdict --
+        # which is exactly the tie that must go to not clipping, because a
+        # missed clip is far cheaper than a clip of somebody else's kill.
+        settled = (head.count(hard) >= 2
+                   and head.count(hard) >= 2 * head.count("other"))
+        if (kinds.count(hard) > n_other and kinds.count(hard) >= n_assist
+                or settled):
             kind = hard
         elif n_assist > n_other:
             kind = "assist"
