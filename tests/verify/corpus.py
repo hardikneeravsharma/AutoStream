@@ -20,6 +20,13 @@ are a HINT and nothing more -- they were produced by the detector under test,
 so treating them as truth would be marking its own homework. They choose where
 to cut; what is actually in each excerpt is decided by review.
 
+FOOTAGE THAT WAS NEVER RECORDED HERE -- a VOD somebody downloaded -- has no
+session.json and no sidecar, so there are no hints and both planners return
+nothing. That is the ordinary case for testing the clipper the way it is meant
+to be used, on a recording made without AutoStream, so `--extra` scans such a
+file once to find its own hints. Same status as a session.json's times: they
+choose where to cut and nothing else.
+
 Every game also gets a deliberately quiet excerpt. A detector that finds
 nothing is only half tested: the other half is a detector that finds things
 that are not there, and nothing in this repo tests that today.
@@ -163,8 +170,49 @@ def discover(extra: dict[str, Path] | None = None) -> list[Candidate]:
                     times.append(round(float(t), 1))
             c.hints = sorted(set(c.hints) | set(times))
             print(f"  [--] {video.name}: {len(times)} hints from kills.json")
+        if not c.hints:
+            c.hints = _hints_by_scanning(video, key)
 
     return list(found.values())
+
+
+def _hints_by_scanning(video: Path, key: str) -> list[float]:
+    """Ask the detector where the action is, for footage with no history.
+
+    A VOD somebody downloaded has no session.json and no sidecar, and BOTH
+    window planners start from hints -- so `--extra` on one produced no
+    excerpts at all, and said nothing about why. That is the case this exists
+    for, and it is the ordinary case for testing the clipper the way it is
+    meant to be used: on a recording made without AutoStream.
+
+    Marking its own homework for WINDOW CHOICE only, which is exactly the
+    status a session.json's kill times already have -- they were produced by
+    the detector under test too. Where to cut is not what these excerpts
+    measure: what is actually in one is decided by review, and a kill the
+    detector misses inside a window it chose itself is still a miss.
+    """
+    from autostream.clips import detect, profiles
+
+    prof = profiles.for_game(key)
+    if prof is None:
+        print(f"  [!!] {video.name}: no profile for {key}, so no hints")
+        return []
+    if prof.missing():
+        print(f"  [!!] {video.name}: {key} is not set up ({prof.missing()}), "
+              f"so no hints")
+        return []
+    print(f"  [--] {video.name}: no history and no kills.json, so scanning it "
+          f"once to find where the action is (this is the slow part)",
+          flush=True)
+    try:
+        kills = detect.scan(video, prof)
+    except Exception as e:                       # noqa: BLE001
+        print(f"  [!!] {video.name}: could not scan it ({type(e).__name__}: "
+              f"{e}), so no hints")
+        return []
+    times = sorted({round(float(k.time), 1) for k in kills})
+    print(f"  [--] {video.name}: {len(times)} hints from a scan")
+    return times
 
 
 # ------------------------------------------------------------- planning
