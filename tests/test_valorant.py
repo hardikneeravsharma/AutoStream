@@ -1031,3 +1031,83 @@ def test_the_feed_sliding_up_through_a_degraded_frame_is_one_row_each():
 
     got = [e for e in vf.collapse(seen) if e.kind == "kill"]
     assert len(got) == 2, [(e.time, e.y0, e.votes) for e in got]
+
+
+# ---------------------------------------------------- the rejection census
+#
+# Every rejection in read_frame is a bare `continue`, so a scan that misses a
+# kill has never been able to say why. These pin that the census reports what
+# was actually discarded, and -- more importantly -- that attaching one cannot
+# change a verdict.
+
+def test_a_census_counts_the_row_it_accepted():
+    a = _draw(_band(), 20, 560, killer=GREEN, victim=RED, yellow_left=True)
+    c = vf.Census()
+    got = vf.read_frame(a, census=c)
+    assert [r.kind for r in got] == ["kill"]
+    assert c.counts["row"] == 1
+    assert c.samples["row"][0]["kind"] == "kill"
+
+
+def test_attaching_a_census_does_not_change_what_is_read():
+    """THE WHOLE POINT OF IT BEING OBSERVATIONAL. A diagnostic that moved a
+    verdict would make every measurement taken with it worthless."""
+    for build in (
+        lambda: _draw(_band(), 20, 560, killer=GREEN, victim=RED,
+                      yellow_left=True),
+        lambda: _draw(_band(), 20, 560, killer=RED, victim=GREEN),
+        lambda: _band(),                                  # nothing at all
+    ):
+        plain = vf.read_frame(build())
+        with_census = vf.read_frame(build(), census=vf.Census())
+        assert plain == with_census
+
+
+def test_scenery_filling_the_right_margin_is_counted_as_flush_right():
+    """FROM FOOTAGE, and the open question #84 left behind.
+
+    A settled row ends short of the band's edge and has background to its
+    right. A warm wall -- or the player's own Clove smoke -- lights that gap,
+    the row's right edge reads as the frame edge, and EDGE_MARGIN throws it
+    away as a slide-in animation frame. The row is real and the kill is lost.
+
+    What is pinned here is only that the loss is now COUNTED, with the
+    geometry it was counted on. Which way to decide it is what the census is
+    for measuring; nothing here asserts an answer.
+    """
+    a = _draw(_band(), 20, 560, killer=GREEN, victim=RED, yellow_left=True)
+    brick = (182, 142, 104)
+    a[20:54, RIGHT:BAND_W] = brick        # scenery across the row's own margin
+
+    c = vf.Census()
+    assert vf.read_frame(a, census=c) == [], "the row is lost, as it is today"
+    assert c.counts["flush_right"] == 1
+    got = c.samples["flush_right"][0]
+    assert got["x1"] > got["cap"], got
+    assert got["pitches"] < 2, "one row's worth of height, not a stack"
+
+
+def test_the_same_row_without_the_scenery_is_read_normally():
+    # The control for the case above: same row, clean margin, still a kill.
+    a = _draw(_band(), 20, 560, killer=GREEN, victim=RED, yellow_left=True)
+    c = vf.Census()
+    assert [r.kind for r in vf.read_frame(a, census=c)] == ["kill"]
+    assert "flush_right" not in c.counts
+
+
+def test_a_census_summary_leads_with_the_commonest_reason():
+    c = vf.Census()
+    for _ in range(3):
+        c.add("flush_right", at=1.0)
+    c.add("row", at=1.0)
+    assert c.total() == 4
+    assert c.summary().startswith("4 candidates: 3 flush_right")
+
+
+def test_a_census_keeps_a_bounded_number_of_samples():
+    """A 40-minute scan must not keep a million dicts alive to report a count."""
+    c = vf.Census(max_samples=5)
+    for i in range(50):
+        c.add("flush_right", at=float(i))
+    assert c.counts["flush_right"] == 50
+    assert len(c.samples["flush_right"]) == 5

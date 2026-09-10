@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import logging
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -276,13 +276,17 @@ def _rows_by_margin(bar: np.ndarray, y0: int, y1: int, min_h: int, max_h: int,
 
 
 def _fit_rows(bar: np.ndarray, ry0: int, ry1: int, prof: np.ndarray,
-              pitch: int, min_h: int, max_h: int, k: float
+              pitch: int, min_h: int, max_h: int, k: float,
+              census: "Census | None" = None, at: float = 0.0
               ) -> list[tuple[int, int]]:
     """The row windows inside one scanline run. -> [(y0, y1)]"""
     out: list[tuple[int, int]] = []
     for y0, y1 in _split_tall(ry0, ry1, prof, pitch, min_h):
         if min_h <= y1 - y0 <= max_h:
             out.append((y0, y1))
+        elif y1 - y0 < min_h:
+            if census:
+                census.add("too_short", at=at, y0=y0, h=y1 - y0, min_h=min_h)
         elif y1 - y0 > max_h:
             # TOO TALL FOR ONE ROW AND TOO SHORT FOR TWO. _split_tall counts
             # rows by PITCH, so a run of 52-58px against a pitch of 39 rounds
@@ -300,8 +304,16 @@ def _fit_rows(bar: np.ndarray, ry0: int, ry1: int, prof: np.ndarray,
             # Measured on that recording: a kill row plainly on screen for two
             # seconds produced no sighting at all, and over one 20s window 77
             # of 218 candidates were being discarded this way.
-            out.extend(_rows_by_margin(bar, y0, y1, min_h, max_h,
-                                       max(1, int(EDGE_MARGIN * k))))
+            got = _rows_by_margin(bar, y0, y1, min_h, max_h,
+                                  max(1, int(EDGE_MARGIN * k)))
+            if census:
+                # A tall run the margin trim could not resolve is a row that is
+                # still being lost -- the same shape of loss #84 fixed, and the
+                # first place to look when a kill has no sighting at all.
+                census.add("tall_rescued" if got else "tall_dropped",
+                           at=at, y0=y0, h=y1 - y0,
+                           pitches=round((y1 - y0) / pitch, 2), got=len(got))
+            out.extend(got)
     return out
 
 
@@ -428,9 +440,63 @@ def victim_of(red: np.ndarray, green: np.ndarray, y0: int, y1: int,
     return ""
 
 
+# --------------------------------------------------------- what got thrown away
+#
+# Every rejection below is a bare `continue`, so a scan that misses a kill says
+# nothing about why. Learning that "77 of 218 candidates" were lost to the
+# height cap took instrumenting this by hand, for one 20-second window, and
+# throwing the instrumentation away afterwards -- and the next recall question
+# starts from nothing again.
+#
+# The open question this exists to settle: a wall or a Clove smoke lights the
+# band's right-hand columns, the row's right edge reads as the frame edge, and
+# EDGE_MARGIN discards it as a slide-in animation frame. The obvious test for
+# that also fires on four stacked rows, which is exactly when multi-kills
+# happen. Which case dominates is a fact about real footage, not something to
+# reason out -- so it is counted.
+
+# Enough rejections to see the shape of one, not so many that a 40-minute scan
+# keeps a million dicts alive.
+CENSUS_SAMPLES = 40
+
+
+@dataclass
+class Census:
+    """Why candidate rows were thrown away, counted rather than guessed.
+
+    Purely observational: nothing here changes a verdict. A scan with no census
+    attached pays one `is not None` check per candidate and nothing else.
+    """
+
+    counts: dict[str, int] = field(default_factory=dict)
+    samples: dict[str, list[dict]] = field(default_factory=dict)
+    max_samples: int = CENSUS_SAMPLES
+
+    def add(self, reason: str, **geom) -> None:
+        self.counts[reason] = self.counts.get(reason, 0) + 1
+        keep = self.samples.setdefault(reason, [])
+        if len(keep) < self.max_samples:
+            keep.append(geom)
+
+    def total(self) -> int:
+        return sum(self.counts.values())
+
+    def summary(self) -> str:
+        """One line, commonest first -- the shape of a scan at a glance."""
+        if not self.counts:
+            return "no candidates"
+        parts = ", ".join(f"{n} {r}" for r, n in
+                          sorted(self.counts.items(), key=lambda kv: -kv[1]))
+        return f"{self.total()} candidates: {parts}"
+
+
 def read_frame(a: np.ndarray, at: float = 0.0, ref_height: int = REF_HEIGHT,
-               frame_height: int | None = None) -> list[Row]:
-    """Every feed row in one frame of the band. -> newest last."""
+               frame_height: int | None = None,
+               census: Census | None = None) -> list[Row]:
+    """Every feed row in one frame of the band. -> newest last.
+
+    `census`, when given, records why each rejected candidate was rejected.
+    """
     red, green, yellow = masks(a)
     bar = red | green | yellow
     h, w = bar.shape
@@ -445,13 +511,38 @@ def read_frame(a: np.ndarray, at: float = 0.0, ref_height: int = REF_HEIGHT,
 
     out: list[Row] = []
     for ry0, ry1 in _row_runs(prof >= DENSE_MIN, max_h):
-        for y0, y1 in _fit_rows(bar, ry0, ry1, prof, pitch, min_h, max_h, k):
+        for y0, y1 in _fit_rows(bar, ry0, ry1, prof, pitch, min_h, max_h, k,
+                                census=census, at=at):
             strip = slice(y0, y1)
             on = bar[strip].mean(axis=0) >= 0.30
             if not on.any():
+                if census:
+                    census.add("blank", at=at, y0=y0, h=y1 - y0)
                 continue
             x1 = int(w - np.argmax(on[::-1]))
-            if x1 / w < RIGHT_MIN or x1 > w - EDGE_MARGIN * k:
+            if x1 / w < RIGHT_MIN:
+                if census:
+                    census.add("right_short", at=at, y0=y0, h=y1 - y0,
+                               x1=x1, w=w)
+                continue
+            if x1 > w - EDGE_MARGIN * k:
+                # THE CASE THAT NEEDS SETTLING. Either a row still sliding in
+                # (throw it away, its geometry is nonsense) or a settled row
+                # whose right margin has been filled in by scenery -- a wall,
+                # or the player's own Clove smoke.
+                #
+                # Only what was actually read is recorded: how far right the
+                # lit run reached, how tall the window is in pitches, and how
+                # many separate lit segments it holds. No verdict is derived
+                # here on purpose. The test that would tell the two apart is
+                # the open question, and a derived field would read as an
+                # answer to it before anyone has measured one.
+                if census:
+                    census.add("flush_right", at=at, y0=y0, h=y1 - y0,
+                               x1=x1, w=w, cap=int(w - EDGE_MARGIN * k),
+                               pitches=round((y1 - y0) / pitch, 2),
+                               segs=len([1 for s, e in _runs(on)
+                                         if e - s >= min_seg]))
                 continue
             # The left edge is the start of the row's LONGEST solid run, not its
             # leftmost coloured pixel -- the assist tiles are further left again.
@@ -460,14 +551,25 @@ def read_frame(a: np.ndarray, at: float = 0.0, ref_height: int = REF_HEIGHT,
             # walk immediately.
             segs = [(s, e) for s, e in _runs(on) if e - s >= min_seg]
             if not segs:
+                if census:
+                    census.add("no_segment", at=at, y0=y0, h=y1 - y0)
                 continue
             mx0, mx1 = max(segs, key=lambda r: r[1] - r[0])
             if not (MIN_ROW_W * k <= x1 - mx0 <= MAX_ROW_W * k):
+                if census:
+                    census.add("width", at=at, y0=y0, h=y1 - y0,
+                               width=x1 - mx0,
+                               lo=round(MIN_ROW_W * k), hi=round(MAX_ROW_W * k))
                 continue
             if not _two_tone(red, green, strip, mx0, x1):
+                if census:
+                    census.add("two_tone", at=at, y0=y0, h=y1 - y0,
+                               x0=int(mx0), x1=x1)
                 continue
             kind, left, right, aside = _verdict(yellow, strip, mx0, mx1,
                                                 y1 - y0)
+            if census:
+                census.add("row", at=at, y0=y0, h=y1 - y0, kind=kind)
             out.append(Row(time=at, kind=kind, y0=y0, y1=y1, x0=int(mx0),
                            x1=x1, left=left, right=right, aside=aside,
                            victim=victim_of(red, green, y0, y1, mx0, x1, k)))
@@ -935,7 +1037,7 @@ def _span(args) -> list[Row]:
     # frame_height is the height of THIS recording, not the height the pixel
     # constants were measured at -- that is REF_HEIGHT, and read_frame scales
     # between the two.
-    video, band, start, dur, fps, frame_h = args
+    video, band, start, dur, fps, frame_h, census = args
     from PIL import Image
 
     from .killfeed import _extract
@@ -946,7 +1048,7 @@ def _span(args) -> list[Row]:
         for png in sorted(tmp.glob("f_*.png")):
             at = start + (int(png.stem.split("_")[1]) - 1) / fps
             a = np.asarray(Image.open(png).convert("RGB"))
-            out.extend(read_frame(a, at, frame_height=frame_h))
+            out.extend(read_frame(a, at, frame_height=frame_h, census=census))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return out
@@ -956,7 +1058,8 @@ def scan(video: Path, band, *, duration: float | None = None,
          start: float = 0.0, fps: float = SAMPLE_FPS, chunk: float = 120.0,
          frame_height: int = REF_HEIGHT,
          progress: Callable[[int, int], None] | None = None,
-         cancelled: Callable[[], bool] | None = None) -> list[Event]:
+         cancelled: Callable[[], bool] | None = None,
+         census: Census | None = None) -> list[Event]:
     """Read the whole recording's feed. -> events in time order.
 
     No OCR, so this is decode-bound rather than CPU-bound: a 46-minute
@@ -983,7 +1086,7 @@ def scan(video: Path, band, *, duration: float | None = None,
     for i, (at, dur) in enumerate(spans, 1):
         if cancelled and cancelled():
             break
-        seen.extend(_span((video, band, at, dur, fps, frame_height)))
+        seen.extend(_span((video, band, at, dur, fps, frame_height, census)))
         if progress:
             progress(i, len(spans))
 
@@ -1002,4 +1105,6 @@ def scan(video: Path, band, *, duration: float | None = None,
     log.info("%s: %d kill(s), %d death(s), %d assist(s) read from the feed "
              "bars (%d sightings)", Path(video).name, t["kill"], t["death"],
              t["assist"], len(seen))
+    if census:
+        log.info("%s: %s", Path(video).name, census.summary())
     return events

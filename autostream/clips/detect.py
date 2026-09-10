@@ -234,7 +234,8 @@ def scan_span(video: Path, profile: Profile, start: float, duration: float,
 def scan(video: Path, profile: Profile, *,
          progress: Callable[[int, int], None] | None = None,
          cancelled: Callable[[], bool] | None = None,
-         duration: float | None = None, start: float = 0.0) -> list[Kill]:
+         duration: float | None = None, start: float = 0.0,
+         census=None) -> list[Kill]:
     """Scan a recording for kill markers. -> kills in time order.
 
     `start` and `duration` are a WINDOW into the file: read `duration`
@@ -255,7 +256,7 @@ def scan(video: Path, profile: Profile, *,
         return scan_killfeed(video, profile, total, progress, cancelled, start)
     if profile.mode == "feedbar":
         return scan_feedbar(video, profile, total, info["height"], progress,
-                            cancelled, start)
+                            cancelled, start, census=census)
     if profile.mode == "cardcount":
         return scan_cardcount(video, profile, total, info["height"], progress,
                               cancelled, start)
@@ -370,11 +371,14 @@ def scan_killfeed(video: Path, profile: Profile, total: float,
 def scan_feedbar(video: Path, profile: Profile, total: float, height: int,
                  progress: Callable[[int, int], None] | None,
                  cancelled: Callable[[], bool] | None,
-                 start: float = 0.0) -> list[Kill]:
+                 start: float = 0.0, census=None) -> list[Kill]:
     """Kills read off the feed's coloured bars -- no OCR, no in-game name.
 
     Same signature as the template path, so bursts, windows, the tail
     guarantee, captions and the montage all work on these unchanged.
+
+    `census`, when given, is a valorant_feed.Census recording why candidate
+    rows were discarded. Observational only -- see its docstring.
     """
     from . import valorant_feed
 
@@ -382,7 +386,8 @@ def scan_feedbar(video: Path, profile: Profile, total: float, height: int,
     events = valorant_feed.scan(video, profile.band, duration=total,
                                 start=start,
                                 fps=profile.scan_fps, frame_height=height,
-                                progress=progress, cancelled=cancelled)
+                                progress=progress, cancelled=cancelled,
+                                census=census)
     if cancelled and cancelled():
         raise Cancelled("scan cancelled")
 

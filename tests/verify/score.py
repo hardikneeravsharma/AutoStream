@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from autostream.clips import detect, profiles                  # noqa: E402
+from autostream.clips import detect, profiles, valorant_feed   # noqa: E402
 
 CORPUS = Path(os.environ.get("AUTOSTREAM_TESTDATA", r"C:\autostream-testdata"))
 BASELINES = Path(__file__).resolve().parent / "baselines"
@@ -79,14 +79,22 @@ def scan_one(entry: dict) -> dict:
     if missing:
         return {"error": f"profile not ready: {missing}"}
 
+    # WHY A KILL WAS MISSED, not just that it was. The feed-bar reader drops
+    # candidate rows at six separate points and every one of them is a bare
+    # `continue`, so a recall figure on its own says nothing about where the
+    # missing kills went. Learning that "77 of 218 candidates" were lost to the
+    # height cap took instrumenting the reader by hand, once, for one 20-second
+    # window -- and the next question started from nothing again.
+    census = valorant_feed.Census() if prof.mode == "feedbar" else None
+
     t0 = time.monotonic()
     try:
-        kills = detect.scan(video, prof)
+        kills = detect.scan(video, prof, census=census)
     except Exception as e:                       # noqa: BLE001
         return {"error": f"{type(e).__name__}: {e}"}
     took = time.monotonic() - t0
 
-    return {
+    out = {
         "mode": prof.mode,
         "seconds_scanned": entry.get("seconds"),
         "scan_seconds": round(took, 1),
@@ -98,6 +106,9 @@ def scan_one(entry: dict) -> dict:
             for k in kills
         ],
     }
+    if census:
+        out["census"] = {"counts": census.counts, "samples": census.samples}
+    return out
 
 
 def cmd_scan(args) -> int:
@@ -246,7 +257,33 @@ def cmd_report(args) -> int:
     if unreviewed:
         print(f"{len(unreviewed)} excerpt(s) have no reviewed baseline yet. "
               "Until they do, tier 4 cannot fail on them.")
+    _print_census()
     return 0
+
+
+def _print_census() -> None:
+    """Where the feed-bar reader's discarded candidates went.
+
+    Printed beside recall because the two only mean anything together: a
+    recall of 0.68 says a third of the kills are missing, and this says which
+    rejection swallowed them. A reason that dominates here is where the next
+    fix belongs -- and one that does not is a fix not worth writing, however
+    obvious it looks in the code.
+    """
+    got = detections()
+    rows = {c: d["census"] for c, d in got.items() if d.get("census")}
+    if not rows:
+        return
+    print("feed-bar candidates, by what became of them")
+    print("-" * 92)
+    for clip in sorted(rows):
+        counts = rows[clip]["counts"]
+        total = sum(counts.values()) or 1
+        parts = ", ".join(
+            f"{r} {n} ({100 * n / total:.0f}%)"
+            for r, n in sorted(counts.items(), key=lambda kv: -kv[1]))
+        print(f"  {clip}: {total} candidates -- {parts}")
+    print()
 
 
 def main(argv=None) -> int:
