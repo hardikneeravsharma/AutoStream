@@ -490,6 +490,31 @@ class Census:
         return f"{self.total()} candidates: {parts}"
 
 
+def _trim_tail(on: np.ndarray, min_seg: int) -> int:
+    """Where a row flush to the band's edge really ends. -> x, or 0 for none.
+
+    Only a strip that breaks into at least two lit segments can be trimmed:
+    the gap between them is the row's own right margin, which is the single
+    property a settled row has and both a slide-in animation frame and an
+    unbroken wall lack. The tail is dropped and the row's edge is the end of
+    the segment before it.
+
+    The tail is NOT held to a minimum width. Four pixels of scenery in the
+    margin lose the row exactly as thoroughly as forty, and a tail too small
+    to qualify as a segment was leaving the strip looking unbroken.
+
+    Cutting too far is caught rather than guarded against here. A row is not
+    solid -- the victim's portrait is a photograph and leaves a hole in it --
+    so the run before the tail can be an internal gap, and the cut then lands
+    inside the row. RIGHT_MIN is what rejects that: a row trimmed back past
+    0.95 of the band no longer ends where a settled row ends.
+    """
+    runs = _runs(on)
+    if len(runs) < 2:
+        return 0
+    return int(runs[-2][1])
+
+
 def read_frame(a: np.ndarray, at: float = 0.0, ref_height: int = REF_HEIGHT,
                frame_height: int | None = None,
                census: Census | None = None) -> list[Row]:
@@ -525,25 +550,38 @@ def read_frame(a: np.ndarray, at: float = 0.0, ref_height: int = REF_HEIGHT,
                     census.add("right_short", at=at, y0=y0, h=y1 - y0,
                                x1=x1, w=w)
                 continue
-            if x1 > w - EDGE_MARGIN * k:
-                # THE CASE THAT NEEDS SETTLING. Either a row still sliding in
-                # (throw it away, its geometry is nonsense) or a settled row
-                # whose right margin has been filled in by scenery -- a wall,
-                # or the player's own Clove smoke.
+            cap = int(w - EDGE_MARGIN * k)
+            if x1 > cap:
+                # A row still sliding in has no settled right edge and its
+                # geometry is nonsense while it does -- that is what this test
+                # is for, and three of the false kills in the first audit were
+                # animation frames. But scenery lighting the MARGIN of a
+                # settled row reads identically, and that was costing whole
+                # multi-kills at once: the contamination spans every row of a
+                # stack, so all four die together.
                 #
-                # Only what was actually read is recorded: how far right the
-                # lit run reached, how tall the window is in pitches, and how
-                # many separate lit segments it holds. No verdict is derived
-                # here on purpose. The test that would tell the two apart is
-                # the open question, and a derived field would read as an
-                # answer to it before anyone has measured one.
+                # They are told apart by the row's own right margin. A settled
+                # row ends short of the band's edge with background after it,
+                # so a contaminated strip breaks into (row)(gap)(scenery) and
+                # the row's true edge is where the run before the tail ends.
+                # An animation frame has no such gap, and neither has a bare
+                # wall -- and a wall that survives this still cannot pass
+                # _two_tone below, which is what makes trimming safe.
+                cut = _trim_tail(on, min_seg)
+                if not cut or cut / w < RIGHT_MIN or cut > cap:
+                    if census:
+                        census.add("flush_right", at=at, y0=y0, h=y1 - y0,
+                                   x1=x1, w=w, cap=cap,
+                                   pitches=round((y1 - y0) / pitch, 2),
+                                   segs=len([1 for s, e in _runs(on)
+                                             if e - s >= min_seg]))
+                    continue
                 if census:
-                    census.add("flush_right", at=at, y0=y0, h=y1 - y0,
-                               x1=x1, w=w, cap=int(w - EDGE_MARGIN * k),
-                               pitches=round((y1 - y0) / pitch, 2),
-                               segs=len([1 for s, e in _runs(on)
-                                         if e - s >= min_seg]))
-                continue
+                    census.add("tail_trimmed", at=at, y0=y0, h=y1 - y0,
+                               was=x1, now=cut, cap=cap)
+                x1 = cut
+                on = on.copy()
+                on[x1:] = False
             # The left edge is the start of the row's LONGEST solid run, not its
             # leftmost coloured pixel -- the assist tiles are further left again.
             # Walking in from the right instead does not work: the victim's

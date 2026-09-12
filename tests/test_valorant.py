@@ -1063,28 +1063,91 @@ def test_attaching_a_census_does_not_change_what_is_read():
         assert plain == with_census
 
 
-def test_scenery_filling_the_right_margin_is_counted_as_flush_right():
-    """FROM FOOTAGE, and the open question #84 left behind.
+BRICK = (182, 142, 104)      # sandstone; r-g 40 against a TEAM_MIN of 30
 
-    A settled row ends short of the band's edge and has background to its
-    right. A warm wall -- or the player's own Clove smoke -- lights that gap,
-    the row's right edge reads as the frame edge, and EDGE_MARGIN throws it
-    away as a slide-in animation frame. The row is real and the kill is lost.
 
-    What is pinned here is only that the loss is now COUNTED, with the
-    geometry it was counted on. Which way to decide it is what the census is
-    for measuring; nothing here asserts an answer.
+def test_scenery_abutting_the_row_leaves_no_margin_to_find():
+    """THE LIMIT OF THE TRIM, pinned deliberately.
+
+    The row is recovered by finding its own right margin inside the lit
+    strip. Scenery starting exactly where the row ends fills that margin
+    completely, so the strip is one unbroken run and there is no gap to cut
+    back to. The kill is lost, and counted as flush_right.
+
+    Not a defect in the trim: the margin is genuinely absent from the signal,
+    and anything that guessed an edge here would be inventing one. Scenery
+    that starts even a few pixels clear of the row is recovered -- see below.
     """
     a = _draw(_band(), 20, 560, killer=GREEN, victim=RED, yellow_left=True)
-    brick = (182, 142, 104)
-    a[20:54, RIGHT:BAND_W] = brick        # scenery across the row's own margin
+    a[20:54, RIGHT:BAND_W] = BRICK        # starts exactly at the row's end
 
     c = vf.Census()
-    assert vf.read_frame(a, census=c) == [], "the row is lost, as it is today"
+    assert vf.read_frame(a, census=c) == []
     assert c.counts["flush_right"] == 1
     got = c.samples["flush_right"][0]
     assert got["x1"] > got["cap"], got
-    assert got["pitches"] < 2, "one row's worth of height, not a stack"
+    assert got["segs"] == 1, "one unbroken run -- nothing to trim to"
+
+
+@pytest.mark.parametrize("width", [3, 4, 8, 14])
+def test_scenery_clear_of_the_row_is_trimmed_and_the_kill_survives(width):
+    """FROM FOOTAGE. The loss #84 identified and left unfixed.
+
+    A wall, or the player's own Clove smoke, lights the band's right-hand
+    columns. The row's right edge then reads as the frame edge and EDGE_MARGIN
+    throws it away as a slide-in animation frame -- a real kill, gone.
+
+    Four pixels of it cost the row exactly as much as forty, which is why the
+    tail is held to no minimum width.
+    """
+    a = _draw(_band(), 20, 560, killer=GREEN, victim=RED, yellow_left=True)
+    a[20:54, BAND_W - width:BAND_W] = BRICK
+
+    c = vf.Census()
+    assert [r.kind for r in vf.read_frame(a, census=c)] == ["kill"]
+    assert c.counts.get("tail_trimmed") == 1
+    assert c.samples["tail_trimmed"][0]["now"] == RIGHT
+
+
+def test_a_whole_multi_kill_is_no_longer_lost_to_one_smear():
+    """WHY THIS IS WORTH THE RISK. Contamination in the margin spans every row
+    of a stack at once, so a four-row multi-kill -- the clip most worth having
+    -- lost all four rows together, not one."""
+    a = _band()
+    for i in range(4):
+        _draw(a, 10 + i * vf.PITCH, 560, killer=GREEN, victim=RED,
+              yellow_left=(i == 0))
+    a[10:10 + 4 * vf.PITCH, BAND_W - 8:BAND_W] = BRICK
+
+    got = [r.kind for r in vf.read_frame(a)]
+    assert got == ["kill", "other", "other", "other"], got
+
+
+@pytest.mark.parametrize("what, paint", [
+    ("a bare wall", lambda a: a.__setitem__((slice(20, 54), slice(600, BAND_W)), BRICK)),
+    ("a one-tone bar off the edge",
+     lambda a: a.__setitem__((slice(20, 54), slice(300, BAND_W)), GREEN)),
+    ("a speck with no row behind it",
+     lambda a: a.__setitem__((slice(20, 54), slice(BAND_W - 3, BAND_W)), BRICK)),
+])
+def test_the_trim_cannot_admit_something_that_was_never_a_row(what, paint):
+    """The trim only ever re-runs the tests that already existed, so what the
+    detector rejects today it still rejects. _two_tone is the backstop that
+    makes this safe: scenery is one colour, and a row is two."""
+    a = _band()
+    paint(a)
+    assert vf.read_frame(a) == [], what
+
+
+def test_a_row_trimmed_back_past_its_own_margin_is_refused():
+    """A row is not solid -- the victim's portrait leaves a hole in it -- so
+    the run before the tail can be an internal gap and the cut can land inside
+    the row. RIGHT_MIN rejects that: what comes back no longer ends where a
+    settled row ends."""
+    a = _draw(_band(), 20, 560, killer=GREEN, victim=RED, yellow_left=True)
+    a[20:54, 700:RIGHT] = BG               # everything right of 700 goes dark
+    a[20:54, BAND_W - 8:BAND_W] = BRICK    # ...and the margin is lit
+    assert vf.read_frame(a) == []
 
 
 def test_the_same_row_without_the_scenery_is_read_normally():
