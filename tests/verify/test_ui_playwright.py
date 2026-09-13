@@ -1,0 +1,314 @@
+r"""Tier 7: the real build, in a real browser.
+
+Every other tier talks to the app over HTTP. That is fast, and it cannot see
+what the PAGE does with an answer -- and the page is most of this program. The
+bug that prompted this tier is exactly that shape: /api/reel/audio answered
+403, the page set that URL on an <audio> element, and the only symptom
+anywhere was a greyed-out play button on somebody's screen. Every HTTP test
+still passed, because the route was only ever asked to say no.
+
+So this tier opens dist\AutoStream\AutoStream.exe -- the actual build, not the
+source tree -- in Chromium, clicks through it, and watches three things the
+HTTP tiers cannot:
+
+    the console          a JS error is a dead button nobody hears about
+    every response       anything the page asks for that comes back 4xx or 5xx
+    media elements       readyState and duration: whether it can actually PLAY
+
+The app runs against a throwaway home with youtube.enabled off, so nothing of
+the user's is touched and nothing reaches YouTube.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from urllib.parse import urlparse
+
+import appd
+import pytest
+
+pytestmark = pytest.mark.ui
+
+PAGES = ("dash", "library", "clips", "settings", "logs")
+# Answers that are correct even though they are 4xx. Empty on purpose: today
+# the page asks for nothing it expects to be refused, and an entry here should
+# have to be justified.
+ALLOWED_FAILURES: tuple[str, ...] = ()
+
+
+@pytest.fixture(scope="module")
+def app(tmp_path_factory):
+    why = appd.why_not()
+    if why:
+        pytest.skip(why)
+    from fakes import free_port
+
+    home = tmp_path_factory.mktemp("ui-home")
+    port = free_port()
+    appd.seed_home(home, port)
+    base, proc = appd.start(home, port)
+    try:
+        yield {"base": base, "home": home, "token": appd.TOKEN}
+    finally:
+        appd.stop(base, proc)
+
+
+@pytest.fixture(scope="module")
+def browser():
+    api = pytest.importorskip(
+        "playwright.sync_api",
+        reason="pip install playwright && python -m playwright install chromium")
+    with api.sync_playwright() as p:
+        try:
+            b = p.chromium.launch()
+        except Exception as e:                               # noqa: BLE001
+            pytest.skip(f"chromium will not launch: {e}")
+        yield b
+        b.close()
+
+
+class Watched:
+    """A page, plus everything that went wrong on it."""
+
+    def __init__(self, page, base):
+        self.page, self.base = page, base
+        self.console: list[str] = []
+        self.errors: list[str] = []
+        self.failed: list[str] = []
+        page.on("console", self._console)
+        page.on("pageerror", lambda e: self.errors.append(str(e)))
+        page.on("response", self._response)
+
+    def _console(self, msg):
+        if msg.type == "error":
+            self.console.append(msg.text)
+
+    def _response(self, r):
+        if r.status >= 400:
+            path = urlparse(r.url).path
+            if path not in ALLOWED_FAILURES:
+                self.failed.append(f"{r.status} {r.request.method} {path}")
+
+    def clean(self, what: str = "") -> None:
+        problems = ([f"console error: {c}" for c in self.console]
+                    + [f"uncaught: {e}" for e in self.errors]
+                    + [f"asked for and refused: {f}" for f in self.failed])
+        assert problems == [], ((what or "the page") + " produced:\n  "
+                                + "\n  ".join(problems))
+
+    def api(self, method: str, path: str, body=None):
+        """Ask the backend THROUGH THE PAGE, with the page's own token."""
+        return self.page.evaluate(
+            """async ([m, p, b]) => (m === 'GET' ? API.get(p) : API.post(p, b || {}))""",
+            [method, path, body])
+
+    def raw(self, method: str, path: str, body=None) -> dict:
+        """The same, but reporting the status rather than throwing on it.
+
+        Several routes answer 4xx as their correct answer -- a blank clip path
+        is refused, and that refusal is the guard working. API.get raises on
+        any non-2xx, so a sweep that used it would call every one of those a
+        failure.
+        """
+        return self.page.evaluate(
+            """async ([m, p, b]) => {
+                 const sep = p.indexOf('?') >= 0 ? '&' : '?';
+                 const url = p + sep + 'k=' + encodeURIComponent(SHELL_K);
+                 const r = await fetch(url, m === 'GET' ? {} : {
+                     method: 'POST',
+                     headers: {'Content-Type': 'application/json'},
+                     body: JSON.stringify(b || {})});
+                 let out = null;
+                 try { out = await r.json(); } catch (e) { out = null; }
+                 return {status: r.status, body: out};
+               }""", [method, path, body])
+
+
+@pytest.fixture
+def ui(browser, app):
+    ctx = browser.new_context(viewport={"width": 1500, "height": 950})
+    page = ctx.new_page()
+    w = Watched(page, app["base"])
+    page.goto(f"{app['base']}/?k={app['token']}", wait_until="domcontentloaded")
+    page.wait_for_selector("#view-dash", state="attached", timeout=30_000)
+    page.wait_for_function("typeof API !== 'undefined' && typeof go === 'function'",
+                           timeout=30_000)
+    yield w
+    ctx.close()
+
+
+# ------------------------------------------------------------------ the page
+
+def test_the_built_app_paints_its_page(ui):
+    """The whole document is assembled from Python strings. A join that breaks
+    is a blank window -- which is what 1.17.5 shipped."""
+    assert ui.page.locator(".rail-btn[data-page]").count() == len(PAGES)
+    assert ui.page.locator("#view-dash").count() == 1
+    ui.page.wait_for_timeout(2500)          # two turns of the status poll
+    ui.clean("opening the app")
+
+
+@pytest.mark.parametrize("page_id", PAGES)
+def test_every_page_opens_without_a_word_in_the_console(ui, page_id):
+    ui.page.click(f'.rail-btn[data-page="{page_id}"]')
+    ui.page.wait_for_selector(f"#view-{page_id}.is-active", timeout=15_000)
+    ui.page.wait_for_timeout(1200)
+    assert ui.page.locator(f"#view-{page_id} .card").count() >= 1, \
+        f"the {page_id} page opened but drew no cards"
+    ui.clean(f"the {page_id} page")
+
+
+def test_nothing_the_page_asks_for_comes_back_refused(ui):
+    """THE WATCHDOG. Walk the whole app and fail on any 4xx/5xx the page itself
+    caused -- the class of bug that greyed out the beat marker's play button."""
+    for page_id in PAGES:
+        ui.page.click(f'.rail-btn[data-page="{page_id}"]')
+        ui.page.wait_for_selector(f"#view-{page_id}.is-active", timeout=15_000)
+        ui.page.wait_for_timeout(900)
+    ui.clean("walking every page")
+
+
+# ------------------------------------------------------------------- settings
+
+def test_a_setting_saved_in_the_browser_reaches_the_app(ui):
+    """Chosen in the real form, saved with the real button, read back out of
+    the real app: the round trip the HTTP tier can only see half of."""
+    ui.page.click('.rail-btn[data-page="settings"]')
+    ui.page.wait_for_selector("#view-settings.is-active")
+    # Only the chosen section is on screen, and advanced fields are folded
+    # away inside a <details>. Both are real steps a person takes.
+    ui.page.click('#set-nav [data-sec="clips"]')
+    ui.page.wait_for_selector("#set-sec-clips:not(.hide)", timeout=15_000)
+    ui.page.evaluate("""() => {
+        const f = document.getElementById('set-f-clips-min-kills');
+        for (let n = f; n; n = n.parentElement)
+            if (n.tagName === 'DETAILS') n.open = true;
+    }""")
+    field = ui.page.locator("#set-f-clips-min-kills")
+    field.wait_for(timeout=15_000)
+    before = str(ui.api("GET", "/api/settings/values")["clips.min_kills"])
+    want = "3" if before != "3" else "2"
+    field.select_option(want)
+    save = ui.page.locator("#set-save")
+    assert save.is_enabled(), "editing a field did not arm Save"
+    save.click()
+    ui.page.wait_for_timeout(1500)
+    after = str(ui.api("GET", "/api/settings/values")["clips.min_kills"])
+    assert after == want, f"the page saved {want}, the app has {after}"
+    ui.clean("saving a setting")
+
+
+# -------------------------------------------------------------------- media
+
+def test_the_beat_marker_can_actually_play_the_song(ui, tmp_path):
+    """THE BUG THIS TIER EXISTS FOR. The song is analysed and the marker opened
+    exactly as the page does it, then the <audio> element is asked whether it
+    can play. Before the fix it carried media error 4 -- the request came back
+    403 -- and every HTTP-level test still passed."""
+    song = appd.click_track(tmp_path / "verify song.wav")
+    got = ui.api("POST", "/api/reel/song", {"song": str(song)})
+    assert got and got.get("ok"), f"the app could not read the song: {got}"
+
+    ui.page.click('.rail-btn[data-page="clips"]')
+    ui.page.wait_for_selector("#view-clips.is-active")
+    ui.page.evaluate("""([path, got]) => {
+        reel_useSong(path, got);      /* what choosing a track does */
+        PAGE_REEL.open([]);           /* show the reel card */
+        reel_openMark();              /* open the tap-the-beats panel */
+    }""", [str(song), got])
+
+    ui.page.locator("#reel-audio").wait_for(state="visible", timeout=15_000)
+    ui.page.wait_for_function(
+        """() => { const a = document.getElementById('reel-audio');
+                   return a && (a.readyState > 0 || a.error); }""", timeout=20_000)
+    state = ui.page.evaluate(
+        """() => { const a = document.getElementById('reel-audio');
+                   return {err: a.error && a.error.code, ready: a.readyState,
+                           dur: a.duration, net: a.networkState, src: a.currentSrc}; }""")
+    assert not state["err"], (
+        f"the beat marker cannot play the song (media error {state['err']}, "
+        f"network state {state['net']}): {state['src']}")
+    assert state["ready"] >= 1 and state["dur"] > 1, \
+        f"the player has nothing to tap against: {state}"
+    ui.clean("opening the beat marker")
+
+
+def test_a_clip_plays_in_the_page(ui, app, tmp_path):
+    """The other media element, through the page's own URL builder against the
+    real app -- so a video route that stops serving fails here."""
+    import subprocess
+
+    from autostream.clips.tools import binary
+
+    ff = binary("ffmpeg")
+    if not ff:
+        pytest.skip("no ffmpeg to make a clip with")
+    clips = Path(app["home"]) / "video" / "clips" / "ui-test"
+    clips.mkdir(parents=True, exist_ok=True)
+    made = clips / "sample.mp4"
+    subprocess.run([ff, "-y", "-v", "error", "-f", "lavfi", "-i",
+                    "testsrc=size=320x180:rate=15:duration=2", str(made)],
+                   check=True, timeout=180)
+    ui.page.click('.rail-btn[data-page="clips"]')
+    ui.page.wait_for_selector("#view-clips.is-active")
+    state = ui.page.evaluate("""async (path) => {
+        const v = document.createElement('video');
+        v.src = clip_videoURL(path);          /* the page's own URL builder */
+        document.body.appendChild(v);
+        await new Promise(res => { v.onloadedmetadata = res; v.onerror = res;
+                                   setTimeout(res, 15000); });
+        return {err: v.error && v.error.code, ready: v.readyState, dur: v.duration};
+    }""", str(made))
+    assert not state["err"], f"a clip in the clips folder would not play: {state}"
+    assert state["dur"] > 0.5, f"the clip loaded no video: {state}"
+    ui.clean("playing a clip")
+
+
+# ------------------------------------------- the backend, through the page
+
+def _rows():
+    import catalog
+
+    return [c for c in catalog.CONTROLS
+            if c.probe == catalog.CALL and c.path.startswith("/api/")
+            and c.method in ("GET", "POST")]
+
+
+@pytest.mark.parametrize("c", _rows(), ids=lambda c: f"{c.method} {c.path}")
+def test_the_backend_answers_the_built_app(ui, c):
+    """Tier 2 asks these of a server built inside the test process. This asks
+    the same of the FROZEN build, through the page's own fetch -- so a route
+    that only breaks once PyInstaller has packaged it fails here."""
+    path = f"{c.path}?{c.query}" if c.query else c.path
+    got = ui.raw(c.method, path, c.body)
+    assert got["status"] in c.status, (
+        f"{c.path} answered {got['status']}, expected one of {c.status}. {c.why}")
+    if got["status"] == 200 and c.expect_resp is None and c.expect is not None:
+        assert c.expect(got["body"]), f"{c.path} answered {str(got['body'])[:300]}"
+
+
+def test_the_watchdog_notices_a_dead_player(ui, tmp_path):
+    """Proof that the tests above would fail if the bug came back.
+
+    A song the app has not analysed is refused -- which is precisely what the
+    whole Downloads folder was, before the fix. The page is made to ask for one
+    anyway, and both nets must catch it: the media element ends up with an
+    error, and the refused response is recorded. If either stops working, the
+    checks above would go quiet instead of failing.
+    """
+    import urllib.parse
+
+    stranger = tmp_path / "not the chosen song.wav"
+    appd.click_track(stranger, seconds=2.0)
+    state = ui.page.evaluate("""async (path) => {
+        const a = document.createElement('audio');
+        a.src = '/api/reel/audio?k=' + encodeURIComponent(SHELL_K) +
+                '&path=' + encodeURIComponent(path);
+        document.body.appendChild(a);
+        await new Promise(res => { a.onloadedmetadata = res; a.onerror = res;
+                                   setTimeout(res, 10000); });
+        return {err: a.error && a.error.code, ready: a.readyState};
+    }""", str(stranger))
+    assert state["err"], "a refused song still looked playable to the page"
+    assert any("/api/reel/audio" in f for f in ui.failed), \
+        f"the response watchdog did not record the refusal: {ui.failed}"
+    ui.failed.clear()        # the refusal was the point of this test

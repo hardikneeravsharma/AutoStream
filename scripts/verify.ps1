@@ -9,8 +9,8 @@
               This is the one to run while working.
     (none)    tiers 1-4. Adds the clip detectors, measured against a reviewed
               baseline on real footage. Ten to fifteen minutes.
-    -Release  tiers 1-6. Adds the built binary and a real private broadcast.
-              This is what build.ps1 -Dist runs.
+    -Release  tiers 1-7. Adds the built binary, the browser, and (with -Live)
+              a real private broadcast. This is what build.ps1 -Dist runs.
 
     Tiers 5 and 6 touch things outside this process, so each one says what it
     is about to do before it does it, and is skipped rather than failed when
@@ -129,6 +129,31 @@ if ($Release) {
     }
 } else {
     Skip-Tier -Name "tier 5     the built binary boots" -Why "not -Release"
+}
+
+# ---- tier 7: the built app in a real browser -------------------------
+#
+# The only tier that sees what the PAGE does with an answer: console errors,
+# requests that come back refused, and whether a media element can actually
+# play. A greyed-out play button is invisible to every tier above this one.
+if ($Release) {
+    $running = @(Get-Process -Name "AutoStream" -ErrorAction SilentlyContinue)
+    if ($running.Count -gt 0) {
+        Skip-Tier -Name "tier 7     the built app in a browser" `
+                  -Why "AutoStream is running; quit it first (POST /api/cmd {""command"":""quit""})"
+    } elseif (-not (Test-Path $BuiltExe)) {
+        Skip-Tier -Name "tier 7     the built app in a browser" -Why "no build at $BuiltExe"
+    } else {
+        $chromium = & $vpy -c "import playwright; print('ok')" 2>$null
+        if ($chromium -ne "ok") {
+            Skip-Tier -Name "tier 7     the built app in a browser" `
+                      -Why "playwright is not installed (pip install playwright; python -m playwright install chromium)"
+        } else {
+            Invoke-Tier -Name "tier 7     the built app in a browser" -Marker "ui" | Out-Null
+        }
+    }
+} else {
+    Skip-Tier -Name "tier 7     the built app in a browser" -Why "not -Release"
 }
 
 # ---- tier 6: real OBS, real private broadcast ------------------------

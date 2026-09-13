@@ -293,6 +293,17 @@ class MainWindow:
         `fell_back` set. Windows without the WebView2 runtime take that path,
         and a clean install is exactly where it is missing.
         """
+        # QUIT CAN ARRIVE BEFORE THE WINDOW EXISTS. cmd_run does engine.startup()
+        # -- which refreshes the game index over the network -- on this thread,
+        # before ever getting here, and the web server is already answering by
+        # then. A Quit during those seconds called request_quit() on a window
+        # that was still None, so the destroy did nothing and this method then
+        # opened a window and blocked on it forever: the app took the request,
+        # said ok, and never exited. Honour the flag instead of outliving it.
+        if self._quit:
+            log.info("quit was requested before the window opened - not opening one")
+            return
+
         if not _HAS:
             log.info("pywebview not installed - opening the UI in your browser")
             self._to_browser()
