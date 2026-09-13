@@ -44,6 +44,37 @@ REEL_HTML: str = (
   </div>
 
   <div class="card-body">
+    <!-- THE STRAIGHT PATH, taken when the song edit is asked for from the
+         finished clips: choose a track and the edit is made, with the whole
+         five-step card kept behind "Not quite" for when it is wrong. -->
+    <section class="reel-quick hide" id="reel-quick">
+      <p class="reel-quick-msg" id="reel-quick-msg"></p>
+      <div class="field-inline hide" id="reel-quick-pick">
+        <button class="btn btn-primary" type="button" data-act="reel-quick-song">
+          Choose a song&hellip;</button>
+        <span class="muted">Any track on this PC. It is not uploaded anywhere.</span>
+      </div>
+      <div class="hide" id="reel-quick-result">
+        <video class="reel-quick-video" id="reel-quick-video" controls
+               playsinline preload="metadata"></video>
+        <p class="muted" id="reel-quick-facts"></p>
+        <p class="reel-quick-ask" id="reel-quick-ask">How is it?</p>
+        <div class="field-inline">
+          <button class="btn btn-primary" type="button" data-act="reel-quick-love">
+            Love it</button>
+          <button class="btn" type="button" data-act="reel-quick-fix">
+            Not quite &mdash; let me fix it</button>
+          <button class="btn btn-ghost" type="button" data-act="reel-show">
+            Show the file</button>
+        </div>
+      </div>
+      <div class="panel hide" id="reel-quick-fixer">
+        <p class="muted"><b>1.</b> Drag the handles to the part of the song you
+           want. <b>2.</b> Play it and press <kbd>M</kbd> on every beat a kill
+           should land on. <b>3.</b> Make it again.</p>
+      </div>
+    </section>
+
     <ol class="reel-steps" id="reel-steps"></ol>
 
     <!-- 1. the song -->
@@ -130,9 +161,17 @@ REEL_HTML: str = (
         <button class="btn" type="button" data-act="reel-untap">Undo</button>
         <button class="btn" type="button" data-act="reel-clearmarks">Clear</button>
         <button class="btn" type="button" data-act="reel-seedmarks">Start from the template</button>
-        <button class="btn btn-primary" type="button" data-act="reel-usemarks">Use these beats</button>
+        <button class="btn btn-primary" type="button" id="reel-usemarks-btn"
+                data-act="reel-usemarks">Use these beats</button>
         <span class="muted" id="reel-mark-count"></span>
       </div>
+    </section>
+
+    <!-- Last, because it acts on the two sections above it. -->
+    <section class="reel-step hide" id="reel-quick-again-bar">
+      <button class="btn btn-primary" type="button" data-act="reel-quick-again">
+        Make it again</button>
+      <span class="muted" id="reel-quick-again-msg"></span>
     </section>
   </div>
 </div>
@@ -177,19 +216,11 @@ function reel_renderSteps() {
 
 /* ---------------------------------------------------------------- 1. song */
 
-async function reel_pickSong() {
-  var r = await API.post('/api/clips/pick', {kind: 'audio'});
-  if (!r || !r.path) return;
-  reel_state.song = r.path;
-  reel_el('reel-song-name').textContent = r.path.split(/[\\/]/).pop();
-  reel_el('reel-song-facts').textContent = 'Reading the track…';
-  var got = await API.post('/api/reel/song', {song: r.path});
-  if (!got || !got.ok) {
-    reel_el('reel-song-facts').textContent =
-      (got && got.error) || 'Could not read that track.';
-    return;
-  }
+/* ONE PLACE where a chosen song becomes the state both paths work from, so the
+   straight path and the five-step card cannot drift about what a song means. */
+function reel_useSong(path, got) {
   var st = reel_state;
+  st.song = path;
   st.shape = got.song;
   st.templates = got.templates || [];
   st.template = got.default_template || 'bar';
@@ -199,11 +230,30 @@ async function reel_pickSong() {
      Long enough for a reel, short enough not to demand every kill a session
      ever produced. */
   st.to = Math.min(got.song.seconds, 60);
-  var s = got.song;
-  reel_el('reel-song-facts').textContent =
-    s.bpm.toFixed(1) + ' BPM · bar ' + s.bar.toFixed(2) + 's' +
+  var a = reel_el('reel-audio');
+  if (a) a.src = '/api/reel/audio?k=' + encodeURIComponent(SHELL_K) +
+                 '&path=' + encodeURIComponent(path);
+  return reel_songFacts(got.song);
+}
+
+function reel_songFacts(s) {
+  return s.bpm.toFixed(1) + ' BPM · bar ' + s.bar.toFixed(2) + 's' +
     (s.drums_in ? ' · drums in at ' + s.drums_in.toFixed(1) + 's' : '') +
     (s.drop ? ' · drop at ' + s.drop.toFixed(1) + 's' : '');
+}
+
+async function reel_pickSong() {
+  var r = await API.post('/api/clips/pick', {kind: 'audio'});
+  if (!r || !r.path) return;
+  reel_el('reel-song-name').textContent = r.path.split(/[\\/]/).pop();
+  reel_el('reel-song-facts').textContent = 'Reading the track…';
+  var got = await API.post('/api/reel/song', {song: r.path});
+  if (!got || !got.ok) {
+    reel_el('reel-song-facts').textContent =
+      (got && got.error) || 'Could not read that track.';
+    return;
+  }
+  reel_el('reel-song-facts').textContent = reel_useSong(r.path, got);
   ['reel-step-part', 'reel-step-kills', 'reel-step-shape'].forEach(function (id) {
     reel_show(id, true);
   });
@@ -300,7 +350,7 @@ async function reel_replan() {
   };
   if (st.marks && st.marks.length) body.beats = st.marks;
   var r = await API.post('/api/reel/plan', body);
-  reel_show('reel-step-plan', true);
+  reel_show('reel-step-plan', !st.quick);
   if (!r || !r.ok) {
     reel_el('reel-plan-facts').textContent =
       (r && r.error) || 'Could not work out a plan.';
@@ -381,8 +431,10 @@ function reel_tick(ctx, x, h, colour) {
 async function reel_build() {
   var st = reel_state;
   if (!st.plan || st.busy) return;
-  var src = (window.clip_state && clip_state.pick)
-    ? clip_state.pick.recording_path : '';
+  /* The straight path knows its recording from the finished run; the card is
+     working on whatever the Clips page has picked. */
+  var src = st.source || ((window.clip_state && clip_state.pick)
+    ? clip_state.pick.recording_path : '');
   if (!src) { toast('No recording is selected.', 'error'); return; }
   st.busy = true;
   reel_el('reel-build-msg').textContent =
@@ -393,7 +445,7 @@ async function reel_build() {
        so it is a real fade rather than the track stopping. */
     fade: Math.min(4, Math.max(0, st.shape.seconds - st.to)),
     template: st.template, start: st.from > 0.05 ? st.from : null,
-    name: ((clip_state.pick || {}).game || 'reel') + '-' +
+    name: (st.game || (clip_state.pick || {}).game || 'reel') + '-' +
           Math.round(st.shape.bpm || 0) + 'bpm',
     kills: reel_chosen().map(function (k) {
       return {time: k.time, round: k.round, labels: k.labels};
@@ -405,11 +457,136 @@ async function reel_build() {
   reel_el('reel-build-msg').textContent = '';
   if (!r || !r.ok) { toast((r && r.error) || 'The reel failed.', 'error'); return; }
   st.built = r;
-  reel_show('reel-step-done', true);
+  reel_show('reel-step-done', !st.quick);
   reel_el('reel-done-facts').textContent =
     r.shots + ' shots · ' + reel_secs(r.seconds) + ' · ' + r.path;
   reel_renderSteps();
   toast('Reel ready.', 'ok');
+  return r;
+}
+
+/* ------------------------------------------------- the straight path */
+
+function reel_quickMsg(text, bad) {
+  var e = reel_el('reel-quick-msg');
+  if (e) { e.textContent = text || ''; e.classList.toggle('is-bad', !!bad); }
+}
+
+/* Which parts of the card are on show. The five steps are not deleted in the
+   straight path, only hidden: "Not quite" brings back the two that answer the
+   question somebody actually has, which is the part of the song and the beats. */
+function reel_quickUI(on) {
+  reel_state.quick = !!on;
+  reel_show('reel-quick', on);
+  ['reel-steps', 'reel-step-song', 'reel-step-kills', 'reel-step-shape',
+   'reel-step-plan', 'reel-step-done'].forEach(function (id) {
+    var e = reel_el(id);
+    if (e) e.classList.toggle('hide', !!on);
+  });
+  if (on) {
+    ['reel-step-part', 'reel-step-mark', 'reel-quick-again-bar',
+     'reel-quick-result', 'reel-quick-fixer', 'reel-quick-pick'].forEach(function (id) {
+      reel_show(id, false);
+    });
+  }
+  var um = reel_el('reel-usemarks-btn');
+  if (um) um.classList.toggle('hide', !!on);
+}
+
+async function reel_quick(folder, game) {
+  var st = reel_state;
+  st.quick = true; st.built = null; st.marks = null; st.plan = null;
+  st.source = ''; st.game = game || 'reel'; st.kills = [];
+  reel_wire();
+  st.open = true;
+  reel_show('reel-card', true);
+  reel_quickUI(true);
+  var card = reel_el('reel-card');
+  if (card) card.scrollIntoView({behavior: 'smooth', block: 'start'});
+
+  reel_quickMsg('Reading what this run found…');
+  var info = await API.get('/api/clips/existing?folder=' + encodeURIComponent(folder || ''));
+  if (!info || !info.ok) {
+    reel_quickMsg((info && info.error) || 'Could not read that run.', true);
+    return;
+  }
+  st.source = info.source || '';
+  /* The kills, not the clips: a clip is a window around a fight and the reel
+     needs the instant of each kill. */
+  st.kills = (info.kills || []).map(function (k) {
+    return {time: Number(k.time), round: k.round,
+            labels: k.labels || [], count: 1, on: true};
+  });
+  if (!st.kills.length || !st.source) {
+    reel_quickMsg('This run has no kills to cut to a song.', true);
+    return;
+  }
+  reel_quickPick();
+}
+
+async function reel_quickPick() {
+  reel_show('reel-quick-pick', false);
+  reel_quickMsg('Choose a song on your PC…');
+  var r = await API.post('/api/clips/pick', {kind: 'audio'});
+  if (!r || !r.path) {
+    reel_quickMsg('No song chosen.');
+    reel_show('reel-quick-pick', true);
+    return;
+  }
+  reel_quickMake(r.path);
+}
+
+async function reel_quickMake(path) {
+  var st = reel_state;
+  reel_quickMsg('Finding the beat in ' + path.split(/[\\/]/).pop() + '…');
+  var got = await API.post('/api/reel/song', {song: path});
+  if (!got || !got.ok) {
+    reel_quickMsg((got && got.error) || 'Could not read that track.', true);
+    reel_show('reel-quick-pick', true);
+    return;
+  }
+  var facts = reel_useSong(path, got);
+  reel_quickMsg(facts + ' — working out where every kill lands…');
+  await reel_replan();
+  await reel_quickRender();
+}
+
+/* Shared by the first go and by "Make it again", so the fixed version is made
+   exactly the way the first one was. */
+async function reel_quickRender() {
+  var st = reel_state;
+  if (!st.plan) {
+    reel_quickMsg('Could not work out a plan for that song.', true);
+    return;
+  }
+  reel_quickMsg('Cutting your song edit… this takes a couple of minutes.');
+  reel_el('reel-quick-again-msg').textContent = 'Cutting…';
+  var r = await reel_build();
+  reel_el('reel-quick-again-msg').textContent = '';
+  if (!r || !r.ok) {
+    reel_quickMsg((r && r.error) || 'The song edit failed. See the log.', true);
+    return;
+  }
+  reel_quickMsg('');
+  reel_show('reel-quick-result', true);
+  var v = reel_el('reel-quick-video');
+  if (v && window.clip_videoURL) { v.src = clip_videoURL(r.path); v.load(); }
+  reel_el('reel-quick-facts').textContent =
+    r.shots + (r.shots === 1 ? ' kill' : ' kills') + ' · ' +
+    reel_secs(r.seconds) + ' · ' + (st.plan.used < st.plan.available
+      ? (st.plan.available - st.plan.used) + ' more did not fit in this part of the song · ' : '') +
+    r.path;
+}
+
+/* "Not quite": the two questions worth asking, in the order they matter. */
+function reel_quickFix() {
+  reel_show('reel-quick-fixer', true);
+  reel_show('reel-step-part', true);
+  reel_syncRange();
+  reel_openMark();
+  reel_show('reel-quick-again-bar', true);
+  var e = reel_el('reel-quick-fixer');
+  if (e) e.scrollIntoView({behavior: 'smooth', block: 'start'});
 }
 
 /* --------------------------------------------------------- marking beats */
@@ -460,10 +637,15 @@ function reel_renderMarks() {
 }
 
 window.PAGE_REEL = {
+  quick: reel_quick,
   open: function (rows) {
     reel_loadKills(rows);
     reel_state.open = true;
     reel_show('reel-card', true);
+    /* Back to the five-step card, whatever the straight path last hid. */
+    reel_quickUI(false);
+    reel_show('reel-step-song', true);
+    reel_state.source = '';
     reel_renderKills();
     reel_renderSteps();
     reel_wire();
@@ -531,6 +713,18 @@ function reel_wire() {
       reel_renderKills(); reel_replan();
     }
     else if (act === 'reel-build') reel_build();
+    else if (act === 'reel-quick-song') reel_quickPick();
+    else if (act === 'reel-quick-fix') reel_quickFix();
+    else if (act === 'reel-quick-again') reel_quickRender();
+    else if (act === 'reel-quick-love') {
+      reel_show('reel-quick-fixer', false);
+      reel_show('reel-step-part', false);
+      reel_show('reel-step-mark', false);
+      reel_show('reel-quick-again-bar', false);
+      var ask = reel_el('reel-quick-ask');
+      if (ask) ask.textContent = 'Saved. It is in your clips folder.';
+      toast('Song edit saved.', 'ok');
+    }
     else if (act === 'reel-mark') reel_openMark();
     else if (act === 'reel-tap') reel_tap();
     else if (act === 'reel-untap') { (reel_state.marks || []).pop(); reel_renderMarks(); }

@@ -161,7 +161,7 @@ CONTROLS: list[Control] = [
             expect=lambda j: isinstance(j, (dict, list)),
             why="reads history.jsonl"),
     Control("/api/clips/existing", "GET", CALL, "clips of a folder", "clips",
-            query="folder=", expect=lambda j: isinstance(j, (dict, list)),
+            query="folder=", acts=("songedit",), expect=lambda j: isinstance(j, (dict, list)),
             why="an empty folder is a normal answer, not an error"),
     Control("/api/clips/sounds", "GET", CALL, "sound effects", "clips",
             expect=lambda j: isinstance(j, (dict, list)),
@@ -258,7 +258,7 @@ CONTROLS: list[Control] = [
             expect=_has("error"), acts=("reveal-src", "reveal-out"),
             why="a path that is not there is refused before Explorer is spawned"),
     Control("/api/clips/pick", "POST", STATIC, "Pick a local file", "clips",
-            acts=("pick-local", "use-local"),
+            acts=("pick-local", "use-local", "reel-quick-song"),
             why="opens a native Tk dialog ON THE SERVER and blocks the "
                 "request thread until a human dismisses it"),
     Control("/api/clips/install", "POST", STATIC, "Install them", "clips",
@@ -285,7 +285,7 @@ CONTROLS: list[Control] = [
     Control("/api/reel/run", "POST", CALL, "Make the reel", "clips",
             body={"song": "", "kills": [], "source": ""}, expect=_has("ok"),
             reject={"song": "", "kills": [], "source": ""}, reject_soft=True,
-            acts=("reel-build",),
+            acts=("reel-build", "reel-quick-again"),
             why="queues the encode; a missing recording is refused before "
                 "ffmpeg is spawned"),
     Control("/api/reel/audio", "GET", STATIC, "the song, for the mark page",
@@ -397,4 +397,10 @@ NOT_A_FLOW: dict[str, str] = {
                       "than start from nothing",
     "reel-show": "reveals the finished file in Explorer via clip_reveal",
     "reel-again": "returns the card to the moment picker for another take",
+    # --- the straight path from the finished clips. The song edit is made
+    # without asking anything, so the only choices left are about the song
+    # itself, and both are answered in the browser until Make it again.
+    "reel-quick-fix": "shows the part picker and the beat marker; nothing is "
+                      "sent until Make it again",
+    "reel-quick-love": "accepts the edit as it is; the file is already on disk",
 }

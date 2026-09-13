@@ -14,17 +14,17 @@
         28.38
       ],
       "measured": {
-        "tp": 2,
-        "fn": 1,
-        "fp": 1,
-        "recall": 0.6667,
-        "precision": 0.6667,
-        "f1": 0.6667
+        "tp": 3,
+        "fn": 0,
+        "fp": 0,
+        "recall": 1.0,
+        "precision": 1.0,
+        "f1": 1.0
       },
       "floor": {
-        "recall": 0.6666,
-        "precision": 0.6666,
-        "max_false_positives": 1
+        "recall": 1.0,
+        "precision": 1.0,
+        "max_false_positives": 0
       },
       "target": {
         "recall": 0.85,
@@ -42,15 +42,15 @@
       ],
       "rejected": [],
       "measured": {
-        "tp": 1,
-        "fn": 1,
+        "tp": 2,
+        "fn": 0,
         "fp": 0,
-        "recall": 0.5,
+        "recall": 1.0,
         "precision": 1.0,
-        "f1": 0.6667
+        "f1": 1.0
       },
       "floor": {
-        "recall": 0.5,
+        "recall": 1.0,
         "precision": 1.0,
         "max_false_positives": 0
       },
@@ -72,15 +72,15 @@
       ],
       "rejected": [],
       "measured": {
-        "tp": 1,
-        "fn": 3,
+        "tp": 4,
+        "fn": 0,
         "fp": 0,
-        "recall": 0.25,
+        "recall": 1.0,
         "precision": 1.0,
-        "f1": 0.4
+        "f1": 1.0
       },
       "floor": {
-        "recall": 0.25,
+        "recall": 1.0,
         "precision": 1.0,
         "max_false_positives": 0
       },
@@ -121,42 +121,44 @@
       "seconds": 101.97,
       "truth": [
         1.6,
-        26
+        26,
+        98.0
       ],
       "rejected": [],
       "measured": {
-        "tp": 1,
-        "fn": 1,
+        "tp": 3,
+        "fn": 0,
         "fp": 0,
-        "recall": 0.5,
+        "recall": 1.0,
         "precision": 1.0,
-        "f1": 0.6667
+        "f1": 1.0
       },
       "floor": {
-        "recall": 0.5,
+        "recall": 1.0,
         "precision": 1.0,
         "max_false_positives": 0
       },
       "target": {
         "recall": 0.85,
         "precision": 0.95
-      }
+      },
+      "confirmed_by": "Riot match record b645186b, kill at 1106.8s of the recording = 98.0s of this excerpt (0.03s). The review could not have marked it: nothing detected it, so the review page never showed it."
     }
   },
   "measured": {
-    "tp": 5,
-    "fp": 1,
-    "fn": 6,
-    "recall": 0.4545,
-    "precision": 0.8333
+    "tp": 12,
+    "fp": 0,
+    "fn": 0,
+    "recall": 1.0,
+    "precision": 1.0
   },
   "floor": {
-    "recall": 0.4545,
-    "precision": 0.8333
+    "recall": 1.0,
+    "precision": 1.0
   },
   "target": {
     "recall": 0.85,
     "precision": 0.95
   },
-  "note": "Reviewed by hand against the excerpt. `truth` is what a person confirmed plus what they said was missed; `rejected` is what the detector reported that is not there. `floor` is what the detector scored on the day this was imported, so tier 4 is a REGRESSION gate: it fails on any drop, not on failing to reach `target`. Regenerate with review.py import, never by hand."
+  "note": "Reviewed by hand against the excerpt. `truth` is what a person confirmed plus what they said was missed; `rejected` is what the detector reported that is not there. `floor` is what the detector scored on the day this was imported, so tier 4 is a REGRESSION gate: it fails on any drop, not on failing to reach `target`. Regenerate with review.py import, never by hand. One kill (valorant_05 at 98.0s) was added from the game's own match record, not from the detector: see confirmed_by."
 }

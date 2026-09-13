@@ -2937,6 +2937,53 @@ REEL_CSS = """
    Five choices in order, each narrowing the next. The rail reports; it does
    not gate, because changing the song after picking moments should not send
    somebody back to the start. */
+/* THE SONG EDIT, offered on the finished clips. The one animated button in
+   the app: it appears once, at the moment somebody has just watched their
+   clips, and it is the only thing on that card competing for attention. The
+   sheen is a moving highlight rather than a colour cycle, so the button still
+   reads as a button and still passes contrast at every frame. */
+.clip-songedit{
+  display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap;
+  margin:var(--space-5) 0 0;
+}
+.clip-songedit .muted{margin:0}
+.btn-flashy{
+  position:relative;overflow:hidden;
+  background:var(--accent);border-color:var(--accent);color:var(--text-on-accent);
+  box-shadow:0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  animation:as-flashy-pulse 2.6s var(--ease-standard) infinite;
+}
+.btn-flashy:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+.btn-flashy::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(115deg,transparent 30%,
+             color-mix(in srgb, var(--text-on-accent) 45%, transparent) 50%,
+             transparent 70%);
+  transform:translateX(-120%);
+  animation:as-flashy-sheen 2.6s var(--ease-standard) infinite;
+}
+@keyframes as-flashy-pulse{
+  0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent)}
+  50%{box-shadow:0 0 0 6px color-mix(in srgb, var(--accent) 0%, transparent)}
+}
+@keyframes as-flashy-sheen{
+  0%{transform:translateX(-120%)}
+  60%,100%{transform:translateX(120%)}
+}
+@media (prefers-reduced-motion:reduce){
+  .btn-flashy{animation:none}
+  .btn-flashy::after{animation:none;display:none}
+}
+/* The straight path through the reel maker. */
+.reel-quick{display:flex;flex-direction:column;gap:var(--space-4)}
+.reel-quick-msg{margin:0;color:var(--text-secondary);font-size:13.5px}
+.reel-quick-msg.is-bad{color:var(--danger)}
+.reel-quick-msg:empty{display:none}
+.reel-quick-video{
+  width:100%;max-height:56vh;display:block;border-radius:var(--radius-sm);
+  background:#000;border:var(--border-hair) solid var(--border-subtle);
+}
+.reel-quick-ask{margin:var(--space-3) 0;font-weight:600}
 .reel-steps{display:flex;flex-wrap:wrap;gap:6px;list-style:none;margin:0 0 4px;padding:0}
 .reel-step-chip{
   padding:3px 10px;border-radius:999px;font-size:12px;

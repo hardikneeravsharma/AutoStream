@@ -627,6 +627,18 @@ One per line - a long session often covers several matches."></textarea>
     </div>
   </div>
 
+  <!-- THE SONG EDIT, offered where the clips actually are. The reel maker
+       itself has always been reachable from the review card, which is before
+       the cut and so before anybody knows whether the clips are any good.
+       This is the moment somebody has just watched them. -->
+  <div class="clip-songedit hide" id="clip-songedit">
+    <button class="btn btn-flashy" type="button" data-act="songedit">"""
+    + _svg("wand")
+    + """<span>Make a song edit</span></button>
+    <p class="muted" id="clip-songedit-why">Your kills cut to a track you
+       choose, each one landing on a beat.</p>
+  </div>
+
   <div class="clip-results" id="clip-res-list"></div>
 
   <div class="panel hide" id="clip-up" style="margin-top:12px">
@@ -1694,6 +1706,14 @@ function clip_renderJob(j) {
   }
   clip_el('clip-res-sub').textContent = sub;
   clip_show('clip-res-list', j.state === 'done');
+
+  /* Only where it can actually work: the reel needs kills on a recording, and
+     the beat-synced edit is a Valorant thing today because that is the feed
+     the reader returns per-kill times for. */
+  var sumk = (j.summary || {}).kills || 0;
+  clip_show('clip-songedit',
+            j.state === 'done' && !j.needs_demo && sumk > 0 &&
+            /valorant/i.test(String(j.game || '')));
 }
 
 function clip_renderResults(list, montagePath) {
@@ -5047,6 +5067,12 @@ function clip_wire() {
       /* The reel cuts the moments the review just found, so it opens from
          here with those rows rather than detecting anything again. */
       if (window.PAGE_REEL) PAGE_REEL.open(((clip_state.review || {}).rows) || []);
+    } else if (act === 'songedit') {
+      /* Straight into it: pick a song, and the edit is made. The five-step
+         card is still there behind "Not quite", for when the automatic answer
+         is not the one somebody wanted. */
+      var jb = clip_state.lastJob || {};
+      if (window.PAGE_REEL) PAGE_REEL.quick(jb.folder, jb.game);
     } else if (act === 'install-tools') {
       clip_installTools();
     } else if (act === 'strip-all') {

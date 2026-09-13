@@ -1310,6 +1310,15 @@ class Server:
                 # re-render rather than being clamped on screen.
                 "source_seconds": self._source_seconds(plan),
                 "game": plan.get("game", ""),
+                "game_key": plan.get("game_key", ""),
+                # The song edit cuts the run's KILLS to the beat, not its clips:
+                # a clip is a window around a fight, and the reel wants the
+                # instant each kill happened. Times are on the recording.
+                "kills": [{"time": float(k.get("time") or 0.0),
+                           "round": k.get("round"),
+                           "labels": list(k.get("tags") or [])}
+                          for k in (plan.get("kills") or [])
+                          if isinstance(k, dict) and k.get("time") is not None],
                 "when": int(man.stat().st_mtime),
                 "montage": (data or {}).get("montage") if isinstance(data, dict) else None,
                 "clips": clips}
