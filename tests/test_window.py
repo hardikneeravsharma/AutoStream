@@ -118,3 +118,28 @@ def test_request_quit_still_sets_it(monkeypatch):
     assert w._quit is False
     w.request_quit()
     assert w._quit is True
+
+
+def test_quit_asked_for_before_the_window_opens_is_not_lost(monkeypatch):
+    """FROM A BUG the browser tier found. cmd_run runs engine.startup() -- which
+    refreshes the game index over the network -- on the main thread BEFORE
+    win.run(), while the web server is already answering. A Quit in those
+    seconds called request_quit() on a window that was still None, so the
+    destroy did nothing, and run() then opened a window and blocked on it
+    forever: the app answered "ok" and never exited. Anyone pressing Quit
+    during startup had to kill it, and build.ps1 -- which quits the app to
+    replace it -- would hang too.
+    """
+    from autostream import window
+
+    opened = []
+    monkeypatch.setattr(window, "_HAS", True, raising=False)
+    monkeypatch.setattr(window, "webview",
+                        type("W", (), {"create_window": lambda *a, **k: opened.append(a)})(),
+                        raising=False)
+
+    w = window.MainWindow("http://127.0.0.1:65000/")
+    w.request_quit("quit during startup")
+    w.run()
+
+    assert opened == [], "run() opened a window after quit had been asked for"

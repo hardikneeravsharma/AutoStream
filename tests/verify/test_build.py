@@ -24,103 +24,40 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+import appd
 import pytest
 
 pytestmark = pytest.mark.build
 
 REPO = Path(__file__).resolve().parents[2]
-BUILT = REPO / "dist" / "AutoStream" / "AutoStream.exe"
-TOKEN = "verify-build-token"
-BOOT_TIMEOUT = 90.0
-
-
-def _running() -> list:
-    """Is the user's AutoStream up? Checked, never killed.
-
-    It may be mid-broadcast or mid-clip-job. Ending someone's stream to test
-    a build is not a trade this suite gets to make -- and it could not run
-    anyway: autostream/single.py holds a named mutex, so a second copy exits
-    immediately.
-    """
-    try:
-        out = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq AutoStream.exe", "/NH"],
-            capture_output=True, text=True, timeout=30).stdout
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return [ln for ln in out.splitlines() if "AutoStream.exe" in ln]
+BUILT = appd.BUILT
+TOKEN = appd.TOKEN
 
 
 @pytest.fixture(scope="module")
 def daemon(tmp_path_factory):
-    if not BUILT.is_file():
-        pytest.skip(f"no build at {BUILT} - run scripts\\build.ps1 first")
-    if _running():
-        pytest.skip("AutoStream is already running; quit it first "
-                    "(POST /api/cmd {\"command\":\"quit\"}). It is not killed "
-                    "here because it may be live or cutting clips.")
+    """The built app, started the one way both build tiers start it.
 
-    import yaml
+    Shared with tier 7 (the browser) through appd, so "how the real build is
+    launched for a test" exists once: the same throwaway home, the same no-op
+    config, the same refusal to touch a running AutoStream.
+    """
+    why = appd.why_not()
+    if why:
+        pytest.skip(why)
     from fakes import free_port
 
     home = tmp_path_factory.mktemp("built-home")
     port = free_port()
-    for d in ("config", "secrets", "logs"):
-        (home / d).mkdir(parents=True, exist_ok=True)
-    (home / "config" / "config.yaml").write_text(yaml.safe_dump({
-        "youtube": {"enabled": False},          # no broadcast, no OAuth, no quota
-        "record": {"enabled": False},           # nothing is written to disk
-        "rules": {"web_token": TOKEN, "web_port": port,
-                  "tray_icon": False, "kill_switch_hotkey": ""},
-        "logging": {"level": "INFO"},
-    }, sort_keys=False), encoding="utf-8")
-
-    env = dict(os.environ)
-    env["AUTOSTREAM_HOME"] = str(home)
-    env["AUTOSTREAM_VIDEO_HOME"] = str(home / "video")
-    proc = subprocess.Popen([str(BUILT), "run"], env=env,
-                            cwd=str(BUILT.parent),
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-
-    base = f"http://127.0.0.1:{port}"
-    deadline = time.monotonic() + BOOT_TIMEOUT
-    last = ""
-    while time.monotonic() < deadline:
-        if proc.poll() is not None:
-            out = (proc.stdout.read() or b"").decode("utf-8", "replace")
-            pytest.fail(f"the built app exited with {proc.returncode} before it "
-                        f"served anything:\n{out[-3000:]}")
-        try:
-            with urllib.request.urlopen(f"{base}/api/status?k={TOKEN}",
-                                        timeout=3) as r:
-                if r.status == 200:
-                    break
-        except (urllib.error.URLError, OSError, TimeoutError) as e:
-            last = str(e)
-        time.sleep(1.0)
-    else:
-        proc.kill()
-        pytest.fail(f"the built app never answered on {base} in "
-                    f"{BOOT_TIMEOUT:.0f}s (last: {last})")
-
+    appd.seed_home(home, port)
+    try:
+        base, proc = appd.start(home, port)
+    except RuntimeError as e:
+        pytest.fail(str(e))
     try:
         yield base, proc, home
     finally:
-        # Its own Quit, which is what the tray and the rail button use, and
-        # which works even when the process is elevated and Stop-Process is
-        # refused. Killed only if it will not go.
-        try:
-            req = urllib.request.Request(
-                f"{base}/api/cmd?k={TOKEN}",
-                data=json.dumps({"command": "quit"}).encode(),
-                headers={"Content-Type": "application/json"}, method="POST")
-            urllib.request.urlopen(req, timeout=5).read()
-        except Exception:                                    # noqa: BLE001
-            pass
-        try:
-            proc.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        appd.stop(base, proc)
 
 
 def _get(base: str, path: str, timeout: float = 20.0):

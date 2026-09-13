@@ -7,3 +7,8 @@ pytest>=8.0
 # reaching a machine where nobody has the browser console open. Pure Python,
 # so it needs no Node install on a Windows box.
 esprima>=4.0
+
+# Tier 7 drives the built app in a real browser, which is the only tier that
+# can see a dead play button or a console error. Install the browser too:
+#   python -m playwright install chromium
+playwright>=1.47

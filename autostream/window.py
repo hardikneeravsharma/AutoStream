@@ -168,6 +168,10 @@ class MainWindow:
         self._show = threading.Event()
         self._hide = threading.Event()
         self._quit = False
+        # Set ONLY by request_quit: "a person asked to leave", as distinct from
+        # _quit, which several tests set directly to stop run() blocking. The
+        # two have to be told apart -- see the guard at the top of run().
+        self._asked_to_quit = False
         # True once the UI has been handed to the real browser because no
         # native window could be had. The caller has nothing to block on then,
         # and must hold the process open itself -- see cmd_run.
@@ -195,6 +199,7 @@ class MainWindow:
         """
         log.info("quit requested: %s", reason or "no reason given")
         save_geometry(self.win)
+        self._asked_to_quit = True
         self._quit = True
         self._show.set()          # wake the worker so it exits promptly
         try:
@@ -293,6 +298,17 @@ class MainWindow:
         `fell_back` set. Windows without the WebView2 runtime take that path,
         and a clean install is exactly where it is missing.
         """
+        # QUIT CAN ARRIVE BEFORE THE WINDOW EXISTS. cmd_run does engine.startup()
+        # -- which refreshes the game index over the network -- on this thread,
+        # before ever getting here, and the web server is already answering by
+        # then. A Quit during those seconds called request_quit() on a window
+        # that was still None, so the destroy did nothing and this method then
+        # opened a window and blocked on it forever: the app took the request,
+        # said ok, and never exited. Honour the flag instead of outliving it.
+        if self._asked_to_quit:
+            log.info("quit was requested before the window opened - not opening one")
+            return
+
         if not _HAS:
             log.info("pywebview not installed - opening the UI in your browser")
             self._to_browser()
