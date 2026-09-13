@@ -391,6 +391,9 @@ NOT_A_FLOW: dict[str, str] = {
     "reel-best": "ticks the multi-kills and aces only",
     "reel-mark": "opens the tap-the-beat panel",
     "reel-tap": "records one tap against the playing song",
+    "reel-play": "plays and pauses the song being marked",
+    "reel-back": "steps the song back a second",
+    "reel-fwd": "steps the song on a second",
     "reel-untap": "drops the last tap",
     "reel-clearmarks": "drops every tap",
     "reel-seedmarks": "fills the taps from the template, to correct rather "

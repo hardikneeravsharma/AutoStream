@@ -377,16 +377,37 @@ PRE_SHARE = 0.30          # of the gap it has to live in
 PRE_MIN, PRE_MAX = 0.14, 0.90
 
 
-def pre_roll(in_gap: float) -> float:
+def pre_roll(in_gap: float, beat: float = 0.0) -> float:
     """How long before its kill a shot cuts in.
 
     FROM THE GAP BEFORE THE BEAT, NOT THE ONE AFTER IT. Sizing it from the
     following gap is wrong and visibly so: a three-second shot wanted 0.9s of
     run-up, which reached back past the beat of the shot before it and left
     that shot 0.10s long with its own kill outside it entirely.
+
+    A WHOLE NUMBER OF BEATS, so the CUT lands on the grid as well as the kill.
+    A share of the gap is a fraction nobody chose: measured on a 162 BPM reel
+    it came out at 0.444s, which is 1.20 beats, so every cut sat 74ms -- a
+    fifth of a beat -- off the grid and only 1 of 26 landed on one. The kills
+    were exact and the edit still read as loose, because the cut is the sync
+    point a viewer hears. Rounding to the nearest whole beat of what the share
+    already wanted keeps the pacing and puts the cut on the beat.
     """
-    return float(np.clip(min(PRE_SHARE * in_gap, in_gap - MIN_AFTER),
+    free = float(np.clip(min(PRE_SHARE * in_gap, in_gap - MIN_AFTER),
                          PRE_MIN, PRE_MAX))
+    if beat <= 0:
+        return free
+    # Never reach past the previous kill, and never below the floor a shot
+    # needs to read as a shot at all.
+    hi = min(PRE_MAX, in_gap - MIN_AFTER)
+    whole = [beat * m for m in (1.0, 2.0, 3.0) if PRE_MIN <= beat * m <= hi]
+    if whole:
+        return min(whole, key=lambda p: abs(p - free))
+    # A fast song's beat can be longer than the whole run-up allows. Half a
+    # beat still lands on the grid -- on the off-beat, which an edit may cut
+    # to -- and is the last thing tried before giving up on the grid.
+    half = beat / 2
+    return half if PRE_MIN <= half <= hi else free
 
 
 @dataclass
@@ -411,21 +432,25 @@ class Shot:
 
 def shots(slots: list[float], kills: list[dict], total: float,
           drift: Drift | None = None,
-          opening: bool = True) -> list[Shot]:
+          opening: bool = True, beat: float = 0.0) -> list[Shot]:
     """Turn slots and kills into shots. -> in reel order.
 
     `opening` gives the first shot everything before its own beat, so a
     template that starts late produces a run-up rather than a hard start on a
     kill. The last shot runs to `total`, which is what makes the fade the
     footage continuing rather than a separate clip.
+
+    `beat` is the song's beat length. Given one, every cut lands on the grid
+    as well as every kill -- see pre_roll. Without one the old share-of-the-gap
+    run-up stands, so a caller that has no song analysis still works.
     """
     drift = drift or Drift()
     n = min(len(slots), len(kills))
     if not n:
         return []
     times = list(slots[:n])
-    pres = [times[0] if opening else pre_roll(times[0])]
-    pres += [pre_roll(times[i] - times[i - 1]) for i in range(1, n)]
+    pres = [times[0] if opening else pre_roll(times[0], beat)]
+    pres += [pre_roll(times[i] - times[i - 1], beat) for i in range(1, n)]
     starts = [t - p for t, p in zip(times, pres)] + [total]
 
     out: list[Shot] = []

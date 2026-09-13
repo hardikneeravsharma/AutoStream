@@ -150,21 +150,35 @@ REEL_HTML: str = (
          choice of WHICH beats carry a kill. -->
     <section class="reel-step hide" id="reel-step-mark">
       <h3 class="reel-h">Tap where the kills should land</h3>
-      <p class="muted">Play the track and press <kbd>M</kbd> on every beat that
-         should carry a kill. Taps snap to the nearest beat, so timing does not
-         have to be exact &mdash; only the choice does.</p>
+      <p class="muted">Press <kbd>Space</kbd> on every beat that should carry a
+         kill. Taps snap to the nearest beat, so timing does not have to be
+         exact &mdash; only the choice does. <kbd>Enter</kbd> plays and pauses,
+         <kbd>&larr;</kbd><kbd>&rarr;</kbd> nudge (hold <kbd>Shift</kbd> for a
+         second), <kbd>Backspace</kbd> undoes. Click the wave to jump.</p>
       <audio id="reel-audio" controls preload="auto"></audio>
       <canvas class="reel-wave" id="reel-mark-wave" height="120"></canvas>
       <div class="field-inline">
         <span class="reel-clock" id="reel-mark-clock">0.000s</span>
-        <button class="btn btn-primary" type="button" data-act="reel-tap">Kill here (M)</button>
+        <button class="btn btn-primary" type="button" data-act="reel-tap">Kill here (Space)</button>
+        <button class="btn" type="button" data-act="reel-play">Play / Pause</button>
+        <button class="btn" type="button" data-act="reel-back">&larr; 1s</button>
+        <button class="btn" type="button" data-act="reel-fwd">1s &rarr;</button>
         <button class="btn" type="button" data-act="reel-untap">Undo</button>
         <button class="btn" type="button" data-act="reel-clearmarks">Clear</button>
         <button class="btn" type="button" data-act="reel-seedmarks">Start from the template</button>
         <button class="btn btn-primary" type="button" id="reel-usemarks-btn"
                 data-act="reel-usemarks">Use these beats</button>
+      </div>
+      <!-- HEARD, NOT SQUINTED AT. A mark that is on the wrong beat is obvious
+           the moment it ticks against the music and nowhere near as obvious on
+           a waveform. -->
+      <div class="field-inline">
+        <label class="muted"><input type="checkbox" id="reel-metro"> click on
+          each mark as it plays</label>
         <span class="muted" id="reel-mark-count"></span>
       </div>
+      <div class="reel-chips" id="reel-mark-chips"></div>
+      <p class="muted" id="reel-mark-gaps"></p>
     </section>
 
     <!-- Last, because it acts on the two sections above it. -->
@@ -629,11 +643,54 @@ function reel_tap() {
 }
 
 function reel_renderMarks() {
-  var st = reel_state;
+  var st = reel_state, m = st.marks || [];
   reel_el('reel-mark-count').textContent =
-    (st.marks || []).length + ' beats marked, ' +
-    reel_chosen().length + ' moments to place';
+    m.length + ' beats marked, ' + reel_chosen().length + ' moments to place';
+  /* Every mark listed and removable. A wrong one in the middle of a run used
+     to mean Clear and start again, because Undo only drops the last. */
+  var chips = reel_el('reel-mark-chips');
+  if (chips) {
+    chips.innerHTML = m.map(function (t, i) {
+      return '<span class="reel-chip" data-mark="' + i +
+             '" title="click to remove">' + (i + 1) + ' · ' +
+             t.toFixed(3) + 's</span>';
+    }).join('');
+  }
+  /* The gaps decide how the reel is cut, so they are worth seeing. */
+  var gaps = reel_el('reel-mark-gaps');
+  if (gaps) {
+    var g = [];
+    for (var i = 1; i < m.length; i++) g.push((m[i] - m[i - 1]).toFixed(2));
+    gaps.textContent = g.length ? 'gaps: ' + g.join(', ') + 's' : '';
+  }
   reel_drawWave('reel-mark-wave', false);
+}
+
+function reel_playPause() {
+  var a = reel_el('reel-audio');
+  if (a && a.src) { if (a.paused) { a.play(); } else { a.pause(); } }
+}
+
+function reel_seek(by) {
+  var a = reel_el('reel-audio'), st = reel_state;
+  if (!a || !st.shape) return;
+  var end = st.shape.seconds || 0;
+  a.currentTime = Math.max(0, Math.min(end, (a.currentTime || 0) + by));
+}
+
+/* A short tick through the Web Audio API rather than an asset: it has to fire
+   on the beat, and a file would have to load and decode first. */
+function reel_click() {
+  try {
+    var C = window.AudioContext || window.webkitAudioContext;
+    if (!C) return;
+    reel_state.ac = reel_state.ac || new C();
+    var ac = reel_state.ac, o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.value = 1800;
+    g.gain.value = 0.15;
+    o.connect(g); g.connect(ac.destination);
+    o.start(); o.stop(ac.currentTime + 0.03);
+  } catch (e) { /* no audio context, no click; the marks still stand */ }
 }
 
 window.PAGE_REEL = {
@@ -684,12 +741,59 @@ function reel_wire() {
   if (au) au.addEventListener('timeupdate', function () {
     var c = reel_el('reel-mark-clock');
     if (c) c.textContent = au.currentTime.toFixed(3) + 's';
+    var metro = reel_el('reel-metro');
+    if (metro && metro.checked) {
+      var st = reel_state;
+      st.ticked = st.ticked || {};
+      (st.marks || []).forEach(function (m, i) {
+        if (Math.abs(au.currentTime - m) < 0.06 && !st.ticked[i]) {
+          st.ticked[i] = 1;
+          setTimeout(function () { delete st.ticked[i]; }, 300);
+          reel_click();
+        }
+      });
+    }
+    reel_drawWave('reel-mark-wave', false);
+  });
+  if (au) au.addEventListener('seeked', function () {
+    reel_drawWave('reel-mark-wave', false);
+  });
+  /* Click the wave to jump there: scrubbing to one beat through the native
+     audio bar means aiming at a few pixels of a whole song. */
+  var wave = reel_el('reel-mark-wave');
+  if (wave) wave.addEventListener('click', function (ev) {
+    var st = reel_state, a = reel_el('reel-audio');
+    if (!a || !st.shape) return;
+    var r = wave.getBoundingClientRect();
+    a.currentTime = Math.max(0, Math.min(st.shape.seconds || 0,
+      (ev.clientX - r.left) / r.width * (st.shape.seconds || 0)));
+  });
+  document.addEventListener('click', function (ev) {
+    var c = ev.target.closest ? ev.target.closest('[data-mark]') : null;
+    if (!c) return;
+    (reel_state.marks || []).splice(Number(c.getAttribute('data-mark')), 1);
+    reel_renderMarks();
   });
   document.addEventListener('keydown', function (e) {
     if (!reel_state.open) return;
     var tag = (e.target.tagName || '').toUpperCase();
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-    if ((e.key || '').toLowerCase() === 'm') { e.preventDefault(); reel_tap(); }
+    /* Only while the marker is up: Space and the arrows belong to the rest of
+       the page the rest of the time. */
+    var mark = reel_el('reel-step-mark');
+    if (!mark || mark.classList.contains('hide')) return;
+    var k = e.key || '';
+    if (k === ' ' || e.code === 'Space' || k.toLowerCase() === 'm') {
+      e.preventDefault(); reel_tap();
+    } else if (k === 'Enter') {
+      e.preventDefault(); reel_playPause();
+    } else if (k === 'Backspace') {
+      e.preventDefault(); (reel_state.marks || []).pop(); reel_renderMarks();
+    } else if (k === 'ArrowLeft') {
+      e.preventDefault(); reel_seek(e.shiftKey ? -1 : -0.1);
+    } else if (k === 'ArrowRight') {
+      e.preventDefault(); reel_seek(e.shiftKey ? 1 : 0.1);
+    }
   });
   document.addEventListener('click', function (ev) {
     var b = ev.target.closest ? ev.target.closest('[data-act]') : null;
@@ -727,6 +831,9 @@ function reel_wire() {
     }
     else if (act === 'reel-mark') reel_openMark();
     else if (act === 'reel-tap') reel_tap();
+    else if (act === 'reel-play') reel_playPause();
+    else if (act === 'reel-back') reel_seek(-1);
+    else if (act === 'reel-fwd') reel_seek(1);
     else if (act === 'reel-untap') { (reel_state.marks || []).pop(); reel_renderMarks(); }
     else if (act === 'reel-clearmarks') { reel_state.marks = []; reel_renderMarks(); }
     else if (act === 'reel-seedmarks') {

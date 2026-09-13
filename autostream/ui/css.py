@@ -3004,6 +3004,16 @@ REEL_CSS = """
 }
 .reel-clock{font-variant-numeric:tabular-nums;font-size:18px;font-weight:600;
             min-width:92px}
+/* One chip per mark, so a wrong beat in the middle of a run can go without
+   clearing the ones after it. */
+.reel-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:var(--space-3)}
+.reel-chip{
+  font-variant-numeric:tabular-nums;font-size:11px;padding:3px 8px;
+  border-radius:var(--radius-sm);cursor:pointer;background:var(--surface);
+  border:var(--border-hair) solid var(--border-subtle);
+  color:var(--text-secondary);
+}
+.reel-chip:hover{border-color:var(--danger);color:var(--danger)}
 /* The moments. A checkbox each, because "which of these" is the question and
    a grid of thumbnails would answer a different one. */
 .reel-kills{display:grid;gap:6px;margin-top:var(--space-3)}

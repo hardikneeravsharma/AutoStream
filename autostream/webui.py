@@ -2268,7 +2268,8 @@ class Server:
         drift = reel.Drift.fit([(float(a), float(b)) for a, b in
                                 (body.get("drift_marks") or [])])
         try:
-            shots = reel.shots(slots, kills, total=main + fade, drift=drift)
+            shots = reel.shots(slots, kills, total=main + fade, drift=drift,
+                               beat=shape.beat)
         except RuntimeError as e:
             return {"ok": False, "error": str(e)}
         return {"ok": True, "song": shape.as_dict(),
