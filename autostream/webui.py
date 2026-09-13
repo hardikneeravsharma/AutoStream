@@ -254,7 +254,13 @@ class _Handler(BaseHTTPRequestHandler):
         if not ok:
             self.send_error(404, "no such song")
             return
-        self._media(want.name, allowed.parent, self.app.SOUND_TYPES, "audio")
+        # THE WHOLE PATH, not want.name. _media resolves what it is given
+        # against the PROCESS's working directory rather than joining it to
+        # root, so a bare filename resolved to dist\AutoStream\<song> and was
+        # refused as "not in the audio folder" -- a 403 the page could only
+        # show as a dead player. The song is whitelisted above; it is the one
+        # this process analysed, and it can be anywhere on the disk.
+        self._media(str(want), allowed.parent, self.app.SOUND_TYPES, "audio")
 
     def _media(self, path: str, root: Path, kinds, what: str) -> None:
         """Stream a file from `root` to a media tag, honouring Range.

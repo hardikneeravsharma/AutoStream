@@ -12,6 +12,7 @@ script still agree about the buttons.
 from __future__ import annotations
 
 import json
+import urllib.parse
 
 from autostream import webui
 from autostream.ui import clips as clips_ui
@@ -149,3 +150,87 @@ def test_the_flashy_button_stops_moving_when_motion_is_turned_down():
     reduced = reduced[:reduced.index(".reel-quick{")]
     assert "prefers-reduced-motion" in reduced
     assert "animation:none" in reduced
+
+
+# --------------------------------------------------------------- the song file
+
+def _cached_song(srv, path):
+    """Put a song in the whitelist the audio route serves from, as reel_song does."""
+    class _Shape:
+        def __init__(self, p):
+            self.path = p
+    srv._reel_cache = ((str(path.resolve()), 0.0), _Shape(path))
+
+
+def test_the_chosen_song_is_actually_served_to_the_beat_marker(tmp_path):
+    """FROM A BUG. The route passed only the FILE NAME to _media, which resolves
+    what it is given against the process's working directory instead of joining
+    it to the folder -- so a song anywhere else (the Downloads folder, in the
+    report that found this) resolved to the app folder instead, failed the "inside
+    the folder" guard, and came back 403. The page could only render that as a
+    player with a greyed-out play button and 0:00 / 0:00.
+
+    The song therefore lives somewhere that is NOT the working directory, which
+    is the whole point: every path in this test is absolute and elsewhere.
+    """
+    from fakes import LiveServer
+
+    song = tmp_path / "a song.mp3"
+    song.write_bytes(b"ID3" + b"\0" * 4096)
+    srv = LiveServer(engine=None)
+    try:
+        _cached_song(srv.srv, song)
+        r = srv.get("/api/reel/audio?path=" + urllib.parse.quote(str(song)))
+        assert r.status == 200, f"the chosen song was refused with {r.status}"
+        assert "audio" in (r.headers.get("Content-Type") or "")
+        assert len(r.body) == 4099
+    finally:
+        srv.close()
+
+
+def test_the_beat_marker_can_seek_within_the_song(tmp_path):
+    """A marker you cannot scrub is no use: taps are made against the playing
+    track, so the player has to be able to start anywhere."""
+    from fakes import LiveServer
+
+    song = tmp_path / "track.flac"
+    song.write_bytes(bytes(range(256)) * 16)
+    srv = LiveServer(engine=None)
+    try:
+        _cached_song(srv.srv, song)
+        url = "/api/reel/audio?path=" + urllib.parse.quote(str(song))
+        r = srv.get(url, headers={"Range": "bytes=100-199"})
+        assert r.status == 206, f"no byte ranges: {r.status}"
+        assert len(r.body) == 100
+    finally:
+        srv.close()
+
+
+def test_no_other_file_is_served_even_from_the_songs_own_folder(tmp_path):
+    """The whitelist is exactly one file. Anything else in that folder -- and
+    anything anywhere -- is still refused."""
+    from fakes import LiveServer
+
+    song = tmp_path / "chosen.mp3"
+    song.write_bytes(b"ID3" + b"\0" * 32)
+    other = tmp_path / "private.mp3"
+    other.write_bytes(b"ID3" + b"\0" * 32)
+    srv = LiveServer(engine=None)
+    try:
+        _cached_song(srv.srv, song)
+        for path in (other, tmp_path / ".." / "secrets.mp3"):
+            r = srv.get("/api/reel/audio?path=" + urllib.parse.quote(str(path)))
+            assert r.status in (403, 404), f"{path} was served with {r.status}"
+    finally:
+        srv.close()
+
+
+def test_with_no_song_chosen_nothing_is_served(tmp_path):
+    from fakes import LiveServer
+
+    srv = LiveServer(engine=None)
+    try:
+        r = srv.get("/api/reel/audio?path=" + urllib.parse.quote(str(tmp_path / "x.mp3")))
+        assert r.status in (403, 404)
+    finally:
+        srv.close()

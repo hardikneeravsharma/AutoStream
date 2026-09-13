@@ -279,15 +279,16 @@ class LiveServer:
         base = f"http://127.0.0.1:{self.port}{path}"
         return f"{base}{sep}k={self.token}" if key else base
 
-    def get(self, path: str, *, key: bool = True, timeout: float = 10.0):
-        return self._call("GET", path, None, key, timeout)
+    def get(self, path: str, *, key: bool = True, timeout: float = 10.0,
+            headers: dict | None = None):
+        return self._call("GET", path, None, key, timeout, headers=headers)
 
     def post(self, path: str, body: Any = None, *, key: bool = True,
              timeout: float = 10.0, raw: bytes | None = None):
         return self._call("POST", path, body, key, timeout, raw=raw)
 
     def _call(self, method: str, path: str, body, key: bool, timeout: float,
-              raw: bytes | None = None):
+              raw: bytes | None = None, headers: dict | None = None):
         data = None
         if method == "POST":
             data = raw if raw is not None else json.dumps(
@@ -304,6 +305,8 @@ class LiveServer:
             req.add_header("Connection", "close")
             if data is not None:
                 req.add_header("Content-Type", "application/json")
+            for k, v in (headers or {}).items():
+                req.add_header(k, v)
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as r:
                     return Response(r.status, r.read(), dict(r.headers))
