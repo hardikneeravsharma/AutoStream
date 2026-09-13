@@ -377,10 +377,16 @@ def scan_feedbar(video: Path, profile: Profile, total: float, height: int,
     guarantee, captions and the montage all work on these unchanged.
     """
     from . import valorant_feed
+    from .profiles import username_for
 
     log.info("reading the %s kill feed bars", profile.label)
+    # The second look re-reads, as text, only the rows the colour reader was
+    # unsure about. It uses the in-game name when games.yaml has one and learns
+    # it from the kills already counted when it does not, so Valorant still
+    # needs nothing set up -- see feed_ocr.
     events = valorant_feed.scan(video, profile.band, duration=total,
-                                start=start,
+                                start=start, second_look=True,
+                                player=profile.player or username_for(profile.key),
                                 fps=profile.scan_fps, frame_height=height,
                                 progress=progress, cancelled=cancelled)
     if cancelled and cancelled():

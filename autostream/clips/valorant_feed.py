@@ -429,9 +429,14 @@ def victim_of(red: np.ndarray, green: np.ndarray, y0: int, y1: int,
 
 
 def read_frame(a: np.ndarray, at: float = 0.0, ref_height: int = REF_HEIGHT,
-               frame_height: int | None = None) -> list[Row]:
-    """Every feed row in one frame of the band. -> newest last."""
-    red, green, yellow = masks(a)
+               frame_height: int | None = None, planes=None) -> list[Row]:
+    """Every feed row in one frame of the band. -> newest last.
+
+    `planes` is masks(a), when the caller already has it: the OCR second look
+    needs the yellow plane too, and computing it twice per frame was 4ms a
+    frame -- seventeen seconds of a thirty-minute match -- for nothing.
+    """
+    red, green, yellow = planes if planes is not None else masks(a)
     bar = red | green | yellow
     h, w = bar.shape
     # Pixel measurements were taken at REF_HEIGHT; scale them to this recording.
@@ -935,7 +940,11 @@ def _span(args) -> list[Row]:
     # frame_height is the height of THIS recording, not the height the pixel
     # constants were measured at -- that is REF_HEIGHT, and read_frame scales
     # between the two.
-    video, band, start, dur, fps, frame_h = args
+    video, band, start, dur, fps, frame_h, *rest = args
+    # The OCR second look keeps what it needs from each frame WHILE the frame
+    # is here. Afterwards the PNGs are deleted, and reading a doubtful row
+    # later would mean decoding the recording a second time.
+    capture = rest[0] if rest else None
     from PIL import Image
 
     from .killfeed import _extract
@@ -946,7 +955,11 @@ def _span(args) -> list[Row]:
         for png in sorted(tmp.glob("f_*.png")):
             at = start + (int(png.stem.split("_")[1]) - 1) / fps
             a = np.asarray(Image.open(png).convert("RGB"))
-            out.extend(read_frame(a, at, frame_height=frame_h))
+            planes = masks(a)
+            rows = read_frame(a, at, frame_height=frame_h, planes=planes)
+            out.extend(rows)
+            if capture is not None:
+                capture.add(a, at, rows, planes[2])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return out
@@ -956,12 +969,17 @@ def scan(video: Path, band, *, duration: float | None = None,
          start: float = 0.0, fps: float = SAMPLE_FPS, chunk: float = 120.0,
          frame_height: int = REF_HEIGHT,
          progress: Callable[[int, int], None] | None = None,
-         cancelled: Callable[[], bool] | None = None) -> list[Event]:
+         cancelled: Callable[[], bool] | None = None,
+         second_look: bool = False, player: str = "") -> list[Event]:
     """Read the whole recording's feed. -> events in time order.
 
-    No OCR, so this is decode-bound rather than CPU-bound: a 46-minute
-    recording scanned in 135s of wall clock, about 20x real time, against the
-    3.5x the OCR path manages.
+    No OCR over the whole recording, so this is decode-bound rather than
+    CPU-bound: a 46-minute recording scanned in 135s of wall clock, about 20x
+    real time, against the 3.5x the OCR path manages.
+
+    `second_look` re-reads, as text, only the rows the colour reader was
+    unsure about -- see feed_ocr. Off by default so a caller that wants the
+    colour reader alone gets exactly that; the clip job turns it on.
     """
     from .killfeed import _sweep_stale_temp
     from .tools import media_info
@@ -977,13 +995,18 @@ def scan(video: Path, band, *, duration: float | None = None,
         spans.append((t, min(chunk, end - t)))
         t += chunk
 
+    capture = None
+    if second_look:
+        from . import feed_ocr
+        capture = feed_ocr.Capture(frame_height)
+
     seen: list[Row] = []
     if progress:
         progress(0, len(spans))
     for i, (at, dur) in enumerate(spans, 1):
         if cancelled and cancelled():
             break
-        seen.extend(_span((video, band, at, dur, fps, frame_height)))
+        seen.extend(_span((video, band, at, dur, fps, frame_height, capture)))
         if progress:
             progress(i, len(spans))
 
@@ -992,12 +1015,20 @@ def scan(video: Path, band, *, duration: float | None = None,
     # this scan actually ran at, so a faster scan does not quietly believe rows
     # on less evidence -- see min_seen_for.
     events = collapse(seen, min_seen=min_seen_for(fps))
+    # Doubt is judged against the kills as collapse counted them, before
+    # refine moves any of them: that is what the rules were measured on.
+    doubt = None
+    if capture is not None:
+        doubt = feed_ocr.doubtful(capture, [e for e in events if e.kind == "kill"])
     # Then each kill's time is pulled back to when its row really appeared.
     # Cheap next to the scan, and it is what keeps the kill inside the clip
     # that gets cut around it.
     if not (cancelled and cancelled()):
         refine(video, band, events, frame_height=frame_height,
                cancelled=cancelled)
+    if capture is not None and not (cancelled and cancelled()):
+        events = feed_ocr.second_look(events, capture, doubt, player=player,
+                                      cancelled=cancelled)
     t = tally(events)
     log.info("%s: %d kill(s), %d death(s), %d assist(s) read from the feed "
              "bars (%d sightings)", Path(video).name, t["kill"], t["death"],
