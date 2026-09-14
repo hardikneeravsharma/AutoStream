@@ -28,7 +28,7 @@ import pytest
 
 pytestmark = pytest.mark.ui
 
-PAGES = ("dash", "library", "clips", "settings", "logs")
+PAGES = ("dash", "library", "clips", "studio", "settings", "logs")
 # Answers that are correct even though they are 4xx. Empty on purpose: today
 # the page asks for nothing it expects to be refused, and an entry here should
 # have to be justified.
@@ -261,6 +261,79 @@ def test_a_clip_plays_in_the_page(ui, app, tmp_path):
     assert not state["err"], f"a clip in the clips folder would not play: {state}"
     assert state["dur"] > 0.5, f"the clip loaded no video: {state}"
     ui.clean("playing a clip")
+
+
+def test_a_reel_is_made_edited_and_rendered_again_in_the_studio(ui, app):
+    """The Studio's whole promise, in the real build: choose clips, get a reel
+    that plays, change one shot on the timeline, and get the change rendered.
+
+    Every step is a place the page and the server could disagree -- a route
+    the bundle does not serve, a filter expression the packaged ffmpeg refuses,
+    a video URL the player cannot load -- and none of them is visible to a
+    test that does not drive the page."""
+    import json
+    import subprocess
+
+    from autostream.clips.tools import binary
+
+    ff = binary("ffmpeg")
+    if not ff:
+        pytest.skip("no ffmpeg to make clips with")
+    run = Path(app["home"]) / "video" / "clips" / "2026-09-14_1200_VALORANT"
+    (run / "clips").mkdir(parents=True, exist_ok=True)
+    rows = []
+    for i in range(3):
+        clip = run / "clips" / f"ui_{i}.mp4"
+        subprocess.run([ff, "-y", "-v", "error", "-f", "lavfi", "-i",
+                        f"testsrc2=size=320x180:rate=30:duration=4",
+                        "-f", "lavfi", "-i", f"sine=frequency={300 + 100 * i}:duration=4",
+                        "-shortest", "-pix_fmt", "yuv420p", str(clip)], check=True, timeout=180)
+        rows.append({"rank": i + 1, "start": 10.0 * (i + 1), "end": 10.0 * (i + 1) + 4,
+                     "duration": 4.0, "kills": 1, "name": clip.stem, "master": str(clip),
+                     "vertical": "", "caption": "", "tags": [], "at": ""})
+    (run / "clips.json").write_text(json.dumps({"game": "VALORANT", "clips": rows}))
+    (run / "session.json").write_text(json.dumps(
+        {"game": "VALORANT", "kills": [{"time": 10.0 * (i + 1) + 2} for i in range(3)]}))
+
+    page = ui.page
+    page.click('.rail-btn[data-page="studio"]')
+    page.wait_for_selector("#view-studio.is-active")
+    page.wait_for_function("document.querySelectorAll('.studio-clip').length >= 3", timeout=30_000)
+    tiles = page.locator(".studio-clip-hit")
+    tiles.nth(0).click()
+    tiles.nth(1).click()
+    assert page.inner_text("#studio-tray-count").startswith("2 clips")
+    page.click('[data-act="studio-make"]')
+    page.click('[data-act="studio-style"][data-style="story"]')
+    page.fill("#studio-name", "UI check")
+    page.click('[data-act="studio-build"]')
+    page.wait_for_selector("#studio-pane-timeline:not(.hide)", timeout=60_000)
+
+    def rendered(what):
+        page.wait_for_function(
+            "() => { const t = document.getElementById('studio-state').textContent;"
+            " return t.startsWith('Ready') || /fail|Could not|refus/i.test(t); }", timeout=300_000)
+        state = page.inner_text("#studio-state")
+        assert state.startswith("Ready"), f"{what}: {state}"
+        video = page.evaluate("""async () => {
+            const v = document.getElementById('studio-video');
+            if (v.readyState < 1) await new Promise(r => { v.onloadedmetadata = r; v.onerror = r; setTimeout(r, 15000); });
+            return {err: v.error && v.error.code, ready: v.readyState, dur: v.duration};
+        }""")
+        assert not video["err"] and video["dur"] > 1, f"{what}: the reel will not play: {video}"
+
+    rendered("first render")
+    assert page.locator(".st-shot").count() == 2
+    page.locator(".st-shot").nth(1).click()
+    page.locator('#studio-insp input[data-list="fx"][value="k06"]').check()
+    page.wait_for_function("document.getElementById('studio-render-btn').textContent === 'Render changes'")
+    page.evaluate("document.getElementById('studio-state').textContent = ''")
+    page.click("#studio-render-btn")
+    rendered("the render after an edit")
+    saved = ui.api("GET", "/api/studio/job")
+    project = json.loads(Path(saved["project"]).read_text(encoding="utf-8"))
+    assert "k06" in project["shots"][1]["fx"], "the edit on the timeline never reached the render"
+    ui.clean("making and editing a reel")
 
 
 # ------------------------------------------- the backend, through the page

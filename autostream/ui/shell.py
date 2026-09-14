@@ -47,6 +47,7 @@ _NAV: tuple[tuple[str, str, str], ...] = (
     ("dash", "dashboard", "Dashboard"),
     ("library", "library", "Library"),
     ("clips", "film", "Clips"),
+    ("studio", "timeline", "Studio"),
     ("settings", "settings", "Settings"),
     ("logs", "logs", "Logs"),
 )
@@ -136,6 +137,8 @@ SHELL_HTML: str = (
     ' aria-label="Library">{{LIBRARY_HTML}}</section>'
     '<section class="view" id="view-clips" role="tabpanel"'
     ' aria-label="Clips">{{CLIPS_HTML}}{{REEL_HTML}}</section>'
+    '<section class="view" id="view-studio" role="tabpanel"'
+    ' aria-label="Studio">{{STUDIO_HTML}}</section>'
     '<section class="view" id="view-settings" role="tabpanel"'
     ' aria-label="Settings">{{SETTINGS_HTML}}</section>'
     '<section class="view" id="view-logs" role="tabpanel"'
@@ -164,13 +167,13 @@ _SHELL_BODY = r"""
    ======================================================================= */
 
 const SHELL_K = new URLSearchParams(location.search).get('k') || '';
-const SHELL_PAGES = ['dash', 'library', 'clips', 'settings', 'logs'];
+const SHELL_PAGES = ['dash', 'library', 'clips', 'studio', 'settings', 'logs'];
 const SHELL_TITLES = {dash: 'Dashboard', library: 'Library', clips: 'Clips',
-                      settings: 'Settings', logs: 'Logs'};
+                      studio: 'Studio', settings: 'Settings', logs: 'Logs'};
 /* Page objects are looked up off window by name so a page file that failed to
    load cannot take the whole shell down with a ReferenceError. */
 const SHELL_PAGE_OBJ = {dash: 'PAGE_DASH', library: 'PAGE_LIBRARY',
-                        clips: 'PAGE_CLIPS',
+                        clips: 'PAGE_CLIPS', studio: 'PAGE_STUDIO',
                         settings: 'PAGE_SETTINGS', logs: 'PAGE_LOGS'};
 const SHELL_POLL_MS = 2000;
 const SHELL_FAIL_LIMIT = 3;   /* misses before we admit we are disconnected */

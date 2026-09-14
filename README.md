@@ -101,6 +101,18 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
 - **Cuts a reel to your own music.** Beats found without librosa; the cuts land on
   them, the acts change on phrase boundaries, and the best moment of the session
   lands on the drop — with the clips still in the order they happened.
+- **Makes reels from every clip you have, in the Studio.** One page lists every clip
+  from every game and every run, grouped the way they were made. Pick any of them —
+  one at a time, a range, or a whole run — choose a style and a song, and it builds
+  the reel with every cut and every kill on the beat.
+  - The styles are measured, not guessed: each one's pace, flash rate and opening are
+    the medians of popular Valorant edits it is modelled on (26 of them, 137 thousand
+    to 5.9 million views) — or of your own reel.
+  - The finished reel opens as an **editing timeline** — video, transitions, kill
+    effects, speed, text and the song's beat grid on one axis. Drag a shot to move
+    it, its edge to trim it, its diamond to move the kill; swap a transition, add a
+    freeze or an RGB split, slow a hero moment, change the colour. Render again and
+    only the shots you changed are re-encoded.
 - **Or don't stream at all.** Turn *Go live on YouTube* off and AutoStream is just
   the clipper: it still spots the game, records it and cuts the clips, never touches
   the YouTube API, and asks for no Google sign-in. The dashboard says RECORDING
@@ -774,8 +786,10 @@ Clips page shows what is missing and the rest of AutoStream is unaffected.
 | [`clips/beatsync.py`](autostream/clips/beatsync.py) | Tempo, beat phase and the drop, from an onset envelope — no librosa. |
 | [`clips/story.py`](autostream/clips/story.py) | The arc: opening, the slide, the turn, the push, match point. Clips stay in order and the music is offset so the drop lands on the peak. |
 | [`clips/voice.py`](autostream/clips/voice.py) | Spoken hooks from Kokoro-82M, ducked over the run-up. Optional download; silent without it. |
+| [`clips/studio.py`](autostream/clips/studio.py) | The Studio: every clip on disk by game and run, reels planned from any of them on the beat grid, the editable project each reel is saved with, and the two-stage render (cached shots, then the join). |
+| [`clips/studio_refs.py`](autostream/clips/studio_refs.py) | What popular Valorant edits do, measured — the numbers the Studio's styles are built from. |
 | [`webui.py`](autostream/webui.py) | Local HTTP server and JSON API. |
-| [`ui/`](autostream/ui/) | The five-page web app: `shell`, `dashboard`, `library`, `clips`, `settings`, `logs`, `setup`. |
+| [`ui/`](autostream/ui/) | The six-page web app: `shell`, `dashboard`, `library`, `clips`, `studio`, `settings`, `logs`, `setup`. |
 | [`window.py`](autostream/window.py) | Native window via pywebview (Edge WebView2). |
 | [`cfg.py`](autostream/cfg.py) | Config load/merge with defaults, atomic writes. |
 

@@ -177,6 +177,7 @@ CONTROLS: list[Control] = [
             why="a blank path must be refused, not read from disk"),
     Control("/api/clips/video", "GET", CALL, "clip playback", "clips",
             query="path=", status=(400, 403, 404), expect=_dict,
+            acts=("studio-preview", "studio-watch"),
             why="path traversal guard: outside the clips dir is refused"),
     Control("/api/clips/sound", "GET", CALL, "sound preview", "clips",
             query="path=", status=(400, 403, 404), expect=_dict,
@@ -255,10 +256,10 @@ CONTROLS: list[Control] = [
     # test; opening a window is the thing to avoid while testing it.
     Control("/api/clips/open", "POST", CALL, "Reveal in Explorer", "clips",
             body={"path": r"C:\verify\no\such\folder\clip.mp4"},
-            expect=_has("error"), acts=("reveal-src", "reveal-out"),
+            expect=_has("error"), acts=("reveal-src", "reveal-out", "studio-show"),
             why="a path that is not there is refused before Explorer is spawned"),
     Control("/api/clips/pick", "POST", STATIC, "Pick a local file", "clips",
-            acts=("pick-local", "use-local", "reel-quick-song"),
+            acts=("pick-local", "use-local", "reel-quick-song", "studio-song"),
             why="opens a native Tk dialog ON THE SERVER and blocks the "
                 "request thread until a human dismisses it"),
     Control("/api/clips/install", "POST", STATIC, "Install them", "clips",
@@ -337,6 +338,46 @@ CONTROLS: list[Control] = [
     Control("/api/setup/webview2/install", "POST", STATIC,
             "install WebView2", "setup",
             why="downloads and runs the Edge runtime installer"),
+    # ------------------------------------------------------------- studio
+    # Every clip on disk, and reels built from any of them on a timeline.
+    Control("/api/studio/library", "GET", CALL, "every clip, by game and run", "studio",
+            expect=_has("ok", "games", "clip_count"), acts=("studio-refresh",),
+            why="read from each run's clips.json; an empty clips folder is an "
+                "empty list, not an error"),
+    Control("/api/studio/catalog", "GET", CALL, "parts and styles", "studio",
+            expect=_has("parts", "styles", "default_style"),
+            why="the page offers every choice from this one answer, and each "
+                "style carries the reference measurements it is built on"),
+    Control("/api/studio/job", "GET", CALL, "render progress", "studio",
+            expect=_has("state"),
+            why="idle when nothing has rendered in this process"),
+    Control("/api/studio/project", "GET", CALL, "open a reel's timeline", "studio",
+            query="path=", expect=_has("ok"), acts=("studio-open",),
+            why="a blank path is refused with ok:false; a reel outside the "
+                "reels folder is refused the same way"),
+    Control("/api/studio/thumb", "GET", CALL, "library thumbnail", "studio",
+            query="path=", status=(400,), expect=_has("error"),
+            why="only ever a clip inside the clips folder; a blank path must "
+                "not reach ffmpeg"),
+    Control("/api/studio/plan", "POST", CALL, "Build and render", "studio",
+            body={"clips": []}, expect=_has("ok"),
+            reject={"clips": []}, reject_soft=True,
+            acts=("studio-build", "studio-restyle"),
+            why="no clips chosen is refused here, before a song is analysed"),
+    Control("/api/studio/check", "POST", CALL, "apply a timeline edit", "studio",
+            body={"project": None}, expect=_has("ok"),
+            reject={"project": None}, reject_soft=True,
+            acts=("studio-beats", "studio-move", "studio-remove", "studio-slip",
+                  "studio-offset", "studio-rfmt", "studio-undo"),
+            why="every edit is clamped and re-derived by the server, so the page "
+                "and the render can never disagree about where a kill lands"),
+    Control("/api/studio/render", "POST", CALL, "Render", "studio",
+            body={"project": None}, expect=_has("ok"),
+            reject={"project": None}, reject_soft=True, acts=("studio-render",),
+            why="a project with no usable clips is refused before ffmpeg starts"),
+    Control("/api/studio/cancel", "POST", CALL, "Cancel the render", "studio",
+            body={}, expect=_has("ok"), acts=("studio-cancel",),
+            why="ok:false when nothing is rendering"),
 ]
 
 BY_PATH: dict[str, Control] = {c.path: c for c in CONTROLS}
@@ -354,6 +395,23 @@ COMMANDS_REFUSED = ("kill", "launch", "chat", "", "QUIT", "stop; rm -rf")
 # Controls that are real, and are deliberately not HTTP calls. Each is either
 # handled entirely in the browser or is a plain link.
 NOT_A_FLOW: dict[str, str] = {
+    # --- the Studio page: selection, layout and the timeline's own view
+    "studio-tab": "switches between the clip library and the timeline",
+    "studio-game": "filters the library to one game",
+    "studio-pick": "selects or unselects a clip (shift selects a range)",
+    "studio-folder": "selects or unselects every clip in a run",
+    "studio-clear": "empties the selection",
+    "studio-make": "opens the make-a-reel dialog",
+    "studio-make-cancel": "closes the make-a-reel dialog",
+    "studio-preview-close": "closes the clip preview",
+    "studio-style": "chooses a style in the dialog; sent with Build",
+    "studio-nosong": "clears the chosen song in the dialog",
+    "studio-fmt": "chooses landscape or vertical in the dialog; sent with Build",
+    "studio-order": "chooses the clip order in the dialog; sent with Build",
+    "studio-play": "plays or pauses the rendered reel",
+    "studio-zoom": "zooms the timeline",
+    "studio-seek": "moves the playhead of the rendered reel",
+    "studio-select": "selects a shot, or the reel, in the inspector",
     # --- navigation and layout
     "rail-btn": "client-side page switch; state lives in sessionStorage",
     "rail": "switches the Clips page sub-tab",

@@ -1,0 +1,366 @@
+"""The Studio: every clip on disk, and reels planned and rendered from them.
+
+No ffmpeg here -- the render is measured in tests/verify/test_studio_render.py.
+These pin the arithmetic the render trusts: where each clip's kills are, where
+every cut and kill lands on the song, and what the page is refused.
+"""
+from __future__ import annotations
+
+import json
+import math
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import pytest
+
+from autostream.clips import studio, studio_refs
+
+
+# ------------------------------------------------------------------ fixtures
+
+def _run(root: Path, name: str, game: str, clips: list[dict], kills: list[float],
+         pre_roll: float = 3.5) -> Path:
+    folder = root / name
+    (folder / "clips").mkdir(parents=True)
+    rows = []
+    for i, c in enumerate(clips):
+        master = folder / "clips" / f"{game}_{i:02d}.mp4"
+        master.write_bytes(b"not really a video")
+        rows.append({"rank": i + 1, "start": c["start"], "end": c["end"],
+                     "duration": c["end"] - c["start"], "kills": c.get("kills", 1),
+                     "name": master.stem, "master": str(master), "vertical": "",
+                     "caption": c.get("caption", ""), "tags": [], "at": ""})
+    (folder / "clips.json").write_text(json.dumps({"game": game, "clips": rows}))
+    (folder / "session.json").write_text(json.dumps(
+        {"game": game, "kills": [{"time": k} for k in kills],
+         "options": {"pre_roll": pre_roll}}))
+    return folder
+
+
+@pytest.fixture
+def root(tmp_path):
+    r = tmp_path / "clips"
+    _run(r, "2026-09-14_0045_VALORANT", "VALORANT",
+         [{"start": 100.0, "end": 108.0}, {"start": 200.0, "end": 214.0, "kills": 2},
+          {"start": 300.0, "end": 305.5}], kills=[103.5, 203.0, 206.5, 303.5])
+    _run(r, "2026-08-22_2151_Counter-Strike-2_shortform", "Counter-Strike 2",
+         [{"start": 10.0, "end": 18.0}], kills=[])
+    (r / "reels").mkdir()
+    (r / ".studio").mkdir()
+    return r
+
+
+@dataclass
+class Shape:
+    """Just what the planner reads off a real song analysis."""
+    bpm: float = 120.0
+    seconds: float = 240.0
+    phase: float = 0.1
+    drop: float | None = None
+    drums_in: float | None = None
+    downbeat_pos: int = 0
+    beats: list = field(default_factory=list)
+
+    @property
+    def beat(self) -> float:
+        return 60.0 / self.bpm
+
+    def __post_init__(self):
+        if not self.beats:
+            n = int((self.seconds - self.phase) / self.beat)
+            self.beats = [self.phase + i * self.beat for i in range(n)]
+
+
+def _clips(root):
+    lib = studio.library(root)
+    return [c for g in lib["games"] for f in g["folders"] for c in f["clips"]]
+
+
+def _on_grid(t: float, beat: float, tol: float = 1e-3) -> bool:
+    return abs(t / beat - round(t / beat)) * beat < tol
+
+
+# ------------------------------------------------------------------ library
+
+def test_the_library_groups_clips_by_game_then_run(root):
+    lib = studio.library(root)
+    assert lib["clip_count"] == 4
+    games = {g["game"]: g for g in lib["games"]}
+    assert set(games) == {"VALORANT", "Counter-Strike 2"}
+    assert games["VALORANT"]["folders"][0]["label"].startswith("14 Sep 2026, 00:45")
+
+
+def test_each_kill_is_placed_inside_its_own_clip(root):
+    """A master starts at the clip's `start`, so a kill's place in the file is
+    its recording time minus that start."""
+    val = next(g for g in studio.library(root)["games"] if g["game"] == "VALORANT")
+    clips = val["folders"][0]["clips"]
+    assert clips[0]["kills"] == [3.5]
+    assert clips[1]["kills"] == [3.0, 6.5]
+
+
+def test_a_run_without_kill_times_uses_its_pre_roll(root):
+    cs = next(g for g in studio.library(root)["games"] if g["game"] == "Counter-Strike 2")
+    assert cs["folders"][0]["clips"][0]["kills"] == [3.5]
+
+
+def test_a_clip_whose_file_is_gone_is_left_out(root):
+    Path(_clips(root)[0]["path"]).unlink()
+    assert studio.library(root)["clip_count"] == 3
+
+
+def test_reels_and_hidden_folders_are_not_runs(root):
+    names = [f["name"] for g in studio.library(root)["games"] for f in g["folders"]]
+    assert "reels" not in names and ".studio" not in names
+
+
+def test_a_reel_with_a_project_can_be_reopened(root):
+    (root / "reels" / "old.mp4").write_bytes(b"x")
+    (root / "reels" / "new.mp4").write_bytes(b"x")
+    (root / "reels" / "new.reel.json").write_text(json.dumps({"name": "New", "shots": [{}, {}]}))
+    by = {r["name"]: r for r in studio.reels(root)}
+    assert by["New"]["project"] and by["New"]["shots"] == 2
+    assert by["old"]["project"] == ""
+
+
+# ------------------------------------------------------------------ speed
+
+@pytest.mark.parametrize("speed", ["s00", "s01", "s02", "s03", "s04", "exit"])
+def test_speed_pieces_tile_the_shot_exactly(speed):
+    ps = studio.pieces(speed, 3.0, 1.5)
+    assert ps[0][0] == 0.0 and ps[-1][1] == pytest.approx(3.0)
+    for (_, b, _), (a, _, _) in zip(ps, ps[1:]):
+        assert a == pytest.approx(b)
+
+
+@pytest.mark.parametrize("speed", ["s00", "s01", "s02", "s03", "s04"])
+def test_output_at_inverts_source_used(speed):
+    ps = studio.pieces(speed, 3.0, 1.5)
+    for t in (0.0, 0.4, 1.5, 2.2, 3.0):
+        assert studio.output_at(ps, studio.source_used(ps, t)) == pytest.approx(t, abs=1e-6)
+
+
+def test_the_kill_is_never_inside_a_sped_up_piece():
+    for speed in ("s02", "s03", "s04"):
+        for a, b, r in studio.pieces(speed, 3.0, 1.5):
+            if a <= 1.5 < b:
+                assert r <= 1.0
+
+
+# ------------------------------------------------------------------ planning
+
+@pytest.mark.parametrize("style", [s.key for s in studio.STYLES])
+def test_every_cut_and_every_kill_lands_on_the_beat(root, style):
+    shape = Shape(bpm=162.0, drop=120.0, drums_in=30.0)
+    proj, _ = studio.plan(_clips(root), style, shape=shape, song="song.mp3")
+    proj["song"] = ""                         # nothing on disk; the arithmetic is the point
+    beat = shape.beat
+    t = 0.0
+    for s in proj["shots"]:
+        assert _on_grid(t, beat), f"{style}: cut at {t}"
+        assert _on_grid(t + s["pre"], beat), f"{style}: kill at {t + s['pre']}"
+        t += s["duration"]
+    # Reel zero is a beat of the song, so reel beats are song beats.
+    assert any(abs(proj["song_offset"] - b) < 1e-4 for b in shape.beats)
+
+
+def test_the_drop_style_lands_a_kill_on_the_drop(tmp_path):
+    r = tmp_path / "clips"
+    _run(r, "2026-09-01_1200_VALORANT", "VALORANT",
+         [{"start": 100.0 * i, "end": 100.0 * i + 12} for i in range(1, 9)],
+         kills=[100.0 * i + 6 for i in range(1, 9)])
+    shape = Shape(bpm=120.0, seconds=300.0, phase=0.0, drop=96.0)
+    proj, _ = studio.plan(_clips(r), "drop", shape=shape, song="x.mp3")
+    starts = studio._starts(proj["shots"])
+    kill_on_drop = starts[3] + proj["shots"][3]["pre"] + proj["song_offset"]
+    assert kill_on_drop == pytest.approx(96.0, abs=1e-6)
+
+
+def test_pace_is_the_measured_median_as_a_power_of_two_in_beats():
+    """At 120 BPM a style measured at ~30 cuts/min is 4-beat shots."""
+    meas = studio_refs.summary(studio.STYLE["montage"].refs)
+    beats = studio._pow2_beats(60.0 / meas["cuts_per_min"], 0.5, lo=1, hi=8)
+    assert beats in (2, 4, 8)
+    assert abs(math.log2(beats) - math.log2(60.0 / meas["cuts_per_min"] / 0.5)) <= 0.5 + 1e-9
+
+
+def test_flashes_follow_the_reference_rate(root):
+    many = [dict(c, id=f"{c['id']}{i}") for i in range(6) for c in _clips(root)]
+    proj, _ = studio.plan(many, "velocity", shape=Shape(bpm=120.0))
+    cuts = proj["shots"][1:]
+    share = sum(1 for s in cuts if s["transition"] == "t02") / len(cuts)
+    meas = studio_refs.summary(studio.STYLE["velocity"].refs)
+    assert share == pytest.approx(min(0.9, meas["flashes_per_min"] / meas["cuts_per_min"]), abs=0.15)
+
+
+def test_without_a_song_the_reel_is_cut_to_120_bpm(root):
+    proj, _ = studio.plan(_clips(root), "story")
+    assert proj["beat"] == pytest.approx(0.5)
+    assert proj["song"] == "" and proj["song_offset"] == 0.0
+
+
+def test_the_reel_never_outlasts_the_song(root):
+    clips = _clips(root) * 10
+    proj, notes = studio.plan(clips, "story", shape=Shape(bpm=120.0, seconds=30.0), song="s.mp3")
+    assert sum(s["duration"] for s in proj["shots"]) <= 30.0
+    assert any("song ends" in n for n in notes)
+
+
+# ------------------------------------------------------------------ checking
+
+def _project(root, **over):
+    proj, _ = studio.plan(_clips(root), "montage")
+    proj.update(over)
+    return proj
+
+
+def test_a_clip_outside_the_clips_folder_is_refused(root, tmp_path):
+    outside = tmp_path / "elsewhere.mp4"
+    outside.write_bytes(b"x")
+    proj = _project(root)
+    proj["shots"][0]["clip"] = str(outside)
+    got, _, notes = studio.normalise(proj, root)
+    assert all(Path(s["clip"]).resolve() != outside.resolve() for s in got["shots"])
+    assert any("not a clip in the clips folder" in n for n in notes)
+
+
+def test_nothing_usable_is_an_error_not_an_empty_render(root):
+    with pytest.raises(studio.ProjectError):
+        studio.normalise({"shots": [{"clip": "C:/nope.mp4"}]}, root)
+    with pytest.raises(studio.ProjectError):
+        studio.normalise(None, root)
+
+
+def test_unknown_parts_and_wild_numbers_are_clamped(root):
+    proj = _project(root, grade="g99", intro="zzz", music_db=900, overlays=["o01", "evil"])
+    proj["shots"][1].update(fx=["k01", "rm -rf"], speed="warp", transition="t99", duration=-4)
+    got, derived, _ = studio.normalise(proj, root)
+    assert got["grade"] == "g01" and got["intro"] == "i00" and got["music_db"] == 12
+    assert got["overlays"] == ["o01"]
+    s = got["shots"][1]
+    assert s["fx"] == ["k01"] and s["speed"] == "s00" and s["transition"] == "t01"
+    assert s["duration"] >= studio.MIN_SHOT
+    assert derived["length"] > 0
+
+
+def test_the_output_can_only_be_written_inside_reels(root, tmp_path):
+    proj = _project(root, output=str(tmp_path / "anywhere.mp4"))
+    got, _, _ = studio.normalise(proj, root)
+    assert got["output"] == ""
+    proj = _project(root, output=str(root / "reels" / "mine.mp4"))
+    got, _, _ = studio.normalise(proj, root)
+    assert got["output"].endswith("mine.mp4")
+
+
+def test_a_transition_is_shortened_to_the_footage_around_the_cut(root):
+    proj = _project(root)
+    s0, s1 = proj["shots"][0], proj["shots"][1]
+    s1.update(transition="t04", tlen=1.5)
+    got, _, _ = studio.normalise(proj, root)
+    t = got["shots"][1]
+    if t["transition"] != "t01":
+        assert t["tlen"] / 2 <= studio._head_room(t) + 1e-6
+        assert t["tlen"] / 2 <= studio._tail_room(got["shots"][0]) + 1e-6
+        assert t["tlen"] <= 0.8 * min(t["duration"], got["shots"][0]["duration"]) + 1e-6
+
+
+def test_the_first_shot_never_has_a_transition_into_it(root):
+    proj = _project(root)
+    proj["shots"][0].update(transition="t05", tlen=0.5)
+    got, _, _ = studio.normalise(proj, root)
+    assert got["shots"][0]["transition"] == "t01" and got["shots"][0]["tlen"] == 0.0
+
+
+def test_a_shot_is_trimmed_to_the_footage_its_speed_consumes(root):
+    proj = _project(root)
+    s = proj["shots"][0]
+    s.update(speed="s04", duration=12.0, pre=6.0)    # 2.2x wants far more than 8 s of clip
+    got, _, _ = studio.normalise(proj, root)
+    g = got["shots"][0]
+    a, b = studio._span(g)
+    assert a >= -1e-6 and b <= g["clip_seconds"] + 1e-6
+
+
+# ------------------------------------------------------------------ render graphs
+
+def _built(root, **shot):
+    proj, _ = studio.plan(_clips(root), "montage", shape=Shape(bpm=120.0))
+    proj["song"] = ""
+    for s in proj["shots"]:
+        s.update(shot)
+    got, derived, _ = studio.normalise(proj, root)
+    segs = studio.segments(got, derived, has_audio=lambda p: True, song_beats=derived["beats"])
+    return got, derived, segs
+
+
+def test_graphs_carry_no_escaped_commas_inside_quotes(root):
+    got, derived, segs = _built(root, fx=["k01", "k02", "k03", "k07", "k11", "k15", "k16"],
+                                hero=True, hero_fx=["h01", "h02", "h03", "h05"], caption="ACE",
+                                camera="c04", speed="s02")
+    for seg in segs:
+        argv = studio.segment_command(seg, Path("out.mp4"))
+        graph = argv[argv.index("-filter_complex") + 1]
+        assert "\\," not in graph
+        assert graph.count("zoompan=") <= 1
+    argv = studio.assemble_command(got, derived, segs, [Path(f"{i}.mp4") for i in range(len(segs))], Path("r.mp4"))
+    assert "\\," not in argv[argv.index("-filter_complex") + 1]
+
+
+def test_a_freeze_never_changes_how_long_a_shot_is(root):
+    got, derived, segs = _built(root, fx=["k04"])
+    for seg in segs:
+        argv = studio.segment_command(seg, Path("o.mp4"))
+        assert argv[argv.index("-frames:v") + 1] == str(seg.frames)
+    assert derived["length"] == pytest.approx(sum(s["duration"] for s in got["shots"]))
+
+
+def test_each_transition_is_centred_on_its_cut(root):
+    proj, _ = studio.plan(_clips(root), "montage", shape=Shape(bpm=120.0))
+    proj["song"] = ""
+    for s in proj["shots"][1:]:
+        s.update(transition="t04", tlen=0.4)
+    got, derived, _ = studio.normalise(proj, root)
+    segs = studio.segments(got, derived)
+    argv = studio.assemble_command(got, derived, segs, [Path(f"{i}.mp4") for i in range(len(segs))], Path("r.mp4"))
+    graph = argv[argv.index("-filter_complex") + 1]
+    F = studio.FPS
+    for i, m in enumerate(re.finditer(r"\[s(\d+)\]xfade=transition=\w+:duration=([\d.]+):offset=([\d.]+)", graph)):
+        k = int(m.group(1))
+        dur, off = float(m.group(2)), float(m.group(3))
+        cut = derived["shots"][k]["start"]
+        head = segs[k].head / F
+        # B's own footage begins exactly where its handle ends: on the cut.
+        assert off + head == pytest.approx(cut, abs=1.5 / F)
+        assert off < cut < off + dur
+
+
+def test_the_segment_cache_key_changes_with_what_is_rendered(root):
+    _, _, a = _built(root, fx=["k01"])
+    _, _, b = _built(root, fx=["k03"])
+    assert a[0].key() != b[0].key()
+    _, _, c = _built(root, fx=["k01"])
+    assert a[0].key() == c[0].key()
+
+
+# ------------------------------------------------------------------ catalogue
+
+def test_part_ids_are_unique_and_every_style_uses_real_parts():
+    ids = [p.id for p in studio.PARTS]
+    assert len(ids) == len(set(ids))
+    for s in studio.STYLES:
+        for pid in (s.intro, s.outro, s.speed, s.hero_speed, s.camera, s.grade,
+                    *s.cuts, *s.kill, *s.hero, *s.overlays):
+            assert pid in studio.PART, f"{s.key} uses unknown part {pid}"
+        assert studio_refs.summary(s.refs)["edits"] == len(s.refs), f"{s.key} cites an unmeasured edit"
+
+
+def test_every_transition_part_can_be_drawn():
+    for pid in studio.ids_of("transition"):
+        assert pid == "t01" or pid in studio.XFADE
+
+
+def test_the_catalog_is_what_the_page_reads():
+    cat = studio.catalog()
+    assert cat["ok"] and cat["default_style"] in {s["key"] for s in cat["styles"]}
+    assert all(s["measured"]["edits"] >= 3 for s in cat["styles"])

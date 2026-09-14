@@ -140,6 +140,15 @@ ICONS: dict[str, str] = {
         + _path("M2.5 12L7.5 12")
         + _path("M16.5 12L21.5 12")
     ),
+    # Three edit lanes of different lengths crossed by a playhead: an editing
+    # timeline, which is what the Studio page is. Distinct from the film strip
+    # at 16px because it is horizontal where the strip is vertical.
+    "timeline": (
+        _path("M3 6.5H14")
+        + _path("M6 12H21")
+        + _path("M3 17.5H11")
+        + _path("M16.5 3.5V20.5")
+    ),
     "settings": _path(_GEAR) + _circle(12, 12, 3.3),
     "logs": (
         _rect(4.5, 3, 15, 18, 2.5)
