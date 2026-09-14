@@ -126,7 +126,7 @@ def test_a_reel_with_a_project_can_be_reopened(root):
 
 # ------------------------------------------------------------------ speed
 
-@pytest.mark.parametrize("speed", ["s00", "s01", "s02", "s03", "s04", "exit"])
+@pytest.mark.parametrize("speed", ["s00", "s01", "s02", "s03", "s04", "s05", "s06", "exit"])
 def test_speed_pieces_tile_the_shot_exactly(speed):
     ps = studio.pieces(speed, 3.0, 1.5)
     assert ps[0][0] == 0.0 and ps[-1][1] == pytest.approx(3.0)
@@ -134,7 +134,7 @@ def test_speed_pieces_tile_the_shot_exactly(speed):
         assert a == pytest.approx(b)
 
 
-@pytest.mark.parametrize("speed", ["s00", "s01", "s02", "s03", "s04"])
+@pytest.mark.parametrize("speed", ["s00", "s01", "s02", "s03", "s04", "s05", "s06"])
 def test_output_at_inverts_source_used(speed):
     ps = studio.pieces(speed, 3.0, 1.5)
     for t in (0.0, 0.4, 1.5, 2.2, 3.0):
@@ -142,7 +142,7 @@ def test_output_at_inverts_source_used(speed):
 
 
 def test_the_kill_is_never_inside_a_sped_up_piece():
-    for speed in ("s02", "s03", "s04"):
+    for speed in ("s02", "s03", "s04", "s05", "s06"):
         for a, b, r in studio.pieces(speed, 3.0, 1.5):
             if a <= 1.5 < b:
                 assert r <= 1.0

@@ -115,7 +115,10 @@ def test_every_kill_lands_on_its_planned_frame(coded):
     ids = [_read(f) for f in frames]
 
     for i, (s, row) in enumerate(zip(proj["shots"], derived["shots"])):
-        want = (i + 1) * 2000 + round(s["kill"] * F)
+        # The planner orders shots by strength, not by clip: each clip's frames
+        # are coded from its own number, so read the base off the file name.
+        base = (int(Path(s["clip"]).stem.split("_")[-1]) + 1) * 2000
+        want = base + round(s["kill"] * F)
         # THE KILL FRAME IS ON SCREEN AT THE PLANNED INSTANT. Not "first
         # appears then": slowed to 0.3x, each source frame holds for three
         # output frames, so its first appearance is legitimately a little
@@ -124,8 +127,8 @@ def test_every_kill_lands_on_its_planned_frame(coded):
         near = ids[max(0, at - 1): at + 2]
         assert any(abs(v - want) <= 1 for v in near), (
             f"shot {i + 1} ({s['speed']}, {s['transition']}): at {row['kill_reel']:.3f}s the "
-            f"reel shows source frames {[v - (i + 1) * 2000 for v in near]}, "
-            f"not the kill frame {want - (i + 1) * 2000}")
+            f"reel shows source frames {[v - base for v in near]}, "
+            f"not the kill frame {want - base}")
 
 
 def test_every_part_renders_without_ffmpeg_refusing_it(coded):
@@ -148,7 +151,7 @@ def test_every_part_renders_without_ffmpeg_refusing_it(coded):
             s.update(fx=[kills[j % len(kills)], kills[(j + 5) % len(kills)]],
                      hero=True, hero_fx=[heroes[j % len(heroes)]], caption="ACE",
                      camera=cameras[j % len(cameras)],
-                     speed=studio.ids_of("speed")[j % 5])
+                     speed=studio.ids_of("speed")[j % len(studio.ids_of("speed"))])
             if i:
                 s.update(transition=transitions[j % len(transitions)], tlen=0.3)
         _render(root, proj)

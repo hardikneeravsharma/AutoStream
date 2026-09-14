@@ -577,7 +577,7 @@ def output_at(ps: list[tuple[float, float, float]], src: float) -> float:
 # ============================================================== planning
 
 def _choose_offset(grid: Grid, first_kill_reel: float, style: Style,
-                   drop_kill_reel: float | None, energy=None) -> float:
+                   drop_kill_reel: float | None, energy=None, build: bool = False) -> float:
     """Where in the song reel time zero sits. Always exactly on a beat."""
     if not grid.beats:
         return 0.0
@@ -586,7 +586,7 @@ def _choose_offset(grid: Grid, first_kill_reel: float, style: Style,
         if off >= 0:
             i = grid.index_at_or_after(off)
             return grid.beats[i]
-    if style.key == "story":
+    if style.key == "story" and not build:
         return grid.beats[0]
     start = grid.drums_in or (rulebook.first_loud(energy, grid.beats, grid.beat, grid.downbeat_pos)
                               if energy is not None else grid.beats[0])
@@ -667,7 +667,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         open_beats = rulebook.INTRO_BARS * 4 + 1
     closer_post = rulebook.ENDING_BEATS if style.outro in ("e01", "e03", "e02") else 0
     open_post = max(1, min(rulebook.MAX_TAIL_BEATS, open_beats // 4))
-    offset = _choose_offset(grid, max(run_b, open_beats - open_post) * beat, style, None, energy) if song else 0.0
+    offset = _choose_offset(grid, max(run_b, open_beats - open_post) * beat, style, None, energy,
+                            build) if song else 0.0
     idx0 = grid.index_at_or_after(offset) if (song and grid.beats) else 0
 
     first_kill_b = max(run_b, open_beats - open_post)
@@ -702,10 +703,19 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             spare = [m for m in spare if m.group != nxt.group]
             picked = rulebook.order(picked + grp, looks, opener_ok)
         elif total > want_beats + shot_beats and len({m.group for m in picked}) > min_groups:
+            # Whole sequences only, and never the opener's, the closer's or
+            # the climax's: taking "the middle shots" once split the opener's
+            # triple kill and left its last shot opening the reel alone,
+            # captioned TRIPLE KILL.
             groups = {}
-            for m in picked[1:-1]:
+            for m in picked:
                 groups.setdefault(m.group, []).append(m)
-            weakest = min(groups.values(), key=lambda g: max(x.strength for x in g))
+            best_group = max(picked, key=lambda m: m.strength).group
+            keep = {picked[0].group, picked[-1].group, best_group}
+            removable = [g for k, g in groups.items() if k not in keep]
+            if not removable:
+                break
+            weakest = min(removable, key=lambda g: max(x.strength for x in g))
             # Ordered again, not filtered: the places were alternated around
             # what is now gone.
             picked = rulebook.order([m for m in picked if m not in weakest], looks, opener_ok)
@@ -719,7 +729,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         drop_kill = sum(sum(x) for x in lens[:3]) + lens[3][0]
         off = grid.drop - drop_kill * beat
         if off >= 0:
-            offset = grid.beats[grid.index_at_or_after(off)]
+            offset = min(grid.beats, key=lambda b: abs(b - off))
             idx0 = grid.index_at_or_after(offset)
             lens, hero_set = plan_walk(picked, fixed={i: lens[i] for i in range(4)},
                                        start=offset, first_index=idx0)
@@ -798,9 +808,12 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         if style.drop and grid.drop and len(shots) > 3:
             off = grid.drop - (_starts(shots)[3] + shots[3]["pre"])
             if off >= 0:
-                offset = grid.beats[grid.index_at_or_after(off)]
+                # The NEAREST beat: at-or-after once moved reel zero a whole beat
+                # late when the exact answer sat a millisecond under a beat,
+                # and Dracula's drop kill landed half a second after the drop.
+                offset = min(grid.beats, key=lambda b: abs(b - off))
         else:
-            offset = _choose_offset(grid, shots[0]["pre"], style, None, energy)
+            offset = _choose_offset(grid, shots[0]["pre"], style, None, energy, build)
     proj["song_offset"] = round(offset, 5) if song else 0.0
     if style.drop and song and not grid.drop:
         notes.append("This song has no clear drop, so the reel is paced as a build without one.")
@@ -1988,29 +2001,42 @@ class StudioJob:
         """
         fixed = path.with_name(path.stem + ".loud.mp4")
 
-        def integrated(p: Path) -> float:
+        def measured(p: Path) -> tuple[float, float]:
+            """(integrated LUFS, true peak dBTP) of a file's audio."""
             err = self._run_ff([ff, "-hide_banner", "-nostdin", "-i", str(p), "-vn", "-af",
                                 "loudnorm=print_format=json", "-f", "null", "-"], capture=True)
-            return float(json.loads(err[err.rindex("{"): err.rindex("}") + 1])["input_i"])
+            m = json.loads(err[err.rindex("{"): err.rindex("}") + 1])
+            return float(m["input_i"]), float(m["input_tp"])
         try:
             # GAIN AND A LIMITER, NOT A NORMALISER. loudnorm reaching -10 LUFS
             # has to compress, and it compressed the kill accents flat again
             # (measured: kills 0.4 dB above the bars between them). A fixed gain
             # into a peak limiter keeps them, and a second measurement corrects
             # for what the limiter took off.
-            now = integrated(path)
-            gain = target - now
-            for _ in range(2):
-                if abs(gain) < 0.3:
-                    break
-                af = f"volume={gain:.2f}dB,alimiter=limit={rulebook.PEAK_LIMIT}:attack=3:release=60:level=disabled"
+            #
+            # AND THE PEAK IS MEASURED TOO. The limiter works on samples; the
+            # encoded file's true peak can still overshoot (one reel measured
+            # +2.7 dBTP), so the ceiling comes down by the overshoot and the
+            # pass runs again.
+            now, peak = measured(path)
+            if abs(target - now) < 0.3 and peak <= rulebook.TRUE_PEAK_MAX:
+                return
+            gain, limit = target - now, rulebook.PEAK_LIMIT
+            for _ in range(6):
+                af = f"volume={gain:.2f}dB,alimiter=limit={limit:.4f}:attack=3:release=60:level=disabled"
                 self._run_ff([ff, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(path),
                               "-map", "0:v", "-map", "0:a", "-c:v", "copy", "-af", af, "-ar", "48000",
                               "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", str(fixed)])
-                got = integrated(fixed)
-                if abs(got - target) < 0.4:
+                got, peak = measured(fixed)
+                level_ok, peak_ok = abs(got - target) < 0.4, peak <= rulebook.TRUE_PEAK_MAX
+                if level_ok and peak_ok:
                     break
-                gain += target - got
+                # Both corrections in one pass: a lower ceiling costs loudness,
+                # which the gain makes back on the next.
+                if not peak_ok:
+                    limit = max(0.3, limit * 10 ** ((rulebook.TRUE_PEAK_MAX - 0.3 - peak) / 20))
+                if not level_ok:
+                    gain += target - got
             if fixed.is_file():
                 fixed.replace(path)
         except Cancelled:

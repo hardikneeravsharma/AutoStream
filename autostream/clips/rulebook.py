@@ -686,3 +686,6 @@ def first_loud(energy, beats: list[float], beat: float, downbeat_pos: int = 0) -
         if energy(b, b + phrase) >= 0.95:
             return b
     return beats[0]
+# The highest true peak the finished file may measure. The limiter's ceiling is
+# lowered by any overshoot and the master runs again.
+TRUE_PEAK_MAX = -0.5

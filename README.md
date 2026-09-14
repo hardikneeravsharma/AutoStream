@@ -109,6 +109,14 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     the medians of the popular montage edits it is modelled on (26 of them — 25
     Valorant, one Call of Duty — 137 thousand to 5.9 million views), or of your own
     reel.
+  - **It edits like an editor.** Every reel runs through a rulebook learned by making
+    the same reel fourteen times from one 70-minute recording and reviewing each
+    version against the YouTube edits: a shot per kill with a real run-up, multi-kills
+    as quick jump-cut runs, death cameras and standing-still kills measured out, a
+    length in whole musical phrases, the best kill two thirds in, pace that follows
+    the song and the phrase, one effect per ordinary kill, colour trimmed to the
+    references, the gunshot heard into a gap in the music, a slow build over a quiet
+    intro and a slow-motion exit to end.
   - **No two kills in a row look the same.** Each shot draws its own kill effects,
     transition, speed ramp and camera move from the style's pools, never repeating the
     shot before. Narrow the pools, or press *Mix kill effects* / *Mix transitions* for
