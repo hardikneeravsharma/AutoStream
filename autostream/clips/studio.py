@@ -70,7 +70,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import studio_refs
+from . import rulebook, studio_refs
 
 log = logging.getLogger(__name__)
 
@@ -292,6 +292,8 @@ PARTS: tuple[Part, ...] = (
     Part("s02", "speed", "Ramp into the kill", "Fast approach, slowing to 0.3× on the kill."),
     Part("s03", "speed", "Ramp out of the kill", "Slow on the kill, then rushes away."),
     Part("s04", "speed", "Velocity", "Rushes in, hangs on the kill, rushes out."),
+    Part("s05", "speed", "Slow build", "Half speed all the way in, real speed from just before the kill."),
+    Part("s06", "speed", "Slow exit", "Real speed to the kill, then slows to a third as the shot leaves."),
 
     Part("c00", "camera", "Still", "No added camera movement."),
     Part("c01", "camera", "Slow push-in", "Drifts steadily closer through the shot."),
@@ -396,7 +398,7 @@ STYLES: tuple[Style, ...] = (
           intro="i03", outro="e01", cuts=("t01", "t05", "t01", "t06"), kill=("k01", "k03"),
           hero=("h01",), speed="s00", hero_speed="s02", camera="c00", grade="g02", vignette=True,
           kill_pool=("k01", "k01", "k03", "k02", "k15", "k07", "k11", "k06"),
-          transition_pool=("t01", "t01", "t05", "t06", "t01", "t07", "t09"),
+          transition_pool=("t01", "t01", "t05", "t06", "t01", "t06"),
           hero_pool=("h01", "h02", "h05"), camera_pool=("c00", "c00", "c01", "c04"),
           speed_pool=("s00", "s00", "s00", "s02"), energy=0.45),
     Style("velocity", "Velocity short",
@@ -408,7 +410,7 @@ STYLES: tuple[Style, ...] = (
           speed="s04", hero_speed="s04", camera="c00", grade="g05", vignette=True,
           overlays=("o01",),
           kill_pool=("k01", "k16", "k06", "k03", "k02", "k14", "k11", "k12"),
-          transition_pool=("t06", "t05", "t01", "t06", "t10", "t11"),
+          transition_pool=("t06", "t05", "t01", "t06", "t02"),
           hero_pool=("h02", "h01", "h05"), camera_pool=("c00", "c00", "c04"),
           speed_pool=("s04", "s04", "s02", "s03"), energy=0.75),
     Style("drop", "Build and drop",
@@ -429,7 +431,7 @@ STYLES: tuple[Style, ...] = (
           hero=("h01",), speed="s00", hero_speed="s02", camera="c04", grade="g05",
           vignette=True, overlays=("o02",),
           kill_pool=("k01", "k02", "k11", "k06", "k08", "k16", "k12", "k03"),
-          transition_pool=("t01", "t05", "t01", "t06", "t07", "t02"),
+          transition_pool=("t01", "t05", "t01", "t06", "t02"),
           hero_pool=("h01", "h05", "h02"), camera_pool=("c04", "c00", "c04", "c03"),
           speed_pool=("s00", "s00", "s02", "s03"), energy=0.7),
 )
@@ -482,6 +484,7 @@ class Grid:
     seconds: float = 0.0                                  # song length; 0 = no song
     bpm: float = NO_SONG_BPM
     downbeat_pos: int = 0
+    peaks: list[float] = field(default_factory=list)   # the song's loudness envelope
 
     @classmethod
     def none(cls) -> "Grid":
@@ -491,7 +494,8 @@ class Grid:
     def of(cls, shape) -> "Grid":
         return cls(beat=shape.beat, beats=list(shape.beats), drop=shape.drop,
                    drums_in=shape.drums_in, seconds=shape.seconds, bpm=shape.bpm,
-                   downbeat_pos=getattr(shape, "downbeat_pos", 0))
+                   downbeat_pos=getattr(shape, "downbeat_pos", 0),
+                   peaks=list(getattr(shape, "peaks", None) or []))
 
     def index_at_or_after(self, t: float) -> int:
         for i, b in enumerate(self.beats):
@@ -527,7 +531,9 @@ def pieces(speed: str, dur: float, pre: float) -> list[tuple[float, float, float
                (k + 0.8, dur, 2.2)]
     elif speed == "s04":
         raw = [(0.0, k - 0.3, 2.2), (k - 0.3, k + 0.45, 0.3), (k + 0.45, dur, 2.2)]
-    elif speed == "exit":
+    elif speed == "s05":
+        raw = [(0.0, k - 0.15, 0.5), (k - 0.15, dur, 1.0)]
+    elif speed in ("exit", "s06"):
         raw = [(0.0, k + 0.1, 1.0), (k + 0.1, dur, 0.35)]
     else:
         raw = [(0.0, dur, 1.0)]
@@ -571,7 +577,7 @@ def output_at(ps: list[tuple[float, float, float]], src: float) -> float:
 # ============================================================== planning
 
 def _choose_offset(grid: Grid, first_kill_reel: float, style: Style,
-                   drop_kill_reel: float | None) -> float:
+                   drop_kill_reel: float | None, energy=None) -> float:
     """Where in the song reel time zero sits. Always exactly on a beat."""
     if not grid.beats:
         return 0.0
@@ -582,7 +588,8 @@ def _choose_offset(grid: Grid, first_kill_reel: float, style: Style,
             return grid.beats[i]
     if style.key == "story":
         return grid.beats[0]
-    start = grid.drums_in or grid.beats[0]
+    start = grid.drums_in or (rulebook.first_loud(energy, grid.beats, grid.beat, grid.downbeat_pos)
+                              if energy is not None else grid.beats[0])
     i = grid.index_at_or_after(start)
     back = int(round(first_kill_reel / grid.beat))
     return grid.beats[max(0, i - back)]
@@ -590,8 +597,12 @@ def _choose_offset(grid: Grid, first_kill_reel: float, style: Style,
 
 def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
          song: str = "", fmt: str = "landscape", name: str = "",
-         max_seconds: float = 0.0, seed: int | None = None) -> tuple[dict, list[str]]:
+         max_seconds: float = 0.0, seed: int | None = None,
+         measure=None) -> tuple[dict, list[str]]:
     """Build a project from chosen clips. -> (project, notes)
+
+    `measure(path, t0, t1)` -> how much the picture moves between two clip
+    times (see action()); None skips the check, which is what tests do.
 
     `clips` are library entries in the order the reel should use them. `seed`
     decides the effect mix; the default is derived from the clips, so the same
@@ -609,53 +620,129 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     shot_beats = _pow2_beats(60.0 / cpm, beat, lo=1, hi=8)
     open_beats = _pow2_beats(max(meas.get("first_shot") or 4.0, 2.0), beat, lo=2, hi=16)
     flash_share = min(0.9, (meas.get("flashes_per_min") or 0.0) / max(cpm, 1.0))
-    build_beats = shot_beats * 2 if style.drop else shot_beats
 
     chosen = [c for c in clips if c and c.get("path")][:MAX_SHOTS]
     if len(clips) > MAX_SHOTS:
         notes.append(f"Only the first {MAX_SHOTS} clips were used.")
-    heroes = sorted(range(len(chosen)),
-                    key=lambda i: (-(chosen[i].get("kill_count") or 1), i))
-    hero_set = set(i for i in heroes[:max(1, len(chosen) // 6)]
-                   if (chosen[i].get("kill_count") or 1) >= 2) or \
-        ({heroes[0]} if chosen and len(chosen) >= 4 else set())
+
+    # MOMENTS, NOT CLIPS -- see rulebook.
+    run_b = max(1, int(math.ceil(max(rulebook.MIN_RUN_BEATS * beat, rulebook.MIN_RUN_SECONDS) / beat - 1e-6)))
+
+    all_moments = rulebook.moments(chosen, beat)
+    stats: dict[int, dict | None] = {}
+    looks: dict[int, list[float]] = {}
+    sat_trim = 1.0
+    if measure is not None:
+        stats = _measure_action(all_moments, measure)
+        for m in all_moments:
+            st = stats.get(id(m))
+            if isinstance(st, dict) and st.get("hist") and m.group not in looks:
+                looks[m.group] = st["hist"]
+        sat_trim = rulebook.saturation_trim(
+            [st.get("sat") for st in stats.values() if isinstance(st, dict)], style.grade)
+        all_moments, still = rulebook.drop_still(all_moments, stats)
+        if still:
+            notes.append(f"{still} moment(s) left out: nothing moves on screen around the kill "
+                         f"(a death camera, or standing still).")
+    est = {id(m): (rulebook.FOLLOW_UP_BEATS if m.seq > 0 else shot_beats) for m in all_moments}
+    available = sum(est.values()) * beat
+    target = rulebook.phrase_seconds(beat, fmt, available, max_seconds)
+    # A reel with less material than one phrase uses all of it: the phrase
+    # rule trims a surplus, it never throws away a short selection's clips.
+    if target < rulebook.PHRASE_BARS * 4 * beat - 1e-6 and not max_seconds:
+        target = 0.0
+        pool = list(all_moments)
+    want_beats = int(round(target / beat))
+    if target:
+        pool = rulebook.select(all_moments, target, lambda m: est[id(m)] * beat)
+    spare = [m for m in all_moments if m not in pool]
+
+    # PACE FROM THE SONG -- see rulebook.pace. Reel zero is fixed first (the
+    # opener's kill on the drums), so every later shot knows where in the song
+    # it plays and how loud it is there.
+    energy = rulebook.energy_profile(grid.peaks, grid.seconds) if song else (lambda a, b: 1.0)
+    build = (bool(song) and not style.drop and style.outro != "e12"
+             and rulebook.wants_build(energy, grid.drums_in, beat))
+    if build:
+        open_beats = rulebook.INTRO_BARS * 4 + 1
+    closer_post = rulebook.ENDING_BEATS if style.outro in ("e01", "e03", "e02") else 0
+    open_post = max(1, min(rulebook.MAX_TAIL_BEATS, open_beats // 4))
+    offset = _choose_offset(grid, max(run_b, open_beats - open_post) * beat, style, None, energy) if song else 0.0
+    idx0 = grid.index_at_or_after(offset) if (song and grid.beats) else 0
+
+    first_kill_b = max(run_b, open_beats - open_post)
+
+    def opener_ok(m):
+        if not build:
+            return True
+        # Half speed over the build: two bars of output need a bar of footage.
+        return m.first >= rulebook.INTRO_BARS * 4 * beat * 0.5 + 0.2
+
+    def plan_walk(ms, fixed=None, start=offset, first_index=idx0):
+        ranked_ = sorted(range(len(ms)), key=lambda i: (-ms[i].strength, i))
+        heroes_ = {i for i in ranked_[:max(1, len(ms) // 6)] if ms[i].caption}
+        lens_ = rulebook.walk(ms, beat=beat, energy=energy, song_start=start, base=shot_beats,
+                              open_beats=open_beats, run_beats=run_b, pre_share=style.pre_share,
+                              first_index=first_index, downbeat_pos=grid.downbeat_pos,
+                              fixed=fixed, heroes=heroes_, closer_post=closer_post,
+                              phrase_from=first_kill_b)
+        return lens_, heroes_
+
+    picked = rulebook.order(pool, looks, opener_ok)
+    lens, hero_set = plan_walk(picked)
+    # Settle the count: add the next-best sequence while the walk falls short
+    # of the phrase, drop the weakest middle one while it runs a shot over.
+    # A drop needs its build: the fourth shot is the one on the drop.
+    min_groups = 5 if style.drop else 3
+    for _ in range(24 if target else 0):
+        total = sum(sum(x) for x in lens)
+        if total < want_beats - 1 and spare:
+            nxt = max(spare, key=lambda m: m.strength)
+            grp = [m for m in spare if m.group == nxt.group]
+            spare = [m for m in spare if m.group != nxt.group]
+            picked = rulebook.order(picked + grp, looks, opener_ok)
+        elif total > want_beats + shot_beats and len({m.group for m in picked}) > min_groups:
+            groups = {}
+            for m in picked[1:-1]:
+                groups.setdefault(m.group, []).append(m)
+            weakest = min(groups.values(), key=lambda g: max(x.strength for x in g))
+            # Ordered again, not filtered: the places were alternated around
+            # what is now gone.
+            picked = rulebook.order([m for m in picked if m not in weakest], looks, opener_ok)
+            spare += weakest
+        else:
+            break
+        lens, hero_set = plan_walk(picked)
+    if style.drop and song and grid.drop and len(picked) > 3:
+        # The build is walked once; reel zero then moves so the fourth shot's
+        # kill lands exactly on the drop, and the rest is walked from there.
+        drop_kill = sum(sum(x) for x in lens[:3]) + lens[3][0]
+        off = grid.drop - drop_kill * beat
+        if off >= 0:
+            offset = grid.beats[grid.index_at_or_after(off)]
+            idx0 = grid.index_at_or_after(offset)
+            lens, hero_set = plan_walk(picked, fixed={i: lens[i] for i in range(4)},
+                                       start=offset, first_index=idx0)
+    if target and len(picked) < len(all_moments):
+        notes.append(f"{len(picked)} of {len(all_moments)} moments fill {target:.0f} s "
+                     f"({int(round(target / (4 * beat)))} bars); the weakest were left out.")
 
     shots = []
-    for i, c in enumerate(chosen):
+    for i, m in enumerate(picked):
+        c = m.clip
         dur_clip = float(c.get("duration") or 0.0)
-        kills = [float(k) for k in (c.get("kills") or [])] or [dur_clip * 0.5]
-        kill = kills[0]
         is_hero = i in hero_set
-        drop_idx = 3 if style.drop else -1
-        nb = open_beats if i == 0 else (build_beats if (style.drop and i < drop_idx)
-                                         else shot_beats)
-        if is_hero:
-            nb = max(nb, shot_beats * 2)
-        # A clip holding more than one kill keeps them together in one shot --
-        # up to a limit. A double kill eight seconds apart is two moments, and
-        # holding one shot that long stalls the pace the style is measured at.
-        if len(kills) > 1:
-            limit = max(shot_beats * 2, 8)
-            together = [k for k in kills if (k - kills[0]) / beat <= limit - max(1, nb // 2)]
-            span = together[-1] - together[0]
-            nb = min(max(nb, int(math.ceil(span / beat)) + max(1, nb // 2)), max(nb, limit))
-        if i == 0:
-            pre_b = max(1, nb - max(1, nb // 4))       # the opening is mostly run-up
-        else:
-            pre_b = max(0, int(math.floor(nb * style.pre_share + 0.5)))
-        post_b = max(1, nb - pre_b)
+        pre_b, span_b, post_b = lens[i]
         speed = style.hero_speed if is_hero else style.speed
         shot = {"clip": c["path"], "clip_id": c.get("id") or clip_id(c["path"]),
                 "name": c.get("name", ""), "clip_seconds": round(dur_clip, 3),
                 "clip_mtime": int(c.get("mtime") or 0),
-                "kills": kills, "kill": round(kill, 3),
-                "pre": round(pre_b * beat, 5), "duration": round((pre_b + post_b) * beat, 5),
+                "kills": list(m.kills), "kill": round(m.first, 3),
+                "pre": round(pre_b * beat, 5), "duration": round((pre_b + span_b + post_b) * beat, 5),
                 "speed": speed, "fx": list(style.kill), "hero": is_hero,
                 "hero_fx": list(style.hero) if is_hero else [],
                 "camera": style.camera, "transition": "t01", "tlen": 0.0,
-                "caption": c.get("caption") or ("DOUBLE KILL" if len(kills) == 2 else
-                                                 "TRIPLE KILL" if len(kills) == 3 else
-                                                 "ACE" if len(kills) >= 5 else "")}
+                "caption": m.caption}
         _fit(shot, beat, notes)
         shots.append(shot)
 
@@ -665,25 +752,56 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         ("kill", style.kill_pool), ("transition", style.transition_pool),
         ("hero", style.hero_pool), ("camera", style.camera_pool), ("speed", style.speed_pool))}
     _vary(shots, pools, style, seed, "all")
+    rulebook.budget(shots, pools)
+    starts_b = [0]
+    for x in lens[:-1]:
+        starts_b.append(starts_b[-1] + sum(x))
+    clip_look = {m.clip["path"]: looks.get(m.group) for m in picked}
+    rulebook.transitions(shots, starts_b, first_kill_beat=lens[0][0] if lens else 0,
+                         looks=clip_look, pools=pools, flash_share=flash_share, beat=beat)
+    def speed_ok(shot, speed):
+        ps = pieces(speed, shot["duration"], shot["pre"])
+        before = source_used(ps, shot["pre"])
+        after = source_used(ps, shot["duration"]) - before
+        return (before <= float(shot["kill"]) + 1e-6
+                and float(shot["kill"]) + after <= float(shot.get("clip_seconds") or 0.0) + 1e-6)
+    rulebook.climax(shots, [m.strength for m in picked], pools, speed_ok=speed_ok)
+    if build and shots:
+        shots[0]["speed"] = "s05"
+        shots[0]["fx"] = shots[0]["fx"][:1]
+    if closer_post and len(shots) > 1:
+        # Slowed as it leaves, so the bar after the last kill has footage to fill.
+        last = shots[-1]
+        last["speed"] = "s06"
+        last["duration"] = round(last["pre"] + (lens[-1][1] + closer_post) * beat, 5)
     for s in shots:
         _fit(s, beat, notes)
+    if target:
+        _fit_total(shots, beat, target, run_b * beat, rulebook.shot_cap(shot_beats, beat) * beat)
 
     proj = {
         "version": VERSION, "name": name or f"{style.label} reel",
         "style": style.key, "format": fmt if fmt in SIZES else "landscape",
         "song": str(song or ""), "song_offset": 0.0,
-        "intro": style.intro, "outro": style.outro, "grade": style.grade,
+        "intro": "i12" if build else style.intro,
+        "outro": "e03" if style.outro == "e01" else style.outro, "grade": style.grade,
         "vignette": style.vignette, "overlays": list(style.overlays),
         "handle": "", "music_db": 0.0, "game_db": 6.0 if song else 0.0, "duck": True,
+        "saturation": sat_trim,
         "beat": round(beat, 6), "seed": int(seed), "pools": pools, "shots": shots,
     }
-    # Where in the song reel zero sits, now the shot lengths are known.
-    reel_in = _starts(shots)
-    first_kill = shots[0]["pre"] if shots else 0.0
-    drop_kill = None
-    if style.drop and len(shots) > 3:
-        drop_kill = reel_in[3] + shots[3]["pre"]
-    proj["song_offset"] = round(_choose_offset(grid, first_kill, style, drop_kill), 5) if song else 0.0
+    # Where in the song reel zero sits: chosen before the walk, so each shot's
+    # length could follow the part of the song it plays over -- and settled
+    # again now, because fitting a shot to its footage can take a beat off the
+    # opener's run-up, and the opener's kill is what lands on the drums.
+    if song and shots:
+        if style.drop and grid.drop and len(shots) > 3:
+            off = grid.drop - (_starts(shots)[3] + shots[3]["pre"])
+            if off >= 0:
+                offset = grid.beats[grid.index_at_or_after(off)]
+        else:
+            offset = _choose_offset(grid, shots[0]["pre"], style, None, energy)
+    proj["song_offset"] = round(offset, 5) if song else 0.0
     if style.drop and song and not grid.drop:
         notes.append("This song has no clear drop, so the reel is paced as a build without one.")
 
@@ -710,6 +828,124 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             t += s["duration"]
         proj["shots"] = kept
     return proj, notes
+
+
+_ACTION_CACHE: dict[tuple, float | None] = {}
+_ACTION_LOCK = threading.Lock()
+
+
+def action(path: str, t0: float, t1: float) -> dict | None:
+    """What the footage between two clip times looks like, at 64x36 and 15 fps.
+
+    -> {"action": 90th percentile of frame-to-frame change,
+        "sat": mean colourfulness ((max-min)/max, as the references were measured),
+        "hist": a 4x4x4 colour histogram, for telling one location from another}
+    or None when it cannot be read.
+
+    The 90th percentile, not the mean: a flick onto a target is a fifth of a
+    second, and a mean over the run-up averages it away.
+    """
+    from .tools import binary
+
+    try:
+        mtime = Path(path).stat().st_mtime
+    except OSError:
+        return None
+    key = (str(path), mtime, round(t0, 2), round(t1, 2))
+    with _ACTION_LOCK:
+        if key in _ACTION_CACHE:
+            return _ACTION_CACHE[key]
+    ff = binary("ffmpeg")
+    val = None
+    if ff:
+        from .killfeed import _NO_WINDOW
+        W, H = 64, 36
+        try:
+            raw = subprocess.run([ff, "-v", "error", "-ss", f"{max(0.0, t0):.3f}", "-i", str(path),
+                                  "-t", f"{max(0.2, t1 - t0):.3f}", "-vf", f"fps=15,scale={W}:{H}",
+                                  "-pix_fmt", "rgb24", "-f", "rawvideo", "-"], capture_output=True,
+                                 timeout=60, creationflags=_NO_WINDOW).stdout
+            n = len(raw) // (W * H * 3)
+            if n > 2:
+                import numpy as np
+                rgb = np.frombuffer(raw, np.uint8)[:n * W * H * 3].reshape(n, H, W, 3).astype(np.float32)
+                fr = rgb.mean(3)
+                d = np.abs(np.diff(fr, axis=0)).mean((1, 2))
+                mx, mn = rgb.max(3), rgb.min(3)
+                hist = np.histogramdd(rgb[::3].reshape(-1, 3), bins=(4, 4, 4), range=((0, 256),) * 3)[0].ravel()
+                val = {"action": float(np.percentile(d, 90)),
+                       "sat": float(np.mean((mx - mn) / (mx + 1e-6))),
+                       "hist": [round(float(x), 4) for x in hist / max(1.0, hist.sum())]}
+        except (OSError, subprocess.SubprocessError):
+            val = None
+    with _ACTION_LOCK:
+        if len(_ACTION_CACHE) > 4000:
+            _ACTION_CACHE.clear()
+        _ACTION_CACHE[key] = val
+    return val
+
+
+def _measure_action(moments_: list, measure) -> dict[int, dict | None]:
+    """What the footage around every moment's kills looks like, four at a time."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(m):
+        return id(m), measure(m.clip["path"], max(0.0, m.first - 1.2), m.last + 0.3)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        return dict(pool.map(one, moments_))
+
+
+def _fit_total(shots: list[dict], beat: float, target: float, run: float, cap: float = 4.0) -> None:
+    """Make the reel end on its phrase: exactly `target` seconds, in whole beats.
+
+    Selection fills to about the phrase; this settles the last few beats by
+    shortening run-ups in the middle of the reel (never below `run`) or, when
+    there is room in the footage, lengthening the opener's and the heroes'.
+    """
+    if not shots or target <= 0:
+        return
+    want = int(round(target / beat))
+
+    def have() -> int:
+        return int(round(sum(s["duration"] for s in shots) / beat))
+
+    for _ in range(4 * len(shots) + 64):
+        if have() <= want:
+            break
+        # 1e-4, not 1e-6: pre is stored rounded to 5 decimals, so two beats
+        # minus one beat can read as a hair under one beat.
+        # Heroes keep two beats of run-up: the climax is the last thing to
+        # give up time so the phrase can end on its bar.
+        def floor(s):
+            if not s.get("hero"):
+                return run
+            return max(run, 2 * beat, math.ceil(rulebook.HERO_RUN_SECONDS / beat - 1e-6) * beat)
+        middle = [s for s in shots[1:-1] if s["pre"] - beat >= floor(s) - 1e-4]
+        pool = middle or [s for s in shots if s["pre"] - beat >= floor(s) - 1e-4]
+        if not pool:
+            break
+        s = max(pool, key=lambda s: (s["pre"], -s.get("hero", False)))
+        s["pre"] = round(s["pre"] - beat, 5)
+        s["duration"] = round(s["duration"] - beat, 5)
+    for _ in range(4 * len(shots) + 64):
+        if have() >= want:
+            break
+        done = False
+        # Spare beats go to the heroes' run-ups first, then to the shortest
+        # shots: v9 gave them all to the first shot with footage, and two
+        # double kills held for six seconds.
+        grow = [s for s in shots if s.get("hero")] + sorted(
+            (s for s in shots if not s.get("hero")), key=lambda s: s["duration"])
+        grow = [s for s in grow if s["duration"] + beat <= cap + 1e-6]
+        for s in grow:
+            ps = pieces(s["speed"], s["duration"] + beat, s["pre"] + beat)
+            if source_used(ps, s["pre"] + beat) <= float(s["kill"]) + 1e-6:
+                s["pre"] = round(s["pre"] + beat, 5)
+                s["duration"] = round(s["duration"] + beat, 5)
+                done = True
+                break
+        if not done:
+            break
 
 
 def _flash_share(style: "Style") -> float:
@@ -801,6 +1037,7 @@ def vary(project: dict, what: str = "all", seed: int | None = None) -> dict:
         seed = (int(project.get("seed") or 0) * 1103515245 + 12345) & 0x7FFFFFFF
     project["seed"] = int(seed)
     _vary(project["shots"], pools, style, seed, what if what in (*POOL_KINDS, "all") else "all")
+    rulebook.budget(project["shots"], pools, what if what in POOL_KINDS else None)
     return project
 
 
@@ -1041,6 +1278,8 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         "music_db": _num(project.get("music_db"), -30, 12, 0.0),
         "game_db": _num(project.get("game_db"), -30, 12, 0.0),
         "duck": bool(project.get("duck", True)),
+        "saturation": round(_num(project.get("saturation"), 0.3, 1.5, 1.0), 3),
+        "kill_sound": bool(project.get("kill_sound", True)),
         "beat": _num(project.get("beat"), 0.2, 2.0, 60.0 / NO_SONG_BPM),
         "seed": int(_num(project.get("seed"), 0, 2 ** 31 - 1, 0)),
         "pools": {},
@@ -1253,6 +1492,9 @@ class Segment:
     freeze_push: bool
     has_audio: bool
     outro_freeze: float = 0.0
+    sat_trim: float = 1.0
+    kill_times: list = field(default_factory=list)   # every kill shown, segment seconds
+    game_gate: bool = False                          # game sound only around the kills
 
     def key(self) -> str:
         d = dict(self.__dict__)
@@ -1297,6 +1539,11 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
         if s["hero"] and "h02" in s["hero_fx"]:
             freeze, push = max(freeze, 0.75), True
         kill_at = hsec + min(s["pre"], dur)
+        # Every kill this shot shows, where it plays in the segment -- through
+        # the speed map, so a slowed kill is still gated at the right moment.
+        k_src = source_used(ps, min(s["pre"], dur))
+        kill_times = sorted({round(hsec + output_at(ps, max(0.0, k_src + (k - s["kill"]))), 4)
+                             for k in s["kills"] if s["kill"] - 1e-6 <= k <= s["kill"] + dur})
         seg_beats = []
         if song_beats is not None:
             seg_beats = [round(b - (starts[i] / FPS - hsec), 4) for b in song_beats
@@ -1314,7 +1561,10 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
             caption=s["caption"] if (s["hero"] and "h05" in s["hero_fx"]) else "",
             beats=seg_beats if s["camera"] == "c04" else [],
             freeze=freeze, freeze_push=push, has_audio=has_audio(s["clip"]),
-            outro_freeze=1.0 if (i == len(shots) - 1 and project["outro"] == "e02") else 0.0))
+            outro_freeze=1.0 if (i == len(shots) - 1 and project["outro"] == "e02") else 0.0,
+            sat_trim=float(project.get("saturation", 1.0)),
+            kill_times=kill_times or [round(kill_at, 4)],
+            game_gate=bool(project.get("song")) and bool(project.get("kill_sound", True))))
     return out
 
 
@@ -1392,7 +1642,7 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
         v.append(f"scale={sx}:{sy},crop={W}:{H}:x='{'+'.join(xs)}':y='{'+'.join(ys)}'")
 
     sat, con, bri, static = GRADES.get(seg.grade, GRADES["g01"])
-    b_terms, c_terms, s_terms = [f"{bri}"], [f"{con}"], [f"{sat}"]
+    b_terms, c_terms, s_terms = [f"{bri}"], [f"{con}"], [f"{sat * seg.sat_trim:.3f}"]
     if "k03" in seg.fx:
         b_terms.append(f"0.55*gte(t,{kt:.4f})*max(0,1-(t-{kt:.4f})/0.12)")
     if "k16" in seg.fx:
@@ -1429,8 +1679,12 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
         dyn = "t" in expr.replace("PI", "")
         v.append(f"vignette=angle='min(1.5,{expr})'" + (":eval=frame" if dyn else ""))
     if seg.caption:
-        size = max(28, round(H * 0.075))
-        big = round(size * 1.9)
+        # Sized to the frame's WIDTH as well as its height: on a vertical
+        # reel the slam's first frames drew "RIPLE KIL" -- 1.9x of a size
+        # chosen from the 1920-pixel height is wider than 1080 pixels.
+        fit = W * 0.9 / max(1, len(seg.caption) * 0.62)
+        size = int(min(max(28, round(H * 0.075)), fit))
+        big = int(min(round(size * 1.9), fit))
         v.append(f"drawtext={_font()}expansion=none:textfile={_path_arg(text_file(textdir, seg.caption))}:"
                  f"fontcolor=white:borderw=3:"
                  f"bordercolor=black@0.55:fontsize='if(lt(t-{kt:.4f},0.1),{big}-{(big - size) * 10}*(t-{kt:.4f}),{size})':"
@@ -1467,6 +1721,19 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
         last = "[ad]"
     else:
         last = "[ac]"
+    if seg.game_gate:
+        # THE KILL IS WHAT YOU HEAR. Game sound under the whole reel -- steps,
+        # reloads, voice lines -- kept the music ducked all the time and left
+        # 1.1 LU of loudness range. Gated to the shots that land, the music is
+        # clean between kills and each kill cuts through it (see rulebook).
+        gates = [f"clip((t-{k - rulebook.KILL_SOUND_BEFORE:.4f})/0.03,0,1)*clip(({k + rulebook.KILL_SOUND_AFTER:.4f}-t)/0.08,0,1)"
+                 for k in seg.kill_times]
+        expr = gates[0]
+        for gexp in gates[1:]:
+            expr = f"max({expr},{gexp})"
+        bed = rulebook.GAME_BED
+        achain += f";{last}volume='{bed}+{1 - bed:.3f}*({expr})':eval=frame[ag]"
+        last = "[ag]"
     achain += f";{last}apad=whole_dur={total_s:.5f},atrim=0:{total_s:.5f}[a]"
 
     enc = encoder_args if encoder_args is not None else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p"]
@@ -1523,9 +1790,11 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         post.append("eq=brightness='max(0,0.85*(1-t/0.35))':eval=frame")
     elif intro == "i12":
         k1 = derived["kills"][0] if derived["kills"] else 0.0
-        post.append(f"eq=saturation='if(lt(t,{k1:.4f}),0,1)':eval=frame")
+        post.append(f"eq=saturation='if(lt(t,{k1:.4f}),0.15,1)':eval=frame")
+        post.append("fade=in:st=0:d=0.6")
+    end_fade = rulebook.ending_fade(project["beat"])
     if outro == "e01" or outro == "e03":
-        post.append(f"fade=out:st={max(0.0, L - 1.2):.4f}:d=1.2")
+        post.append(f"fade=out:st={max(0.0, L - end_fade):.4f}:d={end_fade:.4f}")
     elif outro == "e05":
         post.append(f"fade=out:st={max(0.0, L - 0.35):.4f}:d=0.35:color=white")
     elif outro == "e02":
@@ -1581,12 +1850,42 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         if intro in ("i03", "i05"):
             fades.append("afade=t=in:st=0:d=1.0")
         if outro in ("e01", "e03", "e02"):
-            fades.append(f"afade=t=out:st={max(0.0, L - 1.5):.4f}:d=1.5")
+            fades.append(f"afade=t=out:st={max(0.0, L - end_fade):.4f}:d={end_fade:.4f}")
+        # A BREATH BEFORE THE BIG ONE: the music drops away for the half beat
+        # before each hero kill and comes back on it.
+        holes, hits = [], []
+        half = project["beat"] / 2
+        gated = project.get("duck", True) and project.get("kill_sound", True)
+        for i, sh in enumerate(project["shots"]):
+            k = derived["shots"][i]["kill_reel"]
+            if sh.get("hero") and i > 0:
+                holes.append(f"clip((t-{k - half:.4f})/0.04,0,1)*clip(({k:.4f}-t)/0.02,0,1)")
+        if gated:
+            for k in derived.get("kills") or []:
+                # Before the kill, not on it: the kill sits on a beat, and ducking
+                # the beat itself took its punch away (measured: kills came out
+                # 2 dB quieter than the moment before them). The gunfire plays
+                # into the gap and the beat lands with the kill.
+                hits.append(f"clip((t-{k - rulebook.KILL_DUCK_SECONDS:.4f})/0.05,0,1)*clip(({k - 0.01:.4f}-t)/0.015,0,1)")
+
+        def anyof(gs):
+            e = gs[0]
+            for x in gs[1:]:
+                e = f"max({e},{x})"
+            return e
+        dip = ""
+        if holes or hits:
+            terms = []
+            if hits:
+                terms.append(f"{1 - rulebook.KILL_DUCK:.3f}*({anyof(hits)})")
+            if holes:
+                terms.append(f"{1 - rulebook.HERO_DIP:.3f}*({anyof(holes)})")
+            dip = f",volume='max({rulebook.HERO_DIP},1-{'-'.join(terms)})':eval=frame"
         mchain = (f"[{n}:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
-                  f"atrim=0:{L:.4f},asetpts=PTS-STARTPTS,volume={project['music_db']}dB"
+                  f"atrim=0:{L:.4f},asetpts=PTS-STARTPTS,volume={project['music_db']}dB" + dip
                   + ("," + ",".join(fades) if fades else "") + "[music]")
         g.append(mchain)
-        if project.get("duck", True):
+        if project.get("duck", True) and not project.get("kill_sound", True):
             g.append("[game]asplit[gmix][gkey];[music][gkey]sidechaincompress=threshold=0.16:ratio=5:"
                      "attack=4:release=220:level_sc=1[ducked];[ducked][gmix]amix=inputs=2:normalize=0:"
                      "duration=first[mixed]")
@@ -1595,7 +1894,7 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         last = "[mixed]"
     else:
         last = "[game]"
-    g.append(f"{last}alimiter=limit=0.95,loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,"
+    g.append(f"{last}alimiter=limit=0.9:level=disabled,aresample=48000,"
              f"apad=whole_dur={L:.4f},atrim=0:{L:.4f}[a]")
 
     enc = encoder_args if encoder_args is not None else ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p"]
@@ -1679,7 +1978,7 @@ class StudioJob:
             raise RuntimeError(text[-1500:] or f"ffmpeg exited {code}")
         return text if capture else ""
 
-    def _loudness(self, ff: str, path: Path, target: float = -14.0) -> None:
+    def _loudness(self, ff: str, path: Path, target: float = rulebook.LOUDNESS) -> None:
         """Bring the finished reel to `target` LUFS with a measured second pass.
 
         One pass of loudnorm guesses as it goes and measured 1.2 LU hot on the
@@ -1688,21 +1987,32 @@ class StudioJob:
         this costs seconds.
         """
         fixed = path.with_name(path.stem + ".loud.mp4")
+
+        def integrated(p: Path) -> float:
+            err = self._run_ff([ff, "-hide_banner", "-nostdin", "-i", str(p), "-vn", "-af",
+                                "loudnorm=print_format=json", "-f", "null", "-"], capture=True)
+            return float(json.loads(err[err.rindex("{"): err.rindex("}") + 1])["input_i"])
         try:
-            err = self._run_ff([ff, "-hide_banner", "-nostdin", "-i", str(path), "-vn", "-af",
-                                f"loudnorm=I={target}:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
-                               capture=True)
-            blob = err[err.rindex("{"): err.rindex("}") + 1]
-            m = json.loads(blob)
-            if abs(float(m["input_i"]) - target) < 0.5:
-                return
-            af = (f"loudnorm=I={target}:TP=-1.5:LRA=11:measured_I={m['input_i']}:measured_TP={m['input_tp']}"
-                  f":measured_LRA={m['input_lra']}:measured_thresh={m['input_thresh']}"
-                  f":offset={m['target_offset']}:linear=true")
-            self._run_ff([ff, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(path),
-                          "-map", "0:v", "-map", "0:a", "-c:v", "copy", "-af", af, "-ar", "48000",
-                          "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", str(fixed)])
-            fixed.replace(path)
+            # GAIN AND A LIMITER, NOT A NORMALISER. loudnorm reaching -10 LUFS
+            # has to compress, and it compressed the kill accents flat again
+            # (measured: kills 0.4 dB above the bars between them). A fixed gain
+            # into a peak limiter keeps them, and a second measurement corrects
+            # for what the limiter took off.
+            now = integrated(path)
+            gain = target - now
+            for _ in range(2):
+                if abs(gain) < 0.3:
+                    break
+                af = f"volume={gain:.2f}dB,alimiter=limit={rulebook.PEAK_LIMIT}:attack=3:release=60:level=disabled"
+                self._run_ff([ff, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(path),
+                              "-map", "0:v", "-map", "0:a", "-c:v", "copy", "-af", af, "-ar", "48000",
+                              "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", str(fixed)])
+                got = integrated(fixed)
+                if abs(got - target) < 0.4:
+                    break
+                gain += target - got
+            if fixed.is_file():
+                fixed.replace(path)
         except Cancelled:
             raise
         except Exception as e:                              # noqa: BLE001
