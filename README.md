@@ -106,13 +106,23 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
   one at a time, a range, or a whole run — choose a style and a song, and it builds
   the reel with every cut and every kill on the beat.
   - The styles are measured, not guessed: each one's pace, flash rate and opening are
-    the medians of popular Valorant edits it is modelled on (26 of them, 137 thousand
-    to 5.9 million views) — or of your own reel.
+    the medians of the popular montage edits it is modelled on (26 of them — 25
+    Valorant, one Call of Duty — 137 thousand to 5.9 million views), or of your own
+    reel.
+  - **No two kills in a row look the same.** Each shot draws its own kill effects,
+    transition, speed ramp and camera move from the style's pools, never repeating the
+    shot before. Narrow the pools, or press *Mix kill effects* / *Mix transitions* for
+    a fresh draw — the cuts and kills stay exactly where they were.
   - The finished reel opens as an **editing timeline** — video, transitions, kill
-    effects, speed, text and the song's beat grid on one axis. Drag a shot to move
-    it, its edge to trim it, its diamond to move the kill; swap a transition, add a
-    freeze or an RGB split, slow a hero moment, change the colour. Render again and
-    only the shots you changed are re-encoded.
+    effects, speed, text and the song's beat grid on one axis. Click a shot to change
+    its own kill effects, transition or speed; drag it to move it, its edge to trim
+    it, its diamond to move the kill. Render again and only the shots you changed are
+    re-encoded.
+  - **A song editor.** Choose the track, drag the part you want along the whole
+    waveform, fine-tune its start by a bar, a beat or 10 ms, and — if you want — play
+    it and press K on every beat a kill should land on. The cuts move so shot 1's kill
+    lands on mark 1, shot 2's on mark 2, and the part's length decides how many shots
+    stay.
 - **Or don't stream at all.** Turn *Go live on YouTube* off and AutoStream is just
   the clipper: it still spots the game, records it and cuts the clips, never touches
   the YouTube API, and asks for no Google sign-in. The dashboard says RECORDING

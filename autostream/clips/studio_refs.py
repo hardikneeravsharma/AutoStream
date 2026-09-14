@@ -1,6 +1,7 @@
-"""What popular Valorant edits actually do, measured -- the ground the Studio's styles stand on.
+"""What popular FPS montage edits actually do, measured -- the ground the Studio's styles stand on.
 
-26 edits between 137 thousand and 5.9 million views, plus the reel v9 made on
+26 edits between 137 thousand and 5.9 million views (25 Valorant, one Call of
+Duty montage cut to the same kind of song), plus the reel v9 made on
 this machine, downloaded once and measured frame by frame: cuts and white
 flashes by frame difference and brightness, fades by the first and last half
 second, beat alignment against each video's own detected tempo. Only the

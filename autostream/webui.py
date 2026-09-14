@@ -258,8 +258,13 @@ class _Handler(BaseHTTPRequestHandler):
         want = Path(path or "")
         cached = getattr(self.app, "_reel_cache", None)
         allowed = Path(cached[1].path) if cached else None
+        # The Studio analyses songs too, so the last few are allowed as well:
+        # picking one there must not silence the beat marker on the Clips page.
+        recent = [Path(s.path) for s in (getattr(self.app, "_reel_shapes", {}) or {}).values()]
         try:
-            ok = bool(allowed) and want.resolve() == allowed.resolve()
+            ok = any(want.resolve() == a.resolve() for a in ([allowed] if allowed else []) + recent)
+            if ok and not (allowed and want.resolve() == allowed.resolve()):
+                allowed = next(a for a in recent if want.resolve() == a.resolve())
         except OSError:
             ok = False
         if not ok:
@@ -597,6 +602,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_render(b))
             elif p == "/api/studio/cancel":
                 self._json(self.app.studio_cancel())
+            elif p == "/api/studio/vary":
+                self._json(self.app.studio_vary(b))
+            elif p == "/api/studio/song":
+                self._json(self.app.studio_song(b))
             elif p == "/api/update/install":
                 self._json(self.app.update_install())
             elif p == "/api/update/download":
@@ -2080,6 +2089,11 @@ class Server:
             return {"error": "A clip job is running. Wait for it to finish."}
         if edit_mod.editor().busy():
             return {"error": "A clip is being re-rendered. Wait for it to finish."}
+        from .clips import studio as studio_mod
+
+        # The installer closes the app, and a reel mid-render would go with it.
+        if studio_mod.runner().busy():
+            return {"error": "A reel is rendering in the Studio. Wait for it to finish."}
 
         # The zip has no installer to run; it is extracted by hand. Say so
         # rather than trying to execute an archive.
@@ -2231,7 +2245,14 @@ class Server:
         cached = getattr(self, "_reel_cache", None)
         if cached and cached[0] == key:
             return cached[1]
-        shape = reel.analyse(src, seconds=seconds)
+        shapes = getattr(self, "_reel_shapes", None)
+        if shapes is None:
+            shapes = self._reel_shapes = {}
+        shape = shapes.get(key) or reel.analyse(src, seconds=seconds)
+        shapes.pop(key, None)
+        shapes[key] = shape
+        while len(shapes) > 4:
+            shapes.pop(next(iter(shapes)))
         self._reel_cache = (key, shape)
         return shape
 
@@ -2472,9 +2493,72 @@ class Server:
         out = Path(proj["output"]) if proj.get("output") else \
             _free_reel(outdir, plan_mod.slug(proj["name"]) or "reel")
         proj["output"] = str(out)
-        run.start(studio.StudioJob(proj, derived, root, out))
+        job = studio.StudioJob(proj, derived, root, out)
+        # start() is the gate that holds the lock; busy() above is only the
+        # fast answer. Two POSTs that both passed it must not both be "ok".
+        if not run.start(job):
+            return {"ok": False, "error": "A reel is already rendering."}
         log.info("studio: rendering %d shots -> %s", len(proj["shots"]), out.name)
-        return {"ok": True, "output": str(out), "project": proj, "derived": derived, "notes": notes}
+        return {"ok": True, "job": job.id, "output": str(out), "project": proj,
+                "derived": derived, "notes": notes}
+
+    def studio_vary(self, body: dict) -> dict:
+        """Mix the timeline's effects again; shots and timing stay put."""
+        from .clips import studio
+
+        root = self._clips_dir(cfg.load())
+        try:
+            proj, _, _ = studio.normalise(body.get("project"), root)
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        what = str(body.get("what") or "all")
+        seed = body.get("seed")
+        try:
+            seed = int(seed) if seed is not None else None
+        except (TypeError, ValueError):
+            seed = None
+        studio.vary(proj, what, seed)
+        try:
+            proj, derived, notes = studio.normalise(proj, root)
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "project": proj, "derived": derived, "notes": notes}
+
+    def studio_song(self, body: dict) -> dict:
+        """Choose the song, the part of it, and optionally where the kills land."""
+        from .clips import studio
+
+        root = self._clips_dir(cfg.load())
+        try:
+            proj, _, _ = studio.normalise(body.get("project"), root)
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        song = str(body.get("song") or "")
+        if not song:
+            proj["song"], proj["song_offset"] = "", 0.0
+            proj["beat"] = round(60.0 / studio.NO_SONG_BPM, 6)
+            proj, derived, notes = studio.normalise(proj, root)
+            return {"ok": True, "project": proj, "derived": derived, "notes": notes, "song": None}
+        try:
+            shape = self._studio_shape(song)
+        except (FileNotFoundError, OSError, RuntimeError) as e:
+            return {"ok": False, "error": str(e)}
+
+        def num(v, default=0.0):
+            try:
+                f = float(v)
+                return f if f == f and abs(f) < 1e6 else default
+            except (TypeError, ValueError):
+                return default
+        marks = [num(m, -1.0) for m in (body.get("marks") or [])[:studio.MAX_SHOTS * 2]]
+        notes = studio.apply_song(proj, shape, song, num(body.get("start")), num(body.get("end")),
+                                  [m for m in marks if m >= 0])
+        try:
+            proj, derived, more = studio.normalise(proj, root)
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "project": proj, "derived": derived, "notes": notes + more,
+                "song": shape.as_dict()}
 
     def studio_job(self) -> dict:
         from .clips import studio

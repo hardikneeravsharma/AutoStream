@@ -364,3 +364,187 @@ def test_the_catalog_is_what_the_page_reads():
     cat = studio.catalog()
     assert cat["ok"] and cat["default_style"] in {s["key"] for s in cat["styles"]}
     assert all(s["measured"]["edits"] >= 3 for s in cat["styles"])
+    assert all(s["pools"]["kill"] and s["pools"]["transition"] for s in cat["styles"])
+
+
+# ------------------------------------------------------------------ variety
+
+@pytest.fixture
+def long_run(tmp_path):
+    """Twenty-four 12 s clips with the kill in the middle: room to move."""
+    r = tmp_path / "clips"
+    _run(r, "2026-09-01_1200_VALORANT", "VALORANT",
+         [{"start": 100.0 * i, "end": 100.0 * i + 12} for i in range(1, 25)],
+         kills=[100.0 * i + 6 for i in range(1, 25)])
+    return r
+
+
+@pytest.mark.parametrize("style", [s.key for s in studio.STYLES])
+def test_no_two_shots_running_get_the_same_kill_effect(long_run, style):
+    """The reel the user sent back had one effect on every kill. Every shot
+    draws its own now, and never what the shot before it got."""
+    proj, _ = studio.plan(_clips(long_run), style, shape=Shape(bpm=128.0))
+    firsts = [s["fx"][0] for s in proj["shots"] if s["fx"]]
+    assert len(firsts) == len(proj["shots"])
+    assert all(a != b for a, b in zip(firsts, firsts[1:])), firsts
+    assert len(set(firsts)) >= 3, firsts
+
+
+@pytest.mark.parametrize("style", [s.key for s in studio.STYLES])
+def test_transitions_are_mixed_too(long_run, style):
+    proj, _ = studio.plan(_clips(long_run), style, shape=Shape(bpm=128.0))
+    cuts = [s["transition"] for s in proj["shots"][1:]]
+    assert len(set(cuts)) >= 2, cuts
+    soft = [t for t in cuts if t not in ("t01", "t02")]
+    assert all(a != b for a, b in zip(soft, soft[1:])) or len(set(soft)) <= 1, cuts
+
+
+def test_the_same_seed_is_the_same_reel(long_run):
+    clips = _clips(long_run)
+    a, _ = studio.plan(clips, "velocity", seed=7)
+    b, _ = studio.plan(clips, "velocity", seed=7)
+    c, _ = studio.plan(clips, "velocity", seed=8)
+    mix = lambda p: [(s["fx"], s["transition"], s["speed"], s["camera"]) for s in p["shots"]]
+    assert mix(a) == mix(b)
+    assert mix(a) != mix(c)
+
+
+def test_mixing_again_moves_no_cut_and_no_kill(long_run):
+    proj, _ = studio.plan(_clips(long_run), "montage", shape=Shape(bpm=128.0))
+    timing = [(s["duration"], s["pre"], s["kill"], s["clip"]) for s in proj["shots"]]
+    before = [s["fx"] for s in proj["shots"]]
+    seed = proj["seed"]
+    studio.vary(proj, "kill")
+    assert [(s["duration"], s["pre"], s["kill"], s["clip"]) for s in proj["shots"]] == timing
+    assert [s["fx"] for s in proj["shots"]] != before
+    assert proj["seed"] != seed
+
+
+def test_mixing_one_kind_leaves_the_others_alone(long_run):
+    proj, _ = studio.plan(_clips(long_run), "velocity", shape=Shape(bpm=128.0))
+    trans = [s["transition"] for s in proj["shots"]]
+    speeds = [s["speed"] for s in proj["shots"]]
+    studio.vary(proj, "kill")
+    assert [s["transition"] for s in proj["shots"]] == trans
+    assert [s["speed"] for s in proj["shots"]] == speeds
+
+
+def test_a_narrowed_pool_is_all_that_is_drawn(long_run):
+    proj, _ = studio.plan(_clips(long_run), "hype", shape=Shape(bpm=128.0))
+    proj["pools"]["kill"] = ["k02", "k06"]
+    studio.vary(proj, "kill")
+    assert {k for s in proj["shots"] for k in s["fx"]} <= {"k02", "k06"}
+
+
+def test_pools_and_seed_survive_the_round_trip_and_junk_is_dropped(long_run):
+    proj, _ = studio.plan(_clips(long_run), "story", shape=Shape(bpm=128.0))
+    proj["pools"]["kill"] = ["k01", "evil", "t04"]
+    proj["seed"] = "not a number"
+    got, _, _ = studio.normalise(proj, long_run)
+    assert got["pools"]["kill"] == ["k01"]
+    assert isinstance(got["seed"], int)
+
+
+# ------------------------------------------------------------------ the song part
+
+def test_a_marked_kill_lands_on_its_mark(long_run):
+    proj, _ = studio.plan(_clips(long_run)[:6], "story", shape=Shape(bpm=120.0))
+    marks = [2.0, 3.5, 5.25, 7.0, 9.5]
+    studio.apply_marks(proj, marks)
+    got, derived, _ = studio.normalise(proj, long_run)
+    for i, m in enumerate(marks):
+        assert derived["shots"][i]["kill_reel"] == pytest.approx(m, abs=1.0 / studio.FPS), i
+    # the shot with no mark follows on at its own length
+    assert derived["shots"][5]["start"] == pytest.approx(derived["shots"][4]["end"], abs=1e-6)
+
+
+def test_more_marks_than_shots_says_so(long_run):
+    proj, _ = studio.plan(_clips(long_run)[:2], "story", shape=Shape(bpm=120.0))
+    notes = studio.apply_marks(proj, [2.0, 4.0, 6.0])
+    assert any("were not used" in n for n in notes)
+
+
+def test_a_mark_the_footage_cannot_reach_is_reported(long_run):
+    proj, _ = studio.plan(_clips(long_run)[:2], "story", shape=Shape(bpm=120.0))
+    notes = studio.apply_marks(proj, [9.0, 10.0])           # 6 s of footage before the kill
+    assert any("Shot 1 has only" in n for n in notes)
+
+
+def test_the_song_starts_exactly_where_it_was_fine_tuned(long_run):
+    """10 ms nudges are the point of the control, so the start is not snapped."""
+    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=Shape(bpm=128.0))
+    shape = Shape(bpm=128.0, seconds=90.0)
+    studio.apply_song(proj, shape, "song.wav", 13.1061)
+    assert proj["song_offset"] == pytest.approx(13.1061, abs=1e-4)
+    assert proj["beat"] == pytest.approx(shape.beat, abs=1e-6)
+
+
+def test_song_marks_are_song_seconds_and_outside_ones_are_ignored(long_run):
+    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=Shape(bpm=120.0))
+    shape = Shape(bpm=120.0, seconds=90.0, phase=0.0)
+    studio.apply_song(proj, shape, "song.wav", 20.0, 0.0, [3.0, 22.0, 24.0])
+    got, derived, _ = studio.normalise(dict(proj, song=""), long_run)
+    assert derived["shots"][0]["kill_reel"] == pytest.approx(2.0, abs=1.0 / studio.FPS)
+    assert derived["shots"][1]["kill_reel"] == pytest.approx(4.0, abs=1.0 / studio.FPS)
+
+
+def test_a_short_part_keeps_only_the_shots_it_holds(long_run):
+    proj, _ = studio.plan(_clips(long_run)[:8], "story", shape=Shape(bpm=120.0))
+    n = len(proj["shots"])
+    notes = studio.apply_song(proj, Shape(bpm=120.0, seconds=90.0), "song.wav", 10.0, 16.0)
+    assert sum(s["duration"] for s in proj["shots"]) <= 6.0 + 1e-6
+    assert len(proj["shots"]) < n
+    assert any("left out" in x for x in notes)
+
+
+def test_a_caption_with_punctuation_is_drawn_from_a_file(tmp_path):
+    text = "Ace, it's 3:30 [100%]; done \\o/"
+    p = studio.text_file(tmp_path, text)
+    assert p.read_text(encoding="utf-8") == text
+    assert studio.text_file(tmp_path, text) == p                # same text, same file
+    arg = studio._path_arg(p)
+    assert arg.startswith("'") and arg.endswith("'") and "\\" not in arg.replace("\\:", "")
+
+
+def test_a_hero_caption_never_goes_into_the_graph_inline(root, tmp_path):
+    got, derived, segs = _built(root, hero=True, hero_fx=["h05"], caption="it's, an ACE: [1v5]")
+    for seg in segs:
+        graph = studio.segment_command(seg, Path("o.mp4"), textdir=tmp_path)
+        graph = graph[graph.index("-filter_complex") + 1]
+        assert "it's" not in graph
+        if "drawtext" in graph:
+            assert "textfile=" in graph
+
+
+class _Job:
+    def __init__(self):
+        import threading
+        self.state = "running"
+        self.release = threading.Event()
+        self.cancelled = False
+
+    def run(self):
+        self.release.wait(5)
+        self.state = "done"
+
+    def cancel(self):
+        self.cancelled = True
+        self.release.set()
+
+    def snapshot(self):
+        return {"state": self.state}
+
+
+def test_only_one_reel_renders_at_a_time():
+    run = studio.Runner()
+    a, b = _Job(), _Job()
+    assert run.start(a)
+    assert run.busy() and not run.start(b)
+    assert run.cancel() and a.cancelled
+    for _ in range(100):
+        if not run.busy():
+            break
+        import time
+        time.sleep(0.02)
+    assert not run.busy() and run.start(b)
+    b.release.set()

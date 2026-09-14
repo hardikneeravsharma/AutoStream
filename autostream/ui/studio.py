@@ -40,6 +40,8 @@ STUDIO_HTML = r"""
               data-act="studio-tab" data-tab="clips" id="studio-tab-clips">Clips</button>
       <button type="button" class="seg-btn" role="tab" aria-selected="false"
               data-act="studio-tab" data-tab="timeline" id="studio-tab-timeline" disabled>Timeline</button>
+      <button type="button" class="seg-btn" role="tab" aria-selected="false"
+              data-act="studio-tab" data-tab="song" id="studio-tab-song" disabled>Song</button>
     </div>
   </header>
 
@@ -116,6 +118,82 @@ STUDIO_HTML = r"""
     </div>
   </section>
 
+  <!-- THE SONG. Its own place, because choosing the part of a track and where
+       the kills fall in it is listening work: it wants the whole song on one
+       axis, the chosen part magnified on another, and the music playing. -->
+  <section id="studio-pane-song" class="hide" aria-label="Song">
+    <div class="studio-sg-head">
+      <div class="studio-sg-title">
+        <strong class="studio-sg-name" id="studio-sg-name">No song</strong>
+        <span class="muted" id="studio-sg-facts">Choose a song to cut the reel to.</span>
+      </div>
+      <div class="field-inline">
+        <button type="button" class="btn" data-act="studio-sg-pick">Choose a song…</button>
+        <button type="button" class="btn btn-ghost" data-act="studio-sg-none">No song</button>
+      </div>
+    </div>
+    <div class="studio-sg-body hide" id="studio-sg-body">
+      <p class="field-label">The whole song — drag the highlighted part, or its edges</p>
+      <canvas class="studio-sg-wave" id="studio-sg-overview" height="90" aria-label="Whole song"></canvas>
+      <p class="field-label">The part you are using — click to move the playhead</p>
+      <canvas class="studio-sg-wave studio-sg-detail" id="studio-sg-detail" height="130" aria-label="Chosen part"></canvas>
+      <audio id="studio-sg-audio" preload="auto"></audio>
+      <div class="studio-tl-bar">
+        <button type="button" class="btn btn-sm" data-act="studio-sg-play" id="studio-sg-play">Play the part</button>
+        <label class="studio-check"><input type="checkbox" id="studio-sg-loop" checked> Loop</label>
+        <span class="mono studio-clock" id="studio-sg-clock">0:00.00</span>
+        <span class="muted" id="studio-sg-range"></span>
+      </div>
+      <div class="studio-sg-grid">
+        <div class="card"><div class="card-body studio-sg-card">
+          <h3 class="studio-h">Where the reel starts</h3>
+          <div class="field-inline studio-nudge">
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="start" data-d="-bar">−1 bar</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="start" data-d="-beat">−1 beat</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="start" data-d="-ms">−10 ms</button>
+            <span class="mono" id="studio-sg-start">0:00.00</span>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="start" data-d="ms">+10 ms</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="start" data-d="beat">+1 beat</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="start" data-d="bar">+1 bar</button>
+          </div>
+          <div class="field-inline">
+            <button type="button" class="btn btn-sm" data-act="studio-sg-snapbar">Snap to the nearest bar</button>
+            <button type="button" class="btn btn-sm" data-act="studio-sg-atdrop" id="studio-sg-atdrop">Build into the drop</button>
+          </div>
+          <h3 class="studio-h">Where it ends</h3>
+          <div class="field-inline studio-nudge">
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="end" data-d="-bar">−1 bar</button>
+            <span class="mono" id="studio-sg-end">0:00.00</span>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="end" data-d="bar">+1 bar</button>
+            <button type="button" class="btn btn-sm" data-act="studio-sg-fit">Fit the timeline</button>
+          </div>
+          <p class="muted" id="studio-sg-fitnote"></p>
+        </div></div>
+        <div class="card"><div class="card-body studio-sg-card">
+          <h3 class="studio-h">Mark the kills <span class="muted">(optional)</span></h3>
+          <p class="muted">Play the part and press <kbd>K</kbd> on every beat a kill should land on.
+             Shot 1's kill lands on mark 1, shot 2's on mark 2, and so on; the cuts move to fit.
+             <kbd>Space</kbd> plays and pauses.</p>
+          <div class="field-inline">
+            <button type="button" class="btn btn-primary" data-act="studio-sg-mark">Mark a kill here (K)</button>
+            <button type="button" class="btn btn-ghost" data-act="studio-sg-unmark">Undo mark</button>
+            <button type="button" class="btn btn-ghost" data-act="studio-sg-clearmarks">Clear marks</button>
+          </div>
+          <div class="field-inline">
+            <label class="studio-check"><input type="checkbox" id="studio-sg-snap" checked> Snap marks to the beat</label>
+            <label class="studio-check"><input type="checkbox" id="studio-sg-click" checked> Click on each mark as it plays</label>
+          </div>
+          <div class="reel-chips" id="studio-sg-chips"></div>
+          <p class="muted" id="studio-sg-marksinfo"></p>
+        </div></div>
+      </div>
+      <div class="studio-sg-apply">
+        <span class="muted" id="studio-sg-msg"></span>
+        <button type="button" class="btn btn-primary" data-act="studio-sg-apply" id="studio-sg-apply">Use this part</button>
+      </div>
+    </div>
+  </section>
+
   <div class="scrim hide" id="studio-make-scrim">
   <div class="modal studio-modal" id="studio-make" role="dialog" aria-modal="true" aria-labelledby="studio-make-title">
     <h2 class="modal-title" id="studio-make-title">Make a reel</h2>
@@ -175,7 +253,9 @@ const studio = {
   style: '', song: '', songShape: null, fmt: 'landscape', order: 'chosen',
   project: null, derived: null, notes: [], dirty: true, output: '', renderedAt: 0,
   sel: -1, pps: 60, snap: true, undo: [], checking: 0, checkTimer: null,
-  polling: null, drag: null, clipIndex: {}
+  polling: null, drag: null, clipIndex: {},
+  gen: 0, jobId: 0, seenJob: -1, watching: -1, busy: false,
+  sg: {song: '', shape: null, start: 0, end: 0, marks: [], drag: null, ticked: {}, ac: null}
 };
 
 const studio_el = (id) => document.getElementById(id);
@@ -474,15 +554,21 @@ function studio_setProject(project, derived, notes, songShape) {
   if (songShape !== undefined) studio.songShape = songShape;
   if (project.output) studio.output = project.output;
   studio_el('studio-tab-timeline').disabled = false;
+  studio_el('studio-tab-song').disabled = false;
   studio_el('studio-pname').value = project.name || '';
   if (studio.sel >= project.shots.length) studio.sel = project.shots.length - 1;
   studio_drawAll();
 }
 
+function studio_pushUndo(snapshot) {
+  studio.undo.push(snapshot);
+  if (studio.undo.length > 60) studio.undo.shift();
+}
+
 function studio_change(mutate, immediate) {
   if (!studio.project) return;
-  studio.undo.push(JSON.stringify(studio.project));
-  if (studio.undo.length > 60) studio.undo.shift();
+  studio_pushUndo(JSON.stringify(studio.project));
+  studio.gen++;
   mutate(studio.project);
   studio.dirty = true;
   studio_localDerive();
@@ -493,8 +579,11 @@ function studio_change(mutate, immediate) {
 
 async function studio_check() {
   const n = ++studio.checking;
+  const gen = studio.gen;
   const r = await API.post('/api/studio/check', {project: studio.project});
-  if (n !== studio.checking) return;          /* a newer edit is on its way */
+  /* An answer about an older project must never replace a newer one: an edit
+     made while this was in flight would silently disappear. */
+  if (n !== studio.checking || gen !== studio.gen) return;
   if (!r || !r.ok) { toast((r && r.error) || 'That edit could not be applied.', 'warn'); return; }
   studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
   studio_drawAll();
@@ -503,6 +592,7 @@ async function studio_check() {
 function studio_undo() {
   const last = studio.undo.pop();
   if (!last) return;
+  studio.gen++;
   studio.project = JSON.parse(last);
   studio.dirty = true;
   studio_localDerive(); studio_drawAll();
@@ -537,11 +627,16 @@ function studio_snapTo(t) {
 
 async function studio_render() {
   if (!studio.project) return;
+  /* A check still waiting or in flight describes the project before the
+     server allocates its output; letting it land afterwards would wipe that. */
+  clearTimeout(studio.checkTimer);
+  studio.gen++;
   studio.project.name = studio_el('studio-pname').value.trim() || studio.project.name;
   const r = await API.post('/api/studio/render', {project: studio.project});
   if (!r || !r.ok) { studio_state((r && r.error) || 'Could not start the render.', true); return; }
   studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
   studio.output = r.output;
+  studio.jobId = r.job || 0;
   studio_drawAll();
   studio_poll();
 }
@@ -560,10 +655,17 @@ async function studio_poll() {
   studio_busy(running);
   studio_el('studio-meter').style.width = (running ? j.percent : 100) + '%';
   if (running) {
+    studio.watching = j.id;       /* seen running on this page: its finish is news */
     studio_state(j.message + (j.cached ? ' · ' + j.cached + ' shots unchanged' : ''));
     studio.polling = setTimeout(studio_poll, 700);
     return;
   }
+  /* A finished job is news once, and only to a page that started it or watched
+     it run. The server keeps the last job for as long as it runs, so without
+     this every visit to the page announced the same reel again. */
+  const news = j.id !== studio.seenJob && (j.id === studio.jobId || j.id === studio.watching);
+  studio.seenJob = j.id;
+  if (!news) { studio_drawRenderCard(); return; }
   if (j.state === 'done') {
     const same = studio.project && j.output === studio.project.output;
     studio_state('Ready · rendered in ' + j.elapsed + ' s' + (j.cached ? ' · ' + j.cached + ' shots reused' : ''));
@@ -614,7 +716,12 @@ const STUDIO_ROW = {ruler: 26, video: 64, trans: 30, fx: 34, speed: 38, text: 30
 function studio_drawAll() {
   studio_drawRenderCard();
   studio_drawTimeline();
-  studio_drawInspector();
+  /* Rebuilding the panel under a focused field throws away what is being
+     typed; the panel is redrawn when the field is left instead. */
+  const a = document.activeElement;
+  const typing = a && a.closest && a.closest('#studio-insp') &&
+    /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'range';
+  if (!typing) studio_drawInspector();
 }
 
 function studio_fit() {
@@ -667,26 +774,33 @@ function studio_drawTimeline() {
       '<span class="st-trim" data-trim="' + i + '" title="Drag to change the length"></span></div>';
   });
 
-  /* transitions */
+  /* transitions: a label where there is room for one, a marker where not */
   p.shots.forEach((s, i) => {
     if (i === 0) return;
     const r = d.shots[i];
     const part = studio_part(s.transition);
     const hard = s.transition === 't01';
-    h += '<button type="button" class="st-tr' + (hard ? ' is-cut' : '') + (i === studio.sel ? ' is-sel' : '') +
-      '" data-act="studio-select" data-shot="' + i + '" style="left:' + X(r.start) + 'px;top:' + rows.trans +
-      'px;width:' + Math.max(18, s.tlen * pps).toFixed(1) + 'px" title="' + esc(part.label) + '">' +
-      esc(hard ? '|' : s.transition.toUpperCase()) + '</button>';
+    const room = Math.min((r.end - r.start) * pps, (d.shots[i - 1].end - d.shots[i - 1].start) * pps);
+    const compact = room < 44;
+    h += '<button type="button" class="st-tr' + (hard ? ' is-cut' : '') + (compact ? ' is-compact' : '') +
+      (i === studio.sel ? ' is-sel' : '') + '" data-act="studio-select" data-shot="' + i + '" style="left:' + X(r.start) +
+      'px;top:' + rows.trans + 'px' + (compact ? '' : ';width:' + Math.max(26, s.tlen * pps).toFixed(1) + 'px') +
+      '" title="Shot ' + (i + 1) + ': ' + esc(part.label) + '">' +
+      (compact ? '' : esc(hard ? '|' : s.transition.toUpperCase())) + '</button>';
   });
 
-  /* effects */
+  /* effects: every id on a wide shot, a count on a narrow one */
   p.shots.forEach((s, i) => {
     const r = d.shots[i];
     const ids = s.fx.concat(s.hero ? s.hero_fx : []);
     if (!ids.length) return;
-    h += '<button type="button" class="st-fx' + (s.hero ? ' is-hero' : '') + '" data-act="studio-select" data-shot="' + i +
-      '" style="left:' + X(r.kill_reel) + 'px;top:' + (rows.fx + 6) + 'px" title="' +
-      esc(ids.map(id => studio_part(id).label).join(', ')) + '">' + esc(ids.map(x => x.toUpperCase()).join(' ')) + '</button>';
+    const room = (r.end - r.start) * pps;
+    const full = ids.map(x => x.toUpperCase()).join(' ');
+    const label = room >= full.length * 7 + 16 ? full : room >= 30 ? String(ids.length) : '';
+    h += '<button type="button" class="st-fx' + (s.hero ? ' is-hero' : '') + (label === full ? '' : ' is-compact') +
+      '" data-act="studio-select" data-shot="' + i +
+      '" style="left:' + X(r.kill_reel) + 'px;top:' + (rows.fx + 6) + 'px" title="Shot ' + (i + 1) + ': ' +
+      esc(ids.map(id => studio_part(id).label).join(', ')) + ' — click to change">' + esc(label) + '</button>';
   });
 
   /* speed: one line per shot, real speed through the middle */
@@ -787,6 +901,13 @@ function studio_select_html(id, kind, value, allowNone) {
   ).join('') + '</select>';
 }
 
+function studio_pool_html(kind, values) {
+  return '<div class="studio-checks">' + studio_parts(kind).filter(p => p.id !== 't01' || kind === 'transition').map(p =>
+    '<label class="studio-check-chip' + (values.indexOf(p.id) >= 0 ? ' is-on' : '') + '" title="' + esc(p.blurb) + '">' +
+    '<input type="checkbox" data-pool="' + kind + '" value="' + esc(p.id) + '"' + (values.indexOf(p.id) >= 0 ? ' checked' : '') + '> ' +
+    esc(p.label) + '</label>').join('') + '</div>';
+}
+
 function studio_checks_html(name, kind, values) {
   return '<div class="studio-checks">' + studio_parts(kind).map(p =>
     '<label class="studio-check-chip' + (values.indexOf(p.id) >= 0 ? ' is-on' : '') + '" title="' + esc(p.blurb) + '">' +
@@ -831,7 +952,10 @@ function studio_drawInspector() {
       (i ? studio_select_html('studio-f-trans', 'transition', s.transition) +
         '<input type="range" id="studio-f-tlen" min="0.1" max="1" step="0.05" value="' + (s.tlen || 0.3) + '"' + (s.transition === 't01' ? ' disabled' : '') + ' aria-label="Transition length">'
          : '<span class="muted">The first shot opens the reel.</span>') + '</div>' +
-      '<div class="studio-field"><span class="field-label">Kill effects</span>' + studio_checks_html('fx', 'kill', s.fx) + '</div>' +
+      '<div class="studio-field"><span class="field-label">Kill effects</span>' + studio_checks_html('fx', 'kill', s.fx) +
+      '<span class="field-inline"><button type="button" class="btn btn-ghost btn-sm" data-act="studio-fx-all">Use these on every shot</button>' +
+      (i ? '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-tr-all">Use this transition on every cut</button>' : '') +
+      '</span></div>' +
       '<div class="studio-field"><label class="studio-check"><input type="checkbox" id="studio-f-hero"' + (s.hero ? ' checked' : '') + '> Hero moment</label>' +
       (s.hero ? studio_checks_html('hero_fx', 'hero', s.hero_fx) +
         '<label class="field-label" for="studio-f-caption">Caption</label><input class="input" id="studio-f-caption" maxlength="40" value="' + esc(s.caption) + '">' : '') + '</div>' +
@@ -840,10 +964,21 @@ function studio_drawInspector() {
     return;
   }
   const styles = (studio.catalog ? studio.catalog.styles : []);
+  const pools = p.pools || {};
   box.innerHTML = tabs + '<div class="card-body studio-insp-body">' +
+    '<p class="studio-tip">To change one shot\'s kill effects, speed or transition, click that shot on the timeline.</p>' +
+    '<div class="studio-field"><span class="field-label">Effects every shot draws from</span>' +
+    '<p class="muted studio-small">Each kill gets its own mix from these, never the same as the shot before.</p>' +
+    '<span class="field-label">Kill effects</span>' + studio_pool_html('kill', pools.kill || []) +
+    '<span class="field-label">Transitions</span>' + studio_pool_html('transition', pools.transition || []) +
+    '<span class="field-inline">' +
+    '<button type="button" class="btn btn-sm" data-act="studio-mix" data-what="kill">Mix kill effects</button>' +
+    '<button type="button" class="btn btn-sm" data-act="studio-mix" data-what="transition">Mix transitions</button>' +
+    '<button type="button" class="btn btn-sm" data-act="studio-mix" data-what="all">Mix everything</button></span></div>' +
     '<div class="studio-field"><label class="field-label" for="studio-r-style">Style</label>' +
     '<select class="select" id="studio-r-style">' + styles.map(s => '<option value="' + esc(s.key) + '"' + (s.key === p.style ? ' selected' : '') + '>' + esc(s.label) + '</option>').join('') + '</select>' +
-    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-restyle">Rebuild with this style</button></div>' +
+    '<button type="button" class="btn btn-sm" data-act="studio-restyle" id="studio-restyle-btn"' + (studio.busy ? ' disabled' : '') + '>Rebuild with this style</button>' +
+    '<span class="muted studio-small">Replans every shot. Undo brings your edits back.</span></div>' +
     '<div class="studio-field"><label class="field-label" for="studio-r-grade">Colour</label>' + studio_select_html('studio-r-grade', 'grade', p.grade) +
     '<label class="studio-check"><input type="checkbox" id="studio-r-vignette"' + (p.vignette ? ' checked' : '') + '> Soft vignette</label></div>' +
     '<div class="studio-field"><label class="field-label" for="studio-r-intro">Intro</label>' + studio_select_html('studio-r-intro', 'intro', p.intro) + '</div>' +
@@ -852,6 +987,7 @@ function studio_drawInspector() {
     '<label class="field-label" for="studio-r-handle">Handle</label><input class="input" id="studio-r-handle" maxlength="40" placeholder="@yourhandle" value="' + esc(p.handle) + '"></div>' +
     '<div class="studio-field"><span class="field-label">Song</span>' +
     '<span class="muted truncate">' + (p.song ? esc(p.song.split(/[\\/]/).pop()) : 'No song') + '</span>' +
+    '<button type="button" class="btn btn-sm" data-act="studio-edit-song">' + (p.song ? 'Edit the song and mark kills…' : 'Add a song…') + '</button>' +
     (p.song ? '<span class="field-inline"><button type="button" class="btn btn-ghost btn-sm" data-act="studio-offset" data-d="-4">−1 bar</button>' +
       '<span class="mono">starts at ' + studio_secs(p.song_offset) + '</span>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-offset" data-d="4">+1 bar</button></span>' : '') +
@@ -871,6 +1007,14 @@ function studio_inspectorInput(e) {
   if (!t || !studio.project || !t.closest || !t.closest('#studio-insp')) return;
   const i = studio.sel, p = studio.project;
   const s = i >= 0 ? p.shots[i] : null;
+  const pool = t.getAttribute('data-pool');
+  if (pool) {
+    const vals = Array.prototype.slice.call(studio_el('studio-insp').querySelectorAll('input[data-pool="' + pool + '"]:checked')).map(x => x.value);
+    if (!vals.length) { t.checked = true; toast('Keep at least one to choose from.', 'warn'); return; }
+    studio_change(pr => { pr.pools = Object.assign({}, pr.pools || {}); pr.pools[pool] = vals; });
+    studio_mix(pool, false);
+    return;
+  }
   const list = t.getAttribute('data-list');
   if (list) {
     const vals = Array.prototype.slice.call(studio_el('studio-insp').querySelectorAll('input[data-list="' + list + '"]:checked')).map(x => x.value);
@@ -909,13 +1053,15 @@ function studio_pointerDown(e) {
   const i = Number((trim || kill || shot).getAttribute(trim ? 'data-trim' : kill ? 'data-kill' : 'data-shot'));
   const s = studio.project.shots[i];
   studio.drag = {kind: trim ? 'trim' : kill ? 'kill' : 'move', i: i, x0: e.clientX, moved: false,
-                 dur: s.duration, pre: s.pre, snapshot: JSON.stringify(studio.project)};
+                 dur: s.duration, pre: s.pre, snapshot: JSON.stringify(studio.project), pointer: e.pointerId};
+  /* Captured on the timeline itself, which survives the redraws a drag does. */
+  try { tl.setPointerCapture(e.pointerId); } catch (err) { /* no capture, still works with a mouse */ }
   e.preventDefault();
 }
 
 function studio_pointerMove(e) {
   const g = studio.drag;
-  if (!g) return;
+  if (!g || (g.pointer !== undefined && e.pointerId !== g.pointer)) return;
   const dx = e.clientX - g.x0;
   if (!g.moved && Math.abs(dx) < 4) return;
   g.moved = true;
@@ -926,26 +1072,38 @@ function studio_pointerMove(e) {
   } else if (g.kind === 'kill') {
     s.pre = Math.max(0, Math.min(s.duration, studio_snapTo(g.pre + dt)));
   } else {
-    const d = studio.derived, mid = d.shots[g.i].start + (d.shots[g.i].end - d.shots[g.i].start) / 2 + dt;
-    let to = g.i;
+    const d = studio.derived, last = d.shots.length - 1;
+    const mid = d.shots[g.i].start + (d.shots[g.i].end - d.shots[g.i].start) / 2 + dt;
+    /* Past either end is "first" or "last", not "nowhere". */
+    let to = mid < 0 ? 0 : mid >= d.shots[last].end ? last : g.i;
     d.shots.forEach((r, k) => { if (mid >= r.start && mid < r.end) to = k; });
     if (to !== g.i) {
+      const before = d.shots[g.i].start;
       const [moved] = p.shots.splice(g.i, 1);
       p.shots.splice(to, 0, moved);
-      g.x0 += (d.shots[to].start - d.shots[g.i].start) * studio.pps;
       g.i = to; studio.sel = to;
+      /* Where the moved shot now starts, from the new order -- not where the
+         shot it swapped with used to start, which differs by their lengths. */
+      studio_localDerive();
+      g.x0 += (studio.derived.shots[to].start - before) * studio.pps;
     }
   }
   studio_localDerive();
   studio_drawTimeline();
 }
 
-function studio_pointerUp() {
+function studio_pointerUp(e) {
   const g = studio.drag;
+  if (!g || (e && g.pointer !== undefined && e.pointerId !== g.pointer)) return;
   studio.drag = null;
-  if (!g) return;
+  if (e && e.type === 'pointercancel') {
+    /* The browser took the gesture (a touch pan): put the shot back. */
+    if (g.moved) { studio.project = JSON.parse(g.snapshot); studio_localDerive(); studio_drawAll(); }
+    return;
+  }
   if (!g.moved) { studio_select(g.i); return; }
-  studio.undo.push(g.snapshot);
+  studio.gen++;
+  studio_pushUndo(g.snapshot);
   studio.dirty = true;
   studio.sel = g.i;
   studio_drawAll();
@@ -967,15 +1125,16 @@ async function studio_open(path) {
 }
 
 function studio_tab(which) {
-  const tl = which === 'timeline';
-  studio_show('studio-pane-clips', !tl);
-  studio_show('studio-pane-timeline', tl);
-  ['clips', 'timeline'].forEach(k => {
+  ['clips', 'timeline', 'song'].forEach(k => {
+    studio_show('studio-pane-' + k, k === which);
     const b = studio_el('studio-tab-' + k);
     b.classList.toggle('is-active', k === which);
     b.setAttribute('aria-selected', String(k === which));
   });
-  if (tl) { studio_fit(); studio_drawAll(); }
+  const a = studio_el('studio-sg-audio');
+  if (which !== 'song' && a && !a.paused) a.pause();
+  if (which === 'timeline') { studio_fit(); studio_drawAll(); }
+  if (which === 'song') studio_sgOpen();
 }
 
 /* ------------------------------------------------------------ wiring */
@@ -989,6 +1148,7 @@ function studio_wire() {
     const act = b.getAttribute('data-act');
     const p = studio.project;
     if (act === 'studio-tab') studio_tab(b.getAttribute('data-tab'));
+    else if (act === 'studio-edit-song') studio_tab('song');
     else if (act === 'studio-refresh') studio_load(true);
     else if (act === 'studio-game') { studio.game = b.getAttribute('data-game'); studio_renderLib(); }
     else if (act === 'studio-pick') studio_pick(b.getAttribute('data-clip'), e.shiftKey);
@@ -1067,6 +1227,28 @@ function studio_wire() {
     }
     else if (act === 'studio-rfmt' && p) studio_change(pr => { pr.format = b.getAttribute('data-fmt'); });
     else if (act === 'studio-restyle' && p) studio_restyle();
+    else if (act === 'studio-mix' && p) studio_mix(b.getAttribute('data-what'), true);
+    else if (act === 'studio-fx-all' && p && studio.sel >= 0) {
+      const fx = p.shots[studio.sel].fx.slice();
+      studio_change(pr => { pr.shots.forEach(s => { s.fx = fx.slice(); }); });
+      toast('Every shot now uses ' + (fx.length ? fx.map(id => studio_part(id).label).join(' + ') : 'no kill effect') + '.', 'ok');
+    }
+    else if (act === 'studio-tr-all' && p && studio.sel > 0) {
+      const t = p.shots[studio.sel].transition, len = p.shots[studio.sel].tlen;
+      studio_change(pr => { pr.shots.forEach((s, k) => { if (k) { s.transition = t; s.tlen = len; } }); });
+      toast('Every cut is now ' + studio_part(t).label + '.', 'ok');
+    }
+    else if (act === 'studio-sg-pick') studio_sgPick();
+    else if (act === 'studio-sg-none') studio_sgApply(true);
+    else if (act === 'studio-sg-play') studio_sgPlay();
+    else if (act === 'studio-sg-mark') studio_sgMark();
+    else if (act === 'studio-sg-unmark') { studio.sg.marks.pop(); studio_sgDraw(); }
+    else if (act === 'studio-sg-clearmarks') { studio.sg.marks = []; studio_sgDraw(); }
+    else if (act === 'studio-sg-nudge') studio_sgNudge(b.getAttribute('data-what'), b.getAttribute('data-d'));
+    else if (act === 'studio-sg-snapbar') studio_sgSnapBar();
+    else if (act === 'studio-sg-atdrop') studio_sgAtDrop();
+    else if (act === 'studio-sg-fit') studio_sgFit();
+    else if (act === 'studio-sg-apply') studio_sgApply(false);
   });
   document.addEventListener('change', studio_inspectorInput);
   const q = studio_el('studio-q');
@@ -1076,6 +1258,7 @@ function studio_wire() {
   document.addEventListener('pointerdown', studio_pointerDown);
   document.addEventListener('pointermove', studio_pointerMove);
   document.addEventListener('pointerup', studio_pointerUp);
+  document.addEventListener('pointercancel', studio_pointerUp);
   const v = studio_el('studio-video');
   if (v) {
     ['timeupdate', 'seeked', 'loadedmetadata'].forEach(ev => v.addEventListener(ev, studio_playhead));
@@ -1095,6 +1278,15 @@ function studio_wire() {
     if (e.key === 'Escape') { studio_closeModals(); return; }
     const tag = (e.target.tagName || '').toUpperCase();
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    /* A focused button owns Space and Backspace: Space presses it. */
+    const onButton = tag === 'BUTTON' || (e.target.closest && e.target.closest('button,[role="tab"],a'));
+    const song = !studio_el('studio-pane-song').classList.contains('hide');
+    if (song && studio.sg.shape) {
+      if ((e.key || '').toLowerCase() === 'k') { e.preventDefault(); studio_sgMark(); }
+      else if (e.key === ' ' && !onButton) { e.preventDefault(); studio_sgPlay(); }
+      return;
+    }
+    if (onButton && (e.key === ' ' || e.key === 'Backspace' || e.key === 'Enter')) return;
     const tl = !studio_el('studio-pane-timeline').classList.contains('hide');
     if (!tl || !studio.project) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); studio_undo(); }
@@ -1112,19 +1304,425 @@ function studio_wire() {
 }
 
 async function studio_restyle() {
-  const p = studio.project, key = studio_el('studio-r-style').value;
-  const ids = p.shots.map(s => s.clip);
-  const r = await API.post('/api/studio/plan', {clips: ids, style: key, song: p.song, format: p.format, name: p.name});
-  if (!r || !r.ok) { toast((r && r.error) || 'Could not rebuild with that style.', 'warn'); return; }
-  studio.undo.push(JSON.stringify(p));
-  r.project.output = p.output;
-  studio.sel = -1; studio.dirty = true;
-  studio_setProject(r.project, r.derived, r.notes, r.song);
-  studio_fit(); studio_drawAll();
+  const p = studio.project, sel = studio_el('studio-r-style');
+  if (!p || !sel || studio.busy) return;
+  const key = sel.value;
+  const label = (sel.options[sel.selectedIndex] || {}).text || key;
+  studio.busy = true;
+  const btn = studio_el('studio-restyle-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Rebuilding…'; }
+  try {
+    const snapshot = JSON.stringify(p);
+    const r = await API.post('/api/studio/plan', {clips: p.shots.map(s => s.clip), style: key,
+      song: p.song, format: p.format, name: p.name});
+    if (!r || !r.ok) { toast((r && r.error) || 'Could not rebuild with that style.', 'warn'); return; }
+    studio_pushUndo(snapshot);
+    studio.gen++;
+    r.project.output = p.output;
+    studio.sel = -1; studio.dirty = true;
+    studio_setProject(r.project, r.derived, r.notes, r.song);
+    studio_fit(); studio_drawAll();
+    toast('Rebuilt as ' + label + ' — ' + r.project.shots.length + ' shots. Render to see it.', 'ok');
+  } finally {
+    studio.busy = false;
+    studio_drawInspector();
+  }
+}
+
+async function studio_mix(what, announce) {
+  const p = studio.project;
+  if (!p) return;
+  const gen = ++studio.gen;
+  const snapshot = JSON.stringify(p);
+  const r = await API.post('/api/studio/vary', {project: p, what: what});
+  if (gen !== studio.gen) return;
+  if (!r || !r.ok) { toast((r && r.error) || 'Could not mix the effects.', 'warn'); return; }
+  if (announce) studio_pushUndo(snapshot);
+  studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
+  studio.dirty = true;
+  studio_drawAll();
+  if (announce) toast(what === 'all' ? 'Everything mixed again.' : what === 'kill' ? 'Kill effects mixed again.' : 'Transitions mixed again.', 'ok');
+}
+
+/* ------------------------------------------------------------ the song */
+
+function studio_sgOpen() {
+  const p = studio.project, sg = studio.sg;
+  if (!p) return;
+  if (p.song && (!sg.shape || sg.song !== p.song)) {
+    sg.song = p.song;
+    sg.shape = studio.songShape && studio.songShape.beats ? studio.songShape : null;
+    if (!sg.shape) {
+      API.post('/api/reel/song', {song: p.song}).then(got => {
+        if (got && got.ok) { sg.shape = got.song; studio.songShape = got.song; studio_sgReset(); }
+      });
+    }
+  }
+  if (!p.song) { sg.song = ''; sg.shape = null; }
+  studio_sgReset();
+}
+
+function studio_sgReset() {
+  const p = studio.project, sg = studio.sg, sh = sg.shape;
+  studio_show('studio-sg-body', !!sh);
+  studio_el('studio-sg-name').textContent = sg.song ? sg.song.split(/[\\/]/).pop() : 'No song';
+  studio_el('studio-sg-facts').textContent = sh
+    ? Math.round(sh.bpm) + ' BPM · ' + studio_dur(sh.seconds) + (sh.drop ? ' · drop at ' + studio_secs(sh.drop) : '') +
+      (sh.drums_in ? ' · drums in at ' + studio_secs(sh.drums_in) : '')
+    : 'Choose a song to cut the reel to. Without one the clips keep their own sound on a 120 BPM grid.';
+  if (!sh) return;
+  const len = (studio.derived && studio.derived.length) || 30;
+  if (sg.song === p.song && !sg.touched) {
+    sg.start = p.song_offset || 0;
+    sg.end = Math.min(sh.seconds, sg.start + len);
+  }
+  studio_el('studio-sg-atdrop').disabled = !sh.drop;
+  const a = studio_el('studio-sg-audio');
+  const want = studio_media('/api/reel/audio', sg.song);
+  if (a.getAttribute('data-song') !== sg.song) { a.src = want; a.setAttribute('data-song', sg.song); }
+  studio_sgDraw();
+}
+
+function studio_sgBeat() {
+  const sh = studio.sg.shape;
+  return sh ? sh.beat || (60 / sh.bpm) : 0.5;
+}
+
+function studio_sgNearestBeat(t) {
+  const b = (studio.sg.shape && studio.sg.shape.beats) || [];
+  let best = t, d = 1e9;
+  for (let i = 0; i < b.length; i++) { const x = Math.abs(b[i] - t); if (x < d) { d = x; best = b[i]; } }
+  return best;
+}
+
+function studio_sgNudge(what, how) {
+  const sg = studio.sg, sh = sg.shape;
+  if (!sh) return;
+  const beat = studio_sgBeat();
+  const step = {bar: 4 * beat, '-bar': -4 * beat, beat: beat, '-beat': -beat, ms: 0.01, '-ms': -0.01}[how] || 0;
+  sg.touched = true;
+  if (what === 'start') {
+    const len = sg.end - sg.start;
+    sg.start = Math.max(0, Math.min(sh.seconds - 1, sg.start + step));
+    sg.end = Math.min(sh.seconds, sg.start + len);
+  } else {
+    sg.end = Math.max(sg.start + beat, Math.min(sh.seconds, sg.end + step));
+  }
+  studio_sgDraw();
+}
+
+function studio_sgSnapBar() {
+  const sg = studio.sg, sh = sg.shape;
+  if (!sh || !sh.beats || !sh.beats.length) return;
+  const bars = sh.beats.filter((b, i) => (i % 4) === (sh.downbeat_pos || 0));
+  let best = sg.start, d = 1e9;
+  bars.forEach(b => { const x = Math.abs(b - sg.start); if (x < d) { d = x; best = b; } });
+  const len = sg.end - sg.start;
+  sg.touched = true; sg.start = best; sg.end = Math.min(sh.seconds, best + len);
+  studio_sgDraw();
+}
+
+function studio_sgAtDrop() {
+  const sg = studio.sg, sh = sg.shape;
+  if (!sh || !sh.drop) return;
+  const len = sg.end - sg.start;
+  const lead = Math.min(8 * 4 * studio_sgBeat(), sh.drop, Math.max(4 * studio_sgBeat(), len / 3));
+  sg.touched = true;
+  sg.start = Math.max(0, studio_sgNearestBeat(sh.drop - lead));
+  sg.end = Math.min(sh.seconds, sg.start + len);
+  studio_sgDraw();
+}
+
+function studio_sgFit() {
+  const sg = studio.sg, sh = sg.shape, d = studio.derived;
+  if (!sh || !d) return;
+  sg.touched = true;
+  sg.end = Math.min(sh.seconds, sg.start + d.length);
+  studio_sgDraw();
+}
+
+function studio_sgPlay() {
+  const a = studio_el('studio-sg-audio'), sg = studio.sg;
+  if (!sg.shape || !a.src) return;
+  if (a.paused) {
+    if (a.currentTime < sg.start || a.currentTime >= sg.end) a.currentTime = sg.start;
+    sg.ticked = {};
+    a.play().catch(() => toast('The song could not be played.', 'warn'));
+  } else {
+    a.pause();
+  }
+}
+
+function studio_sgMark() {
+  const a = studio_el('studio-sg-audio'), sg = studio.sg;
+  if (!sg.shape) return;
+  let t = a.currentTime || sg.start;
+  if (studio_el('studio-sg-snap').checked) t = studio_sgNearestBeat(t);
+  if (t < sg.start - 0.01 || t > sg.end + 0.01) { toast('Marks go inside the part you are using.', 'warn'); return; }
+  if (sg.marks.some(m => Math.abs(m - t) < 0.03)) return;
+  sg.marks.push(t);
+  sg.marks.sort((x, y) => x - y);
+  studio_sgDraw();
+}
+
+function studio_sgClick() {
+  try {
+    const C = window.AudioContext || window.webkitAudioContext;
+    if (!C) return;
+    studio.sg.ac = studio.sg.ac || new C();
+    const ac = studio.sg.ac, o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.value = 1800; g.gain.value = 0.15;
+    o.connect(g); g.connect(ac.destination);
+    o.start(); o.stop(ac.currentTime + 0.03);
+  } catch (e) { /* no audio context, no click */ }
+}
+
+function studio_sgTick() {
+  const a = studio_el('studio-sg-audio'), sg = studio.sg;
+  if (!sg.shape) return;
+  if (!a.paused && studio_el('studio-sg-loop').checked && a.currentTime >= sg.end) {
+    a.currentTime = sg.start; sg.ticked = {};
+  }
+  if (!a.paused && studio_el('studio-sg-click').checked) {
+    sg.marks.forEach((m, i) => {
+      if (Math.abs(a.currentTime - m) < 0.05 && !sg.ticked[i]) { sg.ticked[i] = 1; studio_sgClick(); }
+    });
+  }
+  studio_el('studio-sg-clock').textContent = studio_secs(a.currentTime || 0);
+  studio_sgDrawWaves();
+  if (!a.paused) requestAnimationFrame(studio_sgTick);
+}
+
+function studio_sgDraw() {
+  const sg = studio.sg, sh = sg.shape, d = studio.derived, p = studio.project;
+  if (!sh) return;
+  studio_el('studio-sg-start').textContent = studio_secs(sg.start);
+  studio_el('studio-sg-end').textContent = studio_secs(sg.end);
+  studio_el('studio-sg-range').textContent = 'Using ' + studio_secs(sg.start) + ' → ' + studio_secs(sg.end) +
+    ' (' + studio_dur(sg.end - sg.start) + ')';
+  const len = d ? d.length : 0, part = sg.end - sg.start;
+  studio_el('studio-sg-fitnote').textContent = len > part + 0.05
+    ? 'The timeline is ' + studio_dur(len) + '; shots past ' + studio_dur(part) + ' will be left out. "Fit the timeline" keeps them all.'
+    : 'The whole timeline fits in this part.';
+  studio_el('studio-sg-chips').innerHTML = sg.marks.map((m, i) =>
+    '<span class="reel-chip" data-sgmark="' + i + '" title="click to remove">' + (i + 1) + ' · ' + studio_secs(m) + '</span>').join('');
+  const shots = p ? p.shots.length : 0;
+  studio_el('studio-sg-marksinfo').textContent = sg.marks.length
+    ? sg.marks.length + ' marks for ' + shots + ' shots' + (sg.marks.length < shots ? ' — the rest keep their spacing after the last mark.' : sg.marks.length > shots ? ' — the extra marks will not be used.' : '.')
+    : 'No marks: the shots keep the lengths they have, starting from here.';
+  studio_el('studio-sg-apply').textContent = sg.marks.length ? 'Use this part and these marks' : 'Use this part';
+  studio_sgDrawWaves();
+}
+
+function studio_sgCanvas(id, H) {
+  const cv = studio_el(id);
+  if (!cv) return null;
+  const dpr = window.devicePixelRatio || 1, W = Math.max(200, cv.clientWidth);
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return {cv: cv, ctx: ctx, W: W, H: H};
+}
+
+function studio_sgDrawWaves() {
+  const sg = studio.sg, sh = sg.shape;
+  if (!sh || !sh.peaks) return;
+  const css = getComputedStyle(document.documentElement);
+  const accent = css.getPropertyValue('--accent').trim() || '#5aa9ff';
+  const warn = css.getPropertyValue('--warn').trim() || '#e3b341';
+  const faint = css.getPropertyValue('--border-strong').trim() || '#555';
+  const a = studio_el('studio-sg-audio');
+  const now = a ? a.currentTime || 0 : 0;
+  const n = sh.peaks.length, per = sh.seconds / n;
+
+  /* the whole song */
+  const o = studio_sgCanvas('studio-sg-overview', 90);
+  if (o) {
+    const {ctx, W, H} = o, X = t => t / sh.seconds * W, mid = H / 2;
+    ctx.fillStyle = accent;
+    ctx.globalAlpha = 0.35;
+    for (let x = 0; x < W; x++) {
+      const k = Math.min(n - 1, Math.floor(x / W * n));
+      const amp = sh.peaks[k] * (mid - 2);
+      ctx.globalAlpha = (x >= X(sg.start) && x <= X(sg.end)) ? 1 : 0.3;
+      ctx.fillRect(x, mid - amp, 1, amp * 2);
+    }
+    ctx.globalAlpha = 0.18; ctx.fillStyle = accent;
+    ctx.fillRect(X(sg.start), 0, X(sg.end) - X(sg.start), H);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = accent;
+    ctx.fillRect(X(sg.start) - 2, 0, 4, H); ctx.fillRect(X(sg.end) - 2, 0, 4, H);
+    if (sh.drop) { ctx.fillStyle = warn; ctx.fillRect(X(sh.drop) - 1, 0, 2, H); }
+    ctx.fillStyle = '#ff5c5c'; ctx.fillRect(X(now) - 1, 0, 2, H);
+    o.cv.title = 'Drag the highlighted part to move it, or its edges to resize it';
+  }
+
+  /* the part, magnified */
+  const dt = studio_sgCanvas('studio-sg-detail', 130);
+  if (dt) {
+    const {ctx, W, H} = dt;
+    const pad = Math.max(0.5, (sg.end - sg.start) * 0.04);
+    const t0 = Math.max(0, sg.start - pad), t1 = Math.min(sh.seconds, sg.end + pad);
+    const X = t => (t - t0) / (t1 - t0) * W, mid = H / 2;
+    ctx.fillStyle = accent;
+    for (let x = 0; x < W; x += 2) {
+      const t = t0 + x / W * (t1 - t0), k = Math.min(n - 1, Math.floor(t / per));
+      const amp = sh.peaks[k] * (mid - 14);
+      ctx.globalAlpha = (t >= sg.start && t <= sg.end) ? 0.9 : 0.25;
+      ctx.fillRect(x, mid - amp, 1.5, amp * 2);
+    }
+    ctx.globalAlpha = 1;
+    (sh.beats || []).forEach((b, i) => {
+      if (b < t0 || b > t1) return;
+      const bar = (i % 4) === (sh.downbeat_pos || 0);
+      ctx.fillStyle = faint;
+      ctx.globalAlpha = bar ? 0.9 : 0.35;
+      ctx.fillRect(X(b), bar ? 0 : H - 12, 1, bar ? H : 12);
+    });
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = accent;
+    ctx.fillRect(X(sg.start) - 1, 0, 3, H); ctx.fillRect(X(sg.end) - 1, 0, 3, H);
+    if (sh.drop && sh.drop >= t0 && sh.drop <= t1) {
+      ctx.fillStyle = warn; ctx.fillRect(X(sh.drop) - 1, 0, 2, H);
+      ctx.font = '11px sans-serif'; ctx.fillText('drop', X(sh.drop) + 4, 12);
+    }
+    sg.marks.forEach((m, i) => {
+      const x = X(m);
+      ctx.save(); ctx.translate(x, H - 20); ctx.rotate(Math.PI / 4);
+      ctx.fillStyle = '#fff'; ctx.fillRect(-6, -6, 12, 12);
+      ctx.strokeStyle = accent; ctx.lineWidth = 2; ctx.strokeRect(-6, -6, 12, 12);
+      ctx.restore();
+      ctx.fillStyle = css.getPropertyValue('--text-primary').trim() || '#fff';
+      ctx.font = '11px sans-serif'; ctx.fillText(String(i + 1), x + 8, H - 26);
+    });
+    ctx.fillStyle = '#ff5c5c'; ctx.fillRect(X(now) - 1, 0, 2, H);
+    dt.cv.setAttribute('data-t0', t0); dt.cv.setAttribute('data-t1', t1);
+  }
+}
+
+function studio_sgPointer(e) {
+  const sg = studio.sg, sh = sg.shape;
+  if (!sh) return;
+  const ov = studio_el('studio-sg-overview'), de = studio_el('studio-sg-detail');
+  const a = studio_el('studio-sg-audio');
+  if (e.type === 'pointerdown' && e.target === de) {
+    const r = de.getBoundingClientRect();
+    const t0 = Number(de.getAttribute('data-t0')), t1 = Number(de.getAttribute('data-t1'));
+    a.currentTime = Math.max(0, t0 + (e.clientX - r.left) / r.width * (t1 - t0));
+    studio_sgDrawWaves();
+    studio_el('studio-sg-clock').textContent = studio_secs(a.currentTime);
+    return;
+  }
+  if (e.type === 'pointerdown' && e.target === ov) {
+    const r = ov.getBoundingClientRect();
+    const t = (e.clientX - r.left) / r.width * sh.seconds;
+    const edge = 6 / r.width * sh.seconds;
+    const kind = Math.abs(t - sg.start) < edge ? 'start' : Math.abs(t - sg.end) < edge ? 'end'
+      : (t > sg.start && t < sg.end) ? 'move' : 'jump';
+    if (kind === 'jump') {
+      const len = sg.end - sg.start;
+      sg.touched = true;
+      sg.start = Math.max(0, Math.min(sh.seconds - len, t - len / 2));
+      sg.end = sg.start + len;
+      studio_sgDraw();
+      return;
+    }
+    sg.drag = {kind: kind, x0: e.clientX, start: sg.start, end: sg.end, w: r.width, pointer: e.pointerId};
+    try { ov.setPointerCapture(e.pointerId); } catch (err) { /* fine without */ }
+    e.preventDefault();
+    return;
+  }
+  const g = sg.drag;
+  if (!g || e.pointerId !== g.pointer) return;
+  if (e.type === 'pointermove') {
+    const dt = (e.clientX - g.x0) / g.w * sh.seconds;
+    sg.touched = true;
+    if (g.kind === 'start') sg.start = Math.max(0, Math.min(sg.end - 1, g.start + dt));
+    else if (g.kind === 'end') sg.end = Math.max(sg.start + 1, Math.min(sh.seconds, g.end + dt));
+    else {
+      const len = g.end - g.start;
+      sg.start = Math.max(0, Math.min(sh.seconds - len, g.start + dt));
+      sg.end = sg.start + len;
+    }
+    studio_sgDraw();
+  } else {
+    sg.drag = null;
+    /* Dragging lands the part on a beat; the 10 ms nudges are for leaving it. */
+    const len = sg.end - sg.start;
+    if (g.kind !== 'end') { sg.start = studio_sgNearestBeat(sg.start); if (g.kind === 'move') sg.end = Math.min(sh.seconds, sg.start + len); }
+    if (g.kind === 'end') sg.end = studio_sgNearestBeat(sg.end);
+    studio_sgDraw();
+  }
+}
+
+async function studio_sgPick() {
+  const r = await API.post('/api/clips/pick', {kind: 'audio'});
+  if (!r || !r.path) return;
+  studio_el('studio-sg-facts').textContent = 'Finding the beat in ' + r.path.split(/[\\/]/).pop() + '…';
+  const got = await API.post('/api/reel/song', {song: r.path});
+  if (!got || !got.ok) { studio_el('studio-sg-facts').textContent = (got && got.error) || 'Could not read that song.'; return; }
+  const sg = studio.sg, sh = got.song, len = (studio.derived && studio.derived.length) || 30;
+  sg.song = r.path; sg.shape = sh; sg.marks = []; sg.touched = true;
+  const from = sh.drums_in || (sh.beats && sh.beats[0]) || 0;
+  sg.start = studio_sgNearestBeat(Math.max(0, Math.min(from, sh.seconds - len)));
+  sg.end = Math.min(sh.seconds, sg.start + len);
+  studio_sgReset();
+}
+
+async function studio_sgApply(noSong) {
+  const p = studio.project, sg = studio.sg;
+  if (!p) return;
+  const btn = studio_el('studio-sg-apply');
+  btn.disabled = true;
+  studio_el('studio-sg-msg').textContent = noSong ? 'Taking the song off…' : 'Fitting the timeline to the song…';
+  try {
+    const snapshot = JSON.stringify(p);
+    const gen = ++studio.gen;
+    const body = noSong ? {project: p, song: ''} :
+      {project: p, song: sg.song, start: sg.start, end: sg.end, marks: sg.marks};
+    const r = await API.post('/api/studio/song', body);
+    if (gen !== studio.gen) return;
+    if (!r || !r.ok) { studio_el('studio-sg-msg').textContent = (r && r.error) || 'Could not use that song.'; return; }
+    studio_pushUndo(snapshot);
+    r.project.output = p.output;
+    studio.dirty = true;
+    studio_setProject(r.project, r.derived, r.notes, r.song);
+    if (noSong) { sg.song = ''; sg.shape = null; sg.marks = []; }
+    sg.touched = false;
+    studio_el('studio-sg-msg').textContent = '';
+    toast(noSong ? 'The reel has no song now.' : sg.marks.length
+      ? 'Kills moved onto your ' + Math.min(sg.marks.length, r.project.shots.length) + ' marks. Render to hear it.'
+      : 'Song part set. Render to hear it.', 'ok');
+    studio_tab('timeline');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function studio_sgWire() {
+  const ov = studio_el('studio-sg-overview'), de = studio_el('studio-sg-detail');
+  ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(ev => {
+    if (ov) ov.addEventListener(ev, studio_sgPointer);
+    if (de && ev === 'pointerdown') de.addEventListener(ev, studio_sgPointer);
+  });
+  const a = studio_el('studio-sg-audio');
+  if (a) {
+    a.addEventListener('play', () => { studio_el('studio-sg-play').textContent = 'Pause'; requestAnimationFrame(studio_sgTick); });
+    a.addEventListener('pause', () => { studio_el('studio-sg-play').textContent = 'Play the part'; studio_sgDrawWaves(); });
+    a.addEventListener('seeked', studio_sgDrawWaves);
+  }
+  document.addEventListener('click', e => {
+    const c = e.target.closest ? e.target.closest('[data-sgmark]') : null;
+    if (!c) return;
+    studio.sg.marks.splice(Number(c.getAttribute('data-sgmark')), 1);
+    studio_sgDraw();
+  });
+  window.addEventListener('resize', () => { if (shell_page === 'studio') studio_sgDrawWaves(); });
 }
 
 window.PAGE_STUDIO = {
   onShow: function () {
+    if (!studio.wired) studio_sgWire();
     studio_wire();
     studio_load(false);
     studio_poll();

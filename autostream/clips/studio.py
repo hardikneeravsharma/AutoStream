@@ -37,21 +37,35 @@ FRAMES, NOT SECONDS, WHEN IT IS JOINED
     cut and the shot after it still starts on its beat.
 
 WHERE THE STYLES COME FROM
-    studio_refs.py: 26 popular Valorant edits and reel v9, measured frame by
-    frame. A style's pace and flash rate are the medians of the edits it is
-    modelled on. The part ids are the ones in the Montage Parts Bin, so a
-    template described there can be built here.
+    studio_refs.py: 26 popular montage edits (25 Valorant, one Call of Duty cut
+    to the same song as reel v9) and reel v9 itself, measured frame by frame. A
+    style's PACE and FLASH RATE are the medians of the edits it is modelled on.
+    Which other effects it mixes in is taste, not measurement -- the pools name
+    the parts the editing tutorials those edits come from teach -- and the
+    part ids are the ones in the Montage Parts Bin.
+
+VARIETY, NOT A RUBBER STAMP
+    A reel that puts the same punch and the same flicker on every kill reads
+    as a template within five shots. Each style carries POOLS of kill effects,
+    transitions, hero moments, camera moves and speeds, and every shot draws
+    from them with a seeded generator that never repeats the last choice. The
+    seed lives in the project, so a plan is reproducible and "mix them up" is
+    just a new seed.
 """
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import logging
 import math
+import random
 import re
 import subprocess
+import tempfile
 import threading
 import time
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -208,6 +222,8 @@ def reels(root: Path) -> list[dict]:
     except OSError:
         files = []
     for mp4 in files:
+        if mp4.name.endswith((".part.mp4", ".loud.mp4")):
+            continue                       # a render in progress, or one that died
         proj = mp4.with_suffix(".reel.json")
         meta = _read_json(proj) if proj.is_file() else None
         try:
@@ -353,6 +369,13 @@ class Style:
     overlays: tuple[str, ...] = ()
     pre_share: float = 0.5         # of each shot, how much comes before its kill
     drop: bool = False             # land a kill on the song's drop
+    # What shots draw from. A part listed twice is drawn about twice as often.
+    kill_pool: tuple[str, ...] = ("k01",)
+    transition_pool: tuple[str, ...] = ("t01",)
+    hero_pool: tuple[str, ...] = ("h01",)
+    camera_pool: tuple[str, ...] = ("c00",)
+    speed_pool: tuple[str, ...] = ("s00",)
+    energy: float = 0.4            # chance a kill stacks a second effect
 
 
 STYLES: tuple[Style, ...] = (
@@ -361,13 +384,21 @@ STYLES: tuple[Style, ...] = (
           "the shape of your reel v9.",
           ("v9", "RjCsmKbYY7g", "yBvW49SD20Y", "8KKGT4JXPVY", "8bQ-8ZnHG4A"),
           intro="i03", outro="e01", cuts=("t01", "t04", "t01"), kill=("k01",), hero=("h03",),
-          speed="s00", hero_speed="s01", camera="c01", grade="g01", vignette=False),
+          speed="s00", hero_speed="s01", camera="c01", grade="g01", vignette=False,
+          kill_pool=("k01", "k01", "k15", "k14", "k07", "k04"),
+          transition_pool=("t01", "t01", "t04", "t01", "t03", "t08"),
+          hero_pool=("h03", "h02"), camera_pool=("c01", "c03", "c00"),
+          speed_pool=("s00", "s00", "s00", "s02"), energy=0.15),
     Style("montage", "Montage",
           "The shape of the most-watched Valorant montages: a held opening, a punch on every kill, "
           "flashes on most cuts and the odd zoom-through.",
           ("JsTJ60BPTfQ", "c1VjTbzcEds", "vQqU0F8vTOE", "DM3eKiZD3XE", "qAlD8eNIfr8", "fAyUxeDzKlI"),
           intro="i03", outro="e01", cuts=("t01", "t05", "t01", "t06"), kill=("k01", "k03"),
-          hero=("h01",), speed="s00", hero_speed="s02", camera="c00", grade="g02", vignette=True),
+          hero=("h01",), speed="s00", hero_speed="s02", camera="c00", grade="g02", vignette=True,
+          kill_pool=("k01", "k01", "k03", "k02", "k15", "k07", "k11", "k06"),
+          transition_pool=("t01", "t01", "t05", "t06", "t01", "t07", "t09"),
+          hero_pool=("h01", "h02", "h05"), camera_pool=("c00", "c00", "c01", "c04"),
+          speed_pool=("s00", "s00", "s00", "s02"), energy=0.45),
     Style("velocity", "Velocity short",
           "Built like the short edits that go viral: every kill slows on its beat, everything "
           "between rushes, with flicker and hard flashes.",
@@ -375,20 +406,32 @@ STYLES: tuple[Style, ...] = (
            "RmaACKww8do", "prevxQTdkGo", "-rkr4IpA3jM"),
           intro="i08", outro="e12", cuts=("t06", "t05"), kill=("k01", "k16"), hero=("h02",),
           speed="s04", hero_speed="s04", camera="c00", grade="g05", vignette=True,
-          overlays=("o01",)),
+          overlays=("o01",),
+          kill_pool=("k01", "k16", "k06", "k03", "k02", "k14", "k11", "k12"),
+          transition_pool=("t06", "t05", "t01", "t06", "t10", "t11"),
+          hero_pool=("h02", "h01", "h05"), camera_pool=("c00", "c00", "c04"),
+          speed_pool=("s04", "s04", "s02", "s03"), energy=0.75),
     Style("drop", "Build and drop",
           "Long shots through the build, a kill exactly on the song's drop, then quicker shots "
           "through it. Needs a song with a clear drop.",
           ("FEKdk-cPVmg", "nkAEXZE76II", "66zl0-VoWbg"),
           intro="i03", outro="e01", cuts=("t01",), kill=("k01",), hero=("h01",),
-          speed="s00", hero_speed="s02", camera="c00", grade="g01", vignette=True, drop=True),
+          speed="s00", hero_speed="s02", camera="c00", grade="g01", vignette=True, drop=True,
+          kill_pool=("k01", "k01", "k03", "k15", "k02", "k07"),
+          transition_pool=("t01", "t01", "t05", "t04", "t01", "t06"),
+          hero_pool=("h01", "h02"), camera_pool=("c00", "c01", "c00"),
+          speed_pool=("s00", "s00", "s02"), energy=0.35),
     Style("hype", "Hype",
           "Fast and loud like the busiest montages: a cut every couple of beats, shake on every "
           "kill, crunchy colour and a kill counter.",
           ("wlNmShwGaJY", "0OvnyxlKLeQ", "FEKdk-cPVmg", "66zl0-VoWbg"),
           intro="i08", outro="e05", cuts=("t01", "t01", "t05"), kill=("k01", "k02"),
           hero=("h01",), speed="s00", hero_speed="s02", camera="c04", grade="g05",
-          vignette=True, overlays=("o02",)),
+          vignette=True, overlays=("o02",),
+          kill_pool=("k01", "k02", "k11", "k06", "k08", "k16", "k12", "k03"),
+          transition_pool=("t01", "t05", "t01", "t06", "t07", "t02"),
+          hero_pool=("h01", "h05", "h02"), camera_pool=("c04", "c00", "c04", "c03"),
+          speed_pool=("s00", "s00", "s02", "s03"), energy=0.7),
 )
 STYLE = {s.key: s for s in STYLES}
 DEFAULT_STYLE = "montage"
@@ -406,13 +449,24 @@ def catalog() -> dict:
                                  "kill": list(s.kill), "hero": list(s.hero), "speed": s.speed,
                                  "hero_speed": s.hero_speed, "camera": s.camera,
                                  "grade": s.grade, "vignette": s.vignette,
-                                 "overlays": list(s.overlays)}}
+                                 "overlays": list(s.overlays)},
+                    "pools": _style_pools(s), "energy": s.energy}
                    for s in STYLES],
         "default_style": DEFAULT_STYLE,
-        "references": [{k: e[k] for k in ("id", "title", "channel", "views", "cuts_per_min",
-                                          "flashes_per_min", "first_shot")}
-                       for e in studio_refs.EDITS],
     }
+
+
+POOL_KINDS = {"kill": "kill", "transition": "transition", "hero": "hero",
+              "camera": "camera", "speed": "speed"}
+
+
+def _style_pools(style: "Style") -> dict:
+    """The distinct parts each pool offers, in the style's order."""
+    return {"kill": list(dict.fromkeys(style.kill_pool)),
+            "transition": list(dict.fromkeys(style.transition_pool)),
+            "hero": list(dict.fromkeys(style.hero_pool)),
+            "camera": list(dict.fromkeys(style.camera_pool)),
+            "speed": list(dict.fromkeys(style.speed_pool))}
 
 
 # ============================================================== the grid
@@ -444,14 +498,6 @@ class Grid:
             if b >= t - 1e-6:
                 return i
         return max(0, len(self.beats) - 1)
-
-    def reel_beats(self, length: float) -> list[float]:
-        """Beat times inside [0, length] of the reel."""
-        if self.beats:
-            return [round(b - self.offset, 4) for b in self.beats
-                    if self.offset - 1e-6 <= b <= self.offset + length + 1e-6]
-        n = int(length / self.beat) + 1
-        return [round(i * self.beat, 4) for i in range(n)]
 
 
 def _pow2_beats(seconds: float, beat: float, lo: int = 1, hi: int = 16) -> int:
@@ -544,10 +590,12 @@ def _choose_offset(grid: Grid, first_kill_reel: float, style: Style,
 
 def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
          song: str = "", fmt: str = "landscape", name: str = "",
-         max_seconds: float = 0.0) -> tuple[dict, list[str]]:
+         max_seconds: float = 0.0, seed: int | None = None) -> tuple[dict, list[str]]:
     """Build a project from chosen clips. -> (project, notes)
 
-    `clips` are library entries in the order the reel should use them.
+    `clips` are library entries in the order the reel should use them. `seed`
+    decides the effect mix; the default is derived from the clips, so the same
+    selection plans the same reel.
     """
     style = STYLE.get(style_key) or STYLE[DEFAULT_STYLE]
     grid = Grid.of(shape) if shape is not None else Grid.none()
@@ -599,6 +647,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         speed = style.hero_speed if is_hero else style.speed
         shot = {"clip": c["path"], "clip_id": c.get("id") or clip_id(c["path"]),
                 "name": c.get("name", ""), "clip_seconds": round(dur_clip, 3),
+                "clip_mtime": int(c.get("mtime") or 0),
                 "kills": kills, "kill": round(kill, 3),
                 "pre": round(pre_b * beat, 5), "duration": round((pre_b + post_b) * beat, 5),
                 "speed": speed, "fx": list(style.kill), "hero": is_hero,
@@ -610,18 +659,14 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         _fit(shot, beat, notes)
         shots.append(shot)
 
-    # Transitions: flashes on the share the references flash at, spread
-    # evenly; the style's own mix on the rest. The first shot has none.
-    acc = 0.0
-    for i, s in enumerate(shots):
-        if i == 0:
-            continue
-        acc += flash_share
-        if acc >= 1.0 - 1e-9:
-            s["transition"], acc = "t02", acc - 1.0
-        else:
-            s["transition"] = style.cuts[(i - 1) % len(style.cuts)]
-        s["tlen"] = TLEN.get(s["transition"], 0.0)
+    if seed is None:
+        seed = zlib.crc32(",".join(s["clip_id"] for s in shots).encode("utf-8")) & 0x7FFFFFFF
+    pools = {k: list(style_pool) for k, style_pool in (
+        ("kill", style.kill_pool), ("transition", style.transition_pool),
+        ("hero", style.hero_pool), ("camera", style.camera_pool), ("speed", style.speed_pool))}
+    _vary(shots, pools, style, seed, "all")
+    for s in shots:
+        _fit(s, beat, notes)
 
     proj = {
         "version": VERSION, "name": name or f"{style.label} reel",
@@ -630,7 +675,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         "intro": style.intro, "outro": style.outro, "grade": style.grade,
         "vignette": style.vignette, "overlays": list(style.overlays),
         "handle": "", "music_db": 0.0, "game_db": 6.0 if song else 0.0, "duck": True,
-        "beat": round(beat, 6), "shots": shots,
+        "beat": round(beat, 6), "seed": int(seed), "pools": pools, "shots": shots,
     }
     # Where in the song reel zero sits, now the shot lengths are known.
     reel_in = _starts(shots)
@@ -665,6 +710,240 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             t += s["duration"]
         proj["shots"] = kept
     return proj, notes
+
+
+def _flash_share(style: "Style") -> float:
+    meas = studio_refs.summary(style.refs)
+    cpm = meas.get("cuts_per_min") or 30.0
+    return min(0.9, (meas.get("flashes_per_min") or 0.0) / max(cpm, 1.0))
+
+
+def _vary(shots: list[dict], pools: dict, style: "Style", seed: int, what: str = "all") -> None:
+    """Give every shot its own mix of effects, from the style's pools.
+
+    NEVER THE SAME TWICE RUNNING: each draw avoids what the previous shot got
+    (and, for kill effects, the one before that), so a reel cannot settle into
+    punch-flicker-punch-flicker. Flashes still come at the rate the reference
+    edits flash at, spread evenly; every other cut is drawn from the pool.
+    Hero moments get a stronger effect and are never left bare.
+    """
+    rng = random.Random(int(seed))
+
+    def pool(kind: str) -> list[str]:
+        valid = set(ids_of(POOL_KINDS[kind]))
+        got = [p for p in (pools.get(kind) or []) if p in valid]
+        return got
+
+    def draw(options: list[str], avoid: set[str]) -> str:
+        fresh = [o for o in options if o not in avoid]
+        return rng.choice(fresh or options)
+
+    kills, trans, heroes = pool("kill"), pool("transition"), pool("hero")
+    cams, speeds = pool("camera"), pool("speed")
+    flash_share = _flash_share(style)
+    recent: list[str] = []
+    last_cam = last_speed = last_hero = last_trans = ""
+    acc = 0.0
+    for i, s in enumerate(shots):
+        if what in ("all", "kill"):
+            if kills:
+                first = draw(kills, set(recent[-2:]))
+                fx = [first]
+                stack = style.energy + (0.3 if s.get("hero") else 0.0)
+                others = [k for k in dict.fromkeys(kills) if k != first]
+                if others and rng.random() < stack:
+                    fx.append(draw(others, set(recent[-1:])))
+                s["fx"] = fx
+                recent.append(first)
+            else:
+                s["fx"] = []
+        if what in ("all", "hero"):
+            if s.get("hero") and heroes:
+                last_hero = draw(heroes, {last_hero})
+                s["hero_fx"] = [last_hero]
+            elif not s.get("hero"):
+                s["hero_fx"] = []
+        if what in ("all", "camera") and cams:
+            c = draw(cams, {last_cam} if last_cam != "c00" else set())
+            s["camera"], last_cam = c, c
+        if what in ("all", "speed") and speeds:
+            if s.get("hero") and style.hero_speed in ids_of("speed"):
+                s["speed"] = style.hero_speed
+            else:
+                sp = draw(speeds, {last_speed} if len(set(speeds)) > 1 and last_speed != "s00" else set())
+                s["speed"], last_speed = sp, sp
+        if what in ("all", "transition") and i > 0:
+            acc += flash_share
+            if acc >= 1.0 - 1e-9 and "t02" in ids_of("transition"):
+                s["transition"], acc = "t02", acc - 1.0
+            elif trans:
+                # Against the last SOFT transition, not the last cut: a hard cut
+                # between two dips-to-black does not stop them reading as a pair.
+                softs = {t for t in trans if t not in ("t01", "t02")}
+                t = draw(trans, {last_trans} if len(softs) > 1 and last_trans else set())
+                s["transition"] = t
+                if t not in ("t01", "t02"):
+                    last_trans = t
+            else:
+                s["transition"] = "t01"
+            s["tlen"] = TLEN.get(s["transition"], 0.0)
+        elif i == 0:
+            s["transition"], s["tlen"] = "t01", 0.0
+
+
+def vary(project: dict, what: str = "all", seed: int | None = None) -> dict:
+    """Mix a timeline's effects again without touching its shots or timing."""
+    style = STYLE.get(project.get("style")) or STYLE[DEFAULT_STYLE]
+    pools = project.get("pools") or {}
+    if not any(pools.get(k) for k in POOL_KINDS):
+        pools = _style_pools(style)
+    if seed is None:
+        seed = (int(project.get("seed") or 0) * 1103515245 + 12345) & 0x7FFFFFFF
+    project["seed"] = int(seed)
+    _vary(project["shots"], pools, style, seed, what if what in (*POOL_KINDS, "all") else "all")
+    return project
+
+
+# ============================================================== the song part
+
+def max_pre(shot: dict, want: float) -> float:
+    """The longest run-up, up to `want`, this shot's footage before its kill allows."""
+    lo, hi = 0.0, max(0.0, want)
+    big = max(60.0, want + 10.0)
+
+    def fits(pre: float) -> bool:
+        return source_used(pieces(shot["speed"], big, pre), pre) <= float(shot["kill"]) + 1e-6
+    if fits(hi):
+        return hi
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        if fits(mid):
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+def max_post(shot: dict, pre: float, want: float) -> float:
+    """The longest time after the kill, up to `want`, the footage after it allows."""
+    room = max(0.0, float(shot["clip_seconds"]) - float(shot["kill"]))
+
+    def fits(post: float) -> bool:
+        ps = pieces(shot["speed"], pre + post, pre)
+        return source_used(ps, pre + post) - source_used(ps, pre) <= room + 1e-6
+    if fits(want):
+        return want
+    lo, hi = 0.0, want
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        if fits(mid):
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+def apply_marks(project: dict, marks: list[float]) -> list[str]:
+    """Re-time the timeline so shot N's kill lands on mark N (reel seconds).
+
+    Cuts move, never the marks: each shot starts as far before its mark as its
+    own run-up wants and its footage allows, and the shot before it runs up to
+    that cut. Shots past the last mark keep their lengths and follow on.
+    """
+    notes: list[str] = []
+    shots = project["shots"]
+    marks = sorted(m for m in marks if m >= 0)
+    n = min(len(marks), len(shots))
+    if not n:
+        return notes
+    if len(marks) > len(shots):
+        notes.append(f"{len(marks)} kills were marked but the reel has {len(shots)} shots; "
+                     f"the last {len(marks) - len(shots)} marks were not used.")
+    cuts = []
+    pres = []
+    for i in range(n):
+        s = shots[i]
+        k = marks[i]
+        if i == 0:
+            pre = max_pre(s, k)
+            if pre < k - 1.0 / FPS:
+                notes.append(f"Shot 1 has only {pre:.2f} s of footage before its kill, so it lands "
+                             f"{k - pre:.2f} s before the first mark.")
+            cuts.append(0.0)
+            pres.append(pre)
+            continue
+        gap = k - marks[i - 1]
+        want = min(float(s["pre"]) if s["pre"] > 0 else gap / 2, max(0.0, gap - 0.22))
+        pre = max_pre(s, want)
+        cut = k - pre
+        prev = shots[i - 1]
+        need = cut - (cuts[i - 1] + pres[i - 1])       # time after the previous kill
+        room = max_post(prev, pres[i - 1], need)
+        if room < need - 1.0 / FPS:
+            # The previous shot runs out: start this one earlier if its own
+            # footage allows, and say so if it still cannot reach.
+            longer = max_pre(s, max(0.0, k - (cuts[i - 1] + pres[i - 1] + room)))
+            cut = k - longer
+            pre = longer
+            if cut > cuts[i - 1] + pres[i - 1] + room + 1.0 / FPS:
+                notes.append(f"Shot {i} runs out of footage before shot {i + 1}'s mark; "
+                             f"shot {i + 1} may land early.")
+        cuts.append(max(cut, cuts[i - 1] + pres[i - 1] + 1.0 / FPS))
+        pres.append(k - cuts[-1])
+    for i in range(n):
+        s = shots[i]
+        s["pre"] = round(pres[i], 5)
+        if i < n - 1:
+            s["duration"] = round(cuts[i + 1] - cuts[i], 5)
+        else:
+            post = max(0.22, float(s["duration"]) - float(s["pre"]) if s["duration"] > s["pre"] else 0.5)
+            s["duration"] = round(pres[i] + post, 5)
+    return notes
+
+
+def fit_to_part(project: dict, seconds: float) -> list[str]:
+    """Leave out the shots the chosen part of the song cannot hold."""
+    notes: list[str] = []
+    if seconds <= 0:
+        return notes
+    kept, t = [], 0.0
+    for s in project["shots"]:
+        if t >= seconds - MIN_SHOT:
+            break
+        room = seconds - t
+        if s["duration"] > room:
+            if s["pre"] + 0.22 > room:
+                break
+            s["duration"] = round(room, 5)
+        kept.append(s)
+        t += s["duration"]
+    dropped = len(project["shots"]) - len(kept)
+    if dropped and kept:
+        notes.append(f"The part of the song you chose holds {len(kept)} shots; "
+                     f"the last {dropped} were left out.")
+        project["shots"] = kept
+    return notes
+
+
+def apply_song(project: dict, shape, song: str, start: float, end: float = 0.0,
+               marks: list[float] | None = None) -> list[str]:
+    """Put a song, the part of it to use and any marked kills onto a timeline.
+
+    `start`/`end` and `marks` are song seconds. Reel zero is `start` exactly --
+    it is NOT snapped, because fine-tuning it by a few milliseconds is the
+    point of the control.
+    """
+    notes: list[str] = []
+    project["song"] = song
+    project["beat"] = round(float(shape.beat), 6)
+    start = max(0.0, min(float(start), max(0.0, shape.seconds - 1.0)))
+    project["song_offset"] = round(start, 4)
+    part = (min(float(end), shape.seconds) - start) if end and end > start else shape.seconds - start
+    if marks:
+        inside = [m - start for m in marks if start <= m <= start + part]
+        notes += apply_marks(project, inside)
+    notes += fit_to_part(project, part)
+    return notes
 
 
 def _starts(shots: list[dict]) -> list[float]:
@@ -763,9 +1042,15 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         "game_db": _num(project.get("game_db"), -30, 12, 0.0),
         "duck": bool(project.get("duck", True)),
         "beat": _num(project.get("beat"), 0.2, 2.0, 60.0 / NO_SONG_BPM),
+        "seed": int(_num(project.get("seed"), 0, 2 ** 31 - 1, 0)),
+        "pools": {},
         "output": "",
         "shots": [],
     }
+    raw_pools = project.get("pools") if isinstance(project.get("pools"), dict) else {}
+    for kind, part_kind in POOL_KINDS.items():
+        valid = set(ids_of(part_kind))
+        out["pools"][kind] = [p for p in (raw_pools.get(kind) or []) if p in valid][:40]
     song = str(project.get("song") or "")
     if song:
         sp = Path(song)
@@ -796,9 +1081,16 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
             notes.append(f"{cp.name or 'A shot'} is not a clip in the clips folder, so it was left out.")
             continue
         key = str(cp)
+        try:
+            mtime = int(cp.stat().st_mtime)
+        except OSError:
+            mtime = 0
         if key not in seconds_cache:
             given = _num(raw.get("clip_seconds"), 0.0, 36000.0, 0.0)
-            seconds_cache[key] = given if given > 0 else probe(cp)
+            # Trust the stored length only for the file it was measured on. A
+            # clip re-cut on the Clips page keeps its path and changes length.
+            same = int(_num(raw.get("clip_mtime"), 0, 2 ** 40, 0)) == mtime
+            seconds_cache[key] = given if (given > 0 and same) else probe(cp)
         cs = seconds_cache[key]
         if cs <= 0:
             notes.append(f"{cp.name} could not be read, so it was left out.")
@@ -806,7 +1098,7 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         kills = [round(_num(k, 0.0, cs, 0.0), 3) for k in (raw.get("kills") or [])][:12]
         shot = {
             "clip": key, "clip_id": clip_id(cp), "name": str(raw.get("name") or cp.stem)[:120],
-            "clip_seconds": round(cs, 3), "kills": kills or [round(cs / 2, 3)],
+            "clip_seconds": round(cs, 3), "clip_mtime": mtime, "kills": kills or [round(cs / 2, 3)],
             "kill": round(_num(raw.get("kill"), 0.0, cs, kills[0] if kills else cs / 2), 3),
             "duration": round(_num(raw.get("duration"), MIN_SHOT, 60.0, 2.0), 5),
             "pre": 0.0,
@@ -904,9 +1196,26 @@ def _font() -> str:
     return ""
 
 
-def _esc(text: str) -> str:
-    from .reel import _esc as esc
-    return esc(text)
+def _path_arg(p: Path) -> str:
+    """A file path as a quoted drawtext option: C\\:/like/this."""
+    return "'" + str(p).replace("\\", "/").replace(":", "\\:") + "'"
+
+
+def text_file(folder: Path | None, text: str) -> Path:
+    """Write `text` to a file drawtext can read, and return its path.
+
+    THROUGH A FILE, NEVER INLINE. Inline text has to survive two levels of
+    ffmpeg escaping, and measured: a caption as ordinary as "it's" failed the
+    whole render, and the escaping that got past the parser drew nothing at
+    all. A file carries any character exactly.
+    """
+    folder = Path(folder) if folder else Path(tempfile.gettempdir()) / "autostream-studio-text"
+    folder.mkdir(parents=True, exist_ok=True)
+    data = str(text).encode("utf-8")
+    p = folder / f"{hashlib.sha1(data).hexdigest()[:16]}.txt"
+    if not p.is_file():
+        p.write_bytes(data)
+    return p
 
 
 def _between(a: float, b: float) -> str:
@@ -1023,7 +1332,8 @@ def _setpts_expr(ps: list) -> str:
     return f"setpts='({expr})/TB'"
 
 
-def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=None) -> list[str]:
+def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=None,
+                    textdir: Path | None = None) -> list[str]:
     """ffmpeg argv that renders one shot, handles included, to `out`."""
     W, H, F = seg.width, seg.height, FPS
     total = seg.frames                  # a freeze replaces footage; it never lengthens a shot
@@ -1121,7 +1431,8 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     if seg.caption:
         size = max(28, round(H * 0.075))
         big = round(size * 1.9)
-        v.append(f"drawtext={_font()}text='{_esc(seg.caption)}':fontcolor=white:borderw=3:"
+        v.append(f"drawtext={_font()}expansion=none:textfile={_path_arg(text_file(textdir, seg.caption))}:"
+                 f"fontcolor=white:borderw=3:"
                  f"bordercolor=black@0.55:fontsize='if(lt(t-{kt:.4f},0.1),{big}-{(big - size) * 10}*(t-{kt:.4f}),{size})':"
                  f"x=(w-tw)/2:y=h*0.68:enable='{_between(kt, kt + 1.4)}'")
     v.append(f"format=yuv420p,trim=end_frame={total},setpts=PTS-STARTPTS")
@@ -1168,7 +1479,8 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
 
 
 def assemble_command(project: dict, derived: dict, segs: list[Segment], files: list[Path],
-                     out: Path, ff: str = "ffmpeg", encoder_args=None) -> list[str]:
+                     out: Path, ff: str = "ffmpeg", encoder_args=None,
+                     textdir: Path | None = None) -> list[str]:
     """ffmpeg argv that joins the shot renders into the finished reel."""
     W, H, F = SIZES[project["format"]][0], SIZES[project["format"]][1], FPS
     L = derived["length"]
@@ -1229,16 +1541,26 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         ks = derived["kills"] + [L + 1]
         size = max(24, round(H * 0.05))
         for j in range(len(ks) - 1):
-            post.append(f"drawtext={font}text='x{j + 1}':fontsize={size}:fontcolor=white:borderw=2:"
+            post.append(f"drawtext={font}expansion=none:textfile={_path_arg(text_file(textdir, f'x{j + 1}'))}:"
+                        f"fontsize={size}:fontcolor=white:borderw=2:"
                         f"bordercolor=black@0.5:x=w-tw-{round(W * 0.03)}:y={round(H * 0.04)}:"
                         f"enable='{_between(ks[j], ks[j + 1])}'")
     if "o07" in ov and project.get("handle"):
         size = max(18, round(H * 0.032))
-        post.append(f"drawtext={font}text='{_esc(project['handle'])}':fontsize={size}:fontcolor=white@0.7:"
+        post.append(f"drawtext={font}expansion=none:textfile={_path_arg(text_file(textdir, project['handle']))}:"
+                    f"fontsize={size}:fontcolor=white@0.7:"
                     f"x=w-tw-{round(W * 0.025)}:y=h-th-{round(H * 0.03)}")
     if "i04" in ov and song:
-        from .reel import nowplaying_chain
-        post.append(nowplaying_chain(Path(song), W, H))
+        from .reel import NOWPLAYING_FROM, NOWPLAYING_SECONDS, song_tags
+        tags = song_tags(Path(song))
+        line = f"{tags['artist']} - {tags['title']}" if tags["artist"] else tags["title"]
+        size, pad = max(16, int(H * 0.026)), int(H * 0.030)
+        a, b = NOWPLAYING_FROM, NOWPLAYING_FROM + NOWPLAYING_SECONDS
+        alpha = (f"if(lt(t,{a}),0,if(lt(t,{a + 0.4:.2f}),(t-{a})/0.4,"
+                 f"if(lt(t,{b - 0.6:.2f}),1,if(lt(t,{b}),({b}-t)/0.6,0))))")
+        post.append(f"drawtext={font}expansion=none:textfile={_path_arg(text_file(textdir, line))}:"
+                    f"fontcolor=white:fontsize={size}:x={pad}:y=h-{pad}-{size}:box=1:"
+                    f"boxcolor=black@0.45:boxborderw=10:alpha='{alpha}'")
     if intro == "i05":
         chain_in = f"[{acc_label}]split[bs][bb];[bb]gblur=sigma=18[bg];[bs][bg]blend=all_expr='A*min(1,T/1.2)+B*(1-min(1,T/1.2))'[bl]"
         g.append(chain_in)
@@ -1288,11 +1610,15 @@ class Cancelled(RuntimeError):
     pass
 
 
+_JOB_IDS = itertools.count(1)
+
+
 class StudioJob:
     """One reel render: the shots that are not cached, then the join."""
 
     def __init__(self, project: dict, derived: dict, root: Path, out: Path, *,
                  shape_beats: list[float] | None = None):
+        self.id = next(_JOB_IDS)
         self.project, self.derived, self.root, self.out = project, derived, root, out
         self.shape_beats = shape_beats
         self.state = "queued"
@@ -1311,7 +1637,8 @@ class StudioJob:
     def snapshot(self) -> dict:
         with self._lock:
             pct = int(100 * self.done / self.total) if self.total else 0
-            return {"state": self.state, "step": self.step, "done": self.done, "total": self.total,
+            return {"id": self.id, "state": self.state, "step": self.step, "done": self.done,
+                    "total": self.total,
                     "percent": max(0, min(100, pct)), "message": self.message, "error": self.error,
                     "output": str(self.out), "project": str(self.out.with_suffix(".reel.json")),
                     "elapsed": int((self.finished or time.time()) - self.started),
@@ -1331,19 +1658,26 @@ class StudioJob:
             for k, v in kw.items():
                 setattr(self, k, v)
 
-    def _run_ff(self, argv: list[str]) -> None:
+    def _run_ff(self, argv: list[str], *, capture: bool = False) -> str:
+        """Run ffmpeg where Cancel can reach it. -> its stderr when `capture`."""
         from .killfeed import _NO_WINDOW
         if self._cancel.is_set():
             raise Cancelled("cancelled")
-        self._proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                                      creationflags=_NO_WINDOW)
-        _, err = self._proc.communicate()
-        code = self._proc.returncode
+        proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                creationflags=_NO_WINDOW)
+        self._proc = proc
+        # Cancel may have landed between the check above and the assignment.
+        if self._cancel.is_set():
+            proc.terminate()
+        _, err = proc.communicate()
+        code = proc.returncode
         self._proc = None
         if self._cancel.is_set():
             raise Cancelled("cancelled")
+        text = (err or b"").decode("utf-8", "replace")
         if code != 0:
-            raise RuntimeError((err or b"").decode("utf-8", "replace")[-1500:] or f"ffmpeg exited {code}")
+            raise RuntimeError(text[-1500:] or f"ffmpeg exited {code}")
+        return text if capture else ""
 
     def _loudness(self, ff: str, path: Path, target: float = -14.0) -> None:
         """Bring the finished reel to `target` LUFS with a measured second pass.
@@ -1353,19 +1687,18 @@ class StudioJob:
         it linearly lands on the target. Audio only -- the video is copied, so
         this costs seconds.
         """
-        from .killfeed import _NO_WINDOW
+        fixed = path.with_name(path.stem + ".loud.mp4")
         try:
-            r = subprocess.run([ff, "-hide_banner", "-nostdin", "-i", str(path), "-vn", "-af",
+            err = self._run_ff([ff, "-hide_banner", "-nostdin", "-i", str(path), "-vn", "-af",
                                 f"loudnorm=I={target}:TP=-1.5:LRA=11:print_format=json", "-f", "null", "-"],
-                               capture_output=True, text=True, timeout=600, creationflags=_NO_WINDOW)
-            blob = r.stderr[r.stderr.rindex("{"): r.stderr.rindex("}") + 1]
+                               capture=True)
+            blob = err[err.rindex("{"): err.rindex("}") + 1]
             m = json.loads(blob)
             if abs(float(m["input_i"]) - target) < 0.5:
                 return
             af = (f"loudnorm=I={target}:TP=-1.5:LRA=11:measured_I={m['input_i']}:measured_TP={m['input_tp']}"
                   f":measured_LRA={m['input_lra']}:measured_thresh={m['input_thresh']}"
                   f":offset={m['target_offset']}:linear=true")
-            fixed = path.with_name(path.stem + ".loud.mp4")
             self._run_ff([ff, "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(path),
                           "-map", "0:v", "-map", "0:a", "-c:v", "copy", "-af", af, "-ar", "48000",
                           "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart", str(fixed)])
@@ -1375,6 +1708,8 @@ class StudioJob:
         except Exception as e:                              # noqa: BLE001
             # Loudness is a finish, not the reel: keep the render and say why.
             log.info("studio loudness pass skipped: %s", e)
+        finally:
+            _unlink(fixed)
 
     def run(self) -> None:
         from .tools import binary, media_info, video_codec_args
@@ -1383,6 +1718,7 @@ class StudioJob:
             ff = binary("ffmpeg")
             cache = self.root / CACHE_DIR / "segments"
             cache.mkdir(parents=True, exist_ok=True)
+            textdir = self.root / CACHE_DIR / "text"
             _prune(cache)
 
             def audio_of(p: str) -> bool:
@@ -1401,22 +1737,30 @@ class StudioJob:
                 self._set(step="shots", message=f"Shot {s.index + 1} of {len(segs)}")
                 tmp = f.with_suffix(".part.mp4")
                 try:
-                    self._run_ff(segment_command(s, tmp, ff, enc_seg))
+                    self._run_ff(segment_command(s, tmp, ff, enc_seg, textdir))
                 except RuntimeError as e:
                     raise RuntimeError(f"Shot {s.index + 1} ({Path(s.clip).name}): {e}") from e
+                finally:
+                    if not tmp.is_file() or self._cancel.is_set():
+                        _unlink(tmp)
                 tmp.replace(f)
                 self._set(done=j + 1)
             self._set(step="join", message="Joining the shots and mixing the sound")
             self.out.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.out.with_name(self.out.stem + ".part.mp4")
             try:
-                self._run_ff(assemble_command(self.project, self.derived, segs, files, tmp, ff,
-                                              video_codec_args("auto", cq=19)))
-            except RuntimeError as e:
-                raise RuntimeError(f"Joining the shots: {e}") from e
-            self._set(step="sound", message="Matching loudness")
-            self._loudness(ff, tmp)
-            tmp.replace(self.out)
+                try:
+                    self._run_ff(assemble_command(self.project, self.derived, segs, files, tmp, ff,
+                                                  video_codec_args("auto", cq=19), textdir))
+                except RuntimeError as e:
+                    raise RuntimeError(f"Joining the shots: {e}") from e
+                self._set(step="sound", message="Matching loudness")
+                self._loudness(ff, tmp)
+                tmp.replace(self.out)
+            finally:
+                # A cancelled or failed join leaves a headerless mp4 that would
+                # otherwise sit in the reels folder looking like a reel.
+                _unlink(tmp)
             meta = dict(self.project)
             meta["output"] = str(self.out)
             meta["render"] = {"length": self.derived["length"], "when": int(time.time()),
@@ -1430,6 +1774,13 @@ class StudioJob:
             log.warning("studio render failed: %s", e)
             self._set(state="failed", error=str(e)[-800:], message="The render failed",
                       finished=time.time())
+
+
+def _unlink(p: Path) -> None:
+    try:
+        Path(p).unlink()
+    except OSError:
+        pass
 
 
 def _prune(cache: Path, keep: int = 400, days: float = 21.0) -> None:
@@ -1482,12 +1833,17 @@ class Runner:
 
 
 _RUNNER: Runner | None = None
+_RUNNER_LOCK = threading.Lock()
 
 
 def runner() -> Runner:
+    """The one Runner. Built under a lock: two requests arriving together on a
+    fresh daemon would otherwise each get their own, and two renders."""
     global _RUNNER
     if _RUNNER is None:
-        _RUNNER = Runner()
+        with _RUNNER_LOCK:
+            if _RUNNER is None:
+                _RUNNER = Runner()
     return _RUNNER
 
 
@@ -1505,12 +1861,19 @@ def thumb(root: Path, clip: Path, at: float = -1.0, width: int = 360) -> Path:
     from .killfeed import _NO_WINDOW
     from .tools import binary
     t = at if at >= 0 else 0.0
-    tmp = out.with_name(out.stem + ".part.jpg")
+    # One temp per request: the grid asks for the same still from two tabs at
+    # once, and a shared temp promoted half-written is a broken tile for ever.
+    tmp = out.with_name(f"{out.stem}.{threading.get_ident()}.{time.monotonic_ns()}.part.jpg")
     subprocess.run([binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
                     "-ss", f"{t:.3f}", "-i", str(clip), "-frames:v", "1",
                     "-vf", f"scale={width}:-2", "-q:v", "5", str(tmp)],
                    capture_output=True, timeout=30, creationflags=_NO_WINDOW)
     if not tmp.is_file():
         raise RuntimeError("Could not read a frame from that clip.")
-    tmp.replace(out)
+    try:
+        tmp.replace(out)
+    except OSError:
+        _unlink(tmp)
+        if not out.is_file():
+            raise
     return out
