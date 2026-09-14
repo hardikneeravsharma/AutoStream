@@ -293,6 +293,45 @@ def align(match: Match, puuid: str, started: float,
 
 # -------------------------------------------------------- kills and rounds
 
+# A kill the detector read this close outside the record's span is still the
+# record's to replace: the record's first kill can come a moment before the
+# span's start once the offset is rounded.
+SPAN_SLACK = 5.0
+
+
+def span_of(match: Match, sync: cs2_demo.Sync) -> tuple[float, float]:
+    """Where this match starts and ends on the recording's timeline."""
+    return sync.to_vod(0.0), sync.to_vod(max(match.seconds, 0.0))
+
+
+def merge_kills(detected: list[dict], recorded: list[dict],
+                span: tuple[float, float]) -> tuple[list[dict], int]:
+    """The record's kills inside its match, the detector's everywhere else.
+
+    -> (kills, how many detector kills were kept from outside the match)
+
+    ONE RECORD IS ONE MATCH, NOT THE RECORDING. It used to replace every kill
+    the detector found. Measured on a 70-minute recording: the feed bars read
+    104 kills across the whole file, the one cached record -- a 7-minute
+    deathmatch at the start -- lined up with 18 of its 21, and the run cut
+    those 21 and silently dropped the other 83.
+    """
+    lo, hi = span[0] - SPAN_SLACK, span[1] + SPAN_SLACK
+    outside = [k for k in detected if not lo <= float(k.get("time") or 0.0) <= hi]
+    merged = sorted(list(recorded) + outside, key=lambda k: float(k.get("time") or 0.0))
+    return merged, len(outside)
+
+
+def rounds_usable(rounds: list) -> bool:
+    """Whether a record's rounds are rounds.
+
+    A deathmatch reports its whole game as round one; cutting "the round" then
+    cut the whole seven minutes as a single clip. Fewer than two rounds with
+    kills in them is a mode without rounds.
+    """
+    return len(rounds) >= 2
+
+
 def kills_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list[dict]:
     """Every kill by this player, on the recording's timeline."""
     out = []

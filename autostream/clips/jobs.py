@@ -515,16 +515,28 @@ class ClipJob:
             raise RuntimeError("No kills found in this recording.")
 
         # ---- 1a2. the match record, if the game keeps one ----------------
-        # Before the demo branch and on the same terms: a record that lines up
-        # replaces everything the detector said, and one that does not costs
-        # only the lookup. Valorant is the only game with one today.
+        # Before the demo branch: a record that lines up replaces what the
+        # detector said INSIDE ITS MATCH, and one that does not costs only the
+        # lookup. Valorant is the only game with one today.
         if prof and getattr(prof, "matches", False) and opt.get("matches", True):
             got = self._from_match(kills, prof)
             if got:
-                kills = got["kills"]
-                round_list = got["rounds"]
+                from . import valorant_match as vmatch
+
+                kills, outside = vmatch.merge_kills(kills, got["kills"], got["span"])
+                # Rounds only when the record covers every kill being cut and
+                # really has rounds: round mode cuts nothing outside its rounds.
+                usable = vmatch.rounds_usable(got["rounds"]) and not outside
+                round_list = got["rounds"] if usable else []
                 use_rounds = bool(round_list)
-                self.demo = got["about"]
+                self.demo = dict(got["about"], outside=outside)
+                if outside:
+                    log.info("kept %d kill(s) the detector read outside that match",
+                             outside)
+                if got["rounds"] and not usable:
+                    log.info("cutting bursts of kills, not rounds: %s",
+                             "kills outside the match" if outside else
+                             f"{got['about'].get('mode') or 'this mode'} has no rounds")
 
         # ---- 1b. the demo, if the game writes one ------------------------
         #
@@ -959,6 +971,7 @@ class ClipJob:
         return {
             "kills": got_kills,
             "rounds": got_rounds,
+            "span": vmatch.span_of(m, sync),
             "about": {"match": m.id, "mode": m.mode, "ranked": m.ranked,
                       "offset": round(sync.offset, 2),
                       "matched": sync.matched, "total": sync.total,
