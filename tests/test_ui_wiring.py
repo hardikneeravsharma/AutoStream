@@ -22,7 +22,7 @@ import re
 
 import pytest
 
-PAGES = ("shell", "settings", "clips", "dashboard", "library", "logs", "setup")
+PAGES = ("shell", "settings", "clips", "reel", "studio", "dashboard", "library", "logs", "setup")
 
 
 def _blobs(name: str) -> list[str]:

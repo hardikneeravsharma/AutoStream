@@ -30,12 +30,14 @@ from .reel import REEL_HTML, REEL_JS
 from .settings import SETTINGS_HTML, SETTINGS_JS
 from .setup import SETUP_HTML, SETUP_JS
 from .shell import SHELL_HTML, SHELL_JS
+from .studio import STUDIO_HTML, STUDIO_JS
 
 _VIEWS = {
     "{{DASH_HTML}}": DASH_HTML,
     "{{LIBRARY_HTML}}": LIBRARY_HTML,
     "{{CLIPS_HTML}}": CLIPS_HTML,
     "{{REEL_HTML}}": REEL_HTML,
+    "{{STUDIO_HTML}}": STUDIO_HTML,
     "{{SETTINGS_HTML}}": SETTINGS_HTML,
     "{{LOGS_HTML}}": LOGS_HTML,
     "{{SETUP_HTML}}": SETUP_HTML,
@@ -59,6 +61,7 @@ JS = "\n".join((
     LIBRARY_JS,
     CLIPS_JS,
     REEL_JS,
+    STUDIO_JS,
     SETTINGS_JS,
     LOGS_JS,
     SETUP_JS,

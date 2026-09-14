@@ -167,6 +167,47 @@ def test_the_pre_roll_comes_from_the_gap_before_the_beat():
     assert reel.pre_roll(0.45) <= 0.45 - reel.MIN_AFTER + 1e-9
 
 
+def test_the_pre_roll_is_a_whole_number_of_beats_when_the_song_is_known():
+    """Measured on a real 162 BPM reel: the share-of-the-gap run-up came out
+    at 1.20 beats, so every cut sat a fifth of a beat off the grid and 1 of 26
+    landed on a beat. The kills were exact and it still read as loose."""
+    beat = 60.0 / 162.0
+    gap = 4 * beat                      # a kill every bar, the common case
+    assert reel.pre_roll(gap) == pytest.approx(0.444, abs=0.005)   # the old way
+    got = reel.pre_roll(gap, beat)
+    assert got == pytest.approx(beat, abs=1e-6)
+    assert (got / beat) % 1 == pytest.approx(0.0, abs=1e-6)
+
+
+def test_the_beat_true_pre_roll_still_respects_its_own_limits():
+    """Rounding to the grid may never reach past the previous kill, and a
+    beat too long for the allowance falls back rather than breaking a shot."""
+    beat = 60.0 / 162.0
+    tight = 0.45
+    assert reel.pre_roll(tight, beat) <= tight - reel.MIN_AFTER + 1e-9
+    assert reel.pre_roll(tight, beat) >= reel.PRE_MIN - 1e-9
+    # 40 BPM: a whole beat is 1.5s, past PRE_MAX, so it cuts on the off-beat,
+    # which is still the grid.
+    slow = 60.0 / 40.0
+    assert reel.pre_roll(4 * slow, slow) == pytest.approx(slow / 2, abs=1e-9)
+    # 20 BPM: even half a beat is too long, so the old rule stands.
+    crawl = 60.0 / 20.0
+    assert reel.pre_roll(4 * crawl, crawl) == pytest.approx(
+        reel.pre_roll(4 * crawl), abs=1e-9)
+
+
+def test_every_cut_lands_on_a_beat_when_the_kills_do():
+    """The whole point: the cut is the sync point a viewer hears."""
+    s = a_shape()
+    slots = reel.layout(s, want=10, template="bar")
+    sh = reel.shots(slots, kills(len(slots)), total=52.0, beat=s.beat)
+    off = []
+    for cut in [x.reel_in for x in sh[1:]]:
+        near = min(s.beats, key=lambda b: abs(b - cut))
+        off.append(abs(cut - near))
+    assert max(off) < 0.012, f"cuts sit up to {max(off)*1000:.0f}ms off the beat"
+
+
 def test_a_kill_always_lands_inside_its_own_shot():
     s = a_shape()
     for key in reel.TEMPLATES:

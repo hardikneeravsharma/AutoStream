@@ -189,6 +189,17 @@ class _Handler(BaseHTTPRequestHandler):
     def _json(self, obj, code=200):
         self._send(code, json.dumps(obj).encode())
 
+    def _send_cached(self, body: bytes, ctype: str, max_age: int = 86400) -> None:
+        """An immutable asset. The library grid asks for hundreds of these and
+        redraws often; no-store made every redraw fetch every one again."""
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", f"private, max-age={max_age}")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _body(self) -> dict:
         try:
             n = int(self.headers.get("Content-Length") or 0)
@@ -247,8 +258,13 @@ class _Handler(BaseHTTPRequestHandler):
         want = Path(path or "")
         cached = getattr(self.app, "_reel_cache", None)
         allowed = Path(cached[1].path) if cached else None
+        # The Studio analyses songs too, so the last few are allowed as well:
+        # picking one there must not silence the beat marker on the Clips page.
+        recent = [Path(s.path) for s in (getattr(self.app, "_reel_shapes", {}) or {}).values()]
         try:
-            ok = bool(allowed) and want.resolve() == allowed.resolve()
+            ok = any(want.resolve() == a.resolve() for a in ([allowed] if allowed else []) + recent)
+            if ok and not (allowed and want.resolve() == allowed.resolve()):
+                allowed = next(a for a in recent if want.resolve() == a.resolve())
         except OSError:
             ok = False
         if not ok:
@@ -449,6 +465,24 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json({"error": err}, 400)
             else:
                 self._send(200, png, "image/png")
+        elif u.path == "/api/studio/library":
+            self._json(self.app.studio_library())
+        elif u.path == "/api/studio/catalog":
+            self._json(self.app.studio_catalog())
+        elif u.path == "/api/studio/job":
+            self._json(self.app.studio_job())
+        elif u.path == "/api/studio/project":
+            self._json(self.app.studio_project((parse_qs(u.query).get("path") or [""])[0]))
+        elif u.path == "/api/studio/thumb":
+            q = parse_qs(u.query)
+            jpg, err = self.app.studio_thumb((q.get("path") or [""])[0],
+                                             _float((q.get("t") or ["-1"])[0], -1.0))
+            if err:
+                # 400, not 404: a 404 is what an unwired route answers, and a
+                # clip that cannot be read is a bad request to a real route.
+                self._json({"error": err}, 400)
+            else:
+                self._send_cached(jpg, "image/jpeg")
         else:
             self._json({"error": "not found"}, 404)
 
@@ -560,6 +594,18 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.reel_plan(b))
             elif p == "/api/reel/run":
                 self._json(self.app.reel_run(b))
+            elif p == "/api/studio/plan":
+                self._json(self.app.studio_plan(b))
+            elif p == "/api/studio/check":
+                self._json(self.app.studio_check(b))
+            elif p == "/api/studio/render":
+                self._json(self.app.studio_render(b))
+            elif p == "/api/studio/cancel":
+                self._json(self.app.studio_cancel())
+            elif p == "/api/studio/vary":
+                self._json(self.app.studio_vary(b))
+            elif p == "/api/studio/song":
+                self._json(self.app.studio_song(b))
             elif p == "/api/update/install":
                 self._json(self.app.update_install())
             elif p == "/api/update/download":
@@ -2043,6 +2089,11 @@ class Server:
             return {"error": "A clip job is running. Wait for it to finish."}
         if edit_mod.editor().busy():
             return {"error": "A clip is being re-rendered. Wait for it to finish."}
+        from .clips import studio as studio_mod
+
+        # The installer closes the app, and a reel mid-render would go with it.
+        if studio_mod.runner().busy():
+            return {"error": "A reel is rendering in the Studio. Wait for it to finish."}
 
         # The zip has no installer to run; it is extracted by hand. Say so
         # rather than trying to execute an archive.
@@ -2194,7 +2245,14 @@ class Server:
         cached = getattr(self, "_reel_cache", None)
         if cached and cached[0] == key:
             return cached[1]
-        shape = reel.analyse(src, seconds=seconds)
+        shapes = getattr(self, "_reel_shapes", None)
+        if shapes is None:
+            shapes = self._reel_shapes = {}
+        shape = shapes.get(key) or reel.analyse(src, seconds=seconds)
+        shapes.pop(key, None)
+        shapes[key] = shape
+        while len(shapes) > 4:
+            shapes.pop(next(iter(shapes)))
         self._reel_cache = (key, shape)
         return shape
 
@@ -2268,7 +2326,8 @@ class Server:
         drift = reel.Drift.fit([(float(a), float(b)) for a, b in
                                 (body.get("drift_marks") or [])])
         try:
-            shots = reel.shots(slots, kills, total=main + fade, drift=drift)
+            shots = reel.shots(slots, kills, total=main + fade, drift=drift,
+                               beat=shape.beat)
         except RuntimeError as e:
             return {"ok": False, "error": str(e)}
         return {"ok": True, "song": shape.as_dict(),
@@ -2320,6 +2379,231 @@ class Server:
             return {"ok": False, "error": "The render failed. See the log."}
         return {"ok": True, "path": str(out), "shots": len(shots),
                 "seconds": round(main + fade, 2)}
+
+    # ------------------------------------------------------------ studio
+
+    def studio_library(self) -> dict:
+        """Every clip the user has made, by game and run folder."""
+        from .clips import studio
+
+        return studio.library(self._clips_dir(cfg.load()))
+
+    def studio_catalog(self) -> dict:
+        from .clips import studio
+
+        return studio.catalog()
+
+    def studio_thumb(self, path: str, at: float = -1.0) -> tuple[bytes, str | None]:
+        """A cached still for the library grid, only ever from the clips folder."""
+        from . import clips
+        from .clips import studio
+
+        if not str(path).strip():
+            return b"", "No clip given."
+        c = cfg.load()
+        clips.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+        try:
+            return studio.thumb(self._clips_dir(c), Path(path), at).read_bytes(), None
+        except (FileNotFoundError, OSError, RuntimeError, ValueError) as e:
+            return b"", str(e) or "No such clip."
+        except Exception as e:                       # noqa: BLE001
+            log.info("studio thumbnail failed: %s", e)
+            return b"", "Could not read a frame from that clip."
+
+    def _studio_shape(self, song: str):
+        if not song:
+            return None
+        return self._reel_song({"song": song})
+
+    def studio_plan(self, body: dict) -> dict:
+        """A first timeline from chosen clips and a style. Nothing is encoded."""
+        from .clips import studio
+
+        c = cfg.load()
+        root = self._clips_dir(c)
+        want = [str(p) for p in (body.get("clips") or []) if isinstance(p, str)][:studio.MAX_SHOTS]
+        if not want:
+            return {"ok": False, "error": "Choose at least one clip."}
+        lib = studio.library(root)
+        by_path = {}
+        for g in lib["games"]:
+            for f in g["folders"]:
+                for clip in f["clips"]:
+                    by_path[str(Path(clip["path"]).resolve()).lower()] = clip
+        chosen = []
+        for p in want:
+            try:
+                hit = by_path.get(str(Path(p).resolve()).lower())
+            except OSError:
+                hit = None
+            if hit:
+                chosen.append(hit)
+        if not chosen:
+            return {"ok": False, "error": "None of those clips are in the clips folder any more."}
+        song = str(body.get("song") or "")
+        try:
+            shape = self._studio_shape(song)
+        except (FileNotFoundError, OSError, RuntimeError) as e:
+            return {"ok": False, "error": str(e)}
+        try:
+            max_s = float(body.get("max_seconds") or 0.0)
+        except (TypeError, ValueError):
+            max_s = 0.0
+        proj, notes = studio.plan(chosen, str(body.get("style") or studio.DEFAULT_STYLE),
+                                  shape=shape, song=song if shape else "",
+                                  fmt=str(body.get("format") or "landscape"),
+                                  name=str(body.get("name") or ""), max_seconds=max_s)
+        try:
+            proj, derived, more = studio.normalise(proj, root)
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "project": proj, "derived": derived, "notes": notes + more,
+                "song": shape.as_dict() if shape else None}
+
+    def studio_check(self, body: dict) -> dict:
+        """The timeline after an edit: clamped, and with every derived time."""
+        from .clips import studio
+
+        try:
+            proj, derived, notes = studio.normalise(body.get("project"), self._clips_dir(cfg.load()))
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "project": proj, "derived": derived, "notes": notes}
+
+    def studio_render(self, body: dict) -> dict:
+        """Render a timeline. Returns as soon as the job has started."""
+        from . import clips
+        from .clips import plan as plan_mod
+        from .clips import studio
+
+        c = cfg.load()
+        clips.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+        if not clips.available():
+            return {"ok": False, "error": "ffmpeg is not available, so nothing can be rendered."}
+        root = self._clips_dir(c)
+        try:
+            proj, derived, notes = studio.normalise(body.get("project"), root)
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        run = studio.runner()
+        if run.busy():
+            return {"ok": False, "error": "A reel is already rendering."}
+        outdir = root / "reels"
+        outdir.mkdir(parents=True, exist_ok=True)
+        out = Path(proj["output"]) if proj.get("output") else \
+            _free_reel(outdir, plan_mod.slug(proj["name"]) or "reel")
+        proj["output"] = str(out)
+        job = studio.StudioJob(proj, derived, root, out)
+        # start() is the gate that holds the lock; busy() above is only the
+        # fast answer. Two POSTs that both passed it must not both be "ok".
+        if not run.start(job):
+            return {"ok": False, "error": "A reel is already rendering."}
+        log.info("studio: rendering %d shots -> %s", len(proj["shots"]), out.name)
+        return {"ok": True, "job": job.id, "output": str(out), "project": proj,
+                "derived": derived, "notes": notes}
+
+    def studio_vary(self, body: dict) -> dict:
+        """Mix the timeline's effects again; shots and timing stay put."""
+        from .clips import studio
+
+        root = self._clips_dir(cfg.load())
+        try:
+            proj, _, _ = studio.normalise(body.get("project"), root)
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        what = str(body.get("what") or "all")
+        seed = body.get("seed")
+        try:
+            seed = int(seed) if seed is not None else None
+        except (TypeError, ValueError):
+            seed = None
+        studio.vary(proj, what, seed)
+        try:
+            proj, derived, notes = studio.normalise(proj, root)
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "project": proj, "derived": derived, "notes": notes}
+
+    def studio_song(self, body: dict) -> dict:
+        """Choose the song, the part of it, and optionally where the kills land."""
+        from .clips import studio
+
+        root = self._clips_dir(cfg.load())
+        try:
+            proj, _, _ = studio.normalise(body.get("project"), root)
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        song = str(body.get("song") or "")
+        if not song:
+            proj["song"], proj["song_offset"] = "", 0.0
+            proj["beat"] = round(60.0 / studio.NO_SONG_BPM, 6)
+            proj, derived, notes = studio.normalise(proj, root)
+            return {"ok": True, "project": proj, "derived": derived, "notes": notes, "song": None}
+        try:
+            shape = self._studio_shape(song)
+        except (FileNotFoundError, OSError, RuntimeError) as e:
+            return {"ok": False, "error": str(e)}
+
+        def num(v, default=0.0):
+            try:
+                f = float(v)
+                return f if f == f and abs(f) < 1e6 else default
+            except (TypeError, ValueError):
+                return default
+        marks = [num(m, -1.0) for m in (body.get("marks") or [])[:studio.MAX_SHOTS * 2]]
+        notes = studio.apply_song(proj, shape, song, num(body.get("start")), num(body.get("end")),
+                                  [m for m in marks if m >= 0])
+        try:
+            proj, derived, more = studio.normalise(proj, root)
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "project": proj, "derived": derived, "notes": notes + more,
+                "song": shape.as_dict()}
+
+    def studio_job(self) -> dict:
+        from .clips import studio
+
+        return studio.runner().status() or {"state": "idle"}
+
+    def studio_cancel(self) -> dict:
+        from .clips import studio
+
+        return {"ok": studio.runner().cancel()}
+
+    def studio_project(self, path: str) -> dict:
+        """A finished reel's timeline, to open and edit again."""
+        from .clips import studio
+
+        if not str(path).strip():
+            return {"ok": False, "error": "No reel given."}
+        root = self._clips_dir(cfg.load())
+        mp4 = Path(path)
+        try:
+            if not mp4.resolve().is_relative_to((root / "reels").resolve()):
+                return {"ok": False, "error": "That reel is not in the reels folder."}
+        except OSError:
+            return {"ok": False, "error": "That reel is gone."}
+        proj_file = mp4.with_suffix(".reel.json")
+        if not proj_file.is_file():
+            return {"ok": False, "error": "That reel was made before the Studio, so it has no timeline."}
+        try:
+            raw = json.loads(proj_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            return {"ok": False, "error": f"Could not read that reel's timeline: {e}"}
+        raw["output"] = str(mp4)
+        try:
+            proj, derived, notes = studio.normalise(raw, root)
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        shape = None
+        if proj.get("song"):
+            try:
+                shape = self._studio_shape(proj["song"])
+            except Exception:                        # noqa: BLE001
+                shape = None
+        return {"ok": True, "project": proj, "derived": derived, "notes": notes,
+                "song": shape.as_dict() if shape else None,
+                "when": int(mp4.stat().st_mtime)}
 
     def cards_check(self, body: dict) -> dict:
         """Does the card reader actually work on this recording?

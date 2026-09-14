@@ -28,7 +28,7 @@ import pytest
 
 pytestmark = pytest.mark.ui
 
-PAGES = ("dash", "library", "clips", "settings", "logs")
+PAGES = ("dash", "library", "clips", "studio", "settings", "logs")
 # Answers that are correct even though they are 4xx. Empty on purpose: today
 # the page asks for nothing it expects to be refused, and an entry here should
 # have to be justified.
@@ -261,6 +261,218 @@ def test_a_clip_plays_in_the_page(ui, app, tmp_path):
     assert not state["err"], f"a clip in the clips folder would not play: {state}"
     assert state["dur"] > 0.5, f"the clip loaded no video: {state}"
     ui.clean("playing a clip")
+
+
+def _studio_run(app, name: str, count: int, seconds: float = 4.0) -> None:
+    """A run of `count` real clips, each with its kill in the middle."""
+    import json
+    import subprocess
+
+    from autostream.clips.tools import binary
+
+    ff = binary("ffmpeg")
+    if not ff:
+        pytest.skip("no ffmpeg to make clips with")
+    run = Path(app["home"]) / "video" / "clips" / name
+    (run / "clips").mkdir(parents=True, exist_ok=True)
+    rows = []
+    for i in range(count):
+        clip = run / "clips" / f"ui_{i}.mp4"
+        subprocess.run([ff, "-y", "-v", "error", "-f", "lavfi", "-i",
+                        f"testsrc2=size=320x180:rate=30:duration={seconds}",
+                        "-f", "lavfi", "-i", f"sine=frequency={300 + 100 * i}:duration={seconds}",
+                        "-shortest", "-pix_fmt", "yuv420p", str(clip)], check=True, timeout=180)
+        rows.append({"rank": i + 1, "start": 10.0 * (i + 1), "end": 10.0 * (i + 1) + seconds,
+                     "duration": seconds, "kills": 1, "name": clip.stem, "master": str(clip),
+                     "vertical": "", "caption": "", "tags": [], "at": ""})
+    (run / "clips.json").write_text(json.dumps({"game": "VALORANT", "clips": rows}))
+    (run / "session.json").write_text(json.dumps(
+        {"game": "VALORANT", "kills": [{"time": 10.0 * (i + 1) + seconds / 2} for i in range(count)]}))
+
+
+def _studio_build(page, folder_label: str, picks: int, style: str, name: str) -> None:
+    page.click('.rail-btn[data-page="studio"]')
+    page.wait_for_selector("#view-studio.is-active")
+    page.click('[data-act="studio-refresh"]')
+    page.wait_for_function(
+        "(n) => [...document.querySelectorAll('.studio-folder')].some(f => f.textContent.indexOf(n) >= 0)",
+        arg=folder_label, timeout=30_000)
+    folder = page.locator(".studio-folder", has_text=folder_label).first
+    tiles = folder.locator(".studio-clip-hit")
+    page.click('[data-act="studio-clear"]') if page.is_visible('[data-act="studio-clear"]') else None
+    for i in range(picks):
+        tiles.nth(i).click()
+    assert page.inner_text("#studio-tray-count").startswith(f"{picks} clips")
+    page.click('[data-act="studio-make"]')
+    page.click(f'[data-act="studio-style"][data-style="{style}"]')
+    page.fill("#studio-name", name)
+    page.click('[data-act="studio-build"]')
+    page.wait_for_selector("#studio-pane-timeline:not(.hide)", timeout=60_000)
+
+
+def _studio_rendered(page, what: str) -> None:
+    page.wait_for_function(
+        "() => { const t = document.getElementById('studio-state').textContent;"
+        " return t.startsWith('Ready') || /fail|Could not|refus/i.test(t); }", timeout=300_000)
+    state = page.inner_text("#studio-state")
+    assert state.startswith("Ready"), f"{what}: {state}"
+    video = page.evaluate("""async () => {
+        const v = document.getElementById('studio-video');
+        if (v.readyState < 1) await new Promise(r => { v.onloadedmetadata = r; v.onerror = r; setTimeout(r, 15000); });
+        return {err: v.error && v.error.code, ready: v.readyState, dur: v.duration};
+    }""")
+    assert not video["err"] and video["dur"] > 1, f"{what}: the reel will not play: {video}"
+
+
+def test_a_reel_is_made_edited_and_rendered_again_in_the_studio(ui, app):
+    """The Studio's whole promise, in the real build: choose clips, get a reel
+    that plays, change one shot on the timeline, and get the change rendered.
+
+    Every step is a place the page and the server could disagree -- a route
+    the bundle does not serve, a filter expression the packaged ffmpeg refuses,
+    a video URL the player cannot load -- and none of them is visible to a
+    test that does not drive the page."""
+    import json
+
+    _studio_run(app, "2026-09-14_1200_VALORANT", 3)
+    page = ui.page
+    _studio_build(page, "12:00", 2, "story", "UI check")
+
+    def rendered(what):
+        _studio_rendered(page, what)
+
+    rendered("first render")
+    assert page.locator(".st-shot").count() == 2
+    page.locator(".st-shot").nth(1).click()
+    page.locator('#studio-insp input[data-list="fx"][value="k06"]').check()
+    page.wait_for_function("document.getElementById('studio-render-btn').textContent === 'Render changes'")
+    page.evaluate("document.getElementById('studio-state').textContent = ''")
+    page.click("#studio-render-btn")
+    rendered("the render after an edit")
+    saved = ui.api("GET", "/api/studio/job")
+    project = json.loads(Path(saved["project"]).read_text(encoding="utf-8"))
+    assert "k06" in project["shots"][1]["fx"], "the edit on the timeline never reached the render"
+    ui.clean("making and editing a reel")
+
+
+def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp_path):
+    """Everything the timeline offers beyond one shot's checkboxes, in the build.
+
+    The reel the user sent back had the same effect on every kill, and
+    "Rebuild with this style" was reported as doing nothing -- so both are
+    driven through their own buttons and judged by the project, not by a toast.
+    Then the song editor: choose a track, fine-tune the part, mark kills on it,
+    apply, and render -- and every marked kill must land on its mark."""
+    import json
+
+    _studio_run(app, "2026-09-13_2130_VALORANT", 6, seconds=6.0)
+    page = ui.page
+    page.evaluate("""() => { window.__toasts = []; const t = window.toast;
+        window.toast = function (m) { window.__toasts.push(String(m)); return t.apply(this, arguments); }; }""")
+    before_job = page.evaluate("studio.jobId")
+    _studio_build(page, "21:30", 6, "velocity", "Mix check")
+    # Edits first, one render at the end. Build shows the timeline BEFORE it
+    # starts the render, so a cancel sent then finds nothing to cancel and the
+    # render finishes mid-test -- wait for the job to exist first.
+    page.wait_for_function("(n) => studio.jobId && studio.jobId !== n", arg=before_job, timeout=60_000)
+    page.evaluate("API.post('/api/studio/cancel', {})")
+    page.wait_for_function("/^Cancelled|^Ready/.test(document.getElementById('studio-state').textContent)",
+                           timeout=120_000)
+
+    shots = page.evaluate("studio.project.shots")
+    firsts = [s["fx"][0] for s in shots]
+    assert all(a != b for a, b in zip(firsts, firsts[1:])), f"two kills running got one effect: {firsts}"
+    assert len(set(firsts)) >= 3, f"the reel draws from too few kill effects: {firsts}"
+
+    # --- the Reel inspector: pools and the Mix buttons
+    page.click('#studio-insp [data-act="studio-select"][data-shot="-1"]')
+    timing = page.evaluate("studio.derived.shots.map(r => [r.start, r.kill_reel])")
+    before = page.evaluate("studio.project.shots.map(s => s.fx.join('+')).join()")
+    page.click('[data-act="studio-mix"][data-what="kill"]')
+    page.wait_for_function("(b) => studio.project.shots.map(s => s.fx.join('+')).join() !== b",
+                           arg=before, timeout=15_000)
+    after = page.evaluate("studio.derived.shots.map(r => [r.start, r.kill_reel])")
+    assert all(abs(a - b) < 1e-3 for x, y in zip(timing, after) for a, b in zip(x, y)), \
+        "mixing the effects moved a cut or a kill"
+    before = page.evaluate("studio.project.shots.map(s => s.transition).join()")
+    page.click('[data-act="studio-mix"][data-what="transition"]')
+    page.wait_for_function("(b) => studio.project.shots.map(s => s.transition).join() !== b",
+                           arg=before, timeout=15_000)
+    for v in page.evaluate("[...document.querySelectorAll('#studio-insp input[data-pool=\"kill\"]:checked')].map(x => x.value)"):
+        if v not in ("k02", "k06"):
+            page.locator(f'#studio-insp input[data-pool="kill"][value="{v}"]').uncheck()
+            page.wait_for_timeout(250)
+    for v in ("k02", "k06"):
+        box = page.locator(f'#studio-insp input[data-pool="kill"][value="{v}"]')
+        if not box.is_checked():
+            box.check()
+            page.wait_for_timeout(250)
+    page.wait_for_function(
+        "studio.project.shots.every(s => s.fx.every(k => k === 'k02' || k === 'k06'))", timeout=15_000)
+
+    # --- Rebuild with this style
+    page.select_option("#studio-r-style", "hype")
+    page.click("#studio-restyle-btn")
+    page.wait_for_function("studio.project.style === 'hype'", timeout=30_000)
+    assert page.evaluate("studio.project.name") == "Mix check"
+    assert any(t.startswith("Rebuilt as") for t in page.evaluate("window.__toasts"))
+
+    # --- one shot's effects, then onto every shot
+    page.locator(".st-shot").nth(1).click()
+    page.locator('#studio-insp input[data-list="fx"][value="k03"]').check()
+    page.wait_for_function("studio.project.shots[1].fx.indexOf('k03') >= 0", timeout=15_000)
+    page.click('[data-act="studio-fx-all"]')
+    page.wait_for_function(
+        "studio.project.shots.every(s => s.fx.join() === studio.project.shots[1].fx.join())", timeout=15_000)
+    page.click("#studio-undo-btn")
+    page.wait_for_function(
+        "!studio.project.shots.every(s => s.fx.join() === studio.project.shots[1].fx.join())", timeout=15_000)
+
+    # --- the song editor
+    song = appd.click_track(tmp_path / "studio song.wav", seconds=40.0, bpm=120.0)
+    page.click("#studio-tab-song")
+    page.evaluate("""(path) => { const real = API.post;
+        API.post = function (u, b) {                  /* the native file dialog, answered */
+            if (u === '/api/clips/pick') return Promise.resolve({path: path});
+            return real.apply(this, arguments); }; }""", str(song))
+    page.click('[data-act="studio-sg-pick"]')
+    page.wait_for_selector("#studio-sg-body:not(.hide)", timeout=60_000)
+    audio = page.evaluate("""async () => {
+        const a = document.getElementById('studio-sg-audio');
+        if (a.readyState < 1) await new Promise(r => { a.onloadedmetadata = r; a.onerror = r; setTimeout(r, 15000); });
+        return {err: a.error && a.error.code, dur: a.duration}; }""")
+    assert not audio["err"] and audio["dur"] > 30, f"the song editor cannot play the song: {audio}"
+    beat = page.evaluate("studio_sgBeat()")
+    s0 = page.evaluate("studio.sg.start")
+    page.click('[data-act="studio-sg-nudge"][data-what="start"][data-d="bar"]')
+    page.click('[data-act="studio-sg-nudge"][data-what="start"][data-d="ms"]')
+    assert page.evaluate("studio.sg.start") == pytest.approx(s0 + 4 * beat + 0.01, abs=1e-3)
+    page.click('[data-act="studio-sg-snapbar"]')
+    page.click('[data-act="studio-sg-fit"]')
+    start = page.evaluate("studio.sg.start")
+    for k in (1, 3, 5):                                       # K at three playheads
+        page.evaluate(f"document.getElementById('studio-sg-audio').currentTime = {start + k * 2 * beat + 0.04}")
+        page.evaluate("document.activeElement && document.activeElement.blur()")
+        page.keyboard.press("k")
+    marks = page.evaluate("studio.sg.marks")
+    assert len(marks) == 3, f"K did not mark the kills: {marks}"
+    assert page.locator("#studio-sg-chips .reel-chip").count() == 3
+    page.click("#studio-sg-apply")
+    page.wait_for_selector("#studio-pane-timeline:not(.hide)", timeout=60_000)
+    proj, derived = page.evaluate("[studio.project, studio.derived]")
+    assert proj["song"] == str(song)
+    assert proj["song_offset"] == pytest.approx(start, abs=1e-3)
+    landed = [derived["shots"][i]["kill_reel"] + proj["song_offset"] for i in range(3)]
+    assert landed == pytest.approx(marks, abs=0.04), f"marks {marks}, kills landed at {landed}"
+
+    page.evaluate("document.getElementById('studio-state').textContent = ''; window.__toasts = []")
+    page.click("#studio-render-btn")
+    _studio_rendered(page, "the render with a song, marks and mixed effects")
+    page.wait_for_timeout(1000)
+    saved = json.loads(Path(ui.api("GET", "/api/studio/job")["project"]).read_text(encoding="utf-8"))
+    assert saved["song"] == str(song) and saved["style"] == "hype"
+    assert page.evaluate("window.__toasts.filter(t => t === 'Reel ready.').length") == 1
+    ui.clean("mixing, restyling and cutting to marked kills")
 
 
 # ------------------------------------------- the backend, through the page
