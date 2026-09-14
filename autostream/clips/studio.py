@@ -1738,6 +1738,10 @@ class StudioJob:
                 tmp = f.with_suffix(".part.mp4")
                 try:
                     self._run_ff(segment_command(s, tmp, ff, enc_seg, textdir))
+                except Cancelled:
+                    # A subclass of RuntimeError: re-wrapped below, a Cancel
+                    # the user pressed was reported as a failed render.
+                    raise
                 except RuntimeError as e:
                     raise RuntimeError(f"Shot {s.index + 1} ({Path(s.clip).name}): {e}") from e
                 finally:
@@ -1752,6 +1756,8 @@ class StudioJob:
                 try:
                     self._run_ff(assemble_command(self.project, self.derived, segs, files, tmp, ff,
                                                   video_codec_args("auto", cq=19), textdir))
+                except Cancelled:
+                    raise
                 except RuntimeError as e:
                     raise RuntimeError(f"Joining the shots: {e}") from e
                 self._set(step="sound", message="Matching loudness")

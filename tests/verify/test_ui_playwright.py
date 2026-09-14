@@ -369,10 +369,15 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     page = ui.page
     page.evaluate("""() => { window.__toasts = []; const t = window.toast;
         window.toast = function (m) { window.__toasts.push(String(m)); return t.apply(this, arguments); }; }""")
+    before_job = page.evaluate("studio.jobId")
     _studio_build(page, "21:30", 6, "velocity", "Mix check")
-    page.evaluate("API.post('/api/studio/cancel', {})")        # edits first; one render at the end
-    page.wait_for_function("document.getElementById('studio-cancel-btn').classList.contains('hide')",
-                           timeout=60_000)
+    # Edits first, one render at the end. Build shows the timeline BEFORE it
+    # starts the render, so a cancel sent then finds nothing to cancel and the
+    # render finishes mid-test -- wait for the job to exist first.
+    page.wait_for_function("(n) => studio.jobId && studio.jobId !== n", arg=before_job, timeout=60_000)
+    page.evaluate("API.post('/api/studio/cancel', {})")
+    page.wait_for_function("/^Cancelled|^Ready/.test(document.getElementById('studio-state').textContent)",
+                           timeout=120_000)
 
     shots = page.evaluate("studio.project.shots")
     firsts = [s["fx"][0] for s in shots]

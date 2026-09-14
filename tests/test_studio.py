@@ -535,6 +535,32 @@ class _Job:
         return {"state": self.state}
 
 
+@pytest.mark.parametrize("stage", ["shot", "join"])
+def test_cancel_is_reported_as_cancelled_not_as_a_failure(root, tmp_path, monkeypatch, stage):
+    """Cancelled is a RuntimeError, and each stage re-wraps RuntimeErrors with
+    which shot failed -- which turned Cancel into "Shot 1 (...): cancelled"."""
+    from autostream.clips import tools
+
+    monkeypatch.setattr(tools, "binary", lambda name: "ffmpeg")
+    monkeypatch.setattr(tools, "media_info", lambda p: {"audio_tracks": 1})
+    got, derived, _ = _built(root)
+    job = studio.StudioJob(got, derived, root, root / "reels" / "x.mp4")
+
+    def fake_ff(argv, capture=False):
+        out = Path(argv[-1])
+        joining = out.name.endswith(".part.mp4") and out.parent.name == "reels"
+        if (stage == "shot") or joining:
+            job._cancel.set()
+            raise studio.Cancelled("cancelled")
+        out.write_bytes(b"x")
+        return ""
+    monkeypatch.setattr(job, "_run_ff", fake_ff)
+    job.run()
+    snap = job.snapshot()
+    assert snap["state"] == "cancelled", snap
+    assert not snap["error"]
+
+
 def test_only_one_reel_renders_at_a_time():
     run = studio.Runner()
     a, b = _Job(), _Job()

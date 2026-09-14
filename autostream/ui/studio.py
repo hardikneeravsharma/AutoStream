@@ -254,7 +254,7 @@ const studio = {
   project: null, derived: null, notes: [], dirty: true, output: '', renderedAt: 0,
   sel: -1, pps: 60, snap: true, undo: [], checking: 0, checkTimer: null,
   polling: null, drag: null, clipIndex: {},
-  gen: 0, jobId: 0, seenJob: -1, watching: -1, busy: false,
+  gen: 0, jobId: 0, seenJob: -1, watching: -1, busy: false, pollTok: 0,
   sg: {song: '', shape: null, start: 0, end: 0, marks: [], drag: null, ticked: {}, ac: null}
 };
 
@@ -631,6 +631,9 @@ async function studio_render() {
      server allocates its output; letting it land afterwards would wipe that. */
   clearTimeout(studio.checkTimer);
   studio.gen++;
+  /* The previous render is old news once a new one is asked for: a poll that
+     lands in between must not say "Ready" about the reel being replaced. */
+  studio.seenJob = studio.jobId; studio.watching = -1;
   studio.project.name = studio_el('studio-pname').value.trim() || studio.project.name;
   const r = await API.post('/api/studio/render', {project: studio.project});
   if (!r || !r.ok) { studio_state((r && r.error) || 'Could not start the render.', true); return; }
@@ -649,7 +652,11 @@ function studio_state(msg, bad) {
 
 async function studio_poll() {
   clearTimeout(studio.polling);
+  /* One loop. Render and every visit to the page start a poll; without this
+     each left its predecessor running, and they multiplied. */
+  const mine = ++studio.pollTok;
   const j = await API.get('/api/studio/job');
+  if (mine !== studio.pollTok) return;
   if (!j || j.state === 'idle') { studio_busy(false); return; }
   const running = j.state === 'running' || j.state === 'queued';
   studio_busy(running);
