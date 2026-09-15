@@ -548,6 +548,38 @@ def test_a_kill_a_moment_outside_the_span_is_still_the_records():
     assert outside == 0 and [k["time"] for k in merged] == [90.0]
 
 
+class _Rd:
+    def __init__(self, started):
+        self.started = started
+
+
+def test_every_match_in_a_recording_is_used_and_a_deathmatch_beside_rounds_is_loose():
+    """The run that cut seven wrong clips.
+
+    A 70-minute recording held three deathmatches and a competitive match,
+    all four cached and lining up. The run took the best-aligned one -- the
+    first deathmatch -- and read the other 62 minutes off the feed: a 1v4
+    clutch came out as a 6-second triple, two "double kills" held no kill.
+    The competitive record had every one of the seven right.
+    """
+    dm = {"kills": [{"time": 100.0, "record": True}], "rounds": [_Rd(0.0)], "span": (0.0, 440.0)}
+    comp = {"kills": [{"time": 3468.2, "record": True}, {"time": 3468.7, "record": True}],
+            "rounds": [_Rd(1900.0), _Rd(3428.0)], "span": (1827.0, 4103.0)}
+    detected = [{"time": t} for t in (101.0, 500.0, 3468.0, 3468.0, 3468.5, 3215.0)]
+    kills, rounds, spans, outside = vm.merge_matches(detected, [dm, comp])
+    assert [k["time"] for k in kills] == [100.0, 500.0, 3468.2, 3468.7]
+    assert [r.started for r in rounds] == [1900.0, 3428.0]     # the deathmatch has none
+    assert [k["time"] for k in vm.loose(kills, spans)] == [100.0, 500.0]   # cut in bursts beside
+    assert outside == 1
+
+
+def test_no_round_based_match_has_no_round_spans():
+    dm = {"kills": [{"time": 100.0}], "rounds": [_Rd(0.0)], "span": (0.0, 440.0)}
+    kills, rounds, spans, outside = vm.merge_matches([{"time": 900.0}], [dm])
+    assert rounds == [] and spans == [] and outside == 1
+    assert [k["time"] for k in kills] == [100.0, 900.0]
+
+
 def test_a_deathmatch_has_no_rounds_to_cut():
     """A deathmatch reports its whole game as one round, which cut all seven
     minutes of it as a single clip."""

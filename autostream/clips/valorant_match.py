@@ -322,6 +322,34 @@ def merge_kills(detected: list[dict], recorded: list[dict],
     return merged, len(outside)
 
 
+def merge_matches(detected: list[dict], found: list[dict]) -> tuple[list[dict], list, list, int]:
+    """Every lined-up record in a recording, merged over what the detector read.
+
+    `found` holds {"kills", "rounds", "span"} per match. -> (kills, rounds,
+    spans, outside): all kills; the rounds of every match that has rounds;
+    those matches' spans, outside which a kill has no round to be cut by (see
+    loose); and how many detector kills lay outside every match.
+
+    A recording can hold a deathmatch and then a competitive match. The
+    deathmatch has no rounds, so its kills are loose, and the competitive
+    match is still cut round by round.
+    """
+    kills = list(detected)
+    for g in found:
+        kills, _ = merge_kills(kills, g["kills"], g["span"])
+    outside = len(loose(detected, [g["span"] for g in found]))
+    rounded = [g for g in found if rounds_usable(g["rounds"])]
+    rounds = sorted((r for g in rounded for r in g["rounds"]), key=lambda r: r.started)
+    return kills, rounds, [g["span"] for g in rounded], outside
+
+
+def loose(kills: list[dict], spans: list[tuple[float, float]]) -> list[dict]:
+    """The kills that lie outside every one of these match spans."""
+    return [k for k in kills
+            if not any(lo - SPAN_SLACK <= float(k.get("time") or 0.0) <= hi + SPAN_SLACK
+                       for lo, hi in spans)]
+
+
 def rounds_usable(rounds: list) -> bool:
     """Whether a record's rounds are rounds.
 
@@ -341,9 +369,11 @@ def kills_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list[dict]:
         at = sync.to_vod(float(k.get("gameTime") or 0) / 1000.0)
         if at <= 0:
             continue
+        # "record" marks a kill as Riot's word: nothing read off the screen
+        # afterwards -- see jobs._confirm_by_emblem -- may move or drop it.
         out.append({"time": round(at, 3), "end": round(at, 3),
                     "score": 1.0, "count": 1,
-                    "round": int(k.get("round") or 0) + 1})
+                    "round": int(k.get("round") or 0) + 1, "record": True})
     out.sort(key=lambda k: k["time"])
     return out
 

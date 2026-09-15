@@ -83,7 +83,9 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
   Riot client will hand over the match — exact kill times, and who was still alive
   at each one, *counted* rather than guessed, which is what tells a 3-kill round
   from a 1v3. It is fetched while you play, because the credentials go when the
-  game closes.
+  game closes — or when the clips are cut, if the client is open then. A recording
+  that holds several matches uses every one of them: a deathmatch is cut in bursts
+  and a competitive match beside it round by round.
 - **Clips Counter-Strike by the round, not by the kill**, and takes the rounds from
   the demo when there is one.
   - Aces, 1vN clutches won *and* nearly won, multi-kill rounds, last-one-alive,
@@ -799,6 +801,7 @@ Clips page shows what is missing and the rest of AutoStream is unaffected.
 | [`history.py`](autostream/history.py) | Append-only journal of finished sessions. The only record of which game ran on which broadcast. |
 | [`clips/`](autostream/clips/) | Optional. `detect` finds kill markers, `plan` decides what to cut, `cutter` and `montage` produce the files, `jobs` runs it off the engine thread, `calibrate` teaches it a new game. |
 | [`clips/valorant_feed.py`](autostream/clips/valorant_feed.py) | Valorant kills from the feed's coloured bars. No OCR, no in-game name. |
+| [`clips/killmark.py`](autostream/clips/killmark.py) | Valorant's kill emblem: confirms, re-times and adds screen-read kills, leaving out a team-mate's seen while spectating. |
 | [`clips/cs2_cards.py`](autostream/clips/cs2_cards.py) | Counter-Strike kills from the round card tally. No OCR; the HUD colour is measured, not asked for. |
 | [`clips/cs2_demo.py`](autostream/clips/cs2_demo.py) | Counter-Strike `.dem` parsing, and the fingerprint sync that maps demo time onto your recording. |
 | [`clips/beatsync.py`](autostream/clips/beatsync.py) | Tempo, beat phase and the drop, from an onset envelope — no librosa. |

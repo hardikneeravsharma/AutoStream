@@ -502,6 +502,27 @@ def build_marks(marks, *, game: str, clip_seconds: str | int = "30",
     return plans
 
 
+def combine(rounds: list[ClipPlan], bursts: list[ClipPlan], game: str) -> list[ClipPlan]:
+    """Round clips and burst clips from one recording, as one ranked list.
+
+    A recording can hold a deathmatch and a competitive match: the second is
+    cut by round, the first has no rounds and is cut in bursts. Most kills
+    first; on a tie the round goes first, since it carries what the round was.
+    The rank is part of every name, so the names are renumbered to match.
+    """
+    tag = slug(game)
+    order = sorted([(p, 0) for p in rounds] + [(p, 1) for p in bursts],
+                   key=lambda r: (-r[0].kills, r[1]))
+    out: list[ClipPlan] = []
+    for i, (p, _) in enumerate(order, 1):
+        old = f"{tag}_{p.rank:02d}_"
+        if p.name.startswith(old):
+            p.name = f"{tag}_{i:02d}_" + p.name[len(old):]
+        p.rank = i
+        out.append(p)
+    return out
+
+
 def merge_marks(plans: list[ClipPlan], marked: list[ClipPlan],
                 overlap: float = 0.5) -> list[ClipPlan]:
     """Fold chat clips in beside detected ones, dropping the duplicates.

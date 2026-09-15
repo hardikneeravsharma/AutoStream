@@ -140,6 +140,21 @@ def test_ranking_is_stable_and_best_first():
     assert [p.kills for p in a] == sorted((p.kills for p in a), reverse=True)
 
 
+def test_round_and_burst_clips_from_one_recording_rank_together():
+    """A deathmatch cut in bursts beside a competitive match cut by round."""
+    from autostream.clips import rounds as rounds_mod
+    rd = rounds_mod.Round(number=15, started=3428.0, ended=3496.0,
+                          score_before=(0, 0), score_after=(0, 0), half=2)
+    rd.my_kills, rd.kill_times, rd.labels = 4, [3468.2, 3468.7, 3477.0, 3490.0], ["CLUTCH 1v4"]
+    rounds = plan.build_rounds([rd], game="VALORANT", pre_roll=3.5, tail=2.0)
+    bursts = plan.build(_kills(100, 104, 800), game="VALORANT", min_kills=1, clip_seconds="15")
+    got = plan.combine(rounds, bursts, "VALORANT")
+    assert [p.kills for p in got] == [4, 2, 1]
+    assert [p.rank for p in got] == [1, 2, 3]
+    assert [p.name[:12] for p in got] == ["VALORANT_01_", "VALORANT_02_", "VALORANT_03_"]
+    assert "_CLUTCH-1v4_r15_" in got[0].name and "2kills" in got[1].name
+
+
 # ------------------------------------------------------------------- filenames
 
 def test_filename_states_the_game_kills_position_and_length():
