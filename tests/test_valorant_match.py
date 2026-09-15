@@ -520,3 +520,38 @@ def test_a_ceremony_for_a_round_the_player_won_still_counts():
     second = [r for r in rds if r.number == 2][0]
     assert second.won is True
     assert "FLAWLESS" in second.flags
+
+
+# ------------------------------------------------------- one match, one span
+
+def test_the_record_replaces_kills_only_inside_its_own_match():
+    """The fault that cut 21 of 104 kills.
+
+    Measured on a 70-minute recording: the feed bars read 104 kills across the
+    whole file, the one cached record -- a 7-minute deathmatch at the start --
+    lined up, and the run kept its 21 kills and dropped the other 83.
+    """
+    m = _m()
+    sync = _sync(m)
+    lo, hi = vm.span_of(m, sync)
+    assert (lo, hi) == pytest.approx((60.0, 660.0))
+    recorded = vm.kills_from(m, ME, sync)
+    detected = ([{"time": t} for t in (91.0, 93.0, 156.0)]            # the record's own match
+                + [{"time": t} for t in (700.0, 1500.0, 4100.0)])     # later games in the file
+    merged, outside = vm.merge_kills(detected, recorded, (lo, hi))
+    assert outside == 3
+    assert [round(k["time"], 1) for k in merged] == [90.0, 94.0, 155.0, 159.0, 700.0, 1500.0, 4100.0]
+
+
+def test_a_kill_a_moment_outside_the_span_is_still_the_records():
+    merged, outside = vm.merge_kills([{"time": 57.0}, {"time": 663.0}], [{"time": 90.0}], (60.0, 660.0))
+    assert outside == 0 and [k["time"] for k in merged] == [90.0]
+
+
+def test_a_deathmatch_has_no_rounds_to_cut():
+    """A deathmatch reports its whole game as one round, which cut all seven
+    minutes of it as a single clip."""
+    m = _m(rounds=1)
+    rds = vm.rounds_from(m, ME, _sync(m))
+    assert not vm.rounds_usable(rds)
+    assert vm.rounds_usable(vm.rounds_from(_m(), ME, _sync(_m())))

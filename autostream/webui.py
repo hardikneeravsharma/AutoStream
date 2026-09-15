@@ -2449,10 +2449,16 @@ class Server:
             max_s = float(body.get("max_seconds") or 0.0)
         except (TypeError, ValueError):
             max_s = 0.0
+        from . import clips as clips_mod
+
+        clips_mod.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+        # The rulebook's action and colour checks look at the footage around
+        # every kill; without ffmpeg the plan is made without them.
         proj, notes = studio.plan(chosen, str(body.get("style") or studio.DEFAULT_STYLE),
                                   shape=shape, song=song if shape else "",
                                   fmt=str(body.get("format") or "landscape"),
-                                  name=str(body.get("name") or ""), max_seconds=max_s)
+                                  name=str(body.get("name") or ""), max_seconds=max_s,
+                                  measure=studio.action if clips_mod.available() else None)
         try:
             proj, derived, more = studio.normalise(proj, root)
         except studio.ProjectError as e:

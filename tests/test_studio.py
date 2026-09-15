@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from autostream.clips import studio, studio_refs
+from autostream.clips import rulebook, studio, studio_refs
 
 
 # ------------------------------------------------------------------ fixtures
@@ -126,7 +126,7 @@ def test_a_reel_with_a_project_can_be_reopened(root):
 
 # ------------------------------------------------------------------ speed
 
-@pytest.mark.parametrize("speed", ["s00", "s01", "s02", "s03", "s04", "exit"])
+@pytest.mark.parametrize("speed", ["s00", "s01", "s02", "s03", "s04", "s05", "s06", "exit"])
 def test_speed_pieces_tile_the_shot_exactly(speed):
     ps = studio.pieces(speed, 3.0, 1.5)
     assert ps[0][0] == 0.0 and ps[-1][1] == pytest.approx(3.0)
@@ -134,7 +134,7 @@ def test_speed_pieces_tile_the_shot_exactly(speed):
         assert a == pytest.approx(b)
 
 
-@pytest.mark.parametrize("speed", ["s00", "s01", "s02", "s03", "s04"])
+@pytest.mark.parametrize("speed", ["s00", "s01", "s02", "s03", "s04", "s05", "s06"])
 def test_output_at_inverts_source_used(speed):
     ps = studio.pieces(speed, 3.0, 1.5)
     for t in (0.0, 0.4, 1.5, 2.2, 3.0):
@@ -142,7 +142,7 @@ def test_output_at_inverts_source_used(speed):
 
 
 def test_the_kill_is_never_inside_a_sped_up_piece():
-    for speed in ("s02", "s03", "s04"):
+    for speed in ("s02", "s03", "s04", "s05", "s06"):
         for a, b, r in studio.pieces(speed, 3.0, 1.5):
             if a <= 1.5 < b:
                 assert r <= 1.0
@@ -185,13 +185,27 @@ def test_pace_is_the_measured_median_as_a_power_of_two_in_beats():
     assert abs(math.log2(beats) - math.log2(60.0 / meas["cuts_per_min"] / 0.5)) <= 0.5 + 1e-9
 
 
-def test_flashes_follow_the_reference_rate(root):
-    many = [dict(c, id=f"{c['id']}{i}") for i in range(6) for c in _clips(root)]
-    proj, _ = studio.plan(many, "velocity", shape=Shape(bpm=120.0))
-    cuts = proj["shots"][1:]
-    share = sum(1 for s in cuts if s["transition"] == "t02") / len(cuts)
+def test_flashes_come_at_the_reference_rate_on_bar_lines(tmp_path):
+    """Flashes are spaced at the rate the style's references flash at, on bar
+    lines, never inside a jump-cut sequence and never beside a bright kill."""
+    r = tmp_path / "clips"
+    _run(r, "2026-09-01_1200_VALORANT", "VALORANT",
+         [{"start": 100.0 * i, "end": 100.0 * i + 12} for i in range(1, 25)],
+         kills=[100.0 * i + 6 for i in range(1, 25)])
+    proj, _ = studio.plan(_clips(r), "velocity", shape=Shape(bpm=120.0))
+    beat = proj["beat"]
+    shots = proj["shots"]
     meas = studio_refs.summary(studio.STYLE["velocity"].refs)
-    assert share == pytest.approx(min(0.9, meas["flashes_per_min"] / meas["cuts_per_min"]), abs=0.15)
+    share = min(0.9, meas["flashes_per_min"] / meas["cuts_per_min"])
+    flashes = [i for i in range(1, len(shots)) if shots[i]["transition"] == "t02"]
+    assert flashes, "a velocity reel with twenty cuts has no flash at all"
+    assert len(flashes) <= share * (len(shots) - 1) + 1
+    first_kill = round(shots[0]["pre"] / beat)
+    starts = [round(t / beat) for t in studio._starts(shots)]
+    for i in flashes:
+        assert starts[i] % 4 == first_kill % 4, f"flash at beat {starts[i]} is off the bar"
+        assert shots[i]["clip"] != shots[i - 1]["clip"]
+        assert not (set(shots[i]["fx"]) & set(rulebook.BRIGHT_KILL) and shots[i]["pre"] < rulebook.BRIGHT_GAP)
 
 
 def test_without_a_song_the_reel_is_cut_to_120_bpm(root):
