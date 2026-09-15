@@ -187,6 +187,12 @@ class ClipJob:
         # against it. Recorded because it is the only place the detector's
         # accuracy is ever actually measured.
         self.demo: dict = {}
+        # What checking the kills against the game's kill emblem did, if the
+        # game draws one -- see _confirm_by_emblem.
+        self.emblem_note: dict = {}
+        # Where Riot's match records cover the recording. Nothing read off the
+        # screen is allowed to change a kill inside one.
+        self.record_spans: list[tuple[float, float]] = []
         # WHY THE RUN IS TAKING THE SLOW PATH, in one sentence that survives
         # the next step's progress message. A probe that reads twelve minutes
         # and then finds nothing is the difference between a three-minute run
@@ -518,25 +524,33 @@ class ClipJob:
         # Before the demo branch: a record that lines up replaces what the
         # detector said INSIDE ITS MATCH, and one that does not costs only the
         # lookup. Valorant is the only game with one today.
+        # EVERY MATCH IN THE RECORDING, NOT THE BEST ONE. It used to take the
+        # single record that lined up best. A real 70-minute recording held
+        # three deathmatches and a competitive match, all four cached and all
+        # four lining up; the run used the first deathmatch and cut the other
+        # 62 minutes from the feed reader, and the player found seven of those
+        # clips wrong by eye -- a 1v4 clutch cut as one 6-second "triple",
+        # "double kills" with no kill in them. The competitive record had all
+        # seven right.
+        # Where the round-based matches are; a kill outside them all is cut in
+        # a burst beside the rounds.
+        round_spans: list = []
         if prof and getattr(prof, "matches", False) and opt.get("matches", True):
-            got = self._from_match(kills, prof)
-            if got:
+            found = self._from_matches(kills, prof)
+            if found:
                 from . import valorant_match as vmatch
 
-                kills, outside = vmatch.merge_kills(kills, got["kills"], got["span"])
-                # Rounds only when the record covers every kill being cut and
-                # really has rounds: round mode cuts nothing outside its rounds.
-                usable = vmatch.rounds_usable(got["rounds"]) and not outside
-                round_list = got["rounds"] if usable else []
+                kills, round_list, round_spans, outside = vmatch.merge_matches(kills, found)
+                self.record_spans = [g["span"] for g in found]
                 use_rounds = bool(round_list)
-                self.demo = dict(got["about"], outside=outside)
+                first = max(found, key=lambda g: len(g["kills"]))
+                self.demo = dict(first["about"], outside=outside,
+                                 **({"matches": [g["about"] for g in found]}
+                                    if len(found) > 1 else {}))
                 if outside:
-                    log.info("kept %d kill(s) the detector read outside that match",
-                             outside)
-                if got["rounds"] and not usable:
-                    log.info("cutting bursts of kills, not rounds: %s",
-                             "kills outside the match" if outside else
-                             f"{got['about'].get('mode') or 'this mode'} has no rounds")
+                    log.info("kept %d kill(s) the detector read outside %s",
+                             outside, "that match" if len(found) == 1 else
+                             f"the {len(found)} matches")
 
         # ---- 1b. the demo, if the game writes one ------------------------
         #
@@ -579,6 +593,18 @@ class ClipJob:
                         "Counter-Strike and run this again for exact kills "
                         "and real round context."))
 
+        # ---- 1c. the game's own kill emblem --------------------------------
+        # Last, so it checks whatever the kills came from: the feed, a match
+        # record or a cache. See killmark for what it is and what it fixed.
+        if opt.get("emblems", True):
+            kills = self._confirm_by_emblem(kills)
+            if not kills:
+                self._set(summary={"kills": 0, "clips": 0, "covered": 0,
+                                   "coverage": 0, "runtime": 0})
+                raise RuntimeError("No kills found in this recording: none of "
+                                   "the kills the feed showed had the game's "
+                                   "kill emblem on screen.")
+
         # ---- 2. decide what to cut ---------------------------------------
         if use_rounds and not round_list:
             log.info("no round data for this recording; cutting bursts of "
@@ -617,6 +643,26 @@ class ClipJob:
                     quiet, game=self.game, pre_roll=pre_roll, tail=tail,
                     whole_round=False, clip_seconds="12",
                     source_duration=info["duration"])
+            # Only where the recording also holds a round-based match: a
+            # round list read off the screen (Counter-Strike) covers every kill.
+            from . import valorant_match as vmatch
+            loose = vmatch.loose(kills, round_spans) if round_spans else []
+            if loose:
+                log.info("cutting %d kill(s) outside the round-based match(es) "
+                         "as bursts, beside the rounds", len(loose))
+                floor = int(opt.get("min_kills", 2))
+                bursts = plan.build(
+                    loose, game=self.game, min_kills=floor,
+                    clip_seconds=opt.get("clip_seconds", "30"),
+                    pre_roll=pre_roll, tail=tail,
+                    source_duration=info["duration"])
+                plans = plan.combine(plans, bursts, self.game)
+                if want_promo:
+                    spare = spare + promo.pick(plan.build(
+                        loose, game=self.game, min_kills=1,
+                        clip_seconds=opt.get("clip_seconds", "30"),
+                        pre_roll=pre_roll, tail=tail,
+                        source_duration=info["duration"]), floor)
             if not plans:
                 raise RuntimeError(
                     f"{len(round_list)} rounds found but none matched the "
@@ -701,6 +747,7 @@ class ClipJob:
                         [round(self.win_start, 1), round(self.win_end, 1)]),
             "kills": kills, "plans": [p.as_dict() for p in plans],
             **({"demo": self.demo} if self.demo else {}),
+            **({"emblems": self.emblem_note} if self.emblem_note else {}),
             **({"promo_clips": [p.as_dict() for p in spare]} if spare else {}),
             **({"rounds": [
                 {"number": r.number, "start": round(r.started, 1),
@@ -920,13 +967,104 @@ class ClipJob:
         if music and Path(music).is_file() and len(plans) > 1:
             self._reel(Path(music), plans, kills, enc)
 
-    def _from_match(self, kills: list[dict], prof) -> dict | None:
-        """Valorant's own record of the match, if one is cached for this
-        recording and it lines up with what the detector found.
+    def _confirm_by_emblem(self, kills: list[dict]) -> list[dict]:
+        """Kills moved onto the kill emblem the game draws, for a game that draws one.
 
-        -> {"kills", "rounds", "about"} or None. Never raises: the pixel reader
-        has already produced a usable answer by this point, and this is only
-        ever an improvement on it.
+        A kill with no emblem is dropped and an emblem with no kill is added,
+        unless the player was spectating a team-mate when it rose.
+
+        MEASURED against Riot's records for a 70-minute recording, 76 kills
+        outside the one match the run already had a record for: the feed alone
+        read 67 of them and 15 kills that never happened. Confirmed by the
+        emblem, with the spectated emblems left out, it reads 74 and 4 -- two of
+        those 4 show SINGLE KILL on screen and are more likely gaps in a
+        deathmatch record. The two it misses are second kills while the first
+        emblem was still up.
+
+        Only where no match record covers the recording: a record is Riot's own
+        word, and checked against the emblems the second of two record kills
+        0.5 s apart -- the start of a 1v4 clutch -- would be dropped, because
+        one emblem showed for both.
+        Kills that were already confirmed -- a cache from an earlier run that
+        did this -- are not read again. A run in which no emblem shows at all
+        keeps its kills: the HUD may be hidden.
+        """
+        from . import killmark
+        from .tools import binary
+
+        if killmark.spec_for(self.game) is None or not kills:
+            return kills
+        spans = [(lo - 5.0, hi + 5.0) for lo, hi in getattr(self, "record_spans", [])]
+
+        def recorded(t: float) -> bool:
+            return any(lo <= t <= hi for lo, hi in spans)
+        screen = [k for k in kills if not k.get("record") and not recorded(float(k["time"]))]
+        if not screen or all(k.get("emblem") for k in screen):
+            return kills
+        kept = [k for k in kills if k not in screen]
+        ff = binary("ffmpeg") or "ffmpeg"
+
+        # The stretches no record covers -- the whole window when there is none.
+        gaps, t = [], self.win_start
+        for lo, hi in sorted(spans):
+            if lo > t:
+                gaps.append((t, min(lo, self.win_end)))
+            t = max(t, hi)
+        if t < self.win_end:
+            gaps.append((t, self.win_end))
+        gaps = [(a, b) for a, b in gaps if b - a > 1.0]
+        total = sum(b - a for a, b in gaps)
+        done = [0.0]
+
+        marks: list[float] = []
+        for a, b in gaps:
+            def prog(d, n, a=a, b=b):
+                share = done[0] + (b - a) * d / max(1, n)
+                self._set(done=int(share), total=int(total),
+                          message=f"Checking kills against the game's kill emblem - "
+                                  f"{int(100 * share / max(1.0, total))}%")
+            got_marks = killmark.scan(self.source, self.game, start=a, duration=b - a, ff=ff,
+                                      progress=prog, cancelled=lambda: self._cancel.is_set())
+            if self._cancel.is_set():
+                raise detect.Cancelled("cancelled")
+            marks += got_marks or []
+            done[0] += b - a
+        marks.sort()
+        if not marks:
+            log.info("no kill emblem anywhere in %s; keeping the %d kills as read "
+                     "(the HUD may be hidden)", self.source.name, len(kills))
+            return kills
+        ordered = sorted(screen, key=lambda k: float(k["time"]))
+        got, unclaimed = killmark.match([float(k["time"]) for k in ordered], marks)
+        theirs = [j for j in unclaimed
+                  if killmark.spectating(self.source, marks[j], self.game, ff)]
+        out = list(kept)
+        for i, j in got.items():
+            k = dict(ordered[i])
+            k["time"] = k["end"] = marks[j]
+            k["count"], k["emblem"] = 1, True
+            out.append(k)
+        added = [j for j in unclaimed if j not in theirs]
+        for j in added:
+            out.append({"time": marks[j], "end": marks[j], "score": 1.0, "count": 1,
+                        "emblem": True})
+        out.sort(key=lambda k: k["time"])
+        log.info("kill emblems: %d on screen, %d of %d kills confirmed and moved onto "
+                 "them, %d dropped with no emblem, %d missed kills added, %d left out "
+                 "as a team-mate's seen while spectating", len(marks), len(got),
+                 len(screen), len(screen) - len(got), len(added), len(theirs))
+        self.emblem_note = {"emblems": len(marks), "confirmed": len(got),
+                            "dropped": len(screen) - len(got), "added": len(added),
+                            "spectating": len(theirs)}
+        return out
+
+    def _from_matches(self, kills: list[dict], prof) -> list[dict]:
+        """Valorant's own record of every match in this recording that is
+        cached and lines up with what the detector found, oldest first.
+
+        -> [{"kills", "rounds", "span", "about"}]. Never raises: the pixel
+        reader has already produced a usable answer by this point, and this is
+        only ever an improvement on it.
         """
         from . import valorant_match as vmatch
 
@@ -934,16 +1072,25 @@ class ClipJob:
         if not started:
             log.info("no start time for this recording, so its Valorant match "
                      "record cannot be found")
-            return None
+            return []
         found = vmatch.for_recording(started, self.source_seconds)
+        # WHILE THE CLIENT IS OPEN, ASK IT. Records are collected while the
+        # daemon runs; a recording made while AutoStream was closed has none on
+        # disk, yet the client still lists its matches.
+        if vmatch.valorant_api.available():
+            try:
+                if vmatch.collect(limit=10):
+                    found = vmatch.for_recording(started, self.source_seconds)
+            except Exception as e:                     # noqa: BLE001
+                log.info("could not ask the Valorant client for match records: %s", e)
         if not found:
             state = vmatch.state(started, self.source_seconds)
             log.info("no Valorant match record for this recording (%s)",
                      state.get("why") or "none cached")
-            return None
+            return []
 
         vod = sorted(float(k["time"]) for k in kills)
-        best = None
+        out: list[dict] = []
         for m in found:
             puuid = vmatch.puuid_of(m, getattr(prof, "player", "") or "")
             if not puuid:
@@ -954,29 +1101,24 @@ class ClipJob:
             if not sync.ok:
                 log.info("match %s does not line up: %s", m.id[:8], sync.why)
                 continue
-            if best is None or sync.matched > best[2].matched:
-                best = (m, puuid, sync)
-        if best is None:
-            return None
-
-        m, puuid, sync = best
-        got_kills = vmatch.kills_from(m, puuid, sync)
-        got_rounds = vmatch.rounds_from(m, puuid, sync)
-        if not got_kills:
-            log.info("match %s lined up but reports no kills by you", m.id[:8])
-            return None
-        log.info("Valorant match %s (%s): %d kill(s) and %d round(s) from "
-                 "Riot's own record, %s", m.id[:8], m.mode or "?",
-                 len(got_kills), len(got_rounds), sync.why)
-        return {
-            "kills": got_kills,
-            "rounds": got_rounds,
-            "span": vmatch.span_of(m, sync),
-            "about": {"match": m.id, "mode": m.mode, "ranked": m.ranked,
-                      "offset": round(sync.offset, 2),
-                      "matched": sync.matched, "total": sync.total,
-                      "how": sync.why},
-        }
+            got_kills = vmatch.kills_from(m, puuid, sync)
+            if not got_kills:
+                log.info("match %s lined up but reports no kills by you", m.id[:8])
+                continue
+            got_rounds = vmatch.rounds_from(m, puuid, sync)
+            log.info("Valorant match %s (%s): %d kill(s) and %d round(s) from "
+                     "Riot's own record, %s", m.id[:8], m.mode or "?",
+                     len(got_kills), len(got_rounds), sync.why)
+            out.append({
+                "kills": got_kills,
+                "rounds": got_rounds,
+                "span": vmatch.span_of(m, sync),
+                "about": {"match": m.id, "mode": m.mode, "ranked": m.ranked,
+                          "offset": round(sync.offset, 2),
+                          "matched": sync.matched, "total": sync.total,
+                          "how": sync.why},
+            })
+        return out
 
     def _tags(self, kills, wanted: bool) -> dict[float, list[str]]:
         """Kill circumstances read off the frames, for the captions.

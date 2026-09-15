@@ -141,8 +141,11 @@ def library(root: Path) -> dict:
         sess = _read_json(folder / "session.json") or {}
         rows = man if isinstance(man, list) else (man.get("clips") or [])
         game = (man.get("game") if isinstance(man, dict) else "") or sess.get("game") or "Other"
-        kills = sorted(float(k["time"]) for k in (sess.get("kills") or [])
-                       if isinstance(k, dict) and k.get("time") is not None)
+        rows_k = [k for k in (sess.get("kills") or [])
+                  if isinstance(k, dict) and k.get("time") is not None]
+        kills = sorted(float(k["time"]) for k in rows_k)
+        # Riot's record, not a screen reading: the Studio must not move these.
+        recorded = sorted(float(k["time"]) for k in rows_k if k.get("record"))
         try:
             pre = float(((sess.get("options") or {}).get("pre_roll")) or 3.5)
         except (TypeError, ValueError):
@@ -169,6 +172,8 @@ def library(root: Path) -> dict:
                 continue
             offs = [round(k - start, 3) for k in kills if start - 0.05 <= k <= end + 0.05]
             offs = [min(max(0.0, o), dur) for o in offs]
+            from_record = bool(offs) and len(offs) == sum(
+                1 for k in recorded if start - 0.05 <= k <= end + 0.05)
             if not offs:
                 # No per-kill times for this run: the kill is where the cutter
                 # was told to put it, the pre-roll into the clip.
@@ -191,7 +196,9 @@ def library(root: Path) -> dict:
                 "labels": [str(x) for x in (c.get("labels") or c.get("tags") or [])],
                 "at": str(c.get("at") or ""),
                 "rank": int(c.get("rank") or 0),
+                "game": game,
                 "round": c.get("round"),
+                **({"recorded": True} if from_record else {}),
             })
         if not clips:
             continue
@@ -598,11 +605,15 @@ def _choose_offset(grid: Grid, first_kill_reel: float, style: Style,
 def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
          song: str = "", fmt: str = "landscape", name: str = "",
          max_seconds: float = 0.0, seed: int | None = None,
-         measure=None) -> tuple[dict, list[str]]:
+         measure=None, confirm=None, theirs=None) -> tuple[dict, list[str]]:
     """Build a project from chosen clips. -> (project, notes)
 
     `measure(path, t0, t1)` -> how much the picture moves between two clip
     times (see action()); None skips the check, which is what tests do.
+    `confirm(path, game)` -> the game's own kill-emblem times in a clip (see
+    kill_marks()), or None for a game without one; None skips it.
+    `theirs(path, game, t)` -> whether an emblem at clip time t rose while the
+    player was spectating a team-mate (see spectated()); None adds them all.
 
     `clips` are library entries in the order the reel should use them. `seed`
     decides the effect mix; the default is derived from the clips, so the same
@@ -628,6 +639,11 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # MOMENTS, NOT CLIPS -- see rulebook.
     run_b = max(1, int(math.ceil(max(rulebook.MIN_RUN_BEATS * beat, rulebook.MIN_RUN_SECONDS) / beat - 1e-6)))
 
+    if confirm is not None:
+        chosen, moved, dropped, added = _confirm_kills(chosen, confirm, theirs)
+        if moved or dropped or added:
+            notes.append(f"Kill times checked against the game's own kill emblem: {moved} moved onto it, "
+                         f"{dropped} with no emblem left out, {added} the kill feed missed added.")
     all_moments = rulebook.moments(chosen, beat)
     stats: dict[int, dict | None] = {}
     looks: dict[int, list[float]] = {}
@@ -841,6 +857,80 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             t += s["duration"]
         proj["shots"] = kept
     return proj, notes
+
+
+_MARK_CACHE: dict[tuple, list[float] | None] = {}
+
+
+def kill_marks(path: str, game: str) -> list[float] | None:
+    """The game's kill emblems in a clip, in clip seconds; None when the game draws none. Cached."""
+    from . import killmark
+    from .tools import binary
+
+    if killmark.spec_for(game) is None:
+        return None
+    try:
+        key = (str(path), Path(path).stat().st_mtime)
+    except OSError:
+        return None
+    with _ACTION_LOCK:
+        if key in _MARK_CACHE:
+            return _MARK_CACHE[key]
+    ff = binary("ffmpeg")
+    got = killmark.marks(Path(path), game, ff) if ff else None
+    with _ACTION_LOCK:
+        if len(_MARK_CACHE) > 2000:
+            _MARK_CACHE.clear()
+        _MARK_CACHE[key] = got
+    return got
+
+
+def spectated(path: str, game: str, t: float) -> bool:
+    """Whether the emblem at clip time t is a team-mate's, seen while spectating. See killmark.spectating."""
+    from . import killmark
+    from .tools import binary
+
+    ff = binary("ffmpeg")
+    return bool(ff and killmark.spectating(Path(path), t, game, ff))
+
+
+def _confirm_kills(clips: list[dict], confirm, theirs=None) -> tuple[list[dict], int, int, int]:
+    """Clips with their kills moved onto the game's emblems. -> (clips, moved, dropped, added)
+
+    A clip whose every kill turned out to have no emblem is left out: there is
+    no kill in it to show. A clip whose kills came from Riot's match record is
+    left as it is: two kills half a second apart share one emblem, and the
+    check would drop the second.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from . import killmark
+
+    def one(c):
+        if c.get("recorded"):
+            return None
+        return confirm(c["path"], c.get("game") or "")
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        found = list(pool.map(one, clips))
+    # Whether the HUD shows the emblem at all is a property of a RUN, not of a
+    # clip: a run in which no clip shows one keeps its kills, while a clip with
+    # no emblem in a run that shows them has no kill (checked by eye).
+    shows = {c.get("folder") or Path(c["path"]).parent.parent.name
+             for c, m in zip(clips, found) if m}
+    out, moved, dropped, added = [], 0, 0, 0
+    for c, marks in zip(clips, found):
+        run = c.get("folder") or Path(c["path"]).parent.parent.name
+        if marks is None or run not in shows:
+            out.append(c)
+            continue
+        mate = (lambda t, c=c: theirs(c["path"], c.get("game") or "", t)) if theirs else None
+        kills, d, a = killmark.confirm([float(k) for k in c.get("kills") or []], marks, mate)
+        moved += sum(1 for k in kills if all(abs(k - old) > 0.05 for old in c.get("kills") or []))
+        dropped += d
+        added += a
+        if kills:
+            out.append(dict(c, kills=[round(k, 3) for k in kills], kill_count=len(kills)))
+    return out, moved, dropped, added
 
 
 _ACTION_CACHE: dict[tuple, float | None] = {}
