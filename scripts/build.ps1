@@ -114,17 +114,31 @@ if (Test-Path $verify) {
 # PyInstaller clears dist\ before it writes. Without this check that surfaces as
 # a shutil.rmtree traceback ending in WinError 32, which says nothing about the
 # actual problem being "the app you are rebuilding is still running".
-$running = @(Get-Process -Name "AutoStream" -ErrorAction SilentlyContinue)
-if ($running.Count -gt 0) {
-    Write-Warn "AutoStream is running ($($running.Count) process) and holds files in dist\"
-    Write-Step "closing it..."
-    $running | Stop-Process -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
-    if (@(Get-Process -Name "AutoStream" -ErrorAction SilentlyContinue).Count -gt 0) {
-        Write-Bad "could not close AutoStream - quit it from the tray and re-run"
+#
+# ONLY THIS TREE'S BUILD, AND NEVER BY FORCE. This used to Stop-Process every
+# process named AutoStream. A release built in a second worktree -- whose own
+# dist\ nothing held -- went for the installed app instead, while it was
+# recording a game; it survived only because it ran elevated and the kill was
+# denied. Killing it ends a broadcast and destroys a clip job in progress.
+#
+# So the test is whether THIS dist\AutoStream\AutoStream.exe is in use (a
+# running image cannot be opened for writing), and the answer is to stop and
+# say so: whether it is safe to quit is for /api/status to tell, not a build.
+$liveExe = Join-Path $Root "dist\AutoStream\AutoStream.exe"
+if (Test-Path $liveExe) {
+    $inUse = $false
+    try {
+        $fs = [System.IO.File]::Open($liveExe, 'Open', 'ReadWrite', 'None')
+        $fs.Close()
+    } catch {
+        $inUse = $true
+    }
+    if ($inUse) {
+        Write-Bad "dist\AutoStream\AutoStream.exe is running and holds files in dist\"
+        Write-Host "       Check /api/status (phase, recording, clip job), then quit it with" -ForegroundColor Red
+        Write-Host "       POST /api/cmd {`"command`":`"quit`"} or from the tray, and re-run." -ForegroundColor Red
         exit 1
     }
-    Write-Ok "closed"
 }
 
 if ($Clean) {
