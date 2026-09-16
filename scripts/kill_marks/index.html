@@ -12,6 +12,7 @@
     --accent: #4d9fff; --accent-soft: #0d1b2b;
     --kill: #f2c94c; --big: #ff6b6b; --beat: #34404f; --bar: #8a98ad; --onset: #4fc97a;
     --low: #ff8a5c; --mid: #4d9fff; --high: #c98bff;
+    --det: #2fd4c8; --acc: #3f9f97;
     --ok: #4fc97a; --warn: #e3ac3b; --bad: #ff6b6b;
     --mono: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
     --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -186,6 +187,7 @@
         </span>
         <label class="check"><input type="checkbox" id="show-beats" checked> Beat finder's grid</label>
         <label class="check"><input type="checkbox" id="show-onsets" checked> Onsets</label>
+        <label class="check"><input type="checkbox" id="show-det" checked> Detector’s kills</label>
       </div>
 
       <div class="lanes" id="lanes"></div>
@@ -268,7 +270,7 @@ const LANES = [
 ];
 
 const S = {
-  songs: [], cur: null, marks: [], done: false, sel: -1, cal: null, click: {bpm: 100, first: 1},
+  songs: [], cur: null, marks: [], done: false, sel: -1, det: null, cal: null, click: {bpm: 100, first: 1},
   pcm: null, pcmRate: 200, feat: null, featMeta: null, saveTimer: null, poll: null, drag: null,
   calibrating: false, calTaps: [], win: 8,
   show: store.get('lanes', {wave: true, rms: false, bands: true, flux: true, spec: true}),
@@ -351,11 +353,29 @@ $('add').addEventListener('click', async () => {
   loadSongs();
 });
 
+/* What clips/hits.py found in this song, drawn above the player's own marks.
+   These are the detector's kills, not marks made by ear -- they are here to be
+   judged against the marks, never mixed into them. */
+function detFacts() {
+  const d = S.det;
+  if (!d || !d.kills || !d.kills.length) return '';
+  let caught = 0;
+  S.marks.forEach(m => {
+    const t = shown(m), i = nearest(d.hits, t);
+    if (i >= 0 && Math.abs(d.hits[i] - t) <= 0.06) caught++;
+  });
+  return ' · detector: ' + d.kills.length + ' kills, ' + d.accents.length + ' accents, ' +
+    d.big.length + ' big' +
+    (S.marks.length ? ' · ' + Math.round(caught / S.marks.length * 100) + '% of your ' +
+      S.marks.length + ' marks are on one of its hits' : '');
+}
+
 async function openSong(id) {
   let d;
   try { d = await api('/api/song?id=' + encodeURIComponent(id)); } catch (e) { return; }
   audio.pause();
   S.cur = d; S.marks = (d.marks || []).map(m => Object.assign({}, m)); S.done = !!d.done; S.sel = -1;
+  S.det = d.detected || null;
   S.pcm = null; S.feat = null; S.featMeta = null;
   $('placeholder').classList.add('hide'); $('work').classList.remove('hide');
   $('title').textContent = d.title || d.id;
@@ -368,7 +388,7 @@ async function openSong(id) {
   }
   const a = d.analysis;
   $('facts').textContent = 'Beat finder: ' + a.bpm.toFixed(1) + ' BPM · ' + fmt(a.seconds).replace(/\.\d+$/, '') +
-    (a.drums_in ? ' · drums in ' + fmt(a.drums_in) : '') + (a.drop ? ' · drop ' + fmt(a.drop) : '');
+    (a.drums_in ? ' · drums in ' + fmt(a.drums_in) : '') + (a.drop ? ' · drop ' + fmt(a.drop) : '') + detFacts();
   audio.src = '/api/audio?id=' + encodeURIComponent(id);
   audio.playbackRate = currentRate();
   buildLanes();
@@ -447,7 +467,7 @@ document.querySelectorAll('[data-win]').forEach(b => b.addEventListener('click',
   S.win = Number(b.getAttribute('data-win'));
   drawAll();
 }));
-['show-beats', 'show-onsets'].forEach(id => $(id).addEventListener('change', drawAll));
+['show-beats', 'show-onsets', 'show-det'].forEach(id => $(id).addEventListener('change', drawAll));
 
 /* A spectrogram colour: dark blue through violet and orange to pale yellow. */
 const PAL = (() => {
@@ -486,6 +506,12 @@ function drawOverview(a) {
   x.globalAlpha = 1;
   if (a.drop) { x.fillStyle = css('--warn'); x.fillRect(X(a.drop) - 1, 0, 2, H); }
   S.marks.forEach(m => { x.fillStyle = css(m.kind === 'big' ? '--big' : '--kill'); x.fillRect(X(shown(m)) - 1, 0, 2, 12); });
+  if (S.det && $('show-det').checked) {
+    x.fillStyle = css('--det');
+    S.det.kills.forEach(t => x.fillRect(X(t) - 0.5, H - 7, 1, 7));
+    x.fillStyle = css('--fg');
+    S.det.big.forEach(t => x.fillRect(X(t) - 1, H - 11, 2, 11));
+  }
   const v = view();
   x.strokeStyle = css('--fg'); x.globalAlpha = .45; x.strokeRect(X(v.t0), 0.5, X(v.t1) - X(v.t0), H - 1); x.globalAlpha = 1;
   x.fillStyle = css('--bad'); x.fillRect(X(audio.currentTime) - 1, 0, 2, H);
@@ -569,6 +595,24 @@ function drawLane(id, c, a, top, bottom) {
     (a.onsets || []).forEach(o => { if (o >= v.t0 && o <= v.t1) x.fillRect(X(o) - 0.5, pad, 1, 6); });
   }
   if (a.drop && a.drop >= v.t0 && a.drop <= v.t1) { x.fillStyle = css('--warn'); x.fillRect(X(a.drop) - 1, pad, 2, H - pad); }
+  /* the detector's own kills, in the strip above the view: accents are the hits
+     it would put an effect on instead of a cut */
+  if (S.det && $('show-det').checked) {
+    const big = new Set(S.det.big);
+    x.globalAlpha = .9;
+    S.det.accents.forEach(t => {
+      if (t < v.t0 || t > v.t1) return;
+      x.fillStyle = css('--acc'); x.fillRect(X(t) - 0.5, pad - 5, 1, 5);
+    });
+    S.det.kills.forEach(t => {
+      if (t < v.t0 || t > v.t1) return;
+      const isBig = big.has(t), px = X(t);
+      x.fillStyle = css('--det');
+      x.fillRect(px - (isBig ? 1 : 0.5), 2, isBig ? 2 : 1, pad - 2);
+      x.beginPath(); x.moveTo(px - 4, 1); x.lineTo(px + 4, 1); x.lineTo(px, isBig ? 9 : 6); x.fill();
+    });
+    x.globalAlpha = 1;
+  }
   /* the marks, on every view; diamonds on the last so they can be grabbed anywhere */
   S.marks.forEach((m, i) => {
     const t = shown(m);

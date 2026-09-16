@@ -47,7 +47,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from autostream import paths                       # noqa: E402
-from autostream.clips import reel, songfetch       # noqa: E402
+from autostream.clips import hits as hits_mod, reel, songfetch   # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 PORT = int(os.environ.get("KILL_MARKS_PORT", "8790"))
@@ -145,6 +145,35 @@ def _resume() -> None:
         if s["state"] in ("queued", "downloading", "analysing"):
             QUEUE.append(s["id"])
     WAKE.set()
+
+
+def _with_detected(d: dict) -> dict:
+    """The song, plus what clips/hits.py makes of it: hits, kills, accents, big hits.
+
+    Drawn beside the player's own marks so the detector can be reviewed against
+    them. Computed once and kept in the song's file; a song analysed before the
+    detector existed is analysed again here.
+    """
+    a = d.get("analysis") or {}
+    if d.get("state") != "ready":
+        return d
+    song = Path(d.get("path") or "")
+    if "hits" not in a and song.is_file():
+        try:
+            a = reel.analyse(song).as_dict()
+            d["analysis"] = a
+            with LOCK:
+                _write(d["id"], d)
+        except Exception as e:                    # noqa: BLE001
+            log_line = f"could not re-analyse {d['id']}: {e}"
+            print(log_line, flush=True)
+            return d
+    hits = list(a.get("hits") or [])
+    kills, accents = hits_mod.choose_kills(hits)
+    d = dict(d)
+    d["detected"] = {"hits": hits, "kills": kills, "accents": accents,
+                     "big": list(a.get("big") or [])}
+    return d
 
 
 # ------------------------------------------------------------------ ways of seeing a song
@@ -338,7 +367,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"songs": _songs(), "calibration": cal, "click": CLICK})
         if u.path == "/api/song":
             d = _read((q.get("id") or [""])[0])
-            return self._json(d) if d else self._json({"error": "No such song."}, 404)
+            if not d:
+                return self._json({"error": "No such song."}, 404)
+            return self._json(_with_detected(d))
         if u.path == "/api/audio":
             d = _read((q.get("id") or [""])[0]) or {}
             f = Path(d.get("path") or "")
