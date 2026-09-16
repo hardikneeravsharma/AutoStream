@@ -133,9 +133,15 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     it and press K on every beat a kill should land on. The cuts move so shot 1's kill
     lands on mark 1, shot 2's on mark 2, and the part's length decides how many shots
     stay.
+  - **Paste a YouTube link for the song.** Only the audio is downloaded, with a
+    progress bar, into `Videos\AutoStream\songs`, and a link used before is not
+    downloaded again. When it can't be done it says why in plain words — no internet,
+    a private or removed video, an age-restricted one, a playlist or live stream
+    instead of one song.
   - **Choose the part of the song before the reel is built.** Drag it along the
     waveform in the Make dialog, nudge either end by a bar, or jump to the drums, the
-    drop or the whole song, and listen to it. Every clip you chose goes in unless the
+    drop or the whole song — and play it: play and pause, a slider to seek anywhere
+    in the part, five seconds back or forward, and loop. Every clip you chose goes in unless the
     part is full; if the clips are short of it, each kill gets a longer run-up (as far
     as its clip has footage, never over 8 s), and after that the reel ends early and
     says so. *Let AutoStream choose* keeps the old behaviour.

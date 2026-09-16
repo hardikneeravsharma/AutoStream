@@ -52,6 +52,15 @@ except ImportError:
     print("NOTE: demoparser2 is not installed, so this build cannot read CS2 "
           "demos. Rounds and clutches would come off the screen instead.")
 
+# yt-dlp ships its own PyInstaller hook (it imports its extractors lazily);
+# naming the package is what makes the build use it.
+try:
+    import yt_dlp  # noqa: F401
+    hidden += ["yt_dlp"]
+except ImportError:
+    print("NOTE: yt-dlp is not installed, so this build cannot download a reel's "
+          "song from a YouTube link. Choosing a song file is unaffected.")
+
 hidden += collect_submodules("obsws_python")
 # cmd_run imports submodules lazily inside the function body; be explicit so a
 # missed import fails the BUILD rather than the running app.

@@ -133,6 +133,7 @@ STUDIO_HTML = r"""
       </div>
       <div class="field-inline">
         <button type="button" class="btn" data-act="studio-sg-pick">Choose a song…</button>
+        <button type="button" class="btn" data-act="studio-yt" data-for="song">Paste a YouTube link…</button>
         <button type="button" class="btn btn-ghost" data-act="studio-sg-none">No song</button>
       </div>
     </div>
@@ -208,6 +209,7 @@ STUDIO_HTML = r"""
       <h3 class="studio-h">Song</h3>
       <div class="field-inline">
         <button type="button" class="btn" data-act="studio-song">Choose a song…</button>
+        <button type="button" class="btn" data-act="studio-yt" data-for="make">Paste a YouTube link…</button>
         <button type="button" class="btn btn-ghost" data-act="studio-nosong">No song</button>
         <span class="muted" id="studio-song-name">No song: the clips keep their own sound, cut to a 120 BPM grid.</span>
       </div>
@@ -235,8 +237,18 @@ STUDIO_HTML = r"""
             <button type="button" class="btn btn-sm" data-act="studio-mk-preset" data-preset="drums">From the drums</button>
             <button type="button" class="btn btn-sm" data-act="studio-mk-preset" data-preset="drop" id="studio-mk-drop">Build into the drop</button>
             <button type="button" class="btn btn-sm" data-act="studio-mk-preset" data-preset="whole">Whole song</button>
-            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-listen" id="studio-mk-listen">Listen</button>
-            <audio id="studio-mk-audio" preload="none"></audio>
+          </div>
+          <!-- LISTEN BEFORE CHOOSING: a part is picked by ear, so it plays, pauses where
+               it is, and seeks anywhere inside it. -->
+          <div class="studio-mk-transport" role="group" aria-label="Play the part">
+            <button type="button" class="btn btn-sm studio-mk-play" data-act="studio-mk-play" id="studio-mk-play">Play</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-skip" data-d="-5" aria-label="Back 5 seconds">−5 s</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-skip" data-d="5" aria-label="Forward 5 seconds">+5 s</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-restart">From the start</button>
+            <input type="range" class="studio-mk-seek" id="studio-mk-seek" min="0" max="1000" step="1" value="0" aria-label="Position in the part">
+            <span class="mono studio-mk-clock" id="studio-mk-clock">0:00.0 / 0:00.0</span>
+            <label class="studio-check"><input type="checkbox" id="studio-mk-loop"> Loop</label>
+            <audio id="studio-mk-audio" preload="metadata"></audio>
           </div>
           <p class="muted" id="studio-mk-facts"></p>
         </div>
@@ -260,6 +272,29 @@ STUDIO_HTML = r"""
       <span class="muted" id="studio-make-msg"></span>
       <button type="button" class="btn btn-ghost" data-act="studio-make-cancel">Cancel</button>
       <button type="button" class="btn btn-primary" data-act="studio-build" id="studio-build-btn">Build and render</button>
+    </div>
+  </div>
+  </div>
+
+  <div class="scrim hide" id="studio-yt-scrim">
+  <div class="modal studio-yt" id="studio-yt" role="dialog" aria-modal="true" aria-labelledby="studio-yt-title">
+    <h2 class="modal-title" id="studio-yt-title">Song from a YouTube link</h2>
+    <div class="modal-body studio-yt-body">
+      <label class="field-label" for="studio-yt-url">YouTube link</label>
+      <input class="input" id="studio-yt-url" type="url" inputmode="url" autocomplete="off" spellcheck="false"
+             placeholder="https://www.youtube.com/watch?v=…">
+      <p class="muted studio-yt-hint">Only the song's audio is downloaded, into <span class="mono">Videos\AutoStream\songs</span>,
+        and a link you have used before is not downloaded again. Use songs you are allowed to use: YouTube can mute or
+        claim a video that has someone else's music in it.</p>
+      <div class="studio-yt-progress hide" id="studio-yt-progress">
+        <div class="meter"><div class="meter-fill" id="studio-yt-meter" style="width:0%"></div></div>
+        <p class="studio-yt-status" id="studio-yt-status" role="status" aria-live="polite"></p>
+      </div>
+      <p class="studio-yt-error hide" id="studio-yt-error" role="alert"></p>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" data-act="studio-yt-close" id="studio-yt-close">Cancel</button>
+      <button type="button" class="btn btn-primary" data-act="studio-yt-go" id="studio-yt-go">Download</button>
     </div>
   </div>
   </div>
@@ -306,7 +341,9 @@ const studio = {
   gen: 0, jobId: 0, seenJob: -1, watching: -1, busy: false, pollTok: 0,
   sg: {song: '', shape: null, start: 0, end: 0, marks: [], drag: null, ticked: {}, ac: null},
   /* The part of the song chosen on the Make dialog, in song seconds. */
-  mk: {mode: 'part', start: 0, end: 0, touched: false, drag: null},
+  mk: {mode: 'part', start: 0, end: 0, touched: false, drag: null, seekTo: null, ticking: false},
+  /* A song being downloaded from a YouTube link, and which picker asked for it. */
+  yt: {target: 'make', timer: null, running: false},
   /* Set while clips are being added to an existing reel: what to rebuild. */
   adding: null, delPaths: []
 };
@@ -532,6 +569,7 @@ function studio_closeModals() {
   const a = studio_el('studio-mk-audio');
   if (a && !a.paused) a.pause();
   ['studio-preview-scrim', 'studio-make-scrim', 'studio-del-scrim'].forEach(id => studio_show(id, false));
+  if (!studio.yt.running) studio_show('studio-yt-scrim', false);
 }
 
 /* ------------------------------------------------------------ make a reel */
@@ -594,18 +632,27 @@ function studio_renderStyles() {
 async function studio_pickSong() {
   const r = await API.post('/api/clips/pick', {kind: 'audio'});
   if (!r || !r.path) return;
-  studio_el('studio-song-name').textContent = 'Reading ' + r.path.split(/[\\/]/).pop() + '…';
-  const got = await API.post('/api/reel/song', {song: r.path});
+  await studio_useSong(r.path);
+}
+
+/* A song file, whichever way it arrived, as the Make dialog's song. -> whether it could be read. */
+async function studio_useSong(path, label) {
+  const name = label || path.split(/[\\/]/).pop();
+  studio_el('studio-song-name').textContent = 'Finding the beat in ' + name + '…';
+  const got = await API.post('/api/reel/song', {song: path});
   if (!got || !got.ok) {
     studio_el('studio-song-name').textContent = (got && got.error) || 'Could not read that song.';
-    return;
+    return false;
   }
-  studio.song = r.path; studio.songShape = got.song;
-  studio_el('studio-song-name').textContent = r.path.split(/[\\/]/).pop() + ' · ' +
+  const a = studio_el('studio-mk-audio');
+  if (a && !a.paused) a.pause();
+  studio.song = path; studio.songShape = got.song;
+  studio_el('studio-song-name').textContent = name + ' · ' +
     Math.round(got.song.bpm) + ' BPM · ' + studio_dur(got.song.seconds) +
     (got.song.drop ? ' · drop at ' + studio_secs(got.song.drop) : '');
   studio.mk.touched = false;
   studio_mkDefault();
+  return true;
 }
 
 /* ------------------------------------------------------------ the part of the song */
@@ -675,7 +722,10 @@ function studio_mkDraw() {
   ctx.fillRect(X(mk.start) - 2, 0, 4, H); ctx.fillRect(X(mk.end) - 2, 0, 4, H);
   if (sh.drop) { ctx.fillStyle = warn; ctx.fillRect(X(sh.drop) - 1, 0, 2, H); }
   const a = studio_el('studio-mk-audio');
-  if (a && !a.paused) { ctx.fillStyle = '#ff5c5c'; ctx.fillRect(X(a.currentTime) - 1, 0, 2, H); }
+  if (a && a.getAttribute('data-song') === studio.song && (!a.paused || a.currentTime > 0)) {
+    ctx.fillStyle = '#ff5c5c'; ctx.fillRect(X(a.currentTime) - 1, 0, 2, H);
+  }
+  studio_mkClock();
 }
 
 function studio_mkNudge(what, how) {
@@ -712,24 +762,227 @@ function studio_mkPreset(which) {
   studio_mkDraw();
 }
 
-function studio_mkListen() {
-  const a = studio_el('studio-mk-audio'), mk = studio.mk;
-  if (!studio.song || !a) return;
-  if (!a.paused) { a.pause(); return; }
+/* The part's player. The song is loaded on first use; a seek asked for before the
+   browser knows the song's length is held and applied once it does, because a
+   seek made earlier is silently dropped and playback starts from 0:00. */
+function studio_mkLoad() {
+  const a = studio_el('studio-mk-audio');
+  if (!studio.song || !a) return null;
   if (a.getAttribute('data-song') !== studio.song) {
     a.src = studio_media('/api/reel/audio', studio.song);
     a.setAttribute('data-song', studio.song);
   }
-  a.currentTime = mk.start;
+  return a;
+}
+
+function studio_mkSeek(t) {
+  const a = studio_mkLoad(), mk = studio.mk;
+  if (!a) return;
+  t = Math.max(mk.start, Math.min(mk.end, t));
+  if (a.readyState >= 1) a.currentTime = t; else mk.seekTo = t;
+  studio_mkDraw();
+}
+
+function studio_mkPlay() {
+  const a = studio_mkLoad(), mk = studio.mk;
+  if (!a) return;
+  if (!a.paused) { a.pause(); return; }
+  const at = a.readyState >= 1 ? a.currentTime : (mk.seekTo == null ? -1 : mk.seekTo);
+  if (at < mk.start - 0.05 || at >= mk.end - 0.05) studio_mkSeek(mk.start);
   a.play().catch(() => toast('The song could not be played.', 'warn'));
+}
+
+function studio_mkSkip(d) {
+  const a = studio_mkLoad();
+  if (!a) return;
+  const now = a.readyState >= 1 ? a.currentTime : (studio.mk.seekTo == null ? studio.mk.start : studio.mk.seekTo);
+  studio_mkSeek(now + d);
+}
+
+/* Where playback is, inside the part: the slider, the clock and the playhead. */
+function studio_mkClock() {
+  const a = studio_el('studio-mk-audio'), mk = studio.mk;
+  const len = Math.max(0, mk.end - mk.start);
+  const ours = a && a.getAttribute('data-song') === studio.song;
+  const t = ours ? (a.readyState >= 1 ? a.currentTime : (mk.seekTo == null ? mk.start : mk.seekTo)) : mk.start;
+  const pos = Math.max(0, Math.min(len, t - mk.start));
+  const seek = studio_el('studio-mk-seek');
+  if (seek && document.activeElement !== seek) seek.value = String(len ? Math.round(pos / len * 1000) : 0);
+  const clock = studio_el('studio-mk-clock');
+  if (clock) clock.textContent = studio_secs(pos).replace(/(\.\d)\d$/, '$1') + ' / ' + studio_secs(len).replace(/(\.\d)\d$/, '$1');
+  const btn = studio_el('studio-mk-play');
+  if (btn) {
+    const playing = ours && !a.paused;
+    btn.textContent = playing ? 'Pause' : 'Play';
+    btn.setAttribute('aria-label', playing ? 'Pause the part' : 'Play the part');
+  }
 }
 
 function studio_mkAudio(e) {
   const a = studio_el('studio-mk-audio'), mk = studio.mk;
   if (!a) return;
-  if (e.type === 'timeupdate' && !a.paused && a.currentTime >= mk.end) a.pause();
-  studio_el('studio-mk-listen').textContent = a.paused ? 'Listen' : 'Stop';
+  if (e.type === 'loadedmetadata' && mk.seekTo != null) { a.currentTime = mk.seekTo; mk.seekTo = null; }
+  if (e.type === 'timeupdate' && !a.paused && a.currentTime >= mk.end) {
+    if (studio_el('studio-mk-loop').checked) a.currentTime = mk.start;
+    else { a.pause(); a.currentTime = mk.start; }
+  }
+  if (e.type === 'play' && !mk.ticking) { mk.ticking = true; requestAnimationFrame(studio_mkTick); }
   studio_mkDraw();
+}
+
+/* Smooth playhead while playing; timeupdate alone moves it four times a second. */
+function studio_mkTick() {
+  const a = studio_el('studio-mk-audio'), mk = studio.mk;
+  if (!a || a.paused || studio_el('studio-make-scrim').classList.contains('hide')) { mk.ticking = false; return; }
+  if (a.currentTime >= mk.end) studio_mkAudio({type: 'timeupdate'});
+  studio_mkDraw();
+  requestAnimationFrame(studio_mkTick);
+}
+
+function studio_mkSeekInput() {
+  const mk = studio.mk, seek = studio_el('studio-mk-seek');
+  studio_mkSeek(mk.start + Number(seek.value) / 1000 * (mk.end - mk.start));
+}
+
+/* ------------------------------------------------------------ a song from a YouTube link */
+
+function studio_ytOpen(target) {
+  const yt = studio.yt;
+  yt.target = target === 'song' ? 'song' : 'make';
+  if (!yt.running) {
+    studio_el('studio-yt-url').value = '';
+    studio_show('studio-yt-progress', false);
+    studio_ytError('');
+    studio_el('studio-yt-go').disabled = false;
+    studio_el('studio-yt-go').textContent = 'Download';
+    studio_el('studio-yt-close').textContent = 'Cancel';
+  }
+  studio_show('studio-yt-scrim', true);
+  setTimeout(() => { const i = studio_el('studio-yt-url'); if (i && !yt.running) i.focus(); }, 30);
+}
+
+function studio_ytKey(e) {
+  if (e.key === 'Enter' && !studio.yt.running) { e.preventDefault(); studio_ytGo(); }
+}
+
+function studio_ytError(msg) {
+  const e = studio_el('studio-yt-error');
+  e.textContent = msg || '';
+  studio_show('studio-yt-error', !!msg);
+}
+
+function studio_ytBusy(on) {
+  studio.yt.running = on;
+  studio_el('studio-yt-go').disabled = on;
+  studio_el('studio-yt-url').disabled = on;
+  studio_el('studio-yt-close').textContent = on ? 'Stop download' : 'Cancel';
+}
+
+async function studio_ytGo() {
+  const url = studio_el('studio-yt-url').value.trim();
+  studio_ytError('');
+  if (!url) { studio_ytError('Paste a YouTube link first.'); return; }
+  studio_ytBusy(true);
+  studio_ytShow({state: 'starting'});
+  let r;
+  try {
+    r = await API.post('/api/studio/songfetch', {url: url});
+  } catch (e) {
+    studio_ytBusy(false);
+    studio_show('studio-yt-progress', false);
+    studio_ytError('AutoStream didn\'t answer. Make sure it is still running, then try again.');
+    return;
+  }
+  if (!r || !r.ok) {
+    studio_ytBusy(false);
+    studio_show('studio-yt-progress', false);
+    studio_ytError((r && r.error) || 'The download could not start.');
+    return;
+  }
+  studio_ytShow(r.fetch);
+  studio_ytPoll();
+}
+
+function studio_ytMB(n) {
+  return (Number(n) || 0) >= 1048576 ? ((Number(n) || 0) / 1048576).toFixed(1) + ' MB' : Math.round((Number(n) || 0) / 1024) + ' KB';
+}
+
+function studio_ytShow(f) {
+  const title = f.title ? '\u201c' + f.title + '\u201d' : 'the song';
+  const meter = studio_el('studio-yt-meter'), status = studio_el('studio-yt-status');
+  studio_show('studio-yt-progress', true);
+  meter.classList.toggle('is-busy', f.state === 'starting' || f.state === 'reading' || f.state === 'converting' || f.state === 'analysing');
+  if (f.state === 'starting' || f.state === 'reading') {
+    meter.style.width = '100%';
+    status.textContent = 'Reading the link…';
+  } else if (f.state === 'downloading') {
+    meter.style.width = Math.max(2, Math.min(100, f.percent || 0)) + '%';
+    const parts = ['Downloading ' + title];
+    if (f.total_bytes) parts.push(studio_ytMB(f.done_bytes) + ' of ' + studio_ytMB(f.total_bytes), Math.round(f.percent || 0) + '%');
+    if (f.eta != null && f.eta > 0) parts.push(Math.round(f.eta) + ' s left');
+    status.textContent = parts.join(' · ');
+  } else if (f.state === 'converting') {
+    meter.style.width = '100%';
+    status.textContent = 'Converting the audio of ' + title + '…';
+  } else if (f.state === 'analysing') {
+    meter.style.width = '100%';
+    status.textContent = 'Finding the beat in ' + title + '…';
+  } else if (f.state === 'done') {
+    meter.style.width = '100%';
+    status.textContent = (f.reused ? 'Already downloaded: ' : 'Downloaded ') + title + '.';
+  } else if (f.state === 'cancelled') {
+    meter.style.width = '0%';
+    status.textContent = 'Download stopped.';
+  } else if (f.state === 'failed') {
+    studio_show('studio-yt-progress', false);
+  }
+}
+
+async function studio_ytPoll() {
+  const yt = studio.yt;
+  clearTimeout(yt.timer);
+  let r;
+  try {
+    r = await API.get('/api/studio/songfetch/status');
+  } catch (e) {
+    studio_ytBusy(false);
+    studio_ytError('AutoStream stopped answering during the download. Make sure it is still running, then try again.');
+    return;
+  }
+  const f = (r && r.fetch) || {state: 'idle'};
+  studio_ytShow(f);
+  if (f.state === 'starting' || f.state === 'reading' || f.state === 'downloading' || f.state === 'converting') {
+    yt.timer = setTimeout(studio_ytPoll, 350);
+    return;
+  }
+  if (f.state === 'failed') {
+    studio_ytBusy(false);
+    studio_ytError(f.error || 'The download failed.');
+    return;
+  }
+  if (f.state !== 'done') {
+    studio_ytBusy(false);
+    return;
+  }
+  studio_ytShow(Object.assign({}, f, {state: 'analysing'}));
+  const ok = yt.target === 'song' ? await studio_sgUseSong(f.path) : await studio_useSong(f.path, f.title || '');
+  studio_ytBusy(false);
+  if (!ok) {
+    studio_show('studio-yt-progress', false);
+    studio_ytError('The song downloaded, but its beat couldn\'t be read. Try another upload of the song.');
+    return;
+  }
+  studio_show('studio-yt-scrim', false);
+  toast((f.reused ? 'Using ' : 'Downloaded ') + (f.title || 'the song') + '.', 'ok');
+}
+
+async function studio_ytClose() {
+  if (studio.yt.running) {
+    await API.post('/api/studio/songfetch/cancel', {}).catch(() => null);
+    return;                       /* the poll reports "Download stopped" and frees the dialog */
+  }
+  clearTimeout(studio.yt.timer);
+  studio_show('studio-yt-scrim', false);
 }
 
 function studio_mkPointer(e) {
@@ -1550,7 +1803,12 @@ function studio_wire() {
     else if (act === 'studio-mk-mode') { studio.mk.mode = b.getAttribute('data-mode'); studio_mkDraw(); }
     else if (act === 'studio-mk-nudge') studio_mkNudge(b.getAttribute('data-what'), b.getAttribute('data-d') === 'bar' ? 'bar' : '-bar');
     else if (act === 'studio-mk-preset') studio_mkPreset(b.getAttribute('data-preset'));
-    else if (act === 'studio-mk-listen') studio_mkListen();
+    else if (act === 'studio-mk-play') studio_mkPlay();
+    else if (act === 'studio-mk-skip') studio_mkSkip(Number(b.getAttribute('data-d')) || 0);
+    else if (act === 'studio-mk-restart') studio_mkSeek(studio.mk.start);
+    else if (act === 'studio-yt') studio_ytOpen(b.getAttribute('data-for'));
+    else if (act === 'studio-yt-go') studio_ytGo();
+    else if (act === 'studio-yt-close') studio_ytClose();
     else if (act === 'studio-add') studio_addClips();
     else if (act === 'studio-add-cancel') { studio.adding = null; studio.selected = []; studio_syncSelection(); }
     else if (act === 'studio-delete') studio_deleteAsk();
@@ -1648,7 +1906,11 @@ function studio_wire() {
   const mkw = studio_el('studio-mk-wave');
   if (mkw) ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(ev => mkw.addEventListener(ev, studio_mkPointer));
   const mka = studio_el('studio-mk-audio');
-  if (mka) ['play', 'pause', 'timeupdate'].forEach(ev => mka.addEventListener(ev, studio_mkAudio));
+  if (mka) ['play', 'pause', 'timeupdate', 'loadedmetadata', 'seeked'].forEach(ev => mka.addEventListener(ev, studio_mkAudio));
+  const mks = studio_el('studio-mk-seek');
+  if (mks) mks.addEventListener('input', studio_mkSeekInput);
+  const yti = studio_el('studio-yt-url');
+  if (yti) yti.addEventListener('keydown', studio_ytKey);
   const q = studio_el('studio-q');
   if (q) q.addEventListener('input', () => { studio.q = q.value; studio_renderLib(); });
   const pn = studio_el('studio-pname');
@@ -2056,15 +2318,21 @@ function studio_sgPointer(e) {
 async function studio_sgPick() {
   const r = await API.post('/api/clips/pick', {kind: 'audio'});
   if (!r || !r.path) return;
-  studio_el('studio-sg-facts').textContent = 'Finding the beat in ' + r.path.split(/[\\/]/).pop() + '…';
-  const got = await API.post('/api/reel/song', {song: r.path});
-  if (!got || !got.ok) { studio_el('studio-sg-facts').textContent = (got && got.error) || 'Could not read that song.'; return; }
+  await studio_sgUseSong(r.path);
+}
+
+/* A song file as the Song tab's song. -> whether it could be read. */
+async function studio_sgUseSong(path) {
+  studio_el('studio-sg-facts').textContent = 'Finding the beat in ' + path.split(/[\\/]/).pop() + '…';
+  const got = await API.post('/api/reel/song', {song: path});
+  if (!got || !got.ok) { studio_el('studio-sg-facts').textContent = (got && got.error) || 'Could not read that song.'; return false; }
   const sg = studio.sg, sh = got.song, len = (studio.derived && studio.derived.length) || 30;
-  sg.song = r.path; sg.shape = sh; sg.marks = []; sg.touched = true;
+  sg.song = path; sg.shape = sh; sg.marks = []; sg.touched = true;
   const from = sh.drums_in || (sh.beats && sh.beats[0]) || 0;
   sg.start = studio_sgNearestBeat(Math.max(0, Math.min(from, sh.seconds - len)));
   sg.end = Math.min(sh.seconds, sg.start + len);
   studio_sgReset();
+  return true;
 }
 
 async function studio_sgApply(noSong) {
