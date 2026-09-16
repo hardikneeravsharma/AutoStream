@@ -469,6 +469,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.app.studio_library())
         elif u.path == "/api/studio/catalog":
             self._json(self.app.studio_catalog())
+        elif u.path == "/api/studio/songfetch/status":
+            self._json(self.app.studio_songfetch_status())
         elif u.path == "/api/studio/job":
             self._json(self.app.studio_job())
         elif u.path == "/api/studio/project":
@@ -608,6 +610,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_song(b))
             elif p == "/api/studio/delete":
                 self._json(self.app.studio_delete(b))
+            elif p == "/api/studio/songfetch":
+                self._json(self.app.studio_songfetch(b))
+            elif p == "/api/studio/songfetch/cancel":
+                self._json(self.app.studio_songfetch_cancel())
             elif p == "/api/update/install":
                 self._json(self.app.update_install())
             elif p == "/api/update/download":
@@ -2611,6 +2617,26 @@ class Server:
         except OSError as e:
             return {"ok": False, "error": f"Could not delete those clips: {e}"}
         return {"ok": True, **got}
+
+    def studio_songfetch(self, body: dict) -> dict:
+        """Start downloading a song's audio from a YouTube link. Progress is polled."""
+        from .clips import songfetch
+
+        try:
+            job = songfetch.runner().start(str(body.get("url") or ""))
+        except songfetch.FetchError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "fetch": job.snapshot()}
+
+    def studio_songfetch_status(self) -> dict:
+        from .clips import songfetch
+
+        return {"ok": True, "fetch": songfetch.runner().status()}
+
+    def studio_songfetch_cancel(self) -> dict:
+        from .clips import songfetch
+
+        return {"ok": songfetch.runner().cancel()}
 
     def studio_job(self) -> dict:
         from .clips import studio

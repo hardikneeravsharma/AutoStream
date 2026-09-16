@@ -3214,6 +3214,21 @@ STUDIO_CSS = r"""
 .studio-sel-out summary{cursor:pointer;color:var(--warn)}
 .studio-sel-out ul{margin:var(--space-2) 0 0;padding-left:18px;color:var(--text-secondary)}
 .studio-sel-out li{margin-bottom:2px}
+.studio-mk-transport{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3)}
+.studio-mk-play{min-width:72px}
+.studio-mk-seek{flex:1 1 180px;min-width:0;accent-color:var(--accent)}
+.studio-mk-clock{min-width:108px;font-size:12.5px;color:var(--text-primary)}
+.studio-yt{width:min(560px,100%)}
+.studio-yt-body{display:flex;flex-direction:column;gap:var(--space-3);max-width:none}
+.studio-yt-hint{font-size:12.5px;margin:0}
+.studio-yt-progress{display:flex;flex-direction:column;gap:var(--space-3)}
+.studio-yt-status{margin:0;font-size:13px;color:var(--text-secondary);overflow-wrap:anywhere}
+.studio-yt-error{margin:0;font-size:13px;color:var(--danger);overflow-wrap:anywhere}
+/* No percentage yet (reading the link, converting, finding the beat): a band that moves. */
+.meter-fill.is-busy{background:linear-gradient(90deg,transparent 0%,var(--accent) 40%,var(--accent) 60%,transparent 100%);
+  background-size:40% 100%;background-repeat:no-repeat;animation:studio-yt-busy 1.2s linear infinite}
+@keyframes studio-yt-busy{from{background-position:-40% 0}to{background-position:140% 0}}
+@media (prefers-reduced-motion:reduce){.meter-fill.is-busy{animation:none;background:var(--accent);opacity:.6}}
 """
 
 CSS = CSS + STUDIO_CSS

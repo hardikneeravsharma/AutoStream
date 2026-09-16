@@ -25,3 +25,7 @@ numpy>=1.24
 # which is NOT a pip package:
 #   winget install --id UB-Mannheim.TesseractOCR
 pytesseract>=0.3.10
+
+# optional - the Studio's "Paste a YouTube link" for a reel's song. Without it
+# the link option explains itself and choosing a song file works as before.
+yt-dlp>=2026.8.19
