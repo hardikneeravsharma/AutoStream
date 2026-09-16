@@ -221,6 +221,13 @@ PHRASE_SHAPE = ((8, 1.5), (24, 1.0), (32, 0.5))
 # No shot but the opener's build and the closer's exit holds longer than this.
 # With the phrase shape at double length, v11 held one double kill for 5.8 s.
 MAX_SHOT_SECONDS = 4.0
+# The longest run-up a kill may be given when a chosen song part is longer
+# than the clips fill (see studio._lengthen_run_ups). Uncapped, "as far as the
+# clip has footage" gave one kill of a 90 s MONTERO part a 31.7 s run-up -- a
+# 1m23s round clip's walk to site -- while the 27 reference edits' median shot
+# runs 0.43-2.67 s and their longest opening shot 15 s. Twice the shot limit
+# above is enough to see the fight build; past it the reel ends early instead.
+MAX_LEAD_UP_SECONDS = 2 * MAX_SHOT_SECONDS
 
 
 def shot_cap(base: int, beat: float) -> int:

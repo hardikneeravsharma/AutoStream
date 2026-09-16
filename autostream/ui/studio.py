@@ -59,9 +59,12 @@ STUDIO_HTML = r"""
       <div class="studio-tray-text">
         <strong id="studio-tray-count">0 clips</strong>
         <span class="muted" id="studio-tray-facts"></span>
+        <span class="studio-adding hide" id="studio-adding"></span>
       </div>
       <button type="button" class="btn btn-ghost btn-sm" data-act="studio-clear">Clear</button>
-      <button type="button" class="btn btn-primary" data-act="studio-make">Make a reel</button>
+      <button type="button" class="btn btn-ghost btn-sm hide" data-act="studio-add-cancel" id="studio-add-cancel">Stop adding</button>
+      <button type="button" class="btn btn-ghost btn-sm studio-del-btn" data-act="studio-delete">Delete…</button>
+      <button type="button" class="btn btn-primary" data-act="studio-make" id="studio-make-btn">Make a reel</button>
     </div>
   </section>
 
@@ -85,6 +88,7 @@ STUDIO_HTML = r"""
             <button type="button" class="btn btn-ghost" data-act="studio-show" id="studio-show-btn" disabled>Show file</button>
           </div>
           <ul class="studio-notes" id="studio-notes"></ul>
+          <div class="studio-sel" id="studio-sel"></div>
         </div>
       </div>
     </div>
@@ -207,6 +211,36 @@ STUDIO_HTML = r"""
         <button type="button" class="btn btn-ghost" data-act="studio-nosong">No song</button>
         <span class="muted" id="studio-song-name">No song: the clips keep their own sound, cut to a 120 BPM grid.</span>
       </div>
+      <!-- THE PART, BEFORE THE PLAN: chosen afterwards a part can only take
+           shots away, so a short selection on a slow song came out short. -->
+      <div class="studio-mk-part hide" id="studio-mk-part">
+        <h3 class="studio-h">Part of the song</h3>
+        <div class="seg" role="group" aria-label="Reel length">
+          <button type="button" class="seg-btn is-active" data-act="studio-mk-mode" data-mode="part">Choose the part</button>
+          <button type="button" class="seg-btn" data-act="studio-mk-mode" data-mode="auto">Let AutoStream choose</button>
+        </div>
+        <div class="studio-mk-body" id="studio-mk-body">
+          <canvas class="studio-sg-wave" id="studio-mk-wave" height="70" aria-label="The song: drag the highlighted part or its edges"></canvas>
+          <div class="field-inline studio-nudge">
+            <span class="muted">Starts</span>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-nudge" data-what="start" data-d="-bar">−1 bar</button>
+            <span class="mono" id="studio-mk-start">0:00.00</span>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-nudge" data-what="start" data-d="bar">+1 bar</button>
+            <span class="muted">Ends</span>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-nudge" data-what="end" data-d="-bar">−1 bar</button>
+            <span class="mono" id="studio-mk-end">0:00.00</span>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-nudge" data-what="end" data-d="bar">+1 bar</button>
+          </div>
+          <div class="field-inline">
+            <button type="button" class="btn btn-sm" data-act="studio-mk-preset" data-preset="drums">From the drums</button>
+            <button type="button" class="btn btn-sm" data-act="studio-mk-preset" data-preset="drop" id="studio-mk-drop">Build into the drop</button>
+            <button type="button" class="btn btn-sm" data-act="studio-mk-preset" data-preset="whole">Whole song</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-listen" id="studio-mk-listen">Listen</button>
+            <audio id="studio-mk-audio" preload="none"></audio>
+          </div>
+          <p class="muted" id="studio-mk-facts"></p>
+        </div>
+      </div>
       <h3 class="studio-h">Shape</h3>
       <div class="field-inline studio-shape">
         <div class="seg" role="group" aria-label="Format">
@@ -226,6 +260,21 @@ STUDIO_HTML = r"""
       <span class="muted" id="studio-make-msg"></span>
       <button type="button" class="btn btn-ghost" data-act="studio-make-cancel">Cancel</button>
       <button type="button" class="btn btn-primary" data-act="studio-build" id="studio-build-btn">Build and render</button>
+    </div>
+  </div>
+  </div>
+
+  <div class="scrim hide" id="studio-del-scrim">
+  <div class="modal" id="studio-del" role="dialog" aria-modal="true" aria-labelledby="studio-del-title">
+    <h2 class="modal-title" id="studio-del-title">Delete clips</h2>
+    <div class="modal-body">
+      <p id="studio-del-text"></p>
+      <p class="muted" id="studio-del-reels"></p>
+    </div>
+    <div class="modal-actions">
+      <span class="muted" id="studio-del-msg"></span>
+      <button type="button" class="btn btn-ghost" data-act="studio-del-cancel">Cancel</button>
+      <button type="button" class="btn btn-danger" data-act="studio-del-go" id="studio-del-go">Delete</button>
     </div>
   </div>
   </div>
@@ -255,7 +304,11 @@ const studio = {
   sel: -1, pps: 60, snap: true, undo: [], checking: 0, checkTimer: null,
   polling: null, drag: null, clipIndex: {},
   gen: 0, jobId: 0, seenJob: -1, watching: -1, busy: false, pollTok: 0,
-  sg: {song: '', shape: null, start: 0, end: 0, marks: [], drag: null, ticked: {}, ac: null}
+  sg: {song: '', shape: null, start: 0, end: 0, marks: [], drag: null, ticked: {}, ac: null},
+  /* The part of the song chosen on the Make dialog, in song seconds. */
+  mk: {mode: 'part', start: 0, end: 0, touched: false, drag: null},
+  /* Set while clips are being added to an existing reel: what to rebuild. */
+  adding: null, delPaths: []
 };
 
 const studio_el = (id) => document.getElementById(id);
@@ -428,6 +481,12 @@ function studio_renderTray() {
   const games = new Set(sel.map(c => c.game)).size;
   studio_el('studio-tray-facts').textContent = sel.length
     ? studio_dur(secs) + ' of footage · ' + kills + ' kills' + (games > 1 ? ' · ' + games + ' games' : '') : '';
+  const ad = studio.adding;
+  studio_show('studio-adding', !!ad);
+  studio_show('studio-add-cancel', !!ad);
+  if (ad) studio_el('studio-adding').textContent = 'Adding clips to ' + ad.name +
+    ': the clips already in it are selected. Pick more, then rebuild.';
+  studio_el('studio-make-btn').textContent = ad ? 'Rebuild ' + ad.name : 'Make a reel';
 }
 
 function studio_pick(id, shift) {
@@ -470,20 +529,48 @@ function studio_preview(id) {
 function studio_closeModals() {
   const v = studio_el('studio-preview-video');
   if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
-  ['studio-preview-scrim', 'studio-make-scrim'].forEach(id => studio_show(id, false));
+  const a = studio_el('studio-mk-audio');
+  if (a && !a.paused) a.pause();
+  ['studio-preview-scrim', 'studio-make-scrim', 'studio-del-scrim'].forEach(id => studio_show(id, false));
 }
 
 /* ------------------------------------------------------------ make a reel */
 
-function studio_openMake() {
+async function studio_openMake() {
   if (!studio.selected.length) return;
   const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
+  const ad = studio.adding;
   studio_el('studio-make-facts').textContent = sel.length + ' clips, ' +
     sel.reduce((n, c) => n + (c.kill_count || 1), 0) + ' kills. Every cut and kill lands on the beat; ' +
-    'you can change anything on the timeline afterwards.';
-  studio_renderStyles();
+    'you can change anything on the timeline afterwards.' +
+    (ad ? ' Rebuilding ' + ad.name + ' plans every shot again' +
+      (ad.edited ? ', so the changes you made on its timeline will be replaced.' : '.') : '');
+  studio_el('studio-make-title').textContent = ad ? 'Rebuild ' + ad.name : 'Make a reel';
+  studio_el('studio-build-btn').textContent = ad ? 'Rebuild and render' : 'Build and render';
   studio_el('studio-make-msg').textContent = '';
+  if (ad) {
+    studio.style = ad.style || studio.style;
+    studio.fmt = ad.fmt || studio.fmt;
+    document.querySelectorAll('#studio-make [data-act="studio-fmt"]').forEach(x =>
+      x.classList.toggle('is-active', x.getAttribute('data-fmt') === studio.fmt));
+    studio_el('studio-name').value = ad.name;
+    if (ad.song && ad.song !== studio.song) {
+      studio_el('studio-song-name').textContent = 'Reading ' + ad.song.split(/[\\/]/).pop() + '…';
+      const got = await API.post('/api/reel/song', {song: ad.song});
+      if (got && got.ok) {
+        studio.song = ad.song; studio.songShape = got.song;
+        studio_el('studio-song-name').textContent = ad.song.split(/[\\/]/).pop() + ' · ' +
+          Math.round(got.song.bpm) + ' BPM · ' + studio_dur(got.song.seconds);
+      }
+    }
+    if (ad.song && studio.songShape) {
+      studio.mk.mode = 'part'; studio.mk.touched = true;
+      studio.mk.start = ad.start; studio.mk.end = Math.max(ad.start + studio_mkBar(), ad.end);
+    }
+  }
+  studio_renderStyles();
   studio_show('studio-make-scrim', true);
+  studio_mkDefault();
 }
 
 function studio_renderStyles() {
@@ -517,6 +604,179 @@ async function studio_pickSong() {
   studio_el('studio-song-name').textContent = r.path.split(/[\\/]/).pop() + ' · ' +
     Math.round(got.song.bpm) + ' BPM · ' + studio_dur(got.song.seconds) +
     (got.song.drop ? ' · drop at ' + studio_secs(got.song.drop) : '');
+  studio.mk.touched = false;
+  studio_mkDefault();
+}
+
+/* ------------------------------------------------------------ the part of the song */
+
+function studio_mkBar() {
+  const sh = studio.songShape;
+  return 4 * (sh ? (sh.beat || 60 / sh.bpm) : 0.5);
+}
+
+function studio_nearestBeat(sh, t) {
+  const b = (sh && sh.beats) || [];
+  let best = t, d = 1e9;
+  for (let i = 0; i < b.length; i++) { const x = Math.abs(b[i] - t); if (x < d) { d = x; best = b[i]; } }
+  return best;
+}
+
+/* A first part: from where the drums come in, as many whole bars as the format's
+   usual length -- the same place and length the planner would have chosen. */
+function studio_mkDefault() {
+  const sh = studio.songShape, mk = studio.mk;
+  studio_show('studio-mk-part', !!sh);
+  if (!sh) return;
+  if (!mk.touched) {
+    const bar = studio_mkBar();
+    const want = studio.fmt === 'vertical' ? 30 : 46;
+    const bars = Math.max(1, Math.round(want / bar));
+    const from = sh.drums_in || (sh.beats && sh.beats[0]) || 0;
+    mk.start = studio_nearestBeat(sh, Math.max(0, Math.min(from, sh.seconds - bar)));
+    mk.end = Math.min(sh.seconds, mk.start + bars * bar);
+  }
+  studio_el('studio-mk-drop').disabled = !sh.drop;
+  studio_mkDraw();
+}
+
+function studio_mkDraw() {
+  const sh = studio.songShape, mk = studio.mk;
+  studio_show('studio-mk-body', mk.mode === 'part');
+  document.querySelectorAll('#studio-mk-part [data-act="studio-mk-mode"]').forEach(x =>
+    x.classList.toggle('is-active', x.getAttribute('data-mode') === mk.mode));
+  if (!sh) return;
+  if (mk.mode !== 'part') {
+    studio_el('studio-mk-facts').textContent = '';
+    return;
+  }
+  const len = mk.end - mk.start, bars = Math.round(len / studio_mkBar());
+  studio_el('studio-mk-start').textContent = studio_secs(mk.start);
+  studio_el('studio-mk-end').textContent = studio_secs(mk.end);
+  studio_el('studio-mk-facts').textContent = studio_dur(len) + ' · ' + bars + (bars === 1 ? ' bar' : ' bars') +
+    '. Every clip you chose goes in unless the part is full. If they are short of it, each kill gets a ' +
+    'longer run-up, as far as its clip has footage (never over 8 s); if that is still not enough, the reel ends early.';
+  const c = studio_sgCanvas('studio-mk-wave', 70);
+  if (!c || !sh.peaks) return;
+  const {ctx, W, H} = c, n = sh.peaks.length, X = t => t / sh.seconds * W, mid = H / 2;
+  const css = getComputedStyle(document.documentElement);
+  const accent = css.getPropertyValue('--accent').trim() || '#5aa9ff';
+  const warn = css.getPropertyValue('--warn').trim() || '#e3b341';
+  ctx.fillStyle = accent;
+  for (let x = 0; x < W; x++) {
+    const k = Math.min(n - 1, Math.floor(x / W * n));
+    const amp = sh.peaks[k] * (mid - 2);
+    ctx.globalAlpha = (x >= X(mk.start) && x <= X(mk.end)) ? 1 : 0.3;
+    ctx.fillRect(x, mid - amp, 1, amp * 2);
+  }
+  ctx.globalAlpha = 0.18;
+  ctx.fillRect(X(mk.start), 0, X(mk.end) - X(mk.start), H);
+  ctx.globalAlpha = 1;
+  ctx.fillRect(X(mk.start) - 2, 0, 4, H); ctx.fillRect(X(mk.end) - 2, 0, 4, H);
+  if (sh.drop) { ctx.fillStyle = warn; ctx.fillRect(X(sh.drop) - 1, 0, 2, H); }
+  const a = studio_el('studio-mk-audio');
+  if (a && !a.paused) { ctx.fillStyle = '#ff5c5c'; ctx.fillRect(X(a.currentTime) - 1, 0, 2, H); }
+}
+
+function studio_mkNudge(what, how) {
+  const sh = studio.songShape, mk = studio.mk;
+  if (!sh) return;
+  const bar = studio_mkBar(), step = how === 'bar' ? bar : -bar;
+  mk.touched = true;
+  if (what === 'start') {
+    const len = mk.end - mk.start;
+    mk.start = Math.max(0, Math.min(sh.seconds - bar, mk.start + step));
+    mk.end = Math.min(sh.seconds, mk.start + len);
+  } else {
+    mk.end = Math.max(mk.start + bar, Math.min(sh.seconds, mk.end + step));
+  }
+  studio_mkDraw();
+}
+
+function studio_mkPreset(which) {
+  const sh = studio.songShape, mk = studio.mk;
+  if (!sh) return;
+  const bar = studio_mkBar(), len = mk.end - mk.start;
+  mk.touched = true;
+  if (which === 'whole') {
+    mk.start = (sh.beats && sh.beats[0]) || 0;
+    mk.end = sh.seconds;
+  } else if (which === 'drop' && sh.drop) {
+    const lead = Math.min(8 * bar, sh.drop, Math.max(bar, len / 3));
+    mk.start = Math.max(0, studio_nearestBeat(sh, sh.drop - lead));
+    mk.end = Math.min(sh.seconds, mk.start + len);
+  } else {
+    mk.start = studio_nearestBeat(sh, Math.max(0, Math.min(sh.drums_in || 0, sh.seconds - bar)));
+    mk.end = Math.min(sh.seconds, mk.start + len);
+  }
+  studio_mkDraw();
+}
+
+function studio_mkListen() {
+  const a = studio_el('studio-mk-audio'), mk = studio.mk;
+  if (!studio.song || !a) return;
+  if (!a.paused) { a.pause(); return; }
+  if (a.getAttribute('data-song') !== studio.song) {
+    a.src = studio_media('/api/reel/audio', studio.song);
+    a.setAttribute('data-song', studio.song);
+  }
+  a.currentTime = mk.start;
+  a.play().catch(() => toast('The song could not be played.', 'warn'));
+}
+
+function studio_mkAudio(e) {
+  const a = studio_el('studio-mk-audio'), mk = studio.mk;
+  if (!a) return;
+  if (e.type === 'timeupdate' && !a.paused && a.currentTime >= mk.end) a.pause();
+  studio_el('studio-mk-listen').textContent = a.paused ? 'Listen' : 'Stop';
+  studio_mkDraw();
+}
+
+function studio_mkPointer(e) {
+  const sh = studio.songShape, mk = studio.mk, cv = studio_el('studio-mk-wave');
+  if (!sh || !cv) return;
+  if (e.type === 'pointerdown') {
+    const r = cv.getBoundingClientRect();
+    const t = (e.clientX - r.left) / r.width * sh.seconds;
+    const edge = 6 / r.width * sh.seconds;
+    const kind = Math.abs(t - mk.start) < edge ? 'start' : Math.abs(t - mk.end) < edge ? 'end'
+      : (t > mk.start && t < mk.end) ? 'move' : 'jump';
+    mk.touched = true;
+    if (kind === 'jump') {
+      const len = mk.end - mk.start;
+      mk.start = studio_nearestBeat(sh, Math.max(0, Math.min(sh.seconds - len, t - len / 2)));
+      mk.end = Math.min(sh.seconds, mk.start + len);
+      studio_mkDraw();
+      return;
+    }
+    mk.drag = {kind: kind, x0: e.clientX, start: mk.start, end: mk.end, w: r.width, pointer: e.pointerId};
+    try { cv.setPointerCapture(e.pointerId); } catch (err) { /* fine without */ }
+    e.preventDefault();
+    return;
+  }
+  const g = mk.drag;
+  if (!g || e.pointerId !== g.pointer) return;
+  const dt = (e.clientX - g.x0) / g.w * sh.seconds;
+  if (e.type === 'pointermove') {
+    if (g.kind === 'start') mk.start = Math.max(0, Math.min(mk.end - 1, g.start + dt));
+    else if (g.kind === 'end') mk.end = Math.max(mk.start + 1, Math.min(sh.seconds, g.end + dt));
+    else {
+      const len = g.end - g.start;
+      mk.start = Math.max(0, Math.min(sh.seconds - len, g.start + dt));
+      mk.end = mk.start + len;
+    }
+  } else {
+    mk.drag = null;
+    /* Dropped on a beat, so the reel's cuts are the song's beats. */
+    const len = mk.end - mk.start;
+    if (g.kind !== 'end') {
+      mk.start = studio_nearestBeat(sh, mk.start);
+      if (g.kind === 'move') mk.end = Math.min(sh.seconds, mk.start + len);
+    } else {
+      mk.end = Math.max(mk.start + studio_mkBar() / 4, studio_nearestBeat(sh, mk.end));
+    }
+  }
+  studio_mkDraw();
 }
 
 function studio_ordered() {
@@ -531,14 +791,24 @@ async function studio_build() {
   btn.disabled = true;
   studio_el('studio-make-msg').textContent = studio.song ? 'Finding the beat and planning every shot…' : 'Planning every shot…';
   try {
-    const r = await API.post('/api/studio/plan', {
+    const body = {
       clips: studio_ordered().map(c => c.path), style: studio.style, song: studio.song,
       format: studio.fmt, name: studio_el('studio-name').value.trim()
-    });
+    };
+    if (studio.song && studio.songShape && studio.mk.mode === 'part' && studio.mk.end > studio.mk.start) {
+      body.part_start = studio.mk.start;
+      body.part_end = studio.mk.end;
+    }
+    const r = await API.post('/api/studio/plan', body);
     if (!r || !r.ok) { studio_el('studio-make-msg').textContent = (r && r.error) || 'Could not plan that reel.'; return; }
     studio_closeModals();
+    const ad = studio.adding;
+    /* A rebuild renders over the reel it rebuilds rather than beside it. */
+    if (ad && ad.output) r.project.output = ad.output;
     studio_setProject(r.project, r.derived, r.notes, r.song);
-    studio.output = ''; studio.dirty = true; studio.undo = [];
+    studio.output = ad && ad.output ? ad.output : ''; studio.dirty = true; studio.undo = [];
+    studio.adding = null;
+    studio_renderTray();
     studio_tab('timeline');
     studio_fit();
     studio_render();
@@ -713,7 +983,113 @@ function studio_drawRenderCard() {
   btn.textContent = studio.output ? (studio.dirty ? 'Render changes' : 'Render again') : 'Render';
   studio_el('studio-undo-btn').disabled = !studio.undo.length;
   studio_el('studio-show-btn').disabled = !studio.output || studio.dirty && !studio.renderedAt;
-  studio_el('studio-notes').innerHTML = (studio.notes || []).map(n => '<li>' + esc(n) + '</li>').join('');
+  /* The planner's notes live on the project; each later reply (a render, an
+     edit check) only adds what it has to say about that step. */
+  const notes = [];
+  (p.plan_notes || []).concat(studio.notes || []).forEach(n => { if (notes.indexOf(n) < 0) notes.push(n); });
+  studio_el('studio-notes').innerHTML = notes.map(n => '<li>' + esc(n) + '</li>').join('');
+  studio_drawSelection();
+}
+
+/* Which of the clips chosen for this reel are in it, and why any are not. Kept on
+   the project, so it is still true when the reel is opened again next week. */
+function studio_drawSelection() {
+  const d = studio.derived, box = studio_el('studio-sel');
+  if (!d || !box) return;
+  const sel = d.selection || [];
+  const out = sel.filter(x => !x.in);
+  let html = '';
+  if (sel.length) {
+    html += '<p class="studio-sel-h">' + (out.length
+      ? (sel.length - out.length) + ' of ' + sel.length + ' chosen clips are in this reel'
+      : 'All ' + sel.length + ' chosen clips are in this reel') + '</p>';
+    if (out.length) {
+      html += '<details class="studio-sel-out"' + (out.length <= 3 ? ' open' : '') + '><summary>' +
+        out.length + (out.length === 1 ? ' clip' : ' clips') + ' left out, and why</summary><ul>' +
+        out.map(x => '<li><strong>' + esc(x.name) + '</strong>: ' + esc(x.why) + '</li>').join('') + '</ul></details>';
+    }
+  }
+  html += '<button type="button" class="btn btn-sm" data-act="studio-add">Add clips…</button>';
+  box.innerHTML = html;
+}
+
+/* Back to the clips with this reel's selection picked, to add more and rebuild. */
+async function studio_addClips() {
+  const p = studio.project, d = studio.derived;
+  if (!p) return;
+  await studio_load(false);
+  const want = (p.selection && p.selection.length) ? p.selection.map(x => x.clip) : p.shots.map(x => x.clip);
+  const byPath = {};
+  Object.keys(studio.clipIndex).forEach(id => { byPath[String(studio.clipIndex[id].path).toLowerCase()] = id; });
+  const ids = [];
+  want.forEach(path => {
+    const id = byPath[String(path).toLowerCase()];
+    if (id && ids.indexOf(id) < 0) ids.push(id);
+  });
+  studio.selected = ids;
+  studio.adding = {
+    name: p.name, style: p.style, song: p.song || '', fmt: p.format,
+    output: studio.output || p.output || '',
+    start: p.song_offset || 0, end: p.part_end || ((p.song_offset || 0) + (d ? d.length : 0)),
+    edited: !!(d && d.edited) || studio.undo.length > 0
+  };
+  studio_tab('clips');
+  studio_renderLib();
+  if (ids.length < new Set(want).size) toast('Some of the clips in this reel are not in the clips folder any more.', 'warn');
+}
+
+/* ------------------------------------------------------------ deleting clips */
+
+function studio_bytes(n) {
+  const gb = (Number(n) || 0) / 1073741824;
+  return gb >= 1 ? gb.toFixed(1) + ' GB' : Math.round((Number(n) || 0) / 1048576) + ' MB';
+}
+
+async function studio_deleteAsk() {
+  const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
+  if (!sel.length) return;
+  const go = studio_el('studio-del-go');
+  go.disabled = true; go.textContent = 'Delete';
+  studio_el('studio-del-text').textContent = 'Checking ' + sel.length + (sel.length === 1 ? ' clip…' : ' clips…');
+  studio_el('studio-del-reels').textContent = '';
+  studio_el('studio-del-msg').textContent = '';
+  studio_show('studio-del-scrim', true);
+  studio.delPaths = sel.map(c => c.path);
+  const r = await API.post('/api/studio/delete', {paths: studio.delPaths, dry_run: true});
+  if (!r || !r.ok) { studio_el('studio-del-text').textContent = (r && r.error) || 'Could not check those clips.'; return; }
+  const n = r.clips, one = n === 1;
+  studio_el('studio-del-text').textContent = n
+    ? 'Delete ' + n + (one ? ' clip and its vertical copy' : ' clips and their vertical copies') + '? This frees ' +
+      studio_bytes(r.bytes) + '. They are removed from disk for good; the recordings they were cut from are not touched.'
+    : 'None of these clips are in the clips folder any more.';
+  const reels = r.reels || [];
+  studio_el('studio-del-reels').textContent = reels.length
+    ? (reels.length === 1 ? 'The reel “' + reels[0] + '” uses' : reels.length + ' reels use') + ' some of these clips' +
+      (reels.length > 1 ? ' (' + reels.map(x => '“' + x + '”').join(', ') + ')' : '') + '. ' +
+      (reels.length === 1 ? 'Its video stays' : 'Their videos stay') + ', but opening ' +
+      (reels.length === 1 ? 'its timeline' : 'their timelines') + ' again leaves these shots out.'
+    : '';
+  go.textContent = 'Delete ' + n + (one ? ' clip' : ' clips');
+  go.disabled = !n;
+}
+
+async function studio_deleteGo() {
+  const go = studio_el('studio-del-go');
+  go.disabled = true;
+  studio_el('studio-del-msg').textContent = 'Deleting…';
+  const r = await API.post('/api/studio/delete', {paths: studio.delPaths || []});
+  if (!r || !r.ok) {
+    studio_el('studio-del-msg').textContent = (r && r.error) || 'Could not delete those clips.';
+    go.disabled = false;
+    return;
+  }
+  studio_show('studio-del-scrim', false);
+  studio.selected = []; studio.delPaths = [];
+  const bad = (r.errors || []).length;
+  toast('Deleted ' + r.clips + (r.clips === 1 ? ' clip' : ' clips') + ' and freed ' + studio_bytes(r.bytes) +
+    (bad ? '. ' + bad + (bad === 1 ? ' file is' : ' files are') + ' still in use and could not be removed.' : '.'),
+    bad ? 'warn' : 'ok');
+  studio_load(true);
 }
 
 /* ------------------------------------------------------------ timeline */
@@ -1162,18 +1538,29 @@ function studio_wire() {
     else if (act === 'studio-folder') studio_folderToggle(b.getAttribute('data-folder'));
     else if (act === 'studio-preview') studio_preview(b.getAttribute('data-clip'));
     else if (act === 'studio-preview-close' || act === 'studio-make-cancel') studio_closeModals();
-    else if (act === 'studio-clear') { studio.selected = []; studio_syncSelection(); }
+    else if (act === 'studio-clear') { studio.selected = []; studio.adding = null; studio_syncSelection(); }
     else if (act === 'studio-make') studio_openMake();
     else if (act === 'studio-style') { studio.style = b.getAttribute('data-style'); studio_renderStyles(); }
     else if (act === 'studio-song') studio_pickSong();
     else if (act === 'studio-nosong') {
       studio.song = ''; studio.songShape = null;
       studio_el('studio-song-name').textContent = 'No song: the clips keep their own sound, cut to a 120 BPM grid.';
+      studio_mkDefault();
     }
+    else if (act === 'studio-mk-mode') { studio.mk.mode = b.getAttribute('data-mode'); studio_mkDraw(); }
+    else if (act === 'studio-mk-nudge') studio_mkNudge(b.getAttribute('data-what'), b.getAttribute('data-d') === 'bar' ? 'bar' : '-bar');
+    else if (act === 'studio-mk-preset') studio_mkPreset(b.getAttribute('data-preset'));
+    else if (act === 'studio-mk-listen') studio_mkListen();
+    else if (act === 'studio-add') studio_addClips();
+    else if (act === 'studio-add-cancel') { studio.adding = null; studio.selected = []; studio_syncSelection(); }
+    else if (act === 'studio-delete') studio_deleteAsk();
+    else if (act === 'studio-del-cancel') studio_closeModals();
+    else if (act === 'studio-del-go') studio_deleteGo();
     else if (act === 'studio-fmt' || act === 'studio-order') {
       const key = act === 'studio-fmt' ? 'fmt' : 'order';
       studio[key] = b.getAttribute('data-' + key);
       b.parentElement.querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('is-active', x === b));
+      if (key === 'fmt') studio_mkDefault();
     }
     else if (act === 'studio-build') studio_build();
     else if (act === 'studio-open') studio_open(b.getAttribute('data-path'));
@@ -1258,6 +1645,10 @@ function studio_wire() {
     else if (act === 'studio-sg-apply') studio_sgApply(false);
   });
   document.addEventListener('change', studio_inspectorInput);
+  const mkw = studio_el('studio-mk-wave');
+  if (mkw) ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(ev => mkw.addEventListener(ev, studio_mkPointer));
+  const mka = studio_el('studio-mk-audio');
+  if (mka) ['play', 'pause', 'timeupdate'].forEach(ev => mka.addEventListener(ev, studio_mkAudio));
   const q = studio_el('studio-q');
   if (q) q.addEventListener('input', () => { studio.q = q.value; studio_renderLib(); });
   const pn = studio_el('studio-pname');

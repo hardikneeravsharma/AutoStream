@@ -391,6 +391,13 @@ CONTROLS: list[Control] = [
     Control("/api/studio/cancel", "POST", CALL, "Cancel the render", "studio",
             body={}, expect=_has("ok"), acts=("studio-cancel",),
             why="ok:false when nothing is rendering"),
+    Control("/api/studio/delete", "POST", CALL, "Delete clips", "studio",
+            body={"paths": []}, expect=_has("ok"),
+            reject={"paths": []}, reject_soft=True,
+            acts=("studio-delete", "studio-del-go"),
+            why="no clips chosen is refused; only clips a run's clips.json lists "
+                "can be deleted, dry_run says what would go, and a real delete is "
+                "refused while a render, a clip job or an edit may be reading them"),
 ]
 
 BY_PATH: dict[str, Control] = {c.path: c for c in CONTROLS}
@@ -434,6 +441,13 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-sg-snapbar": "moves the part's start onto the nearest bar",
     "studio-sg-atdrop": "moves the part so it builds into the song's drop",
     "studio-sg-fit": "sets the part's end to the timeline's length",
+    "studio-mk-mode": "chooses the part of the song or lets the planner choose; sent with Build",
+    "studio-mk-nudge": "moves the chosen part's start or end by a bar; sent with Build",
+    "studio-mk-preset": "moves the chosen part to the drums, into the drop, or to the whole song; sent with Build",
+    "studio-mk-listen": "plays or stops the chosen part of the song in the dialog",
+    "studio-add": "goes back to the library with the reel's clips selected, to add more and rebuild",
+    "studio-add-cancel": "stops adding clips to a reel and empties the selection",
+    "studio-del-cancel": "closes the delete confirmation without deleting",
     # --- navigation and layout
     "rail-btn": "client-side page switch; state lives in sessionStorage",
     "rail": "switches the Clips page sub-tab",
