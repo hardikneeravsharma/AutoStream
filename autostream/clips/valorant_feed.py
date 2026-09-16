@@ -48,6 +48,8 @@ from __future__ import annotations
 
 import logging
 import shutil
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -936,33 +938,175 @@ def refine(video: Path, band, events: list[Event], *, fps: float = REFINE_FPS,
     return events
 
 
-def _span(args) -> list[Row]:
-    # frame_height is the height of THIS recording, not the height the pixel
-    # constants were measured at -- that is REF_HEIGHT, and read_frame scales
-    # between the two.
-    video, band, start, dur, fps, frame_h, *rest = args
-    # The OCR second look keeps what it needs from each frame WHILE the frame
-    # is here. Afterwards the PNGs are deleted, and reading a doubtful row
-    # later would mean decoding the recording a second time.
-    capture = rest[0] if rest else None
+# How many spans are decoded at once. The scan is decode-bound, and one span
+# at a time left three quarters of the machine idle: measured on a 70-minute
+# 1440p120 recording, 15m05s serial against the emblem pass's 7m46s over the
+# same footage, which has always used four.
+SCAN_WORKERS = 4
+
+
+def band_shape(video: Path, band) -> tuple[int, int] | None:
+    """(height, width) of the cropped band, as ffmpeg itself crops it. -> None if it cannot be read.
+
+    ASKED, NOT CALCULATED. The raw reader has to know the frame size to cut the
+    stream into frames, and ffmpeg's crop rounds the band's fractions its own
+    way -- 0.165 of 1440 is 237.6 and comes out 238. Computing it here and
+    being one row out silently shifts every pixel in every frame.
+    """
     from PIL import Image
 
     from .killfeed import _extract
 
+    tmp = _extract(Path(video), band, 0.0, 0.5, 1.0)
+    try:
+        for png in sorted(tmp.glob("f_*.png")):
+            with Image.open(png) as im:
+                return im.size[1], im.size[0]
+    except (OSError, ValueError) as e:
+        log.info("could not measure the feed band: %s", e)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return None
+
+
+def _crop_expr(band) -> str:
+    x1, y1, x2, y2 = band
+    return (f"crop=iw*{x2 - x1:.6f}:ih*{y2 - y1:.6f}"
+            f":iw*{x1:.6f}:ih*{y1:.6f}")
+
+
+def _decode_args(video: Path, band, start: float, dur: float, fps: float,
+                 on_gpu: bool) -> list[str]:
+    """The ffmpeg call for one span.
+
+    THE FRAMES ARE DROPPED BEFORE THEY ARE COPIED OUT OF THE CARD. A 120 fps
+    recording sampled twice a second still has to be decoded in full -- every
+    frame depends on the ones before it -- but it does not have to be handed to
+    the CPU in full: 118 of every 120 frames were copied out of the GPU only to
+    be thrown away by the fps filter. Dropping first and downloading after is
+    the same picture (measured bit-identical over a span) at 8.6s a span
+    against 13.4s.
+    """
+    from .killfeed import has_cuda
+    from .tools import binary
+
+    crop = _crop_expr(band)
+    if on_gpu:
+        pre = ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
+        chain = f"fps={fps},hwdownload,format=nv12,{crop}"
+    else:
+        pre = ["-hwaccel", "cuda"] if has_cuda() else []
+        chain = f"fps={fps},{crop}"
+    return [binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
+            *pre, "-ss", f"{start:.3f}", "-i", str(video),
+            "-t", f"{max(0.5, dur):.3f}", "-an", "-sn",
+            "-vf", chain, "-pix_fmt", "rgb24", "-f", "rawvideo", "-"]
+
+
+def gpu_drop_works(video: Path, band, shape: tuple[int, int]) -> bool:
+    """Whether this recording can have its frames dropped on the card. Probed, not assumed.
+
+    The chain needs a CUDA decoder that hands back nv12, which a 10-bit or a
+    codec the card cannot decode will not. One frame says so in well under a
+    second, and the answer stands for the whole scan.
+    """
+    from .killfeed import _NO_WINDOW, has_cuda
+
+    if not has_cuda():
+        return False
+    h, w = shape
+    try:
+        out = subprocess.run(_decode_args(video, band, 0.0, 0.5, 1.0, True),
+                             capture_output=True, timeout=120,
+                             creationflags=_NO_WINDOW).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return len(out) >= h * w * 3
+
+
+def _raw_frames(video: Path, band, start: float, dur: float, fps: float,
+                shape: tuple[int, int], on_gpu: bool = False):
+    """One span's frames, straight out of the decoder. -> yields (time, RGB array)
+
+    The same decode as _extract -- same crop expression, same hardware decode --
+    but piped rather than written out as PNGs and read back. Measured
+    bit-identical to the PNG path, frame for frame, over a span.
+    """
+    from .killfeed import _NO_WINDOW
+
+    h, w = shape
+    args = _decode_args(video, band, start, dur, fps, on_gpu)
+    size = h * w * 3
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            creationflags=_NO_WINDOW)
+    try:
+        i = 0
+        while True:
+            # A frame at a time, so a span costs one frame of memory rather
+            # than the 220 MB all of its frames come to.
+            buf = proc.stdout.read(size)
+            if not buf or len(buf) < size:
+                break
+            yield start + i / fps, np.frombuffer(buf, np.uint8).reshape(h, w, 3)
+            i += 1
+    finally:
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass
+        proc.terminate()
+        proc.wait(timeout=10)
+
+
+def _span(args) -> tuple[list[Row], list]:
+    """One span's rows, and the frames the OCR second look kept. -> (rows, frames)
+
+    The capture is per span rather than shared: spans are read in parallel, and
+    appending to one list from four threads puts the frames in whatever order
+    they finish in. The caller merges them in span order.
+    """
+    # frame_height is the height of THIS recording, not the height the pixel
+    # constants were measured at -- that is REF_HEIGHT, and read_frame scales
+    # between the two.
+    video, band, start, dur, fps, frame_h, shape, want_capture, cancelled, on_gpu = args
+    capture = None
+    if want_capture:
+        from . import feed_ocr
+
+        # The OCR second look keeps what it needs from each frame WHILE the
+        # frame is here. Afterwards it is gone, and reading a doubtful row
+        # later would mean decoding the recording a second time.
+        capture = feed_ocr.Capture(frame_h)
+
     out: list[Row] = []
-    tmp = _extract(Path(video), band, start, dur, fps)
+    for at, a in _frames(Path(video), band, start, dur, fps, shape, on_gpu):
+        if cancelled and cancelled():
+            break
+        planes = masks(a)
+        rows = read_frame(a, at, frame_height=frame_h, planes=planes)
+        out.extend(rows)
+        if capture is not None:
+            capture.add(a, at, rows, planes[2])
+    return out, (capture.frames if capture is not None else [])
+
+
+def _frames(video: Path, band, start: float, dur: float, fps: float,
+            shape: tuple[int, int] | None, on_gpu: bool = False):
+    """A span's frames, piped where the band's size is known and via PNGs where it is not."""
+    if shape is not None:
+        yield from _raw_frames(video, band, start, dur, fps, shape, on_gpu)
+        return
+    from PIL import Image
+
+    from .killfeed import _extract
+
+    tmp = _extract(video, band, start, dur, fps)
     try:
         for png in sorted(tmp.glob("f_*.png")):
             at = start + (int(png.stem.split("_")[1]) - 1) / fps
-            a = np.asarray(Image.open(png).convert("RGB"))
-            planes = masks(a)
-            rows = read_frame(a, at, frame_height=frame_h, planes=planes)
-            out.extend(rows)
-            if capture is not None:
-                capture.add(a, at, rows, planes[2])
+            yield at, np.asarray(Image.open(png).convert("RGB"))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    return out
 
 
 def scan(video: Path, band, *, duration: float | None = None,
@@ -976,6 +1120,13 @@ def scan(video: Path, band, *, duration: float | None = None,
     No OCR over the whole recording, so this is decode-bound rather than
     CPU-bound: a 46-minute recording scanned in 135s of wall clock, about 20x
     real time, against the 3.5x the OCR path manages.
+
+    A 120 fps recording is the hard case: every frame has to be decoded to
+    sample two a second. A 70-minute 1440p120 file took 15m05s reading one span
+    at a time and copying every decoded frame off the card; dropping frames on
+    the card (see _decode_args) and reading spans in parallel (see
+    SCAN_WORKERS) took it to 8m35s, with the same 104 kills, 108 deaths and 23
+    assists from the same 2335 sightings.
 
     `second_look` re-reads, as text, only the rows the colour reader was
     unsure about -- see feed_ocr. Off by default so a caller that wants the
@@ -1003,12 +1154,30 @@ def scan(video: Path, band, *, duration: float | None = None,
     seen: list[Row] = []
     if progress:
         progress(0, len(spans))
-    for i, (at, dur) in enumerate(spans, 1):
-        if cancelled and cancelled():
-            break
-        seen.extend(_span((video, band, at, dur, fps, frame_height, capture)))
-        if progress:
-            progress(i, len(spans))
+    shape = band_shape(Path(video), band)
+    on_gpu = bool(shape) and gpu_drop_works(Path(video), band, shape)
+    how = ("dropping frames on the card" if on_gpu else
+           "piping frames" if shape else "through frame files")
+    log.info("reading the feed of %s in %d chunk(s), %s",
+             Path(video).name, len(spans), how)
+    done = 0
+    with ThreadPoolExecutor(max_workers=SCAN_WORKERS) as pool:
+        jobs = [pool.submit(_span, (video, band, at, dur, fps, frame_height,
+                                    shape, capture is not None, cancelled, on_gpu))
+                for at, dur in spans]
+        # Taken in span order, not completion order, so the rows and the
+        # captured frames stay in time order however the decoders finish.
+        for job in jobs:
+            if cancelled and cancelled():
+                job.cancel()
+                continue
+            rows, frames = job.result()
+            seen.extend(rows)
+            if capture is not None:
+                capture.frames.extend(frames)
+            done += 1
+            if progress:
+                progress(done, len(spans))
 
     # Collapsed only once every span is in, so a row straddling a chunk
     # boundary is one event rather than two. The floor is derived from the rate
