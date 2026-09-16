@@ -1973,7 +1973,13 @@ async function studio_restyle() {
   if (btn) { btn.disabled = true; btn.textContent = 'Rebuilding…'; }
   try {
     const snapshot = JSON.stringify(p);
-    const r = await API.post('/api/studio/plan', {clips: p.shots.map(s => s.clip), style: key,
+    /* The clips this reel was made from, each once. Sending the timeline's
+       shots made a clip used in nine of them arrive nine times, and the
+       rebuild filled itself with that one clip. */
+    const from = (p.selection && p.selection.length) ? p.selection.map(x => x.clip) : p.shots.map(x => x.clip);
+    const clips = [];
+    from.forEach(c => { if (clips.indexOf(c) < 0) clips.push(c); });
+    const r = await API.post('/api/studio/plan', {clips: clips, style: key,
       song: p.song, format: p.format, name: p.name});
     if (!r || !r.ok) { toast((r && r.error) || 'Could not rebuild with that style.', 'warn'); return; }
     studio_pushUndo(snapshot);

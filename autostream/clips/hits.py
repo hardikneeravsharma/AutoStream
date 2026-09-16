@@ -25,10 +25,20 @@ WHAT A HIT IS: A PEAK IN THE BASS, NOT A RISE IN IT
     ceiling the measurement above implies (only 70% of the marks are within
     60 ms of any bass peak at all). Timing lands within 30 ms on every song.
 
-    Per song at these settings: 61-84% of marks caught, except Ooo La La at
-    44% -- the song whose marks are NOT on the bass (10% of them sit on a bass
-    peak, no better than chance). That is the second pattern, still to be
-    found; nothing here pretends to cover it.
+    Per song at these settings: 61-90% of marks caught, 79% of all 662.
+
+    THE BAND IS 30-150 Hz, NOT 0-150. Below 30 Hz is rumble, room and the
+    file's own DC, and it drowned the kick in the songs that have little of
+    one: dropping it took Ooo La La from 44% to 61% and Lalala from 84% to
+    90%, at 143 hits a minute instead of 146. It cost two big hits in HIGHEST
+    IN THE ROOM.
+
+    Bass is not every song's pattern. Measured against the marks band by band,
+    four of the seven songs are cut on the bass, two on the mids (Cradles 87%,
+    Ooo La La 73%) and one on the hats (After Party 66%). Imagine Dragons'
+    Believer, unmarked so far, repeats a one-bar hat figure 27 times clearer
+    than anything in its bass. Choosing the band per song is the next step;
+    this module is the bass one.
 
 JUDGED AGAINST ITS OWN PART OF THE SONG
     The player's words: "in a song each part has different high". A verse's
@@ -53,6 +63,9 @@ from . import beatsync as bs
 
 # The band a kick lives in -- and what the marks were measured against.
 LOW_HZ = 150.0
+# ...and the floor of it. Below 30 Hz is rumble and room, not a kick: keeping
+# it cost Ooo La La a third of its marks.
+LOW_MIN_HZ = 30.0
 # 5.8 ms a frame: fine enough to place a kick well inside the 60 ms the marks
 # are scored at, and cheap (a 4-minute song is 41k frames).
 HOP = 128
@@ -76,15 +89,20 @@ BIG_WINDOW = 2.0
 BIG_RISE = 0.04
 BIG_APART = 4.0
 
-# Hits closer together than this are a "dense run" -- the player's "drums
-# placed too close".
-CLOSE = 0.5
-# A dense run this short is cut kill-per-hit (quick cuts); a longer one is
-# thinned to TARGET_GAP and the rest become accents. Two seconds is about a
-# bar at 120 BPM.
-QUICK_RUN = 2.0
-# The player's rule for a long dense run: "keep kills about a second apart".
+# How far apart kills land, when nobody says otherwise. A style says
+# otherwise: studio.plan passes 60 / the style's measured cuts-per-minute, so
+# hype cuts every 1.1 s and story every 2.8 s on the same song.
 TARGET_GAP = 1.0
+# Hits closer together than this share of the gap are a "dense run" -- the
+# player's "drums placed too close".
+CLOSE_SHARE = 0.6
+# A dense run this many gaps long is still cut kill-per-hit (quick cuts); a
+# longer one is thinned and the hits between become accents.
+QUICK_SHARE = 2.0
+# The most hits a thinned run skips between kills. Every 2nd, 3rd or 4th was
+# the player's rule, but a 160-hits-a-minute song at story's pace needs every
+# 8th to keep kills 2.8 s apart, and a run of sixteenth notes twice that.
+MAX_STEP = 16
 
 
 def _low_level(x: np.ndarray) -> tuple[np.ndarray, float]:
@@ -96,7 +114,7 @@ def _low_level(x: np.ndarray) -> tuple[np.ndarray, float]:
     win = np.hanning(WIN).astype(np.float32)
     mag = np.abs(np.fft.rfft(x[idx] * win, axis=1))
     freqs = np.fft.rfftfreq(WIN, 1.0 / bs.SR)
-    power = (mag[:, freqs < LOW_HZ] ** 2).sum(axis=1)
+    power = (mag[:, (freqs >= LOW_MIN_HZ) & (freqs < LOW_HZ)] ** 2).sum(axis=1)
     return 10.0 * np.log10(power + 1e-10), bs.SR / HOP
 
 
@@ -161,7 +179,10 @@ def big_hits(x: np.ndarray, hits: list[float]) -> tuple[list[float], list[float]
     rises = [(mean_loud(t, t + BIG_WINDOW) - mean_loud(t - BIG_WINDOW, t)) / span for t in hits]
     out: list[int] = []
     for i, (t, rise) in enumerate(zip(hits, rises)):
-        if rise < BIG_RISE:
+        if rise < BIG_RISE or t < BIG_WINDOW:
+            # A hit in the first two seconds has no "before" to rise out of --
+            # the silence ahead of the file made Skechers' very first hit look
+            # like its biggest arrival, and the planner opened on it.
             continue
         # One per arrival: the strongest rise in each BIG_APART seconds.
         if out and t - hits[out[-1]] < BIG_APART:
@@ -173,9 +194,13 @@ def big_hits(x: np.ndarray, hits: list[float]) -> tuple[list[float], list[float]
 
 
 def choose_kills(hits: list[float], *, target_gap: float = TARGET_GAP,
-                 close: float = CLOSE, quick_run: float = QUICK_RUN,
+                 close: float = 0.0, quick_run: float = 0.0,
                  min_shot: float = 0.25) -> tuple[list[float], list[float]]:
     """Which hits carry a kill, and which are only accents. -> (kills, accents)
+
+    `target_gap` is how far apart this reel's kills belong -- the style's own
+    pace. Everything else follows from it, so one song gives a hype reel a kill
+    every 1.1 s and a story reel one every 2.8 s, both on the same kicks.
 
     The player's rule for drums placed too close together:
 
@@ -185,6 +210,8 @@ def choose_kills(hits: list[float], *, target_gap: float = TARGET_GAP,
         `target_gap` apart, and the hits in between become accents: effects
         without a kill.
     """
+    close = close or target_gap * CLOSE_SHARE
+    quick_run = quick_run or target_gap * QUICK_SHARE
     hits = sorted(hits or [])
     if not hits:
         return [], []
@@ -205,7 +232,7 @@ def choose_kills(hits: list[float], *, target_gap: float = TARGET_GAP,
             kills.extend(run)                     # short enough to cut one kill each
             continue
         step = int(round(target_gap / max(1e-6, float(np.median(gaps)))))
-        step = max(2, min(4, step))
+        step = max(2, min(MAX_STEP, step))
         for k, t in enumerate(run):
             (kills if k % step == 0 else accents).append(t)
     # A kill too close to the one before it cannot be its own shot.

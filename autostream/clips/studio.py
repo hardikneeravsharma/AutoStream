@@ -70,7 +70,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import rulebook, studio_refs
+from . import hits as hits_mod, rulebook, studio_refs
 
 log = logging.getLogger(__name__)
 
@@ -597,6 +597,8 @@ class Grid:
     bpm: float = NO_SONG_BPM
     downbeat_pos: int = 0
     peaks: list[float] = field(default_factory=list)   # the song's loudness envelope
+    hits: list[float] = field(default_factory=list)    # bass hits, song seconds
+    big: list[float] = field(default_factory=list)     # the strongest of them
 
     @classmethod
     def none(cls) -> "Grid":
@@ -607,7 +609,9 @@ class Grid:
         return cls(beat=shape.beat, beats=list(shape.beats), drop=shape.drop,
                    drums_in=shape.drums_in, seconds=shape.seconds, bpm=shape.bpm,
                    downbeat_pos=getattr(shape, "downbeat_pos", 0),
-                   peaks=list(getattr(shape, "peaks", None) or []))
+                   peaks=list(getattr(shape, "peaks", None) or []),
+                   hits=list(getattr(shape, "hits", None) or []),
+                   big=list(getattr(shape, "big", None) or []))
 
     def index_at_or_after(self, t: float) -> int:
         for i, b in enumerate(self.beats):
@@ -707,6 +711,36 @@ def _choose_offset(grid: Grid, first_kill_reel: float, style: Style,
     return grid.beats[max(0, i - back)]
 
 
+def _first_kill(hits: list[float], big: list[float], *, earliest: float,
+                drums_in: float = 0.0) -> float:
+    """Where the reel's first kill belongs in the song.
+
+    On the first BIG hit the song has to offer -- the first strong bass hit
+    after a quiet stretch, which is where the player's own marks start. Before
+    this, a story reel began at the song's first beat and put its opening kill
+    7 s in, over an intro of Skechers that has no drums until 18 s and where
+    the player marked no kills at all until 19.5.
+    """
+    want = max(earliest, drums_in)
+    for t in big:
+        if t >= want - 1e-6:
+            return t
+    for t in hits:
+        if t >= want - 1e-6:
+            return t
+    return want
+
+
+def _hit_slots(hits: list[float], *, first: float, end: float, gap: float,
+               count: int) -> list[float]:
+    """The song times this reel's kills land on: `count` of them from `first`."""
+    within = [t for t in hits if first - 1e-6 <= t <= end + 1e-6]
+    if not within:
+        return [first]
+    kills, _accents = hits_mod.choose_kills(within, target_gap=gap)
+    return kills[:count] if count else kills
+
+
 def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
          song: str = "", fmt: str = "landscape", name: str = "",
          max_seconds: float = 0.0, seed: int | None = None,
@@ -767,7 +801,22 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     open_beats = _pow2_beats(max(meas.get("first_shot") or 4.0, 2.0), beat, lo=2, hi=16)
     flash_share = min(0.9, (meas.get("flashes_per_min") or 0.0) / max(cpm, 1.0))
 
-    offered = [c for c in clips if c and c.get("path")]
+    # ONE ENTRY PER CLIP. Rebuilding a reel in another style sent the timeline's
+    # shots back as the clip list, so a clip used in nine shots arrived nine
+    # times, became nine sequences, and select() -- which ranks sequences --
+    # took the same footage again and again while the clips that were only
+    # asked for once were left out "to fit the reel's length". DRIPSKETCHERS1
+    # came out as 23 shots of 4 clips from a selection of 20.
+    offered = []
+    seen: set[str] = set()
+    for c in clips:
+        if not c or not c.get("path"):
+            continue
+        k = str(c["path"]).lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        offered.append(c)
     chosen = offered[:MAX_SHOTS]
     if len(offered) > MAX_SHOTS:
         notes.append(f"Only the first {MAX_SHOTS} clips were used.")
@@ -944,12 +993,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         ("hero", style.hero_pool), ("camera", style.camera_pool), ("speed", style.speed_pool))}
     _vary(shots, pools, style, seed, "all")
     rulebook.budget(shots, pools)
-    starts_b = [0]
-    for x in lens[:-1]:
-        starts_b.append(starts_b[-1] + sum(x))
     clip_look = {m.clip["path"]: looks.get(m.group) for m in picked}
-    rulebook.transitions(shots, starts_b, first_kill_beat=lens[0][0] if lens else 0,
-                         looks=clip_look, pools=pools, flash_share=flash_share, beat=beat)
     def speed_ok(shot, speed):
         ps = pieces(speed, shot["duration"], shot["pre"])
         before = source_used(ps, shot["pre"])
@@ -1009,6 +1053,71 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         else:
             offset = _choose_offset(grid, shots[0]["pre"], style, None, energy, build)
     proj["song_offset"] = round(offset, 5) if song else 0.0
+
+    # KILLS ON THE SONG'S BASS HITS, AT THIS STYLE'S PACE.
+    #
+    # The beat grid says every beat is equal and one tempo covers the whole
+    # song; neither is true of the songs the player marked (MONTERO read as
+    # 71.9 BPM, its lines between the kicks). clips/hits.py finds the kicks
+    # themselves, and choose_kills thins them to the pace this style's own
+    # reference edits cut at -- 2.8 s for story, 1.1 s for hype -- so the same
+    # song gives a story reel a third of the cuts of a hype one.
+    #
+    # The shots, their order, their captions and their effects are all decided
+    # above exactly as before. This only moves the cuts, through apply_marks(),
+    # the same path the player's hand-made marks take.
+    if song and shots and grid.hits and not part_len:
+        floor = 0.0
+        first = _first_kill(grid.hits, grid.big, earliest=floor + run_b * beat,
+                            drums_in=grid.drums_in or 0.0)
+        if style.drop and grid.drop and len(shots) > 3:
+            # A drop reel's fourth kill lands ON the drop: the build is the
+            # three shots before it. With the kills on hits the opener moves
+            # to whichever hit puts the fourth slot on the drop's own hit.
+            gap = 60.0 / max(cpm, 1.0)
+            aim = min(grid.hits, key=lambda t: abs(t - grid.drop))
+            best = None
+            for c in grid.hits:
+                if not aim - 14.0 <= c <= aim:
+                    continue
+                s4 = _hit_slots(grid.hits, first=c, end=aim + 1.0, gap=gap, count=4)
+                if len(s4) < 4:
+                    continue
+                d = abs(s4[3] - aim)
+                if best is None or d < best[0]:
+                    best = (d, c)
+            if best and best[0] < gap:
+                first = best[1]
+        offset = max(floor, first - shots[0]["pre"])
+        first = max(first, offset + shots[0]["pre"])
+    elif song and shots and grid.hits:
+        floor = part_start
+        first = _first_kill(grid.hits, [], earliest=floor + shots[0]["pre"])
+    if song and shots and grid.hits:
+        end = (part_start + part_len) if part_len else grid.seconds
+        slots = _hit_slots(grid.hits, first=first, end=end, gap=60.0 / max(cpm, 1.0),
+                           count=len(shots))
+        proj["song_offset"] = round(offset, 5)
+        notes += apply_marks(proj, [t - offset for t in slots])
+        big_on = sum(1 for t in slots if any(abs(t - b) < 0.01 for b in grid.big))
+        notes.append(f"{len(slots)} kills land on the song's own bass hits, a cut every "
+                     f"{60.0 / max(cpm, 1.0):.1f} s at {style.label}'s pace"
+                     + (f", {big_on} of them on a big hit" if big_on else "") + ".")
+        if len(slots) < len(shots):
+            notes.append(f"The song ran out of hits after {len(slots)} of {len(shots)} shots; "
+                         f"the rest follow at their own length.")
+    elif song and shots:
+        notes.append("This song has no bass hits to cut to, so the reel follows the beat grid.")
+
+    # THE CUTS ARE SETTLED, so now each one can be given its transition: which
+    # bar a cut falls on is only known once the shots have been fitted to their
+    # footage and moved onto the song's hits. Chosen from the planned lengths
+    # instead, a velocity reel's flashes sat at beats 13, 19, 25 and 31 -- six
+    # beats apart, on no bar line at all.
+    shots = proj["shots"]
+    starts_b = [int(round(t / beat)) for t in _starts(shots)]
+    rulebook.transitions(shots, starts_b, first_kill_beat=int(round(shots[0]["pre"] / beat)) if shots else 0,
+                         looks=clip_look, pools=pools, flash_share=flash_share, beat=beat)
     if style.drop and song and not grid.drop:
         notes.append("This song has no clear drop, so the reel is paced as a build without one.")
 

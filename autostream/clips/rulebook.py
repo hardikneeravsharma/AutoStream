@@ -33,6 +33,10 @@ MIN_RUN_SECONDS = 0.5
 MAX_TAIL_BEATS = 2
 # How long a reel is when nobody says: whole 8-bar phrases, near these lengths.
 TARGET_SECONDS = {"landscape": 46.0, "vertical": 30.0}
+# ...and the longest it grows to hold clips the player picked by hand. The
+# reference edits run 48 to 86 s, so a landscape reel may reach the longest of
+# them; a vertical one stops short of the 60 s a Short is allowed.
+MAX_SECONDS = {"landscape": 86.0, "vertical": 58.0}
 PHRASE_BARS = 8
 
 
@@ -108,16 +112,28 @@ def phrase_seconds(beat: float, fmt: str, available: float, want: float = 0.0) -
 
     v1 used every clip and ran 127 s against references of 48 and 86 s. When
     there is less material than one phrase, the reel is as long as the material.
+
+    THE CLIPS WERE PICKED, so with nobody asking for a length the reel is as
+    long as it takes to hold them, rounded UP to a whole phrase and capped at
+    MAX_SECONDS. Aiming at the format's usual 46 s instead left ten of twenty
+    hand-picked clips out of DRIPSKETCHERS1 "to fit the reel's length", and
+    rebuilding it as hype -- whose shots are shorter, so the same clips read as
+    less material -- shrank it to one 14 s phrase of three clips. A reel is
+    never shortened to drop clips the player chose; only the cap does that.
     """
     bar = 4.0 * beat
     phrase = PHRASE_BARS * bar
-    target = want or TARGET_SECONDS.get(fmt, 46.0)
-    n = max(1, int(round(target / phrase)))
-    seconds = n * phrase
-    while seconds > available + 1e-6 and n > 1:
-        n -= 1
+    if want:
+        n = max(1, int(round(want / phrase)))
         seconds = n * phrase
-    return seconds if seconds <= available + 1e-6 else available
+        while seconds > available + 1e-6 and n > 1:
+            n -= 1
+            seconds = n * phrase
+        return seconds if seconds <= available + 1e-6 else available
+    if available + 1e-6 < phrase:
+        return available
+    n = max(1, math.ceil(available / phrase - 1e-6))
+    return min(n, max(1, int(MAX_SECONDS.get(fmt, 86.0) // phrase))) * phrase
 
 
 def select(moments_: list[Moment], seconds: float, length_of) -> list[Moment]:
