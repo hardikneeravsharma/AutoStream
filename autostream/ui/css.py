@@ -3205,6 +3205,15 @@ STUDIO_CSS = r"""
 .studio-sg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:var(--space-4)}
 .studio-sg-card{display:flex;flex-direction:column;gap:var(--space-3)}
 .studio-sg-apply{display:flex;align-items:center;justify-content:flex-end;gap:var(--space-4);flex-wrap:wrap}
+.studio-mk-part{display:flex;flex-direction:column;gap:var(--space-3)}
+.studio-mk-body{display:flex;flex-direction:column;gap:var(--space-3)}
+.studio-adding{font-size:12.5px;color:var(--accent)}
+.studio-del-btn{color:var(--danger)}
+.studio-sel{display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-2);font-size:12.5px}
+.studio-sel-h{margin:0;color:var(--text-secondary)}
+.studio-sel-out summary{cursor:pointer;color:var(--warn)}
+.studio-sel-out ul{margin:var(--space-2) 0 0;padding-left:18px;color:var(--text-secondary)}
+.studio-sel-out li{margin-bottom:2px}
 """
 
 CSS = CSS + STUDIO_CSS

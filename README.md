@@ -133,6 +133,19 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     it and press K on every beat a kill should land on. The cuts move so shot 1's kill
     lands on mark 1, shot 2's on mark 2, and the part's length decides how many shots
     stay.
+  - **Choose the part of the song before the reel is built.** Drag it along the
+    waveform in the Make dialog, nudge either end by a bar, or jump to the drums, the
+    drop or the whole song, and listen to it. Every clip you chose goes in unless the
+    part is full; if the clips are short of it, each kill gets a longer run-up (as far
+    as its clip has footage, never over 8 s), and after that the reel ends early and
+    says so. *Let AutoStream choose* keeps the old behaviour.
+  - **You can see which of your clips made it in.** The timeline lists the clips you
+    chose that are not in the reel and why — the part was full, nothing moved around
+    the kill, removed on the timeline — and it stays with the reel when you reopen it.
+    *Add clips…* goes back to the library with the reel's clips still selected, so you
+    can pick more and rebuild it with the same song, part and style.
+  - **Delete clips to free space.** Select any clips and press *Delete…*: it says how
+    much space that frees and which reels use them before anything is removed.
 - **Or don't stream at all.** Turn *Go live on YouTube* off and AutoStream is just
   the clipper: it still spots the game, records it and cuts the clips, never touches
   the YouTube API, and asks for no Google sign-in. The dashboard says RECORDING

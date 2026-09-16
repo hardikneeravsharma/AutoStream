@@ -588,3 +588,155 @@ def test_only_one_reel_renders_at_a_time():
         time.sleep(0.02)
     assert not run.busy() and run.start(b)
     b.release.set()
+
+
+# ------------------------------------------------------------------ the part of the song, chosen first
+
+def _spans_by_clip(shots):
+    out = {}
+    for s in shots:
+        out.setdefault(s["clip"], []).append(studio._span(s))
+    return out
+
+
+def test_a_chosen_part_is_where_the_reel_starts_and_how_long_it_is(long_run):
+    """MONTERO at 72 BPM came out 24 s: the length rule snapped to one 8-bar
+    phrase and left clips out. With the part chosen first it is the length."""
+    shape = Shape(bpm=120.0, seconds=120.0, phase=0.0)
+    proj, notes = studio.plan(_clips(long_run)[:8], "story", shape=shape, song="s.mp3", part=(10.0, 34.0))
+    total = sum(s["duration"] for s in proj["shots"])
+    assert proj["song_offset"] == pytest.approx(10.0)
+    assert proj["part_end"] == pytest.approx(34.0)
+    assert total == pytest.approx(24.0, abs=shape.beat + 1e-6)
+    assert all(x["why"] == "" for x in proj["selection"])          # every chosen clip went in
+    t = 0.0
+    for s in proj["shots"]:
+        assert _on_grid(t, shape.beat) and _on_grid(t + s["pre"], shape.beat)
+        t += s["duration"]
+
+
+def test_clips_short_of_the_part_get_longer_run_ups_within_their_footage(long_run):
+    shape = Shape(bpm=120.0, seconds=180.0, phase=0.0)
+    auto, _ = studio.plan(_clips(long_run)[:4], "story", shape=shape, song="s.mp3")
+    proj, notes = studio.plan(_clips(long_run)[:4], "story", shape=shape, song="s.mp3", part=(0.0, 30.0))
+    assert sum(s["duration"] for s in proj["shots"]) > sum(s["duration"] for s in auto["shots"])
+    assert any("longer run-ups" in n for n in notes)
+    for s in proj["shots"]:
+        a, b = studio._span(s)
+        assert a >= -1e-6 and b <= s["clip_seconds"] + 1e-6              # never past the footage
+        assert s["pre"] <= rulebook.MAX_LEAD_UP_SECONDS + 1e-6          # never a walk to site
+
+
+def test_a_part_the_clips_cannot_fill_ends_early_and_says_so(long_run):
+    shape = Shape(bpm=120.0, seconds=300.0, phase=0.0)
+    proj, notes = studio.plan(_clips(long_run)[:2], "story", shape=shape, song="s.mp3", part=(0.0, 120.0))
+    assert sum(s["duration"] for s in proj["shots"]) < 120.0
+    assert any("ends early" in n for n in notes)
+
+
+def test_a_part_too_short_for_every_clip_says_which_were_left_out_and_why(long_run):
+    shape = Shape(bpm=120.0, seconds=120.0, phase=0.0)
+    proj, _ = studio.plan(_clips(long_run), "story", shape=shape, song="s.mp3", part=(0.0, 8.0))
+    out = [x for x in proj["selection"] if x["why"]]
+    assert out and len(proj["selection"]) == 24
+    assert all(("part" in x["why"]) for x in out)
+    assert {x["clip"] for x in proj["selection"] if not x["why"]} == {s["clip"] for s in proj["shots"]}
+
+
+def test_a_longer_run_up_never_shows_a_kill_twice(tmp_path):
+    """Round clips give several shots from one file; growing a run-up back past
+    the previous shot's footage would play that kill again."""
+    r = tmp_path / "clips"
+    _run(r, "2026-09-16_1537_VALORANT", "VALORANT",
+         [{"start": 1000.0, "end": 1033.0, "kills": 4}, {"start": 2000.0, "end": 2025.0, "kills": 2}],
+         kills=[1003.5, 1012.3, 1025.2, 1029.9, 2003.5, 2011.6])
+    shape = Shape(bpm=72.0, seconds=140.0, phase=0.0)
+    proj, _ = studio.plan(_clips(r), "hype", shape=shape, song="s.mp3", part=(0.0, 90.0))
+    for clip, spans in _spans_by_clip(proj["shots"]).items():
+        spans.sort()
+        for (a1, b1), (a2, b2) in zip(spans, spans[1:]):
+            assert a2 >= b1 - 1e-6, f"{Path(clip).name}: {a1:.2f}-{b1:.2f} overlaps {a2:.2f}-{b2:.2f}"
+
+
+def test_without_a_part_the_planner_chooses_as_before(long_run):
+    shape = Shape(bpm=120.0, seconds=120.0, phase=0.0, drums_in=8.0)
+    a, _ = studio.plan(_clips(long_run)[:8], "story", shape=shape, song="s.mp3")
+    b, _ = studio.plan(_clips(long_run)[:8], "story", shape=shape, song="s.mp3", part=None)
+    assert a["shots"] == b["shots"] and a["song_offset"] == b["song_offset"]
+    assert "part_end" not in a
+
+
+# ------------------------------------------------------------------ what went in, and edits
+
+def test_the_selection_and_part_survive_a_save_and_a_removed_shot_is_explained(long_run):
+    shape = Shape(bpm=120.0, seconds=120.0, phase=0.0)
+    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=shape, song="", part=None)
+    proj["part_end"] = 30.0
+    got, derived, _ = studio.normalise(proj, long_run)
+    assert [x["clip"] for x in got["selection"]] == [c["path"] for c in _clips(long_run)[:4]]
+    assert all(x["in"] for x in derived["selection"])
+    gone = got["shots"].pop(0)["clip"]
+    got, derived, _ = studio.normalise(got, long_run)
+    row = next(x for x in derived["selection"] if x["clip"] == gone)
+    assert not row["in"] and row["why"] == "Removed on the timeline."
+
+
+def test_an_edited_timeline_is_told_apart_from_an_untouched_one(long_run):
+    proj, _ = studio.plan(_clips(long_run)[:4], "story")
+    proj, derived, _ = studio.normalise(proj, long_run)
+    proj["plan_sig"] = studio.signature(proj["shots"])
+    proj, derived, _ = studio.normalise(proj, long_run)
+    assert derived["edited"] is False
+    proj["shots"][1]["caption"] = "MINE"
+    proj, derived, _ = studio.normalise(proj, long_run)
+    assert derived["edited"] is True
+
+
+# ------------------------------------------------------------------ deleting clips
+
+def test_deleting_clips_removes_the_clip_its_vertical_and_its_row_and_nothing_else(root):
+    folder = root / "2026-09-14_0045_VALORANT"
+    man = json.loads((folder / "clips.json").read_text())
+    vert = folder / "vertical" / "VALORANT_00_vertical.mp4"
+    vert.parent.mkdir()
+    vert.write_bytes(b"v" * 1000)
+    man["clips"][0]["vertical"] = str(vert)
+    (folder / "clips.json").write_text(json.dumps(man))
+    target = man["clips"][0]["master"]
+
+    dry = studio.delete_clips(root, [target], dry_run=True)
+    assert dry["clips"] == 1 and dry["bytes"] == len(b"not really a video") + 1000
+    assert Path(target).is_file() and vert.is_file()                    # a dry run touches nothing
+
+    got = studio.delete_clips(root, [target])
+    assert got["clips"] == 1 and not got["errors"]
+    assert not Path(target).exists() and not vert.exists()
+    assert (folder / "session.json").is_file()                          # a re-cut still needs it
+    names = [c["name"] for c in json.loads((folder / "clips.json").read_text())["clips"]]
+    assert "VALORANT_00" not in names and len(names) == 2
+    assert studio.library(root)["clip_count"] == 3
+
+
+def test_only_a_clip_a_run_lists_can_be_deleted(root, tmp_path):
+    stray = tmp_path / "elsewhere.mp4"
+    stray.write_bytes(b"x")
+    session = root / "2026-09-14_0045_VALORANT" / "session.json"
+    got = studio.delete_clips(root, [str(stray), str(session)])
+    assert got["clips"] == 0 and got["missing"] == 2
+    assert stray.is_file() and session.is_file()
+
+
+def test_a_reel_that_uses_a_clip_is_named_before_it_is_deleted(root):
+    clip = _clips(root)[0]["path"]
+    (root / "reels" / "MONTERO2.mp4").write_bytes(b"x")
+    (root / "reels" / "MONTERO2.reel.json").write_text(json.dumps({"name": "MONTERO2", "shots": [{"clip": clip}]}))
+    assert studio.delete_clips(root, [clip], dry_run=True)["reels"] == ["MONTERO2"]
+
+
+def test_what_the_planner_said_stays_with_the_reel(long_run):
+    """Said only in the reply to the plan, the notes were replaced by the render's
+    reply a moment later, so "the weakest were left out" was never read."""
+    proj, _ = studio.plan(_clips(long_run)[:2], "story")
+    proj["plan_notes"] = ["Your clips fill 41 s of the 60 s part, so the reel ends early.", 7, ""]
+    got, _, _ = studio.normalise(proj, long_run)
+    assert got["plan_notes"] == ["Your clips fill 41 s of the 60 s part, so the reel ends early."]

@@ -606,6 +606,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_vary(b))
             elif p == "/api/studio/song":
                 self._json(self.app.studio_song(b))
+            elif p == "/api/studio/delete":
+                self._json(self.app.studio_delete(b))
             elif p == "/api/update/install":
                 self._json(self.app.update_install())
             elif p == "/api/update/download":
@@ -2449,6 +2451,15 @@ class Server:
             max_s = float(body.get("max_seconds") or 0.0)
         except (TypeError, ValueError):
             max_s = 0.0
+        # The part of the song the player chose on the Make dialog, in song
+        # seconds; absent means the planner chooses as it always has.
+        part = None
+        try:
+            p0, p1 = float(body.get("part_start")), float(body.get("part_end"))
+            if shape and 0.0 <= p0 < p1 and p1 - p0 < 36000:
+                part = (p0, p1)
+        except (TypeError, ValueError):
+            part = None
         from . import clips as clips_mod
 
         clips_mod.set_ffmpeg_path(c.clips.ffmpeg_path or None)
@@ -2460,11 +2471,17 @@ class Server:
                                   name=str(body.get("name") or ""), max_seconds=max_s,
                                   measure=studio.action if clips_mod.available() else None,
                                   confirm=studio.kill_marks if clips_mod.available() else None,
-                                  theirs=studio.spectated if clips_mod.available() else None)
+                                  theirs=studio.spectated if clips_mod.available() else None,
+                                  part=part)
         try:
             proj, derived, more = studio.normalise(proj, root)
         except studio.ProjectError as e:
             return {"ok": False, "error": str(e)}
+        # The plan as made, so a later "Add clips" can tell an edited timeline
+        # from an untouched one before re-planning over it.
+        proj["plan_sig"] = studio.signature(proj["shots"])
+        proj["plan_notes"] = list(dict.fromkeys(notes + more))[:20]
+        derived = studio.derive(proj)
         return {"ok": True, "project": proj, "derived": derived, "notes": notes + more,
                 "song": shape.as_dict() if shape else None}
 
@@ -2567,6 +2584,33 @@ class Server:
             return {"ok": False, "error": str(e)}
         return {"ok": True, "project": proj, "derived": derived, "notes": notes + more,
                 "song": shape.as_dict()}
+
+    def studio_delete(self, body: dict) -> dict:
+        """Delete chosen clips to free space. `dry_run` says what would go, for the confirmation."""
+        from . import clips as clips_mod
+        from .clips import edit as edit_mod
+        from .clips import studio
+
+        paths = [str(p) for p in (body.get("paths") or []) if isinstance(p, str)][:5000]
+        if not paths:
+            return {"ok": False, "error": "Choose the clips to delete."}
+        root = self._clips_dir(cfg.load())
+        dry = bool(body.get("dry_run"))
+        if not dry:
+            # Each of these may be reading one of the files right now: a render
+            # joining its shots, a clip job cutting into the same run, an edit
+            # re-encoding a clip.
+            if studio.runner().busy():
+                return {"ok": False, "error": "A reel is rendering; delete clips once it has finished."}
+            if clips_mod.runner().busy():
+                return {"ok": False, "error": "A clip job is running; delete clips once it has finished."}
+            if edit_mod.editor().busy():
+                return {"ok": False, "error": "A clip is being re-rendered; delete clips once it has finished."}
+        try:
+            got = studio.delete_clips(root, paths, dry_run=dry)
+        except OSError as e:
+            return {"ok": False, "error": f"Could not delete those clips: {e}"}
+        return {"ok": True, **got}
 
     def studio_job(self) -> dict:
         from .clips import studio
