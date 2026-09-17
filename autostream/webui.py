@@ -475,6 +475,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.app.studio_job())
         elif u.path == "/api/studio/project":
             self._json(self.app.studio_project((parse_qs(u.query).get("path") or [""])[0]))
+        elif u.path == "/api/studio/examples":
+            self._json(self.app.studio_examples())
+        elif u.path == "/api/studio/example":
+            blob, ctype, err = self.app.studio_example((parse_qs(u.query).get("id") or [""])[0])
+            if err:
+                self._json({"error": err}, 400)
+            else:
+                self._send_cached(blob, ctype)
         elif u.path == "/api/studio/thumb":
             q = parse_qs(u.query)
             jpg, err = self.app.studio_thumb((q.get("path") or [""])[0],
@@ -612,6 +620,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_delete(b))
             elif p == "/api/studio/songfetch":
                 self._json(self.app.studio_songfetch(b))
+            elif p == "/api/studio/examples/build":
+                self._json(self.app.studio_examples_build(b))
             elif p == "/api/studio/songfetch/cancel":
                 self._json(self.app.studio_songfetch_cancel())
             elif p == "/api/update/install":
@@ -2401,6 +2411,38 @@ class Server:
 
         return studio.catalog()
 
+    def studio_examples(self) -> dict:
+        """Every part the reel maker can use, and the example cut for it."""
+        from .clips import examples
+
+        out = examples.manifest(self._clips_dir(cfg.load()))
+        out["build"] = examples.runner().status()
+        return out
+
+    def studio_example(self, part: str) -> tuple[bytes, str, str | None]:
+        """One example, by part id. Only ever from the examples folder."""
+        from .clips import examples
+
+        f = examples.path_for(self._clips_dir(cfg.load()), str(part or "").strip())
+        if f is None:
+            return b"", "", "No example for that part."
+        try:
+            return f.read_bytes(), examples.TYPES.get(f.suffix.lower(), "video/mp4"), None
+        except OSError as e:
+            return b"", "", str(e)
+
+    def studio_examples_build(self, body: dict) -> dict:
+        """Cut the missing examples again, from this machine's own clips."""
+        from . import clips
+        from .clips import examples
+
+        c = cfg.load()
+        clips.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+        only = [str(x) for x in (body.get("parts") or []) if isinstance(x, str)] or None
+        if body.get("all"):
+            only = [p for p in examples.known() if p not in examples.NOTHING]
+        return {"ok": True, "build": examples.runner().start(self._clips_dir(c), only)}
+
     def studio_thumb(self, path: str, at: float = -1.0) -> tuple[bytes, str | None]:
         """A cached still for the library grid, only ever from the clips folder."""
         from . import clips
@@ -2471,7 +2513,9 @@ class Server:
         clips_mod.set_ffmpeg_path(c.clips.ffmpeg_path or None)
         # The rulebook's action and colour checks look at the footage around
         # every kill; without ffmpeg the plan is made without them.
+        picks = body.get("template")
         proj, notes = studio.plan(chosen, str(body.get("style") or studio.DEFAULT_STYLE),
+                                  template=picks if isinstance(picks, dict) else None,
                                   shape=shape, song=song if shape else "",
                                   fmt=str(body.get("format") or "landscape"),
                                   name=str(body.get("name") or ""), max_seconds=max_s,

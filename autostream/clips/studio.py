@@ -66,6 +66,7 @@ import tempfile
 import threading
 import time
 import zlib
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -422,6 +423,9 @@ PARTS: tuple[Part, ...] = (
     Part("g08", "grade", "Neon pop", "Colour pushed toward neon."),
     Part("g09", "grade", "Faded film", "Lifted blacks and soft highlights."),
 
+    # The drawer needs its empty card too: a template picks one part from
+    # every drawer, and most reels carry no overlay at all.
+    Part("o00", "overlay", "No overlay", "Nothing over the picture."),
     Part("o01", "overlay", "Cinematic bars", "Black bars top and bottom (landscape only)."),
     Part("o02", "overlay", "Kill counter", "A running count ticks up with each kill."),
     Part("o04", "overlay", "Film grain", "Fine moving grain over the whole reel."),
@@ -440,6 +444,56 @@ KINDS = ("intro", "transition", "kill", "hero", "speed", "camera", "grade", "ove
 
 def ids_of(kind: str) -> list[str]:
     return [p.id for p in PARTS if p.kind == kind]
+
+
+# A TEMPLATE IS ONE PICK FROM EVERY DRAWER. That is all a style is, so a
+# template is a style with its picks replaced -- everything downstream (the
+# effect mix, the flash budget, the climax) then works exactly as it does for
+# a built-in style, and the reel maker can show the player each pick with its
+# own example playing beside it.
+DRAWERS: tuple[str, ...] = ("intro", "transition", "kill", "hero", "camera",
+                            "speed", "grade", "overlay", "outro")
+
+
+def templated(style: "Style", picks: dict) -> "Style":
+    """`style` with the picks a template makes. Unknown ids are ignored."""
+    swap: dict = {}
+    for kind in DRAWERS:
+        pick = str((picks or {}).get(kind) or "").strip()
+        if not pick or pick not in ids_of(kind):
+            continue
+        if kind == "intro":
+            swap["intro"] = pick
+        elif kind == "outro":
+            swap["outro"] = pick
+        elif kind == "grade":
+            swap["grade"] = pick
+        elif kind == "overlay":
+            swap["overlays"] = () if pick in ("o00", "") else (pick,)
+        elif kind == "transition":
+            swap["cuts"] = (pick,)
+            swap["transition_pool"] = (pick,)
+        elif kind == "kill":
+            swap["kill"] = (pick,)
+            swap["kill_pool"] = (pick,)
+        elif kind == "hero":
+            swap["hero"] = (pick,)
+            swap["hero_pool"] = (pick,)
+        elif kind == "camera":
+            swap["camera"] = pick
+            swap["camera_pool"] = (pick,)
+        elif kind == "speed":
+            swap["speed"] = pick
+            swap["speed_pool"] = (pick,)
+    return dataclasses.replace(style, **swap) if swap else style
+
+
+def picks_of(style: "Style") -> dict:
+    """The template a style already is: one pick per drawer."""
+    return {"intro": style.intro, "outro": style.outro, "grade": style.grade,
+            "overlay": (style.overlays or ("o00",))[0],
+            "transition": (style.cuts or ("t01",))[0], "kill": (style.kill or ("k01",))[0],
+            "hero": (style.hero or ("h01",))[0], "camera": style.camera, "speed": style.speed}
 
 
 XFADE = {"t02": "fadewhite", "t03": "fadeblack", "t04": "fade", "t05": "zoomin",
@@ -556,7 +610,7 @@ def catalog() -> dict:
     return {
         "ok": True,
         "parts": [p.__dict__ for p in PARTS],
-        "kinds": list(KINDS),
+        "kinds": list(KINDS), "drawers": list(DRAWERS),
         "styles": [{"key": s.key, "label": s.label, "blurb": s.blurb,
                     "measured": studio_refs.summary(s.refs),
                     "defaults": {"intro": s.intro, "outro": s.outro, "cuts": list(s.cuts),
@@ -564,7 +618,10 @@ def catalog() -> dict:
                                  "hero_speed": s.hero_speed, "camera": s.camera,
                                  "grade": s.grade, "vignette": s.vignette,
                                  "overlays": list(s.overlays)},
-                    "pools": _style_pools(s), "energy": s.energy}
+                    "pools": _style_pools(s), "energy": s.energy,
+                    # The template this style already is: one pick per drawer,
+                    # which the parts bin shows with an example each.
+                    "picks": picks_of(s)}
                    for s in STYLES],
         "default_style": DEFAULT_STYLE,
     }
@@ -756,7 +813,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
          song: str = "", fmt: str = "landscape", name: str = "",
          max_seconds: float = 0.0, seed: int | None = None,
          measure=None, confirm=None, theirs=None,
-         part: tuple[float, float] | None = None) -> tuple[dict, list[str]]:
+         part: tuple[float, float] | None = None,
+         template: dict | None = None) -> tuple[dict, list[str]]:
     """Build a project from chosen clips. -> (project, notes)
 
     `measure(path, t0, t1)` -> how much the picture moves between two clip
@@ -774,6 +832,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     chose to cut to. See the PART OF THE SONG comment below.
     """
     style = STYLE.get(style_key) or STYLE[DEFAULT_STYLE]
+    if template:
+        style = templated(style, template)
     grid = Grid.of(shape) if shape is not None else Grid.none()
     notes: list[str] = []
     meas = studio_refs.summary(style.refs)

@@ -109,6 +109,9 @@ CSS: str = """
   /* Every face ships with Windows 11. No @font-face, no network request.
      The 20px split between Display and Text is where WinUI's own ramp switches. */
   --font-display:"Segoe UI Variable Display","Segoe UI",system-ui,-apple-system,sans-serif;
+  /* The parts bin's own voice: condensed caps for its headings, the way an
+     edit-house parts list is set. Bahnschrift ships with Windows 11 too. */
+  --font-condensed:"Bahnschrift","Segoe UI Variable Display","Arial Narrow",sans-serif;
   --font-text:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;
   --font-micro:"Segoe UI Variable Small","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
   --font-mono:"Cascadia Mono","Cascadia Code",Consolas,ui-monospace,monospace;
@@ -3050,6 +3053,68 @@ REEL_CSS = """
 CSS = CSS + REEL_CSS
 
 STUDIO_CSS = r"""
+/* ------------------------------------------------------------ parts bin */
+/* The reel maker's front page. Every reel is one pick from each drawer, and
+   each pick is shown by an example cut from the player's own clips, so a
+   choice is made by watching rather than by reading a list of names. */
+.bin-eyebrow{font:500 11px/1 var(--font-mono);letter-spacing:.14em;text-transform:uppercase;
+  color:var(--accent-text);margin:0}
+.bin-top{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(280px,1fr);gap:var(--space-6);
+  align-items:start;padding-bottom:var(--space-5);border-bottom:2px solid var(--border-strong)}
+@media (max-width:900px){.bin-top{grid-template-columns:1fr}}
+.bin-intro{display:grid;gap:10px}
+.bin-title{font-family:var(--font-condensed);font-weight:700;text-transform:uppercase;
+  font-size:clamp(34px,5.2vw,58px);line-height:.95;letter-spacing:.005em;margin:0;color:var(--text-primary)}
+.bin-lede{color:var(--text-secondary);max-width:62ch;margin:0;font-size:14.5px;line-height:1.55}
+.bin-calc{background:var(--surface);border:var(--border-hair) solid var(--border-subtle);
+  border-radius:var(--radius-md);padding:var(--space-4);display:grid;gap:10px}
+.bin-big{font-family:var(--font-condensed);font-weight:700;font-size:clamp(30px,4vw,44px);line-height:1;
+  color:var(--text-primary);font-variant-numeric:tabular-nums}
+.bin-big small{display:block;margin-top:6px;font:500 12px/1.4 var(--font-mono);letter-spacing:0;
+  color:var(--text-tertiary);text-transform:none}
+.bin-slots{display:flex;flex-wrap:wrap;gap:6px}
+.bin-slot{display:inline-flex;align-items:center;gap:7px;padding:4px 9px;cursor:pointer;font-size:12.5px;
+  border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-sm);
+  background:var(--surface-sunken);color:var(--text-secondary);user-select:none}
+.bin-slot b{font:500 11px var(--font-mono);color:var(--text-tertiary)}
+.bin-slot input{accent-color:var(--accent);margin:0}
+.bin-slot:has(input:checked){border-color:var(--accent);background:var(--accent-muted);color:var(--text-primary)}
+
+.bin-sec{display:grid;gap:var(--space-4)}
+.bin-sec-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px var(--space-5);align-items:end;
+  border-bottom:2px solid var(--text-primary);padding-bottom:8px}
+.bin-sec-head h2{font-family:var(--font-condensed);font-weight:700;text-transform:uppercase;margin:0;
+  font-size:clamp(22px,2.6vw,30px);line-height:1;color:var(--text-primary)}
+.bin-sec-head .count{font:500 11px var(--font-mono);letter-spacing:.08em;text-transform:uppercase;
+  color:var(--text-tertiary);white-space:nowrap}
+.bin-sec-head p{grid-column:1/-1;margin:0;color:var(--text-secondary);font-size:13.5px;max-width:78ch}
+
+.bin-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:var(--space-4)}
+.bin-card{display:flex;flex-direction:column;gap:0;text-align:left;padding:0;cursor:pointer;font:inherit;
+  background:var(--surface);color:var(--text-secondary);overflow:hidden;
+  border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-md)}
+.bin-card:hover{border-color:var(--border-strong)}
+.bin-card.is-on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.bin-shot{position:relative;aspect-ratio:16/9;background:var(--surface-sunken);overflow:hidden}
+.bin-shot video,.bin-shot img{width:100%;height:100%;object-fit:cover;display:block}
+.bin-shot .bin-none{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  color:var(--text-tertiary);font:500 11px var(--font-mono);letter-spacing:.1em;text-transform:uppercase;
+  text-align:center;padding:0 10px}
+.bin-shot .bin-tag{position:absolute;left:6px;top:6px;padding:2px 6px;border-radius:4px;
+  background:var(--scrim);color:var(--text-primary);font:500 10.5px var(--font-mono);letter-spacing:.06em}
+.bin-meat{display:grid;gap:4px;padding:10px 11px 12px}
+.bin-name{font-weight:600;color:var(--text-primary);font-size:13.5px;line-height:1.25}
+.bin-blurb{font-size:12px;line-height:1.45;color:var(--text-secondary)}
+.bin-card.is-on .bin-name{color:var(--accent-text)}
+
+.bin-dealer{display:flex;flex-wrap:wrap;gap:var(--space-3);align-items:center}
+.bin-code{font:500 12px var(--font-mono);color:var(--text-tertiary);letter-spacing:.08em}
+.bin-hand{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:var(--space-3)}
+.bin-drawer-label{font:500 10.5px var(--font-mono);letter-spacing:.1em;text-transform:uppercase;
+  color:var(--text-tertiary)}
+.bin-build{display:flex;flex-wrap:wrap;gap:var(--space-3);align-items:center;font-size:12.5px;
+  color:var(--text-tertiary)}
+
 /* ---------------------------------------------------------------- studio */
 .studio{display:flex;flex-direction:column;gap:var(--space-6);padding-bottom:88px}
 .studio-head{display:flex;flex-wrap:wrap;gap:var(--space-5);align-items:flex-end;justify-content:space-between}

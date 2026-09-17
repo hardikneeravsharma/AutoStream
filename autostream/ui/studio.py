@@ -31,10 +31,7 @@ from __future__ import annotations
 STUDIO_HTML = r"""
 <div class="studio">
   <header class="studio-head">
-    <div class="studio-head-text">
-      <h2 class="studio-title">Make reels from everything you have clipped</h2>
-      <p class="muted" id="studio-sub">Reading your clips…</p>
-    </div>
+    <div class="studio-head-text"></div>
     <div class="seg" role="tablist" aria-label="Studio views">
       <button type="button" class="seg-btn is-active" role="tab" aria-selected="true"
               data-act="studio-tab" data-tab="clips" id="studio-tab-clips">Clips</button>
@@ -46,6 +43,24 @@ STUDIO_HTML = r"""
   </header>
 
   <section id="studio-pane-clips" aria-label="Clips">
+    <!-- THE PARTS BIN, AT THE TOP. A reel is one pick from each drawer; the
+         count says how many reels those drawers can make, which is the point
+         of picking rather than taking the same style every time. -->
+    <header class="bin-top">
+      <div class="bin-intro">
+        <p class="bin-eyebrow">Reel maker · parts bin</p>
+        <h1 class="bin-title">Pick the clips, deal a template</h1>
+        <p class="bin-lede">Every reel is a set of picks from a few drawers: how it opens, how shots meet,
+          what happens on a kill, how time bends, what colour it is, how it ends. Each pick below is shown
+          by an example cut from your own clips, so you choose by watching. Select clips, then make a reel.</p>
+        <p class="bin-lede" id="studio-sub">Reading your clips…</p>
+      </div>
+      <aside class="bin-calc" aria-label="How many templates">
+        <p class="bin-eyebrow">Mix and match</p>
+        <div class="bin-big" id="bin-total">—<small id="bin-total-note">counting the drawers</small></div>
+        <div class="bin-slots" id="bin-slots"></div>
+      </aside>
+    </header>
     <div class="studio-tools">
       <input class="input studio-search" id="studio-q" type="search"
              placeholder="Search clips, captions or runs" aria-label="Search clips">
@@ -55,6 +70,19 @@ STUDIO_HTML = r"""
     <div class="studio-reels" id="studio-reels"></div>
     <div id="studio-lib" class="studio-lib"></div>
     <p class="muted studio-empty hide" id="studio-empty"></p>
+
+    <section class="bin-sec" id="bin" aria-label="Parts bin">
+      <div class="bin-sec-head">
+        <h2>The drawers</h2><span class="count" id="bin-count"></span>
+        <p>One example each, cut from your own clips by the same code that renders the reel — so a card
+          shows what the reel will actually do. Click one to put it in the template you are dealing.</p>
+      </div>
+      <div class="bin-build">
+        <button type="button" class="btn btn-sm" data-act="studio-bin-build" id="bin-build">Cut the missing examples</button>
+        <span id="bin-build-msg"></span>
+      </div>
+      <div id="bin-drawers"></div>
+    </section>
     <div class="studio-tray hide" id="studio-tray" role="region" aria-label="Selection">
       <div class="studio-tray-text">
         <strong id="studio-tray-count">0 clips</strong>
@@ -206,6 +234,15 @@ STUDIO_HTML = r"""
       <p class="muted" id="studio-make-facts"></p>
       <h3 class="studio-h">Style</h3>
       <div class="studio-styles" id="studio-styles" role="radiogroup" aria-label="Style"></div>
+      <!-- THE TEMPLATE: what the style picked, shown part by part with its
+           example, and changeable one drawer at a time. -->
+      <h3 class="studio-h">Template</h3>
+      <div class="bin-dealer">
+        <button type="button" class="btn btn-sm" data-act="studio-deal">Deal a template</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-deal-reset">Back to the style's own</button>
+        <span class="bin-code" id="studio-deal-code"></span>
+      </div>
+      <div class="bin-hand" id="studio-hand"></div>
       <h3 class="studio-h">Song</h3>
       <div class="field-inline">
         <button type="button" class="btn" data-act="studio-song">Choose a song…</button>
@@ -334,6 +371,7 @@ STUDIO_JS = r"""
 const studio = {
   lib: null, catalog: null, loadedAt: 0,
   game: 'all', q: '', selected: [], lastClick: null,
+  examples: null, picks: null, binOn: null, binObs: null, binTimer: null,
   style: '', song: '', songShape: null, fmt: 'landscape', order: 'chosen',
   project: null, derived: null, notes: [], dirty: true, output: '', renderedAt: 0,
   sel: -1, pps: 60, snap: true, undo: [], checking: 0, checkTimer: null,
@@ -393,6 +431,7 @@ async function studio_load(force) {
     return;
   }
   studio.lib = lib; studio.loadedAt = Date.now(); studio.clipIndex = {};
+  studio_binLoad(force);
   lib.games.forEach(g => g.folders.forEach(f => f.clips.forEach(c => {
     c.game = g.game; c.folderLabel = f.label; c.when = f.when; studio.clipIndex[c.id] = c;
   })));
@@ -607,6 +646,7 @@ async function studio_openMake() {
     }
   }
   studio_renderStyles();
+  studio_hand();
   studio_show('studio-make-scrim', true);
   studio_mkDefault();
 }
@@ -1032,6 +1072,219 @@ function studio_mkPointer(e) {
   studio_mkDraw();
 }
 
+/* =======================================================================
+   THE PARTS BIN
+   A reel is one pick from each drawer. Each pick is shown by a two-second
+   example cut from this machine's own clips (clips/examples.py), so a choice
+   is made by watching rather than by reading "k04 Freeze" in a list. The
+   examples play only while they are on screen: sixty looping videos at once
+   made the page stutter.
+   ======================================================================= */
+
+const BIN_DRAWERS = {intro: 'Opening', transition: 'Between shots', kill: 'On the kill',
+  hero: 'The big moment', camera: 'Camera', speed: 'Time', grade: 'Colour',
+  overlay: 'Overlay', outro: 'Ending'};
+
+function studio_binName(kind) { return BIN_DRAWERS[kind] || kind; }
+
+/* Play what is on screen, pause what is not. */
+function studio_binWatch() {
+  if (studio.binObs) studio.binObs.disconnect();
+  if (!('IntersectionObserver' in window)) return;
+  studio.binObs = new IntersectionObserver(function (es) {
+    es.forEach(function (e) {
+      const v = e.target;
+      if (e.isIntersecting) { const q = v.play(); if (q && q.catch) q.catch(function () {}); }
+      else v.pause();
+    });
+  }, {rootMargin: '150px'});
+  document.querySelectorAll('.bin-shot video').forEach(function (v) { studio.binObs.observe(v); });
+}
+
+function studio_binShot(id) {
+  const ex = (studio.examples && studio.examples.examples || {})[id];
+  const tag = '<span class="bin-tag">' + esc(id) + '</span>';
+  if (!ex) {
+    const none = studio.examples && (studio.examples.nothing || []).indexOf(id) >= 0;
+    return '<span class="bin-shot">' + tag + '<span class="bin-none">' +
+      (none ? 'nothing added' : 'no example yet') + '</span></span>';
+  }
+  const src = '/api/studio/example?k=' + encodeURIComponent(SHELL_K) +
+    '&id=' + encodeURIComponent(id) + '&v=' + (ex.when || 0);
+  const media = ex.type === 'image/gif'
+    ? '<img src="' + src + '" alt="" loading="lazy">'
+    : '<video src="' + src + '" muted loop playsinline preload="none" aria-hidden="true"></video>';
+  return '<span class="bin-shot">' + media + tag + '</span>';
+}
+
+function studio_binCard(p, on, act) {
+  return '<button type="button" class="bin-card' + (on ? ' is-on' : '') +
+    '" data-act="' + act + '" data-kind="' + esc(p.kind) + '" data-part="' + esc(p.id) + '"' +
+    ' aria-pressed="' + (on ? 'true' : 'false') + '">' + studio_binShot(p.id) +
+    '<span class="bin-meat"><span class="bin-name">' + esc(p.label || p.id) + '</span>' +
+    '<span class="bin-blurb">' + esc(p.blurb || '') + '</span></span></button>';
+}
+
+function studio_binDraw() {
+  const box = studio_el('bin-drawers');
+  if (!box || !studio.catalog) return;
+  const drawers = studio.catalog.drawers || Object.keys(BIN_DRAWERS);
+  const picks = studio_template();
+  box.innerHTML = drawers.map(function (kind) {
+    const parts = studio_parts(kind);
+    if (!parts.length) return '';
+    return '<section class="bin-sec bin-drawer">' +
+      '<div class="bin-sec-head"><h2>' + esc(studio_binName(kind)) + '</h2>' +
+      '<span class="count">' + parts.length + ' to pick from</span></div>' +
+      '<div class="bin-grid">' +
+      parts.map(function (p) { return studio_binCard(p, picks[kind] === p.id, 'studio-bin-pick'); }).join('') +
+      '</div></section>';
+  }).join('');
+  const ex = studio.examples || {};
+  const have = Object.keys(ex.examples || {}).length;
+  const miss = (ex.missing || []).length;
+  const c = studio_el('bin-count');
+  if (c) c.textContent = have + ' of ' + (have + miss) + ' cut from your own clips';
+  const b = studio_el('bin-build');
+  if (b) {
+    b.disabled = !miss;
+    b.textContent = miss ? 'Cut the ' + miss + ' missing example' + (miss === 1 ? '' : 's')
+      : 'Every part has an example';
+  }
+  studio_binSlots();
+  studio_binWatch();
+}
+
+/* HOW MANY REELS THESE DRAWERS MAKE: the point of picking. Four drawers of
+   ten parts each is ten thousand reels, not five styles. */
+function studio_binSlots() {
+  const box = studio_el('bin-slots');
+  if (!box || !studio.catalog) return;
+  const drawers = studio.catalog.drawers || [];
+  if (!studio.binOn) {
+    studio.binOn = {};
+    drawers.forEach(function (k) { studio.binOn[k] = true; });
+  }
+  box.innerHTML = drawers.map(function (k) {
+    return '<label class="bin-slot"><input type="checkbox" data-act="studio-bin-slot" data-kind="' +
+      esc(k) + '"' + (studio.binOn[k] ? ' checked' : '') + '> ' + esc(studio_binName(k)) +
+      ' <b>' + studio_parts(k).length + '</b></label>';
+  }).join('');
+  let total = 1, on = 0;
+  drawers.forEach(function (k) {
+    if (studio.binOn[k]) { total *= Math.max(1, studio_parts(k).length); on++; }
+  });
+  const big = studio_el('bin-total');
+  if (big && big.firstChild) big.firstChild.nodeValue = on ? total.toLocaleString() : '0';
+  const note = studio_el('bin-total-note');
+  if (note) {
+    note.textContent = on ? 'reels from ' + on + ' drawer' + (on === 1 ? '' : 's') + ', one pick each'
+      : 'tick a drawer to count it';
+  }
+}
+
+async function studio_binLoad(force) {
+  if (studio.examples && !force) { studio_binDraw(); return; }
+  const r = await API.get('/api/studio/examples');
+  if (!r || !r.ok) return;
+  studio.examples = r;
+  studio_binDraw();
+  if (r.build && r.build.state === 'running') studio_binPoll();
+}
+
+async function studio_binBuild() {
+  const msg = studio_el('bin-build-msg');
+  if (msg) msg.textContent = 'Starting…';
+  const r = await API.post('/api/studio/examples/build', {});
+  if (!r || !r.ok) { if (msg) msg.textContent = (r && r.error) || 'Could not start.'; return; }
+  const b = studio_el('bin-build');
+  if (b) b.disabled = true;
+  studio_binPoll();
+}
+
+function studio_binPoll() {
+  if (studio.binTimer) return;
+  studio.binTimer = setInterval(async function () {
+    const r = await API.get('/api/studio/examples');
+    if (!r || !r.ok) return;
+    const b = r.build || {};
+    const msg = studio_el('bin-build-msg');
+    if (msg) msg.textContent = b.message || '';
+    if (b.state === 'running') return;
+    clearInterval(studio.binTimer);
+    studio.binTimer = null;
+    studio.examples = r;
+    studio_binDraw();
+    studio_hand();
+  }, 1500);
+}
+
+/* ---------------------------------------------------------------- template */
+
+/* The picks in force: what the style chose, plus anything dealt or clicked. */
+function studio_template() {
+  const cat = studio.catalog;
+  const st = cat && (cat.styles || []).find(function (s) { return s.key === studio.style; });
+  return Object.assign({}, (st && st.picks) || {}, studio.picks || {});
+}
+
+function studio_hand() {
+  const box = studio_el('studio-hand');
+  if (!box || !studio.catalog) return;
+  const picks = studio_template();
+  const drawers = studio.catalog.drawers || [];
+  box.innerHTML = drawers.map(function (kind) {
+    const p = studio_part(picks[kind]) || {id: picks[kind] || '-', label: 'Nothing', kind: kind, blurb: ''};
+    return '<div class="bin-slotcard"><span class="bin-drawer-label">' + esc(studio_binName(kind)) +
+      '</span>' + studio_binCard(p, false, 'studio-hand-next') + '</div>';
+  }).join('');
+  const code = studio_el('studio-deal-code');
+  if (code) {
+    code.textContent = drawers.map(function (k) { return picks[k]; }).filter(Boolean).join(' · ');
+  }
+  studio_binWatch();
+}
+
+/* Deal: one part from each drawer, preferring ones with an example to show. */
+function studio_deal() {
+  const drawers = (studio.catalog && studio.catalog.drawers) || [];
+  const have = (studio.examples && studio.examples.examples) || {};
+  const picks = {};
+  drawers.forEach(function (k) {
+    const parts = studio_parts(k);
+    const shown = parts.filter(function (p) { return have[p.id]; });
+    const from = shown.length ? shown : parts;
+    if (from.length) picks[k] = from[Math.floor(Math.random() * from.length)].id;
+  });
+  studio.picks = picks;
+  studio_hand();
+  studio_binDraw();
+}
+
+function studio_dealReset() {
+  studio.picks = null;
+  studio_hand();
+  studio_binDraw();
+}
+
+/* Click a card in a drawer: that becomes the drawer's pick. */
+function studio_binPick(kind, part) {
+  studio.picks = Object.assign({}, studio_template());
+  studio.picks[kind] = part;
+  studio_hand();
+  studio_binDraw();
+}
+
+/* Click the card in the hand: step to the next part in that drawer. */
+function studio_handNext(kind) {
+  const parts = studio_parts(kind);
+  if (!parts.length) return;
+  const now = studio_template()[kind];
+  let i = -1;
+  parts.forEach(function (p, j) { if (p.id === now) i = j; });
+  studio_binPick(kind, parts[(i + 1) % parts.length].id);
+}
+
 function studio_ordered() {
   const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
   if (studio.order === 'kills') return sel.slice().sort((a, b) => (b.kill_count || 1) - (a.kill_count || 1));
@@ -1046,7 +1299,8 @@ async function studio_build() {
   try {
     const body = {
       clips: studio_ordered().map(c => c.path), style: studio.style, song: studio.song,
-      format: studio.fmt, name: studio_el('studio-name').value.trim()
+      format: studio.fmt, name: studio_el('studio-name').value.trim(),
+      template: studio_template()
     };
     if (studio.song && studio.songShape && studio.mk.mode === 'part' && studio.mk.end > studio.mk.start) {
       body.part_start = studio.mk.start;
@@ -1793,7 +2047,17 @@ function studio_wire() {
     else if (act === 'studio-preview-close' || act === 'studio-make-cancel') studio_closeModals();
     else if (act === 'studio-clear') { studio.selected = []; studio.adding = null; studio_syncSelection(); }
     else if (act === 'studio-make') studio_openMake();
-    else if (act === 'studio-style') { studio.style = b.getAttribute('data-style'); studio_renderStyles(); }
+    else if (act === 'studio-style') {
+      /* A style is a template: taking one drops the picks dealt over the last. */
+      studio.style = b.getAttribute('data-style');
+      studio.picks = null;
+      studio_renderStyles(); studio_hand(); studio_binDraw();
+    }
+    else if (act === 'studio-bin-pick') studio_binPick(b.getAttribute('data-kind'), b.getAttribute('data-part'));
+    else if (act === 'studio-hand-next') studio_handNext(b.getAttribute('data-kind'));
+    else if (act === 'studio-deal') studio_deal();
+    else if (act === 'studio-deal-reset') studio_dealReset();
+    else if (act === 'studio-bin-build') studio_binBuild();
     else if (act === 'studio-song') studio_pickSong();
     else if (act === 'studio-nosong') {
       studio.song = ''; studio.songShape = null;
@@ -1903,6 +2167,13 @@ function studio_wire() {
     else if (act === 'studio-sg-apply') studio_sgApply(false);
   });
   document.addEventListener('change', studio_inspectorInput);
+  document.addEventListener('change', e => {
+    const b = e.target && e.target.closest ? e.target.closest('[data-act="studio-bin-slot"]') : null;
+    if (!b) return;
+    studio.binOn = studio.binOn || {};
+    studio.binOn[b.getAttribute('data-kind')] = b.checked;
+    studio_binSlots();
+  });
   const mkw = studio_el('studio-mk-wave');
   if (mkw) ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(ev => mkw.addEventListener(ev, studio_mkPointer));
   const mka = studio_el('studio-mk-audio');

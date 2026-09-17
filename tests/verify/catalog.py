@@ -356,6 +356,18 @@ CONTROLS: list[Control] = [
             query="path=", expect=_has("ok"), acts=("studio-open",),
             why="a blank path is refused with ok:false; a reel outside the "
                 "reels folder is refused the same way"),
+    Control("/api/studio/examples", "GET", CALL, "the parts bin", "studio",
+            expect=_has("ok", "examples", "missing"),
+            why="every part the reel maker can use, and the example cut for it "
+                "from this machine's own clips; a fresh install has none yet"),
+    Control("/api/studio/example", "GET", CALL, "one part's example", "studio",
+            query="id=", status=(400,), expect=_has("error"),
+            why="only ever a file in the examples folder, named after a part "
+                "the catalog knows; anything else is refused"),
+    Control("/api/studio/examples/build", "POST", CALL, "cut the examples again", "studio",
+            body={}, expect=_has("ok", "build"), acts=("studio-bin-build",),
+            why="renders the missing examples from the player's own clips in "
+                "the background, so the page can watch it"),
     Control("/api/studio/thumb", "GET", CALL, "library thumbnail", "studio",
             query="path=", status=(400,), expect=_has("error"),
             why="only ever a clip inside the clips folder; a blank path must "
@@ -437,6 +449,11 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-make-cancel": "closes the make-a-reel dialog",
     "studio-preview-close": "closes the clip preview",
     "studio-style": "chooses a style in the dialog; sent with Build",
+    "studio-bin-pick": "puts one part of the bin in the template; sent with Build",
+    "studio-hand-next": "steps a drawer of the dealt template to its next part",
+    "studio-deal": "deals a random part from every drawer; sent with Build",
+    "studio-deal-reset": "drops the dealt parts back to the style's own",
+    "studio-bin-slot": "ticks a drawer in and out of the how-many-reels count",
     "studio-nosong": "clears the chosen song in the dialog",
     "studio-fmt": "chooses landscape or vertical in the dialog; sent with Build",
     "studio-order": "chooses the clip order in the dialog; sent with Build",
