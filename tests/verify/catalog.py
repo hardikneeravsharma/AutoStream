@@ -356,6 +356,36 @@ CONTROLS: list[Control] = [
             query="path=", expect=_has("ok"), acts=("studio-open",),
             why="a blank path is refused with ok:false; a reel outside the "
                 "reels folder is refused the same way"),
+    Control("/api/studio/songs", "GET", CALL, "songs already downloaded", "studio",
+            expect=_has("ok", "songs"), acts=("studio-sg-song",),
+            why="what the song picker lists, so a song can be chosen without a "
+                "file dialog; an empty songs folder is an empty list"),
+    Control("/api/studio/songview", "GET", CALL, "ways of seeing a song", "studio",
+            query="song=", expect=_has("ok"),
+            why="loudness, the three bands, onset strength and a spectrogram, "
+                "with the kills the detector would cut to; only ever a file in "
+                "the songs folder"),
+    Control("/api/studio/songview.bin", "GET", CALL, "the lanes themselves", "studio",
+            query="song=", status=(400,), expect=_has("error"),
+            why="the bytes the page draws from; a song outside the songs "
+                "folder is refused"),
+    Control("/api/studio/favourite", "POST", CALL, "star a clip", "studio",
+            body={"paths": []}, expect=_has("ok"),
+            acts=("studio-fav", "studio-fav-selected"),
+            why="a star is kept by clip id in the clips folder's own cache, so "
+                "it survives a run being cut again; no paths is refused"),
+    Control("/api/studio/examples", "GET", CALL, "the parts bin", "studio",
+            expect=_has("ok", "examples", "missing"),
+            why="every part the reel maker can use, and the example cut for it "
+                "from this machine's own clips; a fresh install has none yet"),
+    Control("/api/studio/example", "GET", CALL, "one part's example", "studio",
+            query="id=", status=(400,), expect=_has("error"),
+            why="only ever a file in the examples folder, named after a part "
+                "the catalog knows; anything else is refused"),
+    Control("/api/studio/examples/build", "POST", CALL, "cut the examples again", "studio",
+            body={}, expect=_has("ok", "build"), acts=("studio-bin-build",),
+            why="renders the missing examples from the player's own clips in "
+                "the background, so the page can watch it"),
     Control("/api/studio/thumb", "GET", CALL, "library thumbnail", "studio",
             query="path=", status=(400,), expect=_has("error"),
             why="only ever a clip inside the clips folder; a blank path must "
@@ -437,6 +467,13 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-make-cancel": "closes the make-a-reel dialog",
     "studio-preview-close": "closes the clip preview",
     "studio-style": "chooses a style in the dialog; sent with Build",
+    "studio-bin-pick": "puts one part of the bin in the template; sent with Build",
+    "studio-hand-next": "steps a drawer of the dealt template to its next part",
+    "studio-deal": "deals a random part from every drawer; sent with Build",
+    "studio-deal-reset": "drops the dealt parts back to the style's own",
+    "studio-bin-slot": "ticks a drawer in and out of the how-many-reels count",
+    "studio-sg-win": "zooms the song's lanes",
+    "studio-sg-lane": "shows or hides one way of seeing the song",
     "studio-nosong": "clears the chosen song in the dialog",
     "studio-fmt": "chooses landscape or vertical in the dialog; sent with Build",
     "studio-order": "chooses the clip order in the dialog; sent with Build",

@@ -42,7 +42,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import beatsync as bs
+from . import beatsync as bs, hits as hits_mod
 
 log = logging.getLogger("autostream.clips.reel")
 
@@ -77,6 +77,13 @@ class Shape:
     beats: list[float] = field(default_factory=list)
     peaks: list[float] = field(default_factory=list)   # for drawing a waveform
     onsets: list[float] = field(default_factory=list)  # for snapping a tap
+    # WHERE THE SONG HITS -- see clips/hits.py. The grid above says where the
+    # beats are; these say which moments a kill belongs on, which is not the
+    # same thing and is what 662 hand-marked kills actually landed on.
+    hits: list[float] = field(default_factory=list)
+    hit_strength: list[float] = field(default_factory=list)
+    big: list[float] = field(default_factory=list)
+    pattern: str = ""           # "bass hits", or the band whose bar figure it is
 
     @property
     def beat(self) -> float:
@@ -123,6 +130,9 @@ class Shape:
             "drums_in": round(self.drums_in, 3) if self.drums_in else None,
             "beats": [round(b, 4) for b in self.beats],
             "peaks": self.peaks, "onsets": self.onsets,
+            "hits": [round(h, 4) for h in self.hits],
+            "hit_strength": [round(s, 3) for s in self.hit_strength],
+            "big": [round(b, 4) for b in self.big], "pattern": self.pattern,
         }
 
 
@@ -235,6 +245,9 @@ def analyse(path: Path, seconds: float = 0.0, points: int = 2000) -> Shape:
     onsets = [round(i * hop_s, 4) for i in range(1, len(e) - 1)
               if e[i] > thr and e[i] >= e[i - 1] and e[i] > e[i + 1]]
 
+    found, strength, pattern = hits_mod.song_hits(x, 60.0 / bpm if bpm else 0.0, total)
+    big, _rises = hits_mod.big_hits(x, found)
+
     shape = Shape(
         path=path, seconds=total, bpm=bpm, phase=phase,
         downbeat_pos=downbeat_position(x, beats),
@@ -243,9 +256,12 @@ def analyse(path: Path, seconds: float = 0.0, points: int = 2000) -> Shape:
         beats=beats,
         peaks=[round(v / top, 3) for v in raw[:points]],
         onsets=onsets,
+        hits=found, hit_strength=strength, big=big, pattern=pattern,
     )
-    log.info("reel: %s is %.2f BPM, downbeat at position %d, drums in at %s, "
-             "drop at %s", path.name, shape.bpm, shape.downbeat_pos,
+    log.info("reel: %s is %.2f BPM, %d %s (%d big), downbeat at position %d, "
+             "drums in at %s, drop at %s", path.name, shape.bpm, len(shape.hits),
+             shape.pattern or "hit(s)", len(shape.big),
+             shape.downbeat_pos,
              f"{shape.drums_in:.2f}s" if shape.drums_in else "the start",
              f"{shape.drop:.2f}s" if shape.drop else "no drop found")
     return shape

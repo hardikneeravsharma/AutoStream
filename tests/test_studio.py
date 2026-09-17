@@ -61,6 +61,8 @@ class Shape:
     drums_in: float | None = None
     downbeat_pos: int = 0
     beats: list = field(default_factory=list)
+    hits: list = field(default_factory=list)      # bass hits, song seconds
+    big: list = field(default_factory=list)
 
     @property
     def beat(self) -> float:
@@ -214,11 +216,73 @@ def test_without_a_song_the_reel_is_cut_to_120_bpm(root):
     assert proj["song"] == "" and proj["song_offset"] == 0.0
 
 
-def test_the_reel_never_outlasts_the_song(root):
-    clips = _clips(root) * 10
-    proj, notes = studio.plan(clips, "story", shape=Shape(bpm=120.0, seconds=30.0), song="s.mp3")
+def test_the_reel_never_outlasts_the_song(tmp_path):
+    r = tmp_path / "clips"
+    _run(r, "2026-09-01_1200_VALORANT", "VALORANT",
+         [{"start": 100.0 * i, "end": 100.0 * i + 12} for i in range(1, 25)],
+         kills=[100.0 * i + 6 for i in range(1, 25)])
+    proj, notes = studio.plan(_clips(r), "story", shape=Shape(bpm=120.0, seconds=30.0), song="s.mp3")
     assert sum(s["duration"] for s in proj["shots"]) <= 30.0
     assert any("song ends" in n for n in notes)
+
+
+# ------------------------------------------------- kills on the song's hits
+
+def _song(hits_from: float = 1.0, gap: float = 0.5, seconds: float = 240.0,
+          big: list | None = None, **kw) -> Shape:
+    n = int((seconds - hits_from) / gap)
+    return Shape(seconds=seconds, hits=[hits_from + gap * i for i in range(n)],
+                 big=big if big is not None else [], **kw)
+
+
+def test_every_kill_lands_on_a_bass_hit(root):
+    shape = _song()
+    proj, notes = studio.plan(_clips(root), "montage", shape=shape, song="s.mp3")
+    off = proj["song_offset"]
+    t = 0.0
+    for s in proj["shots"]:
+        kill = t + s["pre"] + off
+        assert min(abs(kill - h) for h in shape.hits) <= 1.0 / studio.FPS,             f"a kill at {kill:.3f} s is on no hit"
+        t += s["duration"]
+    assert any("bass hits" in n for n in notes)
+
+
+def test_the_first_kill_waits_for_the_song_to_start(root):
+    """Skechers has no drums until 18 s and the player marked no kill before
+    19.5; a story reel opened at the first beat and cut its first kill at 7 s."""
+    shape = _song(hits_from=0.5, drums_in=18.0, big=[19.5, 40.0])
+    proj, _ = studio.plan(_clips(root), "story", shape=shape, song="s.mp3")
+    first = proj["song_offset"] + proj["shots"][0]["pre"]
+    assert first == pytest.approx(19.5, abs=0.02)
+    assert proj["song_offset"] > 0
+
+
+def test_a_fast_style_cuts_more_of_the_same_song(root):
+    """The player's rule: hype and velocity cut rapidly, story and montage
+    leave the kills further apart -- on the same song."""
+    shape = _song()
+    gaps = {}
+    for style in ("story", "hype"):
+        proj, _ = studio.plan(_clips(root), style, shape=shape, song="s.mp3")
+        kills, t = [], 0.0
+        for s in proj["shots"]:
+            kills.append(t + s["pre"])
+            t += s["duration"]
+        gaps[style] = sorted(b - a for a, b in zip(kills, kills[1:]))[len(kills) // 2]
+    assert gaps["story"] > gaps["hype"] * 1.5, gaps
+
+
+def test_the_same_clip_twice_is_one_clip(root):
+    """The rebuild-in-another-style button sent the timeline's shots back as
+    the clip list, so a clip in nine shots arrived nine times and filled the
+    reel with itself while the clips asked for once were left out."""
+    clips = _clips(root)
+    proj, _ = studio.plan(clips * 3, "story", shape=Shape(bpm=120.0))
+    once, _ = studio.plan(clips, "story", shape=Shape(bpm=120.0))
+    assert [s["clip"] for s in proj["shots"]] == [s["clip"] for s in once["shots"]]
+    seen = [(s["clip"], s["kill"]) for s in proj["shots"]]
+    assert len(seen) == len(set(seen)), "the same kill is in the reel twice"
+    assert len(proj["selection"]) == len(clips)
 
 
 # ------------------------------------------------------------------ checking

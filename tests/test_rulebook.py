@@ -38,12 +38,21 @@ def test_a_kill_with_no_footage_before_it_is_not_a_moment():
     assert ms[0].caption == ""                  # one kill left to show is not a double
 
 
-def test_the_reel_is_whole_phrases_near_the_formats_length():
+def test_the_reel_is_whole_phrases_long_enough_to_hold_the_clips():
+    """Whole 8-bar phrases: as many as the picked clips need, up to the cap."""
     beat = 60 / 82.81
+    phrase = rb.PHRASE_BARS * 4 * beat
+    # More material than any reel may run: the longest whole phrases that fit.
     s = rb.phrase_seconds(beat, "landscape", available=300.0)
-    assert s == pytest.approx(64 * beat)        # 16 bars, 46.4 s
+    assert s == pytest.approx(3 * phrase) and s <= rb.MAX_SECONDS["landscape"]
     assert rb.phrase_seconds(beat, "vertical", available=300.0) <= s
+    # Enough for two phrases and a bit: the reel holds it all, rounded up.
+    s2 = rb.phrase_seconds(beat, "landscape", available=2.2 * phrase)
+    assert s2 == pytest.approx(3 * phrase)
+    # Less than one phrase is as long as the material, and an asked-for length
+    # is still the length asked for.
     assert rb.phrase_seconds(beat, "landscape", available=10.0) == 10.0
+    assert rb.phrase_seconds(beat, "landscape", available=300.0, want=30.0) == pytest.approx(phrase)
 
 
 def test_a_sequence_is_taken_whole_or_not_at_all():

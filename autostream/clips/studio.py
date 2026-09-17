@@ -66,11 +66,12 @@ import tempfile
 import threading
 import time
 import zlib
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import rulebook, studio_refs
+from . import hits as hits_mod, rulebook, studio_refs
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +120,41 @@ def clip_id(path: str | Path) -> str:
     return hashlib.sha1(str(path).lower().encode("utf-8")).hexdigest()[:12]
 
 
+# FAVOURITES. Kept beside the clips rather than inside each run's clips.json:
+# that file is written by the clip job, and a re-cut of a recording rewrites it
+# whole. A star has to survive that, and survive a clip being renamed by the
+# player, so it is stored by clip id -- the hash of the path clip_id() makes --
+# in the clips folder's own cache.
+FAV_FILE = "favourites.json"
+
+
+def _fav_path(root: Path) -> Path:
+    return Path(root) / CACHE_DIR / FAV_FILE
+
+
+def favourites(root: Path) -> set[str]:
+    """The clip ids the player has starred."""
+    got = _read_json(_fav_path(root))
+    if isinstance(got, dict):
+        got = got.get("clips")
+    return {str(x) for x in got} if isinstance(got, list) else set()
+
+
+def set_favourite(root: Path, paths: list[str], on: bool = True) -> dict:
+    """Star or unstar clips, by path. -> {ok, favourites: [ids], changed: n}"""
+    root = Path(root)
+    have = favourites(root)
+    before = len(have)
+    ids = {clip_id(p) for p in paths if str(p).strip()}
+    have = (have | ids) if on else (have - ids)
+    f = _fav_path(root)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"clips": sorted(have)}, indent=1), encoding="utf-8")
+    tmp.replace(f)
+    return {"ok": True, "favourites": sorted(have), "changed": abs(len(have) - before)}
+
+
 def library(root: Path) -> dict:
     """Every clip under the clips folder, by game and then by run folder.
 
@@ -128,6 +164,8 @@ def library(root: Path) -> dict:
     """
     games: dict[str, dict] = {}
     total = 0
+    starred = favourites(root)
+    fav_count = 0
     try:
         folders = [f for f in root.iterdir() if f.is_dir()]
     except OSError:
@@ -183,9 +221,12 @@ def library(root: Path) -> dict:
                 mtime = int(master.stat().st_mtime)
             except OSError:
                 mtime = 0
+            cid = clip_id(master)
+            fav_count += cid in starred
             clips.append({
                 "mtime": mtime,
-                "id": clip_id(master),
+                "id": cid,
+                "fav": cid in starred,
                 "name": str(c.get("name") or master.stem),
                 "path": str(master),
                 "vertical": str(vert) if vert.is_file() else "",
@@ -217,7 +258,7 @@ def library(root: Path) -> dict:
     for g in out:
         g["folders"].sort(key=lambda f: -f["when"])
     return {"ok": True, "root": str(root), "clip_count": total, "games": out,
-            "reels": reels(root)}
+            "fav_count": fav_count, "reels": reels(root)}
 
 
 def reels(root: Path) -> list[dict]:
@@ -271,6 +312,7 @@ def delete_clips(root: Path, paths: list[str], *, dry_run: bool = False) -> dict
     root_r = root.resolve()
     want = {_key(p) for p in paths if str(p).strip()}
     found: set[str] = set()
+    gone: list[Path] = []
     runs: list[tuple[Path, Any, list[tuple[dict, list[Path]]]]] = []
     total = 0
     try:
@@ -295,6 +337,7 @@ def delete_clips(root: Path, paths: list[str], *, dry_run: bool = False) -> dict
             if not master.name or _key(master) not in want:
                 continue
             found.add(_key(master))
+            gone.append(master)
             files = []
             for f in (master, Path(str(row.get("vertical") or ""))):
                 try:
@@ -347,6 +390,10 @@ def delete_clips(root: Path, paths: list[str], *, dry_run: bool = False) -> dict
         except OSError as e:
             out["errors"].append(f"{man_path.parent.name}/clips.json: {e}")
     out["bytes"] = freed
+    # A star for a clip that is gone is dead weight in the file, and would come
+    # back to life if a clip were ever cut to the same path again.
+    if gone:
+        set_favourite(root, [str(m) for m in gone], on=False)
     log.info("deleted %d clip(s) from the clips folder, %.1f MB freed%s", out["clips"], freed / 1e6,
              f"; {len(out['errors'])} could not be removed" if out["errors"] else "")
     return out
@@ -422,6 +469,9 @@ PARTS: tuple[Part, ...] = (
     Part("g08", "grade", "Neon pop", "Colour pushed toward neon."),
     Part("g09", "grade", "Faded film", "Lifted blacks and soft highlights."),
 
+    # The drawer needs its empty card too: a template picks one part from
+    # every drawer, and most reels carry no overlay at all.
+    Part("o00", "overlay", "No overlay", "Nothing over the picture."),
     Part("o01", "overlay", "Cinematic bars", "Black bars top and bottom (landscape only)."),
     Part("o02", "overlay", "Kill counter", "A running count ticks up with each kill."),
     Part("o04", "overlay", "Film grain", "Fine moving grain over the whole reel."),
@@ -440,6 +490,75 @@ KINDS = ("intro", "transition", "kill", "hero", "speed", "camera", "grade", "ove
 
 def ids_of(kind: str) -> list[str]:
     return [p.id for p in PARTS if p.kind == kind]
+
+
+# A TEMPLATE IS ONE PICK FROM EVERY DRAWER. That is all a style is, so a
+# template is a style with its picks replaced -- everything downstream (the
+# effect mix, the flash budget, the climax) then works exactly as it does for
+# a built-in style, and the reel maker can show the player each pick with its
+# own example playing beside it.
+DRAWERS: tuple[str, ...] = ("intro", "transition", "kill", "hero", "camera",
+                            "speed", "grade", "overlay", "outro")
+
+
+def _leads(pick: str, pool: tuple) -> tuple:
+    """`pick` first and twice as likely, with the style's own pool behind it.
+
+    A drawer that is picked is not a drawer emptied. The kill, transition and
+    hero drawers are drawn from once per SHOT, and a pool of one put the same
+    effect on every kill in a row -- which the reference edits never do and
+    rulebook.budget exists to prevent. Listing a part twice is how a pool says
+    "mostly this" (see Style.kill_pool).
+    """
+    # Distinct, because a style already lists a part twice to make it likelier
+    # and that would dilute the pick against its own drawer.
+    rest = tuple(dict.fromkeys(p for p in (pool or ()) if p != pick))
+    # Twice as likely as anything else, and the style's own parts still behind
+    # it. Not the pick alone, and not the pick against ONE alternate either:
+    # _vary refuses to repeat the last two kill effects, so a pool of two runs
+    # out of fresh choices and starts repeating anyway (k06 k01 k06 k06 k01).
+    return (pick,) * max(2, len(rest)) + rest
+
+
+def templated(style: "Style", picks: dict) -> "Style":
+    """`style` with the picks a template makes. Unknown ids are ignored."""
+    swap: dict = {}
+    for kind in DRAWERS:
+        pick = str((picks or {}).get(kind) or "").strip()
+        if not pick or pick not in ids_of(kind):
+            continue
+        if kind == "intro":
+            swap["intro"] = pick
+        elif kind == "outro":
+            swap["outro"] = pick
+        elif kind == "grade":
+            swap["grade"] = pick
+        elif kind == "overlay":
+            swap["overlays"] = () if pick in ("o00", "") else (pick,)
+        elif kind == "transition":
+            swap["cuts"] = (pick,)
+            swap["transition_pool"] = _leads(pick, style.transition_pool)
+        elif kind == "kill":
+            swap["kill"] = (pick,)
+            swap["kill_pool"] = _leads(pick, style.kill_pool)
+        elif kind == "hero":
+            swap["hero"] = (pick,)
+            swap["hero_pool"] = _leads(pick, style.hero_pool)
+        elif kind == "camera":
+            swap["camera"] = pick
+            swap["camera_pool"] = (pick,)
+        elif kind == "speed":
+            swap["speed"] = pick
+            swap["speed_pool"] = (pick,)
+    return dataclasses.replace(style, **swap) if swap else style
+
+
+def picks_of(style: "Style") -> dict:
+    """The template a style already is: one pick per drawer."""
+    return {"intro": style.intro, "outro": style.outro, "grade": style.grade,
+            "overlay": (style.overlays or ("o00",))[0],
+            "transition": (style.cuts or ("t01",))[0], "kill": (style.kill or ("k01",))[0],
+            "hero": (style.hero or ("h01",))[0], "camera": style.camera, "speed": style.speed}
 
 
 XFADE = {"t02": "fadewhite", "t03": "fadeblack", "t04": "fade", "t05": "zoomin",
@@ -556,7 +675,7 @@ def catalog() -> dict:
     return {
         "ok": True,
         "parts": [p.__dict__ for p in PARTS],
-        "kinds": list(KINDS),
+        "kinds": list(KINDS), "drawers": list(DRAWERS),
         "styles": [{"key": s.key, "label": s.label, "blurb": s.blurb,
                     "measured": studio_refs.summary(s.refs),
                     "defaults": {"intro": s.intro, "outro": s.outro, "cuts": list(s.cuts),
@@ -564,7 +683,10 @@ def catalog() -> dict:
                                  "hero_speed": s.hero_speed, "camera": s.camera,
                                  "grade": s.grade, "vignette": s.vignette,
                                  "overlays": list(s.overlays)},
-                    "pools": _style_pools(s), "energy": s.energy}
+                    "pools": _style_pools(s), "energy": s.energy,
+                    # The template this style already is: one pick per drawer,
+                    # which the parts bin shows with an example each.
+                    "picks": picks_of(s)}
                    for s in STYLES],
         "default_style": DEFAULT_STYLE,
     }
@@ -597,6 +719,10 @@ class Grid:
     bpm: float = NO_SONG_BPM
     downbeat_pos: int = 0
     peaks: list[float] = field(default_factory=list)   # the song's loudness envelope
+    hits: list[float] = field(default_factory=list)    # where the song hits, song seconds
+    hit_strength: list[float] = field(default_factory=list)
+    big: list[float] = field(default_factory=list)     # the strongest of them
+    pattern: str = ""                                  # what those hits are
 
     @classmethod
     def none(cls) -> "Grid":
@@ -607,7 +733,11 @@ class Grid:
         return cls(beat=shape.beat, beats=list(shape.beats), drop=shape.drop,
                    drums_in=shape.drums_in, seconds=shape.seconds, bpm=shape.bpm,
                    downbeat_pos=getattr(shape, "downbeat_pos", 0),
-                   peaks=list(getattr(shape, "peaks", None) or []))
+                   peaks=list(getattr(shape, "peaks", None) or []),
+                   hits=list(getattr(shape, "hits", None) or []),
+                   hit_strength=list(getattr(shape, "hit_strength", None) or []),
+                   big=list(getattr(shape, "big", None) or []),
+                   pattern=str(getattr(shape, "pattern", "") or ""))
 
     def index_at_or_after(self, t: float) -> int:
         for i, b in enumerate(self.beats):
@@ -707,11 +837,49 @@ def _choose_offset(grid: Grid, first_kill_reel: float, style: Style,
     return grid.beats[max(0, i - back)]
 
 
+def _first_kill(hits: list[float], big: list[float], *, earliest: float,
+                drums_in: float = 0.0) -> float:
+    """Where the reel's first kill belongs in the song.
+
+    On the first BIG hit the song has to offer -- the first strong bass hit
+    after a quiet stretch, which is where the player's own marks start. Before
+    this, a story reel began at the song's first beat and put its opening kill
+    7 s in, over an intro of Skechers that has no drums until 18 s and where
+    the player marked no kills at all until 19.5.
+    """
+    want = max(earliest, drums_in)
+    for t in big:
+        if t >= want - 1e-6:
+            return t
+    for t in hits:
+        if t >= want - 1e-6:
+            return t
+    return want
+
+
+def _hit_slots(hits: list[float], strengths: list[float], *, first: float, end: float,
+               gap: float, count: int) -> list[float]:
+    """The song times this reel's kills land on: `count` of them from `first`."""
+    keep = [i for i, t in enumerate(hits) if first - 1e-6 <= t <= end + 1e-6]
+    if not keep:
+        return [first]
+    within = [hits[i] for i in keep]
+    strong = [strengths[i] for i in keep] if len(strengths) == len(hits) else None
+    kills, _accents = hits_mod.choose_kills(within, strong, target_gap=gap)
+    # The opener is not up for grabs: choose_kills takes the loudest hit in
+    # each window, and in the first window that is rarely the hit the reel was
+    # aimed at -- on Skechers it moved the first kill 2.4 s past the drop.
+    if kills and abs(kills[0] - first) > 1e-6:
+        kills = [first] + [k for k in kills if k >= first + hits_mod.WINDOW[0] * gap]
+    return kills[:count] if count else kills
+
+
 def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
          song: str = "", fmt: str = "landscape", name: str = "",
          max_seconds: float = 0.0, seed: int | None = None,
          measure=None, confirm=None, theirs=None,
-         part: tuple[float, float] | None = None) -> tuple[dict, list[str]]:
+         part: tuple[float, float] | None = None,
+         template: dict | None = None) -> tuple[dict, list[str]]:
     """Build a project from chosen clips. -> (project, notes)
 
     `measure(path, t0, t1)` -> how much the picture moves between two clip
@@ -729,6 +897,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     chose to cut to. See the PART OF THE SONG comment below.
     """
     style = STYLE.get(style_key) or STYLE[DEFAULT_STYLE]
+    if template:
+        style = templated(style, template)
     grid = Grid.of(shape) if shape is not None else Grid.none()
     notes: list[str] = []
     meas = studio_refs.summary(style.refs)
@@ -767,7 +937,22 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     open_beats = _pow2_beats(max(meas.get("first_shot") or 4.0, 2.0), beat, lo=2, hi=16)
     flash_share = min(0.9, (meas.get("flashes_per_min") or 0.0) / max(cpm, 1.0))
 
-    offered = [c for c in clips if c and c.get("path")]
+    # ONE ENTRY PER CLIP. Rebuilding a reel in another style sent the timeline's
+    # shots back as the clip list, so a clip used in nine shots arrived nine
+    # times, became nine sequences, and select() -- which ranks sequences --
+    # took the same footage again and again while the clips that were only
+    # asked for once were left out "to fit the reel's length". DRIPSKETCHERS1
+    # came out as 23 shots of 4 clips from a selection of 20.
+    offered = []
+    seen: set[str] = set()
+    for c in clips:
+        if not c or not c.get("path"):
+            continue
+        k = str(c["path"]).lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        offered.append(c)
     chosen = offered[:MAX_SHOTS]
     if len(offered) > MAX_SHOTS:
         notes.append(f"Only the first {MAX_SHOTS} clips were used.")
@@ -944,12 +1129,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         ("hero", style.hero_pool), ("camera", style.camera_pool), ("speed", style.speed_pool))}
     _vary(shots, pools, style, seed, "all")
     rulebook.budget(shots, pools)
-    starts_b = [0]
-    for x in lens[:-1]:
-        starts_b.append(starts_b[-1] + sum(x))
     clip_look = {m.clip["path"]: looks.get(m.group) for m in picked}
-    rulebook.transitions(shots, starts_b, first_kill_beat=lens[0][0] if lens else 0,
-                         looks=clip_look, pools=pools, flash_share=flash_share, beat=beat)
     def speed_ok(shot, speed):
         ps = pieces(speed, shot["duration"], shot["pre"])
         before = source_used(ps, shot["pre"])
@@ -1009,6 +1189,73 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         else:
             offset = _choose_offset(grid, shots[0]["pre"], style, None, energy, build)
     proj["song_offset"] = round(offset, 5) if song else 0.0
+
+    # KILLS ON THE SONG'S BASS HITS, AT THIS STYLE'S PACE.
+    #
+    # The beat grid says every beat is equal and one tempo covers the whole
+    # song; neither is true of the songs the player marked (MONTERO read as
+    # 71.9 BPM, its lines between the kicks). clips/hits.py finds the kicks
+    # themselves, and choose_kills thins them to the pace this style's own
+    # reference edits cut at -- 2.8 s for story, 1.1 s for hype -- so the same
+    # song gives a story reel a third of the cuts of a hype one.
+    #
+    # The shots, their order, their captions and their effects are all decided
+    # above exactly as before. This only moves the cuts, through apply_marks(),
+    # the same path the player's hand-made marks take.
+    if song and shots and grid.hits and not part_len:
+        floor = 0.0
+        first = _first_kill(grid.hits, grid.big, earliest=floor + run_b * beat,
+                            drums_in=grid.drums_in or 0.0)
+        if style.drop and grid.drop and len(shots) > 3:
+            # A drop reel's fourth kill lands ON the drop: the build is the
+            # three shots before it. With the kills on hits the opener moves
+            # to whichever hit puts the fourth slot on the drop's own hit.
+            gap = 60.0 / max(cpm, 1.0)
+            aim = min(grid.hits, key=lambda t: abs(t - grid.drop))
+            best = None
+            for c in grid.hits:
+                if not aim - 14.0 <= c <= aim:
+                    continue
+                s4 = _hit_slots(grid.hits, grid.hit_strength, first=c, end=aim + 1.0,
+                                gap=gap, count=4)
+                if len(s4) < 4:
+                    continue
+                d = abs(s4[3] - aim)
+                if best is None or d < best[0]:
+                    best = (d, c)
+            if best and best[0] < gap:
+                first = best[1]
+        offset = max(floor, first - shots[0]["pre"])
+        first = max(first, offset + shots[0]["pre"])
+    elif song and shots and grid.hits:
+        floor = part_start
+        first = _first_kill(grid.hits, [], earliest=floor + shots[0]["pre"])
+    if song and shots and grid.hits:
+        end = (part_start + part_len) if part_len else grid.seconds
+        slots = _hit_slots(grid.hits, grid.hit_strength, first=first, end=end,
+                           gap=60.0 / max(cpm, 1.0), count=len(shots))
+        proj["song_offset"] = round(offset, 5)
+        notes += apply_marks(proj, [t - offset for t in slots])
+        big_on = sum(1 for t in slots if any(abs(t - b) < 0.01 for b in grid.big))
+        what = grid.pattern or "bass hits"
+        notes.append(f"{len(slots)} kills land on the song's own {what}, a cut every "
+                     f"{60.0 / max(cpm, 1.0):.1f} s at {style.label}'s pace"
+                     + (f", {big_on} of them on a big hit" if big_on else "") + ".")
+        if len(slots) < len(shots):
+            notes.append(f"The song ran out of hits after {len(slots)} of {len(shots)} shots; "
+                         f"the rest follow at their own length.")
+    elif song and shots:
+        notes.append("This song has no bass hits to cut to, so the reel follows the beat grid.")
+
+    # THE CUTS ARE SETTLED, so now each one can be given its transition: which
+    # bar a cut falls on is only known once the shots have been fitted to their
+    # footage and moved onto the song's hits. Chosen from the planned lengths
+    # instead, a velocity reel's flashes sat at beats 13, 19, 25 and 31 -- six
+    # beats apart, on no bar line at all.
+    shots = proj["shots"]
+    starts_b = [int(round(t / beat)) for t in _starts(shots)]
+    rulebook.transitions(shots, starts_b, first_kill_beat=int(round(shots[0]["pre"] / beat)) if shots else 0,
+                         looks=clip_look, pools=pools, flash_share=flash_share, beat=beat)
     if style.drop and song and not grid.drop:
         notes.append("This song has no clear drop, so the reel is paced as a build without one.")
 

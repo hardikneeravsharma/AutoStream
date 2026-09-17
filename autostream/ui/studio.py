@@ -31,10 +31,7 @@ from __future__ import annotations
 STUDIO_HTML = r"""
 <div class="studio">
   <header class="studio-head">
-    <div class="studio-head-text">
-      <h2 class="studio-title">Make reels from everything you have clipped</h2>
-      <p class="muted" id="studio-sub">Reading your clips…</p>
-    </div>
+    <div class="studio-head-text"></div>
     <div class="seg" role="tablist" aria-label="Studio views">
       <button type="button" class="seg-btn is-active" role="tab" aria-selected="true"
               data-act="studio-tab" data-tab="clips" id="studio-tab-clips">Clips</button>
@@ -46,6 +43,24 @@ STUDIO_HTML = r"""
   </header>
 
   <section id="studio-pane-clips" aria-label="Clips">
+    <!-- THE PARTS BIN, AT THE TOP. A reel is one pick from each drawer; the
+         count says how many reels those drawers can make, which is the point
+         of picking rather than taking the same style every time. -->
+    <header class="bin-top">
+      <div class="bin-intro">
+        <p class="bin-eyebrow">Reel maker · parts bin</p>
+        <h1 class="bin-title">Pick the clips, deal a template</h1>
+        <p class="bin-lede">Every reel is a set of picks from a few drawers: how it opens, how shots meet,
+          what happens on a kill, how time bends, what colour it is, how it ends. Each pick below is shown
+          by an example cut from your own clips, so you choose by watching. Select clips, then make a reel.</p>
+        <p class="bin-lede" id="studio-sub">Reading your clips…</p>
+      </div>
+      <aside class="bin-calc" aria-label="How many templates">
+        <p class="bin-eyebrow">Mix and match</p>
+        <div class="bin-big" id="bin-total">—<small id="bin-total-note">counting the drawers</small></div>
+        <div class="bin-slots" id="bin-slots"></div>
+      </aside>
+    </header>
     <div class="studio-tools">
       <input class="input studio-search" id="studio-q" type="search"
              placeholder="Search clips, captions or runs" aria-label="Search clips">
@@ -55,12 +70,26 @@ STUDIO_HTML = r"""
     <div class="studio-reels" id="studio-reels"></div>
     <div id="studio-lib" class="studio-lib"></div>
     <p class="muted studio-empty hide" id="studio-empty"></p>
+
+    <section class="bin-sec" id="bin" aria-label="Parts bin">
+      <div class="bin-sec-head">
+        <h2>The drawers</h2><span class="count" id="bin-count"></span>
+        <p>One example each, cut from your own clips by the same code that renders the reel — so a card
+          shows what the reel will actually do. Click one to put it in the template you are dealing.</p>
+      </div>
+      <div class="bin-build">
+        <button type="button" class="btn btn-sm" data-act="studio-bin-build" id="bin-build">Cut the missing examples</button>
+        <span id="bin-build-msg"></span>
+      </div>
+      <div id="bin-drawers"></div>
+    </section>
     <div class="studio-tray hide" id="studio-tray" role="region" aria-label="Selection">
       <div class="studio-tray-text">
         <strong id="studio-tray-count">0 clips</strong>
         <span class="muted" id="studio-tray-facts"></span>
         <span class="studio-adding hide" id="studio-adding"></span>
       </div>
+      <button type="button" class="btn btn-ghost btn-sm" data-act="studio-fav-selected" id="studio-fav-btn">★ Favourite</button>
       <button type="button" class="btn btn-ghost btn-sm" data-act="studio-clear">Clear</button>
       <button type="button" class="btn btn-ghost btn-sm hide" data-act="studio-add-cancel" id="studio-add-cancel">Stop adding</button>
       <button type="button" class="btn btn-ghost btn-sm studio-del-btn" data-act="studio-delete">Delete…</button>
@@ -137,11 +166,34 @@ STUDIO_HTML = r"""
         <button type="button" class="btn btn-ghost" data-act="studio-sg-none">No song</button>
       </div>
     </div>
+    <!-- THE SONGS ALREADY HERE. Every song downloaded for a reel stays in
+         Videos\AutoStream\songs; picking one back out of a file dialog is
+         work the page can do. -->
+    <div class="studio-sg-songs" id="studio-sg-songs" role="group" aria-label="Songs you have"></div>
     <div class="studio-sg-body hide" id="studio-sg-body">
       <p class="field-label">The whole song — drag the highlighted part, or its edges</p>
       <canvas class="studio-sg-wave" id="studio-sg-overview" height="90" aria-label="Whole song"></canvas>
       <p class="field-label">The part you are using — click to move the playhead</p>
       <canvas class="studio-sg-wave studio-sg-detail" id="studio-sg-detail" height="130" aria-label="Chosen part"></canvas>
+      <!-- WAYS OF SEEING IT. A waveform shows loudness and nothing else; a
+           kill goes on a kick or a hat, and those are only visible once the
+           bands are separated (clips/songview.py). The detector's own kills
+           are drawn above them, so what it would cut to can be judged against
+           what is marked by hand. -->
+      <div class="studio-sg-viewbar" id="studio-sg-viewbar">
+        <span class="field-label">Show</span>
+        <div class="studio-sg-toggles" id="studio-sg-toggles"></div>
+        <span class="field-label">Zoom</span>
+        <span class="seg" role="group" aria-label="Zoom">
+          <button type="button" class="seg-btn" data-act="studio-sg-win" data-win="2">2 s</button>
+          <button type="button" class="seg-btn" data-act="studio-sg-win" data-win="4">4 s</button>
+          <button type="button" class="seg-btn is-active" data-act="studio-sg-win" data-win="8">8 s</button>
+          <button type="button" class="seg-btn" data-act="studio-sg-win" data-win="16">16 s</button>
+        </span>
+        <label class="studio-check"><input type="checkbox" id="studio-sg-showdet" checked> The detector's kills</label>
+        <span class="muted" id="studio-sg-detnote"></span>
+      </div>
+      <div class="studio-sg-lanes" id="studio-sg-lanes"></div>
       <audio id="studio-sg-audio" preload="auto"></audio>
       <div class="studio-tl-bar">
         <button type="button" class="btn btn-sm" data-act="studio-sg-play" id="studio-sg-play">Play the part</button>
@@ -206,6 +258,15 @@ STUDIO_HTML = r"""
       <p class="muted" id="studio-make-facts"></p>
       <h3 class="studio-h">Style</h3>
       <div class="studio-styles" id="studio-styles" role="radiogroup" aria-label="Style"></div>
+      <!-- THE TEMPLATE: what the style picked, shown part by part with its
+           example, and changeable one drawer at a time. -->
+      <h3 class="studio-h">Template</h3>
+      <div class="bin-dealer">
+        <button type="button" class="btn btn-sm" data-act="studio-deal">Deal a template</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-deal-reset">Back to the style's own</button>
+        <span class="bin-code" id="studio-deal-code"></span>
+      </div>
+      <div class="bin-hand" id="studio-hand"></div>
       <h3 class="studio-h">Song</h3>
       <div class="field-inline">
         <button type="button" class="btn" data-act="studio-song">Choose a song…</button>
@@ -334,6 +395,8 @@ STUDIO_JS = r"""
 const studio = {
   lib: null, catalog: null, loadedAt: 0,
   game: 'all', q: '', selected: [], lastClick: null,
+  examples: null, picks: null, binOn: null, binObs: null, binTimer: null,
+  sv: null, svShow: null, svWin: 8, songList: null,
   style: '', song: '', songShape: null, fmt: 'landscape', order: 'chosen',
   project: null, derived: null, notes: [], dirty: true, output: '', renderedAt: 0,
   sel: -1, pps: 60, snap: true, undo: [], checking: 0, checkTimer: null,
@@ -393,6 +456,7 @@ async function studio_load(force) {
     return;
   }
   studio.lib = lib; studio.loadedAt = Date.now(); studio.clipIndex = {};
+  studio_binLoad(force);
   lib.games.forEach(g => g.folders.forEach(f => f.clips.forEach(c => {
     c.game = g.game; c.folderLabel = f.label; c.when = f.when; studio.clipIndex[c.id] = c;
   })));
@@ -405,11 +469,12 @@ async function studio_load(force) {
 function studio_visible() {
   const q = studio.q.trim().toLowerCase();
   const out = [];
+  const favOnly = studio.game === 'fav';
   (studio.lib ? studio.lib.games : []).forEach(g => {
-    if (studio.game !== 'all' && g.game !== studio.game) return;
+    if (studio.game !== 'all' && !favOnly && g.game !== studio.game) return;
     g.folders.forEach(f => {
-      const clips = f.clips.filter(c => !q ||
-        (c.name + ' ' + c.caption + ' ' + f.label + ' ' + g.game).toLowerCase().indexOf(q) >= 0);
+      const clips = f.clips.filter(c => (!favOnly || c.fav) && (!q ||
+        (c.name + ' ' + c.caption + ' ' + f.label + ' ' + g.game).toLowerCase().indexOf(q) >= 0));
       if (clips.length) out.push({game: g.game, folder: f, clips: clips});
     });
   });
@@ -431,7 +496,12 @@ function studio_renderLib() {
     lib.clip_count + '</b></button>' +
     lib.games.map(g => '<button type="button" class="chip' + (studio.game === g.game ? ' is-on' : '') +
       '" data-act="studio-game" data-game="' + esc(g.game) + '" aria-pressed="' + (studio.game === g.game) +
-      '">' + esc(g.game) + ' <b>' + g.clips + '</b></button>').join('');
+      '">' + esc(g.game) + ' <b>' + g.clips + '</b></button>').join('') +
+    /* Favourites cut across games, so the chip sits apart from them. */
+    '<button type="button" class="chip studio-fav-chip' + (studio.game === 'fav' ? ' is-on' : '') +
+    '" data-act="studio-game" data-game="fav" aria-pressed="' + (studio.game === 'fav') + '"' +
+    ((lib.fav_count || 0) ? '' : ' disabled title="Star a clip with the star on its card"') +
+    '>\u2605 Favourites <b>' + (lib.fav_count || 0) + '</b></button>';
 
   const reels = lib.reels || [];
   studio_el('studio-reels').innerHTML = reels.length
@@ -485,6 +555,10 @@ function studio_tile(c, n) {
     '</button>' +
     '<div class="studio-clip-foot"><span class="truncate" title="' + esc(c.name) + '">' +
     esc(c.caption || c.name) + '</span>' +
+    '<button type="button" class="studio-star' + (c.fav ? ' is-on' : '') + '" data-act="studio-fav" data-clip="' +
+      esc(c.id) + '" title="' + (c.fav ? 'A favourite. Click to unstar.' : 'Mark as a favourite') +
+      '" aria-pressed="' + (c.fav ? 'true' : 'false') + '" aria-label="Favourite">' +
+      (c.fav ? '\u2605' : '\u2606') + '</button>' +
     '<button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="studio-preview" data-clip="' +
     esc(c.id) + '" aria-label="Play ' + esc(c.name) + '">' + icon('play') + '</button></div></div>';
 }
@@ -510,6 +584,7 @@ function studio_syncSelection() {
 }
 
 function studio_renderTray() {
+  studio_favLabel();
   const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
   studio_show('studio-tray', sel.length > 0);
   studio_el('studio-tray-count').textContent = sel.length + (sel.length === 1 ? ' clip' : ' clips');
@@ -607,6 +682,7 @@ async function studio_openMake() {
     }
   }
   studio_renderStyles();
+  studio_hand();
   studio_show('studio-make-scrim', true);
   studio_mkDefault();
 }
@@ -1032,6 +1108,260 @@ function studio_mkPointer(e) {
   studio_mkDraw();
 }
 
+/* =======================================================================
+   THE PARTS BIN
+   A reel is one pick from each drawer. Each pick is shown by a two-second
+   example cut from this machine's own clips (clips/examples.py), so a choice
+   is made by watching rather than by reading "k04 Freeze" in a list. The
+   examples play only while they are on screen: sixty looping videos at once
+   made the page stutter.
+   ======================================================================= */
+
+const BIN_DRAWERS = {intro: 'Opening', transition: 'Between shots', kill: 'On the kill',
+  hero: 'The big moment', camera: 'Camera', speed: 'Time', grade: 'Colour',
+  overlay: 'Overlay', outro: 'Ending'};
+
+function studio_binName(kind) { return BIN_DRAWERS[kind] || kind; }
+
+/* Play what is on screen, pause what is not. */
+function studio_binWatch() {
+  if (studio.binObs) studio.binObs.disconnect();
+  if (!('IntersectionObserver' in window)) return;
+  studio.binObs = new IntersectionObserver(function (es) {
+    es.forEach(function (e) {
+      const v = e.target;
+      if (e.isIntersecting) { const q = v.play(); if (q && q.catch) q.catch(function () {}); }
+      else v.pause();
+    });
+  }, {rootMargin: '150px'});
+  document.querySelectorAll('.bin-shot video').forEach(function (v) { studio.binObs.observe(v); });
+}
+
+function studio_binShot(id) {
+  const ex = (studio.examples && studio.examples.examples || {})[id];
+  const tag = '<span class="bin-tag">' + esc(id) + '</span>';
+  if (!ex) {
+    const none = studio.examples && (studio.examples.nothing || []).indexOf(id) >= 0;
+    return '<span class="bin-shot">' + tag + '<span class="bin-none">' +
+      (none ? 'nothing added' : 'no example yet') + '</span></span>';
+  }
+  const src = '/api/studio/example?k=' + encodeURIComponent(SHELL_K) +
+    '&id=' + encodeURIComponent(id) + '&v=' + (ex.when || 0);
+  const media = ex.type === 'image/gif'
+    ? '<img src="' + src + '" alt="" loading="lazy">'
+    : '<video src="' + src + '" muted loop playsinline preload="none" aria-hidden="true"></video>';
+  return '<span class="bin-shot">' + media + tag + '</span>';
+}
+
+function studio_binCard(p, on, act) {
+  return '<button type="button" class="bin-card' + (on ? ' is-on' : '') +
+    '" data-act="' + act + '" data-kind="' + esc(p.kind) + '" data-part="' + esc(p.id) + '"' +
+    ' aria-pressed="' + (on ? 'true' : 'false') + '">' + studio_binShot(p.id) +
+    '<span class="bin-meat"><span class="bin-name">' + esc(p.label || p.id) + '</span>' +
+    '<span class="bin-blurb">' + esc(p.blurb || '') + '</span></span></button>';
+}
+
+function studio_binDraw() {
+  const box = studio_el('bin-drawers');
+  if (!box || !studio.catalog) return;
+  const drawers = studio.catalog.drawers || Object.keys(BIN_DRAWERS);
+  const picks = studio_template();
+  box.innerHTML = drawers.map(function (kind) {
+    const parts = studio_parts(kind);
+    if (!parts.length) return '';
+    return '<section class="bin-sec bin-drawer">' +
+      '<div class="bin-sec-head"><h2>' + esc(studio_binName(kind)) + '</h2>' +
+      '<span class="count">' + parts.length + ' to pick from</span></div>' +
+      '<div class="bin-grid">' +
+      parts.map(function (p) { return studio_binCard(p, picks[kind] === p.id, 'studio-bin-pick'); }).join('') +
+      '</div></section>';
+  }).join('');
+  const ex = studio.examples || {};
+  const have = Object.keys(ex.examples || {}).length;
+  const miss = (ex.missing || []).length;
+  const c = studio_el('bin-count');
+  if (c) c.textContent = have + ' of ' + (have + miss) + ' cut from your own clips';
+  const b = studio_el('bin-build');
+  if (b) {
+    b.disabled = !miss;
+    b.textContent = miss ? 'Cut the ' + miss + ' missing example' + (miss === 1 ? '' : 's')
+      : 'Every part has an example';
+  }
+  studio_binSlots();
+  studio_binWatch();
+}
+
+/* HOW MANY REELS THESE DRAWERS MAKE: the point of picking. Four drawers of
+   ten parts each is ten thousand reels, not five styles. */
+function studio_binSlots() {
+  const box = studio_el('bin-slots');
+  if (!box || !studio.catalog) return;
+  const drawers = studio.catalog.drawers || [];
+  if (!studio.binOn) {
+    studio.binOn = {};
+    drawers.forEach(function (k) { studio.binOn[k] = true; });
+  }
+  box.innerHTML = drawers.map(function (k) {
+    return '<label class="bin-slot"><input type="checkbox" data-act="studio-bin-slot" data-kind="' +
+      esc(k) + '"' + (studio.binOn[k] ? ' checked' : '') + '> ' + esc(studio_binName(k)) +
+      ' <b>' + studio_parts(k).length + '</b></label>';
+  }).join('');
+  let total = 1, on = 0;
+  drawers.forEach(function (k) {
+    if (studio.binOn[k]) { total *= Math.max(1, studio_parts(k).length); on++; }
+  });
+  const big = studio_el('bin-total');
+  if (big && big.firstChild) big.firstChild.nodeValue = on ? total.toLocaleString() : '0';
+  const note = studio_el('bin-total-note');
+  if (note) {
+    note.textContent = on ? 'reels from ' + on + ' drawer' + (on === 1 ? '' : 's') + ', one pick each'
+      : 'tick a drawer to count it';
+  }
+}
+
+async function studio_binLoad(force) {
+  if (studio.examples && !force) { studio_binDraw(); return; }
+  const r = await API.get('/api/studio/examples');
+  if (!r || !r.ok) return;
+  studio.examples = r;
+  studio_binDraw();
+  if (r.build && r.build.state === 'running') studio_binPoll();
+}
+
+async function studio_binBuild() {
+  const msg = studio_el('bin-build-msg');
+  if (msg) msg.textContent = 'Starting…';
+  const r = await API.post('/api/studio/examples/build', {});
+  if (!r || !r.ok) { if (msg) msg.textContent = (r && r.error) || 'Could not start.'; return; }
+  const b = studio_el('bin-build');
+  if (b) b.disabled = true;
+  studio_binPoll();
+}
+
+function studio_binPoll() {
+  if (studio.binTimer) return;
+  studio.binTimer = setInterval(async function () {
+    const r = await API.get('/api/studio/examples');
+    if (!r || !r.ok) return;
+    const b = r.build || {};
+    const msg = studio_el('bin-build-msg');
+    if (msg) msg.textContent = b.message || '';
+    if (b.state === 'running') return;
+    clearInterval(studio.binTimer);
+    studio.binTimer = null;
+    studio.examples = r;
+    studio_binDraw();
+    studio_hand();
+  }, 1500);
+}
+
+/* ---------------------------------------------------------------- template */
+
+/* The picks in force: what the style chose, plus anything dealt or clicked. */
+function studio_template() {
+  const cat = studio.catalog;
+  const st = cat && (cat.styles || []).find(function (s) { return s.key === studio.style; });
+  return Object.assign({}, (st && st.picks) || {}, studio.picks || {});
+}
+
+function studio_hand() {
+  const box = studio_el('studio-hand');
+  if (!box || !studio.catalog) return;
+  const picks = studio_template();
+  const drawers = studio.catalog.drawers || [];
+  box.innerHTML = drawers.map(function (kind) {
+    const p = studio_part(picks[kind]) || {id: picks[kind] || '-', label: 'Nothing', kind: kind, blurb: ''};
+    return '<div class="bin-slotcard"><span class="bin-drawer-label">' + esc(studio_binName(kind)) +
+      '</span>' + studio_binCard(p, false, 'studio-hand-next') + '</div>';
+  }).join('');
+  const code = studio_el('studio-deal-code');
+  if (code) {
+    code.textContent = drawers.map(function (k) { return picks[k]; }).filter(Boolean).join(' · ');
+  }
+  studio_binWatch();
+}
+
+/* Deal: one part from each drawer, preferring ones with an example to show. */
+function studio_deal() {
+  const drawers = (studio.catalog && studio.catalog.drawers) || [];
+  const have = (studio.examples && studio.examples.examples) || {};
+  const picks = {};
+  drawers.forEach(function (k) {
+    const parts = studio_parts(k);
+    const shown = parts.filter(function (p) { return have[p.id]; });
+    const from = shown.length ? shown : parts;
+    if (from.length) picks[k] = from[Math.floor(Math.random() * from.length)].id;
+  });
+  studio.picks = picks;
+  studio_hand();
+  studio_binDraw();
+}
+
+function studio_dealReset() {
+  studio.picks = null;
+  studio_hand();
+  studio_binDraw();
+}
+
+/* Click a card in a drawer: that becomes the drawer's pick. */
+function studio_binPick(kind, part) {
+  studio.picks = Object.assign({}, studio_template());
+  studio.picks[kind] = part;
+  studio_hand();
+  studio_binDraw();
+}
+
+/* Click the card in the hand: step to the next part in that drawer. */
+function studio_handNext(kind) {
+  const parts = studio_parts(kind);
+  if (!parts.length) return;
+  const now = studio_template()[kind];
+  let i = -1;
+  parts.forEach(function (p, j) { if (p.id === now) i = j; });
+  studio_binPick(kind, parts[(i + 1) % parts.length].id);
+}
+
+/* ------------------------------------------------------------- favourites */
+
+/* The star is drawn from studio.lib, so it flips before the round trip and is
+   put back if the write fails -- the library is only re-read on Refresh. */
+async function studio_setFav(clips, on) {
+  if (!clips.length) return;
+  const ids = {};
+  clips.forEach(c => { ids[c.id] = true; c.fav = on; });
+  studio.lib.fav_count = Math.max(0, (studio.lib.fav_count || 0) + (on ? clips.length : -clips.length));
+  if (studio.game === 'fav' && !on) studio.selected = studio.selected.filter(id => !ids[id]);
+  studio_renderLib();
+  const r = await API.post('/api/studio/favourite', {paths: clips.map(c => c.path), on: on});
+  if (!r || !r.ok) {
+    clips.forEach(c => { c.fav = !on; });
+    studio.lib.fav_count = Math.max(0, (studio.lib.fav_count || 0) + (on ? -clips.length : clips.length));
+    studio_renderLib();
+    toast((r && r.error) || 'Could not save that favourite.', 'warn');
+  }
+}
+
+function studio_fav(id) {
+  const c = studio.clipIndex[id];
+  if (c) studio_setFav([c], !c.fav);
+}
+
+/* Star everything selected, or unstar it when it is all starred already. */
+function studio_favLabel() {
+  const b = studio_el('studio-fav-btn');
+  if (!b) return;
+  const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
+  const off = sel.length && sel.every(c => c.fav);
+  b.textContent = (off ? '\u2606 Unfavourite' : '\u2605 Favourite') +
+    (sel.length > 1 ? ' ' + sel.length : '');
+}
+
+function studio_favSelected() {
+  const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
+  if (!sel.length) return;
+  studio_setFav(sel, !sel.every(c => c.fav));
+}
+
 function studio_ordered() {
   const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
   if (studio.order === 'kills') return sel.slice().sort((a, b) => (b.kill_count || 1) - (a.kill_count || 1));
@@ -1046,7 +1376,11 @@ async function studio_build() {
   try {
     const body = {
       clips: studio_ordered().map(c => c.path), style: studio.style, song: studio.song,
-      format: studio.fmt, name: studio_el('studio-name').value.trim()
+      format: studio.fmt, name: studio_el('studio-name').value.trim(),
+      /* Only what was DEALT or CLICKED. Sending the style's own picks back
+         narrowed every drawer to the one part the style leads with, and a
+         montage came out with the same kill effect on all six kills. */
+      template: studio.picks || null
     };
     if (studio.song && studio.songShape && studio.mk.mode === 'part' && studio.mk.end > studio.mk.start) {
       body.part_start = studio.mk.start;
@@ -1793,7 +2127,22 @@ function studio_wire() {
     else if (act === 'studio-preview-close' || act === 'studio-make-cancel') studio_closeModals();
     else if (act === 'studio-clear') { studio.selected = []; studio.adding = null; studio_syncSelection(); }
     else if (act === 'studio-make') studio_openMake();
-    else if (act === 'studio-style') { studio.style = b.getAttribute('data-style'); studio_renderStyles(); }
+    else if (act === 'studio-style') {
+      /* A style is a template: taking one drops the picks dealt over the last. */
+      studio.style = b.getAttribute('data-style');
+      studio.picks = null;
+      studio_renderStyles(); studio_hand(); studio_binDraw();
+    }
+    else if (act === 'studio-sg-song') studio_sgUseSong(b.getAttribute('data-path'));
+    else if (act === 'studio-sg-win') studio_svWin(Number(b.getAttribute('data-win')) || 8);
+    else if (act === 'studio-sg-lane') studio_svToggle(b.getAttribute('data-lane'));
+    else if (act === 'studio-fav') studio_fav(b.getAttribute('data-clip'));
+    else if (act === 'studio-fav-selected') studio_favSelected();
+    else if (act === 'studio-bin-pick') studio_binPick(b.getAttribute('data-kind'), b.getAttribute('data-part'));
+    else if (act === 'studio-hand-next') studio_handNext(b.getAttribute('data-kind'));
+    else if (act === 'studio-deal') studio_deal();
+    else if (act === 'studio-deal-reset') studio_dealReset();
+    else if (act === 'studio-bin-build') studio_binBuild();
     else if (act === 'studio-song') studio_pickSong();
     else if (act === 'studio-nosong') {
       studio.song = ''; studio.songShape = null;
@@ -1903,6 +2252,13 @@ function studio_wire() {
     else if (act === 'studio-sg-apply') studio_sgApply(false);
   });
   document.addEventListener('change', studio_inspectorInput);
+  document.addEventListener('change', e => {
+    const b = e.target && e.target.closest ? e.target.closest('[data-act="studio-bin-slot"]') : null;
+    if (!b) return;
+    studio.binOn = studio.binOn || {};
+    studio.binOn[b.getAttribute('data-kind')] = b.checked;
+    studio_binSlots();
+  });
   const mkw = studio_el('studio-mk-wave');
   if (mkw) ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(ev => mkw.addEventListener(ev, studio_mkPointer));
   const mka = studio_el('studio-mk-audio');
@@ -1973,7 +2329,13 @@ async function studio_restyle() {
   if (btn) { btn.disabled = true; btn.textContent = 'Rebuilding…'; }
   try {
     const snapshot = JSON.stringify(p);
-    const r = await API.post('/api/studio/plan', {clips: p.shots.map(s => s.clip), style: key,
+    /* The clips this reel was made from, each once. Sending the timeline's
+       shots made a clip used in nine of them arrive nine times, and the
+       rebuild filled itself with that one clip. */
+    const from = (p.selection && p.selection.length) ? p.selection.map(x => x.clip) : p.shots.map(x => x.clip);
+    const clips = [];
+    from.forEach(c => { if (clips.indexOf(c) < 0) clips.push(c); });
+    const r = await API.post('/api/studio/plan', {clips: clips, style: key,
       song: p.song, format: p.format, name: p.name});
     if (!r || !r.ok) { toast((r && r.error) || 'Could not rebuild with that style.', 'warn'); return; }
     studio_pushUndo(snapshot);
@@ -2006,6 +2368,222 @@ async function studio_mix(what, announce) {
 
 /* ------------------------------------------------------------ the song */
 
+/* =======================================================================
+   WAYS OF SEEING THE SONG
+   The bands, the onsets and the spectrogram at 100 frames a second, drawn
+   straight from the bytes clips/songview.py sends (no signal processing in
+   the page), plus the kills clips/hits.py would cut to. A kill belongs on a
+   kick or a hat; neither is visible in a waveform.
+   ======================================================================= */
+
+const SG_LANES = [
+  {id: 'wave', h: 74, name: 'Waveform \u2014 the sound itself'},
+  {id: 'bands', h: 96, name: 'Kick \u00b7 snare \u00b7 hats \u2014 energy in three bands'},
+  {id: 'flux', h: 70, name: 'Onset strength \u2014 new sound arriving'},
+  {id: 'spec', h: 128, name: 'Spectrogram \u2014 every frequency over time'}
+];
+const SG_PAL = (function () {
+  /* magma-ish, so a spectrogram reads the way every other tool draws one */
+  const stops = [[0, 0, 4], [40, 11, 84], [101, 21, 110], [159, 42, 99], [212, 72, 66],
+                 [245, 125, 21], [252, 194, 71], [252, 253, 191]];
+  const out = new Uint8Array(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255 * (stops.length - 1), a = stops[Math.floor(t)], b = stops[Math.min(stops.length - 1, Math.ceil(t))];
+    const f = t - Math.floor(t);
+    for (let c = 0; c < 3; c++) out[i * 3 + c] = Math.round(a[c] + (b[c] - a[c]) * f);
+  }
+  return out;
+})();
+
+/* One CSS token, read fresh: the app's theme can change under the page. */
+function studio_tok(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#8894a5';
+}
+
+function studio_svLane(name) {
+  const m = studio.sv && studio.sv.meta;
+  if (!m || !studio.sv.bytes) return null;
+  const at = m.lanes[name];
+  return at ? studio.sv.bytes.subarray(at[0], at[0] + at[1]) : null;
+}
+
+async function studio_svLoad(song) {
+  if (!song) { studio.sv = null; studio_svBuild(); return; }
+  if (studio.sv && studio.sv.song === song) { studio_svBuild(); return; }
+  studio.sv = {song: song, meta: null, bytes: null, det: null};
+  studio_el('studio-sg-detnote').textContent = 'Reading the song\u2026';
+  const meta = await API.get('/api/studio/songview?song=' + encodeURIComponent(song));
+  if (!meta || !meta.ok) {
+    studio.sv = null;
+    studio_el('studio-sg-detnote').textContent = (meta && meta.error) || 'Could not read that song.';
+    studio_svBuild();
+    return;
+  }
+  const buf = await (await fetch('/api/studio/songview.bin?k=' + encodeURIComponent(SHELL_K) +
+    '&song=' + encodeURIComponent(song))).arrayBuffer();
+  if (!studio.sv || studio.sv.song !== song) return;
+  studio.sv.meta = meta;
+  studio.sv.bytes = new Uint8Array(buf);
+  studio.sv.det = meta.detected || null;
+  const d = studio.sv.det;
+  studio_el('studio-sg-detnote').textContent = d && d.kills.length
+    ? d.pattern + ': ' + d.kills.length + ' kills, ' + d.big.length + ' big'
+    : '';
+  studio_svBuild();
+}
+
+function studio_svBuild() {
+  const box = studio_el('studio-sg-lanes');
+  if (!box) return;
+  if (!studio.sv || !studio.sv.meta) { box.innerHTML = ''; studio_el('studio-sg-toggles').innerHTML = ''; return; }
+  studio.svShow = studio.svShow || {wave: true, bands: true, flux: false, spec: true};
+  studio_el('studio-sg-toggles').innerHTML = SG_LANES.map(l =>
+    '<button type="button" class="studio-sg-toggle" data-act="studio-sg-lane" data-lane="' + l.id +
+    '" aria-pressed="' + !!studio.svShow[l.id] + '">' + esc(l.name.split(' \u2014 ')[0]) + '</button>').join('');
+  box.innerHTML = SG_LANES.filter(l => studio.svShow[l.id]).map(l =>
+    '<div class="studio-sg-lane" data-lane="' + l.id + '"><canvas height="' + l.h +
+    '" style="height:' + l.h + 'px"></canvas><span class="name">' + esc(l.name) + '</span></div>').join('');
+  studio_svDraw();
+}
+
+function studio_svWindow() {
+  const sg = studio.sg;
+  const t = (sg && sg.at) || 0;
+  const w = studio.svWin || 8;
+  return {t0: t - w * 0.375, t1: t - w * 0.375 + w, w: w};
+}
+
+function studio_svDraw() {
+  if (!studio.sv || !studio.sv.meta) return;
+  const v = studio_svWindow();
+  document.querySelectorAll('#studio-sg-lanes .studio-sg-lane').forEach(el =>
+    studio_svLaneDraw(el.getAttribute('data-lane'), el.querySelector('canvas'), v));
+}
+
+function studio_svLaneDraw(id, c, v) {
+  const dpr = window.devicePixelRatio || 1;
+  const W = c.clientWidth, H = c.clientHeight;
+  if (!W || !H) return;
+  c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+  const x = c.getContext('2d');
+  x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  x.clearRect(0, 0, W, H);
+  const m = studio.sv.meta, fps = m.fps, pad = 18;
+  const X = t => (t - v.t0) / v.w * W;
+  const curve = (arr, colour, fill) => {
+    if (!arr) return;
+    x.strokeStyle = colour; x.fillStyle = colour; x.lineWidth = 1.5; x.beginPath();
+    for (let i = 0; i < W; i++) {
+      const k0 = Math.floor((v.t0 + i / W * v.w) * fps);
+      const k1 = Math.max(k0 + 1, Math.floor((v.t0 + (i + 1) / W * v.w) * fps));
+      let top = 0;
+      for (let k = Math.max(0, k0); k < Math.min(arr.length, k1); k++) if (arr[k] > top) top = arr[k];
+      const h = top / 255 * (H - pad - 5);
+      if (fill) x.fillRect(i, H - 3 - h, 1, h);
+      else if (i === 0) x.moveTo(i, H - 3 - h); else x.lineTo(i, H - 3 - h);
+    }
+    if (!fill) x.stroke();
+  };
+  if (id === 'wave') curve(studio_svLane('rms'), studio_tok('--accent'), true);
+  else if (id === 'flux') curve(studio_svLane('flux'), studio_tok('--ok'), true);
+  else if (id === 'bands') {
+    curve(studio_svLane('low'), '#ff8a5c', false);
+    curve(studio_svLane('mid'), studio_tok('--accent'), false);
+    curve(studio_svLane('high'), '#c98bff', false);
+  } else if (id === 'spec') {
+    const bins = m.spec_bins, sp = studio_svLane('spec'), f0 = Math.floor(v.t0 * fps);
+    const n = Math.max(1, Math.ceil(v.w * fps));
+    const img = x.createImageData(n, bins);
+    for (let i = 0; i < n; i++) {
+      const f = f0 + i;
+      for (let b = 0; b < bins; b++) {
+        const val = (f >= 0 && f < m.frames) ? sp[f * bins + b] : 0;
+        const o = ((bins - 1 - b) * n + i) * 4;
+        img.data[o] = SG_PAL[val * 3]; img.data[o + 1] = SG_PAL[val * 3 + 1];
+        img.data[o + 2] = SG_PAL[val * 3 + 2]; img.data[o + 3] = 255;
+      }
+    }
+    const off = document.createElement('canvas');
+    off.width = n; off.height = bins;
+    off.getContext('2d').putImageData(img, 0, 0);
+    x.imageSmoothingEnabled = false;
+    x.drawImage(off, 0, pad, W, H - pad);
+  }
+  /* the beat grid, so the song's own tempo can be compared with the hits */
+  const sh = studio.songShape;
+  if (sh && sh.beats) {
+    for (let i = 0; i < sh.beats.length; i++) {
+      const b = sh.beats[i];
+      if (b < v.t0 - 0.1 || b > v.t1 + 0.1) continue;
+      const down = (i % 4) === (sh.downbeat_pos || 0);
+      x.fillStyle = down ? studio_tok('--text-tertiary') : studio_tok('--border-subtle');
+      x.globalAlpha = id === 'spec' ? 0.55 : 1;
+      x.fillRect(X(b) - (down ? 1 : 0.5), pad, down ? 2 : 1, H - pad);
+      x.globalAlpha = 1;
+    }
+  }
+  /* what the detector would cut to, in the strip above the view */
+  const det = studio.sv.det;
+  if (det && studio_el('studio-sg-showdet').checked) {
+    const big = new Set(det.big);
+    x.fillStyle = '#1f7a72';
+    det.accents.forEach(t => { if (t >= v.t0 && t <= v.t1) x.fillRect(X(t) - 0.5, pad - 5, 1, 5); });
+    det.kills.forEach(t => {
+      if (t < v.t0 || t > v.t1) return;
+      const isBig = big.has(t), px = X(t);
+      x.fillStyle = '#2fd4c8';
+      x.fillRect(px - (isBig ? 1 : 0.5), 2, isBig ? 2 : 1, pad - 2);
+      x.beginPath(); x.moveTo(px - 4, 1); x.lineTo(px + 4, 1); x.lineTo(px, isBig ? 9 : 6); x.fill();
+    });
+  }
+  /* the part being used, and the kills marked by hand */
+  const sg = studio.sg;
+  if (sg) {
+    x.fillStyle = studio_tok('--warn');
+    (sg.marks || []).forEach(t => {
+      if (t >= v.t0 && t <= v.t1) x.fillRect(X(t) - 1, pad, 2, H - pad);
+    });
+    if (sg.start >= v.t0 && sg.start <= v.t1) {
+      x.fillStyle = studio_tok('--ok'); x.fillRect(X(sg.start) - 1, 0, 2, H);
+    }
+    if (sg.end >= v.t0 && sg.end <= v.t1) {
+      x.fillStyle = studio_tok('--ok'); x.fillRect(X(sg.end) - 1, 0, 2, H);
+    }
+    x.fillStyle = studio_tok('--bad');
+    x.fillRect(X(sg.at || 0) - 1, 0, 2, H);
+  }
+}
+
+/* The songs already downloaded, so one can be picked without a file dialog. */
+async function studio_sgSongs(force) {
+  const box = studio_el('studio-sg-songs');
+  if (!box) return;
+  if (!studio.songList || force) {
+    const r = await API.get('/api/studio/songs');
+    studio.songList = (r && r.ok && r.songs) || [];
+  }
+  const here = (studio.song || '').toLowerCase();
+  box.innerHTML = studio.songList.length
+    ? studio.songList.map(s =>
+      '<button type="button" class="studio-sg-song' + (s.path.toLowerCase() === here ? ' is-on' : '') +
+      '" data-act="studio-sg-song" data-path="' + esc(s.path) + '" title="' + esc(s.file) + '">' +
+      esc(s.name) + '</button>').join('')
+    : '<span class="muted">No songs downloaded yet. Paste a YouTube link and one will appear here.</span>';
+}
+
+function studio_svWin(w) {
+  studio.svWin = w;
+  document.querySelectorAll('[data-act="studio-sg-win"]').forEach(b =>
+    b.classList.toggle('is-active', Number(b.getAttribute('data-win')) === w));
+  studio_svDraw();
+}
+
+function studio_svToggle(id) {
+  studio.svShow = studio.svShow || {};
+  studio.svShow[id] = !studio.svShow[id];
+  studio_svBuild();
+}
+
 function studio_sgOpen() {
   const p = studio.project, sg = studio.sg;
   if (!p) return;
@@ -2019,6 +2597,8 @@ function studio_sgOpen() {
     }
   }
   if (!p.song) { sg.song = ''; sg.shape = null; }
+  studio_sgSongs();
+  studio_svLoad(sg.song || '');
   studio_sgReset();
 }
 
@@ -2185,6 +2765,7 @@ function studio_sgCanvas(id, H) {
 }
 
 function studio_sgDrawWaves() {
+  studio_svDraw();                      /* the lanes follow the playhead too */
   const sg = studio.sg, sh = sg.shape;
   if (!sh || !sh.peaks) return;
   const css = getComputedStyle(document.documentElement);
@@ -2328,6 +2909,9 @@ async function studio_sgUseSong(path) {
   if (!got || !got.ok) { studio_el('studio-sg-facts').textContent = (got && got.error) || 'Could not read that song.'; return false; }
   const sg = studio.sg, sh = got.song, len = (studio.derived && studio.derived.length) || 30;
   sg.song = path; sg.shape = sh; sg.marks = []; sg.touched = true;
+  studio.songShape = sh;
+  studio_sgSongs();
+  studio_svLoad(path);
   const from = sh.drums_in || (sh.beats && sh.beats[0]) || 0;
   sg.start = studio_sgNearestBeat(Math.max(0, Math.min(from, sh.seconds - len)));
   sg.end = Math.min(sh.seconds, sg.start + len);

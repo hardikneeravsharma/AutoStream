@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kill Marks</title>
+<style>
+  :root {
+    --bg: #0c1016; --chrome: #090d12; --panel: #12171f; --raised: #1a212b; --sunken: #080b10;
+    --line: #1f2833; --line-strong: #2e3946;
+    --fg: #e9eff7; --dim: #aab8c9; --faint: #8593a5;
+    --accent: #4d9fff; --accent-soft: #0d1b2b;
+    --kill: #f2c94c; --big: #ff6b6b; --beat: #34404f; --bar: #8a98ad; --onset: #4fc97a;
+    --low: #ff8a5c; --mid: #4d9fff; --high: #c98bff;
+    --det: #2fd4c8; --acc: #3f9f97;
+    --ok: #4fc97a; --warn: #e3ac3b; --bad: #ff6b6b;
+    --mono: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--sans); }
+  button, input, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .muted { color: var(--dim); }
+  .hide { display: none !important; }
+
+  .app { display: grid; grid-template-columns: 320px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: 100%; }
+  @media (max-width: 900px) { .app { grid-template-columns: 1fr; grid-template-rows: auto auto auto; height: auto; } }
+
+  header { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 11px 18px;
+    background: var(--chrome); border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-size: 17px; font-weight: 650; }
+  header .sub { color: var(--faint); font-size: 13px; }
+  header .spacer { flex: 1; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; padding: 5px 11px; border-radius: 999px; font-size: 12.5px;
+    background: var(--raised); border: 1px solid var(--line-strong); color: var(--dim); }
+  .chip b { color: var(--fg); font-weight: 600; }
+  .check { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--dim); }
+
+  .btn { border: 1px solid var(--line-strong); background: var(--raised); border-radius: 7px; padding: 6px 12px; font-size: 13px; }
+  .btn:hover { border-color: var(--faint); }
+  .btn.primary { background: var(--accent); border-color: transparent; color: #04121f; font-weight: 600; }
+  .btn.ghost { background: transparent; border-color: transparent; color: var(--dim); }
+  .btn.ghost:hover { color: var(--fg); background: var(--raised); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+  aside { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  .add { padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--line); }
+  .add label { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+  .add textarea { resize: vertical; min-height: 74px; background: var(--sunken); border: 1px solid var(--line-strong); border-radius: 7px;
+    padding: 8px 9px; font-family: var(--mono); font-size: 12px; line-height: 1.5; }
+  .add .row { display: flex; gap: 8px; align-items: center; }
+  .add .msgs { display: flex; flex-direction: column; gap: 3px; font-size: 12px; overflow-wrap: anywhere; }
+  .add .msgs .bad { color: var(--bad); }
+  .songs { overflow-y: auto; min-height: 0; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+  .song { text-align: left; width: 100%; display: flex; flex-direction: column; gap: 5px; padding: 9px 10px; border-radius: 8px;
+    border: 1px solid transparent; background: transparent; }
+  .song:hover { background: var(--raised); }
+  .song.cur { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+  .song .t { font-weight: 600; font-size: 13.5px; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .song .meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: var(--faint); align-items: center; }
+  .song .meta .done { color: var(--ok); }
+  .song .meta .err { color: var(--bad); }
+  .bar-mini { height: 3px; background: var(--sunken); border-radius: 2px; overflow: hidden; }
+  .bar-mini i { display: block; height: 100%; background: var(--accent); }
+  .empty { padding: 18px 14px; color: var(--faint); font-size: 13px; }
+
+  main { min-width: 0; min-height: 0; overflow-y: auto; padding: 14px 20px 28px; }
+  .work { display: flex; flex-direction: column; gap: 12px; }
+  .songhead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
+  .songhead h2 { margin: 0; font-size: 19px; font-weight: 650; }
+  .songhead .facts { color: var(--faint); font-size: 13px; }
+  .songhead .spacer { flex: 1; }
+  .save { font-size: 12.5px; color: var(--faint); min-width: 70px; text-align: right; }
+  .save.bad { color: var(--bad); }
+
+  canvas { display: block; width: 100%; }
+  #overview { height: 56px; cursor: pointer; border-radius: 8px; background: var(--sunken); border: 1px solid var(--line); }
+
+  .viewbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  .viewbar .label { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+  .toggles { display: flex; flex-wrap: wrap; gap: 6px; }
+  .toggle { font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line-strong); background: transparent; color: var(--dim); }
+  .toggle[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--fg); }
+  .group { display: inline-flex; gap: 2px; background: var(--raised); border: 1px solid var(--line-strong); border-radius: 8px; padding: 2px; }
+  .group .btn { border: 0; background: transparent; padding: 3px 9px; font-size: 12.5px; }
+  .group .btn.on { background: var(--accent-soft); color: var(--accent); }
+
+  .lanes { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--sunken); }
+  .lane { position: relative; border-top: 1px solid var(--line); }
+  .lane:first-child { border-top: 0; }
+  .lane canvas { cursor: crosshair; touch-action: none; }
+  .lane .name { position: absolute; left: 8px; top: 5px; font-size: 11px; color: var(--faint); background: rgba(8, 11, 16, .75);
+    padding: 1px 6px; border-radius: 4px; pointer-events: none; }
+  .lane .key { position: absolute; right: 8px; top: 5px; font-size: 11px; color: var(--faint); background: rgba(8, 11, 16, .75);
+    padding: 1px 6px; border-radius: 4px; pointer-events: none; display: flex; gap: 10px; }
+  .lane .key i { display: inline-block; width: 10px; height: 3px; vertical-align: middle; margin-right: 4px; }
+
+  .transport { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .transport .play { min-width: 84px; font-weight: 600; }
+  .clock { min-width: 150px; font-size: 13px; }
+  .mark-btns { display: inline-flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+  .btn.kill { border-color: color-mix(in srgb, var(--kill) 50%, var(--line)); color: var(--kill); }
+  .btn.big { border-color: color-mix(in srgb, var(--big) 50%, var(--line)); color: var(--big); }
+
+  .howto { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px 22px; padding: 12px 14px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; font-size: 13px; color: var(--dim); }
+  .howto h3 { margin: 0 0 4px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+  .howto p { margin: 0; }
+  kbd { font-family: var(--mono); font-size: 11.5px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line-strong); background: var(--raised); color: var(--fg); }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 600px; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  th { background: var(--panel); color: var(--faint); font-weight: 600; font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; }
+  td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover td { background: var(--raised); }
+  tbody tr.sel td { background: var(--accent-soft); }
+  .kind-kill { color: var(--kill); } .kind-big { color: var(--big); }
+  .placeholder { margin: 60px auto; max-width: 460px; text-align: center; color: var(--faint); }
+  .placeholder h2 { color: var(--fg); font-size: 18px; margin: 0 0 8px; }
+
+  .scrim { position: fixed; inset: 0; background: rgba(4, 7, 11, .72); display: grid; place-items: center; padding: 16px; z-index: 10; }
+  .modal { width: min(520px, 100%); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; padding: 20px 22px;
+    display: flex; flex-direction: column; gap: 12px; }
+  .modal h2 { margin: 0; font-size: 17px; }
+  .modal p { margin: 0; color: var(--dim); }
+  .taps { display: flex; flex-wrap: wrap; gap: 4px; min-height: 22px; }
+  .taps span { font-family: var(--mono); font-size: 11.5px; padding: 1px 6px; border-radius: 4px; background: var(--raised); }
+  .big-count { font-family: var(--mono); font-size: 30px; font-weight: 600; }
+  .modal .row { display: flex; gap: 8px; justify-content: flex-end; align-items: center; flex-wrap: wrap; }
+  .modal .row .muted { margin-right: auto; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Kill Marks</h1>
+    <span class="sub">Mark where kills should land in each song. Every mark is saved the moment you make it.</span>
+    <span class="spacer"></span>
+    <span class="chip" id="cal-chip">Tap delay: <b>not measured</b></span>
+    <label class="check" title="Off: a mark sits exactly where you pressed K. On: it is moved earlier by your measured tap delay."><input type="checkbox" id="correct"> Shift marks by my tap delay</label>
+    <button type="button" class="btn" id="cal-open">Measure my tap delay</button>
+  </header>
+
+  <aside aria-label="Songs">
+    <div class="add">
+      <label for="urls">Add songs</label>
+      <textarea id="urls" spellcheck="false" placeholder="Paste YouTube links, one per line"></textarea>
+      <div class="row"><button type="button" class="btn primary" id="add">Download</button><span class="muted" id="add-state"></span></div>
+      <div class="msgs" id="add-msgs"></div>
+    </div>
+    <div class="songs" id="songs"><p class="empty">No songs yet. Paste YouTube links above.</p></div>
+  </aside>
+
+  <main>
+    <div class="placeholder" id="placeholder">
+      <h2>Pick a song on the left</h2>
+      <p>Paste the YouTube links for your songs, wait for them to download, then choose one to start marking.</p>
+    </div>
+
+    <div class="work hide" id="work">
+      <div class="songhead">
+        <h2 id="title">—</h2>
+        <span class="facts" id="facts"></span>
+        <span class="spacer"></span>
+        <label class="check"><input type="checkbox" id="done"> This song is done</label>
+        <span class="save" id="save" role="status" aria-live="polite"></span>
+      </div>
+
+      <canvas id="overview" height="56" aria-label="The whole song: click to jump there"></canvas>
+
+      <div class="viewbar">
+        <span class="label">Show</span>
+        <div class="toggles" id="toggles"></div>
+        <span class="label">Zoom</span>
+        <span class="group" role="group" aria-label="Zoom">
+          <button type="button" class="btn" data-win="2">2 s</button>
+          <button type="button" class="btn" data-win="4">4 s</button>
+          <button type="button" class="btn on" data-win="8">8 s</button>
+          <button type="button" class="btn" data-win="16">16 s</button>
+        </span>
+        <label class="check"><input type="checkbox" id="show-beats" checked> Beat finder's grid</label>
+        <label class="check"><input type="checkbox" id="show-onsets" checked> Onsets</label>
+        <label class="check"><input type="checkbox" id="show-det" checked> Detector’s kills</label>
+      </div>
+
+      <div class="lanes" id="lanes"></div>
+
+      <div class="transport">
+        <button type="button" class="btn play" id="play">Play</button>
+        <button type="button" class="btn ghost" data-skip="-5">−5 s</button>
+        <button type="button" class="btn ghost" data-skip="-1">−1 s</button>
+        <button type="button" class="btn ghost" data-skip="1">+1 s</button>
+        <button type="button" class="btn ghost" data-skip="5">+5 s</button>
+        <span class="clock mono" id="clock">0:00.00 / 0:00.00</span>
+        <span class="group" role="group" aria-label="Speed">
+          <button type="button" class="btn on" data-rate="1">1×</button>
+          <button type="button" class="btn" data-rate="0.75">0.75×</button>
+          <button type="button" class="btn" data-rate="0.5">0.5×</button>
+        </span>
+        <span class="mark-btns">
+          <button type="button" class="btn kill" id="mark-kill">Mark kill <kbd>K</kbd></button>
+          <button type="button" class="btn big" id="mark-big">Big kill <kbd>B</kbd></button>
+          <button type="button" class="btn ghost" id="undo">Undo <kbd>Z</kbd></button>
+        </span>
+      </div>
+
+      <div class="howto">
+        <div><h3>What to mark</h3>
+          <p>Listen and press <kbd>K</kbd> wherever a kill should land, the way you would cut a montage. Mark what feels right, not every beat.
+            Press <kbd>B</kbd> for moments that deserve the biggest kill: an ace, a clutch, the drop.</p></div>
+        <div><h3>Where a mark goes</h3>
+          <p>Exactly where you pressed the key. Nothing snaps to a beat or a bar. The beat finder's grid is drawn only so you can compare.
+            Slow the song to 0.75× or 0.5× to place marks carefully, or drag a mark in the views.</p></div>
+        <div><h3>Keys</h3>
+          <p><kbd>Space</kbd> play/pause · <kbd>←</kbd> <kbd>→</kbd> 1 s (<kbd>Shift</kbd> 5 s) · <kbd>Z</kbd> undo ·
+            click a mark, then <kbd>←</kbd> <kbd>→</kbd> nudge 10 ms (<kbd>Shift</kbd> 50 ms), <kbd>Delete</kbd> removes it, <kbd>Esc</kbd> lets go.</p></div>
+      </div>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>#</th><th class="num">Time</th><th>Kind</th><th class="num">Bar · beat</th><th class="num">To nearest beat</th><th class="num">To nearest onset</th><th class="num">Kick · snare · hats</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="scrim hide" id="cal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="cal-title">
+    <h2 id="cal-title">Measure your tap delay</h2>
+    <p>A click plays 100 times a minute. Press <kbd>K</kbd> exactly on each click for about twenty seconds, with the headphones or speakers you mark with.
+      This only measures how late your presses land (your reaction plus the audio delay). Marks stay where you press unless you turn on
+      “Shift marks by my tap delay”.</p>
+    <div class="big-count" id="cal-count">0 taps</div>
+    <div class="taps" id="cal-taps"></div>
+    <div class="row">
+      <span class="muted" id="cal-result"></span>
+      <button type="button" class="btn ghost" id="cal-close">Close</button>
+      <button type="button" class="btn" id="cal-start">Start the clicks</button>
+      <button type="button" class="btn primary" id="cal-save" disabled>Save</button>
+    </div>
+  </div>
+</div>
+
+<audio id="audio" preload="auto"></audio>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('killmarks.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('killmarks.' + k, JSON.stringify(v)); } catch (e) { /* fine */ } }
+};
+
+/* Ways of seeing the song, top to bottom. */
+const LANES = [
+  {id: 'wave', name: 'Waveform', h: 110, blurb: 'the sound itself: tall spikes are loud hits'},
+  {id: 'rms', name: 'Loudness', h: 60, blurb: 'how loud the song is, moment to moment'},
+  {id: 'bands', name: 'Kick · snare · hats', h: 110, blurb: 'energy in three frequency bands'},
+  {id: 'flux', name: 'Onset strength', h: 64, blurb: 'new sound arriving: what a beat finder listens to'},
+  {id: 'spec', name: 'Spectrogram', h: 150, blurb: 'every frequency over time: low at the bottom, high at the top'}
+];
+
+const S = {
+  songs: [], cur: null, marks: [], done: false, sel: -1, det: null, cal: null, click: {bpm: 100, first: 1},
+  pcm: null, pcmRate: 200, feat: null, featMeta: null, saveTimer: null, poll: null, drag: null,
+  calibrating: false, calTaps: [], win: 8,
+  show: store.get('lanes', {wave: true, rms: false, bands: true, flux: true, spec: true}),
+  correct: store.get('correct', false)
+};
+const audio = $('audio');
+
+function fmt(t) { t = Math.max(0, t || 0); const m = Math.floor(t / 60), s = t - m * 60; return m + ':' + (s < 10 ? '0' : '') + s.toFixed(2); }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c])); }
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  let j = null;
+  try { j = await r.json(); } catch (e) { j = null; }
+  if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+  return j;
+}
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+/* A mark is where K was pressed. Only if the player asks is it moved by their tap delay. */
+function delayFor(m) { return (S.correct && S.cal) ? S.cal.offset * (m.rate || 1) : 0; }
+function shown(m) { return m.t - delayFor(m); }
+
+/* ------------------------------------------------------------ songs */
+async function loadSongs() {
+  let j;
+  try { j = await api('/api/songs'); } catch (e) { return; }
+  S.songs = j.songs; S.cal = j.calibration; S.click = j.click || S.click;
+  drawCal(); drawSongs();
+  const busy = S.songs.some(s => s.state === 'queued' || s.state === 'downloading' || s.state === 'analysing');
+  clearTimeout(S.poll);
+  if (busy) S.poll = setTimeout(loadSongs, 700);
+  if (S.cur && S.cur.state !== 'ready') {
+    const now = S.songs.find(s => s.id === S.cur.id);
+    if (now && now.state === 'ready') openSong(now.id);
+  }
+}
+
+function drawSongs() {
+  const box = $('songs');
+  if (!S.songs.length) { box.innerHTML = '<p class="empty">No songs yet. Paste YouTube links above.</p>'; return; }
+  box.innerHTML = S.songs.map(s => {
+    let state;
+    if (s.state === 'queued') state = '<span>Waiting to download</span>';
+    else if (s.state === 'downloading') state = '<span>Downloading ' + Math.round(s.percent || 0) + '%</span>';
+    else if (s.state === 'analysing') state = '<span>Finding the beat…</span>';
+    else if (s.state === 'failed') state = '<span class="err">' + esc(s.error || 'Failed') + '</span> <span class="btn ghost" data-retry="' + esc(s.id) + '" role="button" tabindex="0">Try again</span>';
+    else state = '<span>' + (s.marks ? s.marks + (s.marks === 1 ? ' mark' : ' marks') : 'No marks yet') + '</span>' +
+      (s.bpm ? '<span>' + Math.round(s.bpm) + ' BPM</span>' : '') + (s.seconds ? '<span>' + fmt(s.seconds).replace(/\.\d+$/, '') + '</span>' : '') +
+      (s.done ? '<span class="done">Done</span>' : '');
+    const bar = (s.state === 'downloading' || s.state === 'queued' || s.state === 'analysing')
+      ? '<div class="bar-mini"><i style="width:' + (s.state === 'analysing' ? 100 : Math.max(2, s.percent || 0)) + '%"></i></div>' : '';
+    return '<button type="button" class="song' + (S.cur && S.cur.id === s.id ? ' cur' : '') + '" data-id="' + esc(s.id) + '">' +
+      '<span class="t">' + esc(s.title || s.id) + '</span><span class="meta">' + state + '</span>' + bar + '</button>';
+  }).join('');
+}
+
+$('songs').addEventListener('click', async e => {
+  const r = e.target.closest('[data-retry]');
+  if (r) { e.stopPropagation(); await api('/api/retry', {id: r.getAttribute('data-retry')}).catch(() => null); loadSongs(); return; }
+  const b = e.target.closest('.song');
+  if (b) openSong(b.getAttribute('data-id'));
+});
+
+$('add').addEventListener('click', async () => {
+  const urls = $('urls').value.split(/\s+/).map(x => x.trim()).filter(Boolean);
+  const msgs = $('add-msgs');
+  msgs.innerHTML = '';
+  if (!urls.length) { msgs.innerHTML = '<span class="bad">Paste at least one YouTube link.</span>'; return; }
+  $('add').disabled = true; $('add-state').textContent = 'Adding…';
+  try {
+    const j = await api('/api/add', {urls: urls});
+    const bad = j.results.filter(r => !r.ok), good = j.results.filter(r => r.ok);
+    msgs.innerHTML = (good.length ? '<span>' + good.length + (good.length === 1 ? ' song' : ' songs') + ' added' +
+      (good.some(r => r.already) ? ' (some were already here)' : '') + '.</span>' : '') +
+      bad.map(r => '<span class="bad">' + esc(r.url) + ': ' + esc(r.error) + '</span>').join('');
+    $('urls').value = bad.map(r => r.url).join('\n');
+  } catch (err) {
+    msgs.innerHTML = '<span class="bad">Couldn\'t reach the Kill Marks server (' + esc(err.message) + '). Is it still running?</span>';
+  }
+  $('add').disabled = false; $('add-state').textContent = '';
+  loadSongs();
+});
+
+/* What clips/hits.py found in this song, drawn above the player's own marks.
+   These are the detector's kills, not marks made by ear -- they are here to be
+   judged against the marks, never mixed into them. */
+function detFacts() {
+  const d = S.det;
+  if (!d || !d.kills || !d.kills.length) return '';
+  let caught = 0;
+  S.marks.forEach(m => {
+    const t = shown(m), i = nearest(d.hits, t);
+    if (i >= 0 && Math.abs(d.hits[i] - t) <= 0.06) caught++;
+  });
+  return ' · ' + (d.pattern || 'hits') + ': ' + d.kills.length + ' kills, ' +
+    d.accents.length + ' accents, ' + d.big.length + ' big' +
+    (S.marks.length ? ' · ' + Math.round(caught / S.marks.length * 100) + '% of your ' +
+      S.marks.length + ' marks are on one of its hits' : '');
+}
+
+async function openSong(id) {
+  let d;
+  try { d = await api('/api/song?id=' + encodeURIComponent(id)); } catch (e) { return; }
+  audio.pause();
+  S.cur = d; S.marks = (d.marks || []).map(m => Object.assign({}, m)); S.done = !!d.done; S.sel = -1;
+  S.det = d.detected || null;
+  S.pcm = null; S.feat = null; S.featMeta = null;
+  $('placeholder').classList.add('hide'); $('work').classList.remove('hide');
+  $('title').textContent = d.title || d.id;
+  $('done').checked = S.done;
+  $('save').textContent = ''; $('save').classList.remove('bad');
+  drawSongs();
+  if (d.state !== 'ready' || !d.analysis) {
+    $('facts').textContent = d.state === 'failed' ? (d.error || 'The download failed.') : 'Still downloading…';
+    return;
+  }
+  const a = d.analysis;
+  $('facts').textContent = 'Beat finder: ' + a.bpm.toFixed(1) + ' BPM · ' + fmt(a.seconds).replace(/\.\d+$/, '') +
+    (a.drums_in ? ' · drums in ' + fmt(a.drums_in) : '') + (a.drop ? ' · drop ' + fmt(a.drop) : '') + detFacts();
+  audio.src = '/api/audio?id=' + encodeURIComponent(id);
+  audio.playbackRate = currentRate();
+  buildLanes();
+  loadFeatures(id);
+  decode(id);
+  drawAll();
+}
+
+async function loadFeatures(id) {
+  try {
+    const meta = await api('/api/features?id=' + encodeURIComponent(id));
+    const buf = await (await fetch('/api/features.bin?id=' + encodeURIComponent(id))).arrayBuffer();
+    if (!S.cur || S.cur.id !== id) return;
+    S.featMeta = meta; S.feat = new Uint8Array(buf);
+    drawAll();
+  } catch (e) { $('facts').textContent += ' · the extra views could not be computed: ' + e.message; }
+}
+function lane(name) { const [o, n] = S.featMeta.lanes[name]; return S.feat.subarray(o, o + n); }
+
+/* The waveform at 200 peaks a second, decoded here so a kick drum is a visible spike. */
+async function decode(id) {
+  try {
+    const buf = await (await fetch('/api/audio?id=' + encodeURIComponent(id))).arrayBuffer();
+    const ctx = new OfflineAudioContext(1, 2, 44100);
+    const au = await ctx.decodeAudioData(buf);
+    if (!S.cur || S.cur.id !== id) return;
+    const ch = au.getChannelData(0), per = Math.max(1, Math.floor(au.sampleRate / S.pcmRate));
+    const out = new Float32Array(Math.ceil(ch.length / per));
+    let top = 0;
+    for (let i = 0; i < out.length; i++) {
+      let m = 0;
+      for (let j = i * per, e = Math.min(ch.length, j + per); j < e; j++) { const v = ch[j] < 0 ? -ch[j] : ch[j]; if (v > m) m = v; }
+      out[i] = m; if (m > top) top = m;
+    }
+    if (top > 0) for (let i = 0; i < out.length; i++) out[i] /= top;
+    S.pcm = out;
+    drawAll();
+  } catch (e) { /* the other views still draw */ }
+}
+
+/* ------------------------------------------------------------ the views */
+function buildToggles() {
+  $('toggles').innerHTML = LANES.map(l => '<button type="button" class="toggle" data-lane="' + l.id + '" aria-pressed="' + !!S.show[l.id] +
+    '" title="' + esc(l.blurb) + '">' + esc(l.name) + '</button>').join('');
+}
+$('toggles').addEventListener('click', e => {
+  const b = e.target.closest('[data-lane]');
+  if (!b) return;
+  const id = b.getAttribute('data-lane');
+  S.show[id] = !S.show[id];
+  if (!LANES.some(l => S.show[l.id])) S.show[id] = true;       /* at least one view */
+  store.set('lanes', S.show);
+  buildToggles(); buildLanes(); drawAll();
+});
+function buildLanes() {
+  const box = $('lanes');
+  box.innerHTML = LANES.filter(l => S.show[l.id]).map(l => {
+    let key = '';
+    if (l.id === 'bands') key = '<span class="key"><span><i style="background:var(--low)"></i>kick/bass 30–150 Hz</span><span><i style="background:var(--mid)"></i>snare/vocals 150 Hz–2.5 kHz</span><span><i style="background:var(--high)"></i>hats 5–16 kHz</span></span>';
+    if (l.id === 'spec') key = '<span class="key"><span>30 Hz at the bottom → 16 kHz at the top</span></span>';
+    return '<div class="lane" data-lane="' + l.id + '"><canvas height="' + l.h + '" style="height:' + l.h + 'px"></canvas>' +
+      '<span class="name">' + esc(l.name) + ' — ' + esc(l.blurb) + '</span>' + key + '</div>';
+  }).join('');
+  box.querySelectorAll('canvas').forEach(c => {
+    c.addEventListener('pointerdown', laneDown);
+    c.addEventListener('pointermove', laneMove);
+    c.addEventListener('pointerup', laneUp);
+    c.addEventListener('pointercancel', laneUp);
+  });
+}
+buildToggles();
+$('correct').checked = S.correct;
+$('correct').addEventListener('change', () => { S.correct = $('correct').checked; store.set('correct', S.correct); drawAll(); });
+document.querySelectorAll('[data-win]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-win]').forEach(x => x.classList.toggle('on', x === b));
+  S.win = Number(b.getAttribute('data-win'));
+  drawAll();
+}));
+['show-beats', 'show-onsets', 'show-det'].forEach(id => $(id).addEventListener('change', drawAll));
+
+/* A spectrogram colour: dark blue through violet and orange to pale yellow. */
+const PAL = (() => {
+  const stops = [[8, 11, 16], [30, 36, 90], [110, 50, 140], [210, 80, 90], [250, 170, 60], [255, 245, 190]];
+  const out = new Uint8ClampedArray(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const p = i / 255 * (stops.length - 1), k = Math.min(stops.length - 2, Math.floor(p)), f = p - k;
+    for (let c = 0; c < 3; c++) out[i * 3 + c] = stops[k][c] + (stops[k + 1][c] - stops[k][c]) * f;
+  }
+  return out;
+})();
+
+function canvasCtx(c) {
+  const dpr = window.devicePixelRatio || 1, W = c.clientWidth, H = c.clientHeight;
+  if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
+  const x = c.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, W, H);
+  return {x: x, W: W, H: H, dpr: dpr};
+}
+function view() { const t0 = audio.currentTime - S.win * 0.375; return {t0: t0, t1: t0 + S.win}; }
+
+function drawAll() {
+  if (!S.cur) return;
+  const a = S.cur.analysis;
+  $('clock').textContent = fmt(audio.currentTime) + ' / ' + fmt(a ? a.seconds : 0);
+  if (!a) return;
+  drawOverview(a);
+  const lanes = [...$('lanes').querySelectorAll('.lane')];
+  lanes.forEach((el, i) => drawLane(el.getAttribute('data-lane'), el.querySelector('canvas'), a, i === 0, i === lanes.length - 1));
+  drawRows(a);
+}
+
+function drawOverview(a) {
+  const {x, W, H} = canvasCtx($('overview')), X = t => t / a.seconds * W, mid = H / 2, p = a.peaks || [];
+  x.fillStyle = css('--accent'); x.globalAlpha = .55;
+  for (let i = 0; i < W; i++) { const v = p[Math.min(p.length - 1, Math.floor(i / W * p.length))] || 0; x.fillRect(i, mid - v * (mid - 3), 1, v * (mid - 3) * 2); }
+  x.globalAlpha = 1;
+  if (a.drop) { x.fillStyle = css('--warn'); x.fillRect(X(a.drop) - 1, 0, 2, H); }
+  S.marks.forEach(m => { x.fillStyle = css(m.kind === 'big' ? '--big' : '--kill'); x.fillRect(X(shown(m)) - 1, 0, 2, 12); });
+  if (S.det && $('show-det').checked) {
+    x.fillStyle = css('--det');
+    S.det.kills.forEach(t => x.fillRect(X(t) - 0.5, H - 7, 1, 7));
+    x.fillStyle = css('--fg');
+    S.det.big.forEach(t => x.fillRect(X(t) - 1, H - 11, 2, 11));
+  }
+  const v = view();
+  x.strokeStyle = css('--fg'); x.globalAlpha = .45; x.strokeRect(X(v.t0), 0.5, X(v.t1) - X(v.t0), H - 1); x.globalAlpha = 1;
+  x.fillStyle = css('--bad'); x.fillRect(X(audio.currentTime) - 1, 0, 2, H);
+}
+
+function drawLane(id, c, a, top, bottom) {
+  const {x, W, H, dpr} = canvasCtx(c), v = view(), X = t => (t - v.t0) / S.win * W;
+  const pad = 18;
+  if (id === 'wave') {
+    if (S.pcm) {
+      const mid = pad + (H - pad) / 2, half = (H - pad) / 2 - 2;
+      x.fillStyle = css('--accent'); x.globalAlpha = .75;
+      for (let i = 0; i < W; i++) {
+        const k0 = Math.floor((v.t0 + i / W * S.win) * S.pcmRate), k1 = Math.max(k0 + 1, Math.floor((v.t0 + (i + 1) / W * S.win) * S.pcmRate));
+        let m = 0;
+        for (let k = Math.max(0, k0); k < Math.min(S.pcm.length, k1); k++) if (S.pcm[k] > m) m = S.pcm[k];
+        x.fillRect(i, mid - m * half, 1, Math.max(1, m * half * 2));
+      }
+      x.globalAlpha = 1;
+    }
+  } else if (S.feat && S.featMeta) {
+    const fps = S.featMeta.fps;
+    const curve = (arr, color, alpha) => {
+      x.strokeStyle = color; x.lineWidth = 1.5; x.globalAlpha = alpha; x.beginPath();
+      for (let i = 0; i < W; i++) {
+        const k0 = Math.floor((v.t0 + i / W * S.win) * fps), k1 = Math.max(k0 + 1, Math.floor((v.t0 + (i + 1) / W * S.win) * fps));
+        let m = 0;
+        for (let k = Math.max(0, k0); k < Math.min(arr.length, k1); k++) if (arr[k] > m) m = arr[k];
+        const y = H - 3 - m / 255 * (H - pad - 6);
+        if (i === 0) x.moveTo(i, y); else x.lineTo(i, y);
+      }
+      x.stroke(); x.globalAlpha = 1;
+    };
+    if (id === 'rms') curve(lane('rms'), css('--fg'), .85);
+    else if (id === 'flux') {
+      const arr = lane('flux');
+      x.fillStyle = css('--onset'); x.globalAlpha = .8;
+      for (let i = 0; i < W; i++) {
+        const k0 = Math.floor((v.t0 + i / W * S.win) * fps), k1 = Math.max(k0 + 1, Math.floor((v.t0 + (i + 1) / W * S.win) * fps));
+        let m = 0;
+        for (let k = Math.max(0, k0); k < Math.min(arr.length, k1); k++) if (arr[k] > m) m = arr[k];
+        const h = m / 255 * (H - pad - 4);
+        x.fillRect(i, H - 2 - h, 1, h);
+      }
+      x.globalAlpha = 1;
+    } else if (id === 'bands') {
+      curve(lane('low'), css('--low'), .95); curve(lane('mid'), css('--mid'), .85); curve(lane('high'), css('--high'), .85);
+    } else if (id === 'spec') {
+      const bins = S.featMeta.spec_bins, sp = lane('spec'), frames = S.featMeta.frames;
+      const f0 = Math.floor(v.t0 * fps), n = Math.max(1, Math.ceil(S.win * fps));
+      const img = x.createImageData(n, bins);
+      for (let i = 0; i < n; i++) {
+        const f = f0 + i;
+        for (let b = 0; b < bins; b++) {
+          const val = (f >= 0 && f < frames) ? sp[f * bins + b] : 0, o = ((bins - 1 - b) * n + i) * 4;
+          img.data[o] = PAL[val * 3]; img.data[o + 1] = PAL[val * 3 + 1]; img.data[o + 2] = PAL[val * 3 + 2]; img.data[o + 3] = 255;
+        }
+      }
+      const off = document.createElement('canvas'); off.width = n; off.height = bins;
+      off.getContext('2d').putImageData(img, 0, 0);
+      x.imageSmoothingEnabled = false;
+      x.drawImage(off, 0, pad, W, H - pad);
+    }
+  }
+  /* the beat finder's grid, on every view */
+  const beats = a.beats || [];
+  if ($('show-beats').checked) {
+    x.font = '11px ' + css('--mono');
+    for (let i = 0; i < beats.length; i++) {
+      const b = beats[i];
+      if (b < v.t0 - 0.1 || b > v.t1 + 0.1) continue;
+      const down = (i % 4) === a.downbeat_pos;
+      x.fillStyle = css(down ? '--bar' : '--beat'); x.globalAlpha = id === 'spec' ? .7 : 1;
+      x.fillRect(X(b) - (down ? 1 : 0.5), pad, down ? 2 : 1, H - pad);
+      x.globalAlpha = 1;
+      if (down && top) { x.fillStyle = css('--faint'); x.fillText('bar ' + (Math.floor((i - a.downbeat_pos) / 4) + 1), X(b) + 4, H - 6); }
+    }
+  }
+  if ($('show-onsets').checked && (id === 'flux' || id === 'wave')) {
+    x.fillStyle = css('--onset');
+    (a.onsets || []).forEach(o => { if (o >= v.t0 && o <= v.t1) x.fillRect(X(o) - 0.5, pad, 1, 6); });
+  }
+  if (a.drop && a.drop >= v.t0 && a.drop <= v.t1) { x.fillStyle = css('--warn'); x.fillRect(X(a.drop) - 1, pad, 2, H - pad); }
+  /* the detector's own kills, in the strip above the view: accents are the hits
+     it would put an effect on instead of a cut */
+  if (S.det && $('show-det').checked) {
+    const big = new Set(S.det.big);
+    x.globalAlpha = .9;
+    S.det.accents.forEach(t => {
+      if (t < v.t0 || t > v.t1) return;
+      x.fillStyle = css('--acc'); x.fillRect(X(t) - 0.5, pad - 5, 1, 5);
+    });
+    S.det.kills.forEach(t => {
+      if (t < v.t0 || t > v.t1) return;
+      const isBig = big.has(t), px = X(t);
+      x.fillStyle = css('--det');
+      x.fillRect(px - (isBig ? 1 : 0.5), 2, isBig ? 2 : 1, pad - 2);
+      x.beginPath(); x.moveTo(px - 4, 1); x.lineTo(px + 4, 1); x.lineTo(px, isBig ? 9 : 6); x.fill();
+    });
+    x.globalAlpha = 1;
+  }
+  /* the marks, on every view; diamonds on the last so they can be grabbed anywhere */
+  S.marks.forEach((m, i) => {
+    const t = shown(m);
+    if (t < v.t0 || t > v.t1) return;
+    const px = X(t), col = css(m.kind === 'big' ? '--big' : '--kill');
+    x.fillStyle = col; x.globalAlpha = i === S.sel ? 1 : .85; x.fillRect(px - 1, pad, 2, H - pad); x.globalAlpha = 1;
+    if (bottom) {
+      x.save(); x.translate(px, H - 9); x.rotate(Math.PI / 4);
+      x.fillStyle = i === S.sel ? css('--fg') : col; x.fillRect(-5, -5, 10, 10);
+      x.restore();
+    }
+  });
+  x.fillStyle = css('--bad'); x.fillRect(X(audio.currentTime) - 1, 0, 2, H);
+}
+
+function nearest(list, t) {
+  let lo = 0, hi = list.length - 1;
+  if (hi < 0) return -1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (list[mid] < t) lo = mid; else hi = mid; }
+  return Math.abs(list[lo] - t) <= Math.abs(list[hi] - t) ? lo : hi;
+}
+function drawRows(a) {
+  const body = $('rows');
+  if (!S.marks.length) { body.innerHTML = '<tr><td colspan="7" class="muted">No marks yet. Play the song and press K where a kill should land.</td></tr>'; return; }
+  const beats = a.beats || [], onsets = a.onsets || [];
+  const sign = v => v === null ? '—' : (v > 0 ? '+' : '') + v + ' ms';
+  body.innerHTML = S.marks.map((m, i) => {
+    const t = shown(m), bi = nearest(beats, t), oi = nearest(onsets, t);
+    const rel = bi - a.downbeat_pos;
+    const bb = bi >= 0 ? (Math.floor(rel / 4) + 1) + ' · ' + (((rel % 4) + 4) % 4 + 1) : '—';
+    let bands = '—';
+    if (S.feat && S.featMeta) {
+      const k = Math.round(t * S.featMeta.fps);
+      const at = n => { const arr = lane(n); let mx = 0; for (let j = k - 3; j <= k + 3; j++) if (j >= 0 && j < arr.length && arr[j] > mx) mx = arr[j]; return Math.round(mx / 2.55); };
+      bands = at('low') + ' · ' + at('mid') + ' · ' + at('high');
+    }
+    return '<tr data-i="' + i + '"' + (i === S.sel ? ' class="sel"' : '') + '><td class="mono">' + (i + 1) + '</td><td class="num">' + fmt(t) +
+      '</td><td class="kind-' + m.kind + '">' + (m.kind === 'big' ? 'Big kill' : 'Kill') + '</td><td class="num">' + bb +
+      '</td><td class="num">' + (bi >= 0 ? sign(Math.round((t - beats[bi]) * 1000)) : '—') +
+      '</td><td class="num">' + (oi >= 0 ? sign(Math.round((t - onsets[oi]) * 1000)) : '—') + '</td><td class="num">' + bands + '</td></tr>';
+  }).join('');
+}
+$('rows').addEventListener('click', e => {
+  const tr = e.target.closest('tr[data-i]');
+  if (!tr) return;
+  S.sel = Number(tr.getAttribute('data-i'));
+  seek(shown(S.marks[S.sel]) - S.win * 0.2);
+});
+$('overview').addEventListener('click', e => {
+  if (!S.cur || !S.cur.analysis) return;
+  const r = $('overview').getBoundingClientRect();
+  seek((e.clientX - r.left) / r.width * S.cur.analysis.seconds);
+});
+
+/* Any view: grab a mark to move it, or click elsewhere to move the playhead. */
+function laneDown(e) {
+  if (!S.cur || !S.cur.analysis) return;
+  const c = e.currentTarget, r = c.getBoundingClientRect(), v = view();
+  const t = v.t0 + (e.clientX - r.left) / r.width * S.win, slop = 7 / r.width * S.win;
+  let hit = -1, best = 1e9;
+  S.marks.forEach((m, i) => { const d = Math.abs(shown(m) - t); if (d < slop && d < best) { best = d; hit = i; } });
+  if (hit >= 0) {
+    S.sel = hit; S.drag = {pointer: e.pointerId, t0: v.t0, w: r.width, left: r.left, canvas: c};
+    try { c.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
+    drawAll();
+  } else { S.sel = -1; seek(t); }
+}
+function laneMove(e) {
+  const g = S.drag;
+  if (!g || e.pointerId !== g.pointer || S.sel < 0) return;
+  const t = g.t0 + (e.clientX - g.left) / g.w * S.win, m = S.marks[S.sel];
+  m.t = +(t + delayFor(m)).toFixed(4);
+  drawAll();
+}
+function laneUp(e) {
+  if (!S.drag || e.pointerId !== S.drag.pointer) return;
+  S.drag = null; resort(); changed();
+}
+
+/* ------------------------------------------------------------ marks */
+function addMark(kind) {
+  if (!S.cur || !S.cur.analysis) return;
+  /* Exactly where the key was pressed: the audio's own clock at that instant. */
+  S.marks.push({t: +audio.currentTime.toFixed(4), kind: kind, rate: audio.playbackRate, at: Date.now() / 1000});
+  S.marks.sort((p, q) => p.t - q.t);
+  S.sel = -1;
+  const b = $(kind === 'big' ? 'mark-big' : 'mark-kill'); b.classList.add('on'); setTimeout(() => b.classList.remove('on'), 120);
+  changed();
+}
+function undo() {
+  if (!S.marks.length) return;
+  let last = 0;
+  S.marks.forEach((m, i) => { if ((m.at || 0) >= (S.marks[last].at || 0)) last = i; });
+  S.marks.splice(last, 1); S.sel = -1; changed();
+}
+function resort() { const m = S.marks[S.sel]; S.marks.sort((p, q) => p.t - q.t); S.sel = S.marks.indexOf(m); }
+function changed() {
+  drawAll();
+  $('save').textContent = 'Saving…'; $('save').classList.remove('bad');
+  clearTimeout(S.saveTimer); S.saveTimer = setTimeout(save, 400);
+}
+async function save() {
+  if (!S.cur) return;
+  try {
+    await api('/api/marks', {id: S.cur.id, marks: S.marks, done: S.done});
+    $('save').textContent = 'Saved';
+    const s = S.songs.find(x => x.id === S.cur.id);
+    if (s) { s.marks = S.marks.length; s.done = S.done; drawSongs(); }
+  } catch (e) { $('save').textContent = 'Not saved: ' + e.message; $('save').classList.add('bad'); }
+}
+$('done').addEventListener('change', () => { S.done = $('done').checked; changed(); });
+
+/* ------------------------------------------------------------ transport */
+function currentRate() { const on = document.querySelector('[data-rate].on'); return on ? Number(on.getAttribute('data-rate')) : 1; }
+function togglePlay() {
+  if (!S.cur || !S.cur.analysis) return;
+  if (audio.paused) audio.play().catch(() => { $('save').textContent = 'This browser could not play the song.'; });
+  else audio.pause();
+}
+function seek(t) { if (!S.cur || !S.cur.analysis) return; audio.currentTime = Math.max(0, Math.min(S.cur.analysis.seconds - 0.01, t)); drawAll(); }
+$('play').addEventListener('click', togglePlay);
+document.querySelectorAll('[data-skip]').forEach(b => b.addEventListener('click', () => seek(audio.currentTime + Number(b.getAttribute('data-skip')))));
+document.querySelectorAll('[data-rate]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('[data-rate]').forEach(x => x.classList.toggle('on', x === b));
+  audio.playbackRate = Number(b.getAttribute('data-rate'));
+}));
+$('mark-kill').addEventListener('click', () => addMark('kill'));
+$('mark-big').addEventListener('click', () => addMark('big'));
+$('undo').addEventListener('click', undo);
+['play', 'pause', 'seeked', 'timeupdate'].forEach(ev => audio.addEventListener(ev, () => { $('play').textContent = audio.paused ? 'Play' : 'Pause'; drawAll(); }));
+audio.addEventListener('play', () => requestAnimationFrame(tick));
+function tick() { if (audio.paused) return; drawAll(); requestAnimationFrame(tick); }
+window.addEventListener('resize', drawAll);
+
+document.addEventListener('keydown', e => {
+  if (e.target.closest('textarea, input:not([type=checkbox])')) return;
+  if (S.calibrating) { if (e.key === 'k' || e.key === 'K') { e.preventDefault(); calTap(); } return; }
+  if (!S.cur || !S.cur.analysis) return;
+  const k = e.key;
+  if (k === ' ') { e.preventDefault(); togglePlay(); }
+  else if (k === 'k' || k === 'K') { e.preventDefault(); addMark('kill'); }
+  else if (k === 'b' || k === 'B') { e.preventDefault(); addMark('big'); }
+  else if (k === 'z' || k === 'Z' || (k === 'Backspace' && S.sel < 0)) { e.preventDefault(); undo(); }
+  else if (k === 'Escape') { S.sel = -1; drawAll(); }
+  else if ((k === 'Delete' || k === 'Backspace') && S.sel >= 0) { e.preventDefault(); S.marks.splice(S.sel, 1); S.sel = -1; changed(); }
+  else if (k === 'ArrowLeft' || k === 'ArrowRight') {
+    e.preventDefault();
+    const d = k === 'ArrowLeft' ? -1 : 1;
+    if (S.sel >= 0) { S.marks[S.sel].t = +(S.marks[S.sel].t + d * (e.shiftKey ? 0.05 : 0.01)).toFixed(4); resort(); changed(); }
+    else seek(audio.currentTime + d * (e.shiftKey ? 5 : 1));
+  }
+});
+
+/* ------------------------------------------------------------ tap delay */
+function drawCal() {
+  const c = $('cal-chip');
+  c.innerHTML = S.cal ? 'Tap delay: <b>' + Math.round(S.cal.offset * 1000) + ' ms</b> ± ' + Math.round(S.cal.spread * 1000) + ' ms'
+                      : 'Tap delay: <b>not measured</b>';
+  $('correct').disabled = !S.cal;
+}
+let calAudio = null;
+$('cal-open').addEventListener('click', () => {
+  audio.pause();
+  S.calTaps = []; $('cal-count').textContent = '0 taps'; $('cal-taps').innerHTML = ''; $('cal-result').textContent = '';
+  $('cal-save').disabled = true; $('cal').classList.remove('hide');
+});
+$('cal-start').addEventListener('click', () => {
+  if (!calAudio) { calAudio = new Audio('/api/click.wav'); calAudio.addEventListener('ended', () => { S.calibrating = false; $('cal-start').textContent = 'Start again'; }); }
+  S.calTaps = []; $('cal-taps').innerHTML = ''; $('cal-count').textContent = '0 taps';
+  calAudio.currentTime = 0; calAudio.play();
+  S.calibrating = true; $('cal-start').textContent = 'Listening: press K on each click';
+});
+function calTap() {
+  if (!calAudio || calAudio.paused) return;
+  const beat = 60 / S.click.bpm, t = calAudio.currentTime - S.click.first;
+  if (t < -beat / 2) return;
+  const off = t - Math.round(t / beat) * beat;
+  if (Math.abs(off) > beat * 0.4) return;
+  S.calTaps.push(off);
+  $('cal-count').textContent = S.calTaps.length + (S.calTaps.length === 1 ? ' tap' : ' taps');
+  $('cal-taps').insertAdjacentHTML('beforeend', '<span>' + (off >= 0 ? '+' : '') + Math.round(off * 1000) + '</span>');
+  const s = S.calTaps.slice().sort((p, q) => p - q);
+  $('cal-result').textContent = S.calTaps.length >= 6 ? 'So far: ' + Math.round(s[s.length >> 1] * 1000) + ' ms' : 'Keep going…';
+  $('cal-save').disabled = S.calTaps.length < 8;
+}
+$('cal-save').addEventListener('click', async () => {
+  if (calAudio) calAudio.pause();
+  S.calibrating = false;
+  try {
+    const j = await api('/api/calibration', {offsets: S.calTaps});
+    S.cal = {offset: j.offset, spread: j.spread}; drawCal(); drawAll();
+    $('cal').classList.add('hide');
+  } catch (e) { $('cal-result').textContent = e.message; }
+});
+$('cal-close').addEventListener('click', () => { if (calAudio) calAudio.pause(); S.calibrating = false; $('cal-start').textContent = 'Start the clicks'; $('cal').classList.add('hide'); });
+
+loadSongs();
+</script>
+</body>
+</html>
