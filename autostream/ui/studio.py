@@ -2446,9 +2446,16 @@ function studio_svBuild() {
   studio_svDraw();
 }
 
+/* WHERE THE SONG IS NOW. The audio element, not a field of our own: the
+   lanes were drawn around studio.sg.at, which nothing ever sets, so they sat
+   at zero while the song played. */
+function studio_svNow() {
+  const a = studio_el('studio-sg-audio');
+  return (a && a.currentTime) || 0;
+}
+
 function studio_svWindow() {
-  const sg = studio.sg;
-  const t = (sg && sg.at) || 0;
+  const t = studio_svNow();
   const w = studio.svWin || 8;
   return {t0: t - w * 0.375, t1: t - w * 0.375 + w, w: w};
 }
@@ -2550,7 +2557,7 @@ function studio_svLaneDraw(id, c, v) {
       x.fillStyle = studio_tok('--ok'); x.fillRect(X(sg.end) - 1, 0, 2, H);
     }
     x.fillStyle = studio_tok('--bad');
-    x.fillRect(X(sg.at || 0) - 1, 0, 2, H);
+    x.fillRect(X(studio_svNow()) - 1, 0, 2, H);
   }
 }
 
