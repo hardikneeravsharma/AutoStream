@@ -2133,7 +2133,7 @@ function studio_wire() {
       studio.picks = null;
       studio_renderStyles(); studio_hand(); studio_binDraw();
     }
-    else if (act === 'studio-sg-song') studio_useSong(b.getAttribute('data-path'));
+    else if (act === 'studio-sg-song') studio_sgUseSong(b.getAttribute('data-path'));
     else if (act === 'studio-sg-win') studio_svWin(Number(b.getAttribute('data-win')) || 8);
     else if (act === 'studio-sg-lane') studio_svToggle(b.getAttribute('data-lane'));
     else if (act === 'studio-fav') studio_fav(b.getAttribute('data-clip'));
