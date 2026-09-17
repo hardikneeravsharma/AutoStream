@@ -80,12 +80,28 @@ def test_a_style_is_already_a_template():
 def test_a_template_swaps_the_picks_and_nothing_else():
     base = studio.STYLE["story"]
     got = studio.templated(base, {"kill": "k04", "transition": "t05", "camera": "c04"})
-    assert got.kill == ("k04",) and got.kill_pool == ("k04",)
-    assert got.cuts == ("t05",) and got.transition_pool == ("t05",)
+    assert got.kill == ("k04",) and got.cuts == ("t05",)
     assert got.camera == "c04" and got.camera_pool == ("c04",)
     # untouched drawers keep the style's own
     assert got.intro == base.intro and got.outro == base.outro and got.grade == base.grade
     assert got.key == base.key
+
+
+def test_a_picked_drawer_leads_but_is_not_emptied():
+    """A kill effect is drawn once per SHOT. A pool of one put the same effect
+    on all six kills of a montage, which no reference edit does."""
+    base = studio.STYLE["montage"]
+    got = studio.templated(base, {"kill": "k04", "transition": "t05", "hero": "h02"})
+    for pool, pick, was in ((got.kill_pool, "k04", base.kill_pool),
+                            (got.transition_pool, "t05", base.transition_pool),
+                            (got.hero_pool, "h02", base.hero_pool)):
+        assert pool[0] == pick
+        assert pool.count(pick) >= 2, "the pick has to be the likeliest draw"
+        assert len(set(pool)) >= 3, "_vary avoids the last two: fewer and it repeats"
+        assert set(was) - {pick} <= set(pool), "the style's own parts stay behind it"
+    # ...but a drawer drawn from ONCE for the whole reel is exactly the pick
+    once = studio.templated(base, {"intro": "i08", "grade": "g08", "camera": "c04"})
+    assert once.intro == "i08" and once.grade == "g08" and once.camera_pool == ("c04",)
 
 
 def test_a_part_that_is_not_that_drawers_is_ignored():
@@ -100,19 +116,21 @@ def test_the_reel_is_built_from_the_template(root):
 
     r = root / "clips"
     _run(r, "2026-09-01_1200_VALORANT", "VALORANT",
-         [{"start": 100.0 * i, "end": 100.0 * i + 12} for i in range(1, 7)],
-         kills=[100.0 * i + 6 for i in range(1, 7)])
+         [{"start": 100.0 * i, "end": 100.0 * i + 12} for i in range(1, 25)],
+         kills=[100.0 * i + 6 for i in range(1, 25)])
     picks = {"intro": "i08", "outro": "e05", "grade": "g08", "kill": "k06",
              "camera": "c04", "speed": "s02", "overlay": "o01"}
     proj, _notes = studio.plan(_clips(r), "story", shape=Shape(bpm=120.0), template=picks)
     assert proj["intro"] == "i08" and proj["grade"] == "g08"
     assert proj["overlays"] == ["o01"]
-    assert all(s["fx"] == ["k06"] for s in proj["shots"])
     assert all(s["camera"] == "c04" for s in proj["shots"])
+    fx = [s["fx"][0] for s in proj["shots"]]
+    assert max(set(fx), key=fx.count) == "k06", f"the dealt kill should lead: {fx}"
+    assert all(a != b for a, b in zip(fx, fx[1:])), f"two kills running share an effect: {fx}"
     # ...and the same clips without a template keep the style's own picks
     plain, _ = studio.plan(_clips(r), "story", shape=Shape(bpm=120.0))
     assert plain["intro"] == studio.STYLE["story"].intro
-    assert plain["shots"][0]["fx"] != ["k06"]
+    assert "k06" not in [s["fx"][0] for s in plain["shots"]]
 
 
 def test_the_catalog_tells_the_page_the_drawers_and_each_styles_picks():

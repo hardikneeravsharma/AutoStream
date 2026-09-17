@@ -455,6 +455,25 @@ DRAWERS: tuple[str, ...] = ("intro", "transition", "kill", "hero", "camera",
                             "speed", "grade", "overlay", "outro")
 
 
+def _leads(pick: str, pool: tuple) -> tuple:
+    """`pick` first and twice as likely, with the style's own pool behind it.
+
+    A drawer that is picked is not a drawer emptied. The kill, transition and
+    hero drawers are drawn from once per SHOT, and a pool of one put the same
+    effect on every kill in a row -- which the reference edits never do and
+    rulebook.budget exists to prevent. Listing a part twice is how a pool says
+    "mostly this" (see Style.kill_pool).
+    """
+    # Distinct, because a style already lists a part twice to make it likelier
+    # and that would dilute the pick against its own drawer.
+    rest = tuple(dict.fromkeys(p for p in (pool or ()) if p != pick))
+    # Twice as likely as anything else, and the style's own parts still behind
+    # it. Not the pick alone, and not the pick against ONE alternate either:
+    # _vary refuses to repeat the last two kill effects, so a pool of two runs
+    # out of fresh choices and starts repeating anyway (k06 k01 k06 k06 k01).
+    return (pick,) * max(2, len(rest)) + rest
+
+
 def templated(style: "Style", picks: dict) -> "Style":
     """`style` with the picks a template makes. Unknown ids are ignored."""
     swap: dict = {}
@@ -472,13 +491,13 @@ def templated(style: "Style", picks: dict) -> "Style":
             swap["overlays"] = () if pick in ("o00", "") else (pick,)
         elif kind == "transition":
             swap["cuts"] = (pick,)
-            swap["transition_pool"] = (pick,)
+            swap["transition_pool"] = _leads(pick, style.transition_pool)
         elif kind == "kill":
             swap["kill"] = (pick,)
-            swap["kill_pool"] = (pick,)
+            swap["kill_pool"] = _leads(pick, style.kill_pool)
         elif kind == "hero":
             swap["hero"] = (pick,)
-            swap["hero_pool"] = (pick,)
+            swap["hero_pool"] = _leads(pick, style.hero_pool)
         elif kind == "camera":
             swap["camera"] = pick
             swap["camera_pool"] = (pick,)

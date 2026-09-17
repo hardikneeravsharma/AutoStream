@@ -1300,7 +1300,10 @@ async function studio_build() {
     const body = {
       clips: studio_ordered().map(c => c.path), style: studio.style, song: studio.song,
       format: studio.fmt, name: studio_el('studio-name').value.trim(),
-      template: studio_template()
+      /* Only what was DEALT or CLICKED. Sending the style's own picks back
+         narrowed every drawer to the one part the style leads with, and a
+         montage came out with the same kill effect on all six kills. */
+      template: studio.picks || null
     };
     if (studio.song && studio.songShape && studio.mk.mode === 'part' && studio.mk.end > studio.mk.start) {
       body.part_start = studio.mk.start;
