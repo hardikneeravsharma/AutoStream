@@ -442,6 +442,40 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
         if (a.readyState < 1) await new Promise(r => { a.onloadedmetadata = r; a.onerror = r; setTimeout(r, 15000); });
         return {err: a.error && a.error.code, dur: a.duration}; }""")
     assert not audio["err"] and audio["dur"] > 30, f"the song editor cannot play the song: {audio}"
+    # --- the ways of seeing it, and whether they MOVE
+    # The lanes were drawn around a field nothing ever set, so they sat at zero
+    # while the song played and every still-frame check passed anyway. Play it
+    # and watch the window advance.
+    page.wait_for_function("() => studio.sv && studio.sv.meta && studio.sv.bytes", timeout=120_000)
+    lanes = page.evaluate("() => [...document.querySelectorAll('#studio-sg-lanes .studio-sg-lane')]"
+                          ".map(l => l.getAttribute('data-lane'))")
+    assert lanes, "the song has no views at all"
+    assert "spec" in lanes, f"no spectrogram: {lanes}"
+    assert page.evaluate("() => studio.sv.meta.frames") > 1000, "the lanes are empty"
+
+    def spec_row():
+        """A row of pixels out of the spectrogram, as a string."""
+        return page.evaluate("""() => { const c = document.querySelector('[data-lane="spec"] canvas');
+            if (!c) return '';
+            const d = c.getContext('2d').getImageData(0, Math.round(c.height * 0.6), c.width, 1).data;
+            let out = ''; for (let i = 0; i < d.length; i += 40) out += d[i] + ',';
+            return out; }""")
+
+    page.evaluate("() => { document.getElementById('studio-sg-audio').currentTime = 2; }")
+    page.wait_for_timeout(300)
+    was_window = page.evaluate("() => studio_svWindow().t0")
+    was_row = spec_row()
+    assert was_row.strip(","), "the spectrogram drew nothing"
+    page.click('[data-act="studio-sg-play"]')
+    page.wait_for_function("() => document.getElementById('studio-sg-audio').currentTime > 4",
+                           timeout=30_000)
+    now_window = page.evaluate("() => studio_svWindow().t0")
+    now_row = spec_row()
+    page.evaluate("() => document.getElementById('studio-sg-audio').pause()")
+    assert now_window > was_window + 1.0, \
+        f"the lanes did not follow the song: window {was_window:.2f}s -> {now_window:.2f}s"
+    assert now_row != was_row, "the spectrogram is drawing the same stretch while the song plays"
+
     beat = page.evaluate("studio_sgBeat()")
     s0 = page.evaluate("studio.sg.start")
     page.click('[data-act="studio-sg-nudge"][data-what="start"][data-d="bar"]')

@@ -2430,16 +2430,30 @@ class Server:
         return {"ok": True, "songs": songview.songs(paths.VIDEO_HOME)}
 
     def _song_in_home(self, song: str) -> Path | None:
-        """A song path the page may ask about: inside the songs folder only."""
+        """A song the page may ask about.
+
+        The same rule _reel_audio serves audio by, for the same reason: a song
+        is chosen through the OS dialog and can be anywhere on the disk, so the
+        root-confined rule cannot apply, and answering for any path a query
+        names is how a local server becomes a file browser. So: anything in the
+        songs folder (which the page lists anyway), or a song THIS PROCESS has
+        already analysed -- which is every song the Studio is working on.
+        """
         if not str(song).strip():
             return None
         p = Path(song)
+        if not p.is_file():
+            return None
         try:
-            home = (paths.VIDEO_HOME / "songs").resolve()
-            ok = p.resolve().is_relative_to(home) and p.is_file()
+            here = p.resolve()
+            if here.is_relative_to((paths.VIDEO_HOME / "songs").resolve()):
+                return p
+            cached = getattr(self, "_reel_cache", None)
+            known = [Path(cached[1].path)] if cached else []
+            known += [Path(sh.path) for sh in (getattr(self, "_reel_shapes", {}) or {}).values()]
+            return p if any(here == k.resolve() for k in known) else None
         except OSError:
             return None
-        return p if ok else None
 
     def studio_songview(self, song: str) -> dict:
         """Loudness, the three bands, onset strength and a spectrogram, plus
