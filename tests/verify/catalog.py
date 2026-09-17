@@ -356,6 +356,19 @@ CONTROLS: list[Control] = [
             query="path=", expect=_has("ok"), acts=("studio-open",),
             why="a blank path is refused with ok:false; a reel outside the "
                 "reels folder is refused the same way"),
+    Control("/api/studio/songs", "GET", CALL, "songs already downloaded", "studio",
+            expect=_has("ok", "songs"), acts=("studio-sg-song",),
+            why="what the song picker lists, so a song can be chosen without a "
+                "file dialog; an empty songs folder is an empty list"),
+    Control("/api/studio/songview", "GET", CALL, "ways of seeing a song", "studio",
+            query="song=", expect=_has("ok"),
+            why="loudness, the three bands, onset strength and a spectrogram, "
+                "with the kills the detector would cut to; only ever a file in "
+                "the songs folder"),
+    Control("/api/studio/songview.bin", "GET", CALL, "the lanes themselves", "studio",
+            query="song=", status=(400,), expect=_has("error"),
+            why="the bytes the page draws from; a song outside the songs "
+                "folder is refused"),
     Control("/api/studio/favourite", "POST", CALL, "star a clip", "studio",
             body={"paths": []}, expect=_has("ok"),
             acts=("studio-fav", "studio-fav-selected"),
@@ -459,6 +472,8 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-deal": "deals a random part from every drawer; sent with Build",
     "studio-deal-reset": "drops the dealt parts back to the style's own",
     "studio-bin-slot": "ticks a drawer in and out of the how-many-reels count",
+    "studio-sg-win": "zooms the song's lanes",
+    "studio-sg-lane": "shows or hides one way of seeing the song",
     "studio-nosong": "clears the chosen song in the dialog",
     "studio-fmt": "chooses landscape or vertical in the dialog; sent with Build",
     "studio-order": "chooses the clip order in the dialog; sent with Build",

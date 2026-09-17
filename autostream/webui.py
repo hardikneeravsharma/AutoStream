@@ -475,6 +475,16 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.app.studio_job())
         elif u.path == "/api/studio/project":
             self._json(self.app.studio_project((parse_qs(u.query).get("path") or [""])[0]))
+        elif u.path == "/api/studio/songs":
+            self._json(self.app.studio_songs())
+        elif u.path == "/api/studio/songview":
+            self._json(self.app.studio_songview((parse_qs(u.query).get("song") or [""])[0]))
+        elif u.path == "/api/studio/songview.bin":
+            blob, err = self.app.studio_songview_bytes((parse_qs(u.query).get("song") or [""])[0])
+            if err:
+                self._json({"error": err}, 400)
+            else:
+                self._send_cached(blob, "application/octet-stream")
         elif u.path == "/api/studio/examples":
             self._json(self.app.studio_examples())
         elif u.path == "/api/studio/example":
@@ -620,8 +630,6 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_delete(b))
             elif p == "/api/studio/songfetch":
                 self._json(self.app.studio_songfetch(b))
-            elif p == "/api/studio/favourite":
-                self._json(self.app.studio_favourite(b))
             elif p == "/api/studio/favourite":
                 self._json(self.app.studio_favourite(b))
             elif p == "/api/studio/examples/build":
@@ -2415,15 +2423,62 @@ class Server:
 
         return studio.catalog()
 
-    def studio_favourite(self, body: dict) -> dict:
-        """Star or unstar clips. The library then shows and filters them."""
-        from .clips import studio
+    def studio_songs(self) -> dict:
+        """The songs already downloaded, to pick one without a file dialog."""
+        from .clips import songview
 
-        paths = [str(x) for x in (body.get("paths") or []) if isinstance(x, str)]
-        if not paths:
-            return {"ok": False, "error": "No clips given."}
-        on = bool(body.get("on", True))
-        return studio.set_favourite(self._clips_dir(cfg.load()), paths, on)
+        return {"ok": True, "songs": songview.songs(paths.VIDEO_HOME)}
+
+    def _song_in_home(self, song: str) -> Path | None:
+        """A song path the page may ask about: inside the songs folder only."""
+        if not str(song).strip():
+            return None
+        p = Path(song)
+        try:
+            home = (paths.VIDEO_HOME / "songs").resolve()
+            ok = p.resolve().is_relative_to(home) and p.is_file()
+        except OSError:
+            return None
+        return p if ok else None
+
+    def studio_songview(self, song: str) -> dict:
+        """Loudness, the three bands, onset strength and a spectrogram, plus
+        the kills the detector would cut this song on."""
+        from . import clips
+        from .clips import songview
+
+        p = self._song_in_home(song)
+        if p is None:
+            return {"ok": False, "error": "That song is not in the songs folder."}
+        c = cfg.load()
+        clips.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+        try:
+            meta, blob = songview.views(self._clips_dir(c), p)
+        except Exception as e:                      # noqa: BLE001
+            log.info("songview failed for %s: %s", p.name, e)
+            return {"ok": False, "error": f"Could not read that song: {e}"}
+        out = {"ok": True, "song": str(p), "name": p.stem, "bytes": len(blob), **meta}
+        # The beat analysis is cached by _reel_song, so opening the same song
+        # again costs nothing; the hits come off that same Shape.
+        try:
+            shape = self._reel_song({"song": str(p)})
+            out["analysis"] = shape.as_dict()
+            out["detected"] = songview.detected(shape)
+        except Exception as e:                      # noqa: BLE001
+            log.info("songview analysis failed for %s: %s", p.name, e)
+        return out
+
+    def studio_songview_bytes(self, song: str) -> tuple[bytes, str | None]:
+        from .clips import songview
+
+        p = self._song_in_home(song)
+        if p is None:
+            return b"", "That song is not in the songs folder."
+        try:
+            _meta, blob = songview.views(self._clips_dir(cfg.load()), p)
+        except Exception as e:                      # noqa: BLE001
+            return b"", f"Could not read that song: {e}"
+        return blob, None
 
     def studio_favourite(self, body: dict) -> dict:
         """Star or unstar clips. The library then shows and filters them."""

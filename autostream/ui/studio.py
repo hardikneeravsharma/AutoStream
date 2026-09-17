@@ -166,11 +166,34 @@ STUDIO_HTML = r"""
         <button type="button" class="btn btn-ghost" data-act="studio-sg-none">No song</button>
       </div>
     </div>
+    <!-- THE SONGS ALREADY HERE. Every song downloaded for a reel stays in
+         Videos\AutoStream\songs; picking one back out of a file dialog is
+         work the page can do. -->
+    <div class="studio-sg-songs" id="studio-sg-songs" role="group" aria-label="Songs you have"></div>
     <div class="studio-sg-body hide" id="studio-sg-body">
       <p class="field-label">The whole song — drag the highlighted part, or its edges</p>
       <canvas class="studio-sg-wave" id="studio-sg-overview" height="90" aria-label="Whole song"></canvas>
       <p class="field-label">The part you are using — click to move the playhead</p>
       <canvas class="studio-sg-wave studio-sg-detail" id="studio-sg-detail" height="130" aria-label="Chosen part"></canvas>
+      <!-- WAYS OF SEEING IT. A waveform shows loudness and nothing else; a
+           kill goes on a kick or a hat, and those are only visible once the
+           bands are separated (clips/songview.py). The detector's own kills
+           are drawn above them, so what it would cut to can be judged against
+           what is marked by hand. -->
+      <div class="studio-sg-viewbar" id="studio-sg-viewbar">
+        <span class="field-label">Show</span>
+        <div class="studio-sg-toggles" id="studio-sg-toggles"></div>
+        <span class="field-label">Zoom</span>
+        <span class="seg" role="group" aria-label="Zoom">
+          <button type="button" class="seg-btn" data-act="studio-sg-win" data-win="2">2 s</button>
+          <button type="button" class="seg-btn" data-act="studio-sg-win" data-win="4">4 s</button>
+          <button type="button" class="seg-btn is-active" data-act="studio-sg-win" data-win="8">8 s</button>
+          <button type="button" class="seg-btn" data-act="studio-sg-win" data-win="16">16 s</button>
+        </span>
+        <label class="studio-check"><input type="checkbox" id="studio-sg-showdet" checked> The detector's kills</label>
+        <span class="muted" id="studio-sg-detnote"></span>
+      </div>
+      <div class="studio-sg-lanes" id="studio-sg-lanes"></div>
       <audio id="studio-sg-audio" preload="auto"></audio>
       <div class="studio-tl-bar">
         <button type="button" class="btn btn-sm" data-act="studio-sg-play" id="studio-sg-play">Play the part</button>
@@ -373,6 +396,7 @@ const studio = {
   lib: null, catalog: null, loadedAt: 0,
   game: 'all', q: '', selected: [], lastClick: null,
   examples: null, picks: null, binOn: null, binObs: null, binTimer: null,
+  sv: null, svShow: null, svWin: 8, songList: null,
   style: '', song: '', songShape: null, fmt: 'landscape', order: 'chosen',
   project: null, derived: null, notes: [], dirty: true, output: '', renderedAt: 0,
   sel: -1, pps: 60, snap: true, undo: [], checking: 0, checkTimer: null,
@@ -2109,6 +2133,9 @@ function studio_wire() {
       studio.picks = null;
       studio_renderStyles(); studio_hand(); studio_binDraw();
     }
+    else if (act === 'studio-sg-song') studio_useSong(b.getAttribute('data-path'));
+    else if (act === 'studio-sg-win') studio_svWin(Number(b.getAttribute('data-win')) || 8);
+    else if (act === 'studio-sg-lane') studio_svToggle(b.getAttribute('data-lane'));
     else if (act === 'studio-fav') studio_fav(b.getAttribute('data-clip'));
     else if (act === 'studio-fav-selected') studio_favSelected();
     else if (act === 'studio-bin-pick') studio_binPick(b.getAttribute('data-kind'), b.getAttribute('data-part'));
@@ -2341,6 +2368,222 @@ async function studio_mix(what, announce) {
 
 /* ------------------------------------------------------------ the song */
 
+/* =======================================================================
+   WAYS OF SEEING THE SONG
+   The bands, the onsets and the spectrogram at 100 frames a second, drawn
+   straight from the bytes clips/songview.py sends (no signal processing in
+   the page), plus the kills clips/hits.py would cut to. A kill belongs on a
+   kick or a hat; neither is visible in a waveform.
+   ======================================================================= */
+
+const SG_LANES = [
+  {id: 'wave', h: 74, name: 'Waveform \u2014 the sound itself'},
+  {id: 'bands', h: 96, name: 'Kick \u00b7 snare \u00b7 hats \u2014 energy in three bands'},
+  {id: 'flux', h: 70, name: 'Onset strength \u2014 new sound arriving'},
+  {id: 'spec', h: 128, name: 'Spectrogram \u2014 every frequency over time'}
+];
+const SG_PAL = (function () {
+  /* magma-ish, so a spectrogram reads the way every other tool draws one */
+  const stops = [[0, 0, 4], [40, 11, 84], [101, 21, 110], [159, 42, 99], [212, 72, 66],
+                 [245, 125, 21], [252, 194, 71], [252, 253, 191]];
+  const out = new Uint8Array(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255 * (stops.length - 1), a = stops[Math.floor(t)], b = stops[Math.min(stops.length - 1, Math.ceil(t))];
+    const f = t - Math.floor(t);
+    for (let c = 0; c < 3; c++) out[i * 3 + c] = Math.round(a[c] + (b[c] - a[c]) * f);
+  }
+  return out;
+})();
+
+/* One CSS token, read fresh: the app's theme can change under the page. */
+function studio_tok(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#8894a5';
+}
+
+function studio_svLane(name) {
+  const m = studio.sv && studio.sv.meta;
+  if (!m || !studio.sv.bytes) return null;
+  const at = m.lanes[name];
+  return at ? studio.sv.bytes.subarray(at[0], at[0] + at[1]) : null;
+}
+
+async function studio_svLoad(song) {
+  if (!song) { studio.sv = null; studio_svBuild(); return; }
+  if (studio.sv && studio.sv.song === song) { studio_svBuild(); return; }
+  studio.sv = {song: song, meta: null, bytes: null, det: null};
+  studio_el('studio-sg-detnote').textContent = 'Reading the song\u2026';
+  const meta = await API.get('/api/studio/songview?song=' + encodeURIComponent(song));
+  if (!meta || !meta.ok) {
+    studio.sv = null;
+    studio_el('studio-sg-detnote').textContent = (meta && meta.error) || 'Could not read that song.';
+    studio_svBuild();
+    return;
+  }
+  const buf = await (await fetch('/api/studio/songview.bin?k=' + encodeURIComponent(SHELL_K) +
+    '&song=' + encodeURIComponent(song))).arrayBuffer();
+  if (!studio.sv || studio.sv.song !== song) return;
+  studio.sv.meta = meta;
+  studio.sv.bytes = new Uint8Array(buf);
+  studio.sv.det = meta.detected || null;
+  const d = studio.sv.det;
+  studio_el('studio-sg-detnote').textContent = d && d.kills.length
+    ? d.pattern + ': ' + d.kills.length + ' kills, ' + d.big.length + ' big'
+    : '';
+  studio_svBuild();
+}
+
+function studio_svBuild() {
+  const box = studio_el('studio-sg-lanes');
+  if (!box) return;
+  if (!studio.sv || !studio.sv.meta) { box.innerHTML = ''; studio_el('studio-sg-toggles').innerHTML = ''; return; }
+  studio.svShow = studio.svShow || {wave: true, bands: true, flux: false, spec: true};
+  studio_el('studio-sg-toggles').innerHTML = SG_LANES.map(l =>
+    '<button type="button" class="studio-sg-toggle" data-act="studio-sg-lane" data-lane="' + l.id +
+    '" aria-pressed="' + !!studio.svShow[l.id] + '">' + esc(l.name.split(' \u2014 ')[0]) + '</button>').join('');
+  box.innerHTML = SG_LANES.filter(l => studio.svShow[l.id]).map(l =>
+    '<div class="studio-sg-lane" data-lane="' + l.id + '"><canvas height="' + l.h +
+    '" style="height:' + l.h + 'px"></canvas><span class="name">' + esc(l.name) + '</span></div>').join('');
+  studio_svDraw();
+}
+
+function studio_svWindow() {
+  const sg = studio.sg;
+  const t = (sg && sg.at) || 0;
+  const w = studio.svWin || 8;
+  return {t0: t - w * 0.375, t1: t - w * 0.375 + w, w: w};
+}
+
+function studio_svDraw() {
+  if (!studio.sv || !studio.sv.meta) return;
+  const v = studio_svWindow();
+  document.querySelectorAll('#studio-sg-lanes .studio-sg-lane').forEach(el =>
+    studio_svLaneDraw(el.getAttribute('data-lane'), el.querySelector('canvas'), v));
+}
+
+function studio_svLaneDraw(id, c, v) {
+  const dpr = window.devicePixelRatio || 1;
+  const W = c.clientWidth, H = c.clientHeight;
+  if (!W || !H) return;
+  c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+  const x = c.getContext('2d');
+  x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  x.clearRect(0, 0, W, H);
+  const m = studio.sv.meta, fps = m.fps, pad = 18;
+  const X = t => (t - v.t0) / v.w * W;
+  const curve = (arr, colour, fill) => {
+    if (!arr) return;
+    x.strokeStyle = colour; x.fillStyle = colour; x.lineWidth = 1.5; x.beginPath();
+    for (let i = 0; i < W; i++) {
+      const k0 = Math.floor((v.t0 + i / W * v.w) * fps);
+      const k1 = Math.max(k0 + 1, Math.floor((v.t0 + (i + 1) / W * v.w) * fps));
+      let top = 0;
+      for (let k = Math.max(0, k0); k < Math.min(arr.length, k1); k++) if (arr[k] > top) top = arr[k];
+      const h = top / 255 * (H - pad - 5);
+      if (fill) x.fillRect(i, H - 3 - h, 1, h);
+      else if (i === 0) x.moveTo(i, H - 3 - h); else x.lineTo(i, H - 3 - h);
+    }
+    if (!fill) x.stroke();
+  };
+  if (id === 'wave') curve(studio_svLane('rms'), studio_tok('--accent'), true);
+  else if (id === 'flux') curve(studio_svLane('flux'), studio_tok('--ok'), true);
+  else if (id === 'bands') {
+    curve(studio_svLane('low'), '#ff8a5c', false);
+    curve(studio_svLane('mid'), studio_tok('--accent'), false);
+    curve(studio_svLane('high'), '#c98bff', false);
+  } else if (id === 'spec') {
+    const bins = m.spec_bins, sp = studio_svLane('spec'), f0 = Math.floor(v.t0 * fps);
+    const n = Math.max(1, Math.ceil(v.w * fps));
+    const img = x.createImageData(n, bins);
+    for (let i = 0; i < n; i++) {
+      const f = f0 + i;
+      for (let b = 0; b < bins; b++) {
+        const val = (f >= 0 && f < m.frames) ? sp[f * bins + b] : 0;
+        const o = ((bins - 1 - b) * n + i) * 4;
+        img.data[o] = SG_PAL[val * 3]; img.data[o + 1] = SG_PAL[val * 3 + 1];
+        img.data[o + 2] = SG_PAL[val * 3 + 2]; img.data[o + 3] = 255;
+      }
+    }
+    const off = document.createElement('canvas');
+    off.width = n; off.height = bins;
+    off.getContext('2d').putImageData(img, 0, 0);
+    x.imageSmoothingEnabled = false;
+    x.drawImage(off, 0, pad, W, H - pad);
+  }
+  /* the beat grid, so the song's own tempo can be compared with the hits */
+  const sh = studio.songShape;
+  if (sh && sh.beats) {
+    for (let i = 0; i < sh.beats.length; i++) {
+      const b = sh.beats[i];
+      if (b < v.t0 - 0.1 || b > v.t1 + 0.1) continue;
+      const down = (i % 4) === (sh.downbeat_pos || 0);
+      x.fillStyle = down ? studio_tok('--text-tertiary') : studio_tok('--border-subtle');
+      x.globalAlpha = id === 'spec' ? 0.55 : 1;
+      x.fillRect(X(b) - (down ? 1 : 0.5), pad, down ? 2 : 1, H - pad);
+      x.globalAlpha = 1;
+    }
+  }
+  /* what the detector would cut to, in the strip above the view */
+  const det = studio.sv.det;
+  if (det && studio_el('studio-sg-showdet').checked) {
+    const big = new Set(det.big);
+    x.fillStyle = '#1f7a72';
+    det.accents.forEach(t => { if (t >= v.t0 && t <= v.t1) x.fillRect(X(t) - 0.5, pad - 5, 1, 5); });
+    det.kills.forEach(t => {
+      if (t < v.t0 || t > v.t1) return;
+      const isBig = big.has(t), px = X(t);
+      x.fillStyle = '#2fd4c8';
+      x.fillRect(px - (isBig ? 1 : 0.5), 2, isBig ? 2 : 1, pad - 2);
+      x.beginPath(); x.moveTo(px - 4, 1); x.lineTo(px + 4, 1); x.lineTo(px, isBig ? 9 : 6); x.fill();
+    });
+  }
+  /* the part being used, and the kills marked by hand */
+  const sg = studio.sg;
+  if (sg) {
+    x.fillStyle = studio_tok('--warn');
+    (sg.marks || []).forEach(t => {
+      if (t >= v.t0 && t <= v.t1) x.fillRect(X(t) - 1, pad, 2, H - pad);
+    });
+    if (sg.start >= v.t0 && sg.start <= v.t1) {
+      x.fillStyle = studio_tok('--ok'); x.fillRect(X(sg.start) - 1, 0, 2, H);
+    }
+    if (sg.end >= v.t0 && sg.end <= v.t1) {
+      x.fillStyle = studio_tok('--ok'); x.fillRect(X(sg.end) - 1, 0, 2, H);
+    }
+    x.fillStyle = studio_tok('--bad');
+    x.fillRect(X(sg.at || 0) - 1, 0, 2, H);
+  }
+}
+
+/* The songs already downloaded, so one can be picked without a file dialog. */
+async function studio_sgSongs(force) {
+  const box = studio_el('studio-sg-songs');
+  if (!box) return;
+  if (!studio.songList || force) {
+    const r = await API.get('/api/studio/songs');
+    studio.songList = (r && r.ok && r.songs) || [];
+  }
+  const here = (studio.song || '').toLowerCase();
+  box.innerHTML = studio.songList.length
+    ? studio.songList.map(s =>
+      '<button type="button" class="studio-sg-song' + (s.path.toLowerCase() === here ? ' is-on' : '') +
+      '" data-act="studio-sg-song" data-path="' + esc(s.path) + '" title="' + esc(s.file) + '">' +
+      esc(s.name) + '</button>').join('')
+    : '<span class="muted">No songs downloaded yet. Paste a YouTube link and one will appear here.</span>';
+}
+
+function studio_svWin(w) {
+  studio.svWin = w;
+  document.querySelectorAll('[data-act="studio-sg-win"]').forEach(b =>
+    b.classList.toggle('is-active', Number(b.getAttribute('data-win')) === w));
+  studio_svDraw();
+}
+
+function studio_svToggle(id) {
+  studio.svShow = studio.svShow || {};
+  studio.svShow[id] = !studio.svShow[id];
+  studio_svBuild();
+}
+
 function studio_sgOpen() {
   const p = studio.project, sg = studio.sg;
   if (!p) return;
@@ -2354,6 +2597,8 @@ function studio_sgOpen() {
     }
   }
   if (!p.song) { sg.song = ''; sg.shape = null; }
+  studio_sgSongs();
+  studio_svLoad(sg.song || '');
   studio_sgReset();
 }
 
@@ -2520,6 +2765,7 @@ function studio_sgCanvas(id, H) {
 }
 
 function studio_sgDrawWaves() {
+  studio_svDraw();                      /* the lanes follow the playhead too */
   const sg = studio.sg, sh = sg.shape;
   if (!sh || !sh.peaks) return;
   const css = getComputedStyle(document.documentElement);
@@ -2663,6 +2909,9 @@ async function studio_sgUseSong(path) {
   if (!got || !got.ok) { studio_el('studio-sg-facts').textContent = (got && got.error) || 'Could not read that song.'; return false; }
   const sg = studio.sg, sh = got.song, len = (studio.derived && studio.derived.length) || 30;
   sg.song = path; sg.shape = sh; sg.marks = []; sg.touched = true;
+  studio.songShape = sh;
+  studio_sgSongs();
+  studio_svLoad(path);
   const from = sh.drums_in || (sh.beats && sh.beats[0]) || 0;
   sg.start = studio_sgNearestBeat(Math.max(0, Math.min(from, sh.seconds - len)));
   sg.end = Math.min(sh.seconds, sg.start + len);

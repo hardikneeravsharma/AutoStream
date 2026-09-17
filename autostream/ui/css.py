@@ -3055,6 +3055,25 @@ CSS = CSS + REEL_CSS
 STUDIO_CSS = r"""
 /* In the card's foot, beside Play: over the thumbnail it would sit on top of
    the button that selects the clip. */
+.studio-sg-songs{display:flex;flex-wrap:wrap;gap:6px;margin-top:var(--space-3)}
+.studio-sg-song{max-width:320px;text-align:left;font-size:12.5px;padding:5px 10px;border-radius:999px;
+  border:var(--border-hair) solid var(--border-subtle);background:var(--surface);color:var(--text-secondary);
+  cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.studio-sg-song:hover{border-color:var(--border-strong);color:var(--text-primary)}
+.studio-sg-song.is-on{border-color:var(--accent);background:var(--accent-muted);color:var(--text-primary)}
+.studio-sg-viewbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin-top:var(--space-3)}
+.studio-sg-toggles{display:flex;flex-wrap:wrap;gap:6px}
+.studio-sg-toggle{font-size:12.5px;padding:4px 10px;border-radius:999px;cursor:pointer;
+  border:var(--border-hair) solid var(--border-subtle);background:transparent;color:var(--text-secondary)}
+.studio-sg-toggle[aria-pressed="true"]{background:var(--accent-muted);border-color:var(--accent);color:var(--text-primary)}
+.studio-sg-lanes{border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-md);
+  overflow:hidden;background:var(--surface-sunken);margin-top:var(--space-3)}
+.studio-sg-lane{position:relative;border-top:var(--border-hair) solid var(--border-subtle)}
+.studio-sg-lane:first-child{border-top:0}
+.studio-sg-lane canvas{display:block;width:100%;cursor:crosshair}
+.studio-sg-lane .name{position:absolute;left:8px;top:5px;font-size:11px;color:var(--text-tertiary);
+  background:var(--scrim);padding:1px 6px;border-radius:4px;pointer-events:none}
+
 .studio-star{flex:none;width:26px;height:26px;line-height:1;display:flex;align-items:center;
   justify-content:center;font-size:15px;cursor:pointer;padding:0;border-radius:var(--radius-sm);
   border:var(--border-hair) solid transparent;background:transparent;color:var(--text-tertiary)}
