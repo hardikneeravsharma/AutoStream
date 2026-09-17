@@ -3053,6 +3053,15 @@ REEL_CSS = """
 CSS = CSS + REEL_CSS
 
 STUDIO_CSS = r"""
+/* In the card's foot, beside Play: over the thumbnail it would sit on top of
+   the button that selects the clip. */
+.studio-star{flex:none;width:26px;height:26px;line-height:1;display:flex;align-items:center;
+  justify-content:center;font-size:15px;cursor:pointer;padding:0;border-radius:var(--radius-sm);
+  border:var(--border-hair) solid transparent;background:transparent;color:var(--text-tertiary)}
+.studio-star:hover{color:var(--warn);background:var(--surface-hover)}
+.studio-star.is-on{color:var(--warn)}
+.chip.studio-fav-chip:not(:disabled) b{color:var(--warn)}
+
 /* ------------------------------------------------------------ parts bin */
 /* The reel maker's front page. Every reel is one pick from each drawer, and
    each pick is shown by an example cut from the player's own clips, so a

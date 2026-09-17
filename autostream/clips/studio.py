@@ -120,6 +120,41 @@ def clip_id(path: str | Path) -> str:
     return hashlib.sha1(str(path).lower().encode("utf-8")).hexdigest()[:12]
 
 
+# FAVOURITES. Kept beside the clips rather than inside each run's clips.json:
+# that file is written by the clip job, and a re-cut of a recording rewrites it
+# whole. A star has to survive that, and survive a clip being renamed by the
+# player, so it is stored by clip id -- the hash of the path clip_id() makes --
+# in the clips folder's own cache.
+FAV_FILE = "favourites.json"
+
+
+def _fav_path(root: Path) -> Path:
+    return Path(root) / CACHE_DIR / FAV_FILE
+
+
+def favourites(root: Path) -> set[str]:
+    """The clip ids the player has starred."""
+    got = _read_json(_fav_path(root))
+    if isinstance(got, dict):
+        got = got.get("clips")
+    return {str(x) for x in got} if isinstance(got, list) else set()
+
+
+def set_favourite(root: Path, paths: list[str], on: bool = True) -> dict:
+    """Star or unstar clips, by path. -> {ok, favourites: [ids], changed: n}"""
+    root = Path(root)
+    have = favourites(root)
+    before = len(have)
+    ids = {clip_id(p) for p in paths if str(p).strip()}
+    have = (have | ids) if on else (have - ids)
+    f = _fav_path(root)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"clips": sorted(have)}, indent=1), encoding="utf-8")
+    tmp.replace(f)
+    return {"ok": True, "favourites": sorted(have), "changed": abs(len(have) - before)}
+
+
 def library(root: Path) -> dict:
     """Every clip under the clips folder, by game and then by run folder.
 
@@ -129,6 +164,8 @@ def library(root: Path) -> dict:
     """
     games: dict[str, dict] = {}
     total = 0
+    starred = favourites(root)
+    fav_count = 0
     try:
         folders = [f for f in root.iterdir() if f.is_dir()]
     except OSError:
@@ -184,9 +221,12 @@ def library(root: Path) -> dict:
                 mtime = int(master.stat().st_mtime)
             except OSError:
                 mtime = 0
+            cid = clip_id(master)
+            fav_count += cid in starred
             clips.append({
                 "mtime": mtime,
-                "id": clip_id(master),
+                "id": cid,
+                "fav": cid in starred,
                 "name": str(c.get("name") or master.stem),
                 "path": str(master),
                 "vertical": str(vert) if vert.is_file() else "",
@@ -218,7 +258,7 @@ def library(root: Path) -> dict:
     for g in out:
         g["folders"].sort(key=lambda f: -f["when"])
     return {"ok": True, "root": str(root), "clip_count": total, "games": out,
-            "reels": reels(root)}
+            "fav_count": fav_count, "reels": reels(root)}
 
 
 def reels(root: Path) -> list[dict]:
@@ -272,6 +312,7 @@ def delete_clips(root: Path, paths: list[str], *, dry_run: bool = False) -> dict
     root_r = root.resolve()
     want = {_key(p) for p in paths if str(p).strip()}
     found: set[str] = set()
+    gone: list[Path] = []
     runs: list[tuple[Path, Any, list[tuple[dict, list[Path]]]]] = []
     total = 0
     try:
@@ -296,6 +337,7 @@ def delete_clips(root: Path, paths: list[str], *, dry_run: bool = False) -> dict
             if not master.name or _key(master) not in want:
                 continue
             found.add(_key(master))
+            gone.append(master)
             files = []
             for f in (master, Path(str(row.get("vertical") or ""))):
                 try:
@@ -348,6 +390,10 @@ def delete_clips(root: Path, paths: list[str], *, dry_run: bool = False) -> dict
         except OSError as e:
             out["errors"].append(f"{man_path.parent.name}/clips.json: {e}")
     out["bytes"] = freed
+    # A star for a clip that is gone is dead weight in the file, and would come
+    # back to life if a clip were ever cut to the same path again.
+    if gone:
+        set_favourite(root, [str(m) for m in gone], on=False)
     log.info("deleted %d clip(s) from the clips folder, %.1f MB freed%s", out["clips"], freed / 1e6,
              f"; {len(out['errors'])} could not be removed" if out["errors"] else "")
     return out

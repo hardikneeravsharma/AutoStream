@@ -142,3 +142,71 @@ def test_the_catalog_tells_the_page_the_drawers_and_each_styles_picks():
     for p in cat["parts"]:
         assert p["label"] and p["blurb"], p["id"]
     assert json.dumps(cat)                       # it has to survive the wire
+
+
+# ------------------------------------------------------------- favourites
+
+def test_a_star_is_kept_by_clip_id_and_survives_the_run_being_cut_again(root):
+    """clips.json is rewritten whole when a recording is cut again, so a star
+    cannot live in it."""
+    clip = root / "2026-09-01_1200_VALORANT" / "clips" / "VALORANT_01.mp4"
+    clip.parent.mkdir(parents=True)
+    clip.write_bytes(b"not really a video")
+    assert studio.favourites(root) == set()
+    got = studio.set_favourite(root, [str(clip)], on=True)
+    assert got["ok"] and got["changed"] == 1
+    assert studio.favourites(root) == {studio.clip_id(clip)}
+    # ...and it is still there when the same path is read again
+    assert studio.clip_id(str(clip).upper()) in studio.favourites(root)
+
+
+def test_starring_twice_changes_nothing_and_unstarring_removes_it(root):
+    a, b = root / "a.mp4", root / "b.mp4"
+    studio.set_favourite(root, [str(a), str(b)], on=True)
+    again = studio.set_favourite(root, [str(a)], on=True)
+    assert again["changed"] == 0 and len(again["favourites"]) == 2
+    off = studio.set_favourite(root, [str(a)], on=False)
+    assert off["favourites"] == [studio.clip_id(b)]
+
+
+def test_the_library_says_which_clips_are_starred(root):
+    from test_studio import _clips, _run
+
+    r = root / "clips"
+    _run(r, "2026-09-01_1200_VALORANT", "VALORANT",
+         [{"start": 100.0, "end": 112.0}, {"start": 200.0, "end": 212.0}],
+         kills=[106.0, 206.0])
+    (r / ".studio").mkdir(exist_ok=True)
+    first = _clips(r)[0]
+    studio.set_favourite(r, [first["path"]], on=True)
+    lib = studio.library(r)
+    clips = [c for g in lib["games"] for f in g["folders"] for c in f["clips"]]
+    assert lib["fav_count"] == 1
+    assert [c["fav"] for c in clips] == [True, False]
+
+
+def test_deleting_a_clip_takes_its_star_with_it(root):
+    from test_studio import _clips, _run
+
+    r = root / "clips"
+    _run(r, "2026-09-01_1200_VALORANT", "VALORANT",
+         [{"start": 100.0, "end": 112.0}, {"start": 200.0, "end": 212.0}],
+         kills=[106.0, 206.0])
+    (r / ".studio").mkdir(exist_ok=True)
+    clips = _clips(r)
+    studio.set_favourite(r, [c["path"] for c in clips], on=True)
+    assert len(studio.favourites(r)) == 2
+    studio.delete_clips(r, [clips[0]["path"]])
+    assert studio.favourites(r) == {studio.clip_id(clips[1]["path"])}
+
+
+def test_a_dry_run_delete_leaves_the_stars_alone(root):
+    from test_studio import _clips, _run
+
+    r = root / "clips"
+    _run(r, "2026-09-01_1200_VALORANT", "VALORANT", [{"start": 100.0, "end": 112.0}], kills=[106.0])
+    (r / ".studio").mkdir(exist_ok=True)
+    clip = _clips(r)[0]["path"]
+    studio.set_favourite(r, [clip], on=True)
+    studio.delete_clips(r, [clip], dry_run=True)
+    assert studio.favourites(r) == {studio.clip_id(clip)}

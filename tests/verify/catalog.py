@@ -356,6 +356,11 @@ CONTROLS: list[Control] = [
             query="path=", expect=_has("ok"), acts=("studio-open",),
             why="a blank path is refused with ok:false; a reel outside the "
                 "reels folder is refused the same way"),
+    Control("/api/studio/favourite", "POST", CALL, "star a clip", "studio",
+            body={"paths": []}, expect=_has("ok"),
+            acts=("studio-fav", "studio-fav-selected"),
+            why="a star is kept by clip id in the clips folder's own cache, so "
+                "it survives a run being cut again; no paths is refused"),
     Control("/api/studio/examples", "GET", CALL, "the parts bin", "studio",
             expect=_has("ok", "examples", "missing"),
             why="every part the reel maker can use, and the example cut for it "

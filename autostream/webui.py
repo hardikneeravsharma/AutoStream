@@ -620,6 +620,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_delete(b))
             elif p == "/api/studio/songfetch":
                 self._json(self.app.studio_songfetch(b))
+            elif p == "/api/studio/favourite":
+                self._json(self.app.studio_favourite(b))
+            elif p == "/api/studio/favourite":
+                self._json(self.app.studio_favourite(b))
             elif p == "/api/studio/examples/build":
                 self._json(self.app.studio_examples_build(b))
             elif p == "/api/studio/songfetch/cancel":
@@ -2410,6 +2414,26 @@ class Server:
         from .clips import studio
 
         return studio.catalog()
+
+    def studio_favourite(self, body: dict) -> dict:
+        """Star or unstar clips. The library then shows and filters them."""
+        from .clips import studio
+
+        paths = [str(x) for x in (body.get("paths") or []) if isinstance(x, str)]
+        if not paths:
+            return {"ok": False, "error": "No clips given."}
+        on = bool(body.get("on", True))
+        return studio.set_favourite(self._clips_dir(cfg.load()), paths, on)
+
+    def studio_favourite(self, body: dict) -> dict:
+        """Star or unstar clips. The library then shows and filters them."""
+        from .clips import studio
+
+        paths = [str(x) for x in (body.get("paths") or []) if isinstance(x, str)]
+        if not paths:
+            return {"ok": False, "error": "No clips given."}
+        on = bool(body.get("on", True))
+        return studio.set_favourite(self._clips_dir(cfg.load()), paths, on)
 
     def studio_examples(self) -> dict:
         """Every part the reel maker can use, and the example cut for it."""

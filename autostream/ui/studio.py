@@ -89,6 +89,7 @@ STUDIO_HTML = r"""
         <span class="muted" id="studio-tray-facts"></span>
         <span class="studio-adding hide" id="studio-adding"></span>
       </div>
+      <button type="button" class="btn btn-ghost btn-sm" data-act="studio-fav-selected" id="studio-fav-btn">★ Favourite</button>
       <button type="button" class="btn btn-ghost btn-sm" data-act="studio-clear">Clear</button>
       <button type="button" class="btn btn-ghost btn-sm hide" data-act="studio-add-cancel" id="studio-add-cancel">Stop adding</button>
       <button type="button" class="btn btn-ghost btn-sm studio-del-btn" data-act="studio-delete">Delete…</button>
@@ -444,11 +445,12 @@ async function studio_load(force) {
 function studio_visible() {
   const q = studio.q.trim().toLowerCase();
   const out = [];
+  const favOnly = studio.game === 'fav';
   (studio.lib ? studio.lib.games : []).forEach(g => {
-    if (studio.game !== 'all' && g.game !== studio.game) return;
+    if (studio.game !== 'all' && !favOnly && g.game !== studio.game) return;
     g.folders.forEach(f => {
-      const clips = f.clips.filter(c => !q ||
-        (c.name + ' ' + c.caption + ' ' + f.label + ' ' + g.game).toLowerCase().indexOf(q) >= 0);
+      const clips = f.clips.filter(c => (!favOnly || c.fav) && (!q ||
+        (c.name + ' ' + c.caption + ' ' + f.label + ' ' + g.game).toLowerCase().indexOf(q) >= 0));
       if (clips.length) out.push({game: g.game, folder: f, clips: clips});
     });
   });
@@ -470,7 +472,12 @@ function studio_renderLib() {
     lib.clip_count + '</b></button>' +
     lib.games.map(g => '<button type="button" class="chip' + (studio.game === g.game ? ' is-on' : '') +
       '" data-act="studio-game" data-game="' + esc(g.game) + '" aria-pressed="' + (studio.game === g.game) +
-      '">' + esc(g.game) + ' <b>' + g.clips + '</b></button>').join('');
+      '">' + esc(g.game) + ' <b>' + g.clips + '</b></button>').join('') +
+    /* Favourites cut across games, so the chip sits apart from them. */
+    '<button type="button" class="chip studio-fav-chip' + (studio.game === 'fav' ? ' is-on' : '') +
+    '" data-act="studio-game" data-game="fav" aria-pressed="' + (studio.game === 'fav') + '"' +
+    ((lib.fav_count || 0) ? '' : ' disabled title="Star a clip with the star on its card"') +
+    '>\u2605 Favourites <b>' + (lib.fav_count || 0) + '</b></button>';
 
   const reels = lib.reels || [];
   studio_el('studio-reels').innerHTML = reels.length
@@ -524,6 +531,10 @@ function studio_tile(c, n) {
     '</button>' +
     '<div class="studio-clip-foot"><span class="truncate" title="' + esc(c.name) + '">' +
     esc(c.caption || c.name) + '</span>' +
+    '<button type="button" class="studio-star' + (c.fav ? ' is-on' : '') + '" data-act="studio-fav" data-clip="' +
+      esc(c.id) + '" title="' + (c.fav ? 'A favourite. Click to unstar.' : 'Mark as a favourite') +
+      '" aria-pressed="' + (c.fav ? 'true' : 'false') + '" aria-label="Favourite">' +
+      (c.fav ? '\u2605' : '\u2606') + '</button>' +
     '<button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="studio-preview" data-clip="' +
     esc(c.id) + '" aria-label="Play ' + esc(c.name) + '">' + icon('play') + '</button></div></div>';
 }
@@ -549,6 +560,7 @@ function studio_syncSelection() {
 }
 
 function studio_renderTray() {
+  studio_favLabel();
   const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
   studio_show('studio-tray', sel.length > 0);
   studio_el('studio-tray-count').textContent = sel.length + (sel.length === 1 ? ' clip' : ' clips');
@@ -1283,6 +1295,47 @@ function studio_handNext(kind) {
   let i = -1;
   parts.forEach(function (p, j) { if (p.id === now) i = j; });
   studio_binPick(kind, parts[(i + 1) % parts.length].id);
+}
+
+/* ------------------------------------------------------------- favourites */
+
+/* The star is drawn from studio.lib, so it flips before the round trip and is
+   put back if the write fails -- the library is only re-read on Refresh. */
+async function studio_setFav(clips, on) {
+  if (!clips.length) return;
+  const ids = {};
+  clips.forEach(c => { ids[c.id] = true; c.fav = on; });
+  studio.lib.fav_count = Math.max(0, (studio.lib.fav_count || 0) + (on ? clips.length : -clips.length));
+  if (studio.game === 'fav' && !on) studio.selected = studio.selected.filter(id => !ids[id]);
+  studio_renderLib();
+  const r = await API.post('/api/studio/favourite', {paths: clips.map(c => c.path), on: on});
+  if (!r || !r.ok) {
+    clips.forEach(c => { c.fav = !on; });
+    studio.lib.fav_count = Math.max(0, (studio.lib.fav_count || 0) + (on ? -clips.length : clips.length));
+    studio_renderLib();
+    toast((r && r.error) || 'Could not save that favourite.', 'warn');
+  }
+}
+
+function studio_fav(id) {
+  const c = studio.clipIndex[id];
+  if (c) studio_setFav([c], !c.fav);
+}
+
+/* Star everything selected, or unstar it when it is all starred already. */
+function studio_favLabel() {
+  const b = studio_el('studio-fav-btn');
+  if (!b) return;
+  const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
+  const off = sel.length && sel.every(c => c.fav);
+  b.textContent = (off ? '\u2606 Unfavourite' : '\u2605 Favourite') +
+    (sel.length > 1 ? ' ' + sel.length : '');
+}
+
+function studio_favSelected() {
+  const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
+  if (!sel.length) return;
+  studio_setFav(sel, !sel.every(c => c.fav));
 }
 
 function studio_ordered() {
@@ -2056,6 +2109,8 @@ function studio_wire() {
       studio.picks = null;
       studio_renderStyles(); studio_hand(); studio_binDraw();
     }
+    else if (act === 'studio-fav') studio_fav(b.getAttribute('data-clip'));
+    else if (act === 'studio-fav-selected') studio_favSelected();
     else if (act === 'studio-bin-pick') studio_binPick(b.getAttribute('data-kind'), b.getAttribute('data-part'));
     else if (act === 'studio-hand-next') studio_handNext(b.getAttribute('data-kind'));
     else if (act === 'studio-deal') studio_deal();
