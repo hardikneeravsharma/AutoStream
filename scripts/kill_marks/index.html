@@ -364,8 +364,8 @@ function detFacts() {
     const t = shown(m), i = nearest(d.hits, t);
     if (i >= 0 && Math.abs(d.hits[i] - t) <= 0.06) caught++;
   });
-  return ' · detector: ' + d.kills.length + ' kills, ' + d.accents.length + ' accents, ' +
-    d.big.length + ' big' +
+  return ' · ' + (d.pattern || 'hits') + ': ' + d.kills.length + ' kills, ' +
+    d.accents.length + ' accents, ' + d.big.length + ' big' +
     (S.marks.length ? ' · ' + Math.round(caught / S.marks.length * 100) + '% of your ' +
       S.marks.length + ' marks are on one of its hits' : '');
 }

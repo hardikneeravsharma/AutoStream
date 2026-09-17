@@ -83,6 +83,7 @@ class Shape:
     hits: list[float] = field(default_factory=list)
     hit_strength: list[float] = field(default_factory=list)
     big: list[float] = field(default_factory=list)
+    pattern: str = ""           # "bass hits", or the band whose bar figure it is
 
     @property
     def beat(self) -> float:
@@ -131,7 +132,7 @@ class Shape:
             "peaks": self.peaks, "onsets": self.onsets,
             "hits": [round(h, 4) for h in self.hits],
             "hit_strength": [round(s, 3) for s in self.hit_strength],
-            "big": [round(b, 4) for b in self.big],
+            "big": [round(b, 4) for b in self.big], "pattern": self.pattern,
         }
 
 
@@ -244,7 +245,7 @@ def analyse(path: Path, seconds: float = 0.0, points: int = 2000) -> Shape:
     onsets = [round(i * hop_s, 4) for i in range(1, len(e) - 1)
               if e[i] > thr and e[i] >= e[i - 1] and e[i] > e[i + 1]]
 
-    found, strength = hits_mod.bass_hits(x)
+    found, strength, pattern = hits_mod.song_hits(x, 60.0 / bpm if bpm else 0.0, total)
     big, _rises = hits_mod.big_hits(x, found)
 
     shape = Shape(
@@ -255,10 +256,11 @@ def analyse(path: Path, seconds: float = 0.0, points: int = 2000) -> Shape:
         beats=beats,
         peaks=[round(v / top, 3) for v in raw[:points]],
         onsets=onsets,
-        hits=found, hit_strength=strength, big=big,
+        hits=found, hit_strength=strength, big=big, pattern=pattern,
     )
-    log.info("reel: %s is %.2f BPM, %d bass hit(s) (%d big), downbeat at position %d, "
-             "drums in at %s, drop at %s", path.name, shape.bpm, len(shape.hits), len(shape.big),
+    log.info("reel: %s is %.2f BPM, %d %s (%d big), downbeat at position %d, "
+             "drums in at %s, drop at %s", path.name, shape.bpm, len(shape.hits),
+             shape.pattern or "hit(s)", len(shape.big),
              shape.downbeat_pos,
              f"{shape.drums_in:.2f}s" if shape.drums_in else "the start",
              f"{shape.drop:.2f}s" if shape.drop else "no drop found")

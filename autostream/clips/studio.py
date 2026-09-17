@@ -597,8 +597,10 @@ class Grid:
     bpm: float = NO_SONG_BPM
     downbeat_pos: int = 0
     peaks: list[float] = field(default_factory=list)   # the song's loudness envelope
-    hits: list[float] = field(default_factory=list)    # bass hits, song seconds
+    hits: list[float] = field(default_factory=list)    # where the song hits, song seconds
+    hit_strength: list[float] = field(default_factory=list)
     big: list[float] = field(default_factory=list)     # the strongest of them
+    pattern: str = ""                                  # what those hits are
 
     @classmethod
     def none(cls) -> "Grid":
@@ -611,7 +613,9 @@ class Grid:
                    downbeat_pos=getattr(shape, "downbeat_pos", 0),
                    peaks=list(getattr(shape, "peaks", None) or []),
                    hits=list(getattr(shape, "hits", None) or []),
-                   big=list(getattr(shape, "big", None) or []))
+                   hit_strength=list(getattr(shape, "hit_strength", None) or []),
+                   big=list(getattr(shape, "big", None) or []),
+                   pattern=str(getattr(shape, "pattern", "") or ""))
 
     def index_at_or_after(self, t: float) -> int:
         for i, b in enumerate(self.beats):
@@ -731,13 +735,20 @@ def _first_kill(hits: list[float], big: list[float], *, earliest: float,
     return want
 
 
-def _hit_slots(hits: list[float], *, first: float, end: float, gap: float,
-               count: int) -> list[float]:
+def _hit_slots(hits: list[float], strengths: list[float], *, first: float, end: float,
+               gap: float, count: int) -> list[float]:
     """The song times this reel's kills land on: `count` of them from `first`."""
-    within = [t for t in hits if first - 1e-6 <= t <= end + 1e-6]
-    if not within:
+    keep = [i for i, t in enumerate(hits) if first - 1e-6 <= t <= end + 1e-6]
+    if not keep:
         return [first]
-    kills, _accents = hits_mod.choose_kills(within, target_gap=gap)
+    within = [hits[i] for i in keep]
+    strong = [strengths[i] for i in keep] if len(strengths) == len(hits) else None
+    kills, _accents = hits_mod.choose_kills(within, strong, target_gap=gap)
+    # The opener is not up for grabs: choose_kills takes the loudest hit in
+    # each window, and in the first window that is rarely the hit the reel was
+    # aimed at -- on Skechers it moved the first kill 2.4 s past the drop.
+    if kills and abs(kills[0] - first) > 1e-6:
+        kills = [first] + [k for k in kills if k >= first + hits_mod.WINDOW[0] * gap]
     return kills[:count] if count else kills
 
 
@@ -1080,7 +1091,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             for c in grid.hits:
                 if not aim - 14.0 <= c <= aim:
                     continue
-                s4 = _hit_slots(grid.hits, first=c, end=aim + 1.0, gap=gap, count=4)
+                s4 = _hit_slots(grid.hits, grid.hit_strength, first=c, end=aim + 1.0,
+                                gap=gap, count=4)
                 if len(s4) < 4:
                     continue
                 d = abs(s4[3] - aim)
@@ -1095,12 +1107,13 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         first = _first_kill(grid.hits, [], earliest=floor + shots[0]["pre"])
     if song and shots and grid.hits:
         end = (part_start + part_len) if part_len else grid.seconds
-        slots = _hit_slots(grid.hits, first=first, end=end, gap=60.0 / max(cpm, 1.0),
-                           count=len(shots))
+        slots = _hit_slots(grid.hits, grid.hit_strength, first=first, end=end,
+                           gap=60.0 / max(cpm, 1.0), count=len(shots))
         proj["song_offset"] = round(offset, 5)
         notes += apply_marks(proj, [t - offset for t in slots])
         big_on = sum(1 for t in slots if any(abs(t - b) < 0.01 for b in grid.big))
-        notes.append(f"{len(slots)} kills land on the song's own bass hits, a cut every "
+        what = grid.pattern or "bass hits"
+        notes.append(f"{len(slots)} kills land on the song's own {what}, a cut every "
                      f"{60.0 / max(cpm, 1.0):.1f} s at {style.label}'s pace"
                      + (f", {big_on} of them on a big hit" if big_on else "") + ".")
         if len(slots) < len(shots):

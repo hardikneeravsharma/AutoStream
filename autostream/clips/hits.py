@@ -103,10 +103,31 @@ QUICK_SHARE = 2.0
 # the player's rule, but a 160-hits-a-minute song at story's pace needs every
 # 8th to keep kills 2.8 s apart, and a run of sixteenth notes twice that.
 MAX_STEP = 16
+# How far either side of where the next kill belongs to look for the loudest
+# hit. Wider than this and the pace drifts; narrower and a strong hit just
+# outside is missed.
+WINDOW = (0.6, 1.5)
+
+# ------------------------------------------------------------------ the bands
+# Three bands, because the marks say kills are not always on the bass: of the
+# eight songs marked, four are cut on the kick, two on the mids and one -- the
+# hats of Believer -- on neither.
+BANDS = {"bass": (LOW_MIN_HZ, LOW_HZ), "mid": (150.0, 2500.0), "hats": (5000.0, 16000.0)}
+# A bar folded into this many steps: 32nd notes, fine enough for a swung or
+# pushed accent.
+STEPS = 32
+# When a band's one-bar figure counts as the song's pattern: this much clearer
+# than the bass's figure, and this clear in its own right. Measured over
+# eleven songs, only Believer's hats pass -- 27x, against 6.4x for its own
+# bass, whose hits land on 4% of the marks.
+FIGURE_OVER_BASS = 3.0
+FIGURE_CLEAR = 10.0
+# A step of the figure quiet enough to be left out of it.
+FIGURE_FLOOR = 0.25
 
 
-def _low_level(x: np.ndarray) -> tuple[np.ndarray, float]:
-    """Energy under LOW_HZ per frame, in dB. -> (energy, frames per second)"""
+def _band(x: np.ndarray, lo: float, hi: float) -> tuple[np.ndarray, float]:
+    """Energy between `lo` and `hi` Hz per frame, in dB. -> (energy, frames/s)"""
     n = 1 + max(0, (len(x) - WIN) // HOP)
     if n < 8:
         return np.zeros(0), bs.SR / HOP
@@ -114,8 +135,13 @@ def _low_level(x: np.ndarray) -> tuple[np.ndarray, float]:
     win = np.hanning(WIN).astype(np.float32)
     mag = np.abs(np.fft.rfft(x[idx] * win, axis=1))
     freqs = np.fft.rfftfreq(WIN, 1.0 / bs.SR)
-    power = (mag[:, (freqs >= LOW_MIN_HZ) & (freqs < LOW_HZ)] ** 2).sum(axis=1)
+    power = (mag[:, (freqs >= lo) & (freqs < hi)] ** 2).sum(axis=1)
     return 10.0 * np.log10(power + 1e-10), bs.SR / HOP
+
+
+def _low_level(x: np.ndarray) -> tuple[np.ndarray, float]:
+    """The kick/bass band. -> (energy, frames per second)"""
+    return _band(x, LOW_MIN_HZ, LOW_HZ)
 
 
 def _rolling(v: np.ndarray, frames: int, q: float) -> np.ndarray:
@@ -163,6 +189,100 @@ def bass_hits(x: np.ndarray) -> tuple[list[float], list[float]]:
     return [p / fps for p in peaks], [float(level[p]) for p in peaks]
 
 
+def bar_figure(x: np.ndarray, beat: float, lo: float, hi: float,
+               ) -> tuple[float, float, np.ndarray]:
+    """The one-bar figure a band repeats. -> (contrast, phase, the bar's steps)
+
+    The band's energy is folded onto a single bar at STEPS steps, at the phase
+    that makes the figure sharpest. `contrast` is the loudest step against the
+    typical one: 27 for Believer's hats, which play a hit on every beat with
+    the one on beat three two and a half times louder, and 6 for its bass,
+    which has no figure at all.
+    """
+    energy, fps = _band(x, lo, hi)
+    if energy.size < 8 or beat <= 0:
+        return 0.0, 0.0, np.zeros(STEPS)
+    # New energy arriving, not how loud the band is: a band that never goes
+    # quiet folds flat. Believer's hats read 27 times their own typical step
+    # this way and 4 times it from the raw level.
+    lin = np.maximum(np.diff(energy, prepend=energy[0]), 0.0)
+    seconds = len(lin) / fps
+    bar = 4.0 * beat
+    if seconds < 8 * bar:
+        return 0.0, 0.0, np.zeros(STEPS)
+    at = np.arange(len(lin)) / fps
+    best = (0.0, 0.0, np.zeros(STEPS))
+    for phase in np.arange(0.0, bar / STEPS, bar / STEPS / 12):
+        v = np.interp(np.arange(phase, seconds - bar, bar / STEPS), at, lin)
+        bars = len(v) // STEPS
+        prof = v[:bars * STEPS].reshape(bars, STEPS).mean(axis=0)
+        contrast = float(prof.max() / max(float(np.median(prof)), 1e-9))
+        if contrast > best[0]:
+            best = (contrast, float(phase), prof)
+    return best
+
+
+def figure_hits(x: np.ndarray, beat: float, seconds: float,
+                ) -> tuple[list[float], list[float], str]:
+    """A song whose pattern is a repeated bar, not a run of drum hits.
+
+    Believer's kick is shapeless -- its hits sit on 4% of the marks -- but its
+    hats play the same bar over and over, and the player marked beat three of
+    every one of them. Where a band's figure is far clearer than the bass's,
+    the hits are that figure laid down bar by bar: every step of it that is not
+    quiet, each as strong as it is in the figure.
+
+    -> (times, strengths, which band), or ([], [], "") when no band stands out.
+    """
+    if beat <= 0 or seconds < 16.0:
+        return [], [], ""
+    figures = {b: bar_figure(x, beat, lo, hi) for b, (lo, hi) in BANDS.items()}
+    bass = figures["bass"][0]
+    band = max(figures, key=lambda b: figures[b][0])
+    contrast, phase, prof = figures[band]
+    if band == "bass" or contrast < FIGURE_CLEAR or contrast < FIGURE_OVER_BASS * bass:
+        return [], [], ""
+    bar = 4.0 * beat
+    top = float(prof.max()) or 1.0
+    steps = [(i, float(prof[i]) / top) for i in range(STEPS) if prof[i] / top >= FIGURE_FLOOR]
+    # The figure says WHERE in the bar; the band itself says exactly when. A
+    # grid laid down for 106 bars drifts off a song that does not keep perfect
+    # time, so each step lands on the real arrival nearest it.
+    energy, fps = _band(x, *BANDS[band])
+    rise = np.maximum(np.diff(energy, prepend=energy[0]), 0.0)
+    slack = bar / STEPS / 2
+    times: list[float] = []
+    strengths: list[float] = []
+    for n in range(int((seconds - phase) / bar)):
+        for i, level in steps:
+            t = phase + n * bar + i * bar / STEPS
+            if t >= seconds:
+                continue
+            a = max(0, int((t - slack) * fps))
+            b = min(len(rise), int((t + slack) * fps) + 1)
+            if b > a:
+                t = (a + int(np.argmax(rise[a:b]))) / fps
+            times.append(round(float(t), 4))
+            strengths.append(level)
+    order = np.argsort(times)
+    return [times[i] for i in order], [strengths[i] for i in order], band
+
+
+def song_hits(x: np.ndarray, beat: float = 0.0, seconds: float = 0.0,
+              ) -> tuple[list[float], list[float], str]:
+    """Where this song's kills belong. -> (times, strengths, what was used)
+
+    The bass hits, unless the song has no bass pattern and another band repeats
+    a clear bar figure -- see figure_hits().
+    """
+    seconds = seconds or len(x) / bs.SR
+    times, strengths, band = figure_hits(x, beat, seconds)
+    if times:
+        return times, strengths, f"{band} figure"
+    times, strengths = bass_hits(x)
+    return times, strengths, "bass hits"
+
+
 def big_hits(x: np.ndarray, hits: list[float]) -> tuple[list[float], list[float]]:
     """The hits where the song comes back in after a quiet stretch. -> (times, rises)"""
     if not hits:
@@ -193,7 +313,32 @@ def big_hits(x: np.ndarray, hits: list[float]) -> tuple[list[float], list[float]
     return [hits[i] for i in out], [rises[i] for i in out]
 
 
-def choose_kills(hits: list[float], *, target_gap: float = TARGET_GAP,
+def _loudest_run(run: list[float], strength: list[float], gap: float,
+                 ) -> tuple[list[float], list[float]]:
+    """Walk a dense run, taking the loudest hit where the next kill belongs.
+
+    Every Nth hit takes whatever sits on that count -- on Skechers that caught
+    17% of the marks, on Lalala 16%. Taking the STRONGEST hit in the window
+    instead catches 63% and 66%: an editor cuts on the hit that is loudest
+    there, not on the one the count lands on.
+    """
+    kills = [run[int(np.argmax(strength[:max(1, sum(1 for t in run if t <= run[0] + gap))]))]]
+    while True:
+        last = kills[-1]
+        inside = [i for i, t in enumerate(run) if last + WINDOW[0] * gap <= t <= last + WINDOW[1] * gap]
+        if inside:
+            kills.append(run[max(inside, key=lambda i: strength[i])])
+            continue
+        after = [t for t in run if t > last + WINDOW[1] * gap]
+        if not after:
+            break
+        kills.append(after[0])
+    chosen = set(kills)
+    return kills, [t for t in run if t not in chosen]
+
+
+def choose_kills(hits: list[float], strengths: list[float] | None = None, *,
+                 target_gap: float = TARGET_GAP,
                  close: float = 0.0, quick_run: float = 0.0,
                  min_shot: float = 0.25) -> tuple[list[float], list[float]]:
     """Which hits carry a kill, and which are only accents. -> (kills, accents)
@@ -212,7 +357,9 @@ def choose_kills(hits: list[float], *, target_gap: float = TARGET_GAP,
     """
     close = close or target_gap * CLOSE_SHARE
     quick_run = quick_run or target_gap * QUICK_SHARE
-    hits = sorted(hits or [])
+    order = sorted(range(len(hits or [])), key=lambda i: hits[i])
+    strong = [float(strengths[i]) for i in order] if strengths and len(strengths) == len(hits) else []
+    hits = [hits[i] for i in order]
     if not hits:
         return [], []
     kills: list[float] = []
@@ -231,10 +378,16 @@ def choose_kills(hits: list[float], *, target_gap: float = TARGET_GAP,
         if run[-1] - run[0] <= quick_run and float(gaps.min()) >= min_shot:
             kills.extend(run)                     # short enough to cut one kill each
             continue
+        if strong:
+            took, left = _loudest_run(run, strong[i - len(run):i], target_gap)
+            kills.extend(took)
+            accents.extend(left)
+            continue
         step = int(round(target_gap / max(1e-6, float(np.median(gaps)))))
         step = max(2, min(MAX_STEP, step))
         for k, t in enumerate(run):
             (kills if k % step == 0 else accents).append(t)
+    kills.sort()
     # A kill too close to the one before it cannot be its own shot.
     kept: list[float] = []
     for t in kills:

@@ -46,6 +46,8 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+import numpy as np                                 # noqa: E402
+
 from autostream import paths                       # noqa: E402
 from autostream.clips import hits as hits_mod, reel, songfetch   # noqa: E402
 
@@ -147,6 +149,10 @@ def _resume() -> None:
     WAKE.set()
 
 
+def _median(v) -> float:
+    return float(np.median(v)) if len(v) else 0.0
+
+
 def _with_detected(d: dict) -> dict:
     """The song, plus what clips/hits.py makes of it: hits, kills, accents, big hits.
 
@@ -158,7 +164,7 @@ def _with_detected(d: dict) -> dict:
     if d.get("state") != "ready":
         return d
     song = Path(d.get("path") or "")
-    if "hits" not in a and song.is_file():
+    if "pattern" not in a and song.is_file():
         try:
             a = reel.analyse(song).as_dict()
             d["analysis"] = a
@@ -169,10 +175,16 @@ def _with_detected(d: dict) -> dict:
             print(log_line, flush=True)
             return d
     hits = list(a.get("hits") or [])
-    kills, accents = hits_mod.choose_kills(hits)
+    strength = list(a.get("hit_strength") or [])
+    # At the spacing this song was marked at, so the page compares like with
+    # like; a reel uses its style's spacing instead.
+    marks = sorted(m["t"] for m in (d.get("marks") or []))
+    gap = float(_median(np.diff(marks))) if len(marks) > 2 else hits_mod.TARGET_GAP
+    kills, accents = hits_mod.choose_kills(hits, strength or None, target_gap=gap)
     d = dict(d)
     d["detected"] = {"hits": hits, "kills": kills, "accents": accents,
-                     "big": list(a.get("big") or [])}
+                     "big": list(a.get("big") or []), "pattern": a.get("pattern", ""),
+                     "gap": round(gap, 3)}
     return d
 
 

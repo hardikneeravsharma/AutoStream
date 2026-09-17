@@ -111,3 +111,75 @@ def test_no_shot_is_shorter_than_a_quarter_of_a_second():
 def test_a_song_with_no_hits_asks_for_nothing():
     assert H.choose_kills([]) == ([], [])
     assert H.bass_hits(np.zeros(100, dtype=np.float32)) == ([], [])
+
+
+# ------------------------------------------------------- a song with a figure
+
+def _hats(times: list[float], seconds: float, level: float = 1.0) -> np.ndarray:
+    """Bright, quickly-decaying noise bursts: a hi-hat or a shaker."""
+    n = int(seconds * bs.SR)
+    rng = np.random.default_rng(3)
+    x = np.zeros(n, dtype=np.float32)
+    t = np.arange(int(0.12 * bs.SR)) / bs.SR
+    tick = (rng.normal(0.0, 1.0, len(t)) * np.exp(-60.0 * t)).astype(np.float32)
+    tick -= np.convolve(tick, np.ones(9) / 9, mode="same")      # keep the top end
+    for when, loud in zip(times, [level] * len(times)):
+        i = int(when * bs.SR)
+        end = min(n, i + len(tick))
+        x[i:end] += loud * tick[:end - i]
+    return x
+
+
+def _believer(seconds: float = 40.0, bpm: float = 125.0) -> np.ndarray:
+    """A song like Believer: one hat a beat, the third of the bar loudest, and
+    a bass that plays nothing in particular."""
+    beat = 60.0 / bpm
+    x = np.zeros(int(seconds * bs.SR), dtype=np.float32)
+    for b in range(int(seconds / beat) - 1):
+        at = 0.25 + b * beat
+        x += _hats([at], seconds, level=1.0 if b % 4 == 2 else 0.35)
+    rng = np.random.default_rng(11)
+    kicks = sorted(rng.uniform(0.5, seconds - 1.0, int(seconds / 1.3)))
+    return x + _kicks(list(kicks), seconds, level=0.6)
+
+
+def test_a_bands_repeated_bar_figure_is_found():
+    x = _believer()
+    beat = 60.0 / 125.0
+    hats = H.bar_figure(x, beat, *H.BANDS["hats"])[0]
+    bass = H.bar_figure(x, beat, *H.BANDS["bass"])[0]
+    assert hats > bass * H.FIGURE_OVER_BASS and hats >= H.FIGURE_CLEAR, (hats, bass)
+
+
+def test_a_song_whose_pattern_is_not_its_bass_uses_the_band_that_has_one():
+    """Believer's kick lands on 4% of the marks; its hats play the same bar
+    over and over and the player marked beat three of every one."""
+    x = _believer()
+    beat = 60.0 / 125.0
+    times, strength, kind = H.song_hits(x, beat, 40.0)
+    assert kind == "hats figure"
+    assert times and len(times) == len(strength)
+    # one kill a bar, on the loud step, when the reel cuts at that pace
+    kills, accents = H.choose_kills(times, strength, target_gap=4 * beat)
+    gaps = np.diff(kills)
+    assert abs(float(np.median(gaps)) - 4 * beat) < 0.25
+    loud = [0.25 + b * beat for b in range(int(40.0 / beat) - 1) if b % 4 == 2]
+    assert sum(1 for k in kills if any(abs(k - t) <= 0.06 for t in loud)) >= len(kills) * 0.7
+    assert accents
+
+
+def test_a_song_with_a_kick_stays_on_its_bass():
+    x = _kicks([1.0 + 0.5 * i for i in range(70)], seconds=40.0)
+    times, _s, kind = H.song_hits(x, 60.0 / 120.0, 40.0)
+    assert kind == "bass hits" and times
+
+
+def test_the_loudest_hit_in_the_window_carries_the_kill():
+    """Not every Nth: an editor cuts on the hit that is loudest there. Measured
+    on the marks, the loudest-in-window rule cut on 62% of them, every Nth 45%."""
+    hits = [1.0 + 0.25 * i for i in range(40)]
+    strength = [1.0 if i % 4 == 2 else 0.2 for i in range(40)]
+    kills, accents = H.choose_kills(hits, strength, target_gap=1.0)
+    assert all(any(abs(k - h) < 1e-9 and s > 0.5 for h, s in zip(hits, strength)) for k in kills)
+    assert abs(float(np.median(np.diff(kills))) - 1.0) < 0.1
+    assert sorted(kills + accents) == pytest.approx(hits)
