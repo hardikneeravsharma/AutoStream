@@ -126,11 +126,18 @@ STUDIO_HTML = r"""
       <button type="button" class="btn btn-sm" data-act="studio-play" id="studio-play-btn">Play</button>
       <span class="mono studio-clock" id="studio-clock">0:00.00</span>
       <label class="studio-check"><input type="checkbox" id="studio-snap" checked> Snap to beats</label>
+      <!-- WHAT THE MUSIC LANE SHOWS. A waveform cannot say whether a kill sat
+           on the kick it was aimed at; the spectrogram and the song's own hit
+           marks can, so both are on by default and either can be turned off. -->
+      <label class="studio-check"><input type="checkbox" id="studio-tl-spec" checked> Spectrogram</label>
+      <label class="studio-check"><input type="checkbox" id="studio-tl-marks" checked> Song's hits</label>
       <span class="studio-spacer"></span>
-      <span class="muted studio-hint">Drag a shot to move it, its edge to trim, its diamond to move the kill.</span>
+      <span class="muted studio-hint" id="studio-tl-sync" role="status" aria-live="polite"></span>
+      <span class="muted studio-hint">Drag a shot to move it, its edge to trim, its diamond to move the kill. Ctrl+wheel zooms.</span>
       <button type="button" class="btn btn-ghost btn-sm" data-act="studio-zoom" data-z="-1" aria-label="Zoom out">−</button>
       <button type="button" class="btn btn-ghost btn-sm" data-act="studio-zoom" data-z="0">Fit</button>
       <button type="button" class="btn btn-ghost btn-sm" data-act="studio-zoom" data-z="1" aria-label="Zoom in">+</button>
+      <span class="mono studio-zoomlab" id="studio-zoomlab" aria-hidden="true"></span>
     </div>
     <div class="studio-edit">
       <div class="studio-tl" id="studio-tl" tabindex="0" aria-label="Timeline, use arrow keys to move between shots">
@@ -397,6 +404,9 @@ const studio = {
   game: 'all', q: '', selected: [], lastClick: null,
   examples: null, picks: null, binOn: null, binObs: null, binTimer: null,
   sv: null, svShow: null, svWin: 8, songList: null,
+  /* The music lane: the whole song's spectrogram as one image, which song has
+     been asked for, and what the lane is showing. */
+  spec: null, musicWant: '', musicPending: false, showSpec: true, showMarks: true, waveTick: 0,
   style: '', song: '', songShape: null, fmt: 'landscape', order: 'chosen',
   project: null, derived: null, notes: [], dirty: true, output: '', renderedAt: 0,
   sel: -1, pps: 60, snap: true, undo: [], checking: 0, checkTimer: null,
@@ -1681,7 +1691,15 @@ async function studio_deleteGo() {
 
 /* ------------------------------------------------------------ timeline */
 
-const STUDIO_ROW = {ruler: 26, video: 64, trans: 30, fx: 34, speed: 38, text: 30, music: 56};
+/* The music lane, top to bottom: the song's hits, the spectrogram, the
+   waveform, and the reel's kills under them. The row height is the sum, so
+   moving a band never leaves the lane and its label disagreeing. */
+const STUDIO_MUSIC = {marks: 15, spec: 55, wave: 18, kills: 18};
+const STUDIO_ROW = {ruler: 26, video: 64, trans: 30, fx: 34, speed: 38, text: 30,
+                    music: STUDIO_MUSIC.marks + STUDIO_MUSIC.spec + STUDIO_MUSIC.wave + STUDIO_MUSIC.kills};
+/* Pixels a second: from the whole reel on one screen to a frame being three
+   pixels wide, which is what checking a kill against a hit by eye needs. */
+const STUDIO_ZOOM = [8, 1600];
 
 function studio_drawAll() {
   studio_drawRenderCard();
@@ -1699,7 +1717,51 @@ function studio_fit() {
   const box = studio_el('studio-scroll');
   if (!d || !box) return;
   const w = Math.max(320, box.clientWidth - 24);
-  studio.pps = Math.max(12, Math.min(400, w / Math.max(1, d.length)));
+  studio.pps = Math.max(12, Math.min(STUDIO_ZOOM[1], w / Math.max(1, d.length)));
+}
+
+/* ZOOMING KEEPS ONE SECOND STILL. Changing the scale alone throws the view
+   somewhere else on the reel -- the shot being looked at slides off screen and
+   has to be found again. The second under the pointer (or under the playhead,
+   for the buttons) is held in place instead, which is what every editor does. */
+function studio_zoomAt(pps, clientX) {
+  const box = studio_el('studio-scroll');
+  if (!box || !studio.derived) return;
+  const r = box.getBoundingClientRect();
+  const px = (clientX === null || clientX === undefined)
+    ? box.clientWidth / 2 : Math.max(0, Math.min(box.clientWidth, clientX - r.left));
+  const t = (box.scrollLeft + px) / studio.pps;
+  const next = Math.max(STUDIO_ZOOM[0], Math.min(STUDIO_ZOOM[1], pps));
+  if (Math.abs(next - studio.pps) < 1e-6) return;
+  studio.pps = next;
+  studio_drawTimeline();
+  box.scrollLeft = Math.max(0, t * studio.pps - px);
+  studio_drawWave();
+}
+
+/* The playhead when it is on screen, so zooming from the buttons keeps the
+   frame being watched rather than the middle of the view. */
+function studio_anchorX() {
+  const box = studio_el('studio-scroll'), v = studio_el('studio-video');
+  if (!box) return null;
+  const t = (v && v.src) ? (v.currentTime || 0) : 0;
+  const px = t * studio.pps - box.scrollLeft;
+  if (px < 0 || px > box.clientWidth) return null;
+  return box.getBoundingClientRect().left + px;
+}
+
+function studio_wheel(e) {
+  const box = studio_el('studio-scroll');
+  if (!box || !studio.project) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) {
+    e.preventDefault();
+    /* A line-mode wheel reports 3 lines where a trackpad reports pixels. */
+    const dy = (e.deltaY || 0) * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+    studio_zoomAt(studio.pps * Math.exp(-dy * 0.0025), e.clientX);
+    return;
+  }
+  const dx = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : (e.shiftKey ? e.deltaY : 0);
+  if (dx) { e.preventDefault(); box.scrollLeft += dx; }
 }
 
 function studio_drawTimeline() {
@@ -1711,6 +1773,10 @@ function studio_drawTimeline() {
   let top = 0;
   const rows = {};
   Object.keys(STUDIO_ROW).forEach(k => { rows[k] = top; top += STUDIO_ROW[k]; });
+  /* The label beside each track is the same height as the track, always: the
+     two were written down twice and the music lane grew out of its label. */
+  const labs = document.querySelectorAll('#view-studio .studio-labels .st-lab');
+  Object.keys(STUDIO_ROW).forEach((k, i) => { if (labs[i]) labs[i].style.height = STUDIO_ROW[k] + 'px'; });
   let h = '<div class="st-area" style="width:' + W + 'px;height:' + top + 'px">';
 
   /* ruler: seconds, bars and beats */
@@ -1810,43 +1876,275 @@ function studio_drawTimeline() {
   h += '<div class="st-ph" id="studio-ph" style="height:' + top + 'px"></div>';
   h += '</div>';
   host.innerHTML = h;
-  studio_drawWave(W);
+  const zl = studio_el('studio-zoomlab');
+  if (zl) zl.textContent = pps >= 100 ? Math.round(pps) + ' px/s' : pps.toFixed(1) + ' px/s';
+  studio_drawWave();
+  studio_syncNote();
   studio_playhead();
 }
 
-function studio_drawWave(W) {
+/* =======================================================================
+   THE MUSIC LANE
+   A waveform says how loud the song is and nothing else. Whether a kill
+   landed on the hit it was aimed at is a question about WHICH SOUND is
+   there -- a kick, a hat -- so this lane draws the same spectrogram the
+   Song tab draws, on the reel's own axis, with the hits the reel was cut
+   to above it and the kills as they actually fall below it. A kill on its
+   hit is the one claim a montage makes; now it can be checked by eye.
+
+   IT DRAWS THE VISIBLE WINDOW, NOT THE WHOLE REEL. A canvas as wide as a
+   deeply zoomed timeline is past what a browser will allocate, and the
+   spectrogram would be redrawn blurred to fit it; this one moves with the
+   scroll and stays one canvas pixel per screen pixel at any zoom.
+   ======================================================================= */
+
+function studio_drawWave() {
   const cv = studio_el('studio-wave');
+  const box = studio_el('studio-scroll');
   const p = studio.project, d = studio.derived, sh = studio.songShape;
-  if (!cv || !p || !d) return;
+  if (!cv || !box || !p || !d) return;
+  const pps = studio.pps, H = STUDIO_ROW.music;
+  const W = Math.ceil(d.length * pps) + 24;
+  const x0 = Math.max(0, Math.min(box.scrollLeft, Math.max(0, W - 1)));
+  const vw = Math.max(1, Math.min(box.clientWidth || W, W - x0));
   const dpr = window.devicePixelRatio || 1;
-  const cw = Math.min(16000, W);
-  cv.style.width = W + 'px';
-  cv.width = Math.round(cw * dpr); cv.height = Math.round(STUDIO_ROW.music * dpr);
-  const ctx = cv.getContext('2d');
-  ctx.scale(cv.width / W, dpr);
-  const H = STUDIO_ROW.music, mid = H / 2;
-  const css = getComputedStyle(document.documentElement);
-  ctx.fillStyle = css.getPropertyValue('--accent').trim() || '#5aa9ff';
-  if (p.song && sh && sh.peaks && sh.peaks.length) {
-    const n = sh.peaks.length, per = sh.seconds / n;
-    for (let x = 0; x < W; x += 2) {
-      const t = p.song_offset + x / studio.pps;
-      const k = Math.floor(t / per);
-      if (k < 0 || k >= n) continue;
-      const a = sh.peaks[k] * (mid - 3);
-      ctx.fillRect(x, mid - a, 1.5, a * 2);
-    }
-    if (sh.drop) {
-      const x = (sh.drop - p.song_offset) * studio.pps;
-      if (x >= 0 && x <= W) { ctx.fillStyle = css.getPropertyValue('--warn').trim() || '#e3b341'; ctx.fillRect(x, 0, 2, H); }
-    }
-  } else {
-    ctx.globalAlpha = 0.35;
-    ctx.fillRect(0, mid - 1, W, 2);
-    ctx.globalAlpha = 1;
-    ctx.font = '12px sans-serif';
-    ctx.fillText('No song — the clips keep their own sound', 8, mid - 6);
+  cv.style.left = x0 + 'px';
+  cv.style.width = vw + 'px';
+  cv.width = Math.round(vw * dpr); cv.height = Math.round(H * dpr);
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, vw, H);
+  const X = (t) => t * pps - x0;
+  const t0 = x0 / pps, t1 = (x0 + vw) / pps;
+  const off = p.song_offset || 0;
+  const yMarks = 0, ySpec = STUDIO_MUSIC.marks;
+  const yWave = ySpec + STUDIO_MUSIC.spec, yKills = yWave + STUDIO_MUSIC.wave;
+
+  if (!p.song) {
+    g.fillStyle = studio_tok('--accent');
+    g.globalAlpha = 0.35; g.fillRect(0, H / 2 - 1, vw, 2); g.globalAlpha = 1;
+    g.font = '12px sans-serif';
+    g.fillText('No song — the clips keep their own sound', 8, H / 2 - 6);
+    return;
   }
+  studio_musicNeed();
+
+  /* the spectrogram, cut out of the whole song's image at this zoom */
+  const spec = studio.showSpec === false ? null : studio_specImage();
+  if (spec) {
+    const all = (t1 - t0) * spec.fps;
+    let sx = (off + t0) * spec.fps, sw = all, dx = 0, dw = vw;
+    if (sx < 0) { const cut = Math.min(-sx, sw); sx = 0; sw -= cut; dx = cut / all * vw; dw -= dx; }
+    if (sx + sw > spec.frames) { const cut = sx + sw - spec.frames; sw -= cut; dw -= cut / all * vw; }
+    if (sw > 0 && dw > 0) g.drawImage(spec.canvas, sx, 0, sw, spec.bins, dx, ySpec, dw, STUDIO_MUSIC.spec);
+  } else if (studio.showSpec !== false) {
+    g.fillStyle = studio_tok('--text-tertiary'); g.font = '11px sans-serif';
+    g.fillText(studio.musicPending ? 'Reading the song…' : 'The spectrogram needs the song read once.',
+               8, ySpec + 12);
+  }
+
+  /* the waveform: the song's own loudness at 100 a second once it is read,
+     the plan's coarse peaks until then. With the spectrogram off it takes
+     that band too rather than leaving a gap where it was. */
+  const rms = studio_svSame() ? studio_svLane('rms') : null;
+  const wTop = spec ? yWave : ySpec;
+  const wH = spec ? STUDIO_MUSIC.wave : STUDIO_MUSIC.spec + STUDIO_MUSIC.wave;
+  const mid = wTop + wH / 2, amp = wH / 2 - 1;
+  g.fillStyle = studio_tok('--accent');
+  if (rms) {
+    const fps = studio.sv.meta.fps;
+    for (let i = 0; i < vw; i++) {
+      const a = Math.floor((off + (x0 + i) / pps) * fps);
+      const b = Math.max(a + 1, Math.floor((off + (x0 + i + 1) / pps) * fps));
+      let peak = 0;
+      for (let k = Math.max(0, a); k < Math.min(rms.length, b); k++) if (rms[k] > peak) peak = rms[k];
+      const hh = peak / 255 * amp;
+      if (hh > 0.2) g.fillRect(i, mid - hh, 1, hh * 2);
+    }
+  } else if (sh && sh.peaks && sh.peaks.length) {
+    const n = sh.peaks.length, per = sh.seconds / n;
+    for (let i = 0; i < vw; i += 2) {
+      const k = Math.floor((off + (x0 + i) / pps) / per);
+      if (k < 0 || k >= n) continue;
+      const hh = sh.peaks[k] * amp;
+      g.fillRect(i, mid - hh, 1.5, hh * 2);
+    }
+  }
+
+  /* the drop, where the song has one */
+  if (sh && sh.drop) {
+    const x = X(sh.drop - off);
+    if (x >= -2 && x <= vw + 2) { g.fillStyle = studio_tok('--warn'); g.fillRect(x - 1, ySpec, 2, H - ySpec); }
+  }
+
+  /* THE SONG'S HITS: where a kill was meant to land. Every other hit the
+     song has is a faint tick behind them -- the same pair the Song tab
+     draws -- because "it missed" and "it landed on the hit next door" are
+     different answers and only the neighbours tell them apart. */
+  const mk = studio.showMarks === false ? null : studio_marks();
+  if (mk && pps >= 20) {
+    g.fillStyle = 'rgba(47,212,200,0.45)';
+    mk.minor.forEach(t => {
+      if (t < t0 || t > t1) return;
+      if (mk.at.some(m => Math.abs(m - t) < 0.02)) return;
+      g.fillRect(X(t) - 0.5, yMarks + 7, 1, 4);
+    });
+  }
+  if (mk) {
+    mk.at.forEach((t, i) => {
+      if (t < t0 - 0.05 || t > t1 + 0.05) return;
+      const x = X(t), big = mk.big.some(b => Math.abs(b - t) < 0.02);
+      g.fillStyle = 'rgba(47,212,200,0.38)';
+      g.fillRect(x - 0.5, yMarks + 11, 1, H - yMarks - 11);
+      g.fillStyle = '#2fd4c8';
+      g.fillRect(x - (big ? 1.5 : 0.5), yMarks + 3, big ? 3 : 1, 8);
+      if (big) { g.beginPath(); g.moveTo(x - 4, yMarks + 1); g.lineTo(x + 4, yMarks + 1); g.lineTo(x, yMarks + 7); g.fill(); }
+      if (pps > 80) {
+        g.fillStyle = studio_tok('--text-tertiary'); g.font = '9px monospace';
+        g.fillText(String(i + 1), x + 3, yMarks + 9);
+      }
+    });
+  }
+
+  /* THE KILLS AS THEY FALL. The shot's own kill is the diamond; any other
+     kill inside the shot is a tick, because it is in the footage too. */
+  g.fillStyle = studio_tok('--text-tertiary');
+  (d.kills || []).forEach(t => {
+    if (t < t0 || t > t1) return;
+    g.globalAlpha = 0.5; g.fillRect(X(t) - 0.5, yKills + 2, 1, STUDIO_MUSIC.kills - 4); g.globalAlpha = 1;
+  });
+  const win = d.on_mark_window || 0.05;
+  const ky = yKills + STUDIO_MUSIC.kills / 2;
+  (d.shots || []).forEach((r, i) => {
+    const t = r.kill_reel;
+    if (t < t0 - 0.5 || t > t1 + 0.5) return;
+    const near = studio_nearMark(mk, r, t);
+    const drift = near === null ? null : t - near;
+    const ok = drift !== null && Math.abs(drift) <= win;
+    const col = drift === null ? studio_tok('--text-secondary') : ok ? studio_tok('--ok') : studio_tok('--warn');
+    const x = X(t);
+    if (drift !== null && !ok) {
+      /* the gap itself, drawn as the bar it is: which way and how far */
+      g.fillStyle = col; g.globalAlpha = 0.55;
+      g.fillRect(Math.min(x, X(near)), ky - 1, Math.abs(x - X(near)), 2);
+      g.globalAlpha = 1;
+    }
+    g.fillStyle = col;
+    g.beginPath(); g.moveTo(x, ky - 5); g.lineTo(x + 5, ky); g.lineTo(x, ky + 5); g.lineTo(x - 5, ky); g.closePath(); g.fill();
+    if (i === studio.sel) { g.strokeStyle = studio_tok('--accent'); g.lineWidth = 1.5; g.stroke(); }
+    if (drift !== null && !ok && pps > 60) {
+      g.fillStyle = col; g.font = '9px monospace';
+      g.fillText((drift > 0 ? '+' : '') + drift.toFixed(2), x + 7, ky + 3);
+    }
+  });
+}
+
+/* Is the song that has been read the song this reel uses? */
+function studio_svSame() {
+  return !!(studio.sv && studio.sv.meta && studio.project && studio.sv.song === studio.project.song);
+}
+
+/* THE HITS THE KILLS WERE AIMED AT, in reel seconds.
+   The server works them out for a reel planned since they were recorded
+   (derived.marks); older reels have none stored, so the page falls back to
+   what the detector finds in the song now -- the same set the Song tab draws
+   -- and says which of the two it is showing. */
+function studio_marks() {
+  const p = studio.project, d = studio.derived;
+  if (!p || !p.song || !d) return null;
+  const off = p.song_offset || 0, L = d.length;
+  const sh = studio.songShape;
+  const det = studio_svSame() ? studio.sv.det : null;
+  const reel = (t) => t - off;
+  const inside = (t) => t >= -0.5 && t <= L + 0.5;
+  const big = ((sh && sh.big) || []).map(reel);
+  const minor = (((det && det.hits) || (sh && sh.hits) || [])).map(reel).filter(inside);
+  if (d.marks && d.marks.length) return {at: d.marks, minor: minor, big: big, what: 'planned'};
+  const from = (det && det.kills && det.kills.length) ? det.kills : ((sh && sh.hits) || []);
+  const at = from.map(reel).filter(inside);
+  if (!at.length) return null;
+  return {at: at, minor: minor, big: big, what: (det && det.kills.length) ? 'detector' : 'hits'};
+}
+
+/* The mark nearest a kill: the server's answer where there is one, so the
+   drift drawn is the drift the render produced. */
+function studio_nearMark(mk, row, t) {
+  if (row && row.mark !== undefined && row.mark !== null && mk && mk.what === 'planned') return row.mark;
+  if (!mk || !mk.at.length) return null;
+  let best = mk.at[0];
+  for (let i = 1; i < mk.at.length; i++) if (Math.abs(mk.at[i] - t) < Math.abs(best - t)) best = mk.at[i];
+  return best;
+}
+
+function studio_syncNote() {
+  const el = studio_el('studio-tl-sync');
+  const p = studio.project, d = studio.derived;
+  if (!el || !p || !d) return;
+  const mk = studio_marks();
+  if (!p.song || !mk) { el.textContent = ''; return; }
+  const win = d.on_mark_window || 0.05;
+  let on = 0, have = 0, worst = 0;
+  (d.shots || []).forEach(r => {
+    const near = studio_nearMark(mk, r, r.kill_reel);
+    if (near === null) return;
+    have++;
+    const drift = r.kill_reel - near;
+    if (Math.abs(drift) <= win) on++;
+    else if (Math.abs(drift) > Math.abs(worst)) worst = drift;
+  });
+  if (!have) { el.textContent = ''; return; }
+  el.textContent = on + ' of ' + have + ' kills land on ' +
+    (mk.what === 'planned' ? 'the hit they were cut to'
+      : mk.what === 'detector' ? "the hits the Song tab marks" : "the song's own hits") +
+    ' (±' + win.toFixed(2) + ' s)' +
+    (worst ? '; the furthest is ' + Math.abs(worst).toFixed(2) + ' s ' + (worst > 0 ? 'late' : 'early') : '') + '.';
+}
+
+/* The whole song as one image, built once and cut out of at every zoom.
+   Redrawing 80 bands a frame per paint is what made the Song tab's lanes cost
+   what they cost; the timeline repaints on every scroll and cannot afford it. */
+function studio_specImage() {
+  if (!studio_svSame() || !studio.sv.bytes) return null;
+  const song = studio.sv.song;
+  if (studio.spec && studio.spec.song === song) return studio.spec;
+  const m = studio.sv.meta, bins = m.spec_bins, sp = studio_svLane('spec');
+  if (!sp || !m.frames || !bins) return null;
+  /* A canvas is not allowed to be as wide as a long song has frames. */
+  const step = Math.ceil(m.frames / 30000);
+  const cols = Math.ceil(m.frames / step);
+  const cv = document.createElement('canvas');
+  cv.width = cols; cv.height = bins;
+  const g = cv.getContext('2d');
+  const img = g.createImageData(cols, bins);
+  for (let i = 0; i < cols; i++) {
+    const f = i * step;
+    for (let b = 0; b < bins; b++) {
+      const v = sp[f * bins + b], o = ((bins - 1 - b) * cols + i) * 4;
+      img.data[o] = SG_PAL[v * 3]; img.data[o + 1] = SG_PAL[v * 3 + 1];
+      img.data[o + 2] = SG_PAL[v * 3 + 2]; img.data[o + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  studio.spec = {song: song, canvas: cv, bins: bins, fps: m.fps / step, frames: cols};
+  return studio.spec;
+}
+
+/* The song read once for the timeline, the same bytes the Song tab uses. It
+   is asked for once per song: a failed read must not be retried on every
+   paint, and a paint happens on every scroll. */
+function studio_musicNeed() {
+  const p = studio.project;
+  const song = (p && p.song) || '';
+  if (!song || studio.musicPending || studio_svSame()) return;
+  if (studio.musicWant === song && studio.sv === null) return;
+  studio.musicWant = song;
+  studio.musicPending = true;
+  studio_svLoad(song).then(() => {
+    studio.musicPending = false;
+    studio.spec = null;
+    const tl = studio_el('studio-pane-timeline');
+    if (studio.project && tl && !tl.classList.contains('hide')) { studio_drawWave(); studio_syncNote(); }
+  }, () => { studio.musicPending = false; });
 }
 
 function studio_playhead() {
@@ -2188,8 +2486,8 @@ function studio_wire() {
     }
     else if (act === 'studio-zoom') {
       const z = Number(b.getAttribute('data-z'));
-      if (z === 0) studio_fit(); else studio.pps = Math.max(8, Math.min(400, studio.pps * (z > 0 ? 1.5 : 1 / 1.5)));
-      studio_drawTimeline();
+      if (z === 0) { studio_fit(); studio_drawTimeline(); }
+      else studio_zoomAt(studio.pps * (z > 0 ? 1.5 : 1 / 1.5), studio_anchorX());
     }
     else if (act === 'studio-seek') {
       const v = studio_el('studio-video');
@@ -2259,6 +2557,23 @@ function studio_wire() {
     studio.binOn[b.getAttribute('data-kind')] = b.checked;
     studio_binSlots();
   });
+  /* The music lane draws only what is on screen, so scrolling redraws it --
+     once a frame, because a scroll fires far more often than that. */
+  const sc = studio_el('studio-scroll');
+  if (sc) sc.addEventListener('scroll', () => {
+    if (studio.waveTick) return;
+    studio.waveTick = requestAnimationFrame(() => { studio.waveTick = 0; studio_drawWave(); });
+  });
+  const tlbox = studio_el('studio-tl');
+  if (tlbox) tlbox.addEventListener('wheel', studio_wheel, {passive: false});
+  ['studio-tl-spec', 'studio-tl-marks'].forEach(id => {
+    const c = studio_el(id);
+    if (c) c.addEventListener('change', () => {
+      studio.showSpec = studio_el('studio-tl-spec').checked;
+      studio.showMarks = studio_el('studio-tl-marks').checked;
+      studio_drawWave(); studio_syncNote();
+    });
+  });
   const mkw = studio_el('studio-mk-wave');
   if (mkw) ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(ev => mkw.addEventListener(ev, studio_mkPointer));
   const mka = studio_el('studio-mk-audio');
@@ -2309,6 +2624,9 @@ function studio_wire() {
     else if (e.key === 'ArrowRight') { e.preventDefault(); studio_select(Math.min(studio.project.shots.length - 1, studio.sel + 1)); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); studio_select(Math.max(0, studio.sel - 1)); }
     else if (e.key === ' ') { e.preventDefault(); const vv = studio_el('studio-video'); if (vv.src) { if (vv.paused) vv.play().catch(() => {}); else vv.pause(); } }
+    else if (e.key === '+' || e.key === '=') { e.preventDefault(); studio_zoomAt(studio.pps * 1.5, studio_anchorX()); }
+    else if (e.key === '-' || e.key === '_') { e.preventDefault(); studio_zoomAt(studio.pps / 1.5, studio_anchorX()); }
+    else if (e.key === '0') { e.preventDefault(); studio_fit(); studio_drawTimeline(); }
     else if ((e.key === 'Delete' || e.key === 'Backspace') && studio.sel >= 0 && studio.project.shots.length > 1) {
       e.preventDefault();
       const i = studio.sel;

@@ -3235,7 +3235,10 @@ STUDIO_CSS = r"""
   text-transform:uppercase;letter-spacing:.05em;border-bottom:var(--border-hair) solid var(--border-subtle)}
 .st-lab:nth-child(1){height:26px}.st-lab:nth-child(2){height:64px}.st-lab:nth-child(3){height:30px}
 .st-lab:nth-child(4){height:34px}.st-lab:nth-child(5){height:38px}.st-lab:nth-child(6){height:30px}
-.st-lab:nth-child(7){height:56px;border-bottom:0}
+/* The heights here are only what the labels are before the first draw: the
+   timeline sets each one from STUDIO_ROW, which is where they are decided. */
+.st-lab:nth-child(7){height:106px;border-bottom:0}
+.studio-zoomlab{font-size:11px;color:var(--text-tertiary);min-width:56px;text-align:right}
 .studio-scroll{flex:1;overflow-x:auto;overflow-y:hidden;min-width:0}
 .st-area{position:relative;margin-right:24px;user-select:none;touch-action:pan-x}
 .st-ruler{position:absolute;left:0;right:0;cursor:pointer;border-bottom:var(--border-hair) solid var(--border-subtle)}

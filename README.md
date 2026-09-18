@@ -127,7 +127,16 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     effects, speed, text and the song's beat grid on one axis. Click a shot to change
     its own kill effects, transition or speed; drag it to move it, its edge to trim
     it, its diamond to move the kill. Render again and only the shots you changed are
-    re-encoded.
+    re-encoded. Zoom with the − / Fit / + buttons, Ctrl+wheel or the `+` `-` `0` keys:
+    whatever is under the pointer stays where it is, right down to a frame being three
+    pixels wide.
+  - **See for yourself that the kills landed on the music.** The timeline's music
+    track is the song's **spectrogram** — a kick and a hi-hat look different there,
+    where in a waveform they look the same — with the hits the reel was cut to marked
+    above it and every kill drawn below it: green where it is on its hit, amber with a
+    bar showing how far off and which way where it is not. The bar above says it in
+    words: *19 of 21 kills land on the hit they were cut to*. A reel made before this
+    existed is checked against the hits the Song tab marks instead, and says so.
   - **A song editor.** Choose the track, drag the part you want along the whole
     waveform, fine-tune its start by a bar, a beat or 10 ms, and — if you want — play
     it and press K on every beat a kill should land on. The cuts move so shot 1's kill

@@ -247,6 +247,57 @@ def test_every_kill_lands_on_a_bass_hit(root):
     assert any("bass hits" in n for n in notes)
 
 
+def test_the_hits_the_kills_were_put_on_are_kept_with_the_reel(root):
+    """The music lane draws each kill against the hit it was aimed at, so the
+    reel has to remember which hits those were. Asking the detector again is
+    not the same question: it answers at its own default pace, not the pace
+    this style was cut at, and would mark hits no kill was ever put on."""
+    shape = _song()
+    proj, _ = studio.plan(_clips(root), "montage", shape=shape, song="s.mp3")
+    marks = proj["song_marks"]
+    assert marks, "the reel kept no record of the hits it was cut to"
+    assert all(min(abs(m - h) for h in shape.hits) < 1e-6 for m in marks)
+    off, t = proj["song_offset"], 0.0
+    for s, m in zip(proj["shots"], marks):
+        assert t + s["pre"] + off == pytest.approx(m, abs=1.0 / studio.FPS)
+        t += s["duration"]
+
+
+def test_the_timeline_is_told_how_far_each_kill_sits_from_its_hit(root, tmp_path):
+    """Two implementations of "did this land on the beat" would disagree, so
+    the drift is worked out where the rest of the derived times are."""
+    song = tmp_path / "s.mp3"
+    song.write_bytes(b"not really a song")
+    proj, _ = studio.plan(_clips(root), "montage", shape=_song(), song=str(song))
+    proj, derived, _ = studio.normalise(proj, root)
+    assert proj["song_marks"], "checking dropped the marks"
+    assert derived["marks"] and len(derived["marks"]) <= len(proj["song_marks"])
+    assert derived["on_marks"] == len(derived["shots"])
+    for row in derived["shots"]:
+        assert abs(row["drift"]) <= studio.ON_MARK
+
+    # Slide the reel against the song and every kill is late by that much.
+    proj["song_offset"] = round(proj["song_offset"] + 0.4, 5)
+    _, moved, _ = studio.normalise(proj, root)
+    assert moved["on_marks"] == 0
+    assert all(row["drift"] == pytest.approx(0.4, abs=0.02) for row in moved["shots"])
+
+
+def test_a_reel_without_a_song_has_no_marks_to_miss(root):
+    proj, derived, _ = studio.normalise(_project(root), root)
+    assert derived["marks"] == [] and derived["on_marks"] == 0
+    assert all(row["drift"] is None for row in derived["shots"])
+
+
+def test_kills_marked_by_hand_are_remembered_as_marks(root):
+    """The Song tab's marks are the same thing as the planner's hits: where
+    the player said the kill goes. The lane draws both the same way."""
+    proj, _ = studio.plan(_clips(root), "montage")
+    shape = _song()
+    studio.apply_song(proj, shape, "s.mp3", 4.0, 40.0, marks=[6.0, 9.0, 12.0, 300.0])
+    assert proj["song_marks"] == [6.0, 9.0, 12.0], "a mark outside the part was kept"
+
+
 def test_the_first_kill_waits_for_the_song_to_start(root):
     """Skechers has no drums until 18 s and the player marked no kill before
     19.5; a story reel opened at the first beat and cut its first kill at 7 s."""
