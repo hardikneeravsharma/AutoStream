@@ -31,6 +31,17 @@ MIN_RUN_SECONDS = 0.5
 # How long a shot may run on after its last kill. Every tail longer than this
 # in v1 wandered into reloading, the player's own death or a death-recap card.
 MAX_TAIL_BEATS = 2
+# ...and how long it ORDINARILY runs on, the rest going to the next shot's
+# run-up. The frames after a kill are the least interesting in any shot -- a
+# body falling, a reload, a walk away -- while the frames before the next kill
+# are the fight building, which is what makes the kill read. So an ordinary
+# shot cuts a beat after its kill and hands what it saved forward. The reel
+# does not get shorter: the same time is spent where it shows something.
+# MAX_TAIL_BEATS already stopped tails wandering into a death recap; this
+# spends what was left of them. The closer keeps its full tail -- the last kill
+# is meant to hang -- and so does a jump cut inside a sequence, which has no
+# next run-up to give to.
+TAIL_BEATS = 1
 # How long a reel is when nobody says: whole 8-bar phrases, near these lengths.
 TARGET_SECONDS = {"landscape": 46.0, "vertical": 30.0}
 # ...and the longest it grows to hold clips the player picked by hand. The
@@ -325,7 +336,11 @@ def walk(moments_: list[Moment], *, beat: float, energy, song_start: float,
     # A step may be well under MIN_SHOT_SECONDS, so the floor is counted in
     # steps rather than assumed to be one of them.
     floor = max(1, int(math.ceil(MIN_SHOT_SECONDS / beat - 1e-6)))
+    keep_tail = max(1, TAIL_BEATS * div)
     t = 0
+    # What the shot before cut short of its tail, waiting to be spent on this
+    # shot's run-up. See TAIL_BEATS.
+    carry = 0
     for i, m in enumerate(moments_):
         if fixed and i in fixed:
             p = fixed[i]
@@ -359,13 +374,26 @@ def walk(moments_: list[Moment], *, beat: float, energy, song_start: float,
             post = div                         # a jump cut gets a beat out, at any grid
         else:
             post = min(tail_max, max(1, int(round(nb * (1.0 - pre_share)))))
+        # Cut just after the kill and hand the rest to the next run-up. A
+        # follow-up neither gives nor takes: its fight is already established,
+        # so it stays the tight jump cut FOLLOW_UP_BEATS makes it and passes
+        # the time on to the next shot that opens a fight. The closer keeps its
+        # tail, which is the ending.
+        take = 0
+        if i > 0 and m.seq == 0:
+            take, carry = carry, 0
+            if post > keep_tail and not (closer_post and i == len(moments_) - 1):
+                carry = post - keep_tail
+                post = keep_tail
         run = div if m.seq > 0 else run_beats
         # The kills' own span is added to the shot, not taken out of its
         # run-up: v9's climax triple (three kills in half a second) was left
         # one beat of run-up because the span came out of it.
         if heroes and i in heroes:
             run = max(run, 2 * div, int(math.ceil(HERO_RUN_SECONDS / beat - 1e-6)))
-        pre = max(run, nb - post)
+        # `take` lengthens the run-up only: the tail was computed from the
+        # shot's own length, so handing time forward must not grow it back.
+        pre = max(run, nb - post) + take
         # Never the opener: its kill is what reel zero was placed by. The nudge
         # is up to a beat either way, whatever the step.
         if nb >= bar and i > 0:
@@ -376,7 +404,9 @@ def walk(moments_: list[Moment], *, beat: float, energy, song_start: float,
             elif 0 < bar - delta <= div and pre - (bar - delta) >= run:
                 pre -= bar - delta
         if 0 < i < len(moments_) - 1:
-            cap = max(run + span + post, shot_cap(base, beat))
+            # The cap rises by what was handed forward, or the carry would be
+            # clipped away again and the tail given up for nothing.
+            cap = max(run + span + post, shot_cap(base, beat) + take)
             pre = max(run, min(pre, cap - span - post))
         out.append((pre, span, post))
         t += pre + span + post
