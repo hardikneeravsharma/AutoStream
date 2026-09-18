@@ -244,6 +244,10 @@ MAX_SHOT_SECONDS = 4.0
 # runs 0.43-2.67 s and their longest opening shot 15 s. Twice the shot limit
 # above is enough to see the fight build; past it the reel ends early instead.
 MAX_LEAD_UP_SECONDS = 2 * MAX_SHOT_SECONDS
+# No shot is shorter than this, whatever the grid. The fastest reference edit
+# holds a median shot of 0.43 s (Young Girl A, 45 cuts a minute), so this sits
+# under every edit measured and only ever stops a shot becoming a flicker.
+MIN_SHOT_SECONDS = 0.4
 
 
 def shot_cap(base: int, beat: float) -> int:
@@ -253,25 +257,25 @@ def shot_cap(base: int, beat: float) -> int:
     return max(2, min(int(MAX_SHOT_SECONDS / beat), 2 * base))
 
 
-def phrase_factor(beat_in_phrase: int) -> float:
+def phrase_factor(steps_in_phrase: int, div: int = 1) -> float:
     for end, factor in PHRASE_SHAPE:
-        if beat_in_phrase < end:
+        if steps_in_phrase < end * div:
             return factor
     return 1.0
 
 
-def pace(e: float, base: int) -> int:
-    """Shot length in beats for a stretch of song this loud.
+def pace(e: float, base: int, floor: int = 2, cap: int = 16) -> int:
+    """Shot length in grid steps for a stretch of song this loud.
 
     Quieter than 70% of typical -> twice the style's shot; louder than 110% ->
-    half of it (never under 2 beats). v2 cut every shot at 4 beats through the
+    half of it, never under `floor`. v2 cut every shot at 4 beats through the
     intro, the drums arriving and the breakdown alike: flow_corr 0.04 against
     0.29-0.49 for the references.
     """
     if e < 0.7:
-        return min(16, base * 2)
+        return min(cap, base * 2)
     if e > 1.1:
-        return max(2, base // 2)
+        return max(floor, base // 2)
     return base
 
 
@@ -289,16 +293,38 @@ def walk(moments_: list[Moment], *, beat: float, energy, song_start: float,
          base: int, open_beats: int, run_beats: int, pre_share: float,
          first_index: int = 0, downbeat_pos: int = 0, fixed: dict[int, tuple[int, int, int]] | None = None,
          heroes: set[int] | None = None, closer_post: int = 0,
-         phrase_from: int | None = None) -> list[tuple[int, int, int]]:
-    """(pre, span, post) in beats for each moment, walking the song.
+         phrase_from: int | None = None, div: int = 1) -> list[tuple[int, int, int]]:
+    """(pre, span, post) in GRID STEPS for each moment, walking the song.
+
+    `beat` is the length of one step and `div` how many steps make a musical
+    beat, so every length here is a whole step and a bar is `4 * div` of them.
+    Everything the caller passes in -- `base`, `open_beats`, `run_beats`,
+    `first_index`, `downbeat_pos`, `closer_post`, `phrase_from` -- is in steps.
+
+    WHY THE GRID IS FINER THAN A BEAT FOR FAST STYLES. In whole beats the
+    shortest shot the rules allow is two of them, so at 78 BPM nothing could be
+    shorter than 1.54 s while the edits that style copies hold 0.6-0.9 s. All
+    five styles collapsed onto the same three-beat shot: measured over 19
+    reels, the median shot was 2.99 beats whatever the style, against 0.82
+    beats for Hype's references and 2.36 for Montage's. The references
+    themselves cut off the beat -- 26 of the 27 measured edits land more cuts
+    on half beats than on beats (median 0.53 against 0.29) -- so a half- or
+    quarter-beat step is what they are actually built on.
 
     Each shot's length comes from how loud the song is where it plays. Shots of
-    four beats or more are nudged by their run-up so the cut after them lands
-    on a bar line: the long shots are the ones a listener hears the cut of.
-    `first_index` is the song beat index at reel zero; `fixed` pins the lengths
-    of chosen shots (the build before a drop).
+    a bar or more are nudged by their run-up so the cut after them lands on a
+    bar line: the long shots are the ones a listener hears the cut of.
+    `first_index` is the song's step index at reel zero; `fixed` pins the
+    lengths of chosen shots (the build before a drop).
     """
     out: list[tuple[int, int, int]] = []
+    bar = 4 * div
+    phrase = PHRASE_BARS * bar
+    tail_max = MAX_TAIL_BEATS * div
+    follow_max = FOLLOW_UP_BEATS * div
+    # A step may be well under MIN_SHOT_SECONDS, so the floor is counted in
+    # steps rather than assumed to be one of them.
+    floor = max(1, int(math.ceil(MIN_SHOT_SECONDS / beat - 1e-6)))
     t = 0
     for i, m in enumerate(moments_):
         if fixed and i in fixed:
@@ -310,42 +336,45 @@ def walk(moments_: list[Moment], *, beat: float, energy, song_start: float,
             nb = open_beats
         else:
             a = song_start + t * beat
-            nb = pace(energy(a, a + 8 * beat), base)
+            # Eight musical beats of song, not eight steps: how loud the song is
+            # here is a question about the music, not about the grid.
+            nb = pace(energy(a, a + 8 * beat * div), base, floor, 16 * div)
         # Quiet is the SONG being quiet -- decided before the phrase shape
         # lengthens a shot, or every follow-up in a phrase's first bars stayed
         # long (v11).
         quiet = i > 0 and nb > base
         if i > 0 and phrase_from is not None and t >= phrase_from:
-            f = phrase_factor((t - phrase_from) % (PHRASE_BARS * 4))
-            nb = max(2 if beat < 0.4 else 1, int(round(nb * f)))
+            f = phrase_factor((t - phrase_from) % phrase, div)
+            nb = max(floor, int(round(nb * f)))
         if heroes and i in heroes:
             nb = max(nb, base)                 # a hero moment is never a flicker
         elif m.seq > 0 and not quiet:
-            nb = min(nb, FOLLOW_UP_BEATS)      # a quiet stretch still gets its long shots
+            nb = min(nb, follow_max)           # a quiet stretch still gets its long shots
         span = int(math.ceil((m.last - m.first) / beat - 1e-6)) if len(m.kills) > 1 else 0
         if i == 0:
-            post = max(1, min(MAX_TAIL_BEATS, nb // 4))
+            post = max(1, min(tail_max, nb // 4))
         elif closer_post and i == len(moments_) - 1:
             post = closer_post                 # the last kill gets a bar to land in
         elif m.seq > 0:
-            post = 1
+            post = div                         # a jump cut gets a beat out, at any grid
         else:
-            post = min(MAX_TAIL_BEATS, max(1, int(round(nb * (1.0 - pre_share)))))
-        run = 1 if m.seq > 0 else run_beats
+            post = min(tail_max, max(1, int(round(nb * (1.0 - pre_share)))))
+        run = div if m.seq > 0 else run_beats
         # The kills' own span is added to the shot, not taken out of its
         # run-up: v9's climax triple (three kills in half a second) was left
         # one beat of run-up because the span came out of it.
         if heroes and i in heroes:
-            run = max(run, 2, int(math.ceil(HERO_RUN_SECONDS / beat - 1e-6)))
+            run = max(run, 2 * div, int(math.ceil(HERO_RUN_SECONDS / beat - 1e-6)))
         pre = max(run, nb - post)
-        # Never the opener: its kill is what reel zero was placed by.
-        if nb >= 4 and i > 0:
+        # Never the opener: its kill is what reel zero was placed by. The nudge
+        # is up to a beat either way, whatever the step.
+        if nb >= bar and i > 0:
             end = first_index + t + pre + span + post
-            delta = (downbeat_pos - end) % 4
-            if delta == 1:
-                pre += 1
-            elif delta == 3 and pre - 1 >= run:
-                pre -= 1
+            delta = (downbeat_pos - end) % bar
+            if 0 < delta <= div:
+                pre += delta
+            elif 0 < bar - delta <= div and pre - (bar - delta) >= run:
+                pre -= bar - delta
         if 0 < i < len(moments_) - 1:
             cap = max(run + span + post, shot_cap(base, beat))
             pre = max(run, min(pre, cap - span - post))
@@ -616,21 +645,33 @@ def ending_fade(beat: float) -> float:
 
 def transitions(shots: list[dict], starts: list[int], *, first_kill_beat: int,
                 looks: dict[str, list[float] | None], pools: dict[str, list[str]],
-                flash_share: float = 0.0, beat: float = 0.5) -> None:
+                flash_share: float = 0.0, beat: float = 0.5, div: int = 1) -> None:
     """Choose each cut's transition from where it falls in the music and what it joins. In place.
 
     - A follow-up in a sequence is a hard jump cut.
-    - A cut that opens a new 8-bar phrase (counted from the first kill, which
+    - The cut NEAREST each new 8-bar phrase (counted from the first kill, which
       sits on the drums) is marked: a zoom-through, or a flash without one.
-    - A cut to somewhere that looks different is a whip, but never two whips
-      in a row; to somewhere that looks the same, a hard cut.
-    - Bar-line cuts between places carry a white flash, spaced to the rate the
-      style's reference edits flash at, never within a second of a bright kill.
+    - A cut to somewhere that looks different is a whip, but never two whips in
+      a row -- counting soft cuts only, since a hard cut between two whips does
+      not stop the pair reading as a stamp.
+    - Cuts on the grid between places carry a white flash, spaced to the rate
+      the style's reference edits flash at, never within a second of a bright
+      kill.
 
     v1-v6 drew from the pool at random, and push, iris and pixel dissolves
     landed mid-phrase between two shots of the same wall. v7 kept only flashes
     the mix happened to draw on a bar line: 3.9 a minute against the
     references' 12-33.
+
+    WHY NEITHER MARK ASKS FOR AN EXACT HIT ANY MORE. Both used to: the phrase
+    zoom wanted a cut exactly on the phrase, the flash a cut exactly on a bar.
+    That worked only because a style's shot was rounded to a power of two
+    beats, which put every cut on a bar line and cost up to 39% of the shot
+    length the style's references actually hold. With the pace taken from the
+    references instead, a three-beat shot walks through the bar -- and a
+    velocity reel of twenty cuts came out with no flash at all, because not one
+    cut landed on a bar. So the phrase mark takes the nearest cut, and the
+    flash falls back to the beat when the bars cannot carry the style's rate.
     """
     order_ = list(dict.fromkeys(pools.get("transition") or []))
     pool = set(order_)
@@ -639,30 +680,45 @@ def transitions(shots: list[dict], starts: list[int], *, first_kill_beat: int,
     # soft transitions -- Story's crossfades and dips, not a hard cut forever.
     zoom = "t05" if "t05" in pool else ("t02" if "t02" in pool else (soft[-1] if soft else None))
     whip = "t06" if "t06" in pool else (soft[0] if soft else None)
-    phrase = PHRASE_BARS * 4
-    last = "t01"
+    bar = 4 * div
+    phrase = PHRASE_BARS * bar
+    last_soft = None
     cuts = max(1, len(shots) - 1)
     owed = 0.0
+    # The cut nearest each phrase, within half a bar of it.
+    marks: set[int] = set()
+    if len(shots) > 1:
+        at = first_kill_beat + phrase
+        while at <= starts[-1] + bar:
+            near = min(range(1, len(shots)), key=lambda i: (abs(starts[i] - at), i))
+            if abs(starts[near] - at) <= bar / 2:
+                marks.add(near)
+            at += phrase
+    # Bar lines while there are enough of them to carry the style's flash rate,
+    # the beat when there are not.
+    on_bars = sum(1 for i in range(1, len(shots)) if starts[i] % bar == first_kill_beat % bar)
+    unit = bar if on_bars >= flash_share * cuts else div
     for i in range(1, len(shots)):
         s, prev = shots[i], shots[i - 1]
         b = starts[i]
         owed += flash_share
-        on_bar = b % 4 == first_kill_beat % 4
+        on_bar = b % unit == first_kill_beat % unit
         near_bright = ((any(k in BRIGHT_KILL for k in prev["fx"]) and prev["duration"] - prev["pre"] < BRIGHT_GAP)
                        or (any(k in BRIGHT_KILL for k in s["fx"]) and s["pre"] < BRIGHT_GAP))
         other_place = look_similarity(looks.get(prev["clip"]), looks.get(s["clip"])) < LOOK_SAME
         if prev["clip"] == s["clip"]:
             t = "t01"
-        elif zoom and b > first_kill_beat and (b - first_kill_beat) % phrase == 0:
+        elif zoom and i in marks:
             t = zoom
         elif on_bar and owed >= 1.0 - 1e-6 and not near_bright:
             t, owed = "t02", owed - 1.0
-        elif whip and last != whip and other_place:
+        elif whip and last_soft != whip and other_place:
             t = whip
         else:
             t = "t01"
         s["transition"], s["tlen"] = t, 0.0          # 0: the part's own length, set when checked
-        last = t
+        if t not in ("t01", "t02"):
+            last_soft = t
 
 
 def climax(shots: list[dict], strengths: list[float], pools: dict[str, list[str]],

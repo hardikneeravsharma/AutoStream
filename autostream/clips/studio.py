@@ -757,6 +757,34 @@ def _pow2_beats(seconds: float, beat: float, lo: int = 1, hi: int = 16) -> int:
     return int(max(lo, min(hi, best)))
 
 
+def _grid_step(raw, beat: float) -> float:
+    """A project's grid step: the beat, or the half or quarter of it it was planned on."""
+    try:
+        step = float(raw)
+    except (TypeError, ValueError):
+        return round(beat, 6)
+    if not math.isfinite(step) or step <= 0:
+        return round(beat, 6)
+    div = min((1, 2, 4), key=lambda d: abs(step - beat / d))
+    return round(beat / div, 6)
+
+
+def _grid_div(shot_seconds: float, beat: float) -> int:
+    """How many grid steps make a beat, for a style that wants this shot length.
+
+    A shot is never fewer than two steps once the phrase shape and the run-up
+    have had their say, so the step has to be at most half the shot the style
+    is aiming for. Whole beats until the target drops under a beat and a half,
+    then half beats, then quarters -- which is as fine as the references go:
+    the fastest of the 27 measured holds 0.43 s, a third of a beat at 45 BPM
+    and rather more at the tempos these songs run at.
+    """
+    want = max(1e-6, shot_seconds / beat)
+    if want >= 1.5:
+        return 1
+    return 2 if want >= 0.7 else 4
+
+
 # ============================================================== speed
 
 def pieces(speed: str, dur: float, pre: float) -> list[tuple[float, float, float]]:
@@ -937,8 +965,25 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # PACE FROM THE REFERENCES: the median cuts-per-minute of the edits this
     # style is modelled on, as a whole number of beats at this song's tempo.
     cpm = meas.get("cuts_per_min") or 30.0
-    shot_beats = _pow2_beats(60.0 / cpm, beat, lo=1, hi=8)
-    open_beats = _pow2_beats(max(meas.get("first_shot") or 4.0, 2.0), beat, lo=2, hi=16)
+    # THE SHOT IS THE REFERENCES' MEDIAN, NOT A MINUTE DIVIDED BY THEIR CUTS.
+    # Those are different numbers and the edits are skewed: Montage's cuts a
+    # minute say 2.12 s a shot, its median shot is 1.18 s, because a montage
+    # holds a few long shots and cuts fast between the rest. Aiming at the
+    # average made every shot as long as the long ones -- montero1 came out at
+    # 9 cuts a minute against a 21-33 band -- so the target is the median the
+    # reel is scored against.
+    want = meas.get("median_shot") or (60.0 / cpm)
+    # THE GRID IS AS FINE AS THE TARGET NEEDS. In whole beats the shortest shot
+    # the rules allow is two of them, so a fast style on a half-time song could
+    # not cut faster than 1.5 s and Hype, Velocity and Montage all came out at
+    # the same three-beat shot -- measured over 19 reels. `div` is how many
+    # steps make a beat, and everything from here down is counted in steps.
+    div = _grid_div(want, beat)
+    step = beat / div
+    shot_beats = max(1, min(8 * div, int(round(want / step))))
+    # The opening hold is left on the beat: it already lands inside the
+    # references' band on 20 of 24 reels, so only its unit changes.
+    open_beats = _pow2_beats(max(meas.get("first_shot") or 4.0, 2.0), beat, lo=2, hi=16) * div
     flash_share = min(0.9, (meas.get("flashes_per_min") or 0.0) / max(cpm, 1.0))
 
     # ONE ENTRY PER CLIP. Rebuilding a reel in another style sent the timeline's
@@ -963,7 +1008,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         left_out((c["path"] for c in offered[MAX_SHOTS:]), f"Only the first {MAX_SHOTS} clips can go in one reel.")
 
     # MOMENTS, NOT CLIPS -- see rulebook.
-    run_b = max(1, int(math.ceil(max(rulebook.MIN_RUN_BEATS * beat, rulebook.MIN_RUN_SECONDS) / beat - 1e-6)))
+    run_b = max(1, int(math.ceil(max(rulebook.MIN_RUN_BEATS * beat, rulebook.MIN_RUN_SECONDS) / step - 1e-6)))
 
     if confirm is not None:
         before = [c["path"] for c in chosen]
@@ -996,8 +1041,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         moving = {m.clip["path"] for m in all_moments}
         left_out((p for p in with_moments if p not in moving),
                  "Nothing moves on screen around its kill (a death camera, or standing still).")
-    est = {id(m): (rulebook.FOLLOW_UP_BEATS if m.seq > 0 else shot_beats) for m in all_moments}
-    available = sum(est.values()) * beat
+    est = {id(m): (rulebook.FOLLOW_UP_BEATS * div if m.seq > 0 else shot_beats) for m in all_moments}
+    available = sum(est.values()) * step
     if part_len:
         # Whole beats of the chosen part. select() below keeps every moment
         # when there is less material than this, and leaves out the weakest
@@ -1010,9 +1055,9 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     if not part_len and target < rulebook.PHRASE_BARS * 4 * beat - 1e-6 and not max_seconds:
         target = 0.0
         pool = list(all_moments)
-    want_beats = int(round(target / beat))
+    want_beats = int(round(target / step))
     if target:
-        pool = rulebook.select(all_moments, target, lambda m: est[id(m)] * beat)
+        pool = rulebook.select(all_moments, target, lambda m: est[id(m)] * step)
     spare = [m for m in all_moments if m not in pool]
 
     # PACE FROM THE SONG -- see rulebook.pace. Reel zero is fixed first (the
@@ -1026,13 +1071,13 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         # over; one that starts on the drums would open half speed over them.
         build = part_start + rulebook.INTRO_BARS * 4 * beat <= (grid.drums_in or 0.0) + beat
     if build:
-        open_beats = rulebook.INTRO_BARS * 4 + 1
-    closer_post = rulebook.ENDING_BEATS if style.outro in ("e01", "e03", "e02") else 0
-    open_post = max(1, min(rulebook.MAX_TAIL_BEATS, open_beats // 4))
+        open_beats = (rulebook.INTRO_BARS * 4 + 1) * div
+    closer_post = rulebook.ENDING_BEATS * div if style.outro in ("e01", "e03", "e02") else 0
+    open_post = max(1, min(rulebook.MAX_TAIL_BEATS * div, open_beats // 4))
     if part_len:
         offset = part_start
     else:
-        offset = _choose_offset(grid, max(run_b, open_beats - open_post) * beat, style, None, energy,
+        offset = _choose_offset(grid, max(run_b, open_beats - open_post) * step, style, None, energy,
                                 build) if song else 0.0
     idx0 = grid.index_at_or_after(offset) if (song and grid.beats) else 0
 
@@ -1047,11 +1092,11 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     def plan_walk(ms, fixed=None, start=offset, first_index=idx0):
         ranked_ = sorted(range(len(ms)), key=lambda i: (-ms[i].strength, i))
         heroes_ = {i for i in ranked_[:max(1, len(ms) // 6)] if ms[i].caption}
-        lens_ = rulebook.walk(ms, beat=beat, energy=energy, song_start=start, base=shot_beats,
+        lens_ = rulebook.walk(ms, beat=step, energy=energy, song_start=start, base=shot_beats,
                               open_beats=open_beats, run_beats=run_b, pre_share=style.pre_share,
-                              first_index=first_index, downbeat_pos=grid.downbeat_pos,
+                              first_index=first_index * div, downbeat_pos=grid.downbeat_pos * div,
                               fixed=fixed, heroes=heroes_, closer_post=closer_post,
-                              phrase_from=first_kill_b)
+                              phrase_from=first_kill_b, div=div)
         return lens_, heroes_
 
     picked = rulebook.order(pool, looks, opener_ok)
@@ -1118,12 +1163,12 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                 "name": c.get("name", ""), "clip_seconds": round(dur_clip, 3),
                 "clip_mtime": int(c.get("mtime") or 0),
                 "kills": list(m.kills), "kill": round(m.first, 3),
-                "pre": round(pre_b * beat, 5), "duration": round((pre_b + span_b + post_b) * beat, 5),
+                "pre": round(pre_b * step, 5), "duration": round((pre_b + span_b + post_b) * step, 5),
                 "speed": speed, "fx": list(style.kill), "hero": is_hero,
                 "hero_fx": list(style.hero) if is_hero else [],
                 "camera": style.camera, "transition": "t01", "tlen": 0.0,
                 "caption": m.caption}
-        _fit(shot, beat, notes)
+        _fit(shot, step, notes)
         shots.append(shot)
 
     if seed is None:
@@ -1148,22 +1193,22 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         # Slowed as it leaves, so the bar after the last kill has footage to fill.
         last = shots[-1]
         last["speed"] = "s06"
-        last["duration"] = round(last["pre"] + (lens[-1][1] + closer_post) * beat, 5)
+        last["duration"] = round(last["pre"] + (lens[-1][1] + closer_post) * step, 5)
     for s in shots:
-        _fit(s, beat, notes)
+        _fit(s, step, notes)
     if target:
-        _fit_total(shots, beat, target, run_b * beat, rulebook.shot_cap(shot_beats, beat) * beat)
+        _fit_total(shots, step, target, run_b * step, rulebook.shot_cap(shot_beats, step) * step)
     if part_len and shots:
-        want_b = int(round(target / beat))
-        before_b = int(round(sum(s["duration"] for s in shots) / beat))
-        _lengthen_run_ups(shots, beat, want_b)
-        have_b = int(round(sum(s["duration"] for s in shots) / beat))
+        want_b = int(round(target / step))
+        before_b = int(round(sum(s["duration"] for s in shots) / step))
+        _lengthen_run_ups(shots, step, want_b)
+        have_b = int(round(sum(s["duration"] for s in shots) / step))
         if have_b > before_b:
             notes.append(f"The clips were short of the part, so their kills got longer run-ups "
-                         f"({(have_b - before_b) * beat:.0f} s more in all, as far as each clip has "
+                         f"({(have_b - before_b) * step:.0f} s more in all, as far as each clip has "
                          f"footage and never over {rulebook.MAX_LEAD_UP_SECONDS:.0f} s).")
         if have_b < want_b:
-            notes.append(f"Your clips fill {have_b * beat:.0f} s of the {target:.0f} s part, even with "
+            notes.append(f"Your clips fill {have_b * step:.0f} s of the {target:.0f} s part, even with "
                          f"every kill given as much run-up as it can have, so the reel ends early. "
                          f"Add clips or choose a shorter part to fill it.")
 
@@ -1176,7 +1221,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         "vignette": style.vignette, "overlays": list(style.overlays),
         "handle": "", "music_db": 0.0, "game_db": 6.0 if song else 0.0, "duck": True,
         "saturation": sat_trim,
-        "beat": round(beat, 6), "seed": int(seed), "pools": pools, "shots": shots,
+        "beat": round(beat, 6), "step": round(step, 6),
+        "seed": int(seed), "pools": pools, "shots": shots,
     }
     # Where in the song reel zero sits: chosen before the walk, so each shot's
     # length could follow the part of the song it plays over -- and settled
@@ -1208,7 +1254,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # the same path the player's hand-made marks take.
     if song and shots and grid.hits and not part_len:
         floor = 0.0
-        first = _first_kill(grid.hits, grid.big, earliest=floor + run_b * beat,
+        first = _first_kill(grid.hits, grid.big, earliest=floor + run_b * step,
                             drums_in=grid.drums_in or 0.0)
         if style.drop and grid.drop and len(shots) > 3:
             # A drop reel's fourth kill lands ON the drop: the build is the
@@ -1262,9 +1308,9 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # instead, a velocity reel's flashes sat at beats 13, 19, 25 and 31 -- six
     # beats apart, on no bar line at all.
     shots = proj["shots"]
-    starts_b = [int(round(t / beat)) for t in _starts(shots)]
-    rulebook.transitions(shots, starts_b, first_kill_beat=int(round(shots[0]["pre"] / beat)) if shots else 0,
-                         looks=clip_look, pools=pools, flash_share=flash_share, beat=beat)
+    starts_b = [int(round(t / step)) for t in _starts(shots)]
+    rulebook.transitions(shots, starts_b, first_kill_beat=int(round(shots[0]["pre"] / step)) if shots else 0,
+                         looks=clip_look, pools=pools, flash_share=flash_share, beat=step, div=div)
     if style.drop and song and not grid.drop:
         notes.append("This song has no clear drop, so the reel is paced as a build without one.")
 
@@ -1775,7 +1821,12 @@ def apply_song(project: dict, shape, song: str, start: float, end: float = 0.0,
     """
     notes: list[str] = []
     project["song"] = song
+    # The new song's beat, and the same grid under it: how finely this reel
+    # cuts is the style's, not the song's, so a new song keeps the division.
+    was = float(project.get("beat") or 0.0)
+    div = min((1, 2, 4), key=lambda d: abs(float(project.get("step") or was or 1.0) - was / d)) if was else 1
     project["beat"] = round(float(shape.beat), 6)
+    project["step"] = round(float(shape.beat) / div, 6)
     start = max(0.0, min(float(start), max(0.0, shape.seconds - 1.0)))
     project["song_offset"] = round(start, 4)
     part = (min(float(end), shape.seconds) - start) if end and end > start else shape.seconds - start
@@ -1890,6 +1941,11 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         "output": "",
         "shots": [],
     }
+    # The grid a fast style was planned on. A reel made before the grid could
+    # be finer than a beat has no step, and a whole beat is what it was built
+    # on -- so that is the default, and trimming a shot never knocks it off its
+    # own grid.
+    out["step"] = _grid_step(project.get("step"), out["beat"])
     raw_pools = project.get("pools") if isinstance(project.get("pools"), dict) else {}
     for kind, part_kind in POOL_KINDS.items():
         valid = set(ids_of(part_kind))
@@ -1969,7 +2025,7 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         }
         shot["pre"] = round(_num(raw.get("pre"), 0.0, shot["duration"], shot["duration"] / 2), 5)
         before = (shot["pre"], shot["duration"], shot["speed"])
-        _fit(shot, out["beat"])
+        _fit(shot, out["step"])
         if (shot["pre"], shot["duration"], shot["speed"]) != before:
             notes.append(f"{shot['name']}: trimmed to the footage the clip has.")
         out["shots"].append(shot)
