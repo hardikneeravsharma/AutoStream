@@ -82,6 +82,10 @@ NO_SONG_BPM = 120.0                  # the grid a reel without a song is cut to
 MAX_SHOTS = 80
 CACHE_DIR = ".studio"
 MIN_SHOT = 0.25                      # s. Below this a shot is a flicker, not a shot
+# How far a kill may sit from the song hit it was aimed at and still count as
+# landing on it: three frames of the render, which is under what an ear hears
+# as early or late and what the music lane draws in green.
+ON_MARK = 3.0 / FPS
 
 
 # ============================================================== the library
@@ -1235,6 +1239,11 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         slots = _hit_slots(grid.hits, grid.hit_strength, first=first, end=end,
                            gap=60.0 / max(cpm, 1.0), count=len(shots))
         proj["song_offset"] = round(offset, 5)
+        # The hits the kills were aimed at, kept in song seconds. Without them
+        # the timeline could only redraw what a detector would pick *now*, at
+        # its own default pace -- not the marks this reel was actually cut to,
+        # which is the only set worth checking a kill against.
+        proj["song_marks"] = [round(t, 4) for t in slots]
         notes += apply_marks(proj, [t - offset for t in slots])
         big_on = sum(1 for t in slots if any(abs(t - b) < 0.01 for b in grid.big))
         what = grid.pattern or "bass hits"
@@ -1771,8 +1780,9 @@ def apply_song(project: dict, shape, song: str, start: float, end: float = 0.0,
     project["song_offset"] = round(start, 4)
     part = (min(float(end), shape.seconds) - start) if end and end > start else shape.seconds - start
     if marks:
-        inside = [m - start for m in marks if start <= m <= start + part]
-        notes += apply_marks(project, inside)
+        kept = [m for m in marks if start <= m <= start + part]
+        project["song_marks"] = [round(m, 4) for m in sorted(kept)]
+        notes += apply_marks(project, [m - start for m in kept])
     notes += fit_to_part(project, part)
     return notes
 
@@ -1895,6 +1905,13 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
             end = _num(project.get("part_end"), 0.0, 36000.0, 0.0)
             if end > out["song_offset"]:
                 out["part_end"] = round(end, 5)
+            # The song's own hits this reel's kills were put on, so the
+            # timeline can draw them under the kills and show the drift.
+            marks = [round(_num(m, 0.0, 36000.0, -1.0), 4)
+                     for m in (project.get("song_marks") or [])[:MAX_SHOTS * 2]]
+            marks = sorted({m for m in marks if m >= 0})
+            if marks:
+                out["song_marks"] = marks
         else:
             notes.append("The song is no longer on disk, so this reel has no music.")
     output = str(project.get("output") or "")
@@ -2042,6 +2059,21 @@ def derive(project: dict) -> dict:
                      "pieces": [[round(x, 4), round(y, 4), r] for x, y, r in ps]})
     beat = float(project.get("beat") or 60.0 / NO_SONG_BPM)
     beats = [round(k * beat, 4) for k in range(int(length / beat) + 2) if k * beat <= length + 1e-6]
+    # WHERE THE SONG SAID EACH KILL SHOULD LAND. The marks are song seconds and
+    # reel zero is song_offset, so one subtraction -- the same one the render
+    # does -- puts them on the timeline's axis. Every shot then knows the mark
+    # nearest its kill and how far off it is, which is what the music lane
+    # draws: a kill on its hit is the whole claim the reel makes.
+    offset = float(project.get("song_offset") or 0.0)
+    marks = sorted(round(m - offset, 4) for m in (project.get("song_marks") or [])
+                   if -0.5 <= float(m) - offset <= length + 0.5)
+    on_marks = 0
+    for row in rows:
+        near = min(marks, key=lambda m: abs(m - row["kill_reel"])) if marks else None
+        row["mark"] = near
+        row["drift"] = round(row["kill_reel"] - near, 4) if near is not None else None
+        if near is not None and abs(row["drift"]) <= ON_MARK:
+            on_marks += 1
     in_reel = {str(s["clip"]).lower() for s in shots}
     selection = [{"clip": r["clip"], "name": r["name"],
                   "in": str(r["clip"]).lower() in in_reel,
@@ -2049,6 +2081,7 @@ def derive(project: dict) -> dict:
                  for r in project.get("selection") or []]
     return {"length": round(length, 4), "shots": rows, "kills": sorted(kills_reel),
             "beats": beats, "beat": beat, "bpm": round(60.0 / beat, 2),
+            "marks": marks, "on_marks": on_marks, "on_mark_window": ON_MARK,
             "selection": selection,
             "edited": bool(project.get("plan_sig")) and signature(shots) != project.get("plan_sig")}
 
