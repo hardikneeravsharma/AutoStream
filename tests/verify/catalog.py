@@ -260,7 +260,7 @@ CONTROLS: list[Control] = [
             why="a path that is not there is refused before Explorer is spawned"),
     Control("/api/clips/pick", "POST", STATIC, "Pick a local file", "clips",
             acts=("pick-local", "use-local", "reel-quick-song", "studio-song",
-                  "studio-sg-pick"),
+                  "studio-sg-pick", "studio-intro-add"),
             why="opens a native Tk dialog ON THE SERVER and blocks the "
                 "request thread until a human dismisses it"),
     Control("/api/clips/install", "POST", STATIC, "Install them", "clips",
@@ -360,6 +360,25 @@ CONTROLS: list[Control] = [
             expect=_has("ok", "songs"), acts=("studio-sg-song",),
             why="what the song picker lists, so a song can be chosen without a "
                 "file dialog; an empty songs folder is an empty list"),
+    Control("/api/studio/intros", "GET", CALL, "intro clips already added", "studio",
+            expect=_has("ok", "intros"), acts=("studio-intro-open", "studio-intro-pick"),
+            why="the intro library the dialog lists, so a clip added once can be "
+                "reused on every reel; an empty intros folder is an empty list"),
+    Control("/api/studio/intro", "GET", CALL, "preview an intro clip", "studio",
+            query="path=", status=(403, 404), expect=_has("error"),
+            why="streams one intro so it can be trimmed by eye; only ever an mp4 "
+                "inside the intros folder, so a blank path is refused"),
+    Control("/api/studio/intro-add", "POST", CALL, "Add a GIF or video", "studio",
+            body={"path": ""}, expect=_has("ok"),
+            reject={"path": ""}, reject_soft=True,
+            why="no file chosen is refused; the path comes from the OS dialog, and "
+                "the file is re-encoded into the intros folder before it is used"),
+    Control("/api/studio/intro-delete", "POST", CALL, "Delete an intro clip", "studio",
+            body={"path": ""}, expect=_has("ok"),
+            reject={"path": ""}, reject_soft=True,
+            acts=("studio-intro-del",),
+            why="only a file inside the intros folder can be deleted, and not while "
+                "a reel is rendering"),
     Control("/api/studio/songview", "GET", CALL, "ways of seeing a song", "studio",
             query="song=", expect=_has("ok"),
             why="loudness, the three bands, onset strength and a spectrogram, "
@@ -386,6 +405,11 @@ CONTROLS: list[Control] = [
             body={}, expect=_has("ok", "build"), acts=("studio-bin-build",),
             why="renders the missing examples from the player's own clips in "
                 "the background, so the page can watch it"),
+    Control("/api/studio/favourite-part", "POST", CALL, "star a part of the bin", "studio",
+            body={"part": "", "on": True}, expect=_has("error"),
+            acts=("studio-bin-fav",),
+            why="with a hundred parts in a drawer the ones worth coming back to "
+                "have to be findable; an unknown id is refused rather than stored"),
     Control("/api/studio/thumb", "GET", CALL, "library thumbnail", "studio",
             query="path=", status=(400,), expect=_has("error"),
             why="only ever a clip inside the clips folder; a blank path must "
@@ -476,6 +500,7 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-preview-close": "closes the clip preview",
     "studio-style": "chooses a style in the dialog; sent with Build",
     "studio-bin-pick": "puts one part of the bin in the template; sent with Build",
+    "studio-bin-favonly": "shows only the parts kept as favourites; never leaves the browser",
     "studio-hand-next": "steps a drawer of the dealt template to its next part",
     "studio-deal": "deals a random part from every drawer; sent with Build",
     "studio-deal-reset": "drops the dealt parts back to the style's own",
@@ -513,6 +538,18 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-add-cancel": "stops adding clips to a reel and empties the selection",
     "studio-del-cancel": "closes the delete confirmation without deleting",
     "studio-rdel-cancel": "closes the delete-a-reel confirmation without deleting",
+    # --- the intro-clip dialog: everything here edits studio.intro, and only
+    # "Use this intro" puts any of it on the project (which renders it).
+    "studio-intro-off": "takes the intro clip off the reel",
+    "studio-intro-use": "puts the trimmed intro on the reel",
+    "studio-intro-clear": "takes the intro clip off from inside the dialog",
+    "studio-intro-cancel": "closes the intro dialog, changing nothing",
+    "studio-intro-play": "plays the trimmed part of the intro in the dialog",
+    "studio-intro-nudge": "moves the intro's in or out point by a step",
+    "studio-intro-here": "sets the in or out point to the preview's playhead",
+    "studio-intro-whole": "trims the intro back to the whole clip",
+    "studio-intro-fit-lead": "trims the intro to the length of the reel's lead-in",
+    "studio-intro-fit": "chooses whether the intro fills the frame or fits inside it",
     # --- navigation and layout
     "rail-btn": "client-side page switch; state lives in sessionStorage",
     "rail": "switches the Clips page sub-tab",

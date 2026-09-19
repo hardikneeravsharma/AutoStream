@@ -3009,6 +3009,20 @@ REEL_CSS = """
             min-width:92px}
 /* One chip per mark, so a wrong beat in the middle of a run can go without
    clearing the ones after it. */
+/* The star on a parts-bin card. Absolute inside the card button, so it never
+   pushes the name or the example around, and always in the same corner. */
+.bin-card{position:relative}
+.bin-star{
+  position:absolute;top:6px;right:7px;z-index:2;line-height:1;
+  font-size:15px;color:var(--text-secondary);cursor:pointer;
+  padding:2px 3px;border-radius:var(--radius-sm);
+  background:color-mix(in srgb, var(--surface) 70%, transparent);
+  opacity:0;transition:opacity .12s;
+}
+.bin-card:hover .bin-star,.bin-star:focus-visible{opacity:1}
+.bin-star.is-on{opacity:1;color:var(--accent)}
+.bin-star:hover{color:var(--accent)}
+
 .reel-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:var(--space-3)}
 .reel-chip{
   font-variant-numeric:tabular-nums;font-size:11px;padding:3px 8px;
@@ -3407,6 +3421,46 @@ STUDIO_CSS = r"""
    click lands on whatever slid into the gap. */
 .studio-transport{min-width:76px}
 .studio-transport-wide{min-width:124px}
+
+/* THE INTRO CLIP. A band over the head of the video row, because that is
+   literally what it is: the reel is untouched underneath it. Hatched so it
+   never reads as a shot, and translucent so the shot it covers still shows. */
+.st-introclip{position:absolute;box-sizing:border-box;border-radius:6px;cursor:pointer;
+  border:2px dashed var(--accent-text);
+  background:repeating-linear-gradient(135deg,rgba(0,0,0,.55) 0 8px,rgba(0,0,0,.28) 8px 16px)}
+.st-introclip:hover{background:repeating-linear-gradient(135deg,rgba(0,0,0,.62) 0 8px,rgba(0,0,0,.34) 8px 16px)}
+.st-introclip-tag{position:absolute;left:5px;bottom:4px;padding:1px 6px;border-radius:3px;
+  font:600 10px/1.4 var(--font-text);color:#fff;background:rgba(0,0,0,.7);white-space:nowrap}
+
+/* The inspector's one line about the intro; the editing is in the dialog. */
+.studio-introrow{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3);
+  justify-content:space-between;padding:var(--space-4);border-radius:var(--radius-sm);
+  background:var(--surface-sunken);border:var(--border-hair) solid var(--border-subtle);font-size:12.5px}
+.studio-introrow-on{display:flex;flex-direction:column;min-width:0;gap:1px}
+.studio-introrow-on b{color:var(--text-primary)}
+
+.studio-intro-modal{width:min(760px,100%)}
+.studio-intro-body{display:flex;flex-direction:column;gap:var(--space-5);max-width:none}
+.studio-intro-lede{margin:0}
+/* The library. One card per intro, the whole card picks it, Delete sits apart
+   so a click that means "use this" can never mean "destroy this". */
+.studio-intro-lib{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:var(--space-4)}
+.studio-introcard{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);
+  border-radius:var(--radius-sm);background:var(--surface);
+  border:var(--border-hair) solid var(--border-subtle)}
+.studio-introcard:hover{border-color:var(--border-strong)}
+.studio-introcard.is-on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.studio-introcard-hit{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;text-align:left;
+  padding:0;background:none;border:0;color:inherit;font:inherit;cursor:pointer}
+.studio-introcard-name{font-weight:600;color:var(--text-primary);font-size:12.5px}
+.studio-introcard-meta{font-size:11px}
+.studio-intro-player{background:#000;border-radius:var(--radius-md);overflow:hidden;
+  display:flex;align-items:center;justify-content:center;max-height:38vh}
+.studio-intro-player video{width:100%;max-height:38vh;object-fit:contain;background:#000;display:block}
+.studio-intro-edit{display:flex;flex-direction:column;gap:var(--space-4)}
+.studio-intro-trim{display:flex;flex-direction:column;gap:var(--space-3)}
+.studio-intro-trim input[type=range]{flex:1 1 160px;min-width:0;accent-color:var(--accent)}
+.studio-intro-opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--space-5)}
 .studio-mk-seek{flex:1 1 180px;min-width:0;accent-color:var(--accent)}
 .studio-mk-clock{min-width:108px;font-size:12.5px;color:var(--text-primary)}
 .studio-yt{width:min(560px,100%)}

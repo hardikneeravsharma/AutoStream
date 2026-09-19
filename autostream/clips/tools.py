@@ -153,6 +153,30 @@ def has_nvenc() -> bool:
 
 
 @functools.lru_cache(maxsize=1)
+def filter_script_flag() -> str:
+    """The flag this ffmpeg takes a filter graph in a FILE with.
+
+    A long reel's graph does not fit on a Windows command line (32,767
+    characters; a measured 50-shot reel needed 33,144), so it has to go in a
+    file -- and the two ffmpeg generations spell that differently:
+
+        <= 7.0   -filter_complex_script FILE
+        >= 7.1   -/filter_complex FILE      (the generic "value from a file")
+
+    ASKED, NOT PARSED. Version strings in the wild are `9.0-full_build`,
+    `N-121254-g8a3bb4`, `4.4.2-0ubuntu0.22.04.1`; `-h full` simply stops
+    listing the option once it is gone, which is the thing actually being
+    asked about. Probed once per process, like the encoder checks above.
+    """
+    try:
+        p = run([binary("ffmpeg"), "-hide_banner", "-h", "full"])
+        text = (p.stdout or "") + (p.stderr or "")
+    except Exception:                                        # noqa: BLE001
+        return "-/filter_complex"
+    return "-filter_complex_script" if "filter_complex_script" in text else "-/filter_complex"
+
+
+@functools.lru_cache(maxsize=1)
 def has_cuda() -> bool:
     """Whether CUDA decode is usable. Worth checking separately from nvenc --
     the scan is decode-bound and the cut is encode-bound."""

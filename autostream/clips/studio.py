@@ -71,7 +71,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import hits as hits_mod, rulebook, studio_refs
+from . import hits as hits_mod, parts as parts_mod, rulebook, studio_refs
 
 log = logging.getLogger(__name__)
 
@@ -476,13 +476,9 @@ def delete_clips(root: Path, paths: list[str], *, dry_run: bool = False) -> dict
 
 # ============================================================== the parts
 
-@dataclass(frozen=True)
-class Part:
-    id: str
-    kind: str
-    label: str
-    blurb: str
-
+# The catalogue's own type and its generated variants live in parts.py; the
+# hand-written parts stay here, beside the renderer that draws them.
+Part = parts_mod.Part
 
 PARTS: tuple[Part, ...] = (
     Part("i00", "intro", "Straight in", "No intro effect; the first shot simply starts."),
@@ -581,7 +577,29 @@ PARTS: tuple[Part, ...] = (
     Part("e02", "outro", "Freeze and fade colour", "The final second freezes and drains to grey."),
     Part("e03", "outro", "Slow-mo exit", "The last kill slows down and fades."),
 )
+PARTS = PARTS + tuple(parts_mod.variants({p.id: p.kind for p in PARTS}))
 PART = {p.id: p for p in PARTS}
+
+
+def fam(pid: str) -> str:
+    """Which family's filter draws this part. Unknown ids are their own family."""
+    p = PART.get(pid)
+    return p.family if p else pid
+
+
+def knob(pid: str, name: str, default: float) -> float:
+    """One of a part's numbers, or the family default for a hand-written part."""
+    p = PART.get(pid)
+    return p.knob(name, default) if p else default
+
+
+def picked(fx, family: str) -> str:
+    """The id in `fx` belonging to `family`, or "" -- so the renderer can ask
+    "is there a punch here" without knowing which of the punches it is."""
+    for pid in fx or ():
+        if fam(pid) == family:
+            return pid
+    return ""
 KINDS = ("intro", "transition", "kill", "hero", "speed", "camera", "grade", "overlay", "outro")
 
 
@@ -662,6 +680,20 @@ XFADE = {"t02": "fadewhite", "t03": "fadeblack", "t04": "fade", "t05": "zoomin",
          "t06": "hblur", "t07": "slideleft", "t08": "smoothleft", "t09": "circleopen",
          "t10": "pixelize", "t11": "radial", "t12": "hlslice", "t13": "squeezeh",
          "t14": "diagtl", "t15": "coverleft", "t16": "dissolve", "t17": "fadegrays"}
+def _xfade_name(pid: str) -> str:
+    """The xfade preset a transition draws with, hand-written or generated."""
+    if pid in XFADE:
+        return XFADE[pid]
+    return parts_mod.XFADE_NAMES[int(knob(pid, "preset", 0.0))]
+
+
+def _cut_seconds(pid: str) -> float:
+    """How long a cut runs."""
+    if pid in TLEN:
+        return TLEN[pid]
+    return knob(pid, "secs", 0.32)
+
+
 TLEN = {"t01": 0.0, "t02": 0.2, "t03": 0.4, "t04": 0.5, "t05": 0.3, "t06": 0.25,
         "t07": 0.3, "t08": 0.4, "t09": 0.4, "t10": 0.35, "t11": 0.4,
         # The fast ones stay under a third of a second: a slice or a squeeze
@@ -688,6 +720,30 @@ GRADES = {
     "g12": (0.0, 1.15, 0.03, "colorchannelmixer=rr=0.18:rg=0.60:rb=0.10:"
                              "gr=0.18:gg=1.00:gb=0.10:br=0.10:bg=0.40:bb=0.10"),
 }
+
+
+def _grade_of(pid: str) -> tuple[float, float, float, str]:
+    """A grade's numbers: the hand-written table, or a tint built from a hue.
+
+    A generated tint is one colourbalance push plus saturation and contrast.
+    Doing it off a hue wheel rather than by hand is what makes sixty of them
+    possible; the strength knob is what keeps a wash from being a costume.
+    """
+    if pid in GRADES:
+        return GRADES[pid]
+    if fam(pid) != "tint":
+        return GRADES["g01"]
+    hue = knob(pid, "hue", 200.0)
+    k = knob(pid, "strength", 0.55)
+    # The push, as a shadow/highlight split: shadows toward the hue and
+    # highlights away from it is what separates a GRADE from a colour filter.
+    h = math.radians(hue)
+    r, g, b = math.cos(h), math.cos(h - 2.0944), math.cos(h + 2.0944)
+    def lvl(v: float, scale: float) -> float:
+        return round(max(-0.9, min(0.9, v * k * scale)), 3)
+    static = (f"colorbalance=rs={lvl(r, 0.22)}:gs={lvl(g, 0.22)}:bs={lvl(b, 0.22)}"
+              f":rh={lvl(-r, 0.12)}:gh={lvl(-g, 0.12)}:bh={lvl(-b, 0.12)}")
+    return (knob(pid, "sat", 1.12), knob(pid, "con", 1.06), 0.0, static)
 
 
 # ============================================================== the styles
@@ -779,11 +835,40 @@ STYLE = {s.key: s for s in STYLES}
 DEFAULT_STYLE = "montage"
 
 
+def favourite_parts() -> list[str]:
+    """The PARTS marked as favourites, ignoring any whose id no longer exists.
+
+    Not to be confused with favourites()/set_favourite() above, which star
+    CLIPS in the library. Parts are starred per install and live in the config
+    directory; clips are starred per clips folder.
+    """
+    from .. import paths
+
+    return [p for p in parts_mod.load_favourites(paths.CONFIG_DIR) if p in PART]
+
+
+def set_favourite_part(pid: str, on: bool) -> list[str]:
+    """Mark or unmark one part. -> the list as it now stands.
+
+    Marking appends rather than inserts, so the list reads in the order things
+    were found -- which is the order a person remembers choosing them in.
+    """
+    from .. import paths
+
+    if pid not in PART:
+        raise ProjectError("There is no such part.")
+    now = [p for p in favourite_parts() if p != pid]
+    if on:
+        now.append(pid)
+    return parts_mod.save_favourites(paths.CONFIG_DIR, now)
+
+
 def catalog() -> dict:
     """What the page needs to offer every choice, and why each style is what it is."""
     return {
         "ok": True,
         "parts": [p.__dict__ for p in PARTS],
+        "favourite_parts": favourite_parts(),
         "kinds": list(KINDS), "drawers": list(DRAWERS),
         "styles": [{"key": s.key, "label": s.label, "blurb": s.blurb,
                     "measured": studio_refs.summary(s.refs),
@@ -1776,7 +1861,7 @@ def _vary(shots: list[dict], pools: dict, style: "Style", seed: int, what: str =
                     last_trans = t
             else:
                 s["transition"] = "t01"
-            s["tlen"] = TLEN.get(s["transition"], 0.0)
+            s["tlen"] = _cut_seconds(s["transition"])
         elif i == 0:
             s["transition"], s["tlen"] = "t01", 0.0
 
@@ -2075,7 +2160,10 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         "song": "", "song_offset": 0.0,
         "intro": project.get("intro") if project.get("intro") in ids_of("intro") else "i00",
         "outro": project.get("outro") if project.get("outro") in ids_of("outro") else "e12",
-        "grade": project.get("grade") if project.get("grade") in GRADES else "g01",
+        # The DRAWER, not the hand-written GRADES table: a generated tint is a
+        # real grade with no row in it, and checking the table quietly turned
+        # every one of them back into g01.
+        "grade": project.get("grade") if project.get("grade") in ids_of("grade") else "g01",
         "vignette": bool(project.get("vignette")),
         "overlays": [o for o in dict.fromkeys(project.get("overlays") or []) if o in ids_of("overlay")],
         "handle": re.sub(r"[\r\n]", " ", str(project.get("handle") or ""))[:40],
@@ -2216,7 +2304,7 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         s, prev = shots[i], shots[i - 1]
         t = s["transition"]
         want = s.pop("_want", -1.0)
-        want = TLEN.get(t, 0.0) if want is None or want <= 0 else want
+        want = _cut_seconds(t) if want is None or want <= 0 else want
         if t == "t01" or want <= 0:
             s["transition"], s["tlen"] = "t01", 0.0
             continue
@@ -2393,6 +2481,31 @@ def _between(a: float, b: float) -> str:
     return f"between(t,{a:.4f},{b:.4f})"
 
 
+def _fade_seconds(pid: str, default: float) -> float:
+    """How long a generated fade runs; hand-written intros keep their own."""
+    return knob(pid, "secs", default)
+
+
+def _fade_colour(pid: str) -> str:
+    """What a generated fade goes through."""
+    i = int(knob(pid, "colour", 0.0))
+    hexes = parts_mod.FADE_HEX
+    return hexes[i] if 0 <= i < len(hexes) else "black"
+
+
+def _wash_colour(hue: float) -> str:
+    """A hue in degrees as a hex colour for drawbox. -1 means white."""
+    if hue < 0:
+        return "0xffffff"
+    h = (hue % 360.0) / 60.0
+    c, x = 1.0, 1.0 - abs(h % 2.0 - 1.0)
+    rgb = [(c, x, 0), (x, c, 0), (0, c, x), (0, x, c), (x, 0, c), (c, 0, x)][int(h) % 6]
+    # Lifted off pure, because a fully saturated wash reads as a broken frame
+    # rather than a hit: the reference edits' colour hits all sit off the edge
+    # of the gamut.
+    return "0x" + "".join(f"{int(round((0.18 + 0.82 * v) * 255)):02x}" for v in rgb)
+
+
 def _pulse(var: str, at: float, amount: float, fall: float) -> str:
     """`amount` at `at`, decaying linearly to nothing over `fall` seconds."""
     return f"{amount}*gte({var},{at:.4f})*max(0,1-({var}-{at:.4f})/{fall})"
@@ -2544,32 +2657,35 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     hold = seg.freeze
     T = "in_time"                       # zoompan's clock; every other filter uses t
     z_terms = []
-    if "k01" in seg.fx:
-        z_terms.append(_pulse(T, kt, 0.12, 0.35))
-    if "h01" in seg.hero_fx:
+    if (pid := picked(seg.fx, "k01")):
+        z_terms.append(_pulse(T, kt, knob(pid, "amt", 0.12), knob(pid, "fall", 0.35)))
+    if (pid := picked(seg.hero_fx, "h01")):
+        gap = knob(pid, "gap", 0.16)
         z_terms.append(_pulse(T, kt, 0.10, 0.18))
-        z_terms.append(_pulse(T, kt + 0.16, 0.16, 0.35))
+        z_terms.append(_pulse(T, kt + gap, 0.16, 0.35))
     if seg.freeze_push:
         z_terms.append(f"if(between({T},{kt:.4f},{kt + hold:.4f}),0.4*({T}-{kt:.4f})/{hold:.4f},"
                        f"{_pulse(T, kt + hold, 0.4, 0.25)})")
-    if "k17" in seg.fx:
+    if (pid := picked(seg.fx, "k17")):
         # Held close through the run-up and let go ON the kill: the release is
         # the beat, where k01's arrival is. A reel that only ever punches in
         # reads as one effect however often the pool is redrawn.
-        z_terms.append(f"0.12*(1-min(1,max(0,({T}-{kt:.4f})/0.30)))")
-    if "k21" in seg.fx:
-        z_terms.append(_pulse(T, kt, 0.18, 0.22))
-    if seg.camera == "c01":
-        z_terms.append(f"0.12*{T}/{max(total_s, 0.1):.4f}")
-    if seg.camera == "c05":
-        z_terms.append(f"0.14*(1-{T}/{max(total_s, 0.1):.4f})")
-    if seg.camera == "c08":
+        z_terms.append(f"{knob(pid, 'amt', 0.12)}*(1-min(1,max(0,({T}-{kt:.4f})"
+                       f"/{knob(pid, 'rise', 0.30):.3f})))")
+    if (pid := picked(seg.fx, "k21")):
+        z_terms.append(_pulse(T, kt, knob(pid, "amt", 0.18), 0.22))
+    cam = fam(seg.camera)
+    if cam == "c01":
+        z_terms.append(f"{knob(seg.camera, 'amt', 0.12)}*{T}/{max(total_s, 0.1):.4f}")
+    if cam == "c05":
+        z_terms.append(f"{knob(seg.camera, 'amt', 0.14)}*(1-{T}/{max(total_s, 0.1):.4f})")
+    if cam == "c08":
         # One breath over the shot, never a loop: a sine that repeats reads as
         # a wobble rather than a camera.
-        z_terms.append(f"0.07*sin(PI*{T}/{max(total_s, 0.1):.4f})")
-    if seg.camera == "c04":
+        z_terms.append(f"{knob(seg.camera, 'amt', 0.07)}*sin(PI*{T}/{max(total_s, 0.1):.4f})")
+    if cam == "c04":
         for b in seg.beats:
-            z_terms.append(_pulse(T, b, 0.06, 0.18))
+            z_terms.append(_pulse(T, b, knob(seg.camera, "amt", 0.06), 0.18))
     if z_terms:
         v.append(f"zoompan=z='1+{'+'.join(z_terms)}'"
                  f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={F}")
@@ -2577,88 +2693,109 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     # and rotation all need slack around the picture to move into; giving each
     # its own scale/crop pair would resample the frame once per effect and
     # stack their crops. One scale, one optional rotate, one crop.
-    shifts = {"k02", "k22"} & set(seg.fx)
-    turns = "k19" in seg.fx or seg.camera == "c06"
-    if shifts or turns or seg.camera in ("c03", "c07"):
+    shake_id, tilt_id = picked(seg.fx, "k02"), picked(seg.fx, "k22")
+    rot_id = picked(seg.fx, "k19")
+    turns = bool(rot_id) or cam == "c06"
+    if shake_id or tilt_id or turns or cam in ("c03", "c07"):
         # A degree of rotation throws a 1080-tall frame's corners about 16 px;
         # 1.12 leaves 115 px a side, so nothing black ever reaches the crop.
         over = 1.12 if turns else 1.08
         sx, sy = round(W * over) // 2 * 2, round(H * over) // 2 * 2
         mx, my = (sx - W) / 2, (sy - H) / 2
         xs, ys = [f"{mx:.1f}"], [f"{my:.1f}"]
-        if "k02" in seg.fx:
-            env = f"gte(t,{kt:.4f})*max(0,1-(t-{kt:.4f})/0.45)"
-            xs.append(f"{mx * 0.7:.1f}*sin(t*70)*{env}")
-            ys.append(f"{my * 0.7:.1f}*cos(t*83)*{env}")
-        if "k22" in seg.fx:
+        if shake_id:
+            amp, fall = knob(shake_id, "amp", 0.7), knob(shake_id, "fall", 0.45)
+            hz = knob(shake_id, "freq", 70.0)
+            env = f"gte(t,{kt:.4f})*max(0,1-(t-{kt:.4f})/{fall:.3f})"
+            xs.append(f"{mx * amp:.1f}*sin(t*{hz:.1f})*{env}")
+            ys.append(f"{my * amp:.1f}*cos(t*{hz * 1.19:.1f})*{env}")
+        if tilt_id:
             # Up and down only. A sideways rattle reads as the player flicking;
             # a vertical one reads as the hit landing.
-            env = f"gte(t,{kt:.4f})*max(0,1-(t-{kt:.4f})/0.40)"
-            ys.append(f"{my * 0.85:.1f}*sin(t*64)*{env}")
-        if seg.camera == "c03":
-            xs.append(f"{mx * 0.6:.1f}*sin(t*1.3)+{mx * 0.2:.1f}*sin(t*3.7)")
-            ys.append(f"{my * 0.6:.1f}*cos(t*1.1)")
-        if seg.camera == "c07":
+            amp, fall = knob(tilt_id, "amp", 0.85), knob(tilt_id, "fall", 0.40)
+            env = f"gte(t,{kt:.4f})*max(0,1-(t-{kt:.4f})/{fall:.3f})"
+            ys.append(f"{my * amp:.1f}*sin(t*64)*{env}")
+        if cam == "c03":
+            a = knob(seg.camera, "amp", 0.6)
+            xs.append(f"{mx * a:.1f}*sin(t*1.3)+{mx * a / 3:.1f}*sin(t*3.7)")
+            ys.append(f"{my * a:.1f}*cos(t*1.1)")
+        if cam == "c07":
             # All the way across the slack, once, over the whole shot.
-            xs.append(f"{mx * 0.9:.1f}*(2*t/{max(total_s, 0.1):.4f}-1)")
+            a = knob(seg.camera, "amp", 0.9)
+            xs.append(f"{mx * a:.1f}*(2*t/{max(total_s, 0.1):.4f}-1)")
         turn = []
-        if "k19" in seg.fx:
-            turn.append(f"0.026*gte(t,{kt:.4f})*max(0,1-(t-{kt:.4f})/0.35)")
-        if seg.camera == "c06":
-            turn.append(f"0.030*(t/{max(total_s, 0.1):.4f}-0.5)")
+        if rot_id:
+            turn.append(f"{knob(rot_id, 'rad', 0.026)}*gte(t,{kt:.4f})"
+                        f"*max(0,1-(t-{kt:.4f})/{knob(rot_id, 'fall', 0.35):.3f})")
+        if cam == "c06":
+            turn.append(f"{knob(seg.camera, 'rad', 0.030)}*(t/{max(total_s, 0.1):.4f}-0.5)")
         chain = [f"scale={sx}:{sy}"]
         if turn:
             chain.append(f"rotate=a='{'+'.join(turn)}':ow={sx}:oh={sy}:c=none")
         chain.append(f"crop={W}:{H}:x='{'+'.join(xs)}':y='{'+'.join(ys)}'")
         v.append(",".join(chain))
 
-    sat, con, bri, static = GRADES.get(seg.grade, GRADES["g01"])
+    sat, con, bri, static = _grade_of(seg.grade)
     b_terms, c_terms, s_terms = [f"{bri}"], [f"{con}"], [f"{sat * seg.sat_trim:.3f}"]
-    if "k03" in seg.fx:
-        b_terms.append(f"0.55*gte(t,{kt:.4f})*max(0,1-(t-{kt:.4f})/0.12)")
-    if "k16" in seg.fx:
-        b_terms.append(f"0.35*{_between(kt, kt + 0.25)}*lt(mod(t*{F},4),2)")
+    if (pid := picked(seg.fx, "k03")):
+        b_terms.append(f"{knob(pid, 'amt', 0.55)}*gte(t,{kt:.4f})"
+                       f"*max(0,1-(t-{kt:.4f})/{knob(pid, 'fall', 0.12):.3f})")
+    if (pid := picked(seg.fx, "k16")):
+        per = max(2.0, knob(pid, "period", 4.0))
+        b_terms.append(f"{knob(pid, 'amt', 0.35)}*{_between(kt, kt + knob(pid, 'dur', 0.25))}"
+                       f"*lt(mod(t*{F},{per:.0f}),{per / 2:.0f})")
     s_expr = "+".join(s_terms)
-    if "k07" in seg.fx:
-        s_expr = f"({s_expr})*if(lt(t,{kt:.4f}),0.4,1.45-0.45*min(1,(t-{kt:.4f})/0.6))"
+    if (pid := picked(seg.fx, "k07")):
+        lo, hi = knob(pid, "from", 0.4), knob(pid, "to", 1.45)
+        s_expr = (f"({s_expr})*if(lt(t,{kt:.4f}),{lo},{hi}-{hi - 1.0:.3f}"
+                  f"*min(1,(t-{kt:.4f})/{knob(pid, 'fall', 0.6):.3f}))")
     c_expr = "+".join(c_terms)
-    if "k11" in seg.fx:
-        c_expr = f"({c_expr})*if({_between(kt, kt + 0.3)},1.45,1)"
-        s_expr = f"({s_expr})*if({_between(kt, kt + 0.3)},1.2,1)"
-    if "h03" in seg.hero_fx:
+    if (pid := picked(seg.fx, "k11")):
+        win = _between(kt, kt + knob(pid, "dur", 0.3))
+        c_expr = f"({c_expr})*if({win},{knob(pid, 'con', 1.45)},1)"
+        s_expr = f"({s_expr})*if({win},{knob(pid, 'sat', 1.2)},1)"
+    if picked(seg.hero_fx, "h03"):
         s_expr = f"({s_expr})*if({_between(kt, kt + 0.8)},0.7,1)"
     v.append(f"eq=brightness='{'+'.join(b_terms)}':contrast='{c_expr}':saturation='{s_expr}':eval=frame")
     if static:
         v.append(static)
-    if "k06" in seg.fx:
-        v.append(f"rgbashift=rh=9:bh=-9:enable='{_between(kt, kt + 0.18)}'")
-    if "k08" in seg.fx:
-        v.append(f"drawbox=x=0:y=0:w=iw:h=ih:color=0xff2a2a@0.3:t=fill:enable='{_between(kt, kt + 0.15)}'")
-    if "k12" in seg.fx:
-        v.append(f"negate=enable='{_between(kt, kt + 0.05)}'")
-    if "k14" in seg.fx:
-        v.append(f"boxblur=6:1:enable='{_between(kt, kt + 0.25)}'")
-    if "k21" in seg.fx:
+    if (pid := picked(seg.fx, "k06")):
+        px = int(knob(pid, "px", 9.0))
+        v.append(f"rgbashift=rh={px}:bh=-{px}:enable='{_between(kt, kt + knob(pid, 'dur', 0.18))}'")
+    if (pid := picked(seg.fx, "k08")):
+        v.append(f"drawbox=x=0:y=0:w=iw:h=ih:color={_wash_colour(knob(pid, 'hue', 0.0))}"
+                 f"@{knob(pid, 'alpha', 0.3)}:t=fill:"
+                 f"enable='{_between(kt, kt + knob(pid, 'dur', 0.15))}'")
+    if (pid := picked(seg.fx, "k12")):
+        v.append(f"negate=enable='{_between(kt, kt + knob(pid, 'dur', 0.05))}'")
+    if (pid := picked(seg.fx, "k14")):
+        v.append(f"boxblur={int(knob(pid, 'r', 6.0))}:1:"
+                 f"enable='{_between(kt, kt + knob(pid, 'dur', 0.25))}'")
+    if (pid := picked(seg.fx, "k21")):
         # Shorter and harder than the blur snap: it clears while the punch is
         # still settling, so the frame arrives sharp on the beat.
-        v.append(f"gblur=sigma=14:enable='{_between(kt, kt + 0.10)}'")
-    if "k20" in seg.fx:
+        v.append(f"gblur=sigma={knob(pid, 'sigma', 14.0)}:"
+                 f"enable='{_between(kt, kt + knob(pid, 'dur', 0.10))}'")
+    if (pid := picked(seg.fx, "k20")):
         # Lift the highlights, then spill them: a negative unsharp is the
         # cheapest glow there is, and it only ever touches what is already bright.
-        v.append(f"curves=all='0/0 0.55/0.68 1/1':enable='{_between(kt, kt + 0.30)}'")
-        v.append(f"unsharp=9:9:-1.4:enable='{_between(kt, kt + 0.30)}'")
-    if "k18" in seg.fx:
+        win = _between(kt, kt + knob(pid, "dur", 0.30))
+        v.append(f"curves=all='0/0 0.55/{knob(pid, 'lift', 0.68)} 1/1':enable='{win}'")
+        v.append(f"unsharp=9:9:-1.4:enable='{win}'")
+    if (pid := picked(seg.fx, "k18")):
         # lagfun keeps the brighter of this frame and a decayed last one, so
         # only movement against a dark ground trails -- muzzle flash and tracer,
         # not the wall behind them.
-        v.append(f"lagfun=decay=0.88:enable='{_between(kt, kt + 0.35)}'")
+        v.append(f"lagfun=decay={knob(pid, 'decay', 0.88)}:"
+                 f"enable='{_between(kt, kt + knob(pid, 'dur', 0.35))}'")
     angle = []
     if seg.vignette:
         angle.append("PI/10")
-    if "k15" in seg.fx:
-        angle.append(f"0.6*gte(t,{kt:.4f})*max(0,1-(t-{kt:.4f})/0.4)")
-    if "h03" in seg.hero_fx:
-        angle.append(f"0.9*{_between(kt, kt + 0.8)}")
+    if (pid := picked(seg.fx, "k15")):
+        angle.append(f"{knob(pid, 'amt', 0.6)}*gte(t,{kt:.4f})"
+                     f"*max(0,1-(t-{kt:.4f})/{knob(pid, 'fall', 0.4):.3f})")
+    if (pid := picked(seg.hero_fx, "h03")):
+        angle.append(f"{knob(pid, 'amt', 0.9)}*{_between(kt, kt + 0.8)}")
     if angle:
         expr = "+".join(angle)
         dyn = "t" in expr.replace("PI", "")
@@ -2771,7 +2908,8 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
             acc += frames_i
         else:
             off = (acc - T) / F
-            g.append(f"[{acc_label}][s{i}]xfade=transition={XFADE[t]}:duration={T / F:.5f}:offset={off:.5f},settb=AVTB[{lab}]")
+            g.append(f"[{acc_label}][s{i}]xfade=transition={_xfade_name(t)}:"
+                     f"duration={T / F:.5f}:offset={off:.5f},settb=AVTB[{lab}]")
             acc += frames_i - T
         acc_label = lab
 
@@ -2793,7 +2931,10 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
     def over(own: float, share: float, cap: float) -> float:
         return round(min(max(own, lead * share), cap), 3)
 
-    if intro == "i03":
+    if fam(intro) == "fade_in":
+        post.append(f"fade=in:st=0:d={over(_fade_seconds(intro, 0.7), 0.6, 3.0)}"
+                    f":color={_fade_colour(intro)}")
+    elif intro == "i03":
         post.append(f"fade=in:st=0:d={over(1.0, 0.6, 3.0)}")
     elif intro == "i08":
         d = over(0.35, 0.25, 1.2)
@@ -2803,26 +2944,30 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         post.append(f"eq=saturation='if(lt(t,{k1:.4f}),0.15,1)':eval=frame")
         post.append(f"fade=in:st=0:d={over(0.6, 0.5, 2.5)}")
     end_fade = rulebook.ending_fade(project["beat"])
-    if outro == "e01" or outro == "e03":
+    if fam(outro) == "fade_out":
+        d = _fade_seconds(outro, 0.7)
+        post.append(f"fade=out:st={max(0.0, L - d):.4f}:d={d:.4f}:color={_fade_colour(outro)}")
+    elif outro == "e01" or outro == "e03":
         post.append(f"fade=out:st={max(0.0, L - end_fade):.4f}:d={end_fade:.4f}")
     elif outro == "e05":
         post.append(f"fade=out:st={max(0.0, L - 0.35):.4f}:d=0.35:color=white")
     elif outro == "e02":
         post.append(f"hue=s='if(gt(t,{L - 1.0:.4f}),max(0,1-(t-{L - 1.0:.4f})/0.8),1)'")
     ov = project["overlays"]
-    if "o04" in ov:
-        post.append("noise=alls=10:allf=t")
-    if "o05" in ov:
+    if (pid := picked(ov, "o04")):
+        post.append(f"noise=alls={int(knob(pid, 'amt', 10.0))}:allf=t")
+    if (pid := picked(ov, "o05")):
         # Every other line darkened by a tenth. Drawn from the frame's own
         # height rather than a fixed pitch, so 1080p and 1440p look alike and
         # neither moirés against the encoder.
-        pitch = max(2, round(H / 540))
+        pitch = max(1, int(knob(pid, "pitch", 2.0) * max(1, round(H / 1080))))
         post.append(f"geq=lum='lum(X,Y)*(1-0.10*lt(mod(Y,{pitch * 2}),{pitch}))':"
                     f"cb='cb(X,Y)':cr='cr(X,Y)'")
-    if "o08" in ov:
-        post.append("rgbashift=rh=2:bh=-2")
-    if "o01" in ov and project["format"] == "landscape":
-        bar = round(H * 0.125)
+    if (pid := picked(ov, "o08")):
+        px = int(knob(pid, "px", 2.0))
+        post.append(f"rgbashift=rh={px}:bh=-{px}")
+    if (pid := picked(ov, "o01")) and project["format"] == "landscape":
+        bar = round(H * knob(pid, "h", 0.125))
         post.append(f"drawbox=x=0:y=0:w=iw:h={bar}:color=black:t=fill,drawbox=x=0:y=ih-{bar}:w=iw:h={bar}:color=black:t=fill")
     font = _font()
     if "o02" in ov and derived["kills"]:
@@ -2885,9 +3030,9 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
              f"apad=whole_dur={L:.4f},atrim=0:{L:.4f}[game]")
     if song:
         fades = []
-        if intro in ("i03", "i05"):
+        if intro in ("i03", "i05") or fam(intro) == "fade_in":
             fades.append("afade=t=in:st=0:d=1.0")
-        if outro in ("e01", "e03", "e02"):
+        if outro in ("e01", "e03", "e02") or fam(outro) == "fade_out":
             fades.append(f"afade=t=out:st={max(0.0, L - end_fade):.4f}:d={end_fade:.4f}")
         # A BREATH BEFORE THE BIG ONE: the music drops away for the half beat
         # before each hero kill and comes back on it.
