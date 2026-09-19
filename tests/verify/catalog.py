@@ -503,6 +503,8 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-bin-favonly": "shows only the parts kept as favourites; never leaves the browser",
     "studio-shape": "nudges one of the shaping dials; sent with the next Build",
     "studio-shape-reset": "puts every shaping dial back to what the style measured",
+    "studio-arrange": "chooses how the reel is ordered; sent with the next Build",
+    "studio-pin": "pins a clip to the opener, the climax or the closer; sent with the next Build",
     "studio-hand-next": "steps a drawer of the dealt template to its next part",
     "studio-deal": "deals a random part from every drawer; sent with Build",
     "studio-deal-reset": "drops the dealt parts back to the style's own",

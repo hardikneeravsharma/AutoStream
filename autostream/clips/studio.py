@@ -1171,6 +1171,27 @@ SHAPING = {
 }
 
 
+def _arrangement(raw: dict | None) -> dict:
+    """The ordering and the pins, clamped, as kwargs for rulebook.order.
+
+    An unknown arrangement falls back to `build` rather than raising: this
+    comes off the page, and a reel is worth more than a strict parse.
+    """
+    raw = raw or {}
+    how = str(raw.get("arrange") or "build")
+    if how not in rulebook.ARRANGEMENTS:
+        how = "build"
+    pins = {}
+    got = raw.get("pins")
+    if isinstance(got, dict):
+        for slot in ("open", "climax", "close"):
+            path = str(got.get(slot) or "").strip()
+            if path:
+                pins[slot] = path
+    return {"arrange": how, "pins": pins,
+            "seed": int(_num(raw.get("shuffle_seed"), 0, 2 ** 31 - 1, 0))}
+
+
 def _shaping(raw: dict | None) -> dict:
     """The dials, clamped. Anything missing or unreadable is left centred."""
     out = {}
@@ -1210,6 +1231,10 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # means faster than THIS style rather than a jump to another one, and a
     # reel at every dial centred is exactly the reel the style would have made.
     tw = _shaping(shape_it)
+    # HOW THE REEL IS ORDERED, and anything the player pinned into a slot. Both
+    # ride on the same dict the dials do, so one control panel carries all of
+    # it and a rebuild keeps what was asked for.
+    arrangement = _arrangement(shape_it)
     if tw["effects"] != 1.0:
         # Scaled on the style itself rather than at the draw: _vary() is called
         # from the page too, and a dial the page could not see would be lost
@@ -1395,7 +1420,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                               phrase_from=first_kill_b, div=div)
         return lens_, heroes_
 
-    picked = rulebook.order(pool, looks, opener_ok)
+    picked = rulebook.order(pool, looks, opener_ok, **arrangement)
     lens, hero_set = plan_walk(picked)
     # Settle the count: add the next-best sequence while the walk falls short
     # of the phrase, drop the weakest middle one while it runs a shot over.
@@ -1407,7 +1432,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             nxt = max(spare, key=lambda m: m.strength)
             grp = [m for m in spare if m.group == nxt.group]
             spare = [m for m in spare if m.group != nxt.group]
-            picked = rulebook.order(picked + grp, looks, opener_ok)
+            picked = rulebook.order(picked + grp, looks, opener_ok, **arrangement)
         elif total > want_beats + shot_beats and len({m.group for m in picked}) > min_groups:
             # Whole sequences only, and never the opener's, the closer's or
             # the climax's: taking "the middle shots" once split the opener's
@@ -1424,7 +1449,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             weakest = min(removable, key=lambda g: max(x.strength for x in g))
             # Ordered again, not filtered: the places were alternated around
             # what is now gone.
-            picked = rulebook.order([m for m in picked if m not in weakest], looks, opener_ok)
+            picked = rulebook.order([m for m in picked if m not in weakest], looks, opener_ok,
+                                    **arrangement)
             spare += weakest
         else:
             break
@@ -1517,7 +1543,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         "vignette": style.vignette, "overlays": list(style.overlays),
         "handle": "", "music_db": 0.0, "game_db": 6.0 if song else 0.0, "duck": True,
         "saturation": sat_trim,
-        "beat": round(beat, 6), "step": round(step, 6), "shaping": tw,
+        "beat": round(beat, 6), "step": round(step, 6),
+        "shaping": tw, "arrange": arrangement["arrange"], "pins": arrangement["pins"],
         "seed": int(seed), "pools": pools, "shots": shots,
     }
     # Where in the song reel zero sits: chosen before the walk, so each shot's
@@ -2290,6 +2317,8 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
     # own grid.
     out["step"] = _grid_step(project.get("step"), out["beat"])
     out["shaping"] = _shaping(project.get("shaping"))
+    arranged = _arrangement({"arrange": project.get("arrange"), "pins": project.get("pins")})
+    out["arrange"], out["pins"] = arranged["arrange"], arranged["pins"]
     raw_pools = project.get("pools") if isinstance(project.get("pools"), dict) else {}
     for kind, part_kind in POOL_KINDS.items():
         valid = set(ids_of(part_kind))

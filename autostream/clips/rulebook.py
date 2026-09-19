@@ -413,19 +413,114 @@ def walk(moments_: list[Moment], *, beat: float, energy, song_start: float,
     return out
 
 
+# How the reel may be arranged. `build` is what every reel has always been and
+# stays the default; the others answer questions it cannot -- "show me what
+# actually happened", "open on the best one", "give me a different draw".
+ARRANGEMENTS = ("build", "time", "best", "shuffle")
+# Where the climax sits when a reel is built rather than ordered by hand: about
+# two thirds in, which is where the reference edits put theirs.
+CLIMAX_AT = 2 / 3
+
+
+def _at_seconds(at: str) -> float:
+    """"1h04m20s" / "43m43s" / "57s" -> seconds. Anything else sorts first."""
+    total, num = 0.0, ""
+    for ch in str(at or ""):
+        if ch.isdigit():
+            num += ch
+            continue
+        if num and ch in "hms":
+            total += int(num) * {"h": 3600, "m": 60, "s": 1}[ch]
+        num = ""
+    return total
+
+
+def _when(seq: list[Moment]) -> tuple:
+    """When a fight happened, for chronological order. Run first, then the
+    time inside it: two runs on the same day are told apart by the recording's
+    own mtime, which is the only thing that orders them."""
+    c = seq[0].clip
+    return (int(c.get("mtime") or 0), _at_seconds(c.get("at")),
+            int(c.get("round") or 0), seq[0].group)
+
+
+def _strength(seq: list[Moment]) -> float:
+    return max(x.strength for x in seq)
+
+
+def arrange_seqs(ranked: list[list[Moment]], how: str, seed: int = 0) -> list[list[Moment]]:
+    """The sequences in the asked-for order. `ranked` is strongest first."""
+    if how == "time":
+        return sorted(ranked, key=_when)
+    if how == "best":
+        return list(ranked)
+    if how == "shuffle":
+        import random
+
+        out = list(ranked)
+        random.Random(seed or 1).shuffle(out)
+        return out
+    return list(ranked)
+
+
+def pin_seqs(seq: list[list[Moment]], pins: dict) -> list[list[Moment]]:
+    """Move pinned sequences to the slots they were pinned to.
+
+    `pins` maps "open" / "climax" / "close" to a clip path. A pin is a promise
+    the player made to themselves, so it beats every rule above it -- including
+    the one that puts the strongest moment at the climax.
+    """
+    if not pins or len(seq) < 3:
+        return seq
+    want = {k: str(v).lower() for k, v in pins.items() if v}
+    if not want:
+        return seq
+
+    def find(path: str):
+        for s in seq:
+            if str(s[0].clip.get("path", "")).lower() == path:
+                return s
+        return None
+
+    taken, slots = [], {}
+    for slot in ("open", "climax", "close"):
+        got = find(want[slot]) if slot in want else None
+        if got is not None and got not in taken:
+            slots[slot] = got
+            taken.append(got)
+    rest = [s for s in seq if s not in taken]
+    out = list(rest)
+    if "climax" in slots:
+        out.insert(max(0, min(len(out), int(round(len(out) * CLIMAX_AT)))), slots["climax"])
+    if "open" in slots:
+        out.insert(0, slots["open"])
+    if "close" in slots:
+        out.append(slots["close"])
+    return out
+
+
 def order(moments_: list[Moment], looks: dict[int, list[float]] | None = None,
-          opener_ok=None) -> list[Moment]:
+          opener_ok=None, arrange: str = "build", pins: dict | None = None,
+          seed: int = 0) -> list[Moment]:
     """A build, not a list: a strong opener, rising middle, the best at the climax, a strong close.
 
     Sequences stay together. The strongest sequence goes about two thirds of
     the way in, the second strongest opens, the third closes. With `looks`
     (clip group -> colour histogram) the middle is then spread so two shots
     that look alike -- the same walls, the same light -- are not back to back.
+
+    `arrange` replaces that shape with a plainer one -- see ARRANGEMENTS -- and
+    `pins` forces chosen clips into the opener, climax or closer whichever
+    shape is in use. Both leave the sequences themselves whole: a TRIPLE KILL
+    never shows two of its three kills, however the reel is ordered.
     """
     seqs: dict[int, list[Moment]] = {}
     for m in moments_:
         seqs.setdefault(m.group, []).append(m)
-    ranked = sorted(seqs.values(), key=lambda s: (-max(x.strength for x in s), s[0].group))
+    ranked = sorted(seqs.values(), key=lambda s: (-_strength(s), s[0].group))
+    if arrange in ("time", "best", "shuffle"):
+        out = pin_seqs(arrange_seqs(ranked, arrange, seed), pins or {})
+        return [m for s in out for m in s]
     if len(ranked) <= 2:
         return [m for s in ranked[::-1] for m in s]
     best = ranked[0]
@@ -446,6 +541,9 @@ def order(moments_: list[Moment], looks: dict[int, list[float]] | None = None,
     seq = [opener] + middle + [closer]
     if looks:
         seq = spread_looks(seq, looks)
+    # Pins last: spreading the looks moves sequences about, and a pin that was
+    # applied before it would not have survived the move.
+    seq = pin_seqs(seq, pins or {})
     return [m for s in seq for m in s]
 
 

@@ -3009,6 +3009,16 @@ REEL_CSS = """
             min-width:92px}
 /* One chip per mark, so a wrong beat in the middle of a run can go without
    clearing the ones after it. */
+/* How the reel is ordered, and what is pinned where. Both sit with the bin's
+   own controls: choosing the shape of a reel is the same kind of act as
+   choosing its parts. */
+.bin-arrange{display:inline-flex;gap:4px;flex-wrap:wrap;align-items:center}
+.studio-pins{flex-wrap:wrap;gap:4px;margin:var(--space-2) 0}
+.studio-pins .btn.is-active{
+  border-color:var(--accent);color:var(--accent-text);background:var(--accent-muted);
+}
+.studio-pins .muted{font-size:11px}
+
 /* The shaping dials: minus, name, plus. Inline with the bin's own buttons
    because shaping the reel is the same kind of act as picking its parts. */
 .bin-shape{display:inline-flex;gap:8px;flex-wrap:wrap;align-items:center}
