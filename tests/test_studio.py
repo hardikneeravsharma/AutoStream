@@ -187,9 +187,16 @@ def test_pace_is_the_measured_median_as_a_power_of_two_in_beats():
     assert abs(math.log2(beats) - math.log2(60.0 / meas["cuts_per_min"] / 0.5)) <= 0.5 + 1e-9
 
 
-def test_flashes_come_at_the_reference_rate_on_bar_lines(tmp_path):
-    """Flashes are spaced at the rate the style's references flash at, on bar
-    lines, never inside a jump-cut sequence and never beside a bright kill."""
+def test_flashes_come_at_the_reference_rate_on_the_grid(tmp_path):
+    """Flashes are spaced at the rate the style's references flash at, on the
+    grid, never inside a jump-cut sequence and never beside a bright kill.
+
+    ON THE GRID, NOT ALWAYS ON A BAR. Velocity's references flash 28 times a
+    minute against 45 cuts -- two cuts in three -- and with its shots taken
+    from that pace rather than rounded to a power of two beats, only one cut in
+    four lands on a bar. Asking for a bar line left the reel with no flash at
+    all. See rulebook.transitions.
+    """
     r = tmp_path / "clips"
     _run(r, "2026-09-01_1200_VALORANT", "VALORANT",
          [{"start": 100.0 * i, "end": 100.0 * i + 12} for i in range(1, 25)],
@@ -202,10 +209,15 @@ def test_flashes_come_at_the_reference_rate_on_bar_lines(tmp_path):
     flashes = [i for i in range(1, len(shots)) if shots[i]["transition"] == "t02"]
     assert flashes, "a velocity reel with twenty cuts has no flash at all"
     assert len(flashes) <= share * (len(shots) - 1) + 1
-    first_kill = round(shots[0]["pre"] / beat)
-    starts = [round(t / beat) for t in studio._starts(shots)]
+    step = proj["step"]
+    first_kill = round(shots[0]["pre"] / step)
+    starts = [round(t / step) for t in studio._starts(shots)]
+    div = round(beat / step)
+    bar = 4 * div
+    on_bars = sum(1 for i in range(1, len(shots)) if starts[i] % bar == first_kill % bar)
+    unit = bar if on_bars >= share * (len(shots) - 1) else div
     for i in flashes:
-        assert starts[i] % 4 == first_kill % 4, f"flash at beat {starts[i]} is off the bar"
+        assert starts[i] % unit == first_kill % unit, f"flash at step {starts[i]} is off the grid"
         assert shots[i]["clip"] != shots[i - 1]["clip"]
         assert not (set(shots[i]["fx"]) & set(rulebook.BRIGHT_KILL) and shots[i]["pre"] < rulebook.BRIGHT_GAP)
 
