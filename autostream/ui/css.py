@@ -3016,7 +3016,13 @@ REEL_CSS = """
   border:var(--border-hair) solid var(--border-subtle);
   color:var(--text-secondary);
 }
-.reel-chip:hover{border-color:var(--danger);color:var(--danger)}
+/* A chip chooses a mark now rather than deleting it, so hover is an invitation
+   rather than a warning -- Remove is its own button on the row that appears. */
+.reel-chip:hover{border-color:var(--accent);color:var(--text-primary)}
+.reel-chip.is-on{
+  border-color:var(--accent);color:var(--text-primary);
+  background:color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
 /* The moments. A checkbox each, because "which of these" is the question and
    a grid of thumbnails would answer a different one. */
 .reel-kills{display:grid;gap:6px;margin-top:var(--space-3)}

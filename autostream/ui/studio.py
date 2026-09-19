@@ -237,9 +237,11 @@ STUDIO_HTML = r"""
           <h3 class="studio-h">Mark the kills <span class="muted">(optional)</span></h3>
           <p class="muted">Play the part and press <kbd>K</kbd> on every beat a kill should land on.
              Shot 1's kill lands on mark 1, shot 2's on mark 2, and so on; the cuts move to fit.
-             <kbd>Space</kbd> plays and pauses.</p>
+             <kbd>Space</kbd> plays and pauses. "Where the kills are now" fills these in from the
+             reel as it stands, so the marks AutoStream chose can be moved rather than retapped.</p>
           <div class="field-inline">
             <button type="button" class="btn btn-primary" data-act="studio-sg-mark">Mark a kill here (K)</button>
+            <button type="button" class="btn btn-ghost" data-act="studio-sg-fromkills" id="studio-sg-fromkills">Where the kills are now</button>
             <button type="button" class="btn btn-ghost" data-act="studio-sg-unmark">Undo mark</button>
             <button type="button" class="btn btn-ghost" data-act="studio-sg-clearmarks">Clear marks</button>
           </div>
@@ -248,6 +250,18 @@ STUDIO_HTML = r"""
             <label class="studio-check"><input type="checkbox" id="studio-sg-click" checked> Click on each mark as it plays</label>
           </div>
           <div class="reel-chips" id="studio-sg-chips"></div>
+          <!-- A mark is chosen by clicking its chip; these move the chosen one.
+               Hidden until there is one, so the row does not sit empty. -->
+          <div class="field-inline studio-nudge hide" id="studio-sg-marknudge">
+            <span class="muted">Mark <b id="studio-sg-marknum">1</b></span>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-marknudge" data-d="-beat">−1 beat</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-marknudge" data-d="-half">−½</button>
+            <span class="mono" id="studio-sg-marktime">0:00.00</span>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-marknudge" data-d="half">+½</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-marknudge" data-d="beat">+1 beat</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-markplay">Hear it</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-markdrop">Remove</button>
+          </div>
           <p class="muted" id="studio-sg-marksinfo"></p>
         </div></div>
       </div>
@@ -412,7 +426,8 @@ const studio = {
   sel: -1, pps: 60, snap: true, undo: [], checking: 0, checkTimer: null,
   polling: null, drag: null, clipIndex: {},
   gen: 0, jobId: 0, seenJob: -1, watching: -1, busy: false, pollTok: 0,
-  sg: {song: '', shape: null, start: 0, end: 0, marks: [], drag: null, ticked: {}, ac: null},
+  sg: {song: '', shape: null, start: 0, end: 0, marks: [], drag: null, ticked: {}, ac: null,
+       sel: -1, seeded: ''},
   /* The part of the song chosen on the Make dialog, in song seconds. */
   mk: {mode: 'part', start: 0, end: 0, touched: false, drag: null, seekTo: null, ticking: false},
   /* A song being downloaded from a YouTube link, and which picker asked for it. */
@@ -2541,8 +2556,12 @@ function studio_wire() {
     else if (act === 'studio-sg-none') studio_sgApply(true);
     else if (act === 'studio-sg-play') studio_sgPlay();
     else if (act === 'studio-sg-mark') studio_sgMark();
-    else if (act === 'studio-sg-unmark') { studio.sg.marks.pop(); studio_sgDraw(); }
-    else if (act === 'studio-sg-clearmarks') { studio.sg.marks = []; studio_sgDraw(); }
+    else if (act === 'studio-sg-fromkills') studio_sgFromKills();
+    else if (act === 'studio-sg-marknudge') studio_sgNudgeMark(t.getAttribute('data-d'));
+    else if (act === 'studio-sg-markplay') studio_sgHearMark();
+    else if (act === 'studio-sg-markdrop') studio_sgDropMark();
+    else if (act === 'studio-sg-unmark') { studio.sg.marks.pop(); studio.sg.sel = -1; studio_sgDraw(); }
+    else if (act === 'studio-sg-clearmarks') { studio.sg.marks = []; studio.sg.sel = -1; studio_sgDraw(); }
     else if (act === 'studio-sg-nudge') studio_sgNudge(b.getAttribute('data-what'), b.getAttribute('data-d'));
     else if (act === 'studio-sg-snapbar') studio_sgSnapBar();
     else if (act === 'studio-sg-atdrop') studio_sgAtDrop();
@@ -2941,6 +2960,14 @@ function studio_sgReset() {
     sg.start = p.song_offset || 0;
     sg.end = Math.min(sh.seconds, sg.start + len);
   }
+  // Open on the marks this reel is already using, so the section is an editor
+  // of what is there rather than a blank sheet. Once per song: retyping them
+  // over the player's own edits every redraw would be worse than no seeding.
+  if (sg.song && sg.seeded !== sg.song && !sg.marks.length && (p.song_marks || []).length) {
+    sg.marks = p.song_marks.slice().sort((a, b) => a - b);
+    sg.sel = -1;
+  }
+  if (sg.song) sg.seeded = sg.song;
   studio_el('studio-sg-atdrop').disabled = !sh.drop;
   const a = studio_el('studio-sg-audio');
   const want = studio_media('/api/reel/audio', sg.song);
@@ -3018,6 +3045,71 @@ function studio_sgPlay() {
   }
 }
 
+/* THE MARKS AUTOSTREAM ALREADY CHOSE, so they can be moved instead of retapped.
+   A reel's kills are on the song's bass hits by the time the timeline exists;
+   without this the Song section opened on an empty list and the only way to
+   change one placement was to tap all twenty again. `song_marks` is what a
+   previous Use-these-marks stored; where there is none the kills themselves are
+   where the reel currently puts them, which is the same thing to edit. */
+function studio_sgKillMarks() {
+  const p = studio.project, d = studio.derived, sg = studio.sg;
+  if (!p || !d) return [];
+  if ((p.song_marks || []).length) return p.song_marks.slice().sort((a, b) => a - b);
+  return (d.shots || []).map(r => sg.start + r.kill_reel).sort((a, b) => a - b);
+}
+
+function studio_sgFromKills() {
+  const sg = studio.sg, got = studio_sgKillMarks();
+  if (!got.length) { toast('This reel has no kills to mark yet.'); return; }
+  const snap = studio_el('studio-sg-snap').checked;
+  sg.marks = got.map(t => snap ? studio_sgNearestBeat(t) : Math.round(t * 1000) / 1000)
+                .filter((t, i, a) => i === 0 || t - a[i - 1] > 0.03);
+  sg.sel = -1;
+  sg.touched = true;
+  studio_sgDraw();
+  toast(sg.marks.length + ' marks from the reel. Move any of them, then use them.');
+}
+
+function studio_sgSelect(i) {
+  const sg = studio.sg;
+  sg.sel = (sg.sel === i) ? -1 : i;
+  studio_sgDraw();
+}
+
+/* Moving a mark keeps the list in order, so mark 2 is always after mark 1 --
+   shot N's kill lands on mark N, and a list that crossed over would silently
+   swap two shots' places in the song. A nudge that would cross its neighbour
+   stops against it instead. */
+function studio_sgNudgeMark(how) {
+  const sg = studio.sg, sh = sg.shape;
+  if (!sh || sg.sel < 0 || sg.sel >= sg.marks.length) return;
+  const beat = studio_sgBeat();
+  const d = (how === 'beat' ? beat : how === '-beat' ? -beat : how === 'half' ? beat / 2 : -beat / 2);
+  const lo = sg.sel > 0 ? sg.marks[sg.sel - 1] + 0.03 : sg.start;
+  const hi = sg.sel < sg.marks.length - 1 ? sg.marks[sg.sel + 1] - 0.03 : sh.seconds;
+  sg.marks[sg.sel] = Math.max(lo, Math.min(hi, sg.marks[sg.sel] + d));
+  sg.touched = true;
+  studio_sgDraw();
+}
+
+/* A mark is a moment in the music, so the way to judge one is to hear it: this
+   plays the bar it sits in rather than asking the ear to remember. */
+function studio_sgHearMark() {
+  const sg = studio.sg, a = studio_el('studio-sg-audio');
+  if (sg.sel < 0 || sg.sel >= sg.marks.length || !a) return;
+  a.currentTime = Math.max(0, sg.marks[sg.sel] - studio_sgBeat() * 2);
+  a.play();
+}
+
+function studio_sgDropMark() {
+  const sg = studio.sg;
+  if (sg.sel < 0 || sg.sel >= sg.marks.length) return;
+  sg.marks.splice(sg.sel, 1);
+  sg.sel = -1;
+  sg.touched = true;
+  studio_sgDraw();
+}
+
 function studio_sgMark() {
   const a = studio_el('studio-sg-audio'), sg = studio.sg;
   if (!sg.shape) return;
@@ -3069,8 +3161,16 @@ function studio_sgDraw() {
   studio_el('studio-sg-fitnote').textContent = len > part + 0.05
     ? 'The timeline is ' + studio_dur(len) + '; shots past ' + studio_dur(part) + ' will be left out. "Fit the timeline" keeps them all.'
     : 'The whole timeline fits in this part.';
+  if (sg.sel >= sg.marks.length) sg.sel = -1;
   studio_el('studio-sg-chips').innerHTML = sg.marks.map((m, i) =>
-    '<span class="reel-chip" data-sgmark="' + i + '" title="click to remove">' + (i + 1) + ' · ' + studio_secs(m) + '</span>').join('');
+    '<span class="reel-chip' + (i === sg.sel ? ' is-on' : '') + '" data-sgmark="' + i +
+    '" title="click to choose this mark">' + (i + 1) + ' · ' + studio_secs(m) + '</span>').join('');
+  studio_show('studio-sg-marknudge', sg.sel >= 0);
+  if (sg.sel >= 0) {
+    studio_el('studio-sg-marknum').textContent = String(sg.sel + 1);
+    studio_el('studio-sg-marktime').textContent = studio_secs(sg.marks[sg.sel]);
+  }
+  studio_el('studio-sg-fromkills').disabled = !studio_sgKillMarks().length;
   const shots = p ? p.shots.length : 0;
   studio_el('studio-sg-marksinfo').textContent = sg.marks.length
     ? sg.marks.length + ' marks for ' + shots + ' shots' + (sg.marks.length < shots ? ' — the rest keep their spacing after the last mark.' : sg.marks.length > shots ? ' — the extra marks will not be used.' : '.')
@@ -3289,8 +3389,10 @@ function studio_sgWire() {
   document.addEventListener('click', e => {
     const c = e.target.closest ? e.target.closest('[data-sgmark]') : null;
     if (!c) return;
-    studio.sg.marks.splice(Number(c.getAttribute('data-sgmark')), 1);
-    studio_sgDraw();
+    // Choosing, not removing. A chip used to delete on click, which is a hard
+    // thing to undo when the marks are the twenty AutoStream placed; Remove is
+    // its own button on the row that appears.
+    studio_sgSelect(Number(c.getAttribute('data-sgmark')));
   });
   window.addEventListener('resize', () => { if (shell_page === 'studio') studio_sgDrawWaves(); });
 }
