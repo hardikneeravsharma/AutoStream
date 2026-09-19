@@ -292,6 +292,65 @@ def reels(root: Path) -> list[dict]:
     return out
 
 
+def delete_reels(root: Path, paths: list[str], *, dry_run: bool = False) -> dict:
+    """Delete finished reels -- each mp4, its project, and any half-written part.
+
+    -> {"reels", "bytes", "names", "missing", "errors"}. With `dry_run` nothing
+    is touched and the answer says what would be: what the confirmation shows.
+
+    ONLY WHAT reels() LISTS. A path is deleted only when it is one of the mp4s
+    that function found in the reels folder, so a crafted path cannot reach a
+    recording, a clip, or anything else on the disk through this door.
+
+    THE CLIPS ARE NOT TOUCHED, and neither is the segment cache. A reel is a
+    render of clips that still exist; what goes is the render. The cache is
+    shared between reels and prunes itself (`_prune`), so taking a reel's
+    segments out here would only make the next render of a similar reel slower.
+    """
+    want = {_key(p) for p in paths if str(p).strip()}
+    found: set[str] = set()
+    names: list[str] = []
+    files: list[Path] = []
+    total = 0
+    for r in reels(root):
+        key = _key(r["path"])
+        if key not in want:
+            continue
+        found.add(key)
+        names.append(r["name"])
+        mp4 = Path(r["path"])
+        # The .part/.loud names are what a render leaves behind when it dies;
+        # reels() hides them, so this is the only chance to clear them.
+        for f in (mp4, mp4.with_suffix(".reel.json"),
+                  mp4.with_name(mp4.stem + ".part.mp4"), mp4.with_name(mp4.stem + ".loud.mp4")):
+            try:
+                if f.is_file():
+                    files.append(f)
+                    total += f.stat().st_size
+            except OSError:
+                continue
+
+    out = {"reels": len(found), "bytes": total, "names": names,
+           "missing": len(want - found), "errors": []}
+    if dry_run:
+        return out
+
+    freed = 0
+    for f in files:
+        try:
+            size = f.stat().st_size
+            f.unlink()
+            freed += size
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            out["errors"].append(f"{f.name}: {e}")
+    out["bytes"] = freed
+    log.info("deleted %d reel(s), %.1f MB freed%s", out["reels"], freed / 1e6,
+             f"; {len(out['errors'])} could not be removed" if out["errors"] else "")
+    return out
+
+
 def _key(p: Path | str) -> str:
     try:
         return str(Path(p).resolve()).lower()

@@ -907,6 +907,40 @@ def test_a_reel_that_uses_a_clip_is_named_before_it_is_deleted(root):
     assert studio.delete_clips(root, [clip], dry_run=True)["reels"] == ["MONTERO2"]
 
 
+# ------------------------------------------------------------------ deleting reels
+
+def test_deleting_a_reel_takes_its_video_project_and_leftovers_and_leaves_the_clips(root):
+    clip = _clips(root)[0]["path"]
+    reels = root / "reels"
+    (reels / "MONTERO2.mp4").write_bytes(b"v" * 1000)
+    (reels / "MONTERO2.reel.json").write_text(json.dumps({"name": "MONTERO2", "shots": [{"clip": clip}]}))
+    # What a render that died leaves beside the reel. reels() hides these, so
+    # deleting the reel is the only thing that ever clears them.
+    (reels / "MONTERO2.part.mp4").write_bytes(b"p" * 10)
+    (reels / "OTHER.mp4").write_bytes(b"o")
+
+    dry = studio.delete_reels(root, [str(reels / "MONTERO2.mp4")], dry_run=True)
+    assert dry["reels"] == 1 and dry["names"] == ["MONTERO2"] and dry["bytes"] > 1000
+    assert (reels / "MONTERO2.mp4").is_file()                           # a dry run touches nothing
+
+    got = studio.delete_reels(root, [str(reels / "MONTERO2.mp4")])
+    assert got["reels"] == 1 and not got["errors"]
+    assert sorted(p.name for p in reels.iterdir()) == ["OTHER.mp4"]
+    assert Path(clip).is_file()                                         # the clips are never touched
+    assert studio.library(root)["clip_count"] == 4
+
+
+def test_only_an_mp4_the_reels_folder_lists_can_be_deleted(root, tmp_path):
+    stray = tmp_path / "home_video.mp4"
+    stray.write_bytes(b"x")
+    clip = _clips(root)[0]["path"]
+    part = root / "reels" / "HALF.part.mp4"
+    part.write_bytes(b"p")
+    got = studio.delete_reels(root, [str(stray), clip, str(part)])
+    assert got["reels"] == 0 and got["missing"] == 3
+    assert stray.is_file() and Path(clip).is_file() and part.is_file()
+
+
 def test_what_the_planner_said_stays_with_the_reel(long_run):
     """Said only in the reply to the plan, the notes were replaced by the render's
     reply a moment later, so "the weakest were left out" was never read."""

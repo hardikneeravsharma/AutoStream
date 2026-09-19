@@ -628,6 +628,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_song(b))
             elif p == "/api/studio/delete":
                 self._json(self.app.studio_delete(b))
+            elif p == "/api/studio/reel-delete":
+                self._json(self.app.studio_reel_delete(b))
             elif p == "/api/studio/songfetch":
                 self._json(self.app.studio_songfetch(b))
             elif p == "/api/studio/favourite":
@@ -2753,6 +2755,29 @@ class Server:
             got = studio.delete_clips(root, paths, dry_run=dry)
         except OSError as e:
             return {"ok": False, "error": f"Could not delete those clips: {e}"}
+        return {"ok": True, **got}
+
+    def studio_reel_delete(self, body: dict) -> dict:
+        """Delete finished reels. `dry_run` says what would go, for the confirmation.
+
+        The clips a reel was made from are not touched -- only the render, its
+        project file and anything a dead render left beside them.
+        """
+        from .clips import studio
+
+        paths = [str(p) for p in (body.get("paths") or []) if isinstance(p, str)][:500]
+        if not paths:
+            return {"ok": False, "error": "Choose the reels to delete."}
+        root = self._clips_dir(cfg.load())
+        dry = bool(body.get("dry_run"))
+        # A render writes into the reels folder and may be holding the very mp4
+        # being deleted, or about to replace it.
+        if not dry and studio.runner().busy():
+            return {"ok": False, "error": "A reel is rendering; delete reels once it has finished."}
+        try:
+            got = studio.delete_reels(root, paths, dry_run=dry)
+        except OSError as e:
+            return {"ok": False, "error": f"Could not delete those reels: {e}"}
         return {"ok": True, **got}
 
     def studio_songfetch(self, body: dict) -> dict:

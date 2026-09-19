@@ -440,6 +440,14 @@ CONTROLS: list[Control] = [
             why="no clips chosen is refused; only clips a run's clips.json lists "
                 "can be deleted, dry_run says what would go, and a real delete is "
                 "refused while a render, a clip job or an edit may be reading them"),
+    Control("/api/studio/reel-delete", "POST", CALL, "Delete a reel", "studio",
+            body={"paths": []}, expect=_has("ok"),
+            reject={"paths": []}, reject_soft=True,
+            acts=("studio-reel-del", "studio-rdel-go"),
+            why="no reel chosen is refused; only an mp4 the reels folder lists can "
+                "be deleted -- with its .reel.json and any part a dead render left "
+                "-- the clips it was made from are never touched, dry_run says what "
+                "would go, and a real delete is refused while a reel is rendering"),
 ]
 
 BY_PATH: dict[str, Control] = {c.path: c for c in CONTROLS}
@@ -504,6 +512,7 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-add": "goes back to the library with the reel's clips selected, to add more and rebuild",
     "studio-add-cancel": "stops adding clips to a reel and empties the selection",
     "studio-del-cancel": "closes the delete confirmation without deleting",
+    "studio-rdel-cancel": "closes the delete-a-reel confirmation without deleting",
     # --- navigation and layout
     "rail-btn": "client-side page switch; state lives in sessionStorage",
     "rail": "switches the Clips page sub-tab",
