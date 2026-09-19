@@ -1155,12 +1155,37 @@ def _hit_slots(hits: list[float], strengths: list[float], *, first: float, end: 
     return kills[:count] if count else kills
 
 
+# What the shaping dials mean, and how far each may be pushed. A dial is a
+# MULTIPLIER on what the style's references measured, so 1.0 is "as the style
+# has it" and every reel ever planned without them is unchanged.
+#
+# The ranges are not taste. Past about two thirds either way a reel stops being
+# the style it says it is: the references a style is modelled on span roughly
+# that much between their fastest and slowest, so a dial that went further
+# would be offering a different style under the wrong name.
+SHAPING = {
+    "length": (0.55, 1.8, 1.0),    # how long the reel runs
+    "pace": (0.55, 1.8, 1.0),      # how fast it cuts -- higher is faster
+    "effects": (0.0, 2.0, 1.0),    # how often a kill gets an effect at all
+    "flash": (0.0, 2.5, 1.0),      # how often a cut carries a white flash
+}
+
+
+def _shaping(raw: dict | None) -> dict:
+    """The dials, clamped. Anything missing or unreadable is left centred."""
+    out = {}
+    for key, (lo, hi, mid) in SHAPING.items():
+        out[key] = _num((raw or {}).get(key), lo, hi, mid)
+    return out
+
+
 def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
          song: str = "", fmt: str = "landscape", name: str = "",
          max_seconds: float = 0.0, seed: int | None = None,
          measure=None, confirm=None, theirs=None,
          part: tuple[float, float] | None = None,
-         template: dict | None = None) -> tuple[dict, list[str]]:
+         template: dict | None = None,
+         shape_it: dict | None = None) -> tuple[dict, list[str]]:
     """Build a project from chosen clips. -> (project, notes)
 
     `measure(path, t0, t1)` -> how much the picture moves between two clip
@@ -1180,6 +1205,16 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     style = STYLE.get(style_key) or STYLE[DEFAULT_STYLE]
     if template:
         style = templated(style, template)
+    # SHAPING THE REEL WITHOUT LEAVING THE STYLE. Each of these multiplies what
+    # the style's references measured rather than replacing it, so "faster"
+    # means faster than THIS style rather than a jump to another one, and a
+    # reel at every dial centred is exactly the reel the style would have made.
+    tw = _shaping(shape_it)
+    if tw["effects"] != 1.0:
+        # Scaled on the style itself rather than at the draw: _vary() is called
+        # from the page too, and a dial the page could not see would be lost
+        # the first time somebody pressed "Mix them up".
+        style = dataclasses.replace(style, energy=max(0.0, min(1.0, style.energy * tw["effects"])))
     grid = Grid.of(shape) if shape is not None else Grid.none()
     notes: list[str] = []
     meas = studio_refs.summary(style.refs)
@@ -1212,8 +1247,11 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             why_out.setdefault(p, reason)
 
     # PACE FROM THE REFERENCES: the median cuts-per-minute of the edits this
-    # style is modelled on, as a whole number of beats at this song's tempo.
-    cpm = meas.get("cuts_per_min") or 30.0
+    # style is modelled on, as a whole number of beats at this song's tempo --
+    # times the pace dial, which has to be applied HERE rather than only to the
+    # shot length. Measured: on a song with bass hits the kill placement sets
+    # the durations and a dial that missed this line did nothing at all.
+    cpm = (meas.get("cuts_per_min") or 30.0) * tw["pace"]
     # THE SHOT IS THE REFERENCES' MEDIAN, NOT A MINUTE DIVIDED BY THEIR CUTS.
     # Those are different numbers and the edits are skewed: Montage's cuts a
     # minute say 2.12 s a shot, its median shot is 1.18 s, because a montage
@@ -1221,7 +1259,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # average made every shot as long as the long ones -- montero1 came out at
     # 9 cuts a minute against a 21-33 band -- so the target is the median the
     # reel is scored against.
-    want = meas.get("median_shot") or (60.0 / cpm)
+    want = (meas.get("median_shot") or 0.0) / tw["pace"] or (60.0 / cpm)
     # THE GRID IS AS FINE AS THE TARGET NEEDS. In whole beats the shortest shot
     # the rules allow is two of them, so a fast style on a half-time song could
     # not cut faster than 1.5 s and Hype, Velocity and Montage all came out at
@@ -1233,7 +1271,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # The opening hold is left on the beat: it already lands inside the
     # references' band on 20 of 24 reels, so only its unit changes.
     open_beats = _pow2_beats(max(meas.get("first_shot") or 4.0, 2.0), beat, lo=2, hi=16) * div
-    flash_share = min(0.9, (meas.get("flashes_per_min") or 0.0) / max(cpm, 1.0))
+    flash_share = min(0.9, (meas.get("flashes_per_min") or 0.0) / max(cpm, 1.0) * tw["flash"])
 
     # ONE ENTRY PER CLIP. Rebuilding a reel in another style sent the timeline's
     # shots back as the clip list, so a clip used in nine shots arrived nine
@@ -1299,6 +1337,15 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         target = math.floor(part_len / beat + 1e-6) * beat
     else:
         target = rulebook.phrase_seconds(beat, fmt, available, max_seconds)
+        if tw["length"] != 1.0:
+            # Scale the target that was worked out, rather than feeding a
+            # `want` into phrase_seconds: that takes a different branch and
+            # came out SHORTER for "longer" and "shorter" alike -- measured,
+            # both gave 17.1 s. Whole phrases either way, because a reel that
+            # ends mid-phrase is what the length rule exists to prevent.
+            phrase = rulebook.PHRASE_BARS * 4 * beat
+            n = max(1, int(round(target * tw["length"] / phrase)))
+            target = min(n * phrase, rulebook.MAX_SECONDS.get(fmt, 86.0))
     # A reel with less material than one phrase uses all of it: the phrase
     # rule trims a surplus, it never throws away a short selection's clips.
     if not part_len and target < rulebook.PHRASE_BARS * 4 * beat - 1e-6 and not max_seconds:
@@ -1470,7 +1517,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         "vignette": style.vignette, "overlays": list(style.overlays),
         "handle": "", "music_db": 0.0, "game_db": 6.0 if song else 0.0, "duck": True,
         "saturation": sat_trim,
-        "beat": round(beat, 6), "step": round(step, 6),
+        "beat": round(beat, 6), "step": round(step, 6), "shaping": tw,
         "seed": int(seed), "pools": pools, "shots": shots,
     }
     # Where in the song reel zero sits: chosen before the walk, so each shot's
@@ -2242,6 +2289,7 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
     # on -- so that is the default, and trimming a shot never knocks it off its
     # own grid.
     out["step"] = _grid_step(project.get("step"), out["beat"])
+    out["shaping"] = _shaping(project.get("shaping"))
     raw_pools = project.get("pools") if isinstance(project.get("pools"), dict) else {}
     for kind, part_kind in POOL_KINDS.items():
         valid = set(ids_of(part_kind))

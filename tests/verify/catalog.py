@@ -501,6 +501,8 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-style": "chooses a style in the dialog; sent with Build",
     "studio-bin-pick": "puts one part of the bin in the template; sent with Build",
     "studio-bin-favonly": "shows only the parts kept as favourites; never leaves the browser",
+    "studio-shape": "nudges one of the shaping dials; sent with the next Build",
+    "studio-shape-reset": "puts every shaping dial back to what the style measured",
     "studio-hand-next": "steps a drawer of the dealt template to its next part",
     "studio-deal": "deals a random part from every drawer; sent with Build",
     "studio-deal-reset": "drops the dealt parts back to the style's own",

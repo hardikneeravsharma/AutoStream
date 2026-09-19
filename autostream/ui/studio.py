@@ -78,6 +78,7 @@ STUDIO_HTML = r"""
           shows what the reel will actually do. Click one to put it in the template you are dealing.</p>
       </div>
       <div class="bin-build">
+        <span class="bin-shape" id="bin-shape"></span>
         <button type="button" class="btn btn-sm" data-act="studio-bin-favonly" id="bin-favonly"
                 aria-pressed="false" title="Show only the parts you have kept">&#9733; Favourites</button>
         <button type="button" class="btn btn-sm" data-act="studio-bin-build" id="bin-build">Cut the missing examples</button>
@@ -563,6 +564,10 @@ const studio = {
   polling: null, drag: null, clipIndex: {},
   gen: 0, jobId: 0, seenJob: -1, watching: -1, busy: false, pollTok: 0,
   favParts: [], favOnly: false,
+  /* SHAPING THE REEL. Multipliers on what the style's references measured,
+     so 1 is 'as the style has it' and the dials read as louder/quieter
+     versions of the style rather than a jump to a different one. */
+  shaping: {length: 1, pace: 1, effects: 1, flash: 1},
   sg: {song: '', shape: null, start: 0, end: 0, marks: [], drag: null, ticked: {}, ac: null,
        sel: -1, seeded: ''},
   /* The part of the song chosen on the Make dialog, in song seconds. */
@@ -1348,6 +1353,55 @@ function studio_binCard(p, on, act) {
    cards in a drawer the ones a person keeps coming back to are the only ones
    they will find twice, so they float to the top of their own drawer rather
    than into a tenth drawer of their own. */
+/* Four dials, each a step either side of centre. Buttons rather than sliders:
+   a slider invites hunting for a number, and the honest answer to "how much
+   longer" is one notch at a time with the result in front of you. */
+const SHAPE_DIALS = [
+  {k: 'length',  name: 'Length',  down: 'Shorter', up: 'Longer',  lo: 0.55, hi: 1.8},
+  {k: 'pace',    name: 'Pace',    down: 'Slower',  up: 'Faster',  lo: 0.55, hi: 1.8},
+  {k: 'effects', name: 'Effects', down: 'Fewer',   up: 'More',    lo: 0.0,  hi: 2.0},
+  {k: 'flash',   name: 'Flash',   down: 'Less',    up: 'More',    lo: 0.0,  hi: 2.5}
+];
+
+function studio_shapeDraw() {
+  const host = studio_el('bin-shape');
+  if (!host) return;
+  host.innerHTML = SHAPE_DIALS.map(function (d) {
+    const v = studio.shaping[d.k];
+    const off = Math.abs(v - 1) > 0.01;
+    return '<span class="shape-dial' + (off ? ' is-on' : '') + '">' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-shape" ' +
+      'data-dial="' + d.k + '" data-by="-1" title="' + esc(d.down) + '"' +
+      (v <= d.lo + 0.001 ? ' disabled' : '') + '>&minus;</button>' +
+      '<b>' + esc(d.name) + (off ? '<i>' + (v > 1 ? d.up : d.down) + '</i>' : '') + '</b>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-shape" ' +
+      'data-dial="' + d.k + '" data-by="1" title="' + esc(d.up) + '"' +
+      (v >= d.hi - 0.001 ? ' disabled' : '') + '>+</button></span>';
+  }).join('') +
+  '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-shape-reset"' +
+  (studio_shapeIsCentred() ? ' disabled' : '') + '>Reset</button>';
+}
+
+function studio_shapeIsCentred() {
+  return SHAPE_DIALS.every(function (d) { return Math.abs(studio.shaping[d.k] - 1) < 0.01; });
+}
+
+function studio_shapeNudge(key, by) {
+  const d = SHAPE_DIALS.filter(function (x) { return x.k === key; })[0];
+  if (!d) return;
+  // A fifth either way: small enough that a nudge is a nudge, big enough that
+  // the reel that comes back is visibly a different one.
+  const v = Math.round((studio.shaping[key] + by * 0.2) * 100) / 100;
+  studio.shaping[key] = Math.max(d.lo, Math.min(d.hi, v));
+  studio_shapeDraw();
+  toast('Make the reel again to hear it.');
+}
+
+function studio_shapeReset() {
+  SHAPE_DIALS.forEach(function (d) { studio.shaping[d.k] = 1; });
+  studio_shapeDraw();
+}
+
 function studio_binSort(parts) {
   const fav = studio.favParts;
   if (studio.favOnly) return parts.filter(function (p) { return fav.indexOf(p.id) >= 0; });
@@ -1404,6 +1458,7 @@ function studio_binDraw() {
     fo.classList.toggle('is-active', !!studio.favOnly);
     fo.disabled = !studio.favParts.length && !studio.favOnly;
   }
+  studio_shapeDraw();
   studio_binSlots();
   studio_binWatch();
 }
@@ -1597,7 +1652,8 @@ async function studio_build() {
       /* Only what was DEALT or CLICKED. Sending the style's own picks back
          narrowed every drawer to the one part the style leads with, and a
          montage came out with the same kill effect on all six kills. */
-      template: studio.picks || null
+      template: studio.picks || null,
+      shaping: studio.shaping
     };
     if (studio.song && studio.songShape && studio.mk.mode === 'part' && studio.mk.end > studio.mk.start) {
       body.part_start = studio.mk.start;
@@ -3168,6 +3224,8 @@ function studio_wire() {
     else if (act === 'studio-bin-pick') studio_binPick(b.getAttribute('data-kind'), b.getAttribute('data-part'));
     else if (act === 'studio-bin-fav') studio_binFav(b.getAttribute('data-part'));
     else if (act === 'studio-bin-favonly') studio_binFavOnly();
+    else if (act === 'studio-shape') studio_shapeNudge(b.getAttribute('data-dial'), Number(b.getAttribute('data-by')));
+    else if (act === 'studio-shape-reset') studio_shapeReset();
     else if (act === 'studio-hand-next') studio_handNext(b.getAttribute('data-kind'));
     else if (act === 'studio-deal') studio_deal();
     else if (act === 'studio-deal-reset') studio_dealReset();
@@ -3471,7 +3529,7 @@ async function studio_restyle() {
     const clips = [];
     from.forEach(c => { if (clips.indexOf(c) < 0) clips.push(c); });
     const r = await API.post('/api/studio/plan', {clips: clips, style: key,
-      song: p.song, format: p.format, name: p.name});
+      song: p.song, format: p.format, name: p.name, shaping: studio.shaping});
     if (!r || !r.ok) { toast((r && r.error) || 'Could not rebuild with that style.', 'warn'); return; }
     studio_pushUndo(snapshot);
     studio.gen++;

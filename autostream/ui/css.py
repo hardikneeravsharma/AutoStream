@@ -3009,6 +3009,22 @@ REEL_CSS = """
             min-width:92px}
 /* One chip per mark, so a wrong beat in the middle of a run can go without
    clearing the ones after it. */
+/* The shaping dials: minus, name, plus. Inline with the bin's own buttons
+   because shaping the reel is the same kind of act as picking its parts. */
+.bin-shape{display:inline-flex;gap:8px;flex-wrap:wrap;align-items:center}
+.shape-dial{
+  display:inline-flex;align-items:center;gap:2px;
+  border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-sm);
+  padding:1px 2px;
+}
+.shape-dial b{
+  font-size:11px;font-weight:600;color:var(--text-secondary);
+  padding:0 5px;white-space:nowrap;
+}
+.shape-dial b i{font-style:normal;color:var(--accent);margin-left:5px}
+.shape-dial.is-on{border-color:var(--accent)}
+.shape-dial .btn{padding:1px 7px;min-width:0;line-height:1.4}
+
 /* The star on a parts-bin card. Absolute inside the card button, so it never
    pushes the name or the example around, and always in the same corner. */
 .bin-card{position:relative}
