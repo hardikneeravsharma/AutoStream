@@ -611,6 +611,53 @@ def test_a_mark_the_footage_cannot_reach_is_reported(long_run):
     assert any("Shot 1 has only" in n for n in notes)
 
 
+def test_a_first_mark_out_of_reach_goes_to_the_next_shot(long_run):
+    """The mark keeps its kill even when the opener cannot get to it.
+
+    Measured on QUATROKAV2: a part chosen from 2.0 s put the first mark on the
+    song's arrival at 12.12 s, the opening clip had 3.50 s of footage before
+    its kill, and the arrival -- the loudest thing in the part -- ended up with
+    no cut on it at all while one shot stretched across it.
+    """
+    proj, _ = studio.plan(_clips(long_run)[:6], "story", shape=Shape(bpm=120.0))
+    # Straight speed, so the reach is the footage: a slowed opener spends its
+    # 6 s over twelve and could reach the mark after all.
+    proj["shots"][0]["speed"] = "s00"
+    marks = [9.0, 10.5, 12.0, 13.5]                         # 6 s of footage before the kill
+    studio.apply_marks(proj, marks)
+    got, derived, _ = studio.normalise(proj, long_run)
+    assert got["shots"][0]["lead_in"] is True
+    assert derived["shots"][0]["mark"] is None              # the lead-in is not scored
+    for i, m in enumerate(marks):
+        assert derived["shots"][i + 1]["kill_reel"] == pytest.approx(m, abs=1.0 / studio.FPS), i
+    # and the opener still opens on every frame of run-up it owns
+    assert derived["shots"][0]["kill_reel"] == pytest.approx(6.0, abs=1.0 / studio.FPS)
+
+
+def test_a_first_mark_within_reach_is_still_the_openers(long_run):
+    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=Shape(bpm=120.0))
+    studio.apply_marks(proj, [4.0, 6.0, 8.0])
+    got, derived, _ = studio.normalise(proj, long_run)
+    assert not got["shots"][0].get("lead_in")
+    assert derived["shots"][0]["kill_reel"] == pytest.approx(4.0, abs=1.0 / studio.FPS)
+
+
+def test_the_lead_in_stretches_the_intro_over_itself(long_run):
+    """A one-second fade over a nine-second hold does not look like a start."""
+    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=Shape(bpm=120.0))
+    proj["intro"] = "i03"
+    proj["shots"][0]["speed"] = "s00"
+    studio.apply_marks(proj, [9.0, 10.5, 12.0])
+    assert proj["shots"][0]["lead_in"] is True
+    got, derived, _ = studio.normalise(proj, long_run)
+    segs = studio.segments(got, derived)
+    cmd = studio.assemble_command(got, derived, segs,
+                                  [Path(f"{i}.mp4") for i in range(len(segs))], Path("r.mp4"))
+    fade = [a for a in cmd if "fade=in:st=0:d=" in str(a)]
+    assert fade, cmd
+    assert "fade=in:st=0:d=1.0" not in str(fade)
+
+
 def test_the_song_starts_exactly_where_it_was_fine_tuned(long_run):
     """10 ms nudges are the point of the control, so the start is not snapped."""
     proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=Shape(bpm=128.0))

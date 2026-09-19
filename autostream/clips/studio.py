@@ -1730,27 +1730,66 @@ def max_post(shot: dict, pre: float, want: float) -> float:
 
 
 def apply_marks(project: dict, marks: list[float]) -> list[str]:
-    """Re-time the timeline so shot N's kill lands on mark N (reel seconds).
+    """Re-time the timeline so the shots' kills land on the marks (reel seconds).
 
     Cuts move, never the marks: each shot starts as far before its mark as its
     own run-up wants and its footage allows, and the shot before it runs up to
     that cut. Shots past the last mark keep their lengths and follow on.
+
+    Usually shot N takes mark N. The exception is an opener whose footage
+    cannot reach the first mark -- see below: it becomes the reel's lead-in
+    and the marks shift one shot along, so the mark still gets a kill.
     """
     notes: list[str] = []
     shots = project["shots"]
     marks = sorted(m for m in marks if m >= 0)
-    n = min(len(marks), len(shots))
-    if not n:
+    if not marks or not shots:
         return notes
-    if len(marks) > len(shots):
-        notes.append(f"{len(marks)} kills were marked but the reel has {len(shots)} shots; "
-                     f"the last {len(marks) - len(shots)} marks were not used.")
+
+    # THE MARK GETS ITS KILL, EVEN WHEN THE OPENER CANNOT REACH IT.
+    #
+    # The opener is the one shot that cannot be moved to meet a mark: the reel
+    # starts at reel zero, so its run-up is whatever footage sits before its
+    # kill and not a frame more. Pinning it to the first mark anyway and
+    # letting it land early spends that mark on a kill that never arrives
+    # there -- measured on QUATROKAV2, where a part chosen from 2.0 s put the
+    # first mark on the song's arrival at 12.12 s, the opener had 3.50 s of
+    # footage before its kill, and the result was one shot stretched over the
+    # whole arrival with its kill 6.63 s early. The drop, the loudest thing in
+    # the part, got no cut at all.
+    #
+    # So an unreachable first mark is not consumed. The opener plays out its
+    # own run-up unmarked -- the lead-in the intro effect covers -- and the
+    # mark passes to the shot behind it, which starts wherever it needs to.
+    # WHICH kill lands on the drop matters far less than that one does.
+    lead = 0
+    slack = max(0.25, float(project.get("beat") or 0.5))
+    if len(shots) > 1 and max_pre(shots[0], marks[0]) < marks[0] - slack:
+        lead = 1
+    n = min(len(marks), len(shots) - lead)
+    if n <= 0:
+        return notes
+    if len(marks) > len(shots) - lead:
+        notes.append(f"{len(marks)} kills were marked but the reel has {len(shots) - lead} shots to "
+                     f"put on them; the last {len(marks) - n} marks were not used.")
     cuts = []
     pres = []
+    if lead:
+        s0 = shots[0]
+        # EVERY FRAME IT HAS, not the run-up it was planned with: footage
+        # before the kill is lead-in, footage after it is a shot holding on
+        # past its own point. The mark is the ceiling, and lead is only set
+        # when the footage falls short of it.
+        pre0 = max_pre(s0, marks[0])
+        cuts.append(0.0)
+        pres.append(pre0)
+        notes.append(f"Shot 1 has only {pre0:.2f} s of footage before its kill and the first mark is "
+                     f"{marks[0]:.2f} s in, so it opens the reel as the lead-in and shot 2's kill "
+                     f"lands on that mark instead.")
     for i in range(n):
-        s = shots[i]
+        s = shots[lead + i]
         k = marks[i]
-        if i == 0:
+        if i == 0 and not lead:
             pre = max_pre(s, k)
             if pre < k - 1.0 / FPS:
                 notes.append(f"Shot 1 has only {pre:.2f} s of footage before its kill, so it lands "
@@ -1758,28 +1797,33 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
             cuts.append(0.0)
             pres.append(pre)
             continue
-        gap = k - marks[i - 1]
+        gap = k - (marks[i - 1] if i else pres[0])
+        j = lead + i                                   # where this shot sits in the reel
         want = min(float(s["pre"]) if s["pre"] > 0 else gap / 2, max(0.0, gap - 0.22))
         pre = max_pre(s, want)
         cut = k - pre
-        prev = shots[i - 1]
-        need = cut - (cuts[i - 1] + pres[i - 1])       # time after the previous kill
-        room = max_post(prev, pres[i - 1], need)
+        prev = shots[j - 1]
+        need = cut - (cuts[j - 1] + pres[j - 1])       # time after the previous kill
+        room = max_post(prev, pres[j - 1], need)
         if room < need - 1.0 / FPS:
             # The previous shot runs out: start this one earlier if its own
             # footage allows, and say so if it still cannot reach.
-            longer = max_pre(s, max(0.0, k - (cuts[i - 1] + pres[i - 1] + room)))
+            longer = max_pre(s, max(0.0, k - (cuts[j - 1] + pres[j - 1] + room)))
             cut = k - longer
             pre = longer
-            if cut > cuts[i - 1] + pres[i - 1] + room + 1.0 / FPS:
-                notes.append(f"Shot {i} runs out of footage before shot {i + 1}'s mark; "
-                             f"shot {i + 1} may land early.")
-        cuts.append(max(cut, cuts[i - 1] + pres[i - 1] + 1.0 / FPS))
+            if cut > cuts[j - 1] + pres[j - 1] + room + 1.0 / FPS:
+                notes.append(f"Shot {j} runs out of footage before shot {j + 1}'s mark; "
+                             f"shot {j + 1} may land early.")
+        cuts.append(max(cut, cuts[j - 1] + pres[j - 1] + 1.0 / FPS))
         pres.append(k - cuts[-1])
-    for i in range(n):
+    for s in shots:
+        s.pop("lead_in", None)
+    if lead:
+        shots[0]["lead_in"] = True
+    for i in range(lead + n):
         s = shots[i]
         s["pre"] = round(pres[i], 5)
-        if i < n - 1:
+        if i < lead + n - 1:
             s["duration"] = round(cuts[i + 1] - cuts[i], 5)
         else:
             post = max(0.22, float(s["duration"]) - float(s["pre"]) if s["duration"] > s["pre"] else 0.5)
@@ -2016,6 +2060,10 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
             "speed": raw.get("speed") if raw.get("speed") in ids_of("speed") else "s00",
             "fx": [f for f in dict.fromkeys(raw.get("fx") or []) if f in ids_of("kill")],
             "hero": bool(raw.get("hero")),
+            # Set by apply_marks on an opener that cannot reach the first
+            # mark: it is the lead-in, so the timeline must not score its kill
+            # against a mark it was never aimed at.
+            "lead_in": bool(raw.get("lead_in")),
             "hero_fx": [f for f in dict.fromkeys(raw.get("hero_fx") or []) if f in ids_of("hero")],
             "camera": raw.get("camera") if raw.get("camera") in ids_of("camera") else "c00",
             "transition": raw.get("transition") if raw.get("transition") in ids_of("transition") else "t01",
@@ -2111,6 +2159,7 @@ def derive(project: dict) -> dict:
         kills_reel.extend(inside)
         rows.append({"index": i, "start": round(t0, 5), "end": round(t0 + s["duration"], 5),
                      "kill_reel": round(t0 + s["pre"], 5), "kills_reel": inside,
+                     "lead_in": bool(s.get("lead_in")),
                      "source_in": round(a, 4), "source_out": round(b, 4),
                      "pieces": [[round(x, 4), round(y, 4), r] for x, y, r in ps]})
     beat = float(project.get("beat") or 60.0 / NO_SONG_BPM)
@@ -2125,7 +2174,8 @@ def derive(project: dict) -> dict:
                    if -0.5 <= float(m) - offset <= length + 0.5)
     on_marks = 0
     for row in rows:
-        near = min(marks, key=lambda m: abs(m - row["kill_reel"])) if marks else None
+        near = (min(marks, key=lambda m: abs(m - row["kill_reel"]))
+                if marks and not shots[row["index"]].get("lead_in") else None)
         row["mark"] = near
         row["drift"] = round(row["kill_reel"] - near, 4) if near is not None else None
         if near is not None and abs(row["drift"]) <= ON_MARK:
@@ -2513,14 +2563,31 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
 
     post = []
     intro, outro = project["intro"], project["outro"]
+    # AN INTRO AS LONG AS WHAT IT HAS TO COVER. Normally its own length: a
+    # second of fade, a third of a second of flash, over an opener that reaches
+    # its kill in two or three. But a LEAD-IN opener (see apply_marks) holds
+    # for however long it takes the song to reach the first mark, and a
+    # one-second fade over a nine-second hold leaves eight seconds in which
+    # nothing has happened and the reel does not look started. So the effect is
+    # stretched over the run-up instead -- each to the point where it stops
+    # reading as an intro, which is why the caps differ: a fade from black can
+    # take three seconds and still be a fade, a white flash that burns for
+    # three is a fault.
+    opener = (project["shots"] or [{}])[0]
+    lead = float(opener.get("pre") or 0.0) if opener.get("lead_in") else 0.0
+
+    def over(own: float, share: float, cap: float) -> float:
+        return round(min(max(own, lead * share), cap), 3)
+
     if intro == "i03":
-        post.append("fade=in:st=0:d=1.0")
+        post.append(f"fade=in:st=0:d={over(1.0, 0.6, 3.0)}")
     elif intro == "i08":
-        post.append("eq=brightness='max(0,0.85*(1-t/0.35))':eval=frame")
+        d = over(0.35, 0.25, 1.2)
+        post.append(f"eq=brightness='max(0,0.85*(1-t/{d}))':eval=frame")
     elif intro == "i12":
         k1 = derived["kills"][0] if derived["kills"] else 0.0
         post.append(f"eq=saturation='if(lt(t,{k1:.4f}),0.15,1)':eval=frame")
-        post.append("fade=in:st=0:d=0.6")
+        post.append(f"fade=in:st=0:d={over(0.6, 0.5, 2.5)}")
     end_fade = rulebook.ending_fade(project["beat"])
     if outro == "e01" or outro == "e03":
         post.append(f"fade=out:st={max(0.0, L - end_fade):.4f}:d={end_fade:.4f}")
@@ -2560,7 +2627,9 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
                     f"fontcolor=white:fontsize={size}:x={pad}:y=h-{pad}-{size}:box=1:"
                     f"boxcolor=black@0.45:boxborderw=10:alpha='{alpha}'")
     if intro == "i05":
-        chain_in = f"[{acc_label}]split[bs][bb];[bb]gblur=sigma=18[bg];[bs][bg]blend=all_expr='A*min(1,T/1.2)+B*(1-min(1,T/1.2))'[bl]"
+        b = over(1.2, 0.7, 4.0)
+        chain_in = (f"[{acc_label}]split[bs][bb];[bb]gblur=sigma=18[bg];"
+                    f"[bs][bg]blend=all_expr='A*min(1,T/{b})+B*(1-min(1,T/{b}))'[bl]")
         g.append(chain_in)
         acc_label = "bl"
     post.append(f"trim=end_frame={Lf},format=yuv420p")

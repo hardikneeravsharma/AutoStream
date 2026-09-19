@@ -2082,8 +2082,14 @@ function studio_marks() {
 }
 
 /* The mark nearest a kill: the server's answer where there is one, so the
-   drift drawn is the drift the render produced. */
+   drift drawn is the drift the render produced.
+
+   A lead-in shot has none. Its footage could not reach the first mark, so it
+   opens the reel and the mark went to the shot behind it -- scoring its kill
+   against the nearest mark anyway drew a six-second miss for a shot that was
+   never aimed at one. */
 function studio_nearMark(mk, row, t) {
+  if (row && row.lead_in) return null;
   if (row && row.mark !== undefined && row.mark !== null && mk && mk.what === 'planned') return row.mark;
   if (!mk || !mk.at.length) return null;
   let best = mk.at[0];
