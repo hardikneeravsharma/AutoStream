@@ -497,8 +497,53 @@ def test_part_ids_are_unique_and_every_style_uses_real_parts():
 
 
 def test_every_transition_part_can_be_drawn():
+    """Every cut in the drawer resolves to an xfade preset and a length.
+
+    A generated transition carries its preset as a knob rather than a row in
+    XFADE, so the invariant is that the RESOLVER answers for all of them --
+    an id that fell through would render as a hard cut and the drawer would
+    quietly offer the same part a hundred times.
+    """
+    from autostream.clips import parts as parts_mod
+
+    names = set(parts_mod.XFADE_NAMES) | set(studio.XFADE.values())
     for pid in studio.ids_of("transition"):
-        assert pid == "t01" or pid in studio.XFADE
+        if pid == "t01":
+            assert studio._cut_seconds(pid) == 0.0
+            continue
+        assert studio._xfade_name(pid) in names, f"{pid} draws with no preset"
+        assert 0.05 <= studio._cut_seconds(pid) <= 1.0, f"{pid} has no usable length"
+
+
+def test_every_part_in_a_drawer_survives_normalise():
+    """A part the bin offers must come back out of normalise() unchanged.
+
+    The generated grades were checked against the hand-written GRADES table
+    rather than the drawer, so every one of sixty tints silently became g01 --
+    the bin offered them, the page showed them, and the render ignored them.
+    A drawer's ids and what normalise accepts are the same list or the bin
+    lies.
+    """
+    for pid in studio.ids_of("grade"):
+        sat, con, bri, static = studio._grade_of(pid)
+        assert 0.0 <= sat <= 2.0 and 0.5 <= con <= 2.0, f"{pid} grades to nonsense"
+        assert pid == "g01" or static or sat != 1.0 or con != 1.0, f"{pid} grades to nothing"
+    for pid in studio.ids_of("intro"):
+        assert studio._fade_seconds(pid, 0.7) > 0 or pid == "i00"
+    for pid in studio.ids_of("outro"):
+        assert studio._fade_seconds(pid, 0.7) > 0 or pid == "e12"
+
+
+def test_every_generated_part_resolves_to_a_family():
+    """A variant whose family the renderer does not know draws nothing."""
+    drawn = {"k01", "k02", "k03", "k06", "k07", "k08", "k11", "k12", "k14", "k15",
+             "k16", "k17", "k18", "k19", "k20", "k21", "k22", "xfade", "tint",
+             "c01", "c03", "c04", "c05", "c06", "c07", "c08",
+             "o01", "o04", "o05", "o08", "h01", "h02", "h03", "h05",
+             "fade_in", "fade_out"}
+    for p in studio.PARTS:
+        if p.base:
+            assert p.base in drawn, f"{p.id} has family {p.base}, which nothing draws"
 
 
 def test_the_catalog_is_what_the_page_reads():
@@ -948,3 +993,267 @@ def test_what_the_planner_said_stays_with_the_reel(long_run):
     proj["plan_notes"] = ["Your clips fill 41 s of the 60 s part, so the reel ends early.", 7, ""]
     got, _, _ = studio.normalise(proj, long_run)
     assert got["plan_notes"] == ["Your clips fill 41 s of the 60 s part, so the reel ends early."]
+
+
+# ------------------------------------------------------------------ the intro clip
+
+@pytest.fixture
+def intro_home(tmp_path, monkeypatch):
+    """A throwaway VIDEO_HOME, so the intros library is not the developer's own."""
+    from autostream import paths
+
+    home = tmp_path / "video"
+    monkeypatch.setattr(paths, "VIDEO_HOME", home)
+    return home
+
+
+def _fake_intro(home: Path, name="sting", seconds=6.0, has_audio=True) -> str:
+    """An intro already in the library, written without ffmpeg."""
+    d = home / "intros"
+    d.mkdir(parents=True, exist_ok=True)
+    mp4 = d / f"{name}.mp4"
+    mp4.write_bytes(b"not really a video")
+    (d / f"{name}.json").write_text(json.dumps(
+        {"name": name, "seconds": seconds, "width": 1920, "height": 1080,
+         "has_audio": has_audio, "when": 1_700_000_000}))
+    return str(mp4)
+
+
+def test_an_intro_is_only_ever_a_file_in_the_intros_folder(intro_home, tmp_path):
+    from autostream.clips import intros
+
+    good = _fake_intro(intro_home)
+    assert intros.inside(good) is not None
+    stray = tmp_path / "somewhere.mp4"
+    stray.write_bytes(b"x")
+    # The shapes of "not ours": outside the folder, not an mp4, not there.
+    assert intros.inside(str(stray)) is None
+    assert intros.inside(str(intro_home / "intros" / "sting.json")) is None
+    assert intros.inside(str(intro_home / "intros" / "gone.mp4")) is None
+    assert intros.inside("") is None
+
+
+def test_the_intro_library_lists_what_its_sidecar_says(intro_home):
+    from autostream.clips import intros
+
+    _fake_intro(intro_home, "old", seconds=3.0, has_audio=False)
+    _fake_intro(intro_home, "new", seconds=8.5)
+    by = {e["name"]: e for e in intros.listing()}
+    assert by["old"]["seconds"] == 3.0 and by["old"]["has_audio"] is False
+    assert by["new"]["seconds"] == 8.5 and by["new"]["has_audio"] is True
+
+
+def test_adding_an_intro_refuses_what_is_not_short_or_not_video(intro_home, tmp_path):
+    from autostream.clips import intros
+
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"x")
+    with pytest.raises(ValueError, match="minutes"):
+        intros.add(src, measure=lambda p: {"duration": 600.0, "audio_tracks": 0},
+                   encode=lambda *a, **k: None)
+    doc = tmp_path / "notes.txt"
+    doc.write_text("x")
+    with pytest.raises(ValueError, match="not a video"):
+        intros.add(doc, measure=lambda p: {"duration": 2.0}, encode=lambda *a, **k: None)
+
+
+def test_adding_an_intro_writes_one_mp4_and_its_sidecar(intro_home, tmp_path):
+    from autostream.clips import intros
+
+    src = tmp_path / "My Sting!.gif"
+    src.write_bytes(b"x")
+
+    def encode(s, out, *, keep_audio):
+        out.write_bytes(b"converted")
+
+    got = intros.add(src, measure=lambda p: {"duration": 4.0, "width": 800, "height": 600,
+                                             "audio_tracks": 0}, encode=encode)
+    assert got["name"] == "My Sting" and got["seconds"] == 4.0 and got["has_audio"] is False
+    assert Path(got["path"]).suffix == ".mp4"
+    assert [e["name"] for e in intros.listing()] == ["My Sting"]
+    # A second file of the same name does not overwrite the first.
+    again = intros.add(src, measure=lambda p: {"duration": 4.0, "audio_tracks": 0}, encode=encode)
+    assert again["path"] != got["path"] and len(intros.listing()) == 2
+
+
+def test_deleting_an_intro_takes_its_sidecar_and_refuses_anything_else(intro_home, tmp_path):
+    from autostream.clips import intros
+
+    path = _fake_intro(intro_home, "sting")
+    stray = tmp_path / "elsewhere.mp4"
+    stray.write_bytes(b"x")
+    with pytest.raises(ValueError):
+        intros.remove(str(stray))
+    assert stray.is_file()
+    intros.remove(path)
+    assert intros.listing() == []
+    assert not (intro_home / "intros" / "sting.json").exists()
+
+
+def _with_intro(root, intro_home, **over):
+    proj, _ = studio.plan(_clips(root), "montage", shape=Shape(bpm=120.0))
+    proj["song"] = ""
+    ic = {"path": _fake_intro(intro_home), "start": 1.0, "end": 3.0,
+          "audio": True, "fit": "cover"}
+    ic.update(over)
+    proj["intro_clip"] = ic
+    return studio.normalise(proj, root)
+
+
+def test_an_intro_clip_survives_normalise_with_its_trim_and_its_sound(root, intro_home):
+    got, derived, _ = _with_intro(root, intro_home)
+    assert got["intro_clip"]["start"] == 1.0 and got["intro_clip"]["end"] == 3.0
+    assert got["intro_clip"]["audio"] is True and got["intro_clip"]["has_audio"] is True
+    assert derived["intro_clip"]["seconds"] == pytest.approx(2.0)
+
+
+def test_an_intro_can_never_be_longer_than_the_reel(root, intro_home):
+    # A source longer than the whole reel: left alone it would BE the reel.
+    long_one = _fake_intro(intro_home, "long", seconds=600.0)
+    got, derived, notes = _with_intro(root, intro_home, path=long_one, start=0.0, end=600.0)
+    reel = derived["length"]
+    assert got["intro_clip"]["end"] - got["intro_clip"]["start"] == pytest.approx(reel, abs=1e-3)
+    assert any("longer than the reel" in n for n in notes)
+
+
+def test_an_intro_the_user_deleted_drops_off_the_project(root, intro_home):
+    got, _, _ = _with_intro(root, intro_home)
+    Path(got["intro_clip"]["path"]).unlink()
+    again, _, notes = studio.normalise(got, root)
+    assert again["intro_clip"] is None
+    assert any("not in your intros folder" in n for n in notes)
+
+
+def test_sound_asked_for_on_a_silent_intro_is_remembered_but_not_used(root, intro_home):
+    path = _fake_intro(intro_home, "silent", has_audio=False)
+    got, derived, _ = _with_intro(root, intro_home, path=path, audio=True)
+    # What the user asked for is kept -- ticking the box on a clip that is
+    # later replaced by one with sound should not be silently forgotten --
+    # but what will actually happen is what derive reports.
+    assert got["intro_clip"]["audio"] is True
+    assert got["intro_clip"]["has_audio"] is False
+    assert derived["intro_clip"]["audio"] is False
+
+
+def test_an_intro_that_trims_to_nothing_leaves_the_reel_alone(root, intro_home):
+    got, _, notes = _with_intro(root, intro_home, start=2.0, end=2.1)
+    assert got["intro_clip"] is None
+    assert any("too short to see" in n for n in notes)
+
+
+def _graph(got, derived):
+    segs = studio.segments(got, derived)
+    argv = studio.assemble_command(got, derived, segs,
+                                   [Path(f"{i}.mp4") for i in range(len(segs))], Path("r.mp4"))
+    return argv, argv[argv.index("-filter_complex") + 1]
+
+
+def test_the_intro_is_trimmed_by_ffmpeg_and_laid_over_the_head_of_the_reel(root, intro_home):
+    got, derived, _ = _with_intro(root, intro_home)
+    argv, graph = _graph(got, derived)
+    # Only the chosen part is ever decoded.
+    i = argv.index(got["intro_clip"]["path"])
+    assert argv[i - 5:i] == ["-ss", "1.0000", "-t", "2.0000", "-i"]
+    # Laid over the reel for exactly its own length, and never ending it early.
+    assert "overlay=0:0:eof_action=pass:enable='lt(t,2.0000)'" in graph
+    # It goes on BEFORE the post chain, so the reel's own opening applies to it.
+    assert graph.index("[icj]") < graph.index("trim=end_frame=")
+
+
+def test_the_intro_never_moves_a_cut_or_changes_the_length(root, intro_home):
+    plain, _ = studio.plan(_clips(root), "montage", shape=Shape(bpm=120.0))
+    plain["song"] = ""
+    _, d_plain, _ = studio.normalise(plain, root)
+    _, derived, _ = _with_intro(root, intro_home)
+    assert derived["length"] == pytest.approx(d_plain["length"])
+    assert [r["start"] for r in derived["shots"]] == [r["start"] for r in d_plain["shots"]]
+    assert derived["kills"] == pytest.approx(d_plain["kills"])
+
+
+def test_a_muted_intro_contributes_no_audio_at_all(root, intro_home):
+    got, derived, _ = _with_intro(root, intro_home, audio=False)
+    _, graph = _graph(got, derived)
+    assert "[ica]" not in graph
+    got2, derived2, _ = _with_intro(root, intro_home, audio=True)
+    _, graph2 = _graph(got2, derived2)
+    # Mixed over the finished bed, so the game level never touches it.
+    assert "[ica]amix=inputs=2" in graph2
+
+
+def test_a_silent_intro_asked_to_play_its_sound_adds_no_audio_leg(root, intro_home):
+    path = _fake_intro(intro_home, "silent", has_audio=False)
+    got, derived, _ = _with_intro(root, intro_home, path=path, audio=True)
+    _, graph = _graph(got, derived)
+    assert "[ica]" not in graph
+
+
+@pytest.mark.parametrize("fit,want,avoid", [("cover", "crop=", "pad="), ("contain", "pad=", "crop=")])
+def test_the_intro_fills_or_fits_as_asked(root, intro_home, fit, want, avoid):
+    got, derived, _ = _with_intro(root, intro_home, fit=fit)
+    _, graph = _graph(got, derived)
+    chain = next(c for c in graph.split(";") if c.endswith("[icv]"))
+    assert want in chain and avoid not in chain
+
+
+def test_the_lead_in_the_intro_is_for_is_on_the_derived_project(root, intro_home):
+    proj, _ = studio.plan(_clips(root), "montage", shape=Shape(bpm=120.0))
+    proj["song"] = ""
+    got, derived, _ = studio.normalise(proj, root)
+    assert derived["lead_in"] == 0.0
+    got["shots"][0]["lead_in"] = True
+    got2, derived2, _ = studio.normalise(got, root)
+    assert derived2["lead_in"] == pytest.approx(got2["shots"][0]["pre"])
+
+
+# ------------------------------------------------------------------ the command line
+
+def _long_reel(root, n):
+    """A project with `n` shots, by repeating what the library has."""
+    proj, _ = studio.plan(_clips(root), "hype", shape=Shape(bpm=150.0), song="song.mp3")
+    proj["song"] = ""
+    base = proj["shots"]
+    proj["shots"] = [dict(base[i % len(base)]) for i in range(n)]
+    got, derived, _ = studio.normalise(proj, root)
+    return got, derived, studio.segments(got, derived)
+
+
+def test_a_long_reel_still_fits_on_a_windows_command_line(root, tmp_path):
+    """MEASURED, not guessed: a real 50-shot reel built a 33,144-character
+    command against CreateProcess's 32,767 limit and died with WinError 206
+    AFTER encoding all fifty shots. MAX_SHOTS is 80, so the app was offering
+    nearly twice what it could deliver."""
+    for n in (50, studio.MAX_SHOTS):
+        got, derived, segs = _long_reel(root, n)
+        files = [tmp_path / f"seg{i:03d}.mp4" for i in range(len(segs))]
+        argv = studio.assemble_command(got, derived, segs, files, tmp_path / "out.mp4",
+                                       textdir=tmp_path)
+        length = sum(len(a) + 3 for a in argv)
+        assert length < 32_767, f"{n} shots: {length} characters is over the Windows limit"
+        # Over the threshold it must be the file form, or the line would grow
+        # with the shot count again the moment the graph did. Which spelling
+        # depends on the ffmpeg installed -- see tools.filter_script_flag.
+        assert any(x in argv for x in ("-filter_complex_script", "-/filter_complex")),             f"{n} shots: still inline"
+
+
+def test_the_graph_in_the_script_file_is_the_graph_that_was_built(root, tmp_path):
+    got, derived, segs = _long_reel(root, 50)
+    files = [tmp_path / f"seg{i:03d}.mp4" for i in range(len(segs))]
+    argv = studio.assemble_command(got, derived, segs, files, tmp_path / "out.mp4",
+                                   textdir=tmp_path)
+    from autostream.clips.tools import filter_script_flag
+    script = Path(argv[argv.index(filter_script_flag()) + 1])
+    graph = script.read_text(encoding="utf-8")
+    # The same shape the inline form has, and every input wired up.
+    assert graph.count("[s0]") >= 1 and "[v]" in graph and "[a]" in graph
+    assert graph.count(";") >= len(segs)
+    assert "\n" not in graph          # one line; ffmpeg reads the file whole
+
+
+def test_a_short_reel_keeps_the_command_readable(root, tmp_path):
+    """The file form is a workaround for an OS limit, not the normal path: a
+    graph hidden in a temp file is a graph nobody will find in a log."""
+    got, derived, segs = _long_reel(root, 6)
+    files = [tmp_path / f"seg{i:03d}.mp4" for i in range(len(segs))]
+    argv = studio.assemble_command(got, derived, segs, files, tmp_path / "out.mp4",
+                                   textdir=tmp_path)
+    assert "-filter_complex" in argv and "-filter_complex_script" not in argv

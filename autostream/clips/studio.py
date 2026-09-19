@@ -71,7 +71,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import hits as hits_mod, rulebook, studio_refs
+from . import hits as hits_mod, parts as parts_mod, rulebook, studio_refs
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +86,18 @@ MIN_SHOT = 0.25                      # s. Below this a shot is a flicker, not a 
 # landing on it: three frames of the render, which is under what an ear hears
 # as early or late and what the music lane draws in green.
 ON_MARK = 3.0 / FPS
+# An intro clip shorter than this is a flash nobody can read, and trimming one
+# to nothing by dragging a handle should leave the reel alone rather than open
+# with a single frame.
+MIN_INTRO_SECONDS = 0.3
+# How an intro clip fills the frame when its shape is not the reel's: crop to
+# fill, or letterbox to show all of it. Both are wanted -- a 16:9 clip over a
+# 9:16 reel is unwatchable cropped, and a logo sting is unwatchable boxed.
+INTRO_FITS = ("cover", "contain")
+# Windows caps a whole command line at 32,767 characters. Kept well under it:
+# the paths in the line are the user's own and can be far longer here than on
+# the machine this was measured on.
+CMDLINE_SAFE = 24_000
 
 
 # ============================================================== the library
@@ -464,13 +476,9 @@ def delete_clips(root: Path, paths: list[str], *, dry_run: bool = False) -> dict
 
 # ============================================================== the parts
 
-@dataclass(frozen=True)
-class Part:
-    id: str
-    kind: str
-    label: str
-    blurb: str
-
+# The catalogue's own type and its generated variants live in parts.py; the
+# hand-written parts stay here, beside the renderer that draws them.
+Part = parts_mod.Part
 
 PARTS: tuple[Part, ...] = (
     Part("i00", "intro", "Straight in", "No intro effect; the first shot simply starts."),
@@ -490,6 +498,12 @@ PARTS: tuple[Part, ...] = (
     Part("t09", "transition", "Iris open", "The next shot opens from a circle in the centre."),
     Part("t10", "transition", "Pixel dissolve", "Breaks into blocks and rebuilds."),
     Part("t11", "transition", "Radial sweep", "Revealed by a clock-hand sweep."),
+    Part("t12", "transition", "Slice across", "The frame splits into bands that slide the next shot in."),
+    Part("t13", "transition", "Squeeze", "The last shot squashes out sideways as the next opens."),
+    Part("t14", "transition", "Diagonal wipe", "A corner-to-corner wipe carries the cut."),
+    Part("t15", "transition", "Cover slide", "The next shot slides in over the last, which stays put."),
+    Part("t16", "transition", "Grain dissolve", "The two shots trade places pixel by pixel."),
+    Part("t17", "transition", "Colour drain", "Drains to grey through the cut and back."),
 
     Part("k01", "kill", "Zoom punch", "Jumps about 12% closer on the kill and settles."),
     Part("k02", "kill", "Screen shake", "The frame rattles for under half a second."),
@@ -503,6 +517,12 @@ PARTS: tuple[Part, ...] = (
     Part("k14", "kill", "Blur snap", "Goes soft on the kill and snaps back sharp."),
     Part("k15", "kill", "Vignette pulse", "The edges darken hard on the kill."),
     Part("k16", "kill", "Flicker", "Brightness strobes for a quarter second."),
+    Part("k17", "kill", "Punch out", "Held close through the run-up, released on the kill."),
+    Part("k18", "kill", "Echo trail", "Bright movement smears behind itself for a moment."),
+    Part("k19", "kill", "Rotation kick", "The frame knocks a degree or so and rights itself."),
+    Part("k20", "kill", "Highlight bloom", "Bright parts bloom and glow on the kill."),
+    Part("k21", "kill", "Zoom blur hit", "Punches in through a blur that clears at once."),
+    Part("k22", "kill", "Tilt shake", "Rattles up and down only, not side to side."),
 
     Part("h01", "hero", "Double punch", "Two punches a sixth of a second apart."),
     Part("h02", "hero", "Freeze and push in", "Time stops while the camera pushes in."),
@@ -521,6 +541,10 @@ PARTS: tuple[Part, ...] = (
     Part("c01", "camera", "Slow push-in", "Drifts steadily closer through the shot."),
     Part("c03", "camera", "Handheld drift", "A gentle organic sway."),
     Part("c04", "camera", "Beat bounce", "Pulses closer on every beat."),
+    Part("c05", "camera", "Slow pull-out", "Starts close and eases back through the shot."),
+    Part("c06", "camera", "Roll drift", "Rotates by a degree or two across the shot."),
+    Part("c07", "camera", "Parallax pan", "Drifts sideways, as if tracking past the scene."),
+    Part("c08", "camera", "Breathing zoom", "Eases in and out again, like a held breath."),
 
     Part("g01", "grade", "Natural", "The game's own colours."),
     Part("g02", "grade", "Warm golden", "Amber highlights."),
@@ -531,6 +555,9 @@ PARTS: tuple[Part, ...] = (
     Part("g07", "grade", "Monochrome", "Black and white."),
     Part("g08", "grade", "Neon pop", "Colour pushed toward neon."),
     Part("g09", "grade", "Faded film", "Lifted blacks and soft highlights."),
+    Part("g10", "grade", "Radiant purple", "Valorant's own violet pushed through the shadows."),
+    Part("g11", "grade", "Poster", "Colour flattened into bands, like cel shading."),
+    Part("g12", "grade", "Night vision", "Everything green, blacks lifted, highlights hot."),
 
     # The drawer needs its empty card too: a template picks one part from
     # every drawer, and most reels carry no overlay at all.
@@ -538,6 +565,9 @@ PARTS: tuple[Part, ...] = (
     Part("o01", "overlay", "Cinematic bars", "Black bars top and bottom (landscape only)."),
     Part("o02", "overlay", "Kill counter", "A running count ticks up with each kill."),
     Part("o04", "overlay", "Film grain", "Fine moving grain over the whole reel."),
+    Part("o05", "overlay", "Scanlines", "Fine horizontal lines, like an old monitor. "
+         "Costs about a second of render for every second of reel."),
+    Part("o08", "overlay", "Chromatic edges", "A constant hair of colour fringing at the edges."),
     Part("o07", "overlay", "Handle watermark", "Your handle in the corner."),
     Part("i04", "overlay", "Now-playing card", "Names the track for the first few seconds."),
 
@@ -547,7 +577,29 @@ PARTS: tuple[Part, ...] = (
     Part("e02", "outro", "Freeze and fade colour", "The final second freezes and drains to grey."),
     Part("e03", "outro", "Slow-mo exit", "The last kill slows down and fades."),
 )
+PARTS = PARTS + tuple(parts_mod.variants({p.id: p.kind for p in PARTS}))
 PART = {p.id: p for p in PARTS}
+
+
+def fam(pid: str) -> str:
+    """Which family's filter draws this part. Unknown ids are their own family."""
+    p = PART.get(pid)
+    return p.family if p else pid
+
+
+def knob(pid: str, name: str, default: float) -> float:
+    """One of a part's numbers, or the family default for a hand-written part."""
+    p = PART.get(pid)
+    return p.knob(name, default) if p else default
+
+
+def picked(fx, family: str) -> str:
+    """The id in `fx` belonging to `family`, or "" -- so the renderer can ask
+    "is there a punch here" without knowing which of the punches it is."""
+    for pid in fx or ():
+        if fam(pid) == family:
+            return pid
+    return ""
 KINDS = ("intro", "transition", "kill", "hero", "speed", "camera", "grade", "overlay", "outro")
 
 
@@ -626,9 +678,27 @@ def picks_of(style: "Style") -> dict:
 
 XFADE = {"t02": "fadewhite", "t03": "fadeblack", "t04": "fade", "t05": "zoomin",
          "t06": "hblur", "t07": "slideleft", "t08": "smoothleft", "t09": "circleopen",
-         "t10": "pixelize", "t11": "radial"}
+         "t10": "pixelize", "t11": "radial", "t12": "hlslice", "t13": "squeezeh",
+         "t14": "diagtl", "t15": "coverleft", "t16": "dissolve", "t17": "fadegrays"}
+def _xfade_name(pid: str) -> str:
+    """The xfade preset a transition draws with, hand-written or generated."""
+    if pid in XFADE:
+        return XFADE[pid]
+    return parts_mod.XFADE_NAMES[int(knob(pid, "preset", 0.0))]
+
+
+def _cut_seconds(pid: str) -> float:
+    """How long a cut runs."""
+    if pid in TLEN:
+        return TLEN[pid]
+    return knob(pid, "secs", 0.32)
+
+
 TLEN = {"t01": 0.0, "t02": 0.2, "t03": 0.4, "t04": 0.5, "t05": 0.3, "t06": 0.25,
-        "t07": 0.3, "t08": 0.4, "t09": 0.4, "t10": 0.35, "t11": 0.4}
+        "t07": 0.3, "t08": 0.4, "t09": 0.4, "t10": 0.35, "t11": 0.4,
+        # The fast ones stay under a third of a second: a slice or a squeeze
+        # that outlasts the shot it joins reads as the effect, not the cut.
+        "t12": 0.3, "t13": 0.3, "t14": 0.35, "t15": 0.3, "t16": 0.35, "t17": 0.4}
 
 # (saturation, contrast, brightness, static filters)
 GRADES = {
@@ -641,7 +711,39 @@ GRADES = {
     "g07": (0.0, 1.2, 0.0, ""),
     "g08": (1.70, 1.10, 0.0, "colorbalance=bh=0.06:rh=0.04"),
     "g09": (0.85, 1.0, 0.0, "curves=all='0/0.08 0.5/0.5 1/0.92',colorbalance=rs=0.03:bs=-0.02"),
+    # Valorant draws its own UI in this violet, so a grade that leans into it
+    # sits on the game rather than on top of it.
+    "g10": (1.25, 1.08, 0.0, "colorbalance=rs=0.10:bs=0.16:gs=-0.06:rh=0.04:bh=0.06"),
+    # Banded by a lookup, not by elbg's vector quantiser: measured, elbg costs
+    # 200 ms a frame at 1080p, which is six minutes on a one-minute reel.
+    "g11": (1.35, 1.12, 0.0, "lutyuv=y='(floor(val/26))*26'"),
+    "g12": (0.0, 1.15, 0.03, "colorchannelmixer=rr=0.18:rg=0.60:rb=0.10:"
+                             "gr=0.18:gg=1.00:gb=0.10:br=0.10:bg=0.40:bb=0.10"),
 }
+
+
+def _grade_of(pid: str) -> tuple[float, float, float, str]:
+    """A grade's numbers: the hand-written table, or a tint built from a hue.
+
+    A generated tint is one colourbalance push plus saturation and contrast.
+    Doing it off a hue wheel rather than by hand is what makes sixty of them
+    possible; the strength knob is what keeps a wash from being a costume.
+    """
+    if pid in GRADES:
+        return GRADES[pid]
+    if fam(pid) != "tint":
+        return GRADES["g01"]
+    hue = knob(pid, "hue", 200.0)
+    k = knob(pid, "strength", 0.55)
+    # The push, as a shadow/highlight split: shadows toward the hue and
+    # highlights away from it is what separates a GRADE from a colour filter.
+    h = math.radians(hue)
+    r, g, b = math.cos(h), math.cos(h - 2.0944), math.cos(h + 2.0944)
+    def lvl(v: float, scale: float) -> float:
+        return round(max(-0.9, min(0.9, v * k * scale)), 3)
+    static = (f"colorbalance=rs={lvl(r, 0.22)}:gs={lvl(g, 0.22)}:bs={lvl(b, 0.22)}"
+              f":rh={lvl(-r, 0.12)}:gh={lvl(-g, 0.12)}:bh={lvl(-b, 0.12)}")
+    return (knob(pid, "sat", 1.12), knob(pid, "con", 1.06), 0.0, static)
 
 
 # ============================================================== the styles
@@ -681,9 +783,9 @@ STYLES: tuple[Style, ...] = (
           ("v9", "RjCsmKbYY7g", "yBvW49SD20Y", "8KKGT4JXPVY", "8bQ-8ZnHG4A"),
           intro="i03", outro="e01", cuts=("t01", "t04", "t01"), kill=("k01",), hero=("h03",),
           speed="s00", hero_speed="s01", camera="c01", grade="g01", vignette=False,
-          kill_pool=("k01", "k01", "k15", "k14", "k07", "k04"),
-          transition_pool=("t01", "t01", "t04", "t01", "t03", "t08"),
-          hero_pool=("h03", "h02"), camera_pool=("c01", "c03", "c00"),
+          kill_pool=("k01", "k01", "k15", "k14", "k07", "k04", "k17", "k20"),
+          transition_pool=("t01", "t01", "t04", "t01", "t03", "t08", "t17"),
+          hero_pool=("h03", "h02"), camera_pool=("c01", "c03", "c00", "c05", "c08"),
           speed_pool=("s00", "s00", "s00", "s02"), energy=0.15),
     Style("montage", "Montage",
           "The shape of the most-watched Valorant montages: a held opening, a punch on every kill, "
@@ -691,9 +793,9 @@ STYLES: tuple[Style, ...] = (
           ("JsTJ60BPTfQ", "c1VjTbzcEds", "vQqU0F8vTOE", "DM3eKiZD3XE", "qAlD8eNIfr8", "fAyUxeDzKlI"),
           intro="i03", outro="e01", cuts=("t01", "t05", "t01", "t06"), kill=("k01", "k03"),
           hero=("h01",), speed="s00", hero_speed="s02", camera="c00", grade="g02", vignette=True,
-          kill_pool=("k01", "k01", "k03", "k02", "k15", "k07", "k11", "k06"),
-          transition_pool=("t01", "t01", "t05", "t06", "t01", "t06"),
-          hero_pool=("h01", "h02", "h05"), camera_pool=("c00", "c00", "c01", "c04"),
+          kill_pool=("k01", "k01", "k03", "k02", "k15", "k07", "k11", "k06", "k17", "k20"),
+          transition_pool=("t01", "t01", "t05", "t06", "t01", "t06", "t15"),
+          hero_pool=("h01", "h02", "h05"), camera_pool=("c00", "c00", "c01", "c04", "c05"),
           speed_pool=("s00", "s00", "s00", "s02"), energy=0.45),
     Style("velocity", "Velocity short",
           "Built like the short edits that go viral: every kill slows on its beat, everything "
@@ -703,9 +805,9 @@ STYLES: tuple[Style, ...] = (
           intro="i08", outro="e12", cuts=("t06", "t05"), kill=("k01", "k16"), hero=("h02",),
           speed="s04", hero_speed="s04", camera="c00", grade="g05", vignette=True,
           overlays=("o01",),
-          kill_pool=("k01", "k16", "k06", "k03", "k02", "k14", "k11", "k12"),
-          transition_pool=("t06", "t05", "t01", "t06", "t02"),
-          hero_pool=("h02", "h01", "h05"), camera_pool=("c00", "c00", "c04"),
+          kill_pool=("k01", "k16", "k06", "k03", "k02", "k14", "k11", "k12", "k19", "k21"),
+          transition_pool=("t06", "t05", "t01", "t06", "t02", "t12", "t13"),
+          hero_pool=("h02", "h01", "h05"), camera_pool=("c00", "c00", "c04", "c08"),
           speed_pool=("s04", "s04", "s02", "s03"), energy=0.75),
     Style("drop", "Build and drop",
           "Long shots through the build, a kill exactly on the song's drop, then quicker shots "
@@ -713,9 +815,9 @@ STYLES: tuple[Style, ...] = (
           ("FEKdk-cPVmg", "nkAEXZE76II", "66zl0-VoWbg"),
           intro="i03", outro="e01", cuts=("t01",), kill=("k01",), hero=("h01",),
           speed="s00", hero_speed="s02", camera="c00", grade="g01", vignette=True, drop=True,
-          kill_pool=("k01", "k01", "k03", "k15", "k02", "k07"),
-          transition_pool=("t01", "t01", "t05", "t04", "t01", "t06"),
-          hero_pool=("h01", "h02"), camera_pool=("c00", "c01", "c00"),
+          kill_pool=("k01", "k01", "k03", "k15", "k02", "k07", "k20"),
+          transition_pool=("t01", "t01", "t05", "t04", "t01", "t06", "t14"),
+          hero_pool=("h01", "h02"), camera_pool=("c00", "c01", "c00", "c05"),
           speed_pool=("s00", "s00", "s02"), energy=0.35),
     Style("hype", "Hype",
           "Fast and loud like the busiest montages: a cut every couple of beats, shake on every "
@@ -724,13 +826,41 @@ STYLES: tuple[Style, ...] = (
           intro="i08", outro="e05", cuts=("t01", "t01", "t05"), kill=("k01", "k02"),
           hero=("h01",), speed="s00", hero_speed="s02", camera="c04", grade="g05",
           vignette=True, overlays=("o02",),
-          kill_pool=("k01", "k02", "k11", "k06", "k08", "k16", "k12", "k03"),
-          transition_pool=("t01", "t05", "t01", "t06", "t02"),
-          hero_pool=("h01", "h05", "h02"), camera_pool=("c04", "c00", "c04", "c03"),
+          kill_pool=("k01", "k02", "k11", "k06", "k08", "k16", "k12", "k03", "k19", "k22", "k18"),
+          transition_pool=("t01", "t05", "t01", "t06", "t02", "t12", "t13"),
+          hero_pool=("h01", "h05", "h02"), camera_pool=("c04", "c00", "c04", "c03", "c07"),
           speed_pool=("s00", "s00", "s02", "s03"), energy=0.7),
 )
 STYLE = {s.key: s for s in STYLES}
 DEFAULT_STYLE = "montage"
+
+
+def favourite_parts() -> list[str]:
+    """The PARTS marked as favourites, ignoring any whose id no longer exists.
+
+    Not to be confused with favourites()/set_favourite() above, which star
+    CLIPS in the library. Parts are starred per install and live in the config
+    directory; clips are starred per clips folder.
+    """
+    from .. import paths
+
+    return [p for p in parts_mod.load_favourites(paths.CONFIG_DIR) if p in PART]
+
+
+def set_favourite_part(pid: str, on: bool) -> list[str]:
+    """Mark or unmark one part. -> the list as it now stands.
+
+    Marking appends rather than inserts, so the list reads in the order things
+    were found -- which is the order a person remembers choosing them in.
+    """
+    from .. import paths
+
+    if pid not in PART:
+        raise ProjectError("There is no such part.")
+    now = [p for p in favourite_parts() if p != pid]
+    if on:
+        now.append(pid)
+    return parts_mod.save_favourites(paths.CONFIG_DIR, now)
 
 
 def catalog() -> dict:
@@ -738,6 +868,7 @@ def catalog() -> dict:
     return {
         "ok": True,
         "parts": [p.__dict__ for p in PARTS],
+        "favourite_parts": favourite_parts(),
         "kinds": list(KINDS), "drawers": list(DRAWERS),
         "styles": [{"key": s.key, "label": s.label, "blurb": s.blurb,
                     "measured": studio_refs.summary(s.refs),
@@ -1730,7 +1861,7 @@ def _vary(shots: list[dict], pools: dict, style: "Style", seed: int, what: str =
                     last_trans = t
             else:
                 s["transition"] = "t01"
-            s["tlen"] = TLEN.get(s["transition"], 0.0)
+            s["tlen"] = _cut_seconds(s["transition"])
         elif i == 0:
             s["transition"], s["tlen"] = "t01", 0.0
 
@@ -2029,7 +2160,10 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         "song": "", "song_offset": 0.0,
         "intro": project.get("intro") if project.get("intro") in ids_of("intro") else "i00",
         "outro": project.get("outro") if project.get("outro") in ids_of("outro") else "e12",
-        "grade": project.get("grade") if project.get("grade") in GRADES else "g01",
+        # The DRAWER, not the hand-written GRADES table: a generated tint is a
+        # real grade with no row in it, and checking the table quietly turned
+        # every one of them back into g01.
+        "grade": project.get("grade") if project.get("grade") in ids_of("grade") else "g01",
         "vignette": bool(project.get("vignette")),
         "overlays": [o for o in dict.fromkeys(project.get("overlays") or []) if o in ids_of("overlay")],
         "handle": re.sub(r"[\r\n]", " ", str(project.get("handle") or ""))[:40],
@@ -2170,7 +2304,7 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         s, prev = shots[i], shots[i - 1]
         t = s["transition"]
         want = s.pop("_want", -1.0)
-        want = TLEN.get(t, 0.0) if want is None or want <= 0 else want
+        want = _cut_seconds(t) if want is None or want <= 0 else want
         if t == "t01" or want <= 0:
             s["transition"], s["tlen"] = "t01", 0.0
             continue
@@ -2183,6 +2317,42 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
             notes.append(f"{s['name']}: not enough footage around the cut for a transition, so it is a hard cut.")
             continue
         s["tlen"] = round(half * 2, 4)
+
+    # THE INTRO CLIP, LAST, BECAUSE IT IS CLAMPED AGAINST THE FINISHED REEL.
+    # It plays over the head of the reel rather than in front of it (see
+    # clips/intros.py), so the one thing it cannot do is outlast what it is
+    # covering -- an intro longer than the reel would be the whole reel.
+    out["intro_clip"] = None
+    raw = project.get("intro_clip")
+    if isinstance(raw, dict) and str(raw.get("path") or "").strip():
+        from . import intros
+
+        got = intros.entry(str(raw.get("path")))
+        if got is None:
+            notes.append("The intro clip is not in your intros folder any more, "
+                         "so the reel opens without it.")
+        else:
+            src = float(got["seconds"]) or 0.0
+            a = _num(raw.get("start"), 0.0, max(0.0, src), 0.0)
+            b = _num(raw.get("end"), 0.0, max(0.0, src), src)
+            if b <= a:
+                b = src
+            reel = sum(float(s["duration"]) for s in shots)
+            if b - a > reel:
+                b = a + reel
+                notes.append(f"The intro was trimmed to {reel:.1f} s: an intro cannot "
+                             "be longer than the reel it opens.")
+            if b - a < MIN_INTRO_SECONDS:
+                notes.append("The intro was too short to see, so the reel opens without it.")
+            else:
+                out["intro_clip"] = {
+                    "path": got["path"], "name": got["name"],
+                    "start": round(a, 3), "end": round(b, 3),
+                    # What the user asked for, and what the file can actually
+                    # do. Kept apart so turning sound on for a silent GIF is
+                    # remembered rather than silently rewritten.
+                    "audio": bool(raw.get("audio")), "has_audio": bool(got["has_audio"]),
+                    "fit": raw.get("fit") if raw.get("fit") in INTRO_FITS else "cover"}
     return out, derive(out), notes
 
 
@@ -2244,10 +2414,22 @@ def derive(project: dict) -> dict:
                   "in": str(r["clip"]).lower() in in_reel,
                   "why": "" if str(r["clip"]).lower() in in_reel else (r.get("why") or "Removed on the timeline.")}
                  for r in project.get("selection") or []]
+    # THE HOLE AN INTRO IS FOR. A lead-in opener holds from reel zero until the
+    # song reaches the first mark, and that hold is the dead air the user wants
+    # covered -- so the page can offer "fit the lead-in" as one button instead
+    # of asking them to work the number out from the timeline.
+    lead_in = round(float(shots[0]["pre"]), 4) if shots and shots[0].get("lead_in") else 0.0
+    ic = project.get("intro_clip") or None
+    intro_clip = {"path": ic["path"], "name": ic.get("name") or "",
+                  "seconds": round(float(ic["end"]) - float(ic["start"]), 4),
+                  "start": ic["start"], "end": ic["end"],
+                  "audio": bool(ic.get("audio")) and bool(ic.get("has_audio")),
+                  "has_audio": bool(ic.get("has_audio")),
+                  "fit": ic.get("fit") or "cover"} if ic else None
     return {"length": round(length, 4), "shots": rows, "kills": sorted(kills_reel),
             "beats": beats, "beat": beat, "bpm": round(60.0 / beat, 2),
             "marks": marks, "on_marks": on_marks, "on_mark_window": ON_MARK,
-            "selection": selection,
+            "selection": selection, "lead_in": lead_in, "intro_clip": intro_clip,
             "edited": bool(project.get("plan_sig")) and signature(shots) != project.get("plan_sig")}
 
 
@@ -2297,6 +2479,31 @@ def text_file(folder: Path | None, text: str) -> Path:
 
 def _between(a: float, b: float) -> str:
     return f"between(t,{a:.4f},{b:.4f})"
+
+
+def _fade_seconds(pid: str, default: float) -> float:
+    """How long a generated fade runs; hand-written intros keep their own."""
+    return knob(pid, "secs", default)
+
+
+def _fade_colour(pid: str) -> str:
+    """What a generated fade goes through."""
+    i = int(knob(pid, "colour", 0.0))
+    hexes = parts_mod.FADE_HEX
+    return hexes[i] if 0 <= i < len(hexes) else "black"
+
+
+def _wash_colour(hue: float) -> str:
+    """A hue in degrees as a hex colour for drawbox. -1 means white."""
+    if hue < 0:
+        return "0xffffff"
+    h = (hue % 360.0) / 60.0
+    c, x = 1.0, 1.0 - abs(h % 2.0 - 1.0)
+    rgb = [(c, x, 0), (x, c, 0), (0, c, x), (0, x, c), (x, 0, c), (c, 0, x)][int(h) % 6]
+    # Lifted off pure, because a fully saturated wash reads as a broken frame
+    # rather than a hit: the reference edits' colour hits all sit off the edge
+    # of the gamut.
+    return "0x" + "".join(f"{int(round((0.18 + 0.82 * v) * 255)):02x}" for v in rgb)
 
 
 def _pulse(var: str, at: float, amount: float, fall: float) -> str:
@@ -2450,68 +2657,145 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     hold = seg.freeze
     T = "in_time"                       # zoompan's clock; every other filter uses t
     z_terms = []
-    if "k01" in seg.fx:
-        z_terms.append(_pulse(T, kt, 0.12, 0.35))
-    if "h01" in seg.hero_fx:
+    if (pid := picked(seg.fx, "k01")):
+        z_terms.append(_pulse(T, kt, knob(pid, "amt", 0.12), knob(pid, "fall", 0.35)))
+    if (pid := picked(seg.hero_fx, "h01")):
+        gap = knob(pid, "gap", 0.16)
         z_terms.append(_pulse(T, kt, 0.10, 0.18))
-        z_terms.append(_pulse(T, kt + 0.16, 0.16, 0.35))
+        z_terms.append(_pulse(T, kt + gap, 0.16, 0.35))
     if seg.freeze_push:
         z_terms.append(f"if(between({T},{kt:.4f},{kt + hold:.4f}),0.4*({T}-{kt:.4f})/{hold:.4f},"
                        f"{_pulse(T, kt + hold, 0.4, 0.25)})")
-    if seg.camera == "c01":
-        z_terms.append(f"0.12*{T}/{max(total_s, 0.1):.4f}")
-    if seg.camera == "c04":
+    if (pid := picked(seg.fx, "k17")):
+        # Held close through the run-up and let go ON the kill: the release is
+        # the beat, where k01's arrival is. A reel that only ever punches in
+        # reads as one effect however often the pool is redrawn.
+        z_terms.append(f"{knob(pid, 'amt', 0.12)}*(1-min(1,max(0,({T}-{kt:.4f})"
+                       f"/{knob(pid, 'rise', 0.30):.3f})))")
+    if (pid := picked(seg.fx, "k21")):
+        z_terms.append(_pulse(T, kt, knob(pid, "amt", 0.18), 0.22))
+    cam = fam(seg.camera)
+    if cam == "c01":
+        z_terms.append(f"{knob(seg.camera, 'amt', 0.12)}*{T}/{max(total_s, 0.1):.4f}")
+    if cam == "c05":
+        z_terms.append(f"{knob(seg.camera, 'amt', 0.14)}*(1-{T}/{max(total_s, 0.1):.4f})")
+    if cam == "c08":
+        # One breath over the shot, never a loop: a sine that repeats reads as
+        # a wobble rather than a camera.
+        z_terms.append(f"{knob(seg.camera, 'amt', 0.07)}*sin(PI*{T}/{max(total_s, 0.1):.4f})")
+    if cam == "c04":
         for b in seg.beats:
-            z_terms.append(_pulse(T, b, 0.06, 0.18))
+            z_terms.append(_pulse(T, b, knob(seg.camera, "amt", 0.06), 0.18))
     if z_terms:
         v.append(f"zoompan=z='1+{'+'.join(z_terms)}'"
                  f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={F}")
-    if "k02" in seg.fx or seg.camera == "c03":
-        sx, sy = round(W * 1.08) // 2 * 2, round(H * 1.08) // 2 * 2
+    # EVERYTHING THAT MOVES THE FRAME SHARES ONE OVERSIZE. Shake, drift, pan
+    # and rotation all need slack around the picture to move into; giving each
+    # its own scale/crop pair would resample the frame once per effect and
+    # stack their crops. One scale, one optional rotate, one crop.
+    shake_id, tilt_id = picked(seg.fx, "k02"), picked(seg.fx, "k22")
+    rot_id = picked(seg.fx, "k19")
+    turns = bool(rot_id) or cam == "c06"
+    if shake_id or tilt_id or turns or cam in ("c03", "c07"):
+        # A degree of rotation throws a 1080-tall frame's corners about 16 px;
+        # 1.12 leaves 115 px a side, so nothing black ever reaches the crop.
+        over = 1.12 if turns else 1.08
+        sx, sy = round(W * over) // 2 * 2, round(H * over) // 2 * 2
         mx, my = (sx - W) / 2, (sy - H) / 2
         xs, ys = [f"{mx:.1f}"], [f"{my:.1f}"]
-        if "k02" in seg.fx:
-            env = f"gte(t,{kt:.4f})*max(0,1-(t-{kt:.4f})/0.45)"
-            xs.append(f"{mx * 0.7:.1f}*sin(t*70)*{env}")
-            ys.append(f"{my * 0.7:.1f}*cos(t*83)*{env}")
-        if seg.camera == "c03":
-            xs.append(f"{mx * 0.6:.1f}*sin(t*1.3)+{mx * 0.2:.1f}*sin(t*3.7)")
-            ys.append(f"{my * 0.6:.1f}*cos(t*1.1)")
-        v.append(f"scale={sx}:{sy},crop={W}:{H}:x='{'+'.join(xs)}':y='{'+'.join(ys)}'")
+        if shake_id:
+            amp, fall = knob(shake_id, "amp", 0.7), knob(shake_id, "fall", 0.45)
+            hz = knob(shake_id, "freq", 70.0)
+            env = f"gte(t,{kt:.4f})*max(0,1-(t-{kt:.4f})/{fall:.3f})"
+            xs.append(f"{mx * amp:.1f}*sin(t*{hz:.1f})*{env}")
+            ys.append(f"{my * amp:.1f}*cos(t*{hz * 1.19:.1f})*{env}")
+        if tilt_id:
+            # Up and down only. A sideways rattle reads as the player flicking;
+            # a vertical one reads as the hit landing.
+            amp, fall = knob(tilt_id, "amp", 0.85), knob(tilt_id, "fall", 0.40)
+            env = f"gte(t,{kt:.4f})*max(0,1-(t-{kt:.4f})/{fall:.3f})"
+            ys.append(f"{my * amp:.1f}*sin(t*64)*{env}")
+        if cam == "c03":
+            a = knob(seg.camera, "amp", 0.6)
+            xs.append(f"{mx * a:.1f}*sin(t*1.3)+{mx * a / 3:.1f}*sin(t*3.7)")
+            ys.append(f"{my * a:.1f}*cos(t*1.1)")
+        if cam == "c07":
+            # All the way across the slack, once, over the whole shot.
+            a = knob(seg.camera, "amp", 0.9)
+            xs.append(f"{mx * a:.1f}*(2*t/{max(total_s, 0.1):.4f}-1)")
+        turn = []
+        if rot_id:
+            turn.append(f"{knob(rot_id, 'rad', 0.026)}*gte(t,{kt:.4f})"
+                        f"*max(0,1-(t-{kt:.4f})/{knob(rot_id, 'fall', 0.35):.3f})")
+        if cam == "c06":
+            turn.append(f"{knob(seg.camera, 'rad', 0.030)}*(t/{max(total_s, 0.1):.4f}-0.5)")
+        chain = [f"scale={sx}:{sy}"]
+        if turn:
+            chain.append(f"rotate=a='{'+'.join(turn)}':ow={sx}:oh={sy}:c=none")
+        chain.append(f"crop={W}:{H}:x='{'+'.join(xs)}':y='{'+'.join(ys)}'")
+        v.append(",".join(chain))
 
-    sat, con, bri, static = GRADES.get(seg.grade, GRADES["g01"])
+    sat, con, bri, static = _grade_of(seg.grade)
     b_terms, c_terms, s_terms = [f"{bri}"], [f"{con}"], [f"{sat * seg.sat_trim:.3f}"]
-    if "k03" in seg.fx:
-        b_terms.append(f"0.55*gte(t,{kt:.4f})*max(0,1-(t-{kt:.4f})/0.12)")
-    if "k16" in seg.fx:
-        b_terms.append(f"0.35*{_between(kt, kt + 0.25)}*lt(mod(t*{F},4),2)")
+    if (pid := picked(seg.fx, "k03")):
+        b_terms.append(f"{knob(pid, 'amt', 0.55)}*gte(t,{kt:.4f})"
+                       f"*max(0,1-(t-{kt:.4f})/{knob(pid, 'fall', 0.12):.3f})")
+    if (pid := picked(seg.fx, "k16")):
+        per = max(2.0, knob(pid, "period", 4.0))
+        b_terms.append(f"{knob(pid, 'amt', 0.35)}*{_between(kt, kt + knob(pid, 'dur', 0.25))}"
+                       f"*lt(mod(t*{F},{per:.0f}),{per / 2:.0f})")
     s_expr = "+".join(s_terms)
-    if "k07" in seg.fx:
-        s_expr = f"({s_expr})*if(lt(t,{kt:.4f}),0.4,1.45-0.45*min(1,(t-{kt:.4f})/0.6))"
+    if (pid := picked(seg.fx, "k07")):
+        lo, hi = knob(pid, "from", 0.4), knob(pid, "to", 1.45)
+        s_expr = (f"({s_expr})*if(lt(t,{kt:.4f}),{lo},{hi}-{hi - 1.0:.3f}"
+                  f"*min(1,(t-{kt:.4f})/{knob(pid, 'fall', 0.6):.3f}))")
     c_expr = "+".join(c_terms)
-    if "k11" in seg.fx:
-        c_expr = f"({c_expr})*if({_between(kt, kt + 0.3)},1.45,1)"
-        s_expr = f"({s_expr})*if({_between(kt, kt + 0.3)},1.2,1)"
-    if "h03" in seg.hero_fx:
+    if (pid := picked(seg.fx, "k11")):
+        win = _between(kt, kt + knob(pid, "dur", 0.3))
+        c_expr = f"({c_expr})*if({win},{knob(pid, 'con', 1.45)},1)"
+        s_expr = f"({s_expr})*if({win},{knob(pid, 'sat', 1.2)},1)"
+    if picked(seg.hero_fx, "h03"):
         s_expr = f"({s_expr})*if({_between(kt, kt + 0.8)},0.7,1)"
     v.append(f"eq=brightness='{'+'.join(b_terms)}':contrast='{c_expr}':saturation='{s_expr}':eval=frame")
     if static:
         v.append(static)
-    if "k06" in seg.fx:
-        v.append(f"rgbashift=rh=9:bh=-9:enable='{_between(kt, kt + 0.18)}'")
-    if "k08" in seg.fx:
-        v.append(f"drawbox=x=0:y=0:w=iw:h=ih:color=0xff2a2a@0.3:t=fill:enable='{_between(kt, kt + 0.15)}'")
-    if "k12" in seg.fx:
-        v.append(f"negate=enable='{_between(kt, kt + 0.05)}'")
-    if "k14" in seg.fx:
-        v.append(f"boxblur=6:1:enable='{_between(kt, kt + 0.25)}'")
+    if (pid := picked(seg.fx, "k06")):
+        px = int(knob(pid, "px", 9.0))
+        v.append(f"rgbashift=rh={px}:bh=-{px}:enable='{_between(kt, kt + knob(pid, 'dur', 0.18))}'")
+    if (pid := picked(seg.fx, "k08")):
+        v.append(f"drawbox=x=0:y=0:w=iw:h=ih:color={_wash_colour(knob(pid, 'hue', 0.0))}"
+                 f"@{knob(pid, 'alpha', 0.3)}:t=fill:"
+                 f"enable='{_between(kt, kt + knob(pid, 'dur', 0.15))}'")
+    if (pid := picked(seg.fx, "k12")):
+        v.append(f"negate=enable='{_between(kt, kt + knob(pid, 'dur', 0.05))}'")
+    if (pid := picked(seg.fx, "k14")):
+        v.append(f"boxblur={int(knob(pid, 'r', 6.0))}:1:"
+                 f"enable='{_between(kt, kt + knob(pid, 'dur', 0.25))}'")
+    if (pid := picked(seg.fx, "k21")):
+        # Shorter and harder than the blur snap: it clears while the punch is
+        # still settling, so the frame arrives sharp on the beat.
+        v.append(f"gblur=sigma={knob(pid, 'sigma', 14.0)}:"
+                 f"enable='{_between(kt, kt + knob(pid, 'dur', 0.10))}'")
+    if (pid := picked(seg.fx, "k20")):
+        # Lift the highlights, then spill them: a negative unsharp is the
+        # cheapest glow there is, and it only ever touches what is already bright.
+        win = _between(kt, kt + knob(pid, "dur", 0.30))
+        v.append(f"curves=all='0/0 0.55/{knob(pid, 'lift', 0.68)} 1/1':enable='{win}'")
+        v.append(f"unsharp=9:9:-1.4:enable='{win}'")
+    if (pid := picked(seg.fx, "k18")):
+        # lagfun keeps the brighter of this frame and a decayed last one, so
+        # only movement against a dark ground trails -- muzzle flash and tracer,
+        # not the wall behind them.
+        v.append(f"lagfun=decay={knob(pid, 'decay', 0.88)}:"
+                 f"enable='{_between(kt, kt + knob(pid, 'dur', 0.35))}'")
     angle = []
     if seg.vignette:
         angle.append("PI/10")
-    if "k15" in seg.fx:
-        angle.append(f"0.6*gte(t,{kt:.4f})*max(0,1-(t-{kt:.4f})/0.4)")
-    if "h03" in seg.hero_fx:
-        angle.append(f"0.9*{_between(kt, kt + 0.8)}")
+    if (pid := picked(seg.fx, "k15")):
+        angle.append(f"{knob(pid, 'amt', 0.6)}*gte(t,{kt:.4f})"
+                     f"*max(0,1-(t-{kt:.4f})/{knob(pid, 'fall', 0.4):.3f})")
+    if (pid := picked(seg.hero_fx, "h03")):
+        angle.append(f"{knob(pid, 'amt', 0.9)}*{_between(kt, kt + 0.8)}")
     if angle:
         expr = "+".join(angle)
         dyn = "t" in expr.replace("PI", "")
@@ -2597,6 +2881,14 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
     song = project.get("song") or ""
     if song:
         args += ["-ss", f"{project['song_offset']:.4f}", "-t", f"{L + 1.0:.4f}", "-i", song]
+    # THE INTRO CLIP IS AN INPUT, NOT A SHOT. Trimmed by ffmpeg on the way in,
+    # so only the chosen part is ever decoded, and last in the input list so
+    # the segment and song indices above it do not move.
+    ic = project.get("intro_clip") or None
+    ic_len = round(float(ic["end"]) - float(ic["start"]), 4) if ic else 0.0
+    ic_i = n + (1 if song else 0)
+    if ic:
+        args += ["-ss", f"{float(ic['start']):.4f}", "-t", f"{ic_len:.4f}", "-i", str(ic["path"])]
 
     g = []
     for i in range(n):
@@ -2616,7 +2908,8 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
             acc += frames_i
         else:
             off = (acc - T) / F
-            g.append(f"[{acc_label}][s{i}]xfade=transition={XFADE[t]}:duration={T / F:.5f}:offset={off:.5f},settb=AVTB[{lab}]")
+            g.append(f"[{acc_label}][s{i}]xfade=transition={_xfade_name(t)}:"
+                     f"duration={T / F:.5f}:offset={off:.5f},settb=AVTB[{lab}]")
             acc += frames_i - T
         acc_label = lab
 
@@ -2638,7 +2931,10 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
     def over(own: float, share: float, cap: float) -> float:
         return round(min(max(own, lead * share), cap), 3)
 
-    if intro == "i03":
+    if fam(intro) == "fade_in":
+        post.append(f"fade=in:st=0:d={over(_fade_seconds(intro, 0.7), 0.6, 3.0)}"
+                    f":color={_fade_colour(intro)}")
+    elif intro == "i03":
         post.append(f"fade=in:st=0:d={over(1.0, 0.6, 3.0)}")
     elif intro == "i08":
         d = over(0.35, 0.25, 1.2)
@@ -2648,17 +2944,30 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         post.append(f"eq=saturation='if(lt(t,{k1:.4f}),0.15,1)':eval=frame")
         post.append(f"fade=in:st=0:d={over(0.6, 0.5, 2.5)}")
     end_fade = rulebook.ending_fade(project["beat"])
-    if outro == "e01" or outro == "e03":
+    if fam(outro) == "fade_out":
+        d = _fade_seconds(outro, 0.7)
+        post.append(f"fade=out:st={max(0.0, L - d):.4f}:d={d:.4f}:color={_fade_colour(outro)}")
+    elif outro == "e01" or outro == "e03":
         post.append(f"fade=out:st={max(0.0, L - end_fade):.4f}:d={end_fade:.4f}")
     elif outro == "e05":
         post.append(f"fade=out:st={max(0.0, L - 0.35):.4f}:d=0.35:color=white")
     elif outro == "e02":
         post.append(f"hue=s='if(gt(t,{L - 1.0:.4f}),max(0,1-(t-{L - 1.0:.4f})/0.8),1)'")
     ov = project["overlays"]
-    if "o04" in ov:
-        post.append("noise=alls=10:allf=t")
-    if "o01" in ov and project["format"] == "landscape":
-        bar = round(H * 0.125)
+    if (pid := picked(ov, "o04")):
+        post.append(f"noise=alls={int(knob(pid, 'amt', 10.0))}:allf=t")
+    if (pid := picked(ov, "o05")):
+        # Every other line darkened by a tenth. Drawn from the frame's own
+        # height rather than a fixed pitch, so 1080p and 1440p look alike and
+        # neither moirés against the encoder.
+        pitch = max(1, int(knob(pid, "pitch", 2.0) * max(1, round(H / 1080))))
+        post.append(f"geq=lum='lum(X,Y)*(1-0.10*lt(mod(Y,{pitch * 2}),{pitch}))':"
+                    f"cb='cb(X,Y)':cr='cr(X,Y)'")
+    if (pid := picked(ov, "o08")):
+        px = int(knob(pid, "px", 2.0))
+        post.append(f"rgbashift=rh={px}:bh=-{px}")
+    if (pid := picked(ov, "o01")) and project["format"] == "landscape":
+        bar = round(H * knob(pid, "h", 0.125))
         post.append(f"drawbox=x=0:y=0:w=iw:h={bar}:color=black:t=fill,drawbox=x=0:y=ih-{bar}:w=iw:h={bar}:color=black:t=fill")
     font = _font()
     if "o02" in ov and derived["kills"]:
@@ -2691,6 +3000,23 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
                     f"[bs][bg]blend=all_expr='A*min(1,T/{b})+B*(1-min(1,T/{b}))'[bl]")
         g.append(chain_in)
         acc_label = "bl"
+    # THE INTRO GOES ON BEFORE THE POST CHAIN, NOT AFTER IT. Everything in
+    # `post` is what the reel looks like -- the fade up from black, the kill
+    # counter, the handle in the corner -- and all of it should apply to the
+    # intro too. Laid over the top afterwards, the intro would punch a hole in
+    # the reel's own opening: a fade from black that the intro ignores, a
+    # handle that vanishes for nine seconds and comes back.
+    if ic:
+        fit = ("scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d" % (W, H, W, H)
+               if ic.get("fit", "cover") == "cover" else
+               "scale=%d:%d:force_original_aspect_ratio=decrease,"
+               "pad=%d:%d:(ow-iw)/2:(oh-ih)/2:black" % (W, H, W, H))
+        g.append(f"[{ic_i}:v]fps={F},{fit},setsar=1,format=yuv420p,setpts=PTS-STARTPTS[icv]")
+        # eof_action=pass: the intro ends long before the reel does, and the
+        # default would end the whole video with it.
+        g.append(f"[{acc_label}][icv]overlay=0:0:eof_action=pass:"
+                 f"enable='lt(t,{ic_len:.4f})'[icj]")
+        acc_label = "icj"
     post.append(f"trim=end_frame={Lf},format=yuv420p")
     g.append(f"[{acc_label}]" + ",".join(post) + "[v]")
 
@@ -2704,9 +3030,9 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
              f"apad=whole_dur={L:.4f},atrim=0:{L:.4f}[game]")
     if song:
         fades = []
-        if intro in ("i03", "i05"):
+        if intro in ("i03", "i05") or fam(intro) == "fade_in":
             fades.append("afade=t=in:st=0:d=1.0")
-        if outro in ("e01", "e03", "e02"):
+        if outro in ("e01", "e03", "e02") or fam(outro) == "fade_out":
             fades.append(f"afade=t=out:st={max(0.0, L - end_fade):.4f}:d={end_fade:.4f}")
         # A BREATH BEFORE THE BIG ONE: the music drops away for the half beat
         # before each hero kill and comes back on it.
@@ -2751,13 +3077,43 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         last = "[mixed]"
     else:
         last = "[game]"
+    # THE INTRO'S OWN SOUND, IF IT WAS ASKED FOR AND THERE IS ANY. Mixed over
+    # the finished bed rather than into the game mix, which would put it
+    # through game_db -- the intro is not gameplay, and a user who pulls the
+    # game down to hear the music should not lose their intro's sound with it.
+    # apad carries it to full length so amix does not end the track early.
+    if ic and ic.get("audio") and ic.get("has_audio"):
+        g.append(f"[{ic_i}:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
+                 f"asetpts=PTS-STARTPTS,atrim=0:{ic_len:.4f},"
+                 f"apad=whole_dur={L:.4f},atrim=0:{L:.4f}[ica]")
+        g.append(f"{last}[ica]amix=inputs=2:normalize=0:duration=first[icmix]")
+        last = "[icmix]"
     g.append(f"{last}alimiter=limit=0.9:level=disabled,aresample=48000,"
              f"apad=whole_dur={L:.4f},atrim=0:{L:.4f}[a]")
 
     enc = encoder_args if encoder_args is not None else ["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p"]
-    return args + ["-filter_complex", ";".join(g), "-map", "[v]", "-map", "[a]",
-                   "-r", str(F), *enc, "-c:a", "aac", "-b:a", "256k", "-ar", "48000",
-                   "-movflags", "+faststart", "-t", f"{L:.4f}", str(out)]
+    graph = ";".join(g)
+    tail = ["-map", "[v]", "-map", "[a]", "-r", str(F), *enc,
+            "-c:a", "aac", "-b:a", "256k", "-ar", "48000",
+            "-movflags", "+faststart", "-t", f"{L:.4f}", str(out)]
+
+    # A LONG REEL WILL NOT FIT ON A WINDOWS COMMAND LINE. CreateProcess caps
+    # the whole line at 32,767 characters, and the filter graph grows with the
+    # shot count: measured on a real 50-shot reel, the graph alone was 28,394
+    # characters and the command 33,144 -- 379 over, so it died with
+    # "[WinError 206] The filename or extension is too long" AFTER all 50
+    # shots had been encoded. MAX_SHOTS is 80, so the app was offering nearly
+    # twice what it could deliver.
+    #
+    # ffmpeg will read the graph out of a file instead, which takes those
+    # 28,394 characters off the line. Only when it is needed: the inline form
+    # is what every normal reel uses and what is easiest to read in a log.
+    if sum(len(a) + 3 for a in args + ["-filter_complex", graph] + tail) > CMDLINE_SAFE:
+        from .tools import filter_script_flag
+
+        script = text_file(textdir, graph)
+        return args + [filter_script_flag(), str(script)] + tail
+    return args + ["-filter_complex", graph] + tail
 
 
 # ============================================================== the job

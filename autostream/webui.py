@@ -232,6 +232,19 @@ class _Handler(BaseHTTPRequestHandler):
         self._media(path, self.app._clips_dir(cfg.load()),
                     (".mp4", ".m4v", ".webm"), "video")
 
+    def _intro(self, path: str) -> None:
+        """Stream one intro clip, so it can be previewed and trimmed by eye.
+
+        Its own root and one type, for the same reason `_sound` has its own:
+        every widening of the thing that streams files is one more place to be
+        careful about forever, and a parameter costs nothing. Everything in
+        that folder is an mp4 this app wrote (clips/intros.py re-encodes on
+        import), so there is exactly one extension to allow.
+        """
+        from .clips import intros
+
+        self._media(path, intros.folder(), (".mp4",), "intro")
+
     def _sound(self, path: str) -> None:
         """Stream one sound effect, so the effects preview can play it.
 
@@ -477,6 +490,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.app.studio_project((parse_qs(u.query).get("path") or [""])[0]))
         elif u.path == "/api/studio/songs":
             self._json(self.app.studio_songs())
+        elif u.path == "/api/studio/intros":
+            self._json(self.app.studio_intros())
+        elif u.path == "/api/studio/intro":
+            self._intro((parse_qs(u.query).get("path") or [""])[0])
         elif u.path == "/api/studio/songview":
             self._json(self.app.studio_songview((parse_qs(u.query).get("song") or [""])[0]))
         elif u.path == "/api/studio/songview.bin":
@@ -614,6 +631,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.reel_plan(b))
             elif p == "/api/reel/run":
                 self._json(self.app.reel_run(b))
+            elif p == "/api/studio/favourite-part":
+                self._json(self.app.studio_favourite_part(b))
             elif p == "/api/studio/plan":
                 self._json(self.app.studio_plan(b))
             elif p == "/api/studio/check":
@@ -630,6 +649,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_delete(b))
             elif p == "/api/studio/reel-delete":
                 self._json(self.app.studio_reel_delete(b))
+            elif p == "/api/studio/intro-add":
+                self._json(self.app.studio_intro_add(b))
+            elif p == "/api/studio/intro-delete":
+                self._json(self.app.studio_intro_delete(b))
             elif p == "/api/studio/songfetch":
                 self._json(self.app.studio_songfetch(b))
             elif p == "/api/studio/favourite":
@@ -2425,6 +2448,16 @@ class Server:
 
         return studio.catalog()
 
+    def studio_favourite_part(self, body: dict) -> dict:
+        """Star or unstar one PART of the bin -- not a clip; see studio_favourite."""
+        from .clips import studio
+
+        try:
+            got = studio.set_favourite_part(str(body.get("part") or ""), bool(body.get("on")))
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "favourite_parts": got}
+
     def studio_songs(self) -> dict:
         """The songs already downloaded, to pick one without a file dialog."""
         from .clips import songview
@@ -2780,6 +2813,48 @@ class Server:
             return {"ok": False, "error": f"Could not delete those reels: {e}"}
         return {"ok": True, **got}
 
+    def studio_intros(self) -> dict:
+        """The intro clips already in the library, to reuse one without a dialog."""
+        from .clips import intros
+
+        return {"ok": True, "intros": intros.listing(),
+                "max_seconds": intros.MAX_SECONDS}
+
+    def studio_intro_add(self, body: dict) -> dict:
+        """Take a GIF or video into the intros library. -> {ok, intro}.
+
+        The path comes from the OS dialog (`/api/clips/pick`), never from a
+        browser file input -- see clips_pick for why. Re-encoding runs on this
+        request's own thread; the server is threaded, so a slow convert holds
+        up nothing but the dialog that asked for it.
+        """
+        from . import clips as clips_mod
+        from .clips import intros
+
+        src = str(body.get("path") or "").strip()
+        if not src:
+            return {"ok": False, "error": "Choose a file first."}
+        c = cfg.load()
+        clips_mod.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+        try:
+            got = intros.add(src)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:                               # noqa: BLE001
+            return {"ok": False, "error": f"Could not add that intro: {str(e)[:200]}"}
+        return {"ok": True, "intro": got}
+
+    def studio_intro_delete(self, body: dict) -> dict:
+        """Delete one intro from the library. Reels already rendered keep theirs."""
+        from .clips import intros, studio
+
+        if studio.runner().busy():
+            return {"ok": False, "error": "A reel is rendering; delete intros once it has finished."}
+        try:
+            return intros.remove(str(body.get("path") or ""))
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+
     def studio_songfetch(self, body: dict) -> dict:
         """Start downloading a song's audio from a YouTube link. Progress is polled."""
         from .clips import songfetch
@@ -3052,8 +3127,9 @@ class Server:
     def clips_pick(self, kind: str = "video") -> dict:
         """Ask the OS for a file. -> {ok, path} or {error}.
 
-        `kind` only changes the filter and the title: a reel needs a song
-        and everything else about choosing one is identical.
+        `kind` only changes the filter and the title: a reel needs a song,
+        an intro needs a GIF, and everything else about choosing one is
+        identical.
 
         A browser file input hands back a NAME, never a path, and these files
         run to tens of gigabytes so uploading one is not an option either. The
@@ -3074,14 +3150,20 @@ class Server:
             root.withdraw()
             root.attributes("-topmost", True)   # or it opens behind the browser
             audio = kind == "audio"
-            chosen = filedialog.askopenfilename(
-                parent=root,
-                title="Choose a track for the reel" if audio
-                      else "Choose a video to clip",
-                filetypes=[("Audio", "*.mp3 *.flac *.m4a *.wav *.aac *.ogg *.opus")]
-                if audio else
-                [("Video", "*.mp4 *.mkv *.mov *.flv *.avi *.ts *.webm"),
-                 ("All files", "*.*")])
+            if kind == "intro":
+                from .clips import intros
+
+                title = "Choose a GIF or video for the intro"
+                types = [("Video or GIF", " ".join("*" + t for t in intros.TYPES)),
+                         ("All files", "*.*")]
+            elif audio:
+                title = "Choose a track for the reel"
+                types = [("Audio", "*.mp3 *.flac *.m4a *.wav *.aac *.ogg *.opus")]
+            else:
+                title = "Choose a video to clip"
+                types = [("Video", "*.mp4 *.mkv *.mov *.flv *.avi *.ts *.webm"),
+                         ("All files", "*.*")]
+            chosen = filedialog.askopenfilename(parent=root, title=title, filetypes=types)
             root.destroy()
         except Exception as e:  # noqa: BLE001
             return {"error": f"Could not open the file picker: {str(e)[:160]}"}
@@ -3093,7 +3175,11 @@ class Server:
         out = {"ok": True, "path": str(path), "name": path.name,
                "bytes": path.stat().st_size,
                "size_mb": round(path.stat().st_size / (1024 * 1024))}
-        out.update(self.clips_probe({"path": str(path)}))
+        # An intro is measured by intros.add() a moment later, and clips_probe
+        # also goes looking for a matching replay -- work with no answer to
+        # give about a GIF.
+        if kind != "intro":
+            out.update(self.clips_probe({"path": str(path)}))
         return out
 
     def clips_probe(self, body: dict) -> dict:

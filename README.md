@@ -136,6 +136,14 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     edited shots flagged on the timeline, a badge over the player itself, and a button
     that counts them: *Apply 4 changes*. Undo takes one back off the list, and a render
     that fails or is cancelled puts them back on it.
+  - **Your own GIF or video over the slow start.** Some songs take nine seconds to
+    arrive, and AutoStream will not spend the first kill on a mark the opening shot
+    cannot reach — so the reel holds on one shot until the music gets there. Drop in
+    a GIF or a video and it plays over that build instead, with the song and the reel
+    running underneath: *Fill the lead-in* trims it to the exact length of the hole.
+    Trim it by eye against its own preview, play its sound or mute it, crop it to the
+    frame or letterbox it. Every clip you add stays in your intros library for the
+    next reel, and the intro never moves a cut, a kill or the length of the reel.
   - **See for yourself that the kills landed on the music.** The timeline's music
     track is the song's **spectrogram** — a kick and a hi-hat look different there,
     where in a waveform they look the same — with the hits the reel was cut to marked
@@ -846,6 +854,7 @@ Clips page shows what is missing and the rest of AutoStream is unaffected.
 | [`clips/voice.py`](autostream/clips/voice.py) | Spoken hooks from Kokoro-82M, ducked over the run-up. Optional download; silent without it. |
 | [`clips/studio.py`](autostream/clips/studio.py) | The Studio: every clip on disk by game and run, reels planned from any of them on the beat grid, the editable project each reel is saved with, and the two-stage render (cached shots, then the join). |
 | [`clips/studio_refs.py`](autostream/clips/studio_refs.py) | What popular Valorant edits do, measured — the numbers the Studio's styles are built from. |
+| [`clips/intros.py`](autostream/clips/intros.py) | The intro clips a reel can open over. A GIF or video is re-encoded into one normalised mp4 in `Videos\AutoStream\intros` so it can be scrubbed, trimmed and reused; the render lays it over the head of the reel, never in front of it. |
 | [`webui.py`](autostream/webui.py) | Local HTTP server and JSON API. |
 | [`ui/`](autostream/ui/) | The six-page web app: `shell`, `dashboard`, `library`, `clips`, `studio`, `settings`, `logs`, `setup`. |
 | [`window.py`](autostream/window.py) | Native window via pywebview (Edge WebView2). |

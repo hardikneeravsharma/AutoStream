@@ -78,6 +78,8 @@ STUDIO_HTML = r"""
           shows what the reel will actually do. Click one to put it in the template you are dealing.</p>
       </div>
       <div class="bin-build">
+        <button type="button" class="btn btn-sm" data-act="studio-bin-favonly" id="bin-favonly"
+                aria-pressed="false" title="Show only the parts you have kept">&#9733; Favourites</button>
         <button type="button" class="btn btn-sm" data-act="studio-bin-build" id="bin-build">Cut the missing examples</button>
         <span id="bin-build-msg"></span>
       </div>
@@ -423,6 +425,87 @@ STUDIO_HTML = r"""
   </div>
   </div>
 
+  <!-- THE INTRO CLIP. A dialog and not a panel in the inspector, because the
+       inspector rebuilds its own HTML on every edit: a <video> living there
+       would reload, lose its playhead and stop mid-trim every time a slider
+       moved. Trimming by eye needs a player that stays put. -->
+  <div class="scrim hide" id="studio-intro-scrim">
+  <div class="modal studio-intro-modal" id="studio-intro" role="dialog" aria-modal="true" aria-labelledby="studio-intro-title">
+    <h2 class="modal-title" id="studio-intro-title">Intro clip</h2>
+    <div class="modal-body studio-intro-body">
+      <p class="muted studio-intro-lede" id="studio-intro-lede"></p>
+
+      <div class="studio-intro-lib" id="studio-intro-lib" role="group" aria-label="Your intro clips"></div>
+      <div class="field-inline">
+        <button type="button" class="btn" data-act="studio-intro-add" id="studio-intro-add">Add a GIF or video…</button>
+        <span class="muted" id="studio-intro-msg"></span>
+      </div>
+
+      <div class="studio-intro-edit hide" id="studio-intro-edit">
+        <div class="studio-intro-player">
+          <video id="studio-intro-video" playsinline preload="metadata" muted></video>
+        </div>
+        <div class="studio-tl-bar">
+          <button type="button" class="btn btn-sm studio-transport studio-transport-wide" data-act="studio-intro-play" id="studio-intro-play">Play the part</button>
+          <label class="studio-check"><input type="checkbox" id="studio-intro-loop" checked> Loop</label>
+          <span class="mono studio-clock" id="studio-intro-clock">0:00.00</span>
+          <span class="muted" id="studio-intro-range"></span>
+        </div>
+
+        <!-- TRIMMED TWO WAYS, BECAUSE THEY ARE TWO DIFFERENT JOBS. The sliders
+             are for "about there"; "Start here"/"End here" take the playhead,
+             which is how you trim to a beat you can see. -->
+        <div class="studio-intro-trim">
+          <label class="field-label" for="studio-intro-a">Starts at <span class="mono" id="studio-intro-astamp">0:00.00</span></label>
+          <div class="field-inline studio-nudge">
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-intro-nudge" data-what="start" data-d="-1">−1 s</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-intro-nudge" data-what="start" data-d="-0.1">−0.1 s</button>
+            <input type="range" id="studio-intro-a" min="0" max="1000" value="0" aria-label="Where the intro starts">
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-intro-nudge" data-what="start" data-d="0.1">+0.1 s</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-intro-nudge" data-what="start" data-d="1">+1 s</button>
+            <button type="button" class="btn btn-sm" data-act="studio-intro-here" data-what="start">Start here</button>
+          </div>
+          <label class="field-label" for="studio-intro-b">Ends at <span class="mono" id="studio-intro-bstamp">0:00.00</span></label>
+          <div class="field-inline studio-nudge">
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-intro-nudge" data-what="end" data-d="-1">−1 s</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-intro-nudge" data-what="end" data-d="-0.1">−0.1 s</button>
+            <input type="range" id="studio-intro-b" min="0" max="1000" value="1000" aria-label="Where the intro ends">
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-intro-nudge" data-what="end" data-d="0.1">+0.1 s</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-intro-nudge" data-what="end" data-d="1">+1 s</button>
+            <button type="button" class="btn btn-sm" data-act="studio-intro-here" data-what="end">End here</button>
+          </div>
+          <div class="field-inline">
+            <button type="button" class="btn btn-sm" data-act="studio-intro-fit-lead" id="studio-intro-fit-lead">Fill the lead-in</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-intro-whole">The whole clip</button>
+          </div>
+        </div>
+
+        <div class="studio-intro-opts">
+          <div class="studio-field">
+            <span class="field-label">Sound</span>
+            <label class="studio-check"><input type="checkbox" id="studio-intro-audio"> Play the clip's own sound</label>
+            <p class="muted studio-small" id="studio-intro-audionote"></p>
+          </div>
+          <div class="studio-field">
+            <span class="field-label">Shape</span>
+            <div class="seg">
+              <button type="button" class="seg-btn is-active" data-act="studio-intro-fit" data-fit="cover" id="studio-intro-fit-cover">Fill the frame</button>
+              <button type="button" class="seg-btn" data-act="studio-intro-fit" data-fit="contain" id="studio-intro-fit-contain">Fit it all in</button>
+            </div>
+            <p class="muted studio-small" id="studio-intro-fitnote"></p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <span class="muted" id="studio-intro-warn"></span>
+      <button type="button" class="btn btn-ghost hide" data-act="studio-intro-clear" id="studio-intro-clear">Open without an intro</button>
+      <button type="button" class="btn btn-ghost" data-act="studio-intro-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" data-act="studio-intro-use" id="studio-intro-use" disabled>Use this intro</button>
+    </div>
+  </div>
+  </div>
+
   <!-- DELETING A REEL. Its own dialog rather than the clips one: what goes and
        what stays are the opposite way round here, and that is the whole
        question being asked. -->
@@ -479,6 +562,7 @@ const studio = {
   sel: -1, pps: 60, snap: true, undo: [], checking: 0, checkTimer: null,
   polling: null, drag: null, clipIndex: {},
   gen: 0, jobId: 0, seenJob: -1, watching: -1, busy: false, pollTok: 0,
+  favParts: [], favOnly: false,
   sg: {song: '', shape: null, start: 0, end: 0, marks: [], drag: null, ticked: {}, ac: null,
        sel: -1, seeded: ''},
   /* The part of the song chosen on the Make dialog, in song seconds. */
@@ -486,7 +570,11 @@ const studio = {
   /* A song being downloaded from a YouTube link, and which picker asked for it. */
   yt: {target: 'make', timer: null, running: false},
   /* Set while clips are being added to an existing reel: what to rebuild. */
-  adding: null, delPaths: [], reelDel: ''
+  adding: null, delPaths: [], reelDel: '',
+  /* The intro-clip dialog: the library, which one is being edited, and the
+     trim being made to it. Nothing here touches the project until Use. */
+  intro: {list: null, pick: '', seconds: 0, hasAudio: false,
+          start: 0, end: 0, audio: false, fit: 'cover', tick: null}
 };
 
 const studio_el = (id) => document.getElementById(id);
@@ -525,7 +613,10 @@ function studio_parts(kind) {
 async function studio_load(force) {
   if (!studio.catalog) {
     const cat = await API.get('/api/studio/catalog');
-    if (cat && cat.ok) { studio.catalog = cat; studio.style = cat.default_style; }
+    if (cat && cat.ok) {
+      studio.catalog = cat; studio.style = cat.default_style;
+      studio.favParts = cat.favourite_parts || [];
+    }
   }
   if (!force && studio.lib && Date.now() - studio.loadedAt < 30000) { studio_renderLib(); return; }
   const lib = await API.get('/api/studio/library');
@@ -727,7 +818,9 @@ function studio_closeModals() {
   const a = studio_el('studio-mk-audio');
   if (a && !a.paused) a.pause();
   ['studio-preview-scrim', 'studio-make-scrim', 'studio-del-scrim',
-   'studio-rdel-scrim'].forEach(id => studio_show(id, false));
+   'studio-rdel-scrim', 'studio-intro-scrim'].forEach(id => studio_show(id, false));
+  const iv = studio_el('studio-intro-video');
+  if (iv && !iv.paused) iv.pause();
   if (!studio.yt.running) studio_show('studio-yt-scrim', false);
 }
 
@@ -1238,11 +1331,42 @@ function studio_binShot(id) {
 }
 
 function studio_binCard(p, on, act) {
+  const fav = studio.favParts.indexOf(p.id) >= 0;
   return '<button type="button" class="bin-card' + (on ? ' is-on' : '') +
     '" data-act="' + act + '" data-kind="' + esc(p.kind) + '" data-part="' + esc(p.id) + '"' +
     ' aria-pressed="' + (on ? 'true' : 'false') + '">' + studio_binShot(p.id) +
+    '<span class="bin-star' + (fav ? ' is-on' : '') + '" role="button" tabindex="0"' +
+    ' data-act="studio-bin-fav" data-part="' + esc(p.id) + '"' +
+    ' aria-pressed="' + (fav ? 'true' : 'false') + '"' +
+    ' title="' + (fav ? 'Remove from favourites' : 'Keep in favourites') + '">' +
+    (fav ? '★' : '☆') + '</span>' +
     '<span class="bin-meat"><span class="bin-name">' + esc(p.label || p.id) + '</span>' +
     '<span class="bin-blurb">' + esc(p.blurb || '') + '</span></span></button>';
+}
+
+/* FAVOURITES FIRST, and on their own when the filter is on. With a hundred
+   cards in a drawer the ones a person keeps coming back to are the only ones
+   they will find twice, so they float to the top of their own drawer rather
+   than into a tenth drawer of their own. */
+function studio_binSort(parts) {
+  const fav = studio.favParts;
+  if (studio.favOnly) return parts.filter(function (p) { return fav.indexOf(p.id) >= 0; });
+  return parts.slice().sort(function (a, b) {
+    return (fav.indexOf(b.id) >= 0) - (fav.indexOf(a.id) >= 0);
+  });
+}
+
+async function studio_binFav(id) {
+  const on = studio.favParts.indexOf(id) < 0;
+  const r = await API.post('/api/studio/favourite-part', {part: id, on: on});
+  if (!r || !r.ok) { toast((r && r.error) || 'That part could not be starred.'); return; }
+  studio.favParts = r.favourite_parts || [];
+  studio_binDraw();
+}
+
+function studio_binFavOnly() {
+  studio.favOnly = !studio.favOnly;
+  studio_binDraw();
 }
 
 function studio_binDraw() {
@@ -1251,11 +1375,14 @@ function studio_binDraw() {
   const drawers = studio.catalog.drawers || Object.keys(BIN_DRAWERS);
   const picks = studio_template();
   box.innerHTML = drawers.map(function (kind) {
-    const parts = studio_parts(kind);
+    const all = studio_parts(kind);
+    const parts = studio_binSort(all);
     if (!parts.length) return '';
+    const kept = all.filter(function (x) { return studio.favParts.indexOf(x.id) >= 0; }).length;
     return '<section class="bin-sec bin-drawer">' +
       '<div class="bin-sec-head"><h2>' + esc(studio_binName(kind)) + '</h2>' +
-      '<span class="count">' + parts.length + ' to pick from</span></div>' +
+      '<span class="count">' + parts.length + ' to pick from' +
+      (kept && !studio.favOnly ? ' · ' + kept + ' kept' : '') + '</span></div>' +
       '<div class="bin-grid">' +
       parts.map(function (p) { return studio_binCard(p, picks[kind] === p.id, 'studio-bin-pick'); }).join('') +
       '</div></section>';
@@ -1270,6 +1397,12 @@ function studio_binDraw() {
     b.disabled = !miss;
     b.textContent = miss ? 'Cut the ' + miss + ' missing example' + (miss === 1 ? '' : 's')
       : 'Every part has an example';
+  }
+  const fo = studio_el('bin-favonly');
+  if (fo) {
+    fo.setAttribute('aria-pressed', studio.favOnly ? 'true' : 'false');
+    fo.classList.toggle('is-active', !!studio.favOnly);
+    fo.disabled = !studio.favParts.length && !studio.favOnly;
   }
   studio_binSlots();
   studio_binWatch();
@@ -1628,8 +1761,12 @@ function studio_localDerive() {
   const beat = p.beat || 0.5;
   const beats = [];
   for (let b = 0; b <= t + 1e-6; b += beat) beats.push(b);
+  /* Carried through, not recomputed: neither follows from the shots, and a
+     drag that dropped them made the intro band blink off the timeline until
+     the server answered. */
   studio.derived = {length: t, shots: rows, kills: rows.map(r => r.kill_reel), beats: beats, beat: beat,
-                    bpm: 60 / beat};
+                    bpm: 60 / beat, selection: (d && d.selection) || [],
+                    lead_in: (d && d.lead_in) || 0, intro_clip: (d && d.intro_clip) || null};
 }
 
 function studio_snapTo(t) {
@@ -1955,6 +2092,246 @@ async function studio_deleteGo() {
   studio_load(true);
 }
 
+/* =======================================================================
+   THE INTRO CLIP
+   A song that takes nine seconds to arrive leaves the opener holding for
+   nine seconds, and the built-in intro effects are a second long. This is
+   what goes on screen during that build: the user's own GIF or video, over
+   the head of the reel, with the song running underneath. See
+   clips/intros.py for why it is an overlay and not a shot.
+   ======================================================================= */
+
+/* The inspector's one line about it. The editing happens in the dialog; this
+   says what is set and opens it. */
+function studio_introRow(p) {
+  const ic = p.intro_clip;
+  const len = ic ? (Number(ic.end) - Number(ic.start)) : 0;
+  return '<div class="studio-introrow">' +
+    (ic
+      ? '<span class="studio-introrow-on"><b class="truncate">' + esc(ic.name || 'Intro clip') + '</b>' +
+        '<span class="muted">' + len.toFixed(1) + ' s · ' +
+        (ic.audio && ic.has_audio ? 'with its sound' : 'silent') + '</span></span>'
+      : '<span class="muted">No intro clip</span>') +
+    '<span class="field-inline">' +
+    '<button type="button" class="btn btn-sm" data-act="studio-intro-open">' +
+    (ic ? 'Edit the intro clip…' : 'Add an intro clip…') + '</button>' +
+    (ic ? '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-intro-off">Remove</button>' : '') +
+    '</span></div>';
+}
+
+async function studio_introOpen() {
+  const p = studio.project;
+  if (!p) return;
+  const ic = p.intro_clip;
+  studio.intro.pick = ic ? ic.path : '';
+  studio.intro.start = ic ? Number(ic.start) : 0;
+  studio.intro.end = ic ? Number(ic.end) : 0;
+  studio.intro.audio = ic ? !!ic.audio : false;
+  studio.intro.fit = (ic && ic.fit) || 'cover';
+  studio.intro.seconds = 0; studio.intro.hasAudio = false;
+  studio_el('studio-intro-msg').textContent = '';
+  studio_show('studio-intro-clear', !!ic);
+  studio_show('studio-intro-scrim', true);
+  studio_introLede();
+  await studio_introLoad();
+  if (studio.intro.pick) studio_introChoose(studio.intro.pick, true);
+  else studio_introDraw();
+}
+
+function studio_introLede() {
+  const d = studio.derived;
+  const lead = d ? Number(d.lead_in || 0) : 0;
+  studio_el('studio-intro-lede').textContent = lead > 0.5
+    ? 'This reel opens with a ' + lead.toFixed(1) + ' s run-up before its first kill — the song has '
+      + 'not arrived yet. An intro clip plays over that, with the song underneath.'
+    : 'An intro clip plays over the start of the reel, with the song and the reel underneath. '
+      + 'It never changes the length or where anything is cut.';
+  const b = studio_el('studio-intro-fit-lead');
+  studio_show('studio-intro-fit-lead', lead > 0.5);
+  if (b && lead > 0.5) b.textContent = 'Fill the lead-in (' + lead.toFixed(1) + ' s)';
+}
+
+async function studio_introLoad() {
+  const r = await API.get('/api/studio/intros');
+  studio.intro.list = (r && r.ok) ? (r.intros || []) : [];
+  studio_introLib();
+}
+
+function studio_introLib() {
+  const box = studio_el('studio-intro-lib');
+  const list = studio.intro.list;
+  if (list === null) { box.innerHTML = '<p class="muted">Reading your intros…</p>'; return; }
+  if (!list.length) {
+    box.innerHTML = '<p class="muted">No intro clips yet. Add a GIF or a video and it stays here for every reel.</p>';
+    return;
+  }
+  box.innerHTML = list.map(x =>
+    '<div class="studio-introcard' + (x.path === studio.intro.pick ? ' is-on' : '') + '">' +
+    '<button type="button" class="studio-introcard-hit" data-act="studio-intro-pick" data-path="' + esc(x.path) + '">' +
+    '<span class="studio-introcard-name truncate">' + esc(x.name) + '</span>' +
+    '<span class="muted studio-introcard-meta">' + Number(x.seconds).toFixed(1) + ' s · ' +
+    (x.width && x.height ? x.width + '×' + x.height : '') + (x.has_audio ? ' · sound' : ' · silent') + '</span></button>' +
+    '<button type="button" class="btn btn-ghost btn-sm studio-del-btn" data-act="studio-intro-del" ' +
+    'data-path="' + esc(x.path) + '" data-name="' + esc(x.name) + '" title="Delete this intro">Delete</button>' +
+    '</div>').join('');
+}
+
+function studio_introChoose(path, keepTrim) {
+  const x = (studio.intro.list || []).find(i => i.path === path);
+  if (!x) return;
+  const iv = studio.intro;
+  iv.pick = path; iv.seconds = Number(x.seconds) || 0; iv.hasAudio = !!x.has_audio;
+  if (!keepTrim || iv.end <= iv.start) {
+    iv.start = 0; iv.end = iv.seconds;
+    /* A fresh pick takes the clip at its word: a video handed over with sound
+       is a video whose sound was the point, so muting is the deliberate act
+       and not the default. A reel being reopened keeps what it was saved with. */
+    iv.audio = !!x.has_audio;
+  }
+  iv.start = Math.max(0, Math.min(iv.start, Math.max(0, iv.seconds - 0.3)));
+  iv.end = Math.max(iv.start + 0.3, Math.min(iv.end || iv.seconds, iv.seconds));
+  if (!iv.hasAudio) iv.audio = false;
+  const v = studio_el('studio-intro-video');
+  const want = studio_media('/api/studio/intro', path, '');
+  if (v.getAttribute('data-path') !== path) {
+    v.setAttribute('data-path', path);
+    v.src = want;
+    v.currentTime = iv.start;
+  }
+  studio_introLib();
+  studio_introDraw();
+}
+
+/* Everything in the dialog that follows from the trim. */
+function studio_introDraw() {
+  const iv = studio.intro, on = !!iv.pick && iv.seconds > 0;
+  studio_show('studio-intro-edit', on);
+  studio_el('studio-intro-use').disabled = !on;
+  if (!on) { studio_el('studio-intro-warn').textContent = ''; return; }
+  const len = Math.max(0, iv.end - iv.start);
+  const a = studio_el('studio-intro-a'), b = studio_el('studio-intro-b');
+  if (document.activeElement !== a) a.value = String(Math.round(iv.start / iv.seconds * 1000));
+  if (document.activeElement !== b) b.value = String(Math.round(iv.end / iv.seconds * 1000));
+  studio_el('studio-intro-astamp').textContent = studio_secs(iv.start);
+  studio_el('studio-intro-bstamp').textContent = studio_secs(iv.end);
+  studio_el('studio-intro-range').textContent =
+    len.toFixed(2) + ' s of ' + iv.seconds.toFixed(1) + ' s';
+  const au = studio_el('studio-intro-audio');
+  au.checked = iv.audio && iv.hasAudio;
+  au.disabled = !iv.hasAudio;
+  studio_el('studio-intro-audionote').textContent = iv.hasAudio
+    ? (iv.audio ? 'Mixed over the reel, on top of the song.' : 'The clip plays silent; the song carries it.')
+    : 'This clip has no sound of its own.';
+  studio_el('studio-intro-fitnote').textContent = iv.fit === 'cover'
+    ? 'Cropped to fill the reel. Anything outside the frame is cut off.'
+    : 'The whole clip is shown, with black around it where the shapes differ.';
+  ['cover', 'contain'].forEach(k => {
+    const el = studio_el('studio-intro-fit-' + k);
+    if (el) el.classList.toggle('is-active', iv.fit === k);
+  });
+  /* The two things that can be wrong are worth saying before Use, not after
+     the server clamps them in silence. */
+  const d = studio.derived, reel = d ? Number(d.length || 0) : 0, lead = d ? Number(d.lead_in || 0) : 0;
+  let warn = '';
+  if (reel && len > reel) warn = 'Longer than the reel — it will be cut to ' + reel.toFixed(1) + ' s.';
+  else if (lead > 0.5 && len > lead + 0.05) warn = 'Runs ' + (len - lead).toFixed(1) + ' s past the first kill.';
+  studio_el('studio-intro-warn').textContent = warn;
+}
+
+function studio_introSet(what, t) {
+  const iv = studio.intro;
+  const v = Math.max(0, Math.min(iv.seconds, t));
+  if (what === 'start') iv.start = Math.min(v, iv.end - 0.3);
+  else iv.end = Math.max(v, iv.start + 0.3);
+  iv.start = Math.max(0, iv.start);
+  iv.end = Math.min(iv.seconds, iv.end);
+  studio_introDraw();
+  const vid = studio_el('studio-intro-video');
+  if (vid && vid.paused) vid.currentTime = what === 'start' ? iv.start : Math.max(iv.start, iv.end - 0.25);
+}
+
+function studio_introPlay() {
+  const v = studio_el('studio-intro-video'), iv = studio.intro;
+  if (!v || !v.src) return;
+  if (v.paused) {
+    if (v.currentTime < iv.start || v.currentTime >= iv.end - 0.02) v.currentTime = iv.start;
+    v.muted = !(iv.audio && iv.hasAudio);
+    v.play().catch(() => {});
+  } else {
+    v.pause();
+  }
+}
+
+/* Keeps the preview inside the trim, and loops it when asked. */
+function studio_introTick() {
+  const v = studio_el('studio-intro-video'), iv = studio.intro;
+  if (!v) return;
+  if (!v.paused && v.currentTime >= iv.end - 0.02) {
+    if (studio_el('studio-intro-loop').checked) v.currentTime = iv.start;
+    else { v.pause(); v.currentTime = iv.start; }
+  }
+  const c = studio_el('studio-intro-clock');
+  if (c) c.textContent = studio_secs(Math.max(0, v.currentTime - iv.start));
+  if (!v.paused) requestAnimationFrame(studio_introTick);
+}
+
+async function studio_introAdd() {
+  const btn = studio_el('studio-intro-add'), msg = studio_el('studio-intro-msg');
+  const r = await API.post('/api/clips/pick', {kind: 'intro'});
+  if (!r || !r.path) return;
+  btn.disabled = true;
+  msg.textContent = 'Converting ' + String(r.name || 'that file') + '…';
+  const got = await API.post('/api/studio/intro-add', {path: r.path});
+  btn.disabled = false;
+  if (!got || !got.ok) { msg.textContent = (got && got.error) || 'Could not add that intro.'; return; }
+  msg.textContent = '';
+  await studio_introLoad();
+  studio.intro.start = 0; studio.intro.end = 0;
+  studio_introChoose(got.intro.path, false);
+}
+
+async function studio_introDelete(path, name) {
+  const msg = studio_el('studio-intro-msg');
+  msg.textContent = 'Deleting “' + name + '”…';
+  const r = await API.post('/api/studio/intro-delete', {path: path});
+  if (!r || !r.ok) { msg.textContent = (r && r.error) || 'Could not delete that intro.'; return; }
+  msg.textContent = '';
+  if (studio.intro.pick === path) {
+    studio.intro.pick = ''; studio.intro.seconds = 0;
+    const v = studio_el('studio-intro-video');
+    v.pause(); v.removeAttribute('src'); v.removeAttribute('data-path');
+  }
+  await studio_introLoad();
+  studio_introDraw();
+  toast('Deleted “' + name + '”.', 'ok');
+}
+
+function studio_introUse() {
+  const iv = studio.intro;
+  if (!iv.pick || iv.end <= iv.start) return;
+  const x = (iv.list || []).find(i => i.path === iv.pick) || {};
+  studio_change(pr => {
+    pr.intro_clip = {path: iv.pick, name: x.name || '', start: Number(iv.start.toFixed(3)),
+                     end: Number(iv.end.toFixed(3)), audio: !!(iv.audio && iv.hasAudio),
+                     has_audio: !!iv.hasAudio, fit: iv.fit};
+  }, 'The intro clip');
+  studio_introClose();
+  toast('Intro set — ' + (iv.end - iv.start).toFixed(1) + ' s over the start of the reel.', 'ok');
+}
+
+function studio_introOff(quiet) {
+  if (!studio.project || !studio.project.intro_clip) { studio_introClose(); return; }
+  studio_change(pr => { pr.intro_clip = null; }, 'The intro clip taken off');
+  studio_introClose();
+  if (!quiet) toast('The reel opens without an intro clip now.', 'ok');
+}
+
+function studio_introClose() {
+  const v = studio_el('studio-intro-video');
+  if (v && !v.paused) v.pause();
+  studio_show('studio-intro-scrim', false);
+}
+
 /* ------------------------------------------------------------ deleting reels */
 
 /* The dry run first: the server decides what a reel's path really owns, and
@@ -2135,6 +2512,20 @@ function studio_drawTimeline() {
       'px" title="Kill — drag to move it"></span>' +
       '<span class="st-trim" data-trim="' + i + '" title="Drag to change the length"></span></div>';
   });
+
+  /* THE INTRO CLIP, DRAWN OVER WHAT IT COVERS. It is not a shot and never
+     moves a cut, so it is a band across the head of the video row rather than
+     a block in the row: what it hides is exactly what is under it. */
+  const icd = d.intro_clip;
+  if (icd && icd.seconds > 0) {
+    const iw = Math.max(2, icd.seconds * pps);
+    h += '<div class="st-introclip" data-act="studio-intro-open" style="left:' + X(0) +
+      'px;top:' + rows.video + 'px;width:' + iw.toFixed(1) + 'px;height:' + STUDIO_ROW.video +
+      'px" title="' + esc(icd.name || 'Intro clip') + ' — ' + icd.seconds.toFixed(1) +
+      ' s. Click to edit.">' +
+      (iw > 64 ? '<span class="st-introclip-tag">Intro · ' + icd.seconds.toFixed(1) + ' s</span>' : '') +
+      '</div>';
+  }
 
   /* transitions: a label where there is room for one, a marker where not */
   p.shots.forEach((s, i) => {
@@ -2581,7 +2972,8 @@ function studio_drawInspector() {
     '<span class="muted studio-small">Replans every shot. Undo brings your edits back.</span></div>' +
     '<div class="studio-field"><label class="field-label" for="studio-r-grade">Colour</label>' + studio_select_html('studio-r-grade', 'grade', p.grade) +
     '<label class="studio-check"><input type="checkbox" id="studio-r-vignette"' + (p.vignette ? ' checked' : '') + '> Soft vignette</label></div>' +
-    '<div class="studio-field"><label class="field-label" for="studio-r-intro">Intro</label>' + studio_select_html('studio-r-intro', 'intro', p.intro) + '</div>' +
+    '<div class="studio-field"><label class="field-label" for="studio-r-intro">Intro</label>' + studio_select_html('studio-r-intro', 'intro', p.intro) +
+    studio_introRow(p) + '</div>' +
     '<div class="studio-field"><label class="field-label" for="studio-r-outro">Outro</label>' + studio_select_html('studio-r-outro', 'outro', p.outro) + '</div>' +
     '<div class="studio-field"><span class="field-label">Overlays</span>' + studio_checks_html('overlays', 'overlay', p.overlays) +
     '<label class="field-label" for="studio-r-handle">Handle</label><input class="input" id="studio-r-handle" maxlength="40" placeholder="@yourhandle" value="' + esc(p.handle) + '"></div>' +
@@ -2774,6 +3166,8 @@ function studio_wire() {
     else if (act === 'studio-fav') studio_fav(b.getAttribute('data-clip'));
     else if (act === 'studio-fav-selected') studio_favSelected();
     else if (act === 'studio-bin-pick') studio_binPick(b.getAttribute('data-kind'), b.getAttribute('data-part'));
+    else if (act === 'studio-bin-fav') studio_binFav(b.getAttribute('data-part'));
+    else if (act === 'studio-bin-favonly') studio_binFavOnly();
     else if (act === 'studio-hand-next') studio_handNext(b.getAttribute('data-kind'));
     else if (act === 'studio-deal') studio_deal();
     else if (act === 'studio-deal-reset') studio_dealReset();
@@ -2798,6 +3192,39 @@ function studio_wire() {
     else if (act === 'studio-delete') studio_deleteAsk();
     else if (act === 'studio-del-cancel') studio_closeModals();
     else if (act === 'studio-del-go') studio_deleteGo();
+    else if (act === 'studio-intro-open') studio_introOpen();
+    else if (act === 'studio-intro-off') studio_introOff(false);
+    else if (act === 'studio-intro-add') studio_introAdd();
+    else if (act === 'studio-intro-pick') studio_introChoose(b.getAttribute('data-path'), false);
+    else if (act === 'studio-intro-del') studio_introDelete(b.getAttribute('data-path'), b.getAttribute('data-name'));
+    else if (act === 'studio-intro-play') studio_introPlay();
+    else if (act === 'studio-intro-nudge') {
+      const what = b.getAttribute('data-what'), d = Number(b.getAttribute('data-d')) || 0;
+      studio_introSet(what, (what === 'start' ? studio.intro.start : studio.intro.end) + d);
+    }
+    else if (act === 'studio-intro-here') {
+      const v = studio_el('studio-intro-video');
+      studio_introSet(b.getAttribute('data-what'), v ? v.currentTime : 0);
+    }
+    else if (act === 'studio-intro-whole') {
+      studio.intro.start = 0; studio.intro.end = studio.intro.seconds; studio_introDraw();
+    }
+    else if (act === 'studio-intro-fit-lead') {
+      const lead = studio.derived ? Number(studio.derived.lead_in || 0) : 0;
+      const iv = studio.intro;
+      /* From the start of the trim, as far as the clip can reach. A clip
+         shorter than the lead-in fills what it can and says so. */
+      iv.end = Math.min(iv.seconds, iv.start + lead);
+      if (iv.end - iv.start < lead - 0.05) {
+        toast('This clip is ' + (iv.end - iv.start).toFixed(1) + ' s — shorter than the ' +
+              lead.toFixed(1) + ' s lead-in. The rest is the opener.', 'warn');
+      }
+      studio_introDraw();
+    }
+    else if (act === 'studio-intro-fit') { studio.intro.fit = b.getAttribute('data-fit'); studio_introDraw(); }
+    else if (act === 'studio-intro-use') studio_introUse();
+    else if (act === 'studio-intro-clear') studio_introOff(false);
+    else if (act === 'studio-intro-cancel') studio_introClose();
     else if (act === 'studio-reel-del') studio_reelDeleteAsk(b.getAttribute('data-path'), b.getAttribute('data-name'));
     else if (act === 'studio-rdel-cancel') { studio.reelDel = ''; studio_show('studio-rdel-scrim', false); }
     else if (act === 'studio-rdel-go') studio_reelDeleteGo();
@@ -2935,6 +3362,44 @@ function studio_wire() {
   if (yti) yti.addEventListener('keydown', studio_ytKey);
   const q = studio_el('studio-q');
   if (q) q.addEventListener('input', () => { studio.q = q.value; studio_renderLib(); });
+  /* The intro dialog's own controls. Wired once, because unlike the inspector
+     this markup is never rebuilt. */
+  ['studio-intro-a', 'studio-intro-b'].forEach(id => {
+    const el = studio_el(id);
+    if (el) el.addEventListener('input', () => {
+      const iv = studio.intro;
+      studio_introSet(id === 'studio-intro-a' ? 'start' : 'end',
+                      Number(el.value) / 1000 * iv.seconds);
+    });
+  });
+  const ia = studio_el('studio-intro-audio');
+  if (ia) ia.addEventListener('change', () => {
+    studio.intro.audio = ia.checked;
+    const v = studio_el('studio-intro-video');
+    if (v) v.muted = !(studio.intro.audio && studio.intro.hasAudio);
+    studio_introDraw();
+  });
+  const ivid = studio_el('studio-intro-video');
+  if (ivid) {
+    ivid.addEventListener('play', () => {
+      studio_el('studio-intro-play').textContent = 'Pause the part';
+      requestAnimationFrame(studio_introTick);
+    });
+    ivid.addEventListener('pause', () => { studio_el('studio-intro-play').textContent = 'Play the part'; });
+    ivid.addEventListener('timeupdate', studio_introTick);
+    ivid.addEventListener('loadedmetadata', () => {
+      /* The sidecar's length is what the trim was clamped against; if the file
+         disagrees, the file wins -- it is what the render will read. */
+      const iv = studio.intro;
+      if (ivid.duration && isFinite(ivid.duration) && Math.abs(ivid.duration - iv.seconds) > 0.05) {
+        iv.seconds = ivid.duration;
+        iv.end = Math.min(iv.end || iv.seconds, iv.seconds);
+        studio_introDraw();
+      }
+      ivid.currentTime = iv.start;
+    });
+  }
+
   const pn = studio_el('studio-pname');
   if (pn) pn.addEventListener('change', () => { if (studio.project) studio_change(pr => { pr.name = pn.value.trim() || pr.name; }, 'Reel name'); });
   document.addEventListener('pointerdown', studio_pointerDown);
