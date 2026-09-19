@@ -830,6 +830,65 @@ STYLES: tuple[Style, ...] = (
           transition_pool=("t01", "t05", "t01", "t06", "t02", "t12", "t13"),
           hero_pool=("h01", "h05", "h02"), camera_pool=("c04", "c00", "c04", "c03", "c07"),
           speed_pool=("s00", "s00", "s02", "s03"), energy=0.7),
+    # ---- five more, each grouped by what its references MEASURE, not by taste.
+    Style("clean", "Clean",
+          "The calm end of the shelf: long shots, almost no effects, the game's own "
+          "colours. Modelled on the edits that cut 17-21 times a minute and flash barely at all.",
+          ("RjCsmKbYY7g", "yBvW49SD20Y", "8KKGT4JXPVY"),
+          intro="i03", outro="e01", cuts=("t01", "t01", "t04"), kill=("k01soft",),
+          hero=("h03",), speed="s00", hero_speed="s01", camera="c01soft", grade="g01",
+          vignette=False, pre_share=0.55,
+          kill_pool=("k01soft", "k01", "k01soft", "k17soft", "k14soft", "k15soft"),
+          transition_pool=("t01", "t01", "t01", "t04", "t08", "t17"),
+          hero_pool=("h03", "h02"), camera_pool=("c00", "c01soft", "c01hair", "c05soft"),
+          speed_pool=("s00", "s00", "s00", "s05"), energy=0.08),
+    Style("chaos", "Chaos",
+          "Everything at once, the way the busiest edits do it: 45-58 cuts a minute and "
+          "40-79 flashes. Loud on purpose, and not for every song.",
+          ("nqa8RP_R0cU", "xrgExBQyHBc", "66zl0-VoWbg", "oJDesm--wss"),
+          intro="i08", outro="e05", cuts=("t02", "t06", "t13"), kill=("k01snap", "k03wide"),
+          hero=("h01", "h05"), speed="s04", hero_speed="s04", camera="c04hard", grade="g05",
+          vignette=True, overlays=("o08",), pre_share=0.4,
+          kill_pool=("k01snap", "k03wide", "k02hard", "k19hard", "k06wide", "k16hard",
+                     "k21hard", "k12flash", "k22hard", "k18short"),
+          transition_pool=("t02", "t06", "t13", "t12", "t05", "t01"),
+          hero_pool=("h01", "h05", "h02"),
+          camera_pool=("c04hard", "c04slam", "c00", "c06far"),
+          speed_pool=("s04", "s04", "s03", "s02"), energy=0.9),
+    Style("short", "Short", 
+          "Built for a Short: under half a minute, a cut a second, and the mark of the "
+          "vertical edits -- quick in, quick out, nothing held.",
+          ("H2N0eHGOi_w", "DrC9DxQ27lI", "prevxQTdkGo", "8bQ-8ZnHG4A"),
+          intro="i08", outro="e12", cuts=("t06", "t01", "t05"), kill=("k01hard", "k03"),
+          hero=("h02",), speed="s02", hero_speed="s04", camera="c00", grade="g08",
+          vignette=True, pre_share=0.45,
+          kill_pool=("k01hard", "k03", "k02fast", "k14", "k19", "k07hard", "k20blink"),
+          transition_pool=("t06", "t01", "t05", "t12", "t01"),
+          hero_pool=("h02", "h01"), camera_pool=("c00", "c00", "c04soft", "c08soft"),
+          speed_pool=("s02", "s04", "s00", "s03"), energy=0.6),
+    Style("cinematic", "Cinematic",
+          "Bars, a graded picture and a camera that never stops moving. The slower "
+          "references, played like a trailer rather than a montage.",
+          ("fAyUxeDzKlI", "8KKGT4JXPVY", "RjCsmKbYY7g"),
+          intro="i03", outro="e02", cuts=("t04", "t01", "t17"), kill=("k01settle",),
+          hero=("h02",), speed="s00", hero_speed="s01", camera="c01soft", grade="g03",
+          vignette=True, overlays=("o01",), pre_share=0.6,
+          kill_pool=("k01settle", "k01soft", "k15soft", "k20slow", "k14breath", "k17slow"),
+          transition_pool=("t04", "t01", "t17", "t08", "t01", "t03"),
+          hero_pool=("h02", "h03"),
+          camera_pool=("c01soft", "c01in", "c05soft", "c08soft", "c06hair"),
+          speed_pool=("s00", "s05", "s01", "s06"), energy=0.2),
+    Style("retro", "Retro",
+          "Grain, scanlines and faded colour over a mid-paced cut -- the look the "
+          "2010s montages had, on the references that sit nearest that pace.",
+          ("DM3eKiZD3XE", "qAlD8eNIfr8", "c1VjTbzcEds"),
+          intro="i05", outro="e01", cuts=("t01", "t16", "t04"), kill=("k01", "k16soft"),
+          hero=("h01",), speed="s00", hero_speed="s02", camera="c03soft", grade="g09",
+          vignette=True, overlays=("o04heavy",), pre_share=0.5,
+          kill_pool=("k01", "k16soft", "k06thin", "k12one", "k11flat", "k14", "k18faint"),
+          transition_pool=("t01", "t16", "t04", "t01", "t10", "t03"),
+          hero_pool=("h01", "h03"), camera_pool=("c03soft", "c00", "c01hair", "c03"),
+          speed_pool=("s00", "s00", "s01", "s02"), energy=0.35),
 )
 STYLE = {s.key: s for s in STYLES}
 DEFAULT_STYLE = "montage"
@@ -1096,12 +1155,37 @@ def _hit_slots(hits: list[float], strengths: list[float], *, first: float, end: 
     return kills[:count] if count else kills
 
 
+# What the shaping dials mean, and how far each may be pushed. A dial is a
+# MULTIPLIER on what the style's references measured, so 1.0 is "as the style
+# has it" and every reel ever planned without them is unchanged.
+#
+# The ranges are not taste. Past about two thirds either way a reel stops being
+# the style it says it is: the references a style is modelled on span roughly
+# that much between their fastest and slowest, so a dial that went further
+# would be offering a different style under the wrong name.
+SHAPING = {
+    "length": (0.55, 1.8, 1.0),    # how long the reel runs
+    "pace": (0.55, 1.8, 1.0),      # how fast it cuts -- higher is faster
+    "effects": (0.0, 2.0, 1.0),    # how often a kill gets an effect at all
+    "flash": (0.0, 2.5, 1.0),      # how often a cut carries a white flash
+}
+
+
+def _shaping(raw: dict | None) -> dict:
+    """The dials, clamped. Anything missing or unreadable is left centred."""
+    out = {}
+    for key, (lo, hi, mid) in SHAPING.items():
+        out[key] = _num((raw or {}).get(key), lo, hi, mid)
+    return out
+
+
 def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
          song: str = "", fmt: str = "landscape", name: str = "",
          max_seconds: float = 0.0, seed: int | None = None,
          measure=None, confirm=None, theirs=None,
          part: tuple[float, float] | None = None,
-         template: dict | None = None) -> tuple[dict, list[str]]:
+         template: dict | None = None,
+         shape_it: dict | None = None) -> tuple[dict, list[str]]:
     """Build a project from chosen clips. -> (project, notes)
 
     `measure(path, t0, t1)` -> how much the picture moves between two clip
@@ -1121,6 +1205,16 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     style = STYLE.get(style_key) or STYLE[DEFAULT_STYLE]
     if template:
         style = templated(style, template)
+    # SHAPING THE REEL WITHOUT LEAVING THE STYLE. Each of these multiplies what
+    # the style's references measured rather than replacing it, so "faster"
+    # means faster than THIS style rather than a jump to another one, and a
+    # reel at every dial centred is exactly the reel the style would have made.
+    tw = _shaping(shape_it)
+    if tw["effects"] != 1.0:
+        # Scaled on the style itself rather than at the draw: _vary() is called
+        # from the page too, and a dial the page could not see would be lost
+        # the first time somebody pressed "Mix them up".
+        style = dataclasses.replace(style, energy=max(0.0, min(1.0, style.energy * tw["effects"])))
     grid = Grid.of(shape) if shape is not None else Grid.none()
     notes: list[str] = []
     meas = studio_refs.summary(style.refs)
@@ -1153,8 +1247,11 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             why_out.setdefault(p, reason)
 
     # PACE FROM THE REFERENCES: the median cuts-per-minute of the edits this
-    # style is modelled on, as a whole number of beats at this song's tempo.
-    cpm = meas.get("cuts_per_min") or 30.0
+    # style is modelled on, as a whole number of beats at this song's tempo --
+    # times the pace dial, which has to be applied HERE rather than only to the
+    # shot length. Measured: on a song with bass hits the kill placement sets
+    # the durations and a dial that missed this line did nothing at all.
+    cpm = (meas.get("cuts_per_min") or 30.0) * tw["pace"]
     # THE SHOT IS THE REFERENCES' MEDIAN, NOT A MINUTE DIVIDED BY THEIR CUTS.
     # Those are different numbers and the edits are skewed: Montage's cuts a
     # minute say 2.12 s a shot, its median shot is 1.18 s, because a montage
@@ -1162,7 +1259,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # average made every shot as long as the long ones -- montero1 came out at
     # 9 cuts a minute against a 21-33 band -- so the target is the median the
     # reel is scored against.
-    want = meas.get("median_shot") or (60.0 / cpm)
+    want = (meas.get("median_shot") or 0.0) / tw["pace"] or (60.0 / cpm)
     # THE GRID IS AS FINE AS THE TARGET NEEDS. In whole beats the shortest shot
     # the rules allow is two of them, so a fast style on a half-time song could
     # not cut faster than 1.5 s and Hype, Velocity and Montage all came out at
@@ -1174,7 +1271,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # The opening hold is left on the beat: it already lands inside the
     # references' band on 20 of 24 reels, so only its unit changes.
     open_beats = _pow2_beats(max(meas.get("first_shot") or 4.0, 2.0), beat, lo=2, hi=16) * div
-    flash_share = min(0.9, (meas.get("flashes_per_min") or 0.0) / max(cpm, 1.0))
+    flash_share = min(0.9, (meas.get("flashes_per_min") or 0.0) / max(cpm, 1.0) * tw["flash"])
 
     # ONE ENTRY PER CLIP. Rebuilding a reel in another style sent the timeline's
     # shots back as the clip list, so a clip used in nine shots arrived nine
@@ -1240,6 +1337,15 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         target = math.floor(part_len / beat + 1e-6) * beat
     else:
         target = rulebook.phrase_seconds(beat, fmt, available, max_seconds)
+        if tw["length"] != 1.0:
+            # Scale the target that was worked out, rather than feeding a
+            # `want` into phrase_seconds: that takes a different branch and
+            # came out SHORTER for "longer" and "shorter" alike -- measured,
+            # both gave 17.1 s. Whole phrases either way, because a reel that
+            # ends mid-phrase is what the length rule exists to prevent.
+            phrase = rulebook.PHRASE_BARS * 4 * beat
+            n = max(1, int(round(target * tw["length"] / phrase)))
+            target = min(n * phrase, rulebook.MAX_SECONDS.get(fmt, 86.0))
     # A reel with less material than one phrase uses all of it: the phrase
     # rule trims a surplus, it never throws away a short selection's clips.
     if not part_len and target < rulebook.PHRASE_BARS * 4 * beat - 1e-6 and not max_seconds:
@@ -1411,7 +1517,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         "vignette": style.vignette, "overlays": list(style.overlays),
         "handle": "", "music_db": 0.0, "game_db": 6.0 if song else 0.0, "duck": True,
         "saturation": sat_trim,
-        "beat": round(beat, 6), "step": round(step, 6),
+        "beat": round(beat, 6), "step": round(step, 6), "shaping": tw,
         "seed": int(seed), "pools": pools, "shots": shots,
     }
     # Where in the song reel zero sits: chosen before the walk, so each shot's
@@ -2183,6 +2289,7 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
     # on -- so that is the default, and trimming a shot never knocks it off its
     # own grid.
     out["step"] = _grid_step(project.get("step"), out["beat"])
+    out["shaping"] = _shaping(project.get("shaping"))
     raw_pools = project.get("pools") if isinstance(project.get("pools"), dict) else {}
     for kind, part_kind in POOL_KINDS.items():
         valid = set(ids_of(part_kind))
@@ -2675,14 +2782,26 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     if (pid := picked(seg.fx, "k21")):
         z_terms.append(_pulse(T, kt, knob(pid, "amt", 0.18), 0.22))
     cam = fam(seg.camera)
+    # HOW A MOVE GETS WHERE IT IS GOING, as an expression in 0..1 over the shot.
+    # Even is a dolly; slow-in creeps then commits; slow-out leaves at once and
+    # settles. See parts.CAMERA_CURVES.
+    span = max(total_s, 0.1)
+    def eased(var: str) -> str:
+        u = f"min(1,max(0,{var}/{span:.4f}))"
+        c = int(knob(seg.camera, "curve", 0.0))
+        if c == 1:
+            return f"pow({u},2)"
+        if c == 2:
+            return f"(1-pow(1-{u},2))"
+        return u
     if cam == "c01":
-        z_terms.append(f"{knob(seg.camera, 'amt', 0.12)}*{T}/{max(total_s, 0.1):.4f}")
+        z_terms.append(f"{knob(seg.camera, 'amt', 0.12)}*{eased(T)}")
     if cam == "c05":
-        z_terms.append(f"{knob(seg.camera, 'amt', 0.14)}*(1-{T}/{max(total_s, 0.1):.4f})")
+        z_terms.append(f"{knob(seg.camera, 'amt', 0.14)}*(1-{eased(T)})")
     if cam == "c08":
         # One breath over the shot, never a loop: a sine that repeats reads as
         # a wobble rather than a camera.
-        z_terms.append(f"{knob(seg.camera, 'amt', 0.07)}*sin(PI*{T}/{max(total_s, 0.1):.4f})")
+        z_terms.append(f"{knob(seg.camera, 'amt', 0.07)}*sin(PI*{eased(T)})")
     if cam == "c04":
         for b in seg.beats:
             z_terms.append(_pulse(T, b, knob(seg.camera, "amt", 0.06), 0.18))
