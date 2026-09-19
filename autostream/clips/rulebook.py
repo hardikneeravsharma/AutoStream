@@ -739,7 +739,12 @@ def transitions(shots: list[dict], starts: list[int], *, first_kill_beat: int,
         if prev["clip"] == s["clip"]:
             t = "t01"
         elif zoom and i in marks:
+            # Two phrase marks close together would otherwise stamp the same
+            # soft cut twice running -- which is the thing `last_soft` exists to
+            # stop, and a phrase mark is no more exempt from it than a whip is.
             t = zoom
+            if t == last_soft:
+                t = next((x for x in soft if x != last_soft), "t01")
         elif on_bar and owed >= 1.0 - 1e-6 and not near_bright:
             t, owed = "t02", owed - 1.0
         elif whip and last_soft != whip and other_place:

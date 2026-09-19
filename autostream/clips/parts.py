@@ -84,6 +84,8 @@ FLASH = [
     ("mid", "Flash", "One or two frames blow out to white.", {"amt": 0.55, "fall": 0.12}),
     ("wide", "Wide flash", "The whole frame whites out and comes back.", {"amt": 0.85, "fall": 0.22}),
     ("bloom", "Flash bloom", "Blows out and takes a third of a second to recover.", {"amt": 0.70, "fall": 0.34}),
+    ("double", "Double flash", "Two lifts, a few frames apart.", {"amt": 0.50, "fall": 0.30}),
+    ("dim", "Dim flash", "Barely a lift at all.", {"amt": 0.18, "fall": 0.10}),
 ]
 
 BLUR = [
@@ -91,6 +93,7 @@ BLUR = [
     ("mid", "Blur snap", "Goes soft on the kill and snaps back sharp.", {"r": 6.0, "dur": 0.25}),
     ("hard", "Smear", "Heavily soft for a moment.", {"r": 12.0, "dur": 0.20}),
     ("long", "Held blur", "Soft for half a second before it clears.", {"r": 7.0, "dur": 0.50}),
+    ("breath", "Breath blur", "Softens and clears over a whole second.", {"r": 5.0, "dur": 1.00}),
 ]
 
 SPLIT = [
@@ -98,48 +101,63 @@ SPLIT = [
     ("mid", "RGB split", "Red and blue tear apart for a few frames.", {"px": 9.0, "dur": 0.18}),
     ("wide", "Wide split", "The channels tear right apart.", {"px": 18.0, "dur": 0.15}),
     ("long", "Held split", "Torn for a third of a second.", {"px": 11.0, "dur": 0.33}),
+    ("creep", "Creeping split", "The tear opens over a quarter second.", {"px": 13.0, "dur": 0.26}),
 ]
 
 VIGNETTE = [
     ("soft", "Soft vignette pulse", "The edges shade in gently.", {"amt": 0.35, "fall": 0.55}),
     ("mid", "Vignette pulse", "The edges darken hard on the kill.", {"amt": 0.60, "fall": 0.40}),
     ("hard", "Tunnel", "The frame closes right down and opens again.", {"amt": 0.95, "fall": 0.35}),
+    ("slow", "Slow close", "The edges shade in and take their time leaving.", {"amt": 0.55, "fall": 0.85}),
+    ("blink", "Vignette blink", "Closes and opens again in a blink.", {"amt": 0.75, "fall": 0.18}),
 ]
 
 SAT = [
     ("soft", "Colour lift", "A little colour arrives with the kill.", {"from": 0.70, "to": 1.20, "fall": 0.60}),
     ("mid", "Saturation pop", "Muted colour until the kill, then it floods in.", {"from": 0.40, "to": 1.45, "fall": 0.60}),
     ("hard", "Colour slam", "Grey to full colour in one frame.", {"from": 0.10, "to": 1.70, "fall": 0.45}),
+    ("drain", "Colour drain", "Full colour until the kill, then the colour goes.", {"from": 1.30, "to": 0.45, "fall": 0.70}),
+    ("slow", "Slow bloom", "Colour arrives over a second.", {"from": 0.55, "to": 1.30, "fall": 1.00}),
 ]
 
 TILT = [
     ("soft", "Soft tilt", "A small vertical nudge.", {"amp": 0.45, "fall": 0.30}),
     ("mid", "Tilt shake", "Rattles up and down only, not side to side.", {"amp": 0.85, "fall": 0.40}),
     ("hard", "Stomp", "One heavy vertical hit.", {"amp": 1.20, "fall": 0.25}),
+    ("twice", "Double stomp", "Two vertical hits, the second smaller.", {"amp": 1.00, "fall": 0.55}),
+    ("long", "Rolling stomp", "Rides up and down for most of a second.", {"amp": 0.60, "fall": 0.80}),
 ]
 
 ROT = [
     ("soft", "Soft kick", "Half a degree, righted at once.", {"rad": 0.010, "fall": 0.28}),
     ("mid", "Rotation kick", "The frame knocks a degree or so and rights itself.", {"rad": 0.026, "fall": 0.35}),
     ("hard", "Dutch kick", "Two and a half degrees, held a moment.", {"rad": 0.045, "fall": 0.50}),
+    ("back", "Counter kick", "Knocks the other way and rights itself.", {"rad": -0.026, "fall": 0.35}),
+    ("slow", "Slow right", "A degree, taking most of a second to settle.", {"rad": 0.022, "fall": 0.80}),
 ]
 
 ECHO = [
     ("short", "Short echo", "Movement smears behind itself briefly.", {"decay": 0.80, "dur": 0.20}),
     ("mid", "Echo trail", "Bright movement smears behind itself for a moment.", {"decay": 0.88, "dur": 0.35}),
     ("long", "Long echo", "Trails hang on for half a second.", {"decay": 0.93, "dur": 0.55}),
+    ("faint", "Faint echo", "The barest smear, gone at once.", {"decay": 0.70, "dur": 0.15}),
+    ("hold", "Held echo", "Trails stay up for the best part of a second.", {"decay": 0.95, "dur": 0.75}),
 ]
 
 BLOOM = [
     ("soft", "Soft bloom", "Highlights warm and swell a little.", {"lift": 0.60, "dur": 0.22}),
     ("mid", "Highlight bloom", "Bright parts bloom and glow on the kill.", {"lift": 0.68, "dur": 0.30}),
     ("hard", "Blowout", "Highlights bloom right out.", {"lift": 0.80, "dur": 0.40}),
+    ("slow", "Slow bloom", "Highlights swell and take their time.", {"lift": 0.66, "dur": 0.60}),
+    ("blink", "Bloom blink", "One bright pulse and out.", {"lift": 0.78, "dur": 0.14}),
 ]
 
 CRUNCH = [
     ("soft", "Soft crunch", "Contrast firms up for a moment.", {"con": 1.20, "sat": 1.08, "dur": 0.30}),
     ("mid", "Contrast crunch", "Blacks crush and colour hardens on the kill.", {"con": 1.45, "sat": 1.20, "dur": 0.30}),
     ("hard", "Slam crunch", "Hard blacks, hard colour, gone in a blink.", {"con": 1.80, "sat": 1.35, "dur": 0.18}),
+    ("held", "Held crunch", "Hard contrast for most of a second.", {"con": 1.40, "sat": 1.15, "dur": 0.70}),
+    ("flat", "Flatten", "Contrast drops away instead of hardening.", {"con": 0.72, "sat": 0.85, "dur": 0.30}),
 ]
 
 WASH = [
@@ -148,30 +166,38 @@ WASH = [
     ("purple", "Violet hit", "A violet wash, Valorant's own.", {"hue": 280.0, "alpha": 0.30, "dur": 0.15}),
     ("gold", "Gold hit", "A warm gold wash.", {"hue": 40.0, "alpha": 0.28, "dur": 0.16}),
     ("cyan", "Cyan hit", "A cold wash.", {"hue": 185.0, "alpha": 0.26, "dur": 0.15}),
+    ("green", "Toxic hit", "A sick green wash.", {"hue": 110.0, "alpha": 0.26, "dur": 0.15}),
+    ("deep", "Deep red hit", "A heavier red, held a moment longer.", {"hue": 0.0, "alpha": 0.42, "dur": 0.24}),
 ]
 
 FLICKER = [
     ("soft", "Soft flicker", "Brightness wavers for a moment.", {"amt": 0.20, "dur": 0.20, "period": 6.0}),
     ("mid", "Flicker", "Brightness strobes for a quarter second.", {"amt": 0.35, "dur": 0.25, "period": 4.0}),
     ("hard", "Strobe", "Hard on-off strobing.", {"amt": 0.60, "dur": 0.30, "period": 2.0}),
+    ("fast", "Fast flicker", "A very quick stutter of light.", {"amt": 0.30, "dur": 0.15, "period": 2.0}),
+    ("long", "Long strobe", "Strobes for most of a second.", {"amt": 0.45, "dur": 0.70, "period": 4.0}),
 ]
 
 INVERT = [
     ("one", "Single negative", "A single negative frame.", {"dur": 0.05}),
     ("two", "Negative blink", "Two or three negative frames.", {"dur": 0.10}),
     ("long", "Negative hold", "Inverted for a fifth of a second.", {"dur": 0.20}),
+    ("flash", "Negative flash", "Inverts and returns inside two frames.", {"dur": 0.07}),
 ]
 
 RELEASE = [
     ("soft", "Soft release", "Held 8% close, eased off through the kill.", {"amt": 0.08, "rise": 0.45}),
     ("mid", "Punch out", "Held close through the run-up, released on the kill.", {"amt": 0.12, "rise": 0.30}),
     ("hard", "Snap out", "Held deep and dropped the instant the kill lands.", {"amt": 0.20, "rise": 0.16}),
+    ("slow", "Slow release", "Held close and let go over most of a second.", {"amt": 0.14, "rise": 0.80}),
+    ("deep", "Deep release", "Held very close, then dropped.", {"amt": 0.26, "rise": 0.35}),
 ]
 
 ZBLUR = [
     ("soft", "Soft zoom blur", "Punches in through a light haze.", {"sigma": 8.0, "dur": 0.08, "amt": 0.12}),
     ("mid", "Zoom blur hit", "Punches in through a blur that clears at once.", {"sigma": 14.0, "dur": 0.10, "amt": 0.18}),
     ("hard", "Warp hit", "A heavy blur and a deep punch, both gone in three frames.", {"sigma": 22.0, "dur": 0.07, "amt": 0.26}),
+    ("long", "Held warp", "The blur clears over a third of a second.", {"sigma": 16.0, "dur": 0.30, "amt": 0.16}),
 ]
 
 KILL_FAMILIES = {
@@ -243,21 +269,34 @@ CUT_LENGTHS = [("q", "quick", 0.2), ("", "", 0.32), ("s", "slow", 0.55)]
 # --------------------------------------------------------------------- camera
 CAMERA = [
     ("c01", "push", "Push in", "Drifts steadily closer.", "amt", [
-        ("soft", "a touch", 0.06), ("", "", 0.12), ("far", "a long way", 0.22)]),
+        ("hair", "a hair", 0.04), ("soft", "a touch", 0.07), ("", "", 0.12),
+        ("far", "a long way", 0.20), ("deep", "deep", 0.30)]),
     ("c05", "pull", "Pull out", "Starts close and eases back.", "amt", [
-        ("soft", "a touch", 0.07), ("", "", 0.14), ("far", "a long way", 0.24)]),
+        ("hair", "a hair", 0.05), ("soft", "a touch", 0.08), ("", "", 0.14),
+        ("far", "a long way", 0.22), ("deep", "deep", 0.32)]),
     ("c08", "breathe", "Breathing zoom", "Eases in and out again.", "amt", [
-        ("soft", "shallow", 0.04), ("", "", 0.07), ("deep", "deep", 0.12)]),
+        ("hair", "barely", 0.03), ("soft", "shallow", 0.05), ("", "", 0.07),
+        ("deep", "deep", 0.12), ("swell", "a big swell", 0.18)]),
     ("c04", "bounce", "Beat bounce", "Pulses closer on every beat.", "amt", [
-        ("soft", "gentle", 0.03), ("", "", 0.06), ("hard", "hard", 0.10)]),
+        ("hair", "barely", 0.02), ("soft", "gentle", 0.04), ("", "", 0.06),
+        ("hard", "hard", 0.10), ("slam", "slamming", 0.15)]),
     ("c03", "drift", "Handheld drift", "A gentle organic sway.", "amp", [
-        ("soft", "barely moving", 0.35), ("", "", 0.60), ("loose", "loose", 1.00)]),
+        ("still", "almost still", 0.20), ("soft", "barely moving", 0.35), ("", "", 0.60),
+        ("loose", "loose", 1.00), ("wild", "wild", 1.40)]),
     ("c06", "roll", "Roll drift", "Rotates slowly across the shot.", "rad", [
-        ("soft", "a degree", 0.018), ("", "", 0.030), ("far", "three degrees", 0.052)]),
+        ("hair", "half a degree", 0.009), ("soft", "a degree", 0.018), ("", "", 0.030),
+        ("far", "three degrees", 0.052), ("deep", "five degrees", 0.087)]),
     ("c07", "pan", "Parallax pan", "Drifts sideways across the scene.", "amp", [
-        ("soft", "slight", 0.45), ("", "", 0.90), ("far", "right across", 1.30)]),
+        ("hair", "a little", 0.25), ("soft", "slight", 0.45), ("", "", 0.90),
+        ("far", "right across", 1.30), ("sweep", "a full sweep", 1.70)]),
 ]
 CAMERA_DIRS = [("", "", 1.0), ("back", "the other way", -1.0)]
+# HOW A MOVE GETS WHERE IT IS GOING. The same push feels different arriving:
+# even is a dolly, slow-in creeps then commits, slow-out leaves at once and
+# settles. Only the moves that travel across a whole shot take a curve --
+# a bounce and a sway are already shaped by the beat and by the noise.
+CAMERA_CURVES = [("", "", 0.0), ("in", "easing in", 1.0), ("out", "easing out", 2.0)]
+CAMERA_CURVED = {"push", "pull", "breathe"}
 
 # ---------------------------------------------------------------------- grade
 #
@@ -270,7 +309,10 @@ TINTS = [
     ("teal", "Teal", 180.0), ("ice", "Ice", 200.0), ("steel", "Steel", 215.0),
     ("cobalt", "Cobalt", 228.0), ("indigo", "Indigo", 250.0), ("violet", "Violet", 275.0),
     ("orchid", "Orchid", 295.0), ("magenta", "Magenta", 315.0), ("rose", "Rose", 340.0),
-    ("ember", "Ember", 10.0),
+    ("ember", "Ember", 10.0), ("rust", "Rust", 22.0), ("brass", "Brass", 52.0),
+    ("moss", "Moss", 105.0), ("mint", "Mint", 150.0), ("cyan", "Cyan", 190.0),
+    ("slate", "Slate", 208.0), ("denim", "Denim", 238.0), ("plum", "Plum", 288.0),
+    ("fuchsia", "Fuchsia", 322.0), ("blush", "Blush", 350.0),
 ]
 GRADE_WEIGHTS = [
     ("wash", "wash", 0.30, 0.95, 1.02),      # (suffix, word, tint strength, sat, contrast)
@@ -339,11 +381,14 @@ def variants(kinds: dict[str, str]) -> list[Part]:
             for dsuffix, dword, sign in CAMERA_DIRS:
                 if sign < 0 and fam not in ("pan", "roll", "drift"):
                     continue                      # only the sideways ones reverse
-                pid = f"{base}{suffix}{dsuffix}"
-                if pid == base:
-                    continue
-                add(pid, "camera", _name(label, " ".join(w for w in (word, dword) if w)),
-                    blurb, base, {knob: val * sign})
+                curves = CAMERA_CURVES if fam in CAMERA_CURVED else CAMERA_CURVES[:1]
+                for csuffix, cword, curve in curves:
+                    pid = f"{base}{suffix}{dsuffix}{csuffix}"
+                    if pid == base:
+                        continue
+                    words = " ".join(w for w in (word, dword, cword) if w)
+                    add(pid, "camera", _name(label, words), blurb, base,
+                        {knob: val * sign, "curve": curve})
 
     # -- colour -----------------------------------------------------------
     for tint, tname, hue in TINTS:

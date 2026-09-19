@@ -830,6 +830,65 @@ STYLES: tuple[Style, ...] = (
           transition_pool=("t01", "t05", "t01", "t06", "t02", "t12", "t13"),
           hero_pool=("h01", "h05", "h02"), camera_pool=("c04", "c00", "c04", "c03", "c07"),
           speed_pool=("s00", "s00", "s02", "s03"), energy=0.7),
+    # ---- five more, each grouped by what its references MEASURE, not by taste.
+    Style("clean", "Clean",
+          "The calm end of the shelf: long shots, almost no effects, the game's own "
+          "colours. Modelled on the edits that cut 17-21 times a minute and flash barely at all.",
+          ("RjCsmKbYY7g", "yBvW49SD20Y", "8KKGT4JXPVY"),
+          intro="i03", outro="e01", cuts=("t01", "t01", "t04"), kill=("k01soft",),
+          hero=("h03",), speed="s00", hero_speed="s01", camera="c01soft", grade="g01",
+          vignette=False, pre_share=0.55,
+          kill_pool=("k01soft", "k01", "k01soft", "k17soft", "k14soft", "k15soft"),
+          transition_pool=("t01", "t01", "t01", "t04", "t08", "t17"),
+          hero_pool=("h03", "h02"), camera_pool=("c00", "c01soft", "c01hair", "c05soft"),
+          speed_pool=("s00", "s00", "s00", "s05"), energy=0.08),
+    Style("chaos", "Chaos",
+          "Everything at once, the way the busiest edits do it: 45-58 cuts a minute and "
+          "40-79 flashes. Loud on purpose, and not for every song.",
+          ("nqa8RP_R0cU", "xrgExBQyHBc", "66zl0-VoWbg", "oJDesm--wss"),
+          intro="i08", outro="e05", cuts=("t02", "t06", "t13"), kill=("k01snap", "k03wide"),
+          hero=("h01", "h05"), speed="s04", hero_speed="s04", camera="c04hard", grade="g05",
+          vignette=True, overlays=("o08",), pre_share=0.4,
+          kill_pool=("k01snap", "k03wide", "k02hard", "k19hard", "k06wide", "k16hard",
+                     "k21hard", "k12flash", "k22hard", "k18short"),
+          transition_pool=("t02", "t06", "t13", "t12", "t05", "t01"),
+          hero_pool=("h01", "h05", "h02"),
+          camera_pool=("c04hard", "c04slam", "c00", "c06far"),
+          speed_pool=("s04", "s04", "s03", "s02"), energy=0.9),
+    Style("short", "Short", 
+          "Built for a Short: under half a minute, a cut a second, and the mark of the "
+          "vertical edits -- quick in, quick out, nothing held.",
+          ("H2N0eHGOi_w", "DrC9DxQ27lI", "prevxQTdkGo", "8bQ-8ZnHG4A"),
+          intro="i08", outro="e12", cuts=("t06", "t01", "t05"), kill=("k01hard", "k03"),
+          hero=("h02",), speed="s02", hero_speed="s04", camera="c00", grade="g08",
+          vignette=True, pre_share=0.45,
+          kill_pool=("k01hard", "k03", "k02fast", "k14", "k19", "k07hard", "k20blink"),
+          transition_pool=("t06", "t01", "t05", "t12", "t01"),
+          hero_pool=("h02", "h01"), camera_pool=("c00", "c00", "c04soft", "c08soft"),
+          speed_pool=("s02", "s04", "s00", "s03"), energy=0.6),
+    Style("cinematic", "Cinematic",
+          "Bars, a graded picture and a camera that never stops moving. The slower "
+          "references, played like a trailer rather than a montage.",
+          ("fAyUxeDzKlI", "8KKGT4JXPVY", "RjCsmKbYY7g"),
+          intro="i03", outro="e02", cuts=("t04", "t01", "t17"), kill=("k01settle",),
+          hero=("h02",), speed="s00", hero_speed="s01", camera="c01soft", grade="g03",
+          vignette=True, overlays=("o01",), pre_share=0.6,
+          kill_pool=("k01settle", "k01soft", "k15soft", "k20slow", "k14breath", "k17slow"),
+          transition_pool=("t04", "t01", "t17", "t08", "t01", "t03"),
+          hero_pool=("h02", "h03"),
+          camera_pool=("c01soft", "c01in", "c05soft", "c08soft", "c06hair"),
+          speed_pool=("s00", "s05", "s01", "s06"), energy=0.2),
+    Style("retro", "Retro",
+          "Grain, scanlines and faded colour over a mid-paced cut -- the look the "
+          "2010s montages had, on the references that sit nearest that pace.",
+          ("DM3eKiZD3XE", "qAlD8eNIfr8", "c1VjTbzcEds"),
+          intro="i05", outro="e01", cuts=("t01", "t16", "t04"), kill=("k01", "k16soft"),
+          hero=("h01",), speed="s00", hero_speed="s02", camera="c03soft", grade="g09",
+          vignette=True, overlays=("o04heavy",), pre_share=0.5,
+          kill_pool=("k01", "k16soft", "k06thin", "k12one", "k11flat", "k14", "k18faint"),
+          transition_pool=("t01", "t16", "t04", "t01", "t10", "t03"),
+          hero_pool=("h01", "h03"), camera_pool=("c03soft", "c00", "c01hair", "c03"),
+          speed_pool=("s00", "s00", "s01", "s02"), energy=0.35),
 )
 STYLE = {s.key: s for s in STYLES}
 DEFAULT_STYLE = "montage"
@@ -2675,14 +2734,26 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     if (pid := picked(seg.fx, "k21")):
         z_terms.append(_pulse(T, kt, knob(pid, "amt", 0.18), 0.22))
     cam = fam(seg.camera)
+    # HOW A MOVE GETS WHERE IT IS GOING, as an expression in 0..1 over the shot.
+    # Even is a dolly; slow-in creeps then commits; slow-out leaves at once and
+    # settles. See parts.CAMERA_CURVES.
+    span = max(total_s, 0.1)
+    def eased(var: str) -> str:
+        u = f"min(1,max(0,{var}/{span:.4f}))"
+        c = int(knob(seg.camera, "curve", 0.0))
+        if c == 1:
+            return f"pow({u},2)"
+        if c == 2:
+            return f"(1-pow(1-{u},2))"
+        return u
     if cam == "c01":
-        z_terms.append(f"{knob(seg.camera, 'amt', 0.12)}*{T}/{max(total_s, 0.1):.4f}")
+        z_terms.append(f"{knob(seg.camera, 'amt', 0.12)}*{eased(T)}")
     if cam == "c05":
-        z_terms.append(f"{knob(seg.camera, 'amt', 0.14)}*(1-{T}/{max(total_s, 0.1):.4f})")
+        z_terms.append(f"{knob(seg.camera, 'amt', 0.14)}*(1-{eased(T)})")
     if cam == "c08":
         # One breath over the shot, never a loop: a sine that repeats reads as
         # a wobble rather than a camera.
-        z_terms.append(f"{knob(seg.camera, 'amt', 0.07)}*sin(PI*{T}/{max(total_s, 0.1):.4f})")
+        z_terms.append(f"{knob(seg.camera, 'amt', 0.07)}*sin(PI*{eased(T)})")
     if cam == "c04":
         for b in seg.beats:
             z_terms.append(_pulse(T, b, knob(seg.camera, "amt", 0.06), 0.18))
