@@ -71,7 +71,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import hits as hits_mod, parts as parts_mod, rulebook, studio_refs
+from . import hits as hits_mod, mark as mark_mod, parts as parts_mod, rulebook, studio_refs
 
 log = logging.getLogger(__name__)
 
@@ -2869,8 +2869,12 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
 
 def assemble_command(project: dict, derived: dict, segs: list[Segment], files: list[Path],
                      out: Path, ff: str = "ffmpeg", encoder_args=None,
-                     textdir: Path | None = None) -> list[str]:
-    """ffmpeg argv that joins the shot renders into the finished reel."""
+                     textdir: Path | None = None, mark_at=None) -> list[str]:
+    """ffmpeg argv that joins the shot renders into the finished reel.
+
+    `mark_at` is (animation folder, resting still, x, y) for the AutoStream
+    mark, or None when it cannot be drawn. See THE MARK below.
+    """
     W, H, F = SIZES[project["format"]][0], SIZES[project["format"]][1], FPS
     L = derived["length"]
     Lf = round(L * F)
@@ -2889,6 +2893,15 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
     ic_i = n + (1 if song else 0)
     if ic:
         args += ["-ss", f"{float(ic['start']):.4f}", "-t", f"{ic_len:.4f}", "-i", str(ic["path"])]
+    # THE MARK IS TWO MORE INPUTS, last of all, for the same reason the intro
+    # clip is: every index above it would move otherwise. The animated strip
+    # covers the first seconds and the still covers the rest, each gated by
+    # `enable`, so nothing is decoded that is not on screen.
+    mark_i = ic_i + (1 if ic else 0)
+    if mark_at:
+        mfolder, mstill, _mx, _my = mark_at
+        args += ["-framerate", f"{mark_mod.FPS:g}", "-i", str(Path(mfolder) / "f%04d.png")]
+        args += ["-loop", "1", "-t", f"{L + 1.0:.4f}", "-i", str(mstill)]
 
     g = []
     for i in range(n):
@@ -3018,7 +3031,17 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
                  f"enable='lt(t,{ic_len:.4f})'[icj]")
         acc_label = "icj"
     post.append(f"trim=end_frame={Lf},format=yuv420p")
-    g.append(f"[{acc_label}]" + ",".join(post) + "[v]")
+    if mark_at:
+        # Above everything the post chain drew: a mark under the film grain or
+        # behind the cinematic bars is not a mark.
+        _f, _s, mx, my = mark_at
+        g.append(f"[{acc_label}]" + ",".join(post) + "[vpre]")
+        g.append(f"[vpre][{mark_i}:v]overlay=x={mx}:y={my}:eof_action=pass:"
+                 f"enable='lt(t,{mark_mod.FOLD_IN[1]:.2f})'[vmk]")
+        g.append(f"[vmk][{mark_i + 1}:v]overlay=x={mx}:y={my}:shortest=0:"
+                 f"enable='gte(t,{mark_mod.FOLD_IN[1]:.2f})'[v]")
+    else:
+        g.append(f"[{acc_label}]" + ",".join(post) + "[v]")
 
     # Audio: each shot's own sound where it plays, the song under it all.
     for i, seg in enumerate(segs):
@@ -3290,8 +3313,21 @@ class StudioJob:
             tmp = self.out.with_name(self.out.stem + ".part.mp4")
             try:
                 try:
+                    # EVERY REEL CARRIES THE MARK. Drawn once per reel height
+                    # and cached beside the examples, so this is a directory
+                    # listing on every render after the first. If it cannot be
+                    # drawn -- no bold font on the machine, no Pillow -- the
+                    # reel is rendered without it rather than failing: a
+                    # watermark is not worth losing someone's reel over.
+                    try:
+                        mw, mh = SIZES[self.project["format"]]
+                        mark_at = mark_mod.build(self.root, mw, mh)
+                    except Exception as e:
+                        log.warning("studio: the mark could not be drawn (%s)", e)
+                        mark_at = None
                     self._run_ff(assemble_command(self.project, self.derived, segs, files, tmp, ff,
-                                                  video_codec_args("auto", cq=19), textdir))
+                                                  video_codec_args("auto", cq=19), textdir,
+                                                  mark_at=mark_at))
                 except Cancelled:
                     raise
                 except RuntimeError as e:
