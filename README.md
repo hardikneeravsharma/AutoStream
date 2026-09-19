@@ -130,6 +130,12 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     re-encoded. Zoom with the − / Fit / + buttons, Ctrl+wheel or the `+` `-` `0` keys:
     whatever is under the pointer stays where it is, right down to a frame being three
     pixels wide.
+  - **It always says whether the video is what you have edited.** The panel beside the
+    player is either green — *the video matches your edits* — or amber, naming every
+    change that has not reached it yet (*shot 4 trimmed*, *music level ×3*), with the
+    edited shots flagged on the timeline, a badge over the player itself, and a button
+    that counts them: *Apply 4 changes*. Undo takes one back off the list, and a render
+    that fails or is cancelled puts them back on it.
   - **See for yourself that the kills landed on the music.** The timeline's music
     track is the song's **spectrogram** — a kick and a hi-hat look different there,
     where in a waveform they look the same — with the hits the reel was cut to marked
@@ -160,7 +166,10 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     *Add clips…* goes back to the library with the reel's clips still selected, so you
     can pick more and rebuild it with the same song, part and style.
   - **Delete clips to free space.** Select any clips and press *Delete…*: it says how
-    much space that frees and which reels use them before anything is removed.
+    much space that frees and which reels use them before anything is removed. A
+    finished reel has its own *Delete…* on its card — a reel is the largest file the
+    app makes — and it takes the video and the timeline it reopens from, never the
+    clips it was cut from, so the same reel can be made again.
 - **Or don't stream at all.** Turn *Go live on YouTube* off and AutoStream is just
   the clipper: it still spots the game, records it and cuts the clips, never touches
   the YouTube API, and asks for no Google sign-in. The dashboard says RECORDING

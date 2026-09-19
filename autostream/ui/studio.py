@@ -102,28 +102,55 @@ STUDIO_HTML = r"""
       <div class="studio-player">
         <video id="studio-video" controls playsinline preload="metadata"></video>
         <div class="studio-player-empty" id="studio-player-empty">The reel appears here once it has rendered.</div>
+        <!-- THE PLAYER IS WHERE THE EYES ARE. A sidebar saying the edits are
+             not in the video yet is missed by someone watching the video, so
+             the video says it too, over its own top corner. -->
+        <div class="studio-stale hide" id="studio-stale" aria-hidden="true"></div>
       </div>
       <div class="studio-render card">
         <div class="card-body">
           <label class="field-label" for="studio-pname">Reel name</label>
           <input class="input" id="studio-pname" maxlength="80">
           <p class="muted studio-facts" id="studio-facts"></p>
-          <div class="meter" aria-hidden="true"><div class="meter-fill" id="studio-meter" style="width:0%"></div></div>
-          <p class="studio-state" id="studio-state" role="status" aria-live="polite"></p>
-          <div class="field-inline">
+
+          <!-- DOES THE VIDEO MATCH THE TIMELINE? The one question the page was
+               unable to answer: "Render changes" against "Render again" is a
+               two-word difference nobody reads, so an edit could sit unrendered
+               for an hour. One strip owns the answer -- a colour, a sentence,
+               and, when they differ, the list of what has not reached the
+               video yet. -->
+          <div class="studio-sync is-none" id="studio-sync">
+            <p class="studio-sync-line">
+              <span class="studio-sync-dot" aria-hidden="true"></span>
+              <span class="studio-sync-head" id="studio-sync-head">Not rendered yet</span>
+            </p>
+            <!-- studio-state is the job's own words (Ready, Cancelled, the
+                 error). Kept as its own node: it is what the render tests read. -->
+            <p class="studio-sync-sub" id="studio-sync-sub"></p>
+            <p class="studio-state" id="studio-state" role="status" aria-live="polite"></p>
+            <div class="meter hide" id="studio-meter-wrap" aria-hidden="true"><div class="meter-fill" id="studio-meter" style="width:0%"></div></div>
+            <ul class="studio-pending hide" id="studio-pending"></ul>
+          </div>
+
+          <div class="field-inline studio-acts">
             <button type="button" class="btn btn-primary" data-act="studio-render" id="studio-render-btn">Render</button>
             <button type="button" class="btn btn-ghost hide" data-act="studio-cancel" id="studio-cancel-btn">Cancel</button>
             <button type="button" class="btn btn-ghost" data-act="studio-undo" id="studio-undo-btn" disabled>Undo</button>
             <button type="button" class="btn btn-ghost" data-act="studio-show" id="studio-show-btn" disabled>Show file</button>
           </div>
-          <ul class="studio-notes" id="studio-notes"></ul>
-          <div class="studio-sel" id="studio-sel"></div>
+
+          <!-- WHY THE REEL IS THE WAY IT IS. Five amber bullets shouting at
+               once read as five problems; they are mostly the planner saying
+               what it did. Anything wrong with the reel as it stands is above,
+               in its own plate; the planner's account of the build is folded
+               away, where it can be opened by someone who wants it. -->
+          <div class="studio-why" id="studio-why"></div>
         </div>
       </div>
     </div>
 
     <div class="studio-tl-bar">
-      <button type="button" class="btn btn-sm" data-act="studio-play" id="studio-play-btn">Play</button>
+      <button type="button" class="btn btn-sm studio-transport" data-act="studio-play" id="studio-play-btn">Play</button>
       <span class="mono studio-clock" id="studio-clock">0:00.00</span>
       <label class="studio-check"><input type="checkbox" id="studio-snap" checked> Snap to beats</label>
       <!-- WHAT THE MUSIC LANE SHOWS. A waveform cannot say whether a kill sat
@@ -203,7 +230,7 @@ STUDIO_HTML = r"""
       <div class="studio-sg-lanes" id="studio-sg-lanes"></div>
       <audio id="studio-sg-audio" preload="auto"></audio>
       <div class="studio-tl-bar">
-        <button type="button" class="btn btn-sm" data-act="studio-sg-play" id="studio-sg-play">Play the part</button>
+        <button type="button" class="btn btn-sm studio-transport studio-transport-wide" data-act="studio-sg-play" id="studio-sg-play">Play the part</button>
         <label class="studio-check"><input type="checkbox" id="studio-sg-loop" checked> Loop</label>
         <span class="mono studio-clock" id="studio-sg-clock">0:00.00</span>
         <span class="muted" id="studio-sg-range"></span>
@@ -396,6 +423,24 @@ STUDIO_HTML = r"""
   </div>
   </div>
 
+  <!-- DELETING A REEL. Its own dialog rather than the clips one: what goes and
+       what stays are the opposite way round here, and that is the whole
+       question being asked. -->
+  <div class="scrim hide" id="studio-rdel-scrim">
+  <div class="modal" id="studio-rdel" role="dialog" aria-modal="true" aria-labelledby="studio-rdel-title">
+    <h2 class="modal-title" id="studio-rdel-title">Delete reel</h2>
+    <div class="modal-body">
+      <p id="studio-rdel-text"></p>
+      <p class="muted" id="studio-rdel-note"></p>
+    </div>
+    <div class="modal-actions">
+      <span class="muted" id="studio-rdel-msg"></span>
+      <button type="button" class="btn btn-ghost" data-act="studio-rdel-cancel">Cancel</button>
+      <button type="button" class="btn btn-danger" data-act="studio-rdel-go" id="studio-rdel-go">Delete</button>
+    </div>
+  </div>
+  </div>
+
   <div class="scrim hide" id="studio-preview-scrim">
   <div class="modal studio-modal" id="studio-preview" role="dialog" aria-modal="true" aria-labelledby="studio-preview-title">
     <h2 class="modal-title" id="studio-preview-title">Clip</h2>
@@ -423,6 +468,14 @@ const studio = {
   spec: null, musicWant: '', musicPending: false, showSpec: true, showMarks: true, waveTick: 0,
   style: '', song: '', songShape: null, fmt: 'landscape', order: 'chosen',
   project: null, derived: null, notes: [], dirty: true, output: '', renderedAt: 0,
+  /* WHAT HAS NOT REACHED THE VIDEO YET. `dirty` could say that something had
+     changed; it could not say what, so pressing render was an act of faith and
+     not pressing it was a reel watched in the wrong version. Every edit names
+     itself here ({label, shot, n}); a render empties the list. */
+  pending: [], jobMsg: '', failMsg: '', renderNote: '', rendering: false,
+  /* Which explanations are open. The card is redrawn on every edit and on
+     every poll tick, and a fold that shut itself each time could not be read. */
+  folds: {build: false, clips: false},
   sel: -1, pps: 60, snap: true, undo: [], checking: 0, checkTimer: null,
   polling: null, drag: null, clipIndex: {},
   gen: 0, jobId: 0, seenJob: -1, watching: -1, busy: false, pollTok: 0,
@@ -433,7 +486,7 @@ const studio = {
   /* A song being downloaded from a YouTube link, and which picker asked for it. */
   yt: {target: 'make', timer: null, running: false},
   /* Set while clips are being added to an existing reel: what to rebuild. */
-  adding: null, delPaths: []
+  adding: null, delPaths: [], reelDel: ''
 };
 
 const studio_el = (id) => document.getElementById(id);
@@ -539,6 +592,11 @@ function studio_renderLib() {
       (r.project ? '<button type="button" class="btn btn-sm" data-act="studio-open" data-path="' + esc(r.path) + '">Open timeline</button>'
                  : '<span class="muted studio-reel-old">Made before the Studio</span>') +
       '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-watch" data-path="' + esc(r.path) + '">Play</button>' +
+      /* A reel is the biggest file the app makes and the easiest to make
+         another of, so it needs a way out that is not the file explorer. */
+      '<button type="button" class="btn btn-ghost btn-sm studio-del-btn" data-act="studio-reel-del" ' +
+      'data-path="' + esc(r.path) + '" data-name="' + esc(r.name) + '" ' +
+      'title="Delete this reel">Delete…</button>' +
       '</span></div>').join('') + '</div>'
     : '';
 
@@ -668,7 +726,8 @@ function studio_closeModals() {
   if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
   const a = studio_el('studio-mk-audio');
   if (a && !a.paused) a.pause();
-  ['studio-preview-scrim', 'studio-make-scrim', 'studio-del-scrim'].forEach(id => studio_show(id, false));
+  ['studio-preview-scrim', 'studio-make-scrim', 'studio-del-scrim',
+   'studio-rdel-scrim'].forEach(id => studio_show(id, false));
   if (!studio.yt.running) studio_show('studio-yt-scrim', false);
 }
 
@@ -1418,7 +1477,11 @@ async function studio_build() {
     /* A rebuild renders over the reel it rebuilds rather than beside it. */
     if (ad && ad.output) r.project.output = ad.output;
     studio_setProject(r.project, r.derived, r.notes, r.song);
-    studio.output = ad && ad.output ? ad.output : ''; studio.dirty = true; studio.undo = [];
+    studio.output = ad && ad.output ? ad.output : ''; studio.undo = [];
+    /* A fresh reel has no video to differ from; a rebuild over an existing one
+       has exactly one difference, and it is the whole reel. */
+    studio.pending = []; studio.dirty = true; studio.failMsg = '';
+    if (studio.output) studio_touched('Rebuilt from the clips');
     studio.adding = null;
     studio_renderTray();
     studio_tab('timeline');
@@ -1447,16 +1510,85 @@ function studio_pushUndo(snapshot) {
   if (studio.undo.length > 60) studio.undo.shift();
 }
 
-function studio_change(mutate, immediate) {
+/* ------------------------------------------------- what is not rendered yet
+
+   Three rules, and they are what make the count trustworthy enough to put on
+   a button: one undo step is one unit of change here, a render clears the
+   list, and an undo takes a unit back off it. When the count reaches zero the
+   project is byte-for-byte the one that was rendered, so "the video matches
+   your edits" is a fact and not a guess. */
+
+/* Shots are numbered from 1 on the timeline, so they are numbered from 1 here. */
+function studio_shotName(i) { return 'Shot ' + (Number(i) + 1); }
+
+/* How long ago, roughly. "Rendered 2 days ago" is the fact that decides whether
+   the video on screen can be trusted, and an exact timestamp does not say it. */
+function studio_ago(when) {
+  const s = Math.max(0, (Date.now() - (Number(when) || 0)) / 1000);
+  if (s < 90) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return m + (m === 1 ? ' minute ago' : ' minutes ago');
+  const h = Math.round(m / 60);
+  if (h < 36) return h + (h === 1 ? ' hour ago' : ' hours ago');
+  const d = Math.round(h / 24);
+  return d + (d === 1 ? ' day ago' : ' days ago');
+}
+
+function studio_touched(label, shot) {
+  studio.dirty = true;
+  studio.failMsg = '';
+  /* "Ready · rendered in 23 s" stops being true the moment anything is
+     touched, and a verdict left sitting under a warning is how the page said
+     two opposite things at once. */
+  studio_state('');
+  const name = label || 'An edit on the timeline';
+  const at = (shot === undefined || shot === null) ? -1 : shot;
+  /* A slider fires per step and a nudge button per press: the same edit, made
+     again, is one line with a count and not twenty lines. */
+  const same = studio.pending.filter(x => x.label === name && x.shot === at)[0];
+  if (same) {
+    same.n++;
+    studio.pending.splice(studio.pending.indexOf(same), 1);
+    studio.pending.push(same);
+    return;
+  }
+  studio.pending.push({label: name, shot: at, n: 1});
+}
+
+/* Rendered: the video and the project are the same thing again. */
+function studio_settled() { studio.dirty = false; studio.pending = []; studio.failMsg = ''; }
+
+/* Removing or reordering shots renumbers them, so every shot index already on
+   the list now points at the wrong shot. The edits still count; they just stop
+   claiming to know which shot they were. */
+function studio_forgetShots() { studio.pending.forEach(x => { x.shot = -1; }); }
+
+function studio_untouched() {
+  const last = studio.pending[studio.pending.length - 1];
+  if (last && last.n > 1) { last.n--; return; }
+  if (last) {
+    studio.pending.pop();
+    studio.dirty = studio.pending.length > 0 || !studio.output;
+    return;
+  }
+  /* Undone past the last render: the project is behind the video now, which
+     is still a difference, and still needs rendering to resolve. */
+  studio_touched('Undone past the last render');
+}
+
+/* `label` is what the card will call this edit, and `shot` the shot it happened
+   to, so the timeline can mark it. Both optional -- an unlabelled edit still
+   counts, it just reads as a generic one. */
+function studio_change(mutate, label, shot) {
   if (!studio.project) return;
   studio_pushUndo(JSON.stringify(studio.project));
   studio.gen++;
   mutate(studio.project);
-  studio.dirty = true;
+  studio_touched(label, shot);
   studio_localDerive();
   studio_drawAll();
   clearTimeout(studio.checkTimer);
-  studio.checkTimer = setTimeout(studio_check, immediate ? 0 : 250);
+  studio.checkTimer = setTimeout(studio_check, 250);
 }
 
 async function studio_check() {
@@ -1476,7 +1608,7 @@ function studio_undo() {
   if (!last) return;
   studio.gen++;
   studio.project = JSON.parse(last);
-  studio.dirty = true;
+  studio_untouched();
   studio_localDerive(); studio_drawAll();
   studio_check();
 }
@@ -1517,8 +1649,26 @@ async function studio_render() {
      lands in between must not say "Ready" about the reel being replaced. */
   studio.seenJob = studio.jobId; studio.watching = -1;
   studio.project.name = studio_el('studio-pname').value.trim() || studio.project.name;
+  /* The list of what is pending belongs to the project being sent. Clearing it
+     here rather than on the job's reply means the card stops claiming, for the
+     length of the render, that those edits are still missing. */
+  const sent = studio.pending.slice();
+  studio_settled();
+  /* Said before the round trip, not after it: the gap between pressing the
+     button and the first poll is exactly where the page used to look as if
+     nothing had happened. */
+  studio_busy(true);
+  studio_el('studio-meter').style.width = '0%';
+  studio_state('Starting the render…');
+  studio_drawRenderCard();
   const r = await API.post('/api/studio/render', {project: studio.project});
-  if (!r || !r.ok) { studio_state((r && r.error) || 'Could not start the render.', true); return; }
+  if (!r || !r.ok) {
+    studio_busy(false);
+    studio.pending = sent; studio.dirty = sent.length > 0;
+    studio_state((r && r.error) || 'Could not start the render.', true);
+    studio_drawRenderCard();
+    return;
+  }
   studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
   studio.output = r.output;
   studio.jobId = r.job || 0;
@@ -1528,8 +1678,10 @@ async function studio_render() {
 
 function studio_state(msg, bad) {
   const el = studio_el('studio-state');
+  if (!el) return;
   el.textContent = msg || '';
   el.classList.toggle('is-bad', !!bad);
+  if (bad) studio.failMsg = msg || '';
 }
 
 async function studio_poll() {
@@ -1539,16 +1691,19 @@ async function studio_poll() {
   const mine = ++studio.pollTok;
   const j = await API.get('/api/studio/job');
   if (mine !== studio.pollTok) return;
-  if (!j || j.state === 'idle') { studio_busy(false); return; }
+  if (!j || j.state === 'idle') { studio_busy(false); studio_drawRenderCard(); return; }
   const running = j.state === 'running' || j.state === 'queued';
   studio_busy(running);
   studio_el('studio-meter').style.width = (running ? j.percent : 100) + '%';
   if (running) {
     studio.watching = j.id;       /* seen running on this page: its finish is news */
-    studio_state(j.message + (j.cached ? ' · ' + j.cached + ' shots unchanged' : ''));
+    studio.jobMsg = j.message + (j.cached ? ' · ' + j.cached + ' shots unchanged' : '');
+    studio_state(studio.jobMsg);
+    studio_drawRenderCard();
     studio.polling = setTimeout(studio_poll, 700);
     return;
   }
+  studio.jobMsg = '';
   /* A finished job is news once, and only to a page that started it or watched
      it run. The server keeps the last job for as long as it runs, so without
      this every visit to the page announced the same reel again. */
@@ -1557,24 +1712,34 @@ async function studio_poll() {
   if (!news) { studio_drawRenderCard(); return; }
   if (j.state === 'done') {
     const same = studio.project && j.output === studio.project.output;
+    studio.renderNote = 'took ' + j.elapsed + ' s' + (j.cached ? ' · ' + j.cached + ' shots reused' : '');
     studio_state('Ready · rendered in ' + j.elapsed + ' s' + (j.cached ? ' · ' + j.cached + ' shots reused' : ''));
     if (same) {
-      studio.dirty = false; studio.output = j.output; studio.renderedAt = Date.now();
+      /* Not studio_settled(): an edit made while the render ran is a real
+         difference from the video that has just arrived, and saying otherwise
+         would lose it. studio_render() already cleared what it sent. */
+      studio.output = j.output; studio.renderedAt = Date.now();
       studio_loadVideo();
     }
     toast('Reel ready.', 'ok');
     studio.loadedAt = 0;
   } else if (j.state === 'failed') {
+    /* A failed render leaves the edits unrendered, so they go back on the list
+       -- as one line, because which of them it was is no longer knowable. */
+    if (!studio.pending.length && studio.output) studio_touched('The edits from the render that failed');
     studio_state(j.error || 'The render failed.', true);
   } else {
+    if (!studio.pending.length && studio.output) studio_touched('The edits from the render you cancelled');
     studio_state('Cancelled.');
   }
   studio_drawRenderCard();
 }
 
 function studio_busy(on) {
+  studio.rendering = !!on;
   studio_show('studio-cancel-btn', on);
   studio_el('studio-render-btn').disabled = on;
+  studio_show('studio-meter-wrap', on);
 }
 
 function studio_loadVideo() {
@@ -1591,38 +1756,124 @@ function studio_drawRenderCard() {
   studio_el('studio-facts').textContent = studio_dur(d.length) + ' · ' + p.shots.length + ' shots · ' +
     Math.round(d.bpm) + ' BPM grid · ' + (st ? st.label : p.style) + ' · ' +
     (p.format === 'vertical' ? '9:16' : '16:9') + (p.song ? '' : ' · no song');
-  const btn = studio_el('studio-render-btn');
-  btn.textContent = studio.output ? (studio.dirty ? 'Render changes' : 'Render again') : 'Render';
+  studio_drawSync();
   studio_el('studio-undo-btn').disabled = !studio.undo.length;
   studio_el('studio-show-btn').disabled = !studio.output || studio.dirty && !studio.renderedAt;
-  /* The planner's notes live on the project; each later reply (a render, an
-     edit check) only adds what it has to say about that step. */
-  const notes = [];
-  (p.plan_notes || []).concat(studio.notes || []).forEach(n => { if (notes.indexOf(n) < 0) notes.push(n); });
-  studio_el('studio-notes').innerHTML = notes.map(n => '<li>' + esc(n) + '</li>').join('');
-  studio_drawSelection();
+  studio_drawWhy();
 }
 
-/* Which of the clips chosen for this reel are in it, and why any are not. Kept on
-   the project, so it is still true when the reel is opened again next week. */
-function studio_drawSelection() {
-  const d = studio.derived, box = studio_el('studio-sel');
-  if (!d || !box) return;
-  const sel = d.selection || [];
-  const out = sel.filter(x => !x.in);
-  let html = '';
-  if (sel.length) {
-    html += '<p class="studio-sel-h">' + (out.length
-      ? (sel.length - out.length) + ' of ' + sel.length + ' chosen clips are in this reel'
-      : 'All ' + sel.length + ' chosen clips are in this reel') + '</p>';
-    if (out.length) {
-      html += '<details class="studio-sel-out"' + (out.length <= 3 ? ' open' : '') + '><summary>' +
-        out.length + (out.length === 1 ? ' clip' : ' clips') + ' left out, and why</summary><ul>' +
-        out.map(x => '<li><strong>' + esc(x.name) + '</strong>: ' + esc(x.why) + '</li>').join('') + '</ul></details>';
-    }
+/* How many single edits are waiting, which is what the button counts. */
+function studio_pendingCount() {
+  return studio.pending.reduce((a, x) => a + x.n, 0);
+}
+
+/* THE ANSWER TO "IS WHAT I AM WATCHING WHAT I HAVE EDITED?", in one strip:
+   a state colour, a sentence, and the list of what is missing when any is. */
+function studio_drawSync() {
+  const box = studio_el('studio-sync');
+  if (!box) return;
+  const n = studio_pendingCount();
+  const btn = studio_el('studio-render-btn');
+  let kind, head, sub, label;
+  /* #studio-state, just below, carries the job's own words -- "Ready ·
+     rendered in 23 s", "Cancelled.", the error. Nothing here repeats them. */
+  if (studio.rendering) {
+    kind = 'busy'; label = 'Rendering…';
+    head = 'Rendering your changes';
+    sub = '';
+  } else if (studio.failMsg) {
+    kind = 'bad'; label = n ? 'Try again · ' + n + (n === 1 ? ' change' : ' changes') : 'Try again';
+    head = 'The last render failed';
+    sub = 'Your edits are still here. Nothing was lost.';
+  } else if (!studio.output) {
+    kind = 'none'; label = 'Render';
+    head = 'Not rendered yet';
+    sub = 'There is nothing to watch until this reel has been rendered once.';
+  } else if (studio.dirty) {
+    kind = 'stale';
+    label = n ? 'Apply ' + n + (n === 1 ? ' change' : ' changes') : 'Apply your changes';
+    head = n ? n + (n === 1 ? ' change is not in the video' : ' changes are not in the video')
+             : 'Your changes are not in the video';
+    sub = 'The player is still showing the last render.';
+  } else {
+    kind = 'ok'; label = 'Render again';
+    head = 'The video matches your edits';
+    /* Only once the render has stopped being news: while it is, the line below
+       is still saying "Ready · rendered in 23 s", which says it better. */
+    const ago = studio.renderedAt ? studio_ago(studio.renderedAt) : '';
+    sub = (ago && ago !== 'just now') ? 'Rendered ' + ago + '.' : '';
   }
-  html += '<button type="button" class="btn btn-sm" data-act="studio-add">Add clips…</button>';
-  box.innerHTML = html;
+  box.className = 'studio-sync is-' + kind;
+  studio_el('studio-sync-head').textContent = head;
+  studio_el('studio-sync-sub').textContent = sub;
+  studio_show('studio-sync-sub', !!sub);
+  if (btn) {
+    btn.textContent = label;
+    btn.classList.toggle('btn-warn', kind === 'stale');
+    btn.classList.toggle('btn-primary', kind !== 'stale');
+  }
+  /* WHICH changes, not just how many -- the newest first, because that is the
+     one being second-guessed. Six is as many as the card can hold without
+     becoming the thing it replaced. */
+  const list = studio_el('studio-pending');
+  const show = kind === 'stale' || (kind === 'bad' && n);
+  studio_show('studio-pending', show && n > 0);
+  if (show && n > 0) {
+    const rows = studio.pending.slice().reverse();
+    list.innerHTML = rows.slice(0, 6).map(x =>
+      '<li>' + esc(x.label) + (x.n > 1 ? '<span class="studio-pending-n">×' + x.n + '</span>' : '') + '</li>').join('') +
+      (rows.length > 6 ? '<li class="studio-pending-more">and ' + (rows.length - 6) + ' more</li>' : '');
+  }
+  /* The player says it too: the sidebar is not where someone watching looks. */
+  const stale = studio_el('studio-stale');
+  if (stale) {
+    studio_show('studio-stale', kind === 'stale' && !!studio.output);
+    stale.textContent = 'Last render · ' + n + (n === 1 ? ' change not shown' : ' changes not shown');
+  }
+}
+
+/* WHY THE REEL IS THE WAY IT IS. Two kinds of note arrive as one list of
+   strings, and showing them as one list of amber bullets made the planner's
+   running commentary look like five things going wrong. They are told apart by
+   where they came from: plan_notes is the account of the build, kept on the
+   project; anything in the latest reply that is NOT in it is the server
+   answering for the edit just made, which is the part worth interrupting for. */
+function studio_drawWhy() {
+  const p = studio.project, d = studio.derived, box = studio_el('studio-why');
+  if (!p || !box) return;
+  /* Read back what is open before replacing it. The card is redrawn on every
+     edit and every poll tick, and a fold that shut itself each time could not
+     be read to the end. */
+  Array.prototype.forEach.call(box.querySelectorAll('details[data-fold]'),
+    d => { studio.folds[d.getAttribute('data-fold')] = d.open; });
+  const plan = p.plan_notes || [];
+  const live = (studio.notes || []).filter(n => plan.indexOf(n) < 0);
+  const sel = (d && d.selection) || [];
+  const out = sel.filter(x => !x.in);
+  let h = '';
+  if (live.length) {
+    h += '<div class="studio-alert"><p class="studio-alert-h">' +
+      (live.length === 1 ? 'One thing to know about that edit' : live.length + ' things to know about that edit') +
+      '</p><ul>' + live.map(n => '<li>' + esc(n) + '</li>').join('') + '</ul></div>';
+  }
+  if (plan.length) {
+    h += '<details class="studio-fold" data-fold="build"' + (studio.folds.build ? ' open' : '') +
+      '><summary>How this reel was built' +
+      '<span class="studio-fold-n">' + plan.length + '</span></summary>' +
+      '<ul class="studio-fold-list">' + plan.map(n => '<li>' + esc(n) + '</li>').join('') + '</ul></details>';
+  }
+  if (sel.length) {
+    const used = sel.length - out.length;
+    h += out.length
+      ? '<details class="studio-fold" data-fold="clips"' + (studio.folds.clips ? ' open' : '') +
+        '><summary>Clips<span class="studio-fold-n">' + used + ' of ' + sel.length +
+        '</span></summary><p class="studio-fold-lede">' + out.length +
+        (out.length === 1 ? ' clip was left out:' : ' clips were left out:') + '</p><ul class="studio-fold-list">' +
+        out.map(x => '<li><strong>' + esc(x.name) + '</strong> — ' + esc(x.why) + '</li>').join('') + '</ul></details>'
+      : '<p class="studio-fold-flat">All ' + sel.length + ' chosen clips are in this reel</p>';
+  }
+  h += '<button type="button" class="btn btn-sm studio-add-btn" data-act="studio-add">Add clips…</button>';
+  box.innerHTML = h;
 }
 
 /* Back to the clips with this reel's selection picked, to add more and rebuild. */
@@ -1699,6 +1950,60 @@ async function studio_deleteGo() {
   studio.selected = []; studio.delPaths = [];
   const bad = (r.errors || []).length;
   toast('Deleted ' + r.clips + (r.clips === 1 ? ' clip' : ' clips') + ' and freed ' + studio_bytes(r.bytes) +
+    (bad ? '. ' + bad + (bad === 1 ? ' file is' : ' files are') + ' still in use and could not be removed.' : '.'),
+    bad ? 'warn' : 'ok');
+  studio_load(true);
+}
+
+/* ------------------------------------------------------------ deleting reels */
+
+/* The dry run first: the server decides what a reel's path really owns, and
+   the confirmation says it back before anything is unlinked. */
+async function studio_reelDeleteAsk(path, name) {
+  if (!path) return;
+  studio.reelDel = path;
+  const go = studio_el('studio-rdel-go');
+  go.disabled = true;
+  studio_el('studio-rdel-text').textContent = 'Checking “' + name + '”…';
+  studio_el('studio-rdel-note').textContent = '';
+  studio_el('studio-rdel-msg').textContent = '';
+  studio_show('studio-rdel-scrim', true);
+  const r = await API.post('/api/studio/reel-delete', {paths: [path], dry_run: true});
+  if (studio.reelDel !== path) return;
+  if (!r || !r.ok) { studio_el('studio-rdel-text').textContent = (r && r.error) || 'Could not check that reel.'; return; }
+  if (!r.reels) { studio_el('studio-rdel-text').textContent = 'That reel is not in the reels folder any more.'; return; }
+  studio_el('studio-rdel-text').textContent =
+    'Delete “' + (r.names[0] || name) + '” and its timeline? This frees ' + studio_bytes(r.bytes) +
+    '. The video and the project it reopens from are removed from disk for good.';
+  studio_el('studio-rdel-note').textContent =
+    'The clips it was made from are not touched, so the same reel can be made again.';
+  go.disabled = false;
+}
+
+async function studio_reelDeleteGo() {
+  const go = studio_el('studio-rdel-go');
+  go.disabled = true;
+  studio_el('studio-rdel-msg').textContent = 'Deleting…';
+  const r = await API.post('/api/studio/reel-delete', {paths: [studio.reelDel || '']});
+  if (!r || !r.ok) {
+    studio_el('studio-rdel-msg').textContent = (r && r.error) || 'Could not delete that reel.';
+    go.disabled = false;
+    return;
+  }
+  studio_show('studio-rdel-scrim', false);
+  /* The timeline on screen may be the reel that has just gone: it can still be
+     edited, but it would be rendering into a file that no longer exists, so it
+     is treated as never rendered rather than left claiming to match a video. */
+  if (studio.project && studio.output && studio.output.toLowerCase() === String(studio.reelDel).toLowerCase()) {
+    studio.output = ''; studio.renderedAt = 0; studio.renderNote = '';
+    studio.project.output = '';
+    studio_touched('The reel this was rendered to was deleted');
+    studio_loadVideo();
+    studio_drawAll();
+  }
+  studio.reelDel = '';
+  const bad = (r.errors || []).length;
+  toast('Deleted “' + (r.names[0] || 'that reel') + '” and freed ' + studio_bytes(r.bytes) +
     (bad ? '. ' + bad + (bad === 1 ? ' file is' : ' files are') + ' still in use and could not be removed.' : '.'),
     bad ? 'warn' : 'ok');
   studio_load(true);
@@ -1809,6 +2114,8 @@ function studio_drawTimeline() {
   });
 
   /* video */
+  const edited = {};
+  studio.pending.forEach(x => { if (x.shot >= 0) edited[x.shot] = true; });
   p.shots.forEach((s, i) => {
     const r = d.shots[i];
     if (!r) return;
@@ -1816,7 +2123,11 @@ function studio_drawTimeline() {
     const thumb = studio_media('/api/studio/thumb', s.clip, '&t=' + Math.max(0, s.kill - 0.3).toFixed(2) +
                                '&v=' + ((c && c.mtime) || 0));
     const w = Math.max(6, (r.end - r.start) * pps);
+    /* A shot edited since the last render is flagged where the edit was made,
+       not only in the sidebar: "which shot did I change?" is a timeline
+       question and deserves a timeline answer. */
     h += '<div class="st-shot' + (i === studio.sel ? ' is-sel' : '') + (s.hero ? ' is-hero' : '') +
+      (edited[i] ? ' is-edited' : '') +
       '" data-shot="' + i + '" style="left:' + X(r.start) + 'px;top:' + rows.video + 'px;width:' + w.toFixed(1) +
       'px;height:' + STUDIO_ROW.video + 'px;background-image:url(\'' + thumb + '\')" title="' + esc(s.name) + '">' +
       '<span class="st-shot-name">' + (i + 1) + (w > 70 ? ' · ' + esc((c && c.caption) || s.name) : '') + '</span>' +
@@ -2082,8 +2393,14 @@ function studio_marks() {
 }
 
 /* The mark nearest a kill: the server's answer where there is one, so the
-   drift drawn is the drift the render produced. */
+   drift drawn is the drift the render produced.
+
+   A lead-in shot has none. Its footage could not reach the first mark, so it
+   opens the reel and the mark went to the shot behind it -- scoring its kill
+   against the nearest mark anyway drew a six-second miss for a shot that was
+   never aimed at one. */
 function studio_nearMark(mk, row, t) {
+  if (row && row.lead_in) return null;
   if (row && row.mark !== undefined && row.mark !== null && mk && mk.what === 'planned') return row.mark;
   if (!mk || !mk.at.length) return null;
   let best = mk.at[0];
@@ -2294,32 +2611,35 @@ function studio_inspectorInput(e) {
   if (pool) {
     const vals = Array.prototype.slice.call(studio_el('studio-insp').querySelectorAll('input[data-pool="' + pool + '"]:checked')).map(x => x.value);
     if (!vals.length) { t.checked = true; toast('Keep at least one to choose from.', 'warn'); return; }
-    studio_change(pr => { pr.pools = Object.assign({}, pr.pools || {}); pr.pools[pool] = vals; });
+    studio_change(pr => { pr.pools = Object.assign({}, pr.pools || {}); pr.pools[pool] = vals; },
+                  'The ' + pool + ' effects to choose from');
     studio_mix(pool, false);
     return;
   }
   const list = t.getAttribute('data-list');
   if (list) {
     const vals = Array.prototype.slice.call(studio_el('studio-insp').querySelectorAll('input[data-list="' + list + '"]:checked')).map(x => x.value);
-    studio_change(pr => { if (list === 'overlays') pr.overlays = vals; else pr.shots[i][list] = vals; });
+    studio_change(pr => { if (list === 'overlays') pr.overlays = vals; else pr.shots[i][list] = vals; },
+                  list === 'overlays' ? 'Overlays' : studio_shotName(i) + ' · effects', list === 'overlays' ? -1 : i);
     return;
   }
+  /* Each edit names itself for the card's list of what is not rendered yet. */
   const map = {
-    'studio-f-kill': () => studio_change(pr => { pr.shots[i].kill = Number(t.value); }),
-    'studio-f-speed': () => studio_change(pr => { pr.shots[i].speed = t.value; }),
-    'studio-f-trans': () => studio_change(pr => { pr.shots[i].transition = t.value; pr.shots[i].tlen = 0; }),
-    'studio-f-tlen': () => studio_change(pr => { pr.shots[i].tlen = Number(t.value); }),
-    'studio-f-hero': () => studio_change(pr => { const sh = pr.shots[i]; sh.hero = t.checked; if (t.checked && !sh.hero_fx.length) sh.hero_fx = ['h01']; }),
-    'studio-f-caption': () => studio_change(pr => { pr.shots[i].caption = t.value; }),
-    'studio-f-camera': () => studio_change(pr => { pr.shots[i].camera = t.value; }),
-    'studio-r-grade': () => studio_change(pr => { pr.grade = t.value; }),
-    'studio-r-vignette': () => studio_change(pr => { pr.vignette = t.checked; }),
-    'studio-r-intro': () => studio_change(pr => { pr.intro = t.value; }),
-    'studio-r-outro': () => studio_change(pr => { pr.outro = t.value; }),
-    'studio-r-handle': () => studio_change(pr => { pr.handle = t.value; }),
-    'studio-r-music': () => studio_change(pr => { pr.music_db = Number(t.value); }),
-    'studio-r-game': () => studio_change(pr => { pr.game_db = Number(t.value); }),
-    'studio-r-duck': () => studio_change(pr => { pr.duck = t.checked; })
+    'studio-f-kill': () => studio_change(pr => { pr.shots[i].kill = Number(t.value); }, studio_shotName(i) + ' · where the kill is', i),
+    'studio-f-speed': () => studio_change(pr => { pr.shots[i].speed = t.value; }, studio_shotName(i) + ' · speed', i),
+    'studio-f-trans': () => studio_change(pr => { pr.shots[i].transition = t.value; pr.shots[i].tlen = 0; }, studio_shotName(i) + ' · transition', i),
+    'studio-f-tlen': () => studio_change(pr => { pr.shots[i].tlen = Number(t.value); }, studio_shotName(i) + ' · transition length', i),
+    'studio-f-hero': () => studio_change(pr => { const sh = pr.shots[i]; sh.hero = t.checked; if (t.checked && !sh.hero_fx.length) sh.hero_fx = ['h01']; }, studio_shotName(i) + (t.checked ? ' · made a hero shot' : ' · no longer a hero shot'), i),
+    'studio-f-caption': () => studio_change(pr => { pr.shots[i].caption = t.value; }, studio_shotName(i) + ' · caption', i),
+    'studio-f-camera': () => studio_change(pr => { pr.shots[i].camera = t.value; }, studio_shotName(i) + ' · camera move', i),
+    'studio-r-grade': () => studio_change(pr => { pr.grade = t.value; }, 'Colour'),
+    'studio-r-vignette': () => studio_change(pr => { pr.vignette = t.checked; }, 'Vignette'),
+    'studio-r-intro': () => studio_change(pr => { pr.intro = t.value; }, 'The opening'),
+    'studio-r-outro': () => studio_change(pr => { pr.outro = t.value; }, 'The ending'),
+    'studio-r-handle': () => studio_change(pr => { pr.handle = t.value; }, 'Your handle'),
+    'studio-r-music': () => studio_change(pr => { pr.music_db = Number(t.value); }, 'Music level'),
+    'studio-r-game': () => studio_change(pr => { pr.game_db = Number(t.value); }, 'Game sound level'),
+    'studio-r-duck': () => studio_change(pr => { pr.duck = t.checked; }, 'Ducking the music under gunfire')
   };
   if (s === null && t.id && t.id.indexOf('studio-f-') === 0) return;
   if (map[t.id]) map[t.id]();
@@ -2387,7 +2707,7 @@ function studio_pointerUp(e) {
   if (!g.moved) { studio_select(g.i); return; }
   studio.gen++;
   studio_pushUndo(g.snapshot);
-  studio.dirty = true;
+  studio_touched(studio_shotName(g.i) + (g.kind === 'trim' ? ' · trimmed' : g.kind === 'kill' ? ' · the kill moved' : ' moved'), g.i);
   studio.sel = g.i;
   studio_drawAll();
   studio_check();
@@ -2400,7 +2720,9 @@ async function studio_open(path) {
   if (!r || !r.ok) { toast((r && r.error) || 'Could not open that reel.', 'warn'); return; }
   studio.undo = []; studio.sel = -1;
   studio_setProject(r.project, r.derived, r.notes, r.song);
-  studio.output = r.project.output; studio.dirty = false; studio.renderedAt = r.when || Date.now();
+  studio.output = r.project.output; studio.renderedAt = r.when || Date.now();
+  studio_settled();
+  studio.renderNote = '';
   studio_tab('timeline');
   studio_fit();
   studio_drawAll();
@@ -2476,6 +2798,9 @@ function studio_wire() {
     else if (act === 'studio-delete') studio_deleteAsk();
     else if (act === 'studio-del-cancel') studio_closeModals();
     else if (act === 'studio-del-go') studio_deleteGo();
+    else if (act === 'studio-reel-del') studio_reelDeleteAsk(b.getAttribute('data-path'), b.getAttribute('data-name'));
+    else if (act === 'studio-rdel-cancel') { studio.reelDel = ''; studio_show('studio-rdel-scrim', false); }
+    else if (act === 'studio-rdel-go') studio_reelDeleteGo();
     else if (act === 'studio-fmt' || act === 'studio-order') {
       const key = act === 'studio-fmt' ? 'fmt' : 'order';
       studio[key] = b.getAttribute('data-' + key);
@@ -2514,42 +2839,49 @@ function studio_wire() {
     else if (act === 'studio-move' && p) {
       const d = Number(b.getAttribute('data-d')), i = studio.sel, j = i + d;
       if (j < 0 || j >= p.shots.length) return;
-      studio_change(pr => { const t = pr.shots[i]; pr.shots[i] = pr.shots[j]; pr.shots[j] = t; });
+      studio_forgetShots();
+      studio_change(pr => { const t = pr.shots[i]; pr.shots[i] = pr.shots[j]; pr.shots[j] = t; },
+                    'Shots reordered');
       studio.sel = j; studio_drawAll();
     }
     else if (act === 'studio-remove' && p) {
       if (p.shots.length <= 1) { toast('A reel needs at least one shot.', 'warn'); return; }
       const i = studio.sel;
-      studio_change(pr => { pr.shots.splice(i, 1); });
+      const gone = studio_shotName(i);
+      studio_forgetShots();
+      studio_change(pr => { pr.shots.splice(i, 1); }, gone + ' removed');
       studio.sel = Math.min(i, p.shots.length - 1); studio_drawAll();
     }
     else if (act === 'studio-slip' && p) {
-      const d = Number(b.getAttribute('data-d'));
-      studio_change(pr => { const s = pr.shots[studio.sel]; s.kill = Math.max(0, Math.min(s.clip_seconds, s.kill + d)); });
+      const d = Number(b.getAttribute('data-d')), i = studio.sel;
+      studio_change(pr => { const s = pr.shots[i]; s.kill = Math.max(0, Math.min(s.clip_seconds, s.kill + d)); },
+                    studio_shotName(i) + ' · where the kill is', i);
     }
     else if (act === 'studio-beats' && p) {
-      const what = b.getAttribute('data-what'), d = Number(b.getAttribute('data-d')), beat = p.beat || 0.5;
+      const what = b.getAttribute('data-what'), d = Number(b.getAttribute('data-d')), beat = p.beat || 0.5, i = studio.sel;
       studio_change(pr => {
-        const s = pr.shots[studio.sel];
+        const s = pr.shots[i];
         if (what === 'pre') s.pre = Math.max(0, Math.min(s.duration, s.pre + d * beat));
         else { s.duration = Math.max(beat, s.duration + d * beat); s.pre = Math.min(s.pre, s.duration); }
-      });
+      }, studio_shotName(i) + (what === 'pre' ? ' · the run-up to the kill' : ' · length'), i);
     }
     else if (act === 'studio-offset' && p) {
       const d = Number(b.getAttribute('data-d')), beat = p.beat || 0.5;
-      studio_change(pr => { pr.song_offset = Math.max(0, pr.song_offset + d * beat); });
+      studio_change(pr => { pr.song_offset = Math.max(0, pr.song_offset + d * beat); }, 'Where the song starts');
     }
-    else if (act === 'studio-rfmt' && p) studio_change(pr => { pr.format = b.getAttribute('data-fmt'); });
+    else if (act === 'studio-rfmt' && p) studio_change(pr => { pr.format = b.getAttribute('data-fmt'); },
+      'Format · ' + (b.getAttribute('data-fmt') === 'vertical' ? '9:16' : '16:9'));
     else if (act === 'studio-restyle' && p) studio_restyle();
     else if (act === 'studio-mix' && p) studio_mix(b.getAttribute('data-what'), true);
     else if (act === 'studio-fx-all' && p && studio.sel >= 0) {
       const fx = p.shots[studio.sel].fx.slice();
-      studio_change(pr => { pr.shots.forEach(s => { s.fx = fx.slice(); }); });
+      studio_change(pr => { pr.shots.forEach(s => { s.fx = fx.slice(); }); }, 'The same kill effect on every shot');
       toast('Every shot now uses ' + (fx.length ? fx.map(id => studio_part(id).label).join(' + ') : 'no kill effect') + '.', 'ok');
     }
     else if (act === 'studio-tr-all' && p && studio.sel > 0) {
       const t = p.shots[studio.sel].transition, len = p.shots[studio.sel].tlen;
-      studio_change(pr => { pr.shots.forEach((s, k) => { if (k) { s.transition = t; s.tlen = len; } }); });
+      studio_change(pr => { pr.shots.forEach((s, k) => { if (k) { s.transition = t; s.tlen = len; } }); },
+                    'The same transition on every cut');
       toast('Every cut is now ' + studio_part(t).label + '.', 'ok');
     }
     else if (act === 'studio-sg-pick') studio_sgPick();
@@ -2604,7 +2936,7 @@ function studio_wire() {
   const q = studio_el('studio-q');
   if (q) q.addEventListener('input', () => { studio.q = q.value; studio_renderLib(); });
   const pn = studio_el('studio-pname');
-  if (pn) pn.addEventListener('change', () => { if (studio.project) studio_change(pr => { pr.name = pn.value.trim() || pr.name; }); });
+  if (pn) pn.addEventListener('change', () => { if (studio.project) studio_change(pr => { pr.name = pn.value.trim() || pr.name; }, 'Reel name'); });
   document.addEventListener('pointerdown', studio_pointerDown);
   document.addEventListener('pointermove', studio_pointerMove);
   document.addEventListener('pointerup', studio_pointerUp);
@@ -2648,8 +2980,9 @@ function studio_wire() {
     else if (e.key === '0') { e.preventDefault(); studio_fit(); studio_drawTimeline(); }
     else if ((e.key === 'Delete' || e.key === 'Backspace') && studio.sel >= 0 && studio.project.shots.length > 1) {
       e.preventDefault();
-      const i = studio.sel;
-      studio_change(pr => { pr.shots.splice(i, 1); });
+      const i = studio.sel, gone = studio_shotName(i);
+      studio_forgetShots();
+      studio_change(pr => { pr.shots.splice(i, 1); }, gone + ' removed');
       studio.sel = Math.min(i, studio.project.shots.length - 1); studio_drawAll();
     }
   });
@@ -2678,7 +3011,8 @@ async function studio_restyle() {
     studio_pushUndo(snapshot);
     studio.gen++;
     r.project.output = p.output;
-    studio.sel = -1; studio.dirty = true;
+    studio.sel = -1;
+    studio_touched('Rebuilt as ' + label);
     studio_setProject(r.project, r.derived, r.notes, r.song);
     studio_fit(); studio_drawAll();
     toast('Rebuilt as ' + label + ' — ' + r.project.shots.length + ' shots. Render to see it.', 'ok');
@@ -2698,7 +3032,14 @@ async function studio_mix(what, announce) {
   if (!r || !r.ok) { toast((r && r.error) || 'Could not mix the effects.', 'warn'); return; }
   if (announce) studio_pushUndo(snapshot);
   studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
-  studio.dirty = true;
+  /* An unannounced mix rides along with the pool edit that asked for it, and
+     that edit has already named itself; naming it twice would double the count. */
+  if (announce) {
+    studio_touched(what === 'all' ? 'Everything mixed again'
+                 : what === 'kill' ? 'Kill effects mixed again' : 'Transitions mixed again');
+  } else {
+    studio.dirty = true;
+  }
   studio_drawAll();
   if (announce) toast(what === 'all' ? 'Everything mixed again.' : what === 'kill' ? 'Kill effects mixed again.' : 'Transitions mixed again.', 'ok');
 }
@@ -3360,7 +3701,8 @@ async function studio_sgApply(noSong) {
     if (!r || !r.ok) { studio_el('studio-sg-msg').textContent = (r && r.error) || 'Could not use that song.'; return; }
     studio_pushUndo(snapshot);
     r.project.output = p.output;
-    studio.dirty = true;
+    studio_touched(noSong ? 'The song taken off'
+                 : sg.marks.length ? 'The song, and ' + sg.marks.length + ' kill marks' : 'The part of the song');
     studio_setProject(r.project, r.derived, r.notes, r.song);
     if (noSong) { sg.song = ''; sg.shape = null; sg.marks = []; }
     sg.touched = false;
@@ -3382,7 +3724,10 @@ function studio_sgWire() {
   });
   const a = studio_el('studio-sg-audio');
   if (a) {
-    a.addEventListener('play', () => { studio_el('studio-sg-play').textContent = 'Pause'; requestAnimationFrame(studio_sgTick); });
+    /* "Pause the part", not "Pause": a button that renames itself must not
+       resize itself under the pointer that just pressed it, and two labels of
+       the same length cannot. The min-width in the CSS is the belt to this. */
+    a.addEventListener('play', () => { studio_el('studio-sg-play').textContent = 'Pause the part'; requestAnimationFrame(studio_sgTick); });
     a.addEventListener('pause', () => { studio_el('studio-sg-play').textContent = 'Play the part'; studio_sgDrawWaves(); });
     a.addEventListener('seeked', studio_sgDrawWaves);
   }

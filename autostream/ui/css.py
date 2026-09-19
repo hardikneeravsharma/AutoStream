@@ -3165,6 +3165,10 @@ STUDIO_CSS = r"""
   border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-md)}
 .studio-reel-name{font-weight:600;color:var(--text-primary)}
 .studio-reel-meta,.studio-reel-old{font-size:12px}
+/* Delete sits at the far right of the card's action row, on whichever line it
+   lands on: a card whose first button reads "Made before the Studio" wraps. */
+.studio-reel .field-inline{flex-wrap:wrap;align-items:center}
+.studio-reel .studio-del-btn{margin-left:auto}
 .studio-game-h{font-family:var(--font-display);font-size:18px;font-weight:600;color:var(--text-primary);
   margin:var(--space-6) 0 0;padding-bottom:6px;border-bottom:var(--border-hair) solid var(--border-subtle)}
 .studio-folder{display:flex;flex-direction:column;gap:var(--space-3);margin-top:var(--space-5)}
@@ -3221,11 +3225,90 @@ STUDIO_CSS = r"""
 .studio-player video{width:100%;height:100%;object-fit:contain;background:#000}
 .studio-player-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   color:#c8ccd4;font-size:14px;padding:var(--space-6);text-align:center}
-.studio-render .card-body{display:flex;flex-direction:column;gap:var(--space-3)}
-.studio-facts{font-size:12.5px}
-.studio-state{font-size:13px;color:var(--text-secondary);min-height:1.4em}
+.studio-render .card-body{display:flex;flex-direction:column;gap:var(--space-5)}
+.studio-facts{font-size:12.5px;margin:0}
+
+/* IS THE VIDEO WHAT I EDITED? One plate answers it, and the plate is the only
+   status colour on the page: the timeline is full of accent already, so the
+   answer had to be a shape and a colour the timeline never uses. */
+.studio-sync{display:flex;flex-direction:column;gap:var(--space-3);
+  padding:var(--space-5);border-radius:var(--radius-sm);
+  border:var(--border-hair) solid var(--border-subtle);border-left-width:3px;
+  background:var(--surface-sunken)}
+.studio-sync-line{display:flex;align-items:center;gap:var(--space-4);margin:0}
+.studio-sync-dot{flex:none;width:var(--size-dot);height:var(--size-dot);border-radius:var(--radius-pill);
+  background:var(--text-tertiary)}
+.studio-sync-head{font:600 13.5px/1.35 var(--font-text);color:var(--text-primary)}
+.studio-sync-sub{margin:0;font-size:12.5px;color:var(--text-secondary)}
+.studio-state{font-size:12.5px;color:var(--text-secondary);min-height:1.35em;margin:0}
 .studio-state.is-bad{color:var(--danger);white-space:pre-wrap}
-.studio-notes{margin:0;padding-left:18px;font-size:12.5px;color:var(--warn)}
+.studio-sync.is-ok{border-left-color:var(--ok);background:var(--ok-muted)}
+.studio-sync.is-ok .studio-sync-dot{background:var(--ok)}
+.studio-sync.is-stale{border-left-color:var(--warn);background:var(--warn-muted)}
+.studio-sync.is-stale .studio-sync-dot{background:var(--warn)}
+.studio-sync.is-bad{border-left-color:var(--danger);background:var(--danger-muted)}
+.studio-sync.is-bad .studio-sync-dot{background:var(--danger)}
+/* The meter is the progress; the dot would only pulse next to it. */
+.studio-sync.is-busy{border-left-color:var(--text-tertiary)}
+
+/* WHICH changes, not just how many. Kept to the width of the card and to six
+   lines, because a list long enough to scroll is the clutter it replaced. */
+.studio-pending{list-style:none;margin:0;padding:var(--space-3) 0 0;
+  border-top:var(--border-hair) solid var(--border-subtle);
+  display:flex;flex-direction:column;gap:var(--space-2)}
+.studio-pending li{display:flex;align-items:baseline;gap:var(--space-3);font-size:12.5px;
+  color:var(--text-primary);overflow-wrap:anywhere}
+.studio-pending li::before{content:"";flex:none;width:3px;height:3px;margin-top:6px;border-radius:var(--radius-pill);
+  background:var(--warn)}
+.studio-pending-n{margin-left:auto;flex:none;font:11px var(--font-mono);color:var(--text-tertiary)}
+.studio-sync.is-bad .studio-pending li::before{background:var(--danger)}
+.studio-pending-more{color:var(--text-tertiary)}
+.studio-pending-more::before{background:var(--border-strong) !important}
+
+/* The badge over the video itself. Someone watching the player is not reading
+   the sidebar, and this is the one place they cannot miss. */
+.studio-stale{position:absolute;top:var(--space-5);left:var(--space-5);z-index:1;
+  padding:var(--space-3) var(--space-5);border-radius:var(--radius-pill);
+  background:var(--warn);color:#1a1300;font:600 11.5px/1 var(--font-text);
+  box-shadow:var(--shadow-md);pointer-events:none}
+
+.studio-acts{gap:var(--space-4);flex-wrap:wrap}
+
+/* THE EXPLANATIONS, FOLDED. Everything here used to be amber bullets in one
+   stack; only the first block is ever a problem, and the rest is the planner
+   accounting for itself, which is worth keeping and not worth shouting. */
+.studio-why{display:flex;flex-direction:column;gap:var(--space-4);font-size:12.5px}
+.studio-alert{padding:var(--space-4) var(--space-5);border-radius:var(--radius-sm);
+  background:var(--warn-muted);border:var(--border-hair) solid var(--warn);
+  border-width:0 0 0 3px}
+.studio-alert-h{margin:0 0 var(--space-3);font-weight:600;color:var(--text-primary)}
+.studio-alert ul{margin:0;padding-left:18px;color:var(--text-secondary);list-style:disc}
+.studio-alert li{margin-bottom:2px;line-height:1.5}
+.studio-alert li::marker{color:var(--warn)}
+.studio-fold{border-top:var(--border-hair) solid var(--border-subtle);padding-top:var(--space-4)}
+.studio-fold summary{display:flex;align-items:center;gap:var(--space-4);cursor:pointer;
+  color:var(--text-secondary);list-style:none}
+.studio-fold summary::-webkit-details-marker{display:none}
+/* The chevron the flex summary drops. Right when shut, down when open. */
+.studio-fold summary::before{content:"";flex:none;width:5px;height:5px;margin:0 1px 2px 2px;
+  border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;
+  transform:rotate(-45deg);transition:transform var(--dur-fast) var(--ease-standard)}
+.studio-fold[open] summary::before{transform:rotate(45deg);margin-bottom:4px}
+.studio-fold summary:hover{color:var(--text-primary)}
+.studio-fold summary:focus-visible{outline:2px solid var(--border-focus);outline-offset:2px;border-radius:var(--radius-xs)}
+.studio-fold-n{margin-left:auto;padding:1px 7px;border-radius:var(--radius-pill);
+  background:var(--surface-sunken);border:var(--border-hair) solid var(--border-subtle);
+  font:11px var(--font-mono);color:var(--text-tertiary)}
+.studio-fold-lede{margin:var(--space-4) 0 var(--space-2);color:var(--text-secondary)}
+/* The reset takes the markers off every ul; these want them back, so that a
+   note running to three lines still reads as one note. */
+.studio-fold-list{margin:var(--space-4) 0 0;padding-left:26px;color:var(--text-secondary);list-style:disc}
+.studio-fold-list li{line-height:1.5;margin-bottom:var(--space-4)}
+.studio-fold-list li:last-child{margin-bottom:0}
+.studio-fold-list li::marker{color:var(--text-tertiary)}
+.studio-fold-flat{margin:0;padding-top:var(--space-4);
+  border-top:var(--border-hair) solid var(--border-subtle);color:var(--text-secondary)}
+.studio-add-btn{align-self:flex-start}
 .studio-tl-bar{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3)}
 .studio-clock{min-width:70px;color:var(--text-primary)}
 .studio-check{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary)}
@@ -3256,6 +3339,11 @@ STUDIO_CSS = r"""
 .st-shot:active{cursor:grabbing}
 .st-shot.is-hero{border-color:var(--warn)}
 .st-shot.is-sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+/* Edited since the last render. A corner flag rather than a border, because
+   the borders here are already spoken for by the selection and the hero shot,
+   and this has to be readable on top of either. */
+.st-shot.is-edited::after{content:"";position:absolute;top:0;right:0;width:0;height:0;
+  border-top:12px solid var(--warn);border-left:12px solid transparent;pointer-events:none}
 .st-shot-name{position:absolute;left:4px;top:3px;right:12px;padding:1px 5px;border-radius:3px;
   font:600 11px/1.3 var(--font-text);color:#fff;background:rgba(0,0,0,.55);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;max-width:max-content}
@@ -3311,13 +3399,14 @@ STUDIO_CSS = r"""
 .studio-mk-body{display:flex;flex-direction:column;gap:var(--space-3)}
 .studio-adding{font-size:12.5px;color:var(--accent)}
 .studio-del-btn{color:var(--danger)}
-.studio-sel{display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-2);font-size:12.5px}
-.studio-sel-h{margin:0;color:var(--text-secondary)}
-.studio-sel-out summary{cursor:pointer;color:var(--warn)}
-.studio-sel-out ul{margin:var(--space-2) 0 0;padding-left:18px;color:var(--text-secondary)}
-.studio-sel-out li{margin-bottom:2px}
 .studio-mk-transport{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3)}
 .studio-mk-play{min-width:72px}
+/* A BUTTON THAT RENAMES ITSELF MUST NOT RESIZE ITSELF. Play/Pause swaps the
+   label under a pointer that has not moved; without a floor on the width the
+   button changes size on every press, the row reflows around it, and the next
+   click lands on whatever slid into the gap. */
+.studio-transport{min-width:76px}
+.studio-transport-wide{min-width:124px}
 .studio-mk-seek{flex:1 1 180px;min-width:0;accent-color:var(--accent)}
 .studio-mk-clock{min-width:108px;font-size:12.5px;color:var(--text-primary)}
 .studio-yt{width:min(560px,100%)}
