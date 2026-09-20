@@ -78,6 +78,7 @@ STUDIO_HTML = r"""
           shows what the reel will actually do. Click one to put it in the template you are dealing.</p>
       </div>
       <div class="bin-build">
+        <span class="bin-arrange" id="bin-arrange"></span>
         <span class="bin-shape" id="bin-shape"></span>
         <button type="button" class="btn btn-sm" data-act="studio-bin-favonly" id="bin-favonly"
                 aria-pressed="false" title="Show only the parts you have kept">&#9733; Favourites</button>
@@ -568,6 +569,9 @@ const studio = {
      so 1 is 'as the style has it' and the dials read as louder/quieter
      versions of the style rather than a jump to a different one. */
   shaping: {length: 1, pace: 1, effects: 1, flash: 1},
+  /* HOW THE REEL IS ORDERED, and anything pinned into a slot. Rides in the
+     same payload as the dials so one Build carries all of it. */
+  arrange: 'build', pins: {}, shuffleSeed: 0,
   sg: {song: '', shape: null, start: 0, end: 0, marks: [], drag: null, ticked: {}, ac: null,
        sel: -1, seeded: ''},
   /* The part of the song chosen on the Make dialog, in song seconds. */
@@ -1382,6 +1386,75 @@ function studio_shapeDraw() {
   (studio_shapeIsCentred() ? ' disabled' : '') + '>Reset</button>';
 }
 
+const ARRANGES = [
+  {k: 'build', name: 'Build up', why: 'A strong opener, the best one two thirds in, a strong close.'},
+  {k: 'time', name: 'As it happened', why: 'The fights in the order you played them.'},
+  {k: 'best', name: 'Best first', why: 'The strongest moment opens the reel.'},
+  {k: 'shuffle', name: 'Shuffle', why: 'A fresh draw. Press again for another.'}
+];
+
+function studio_arrangeDraw() {
+  const host = studio_el('bin-arrange');
+  if (!host) return;
+  host.innerHTML = ARRANGES.map(function (a) {
+    const on = studio.arrange === a.k;
+    return '<button type="button" class="btn btn-sm' + (on ? ' is-active' : '') +
+      '" data-act="studio-arrange" data-how="' + a.k + '" aria-pressed="' + on + '"' +
+      ' title="' + esc(a.why) + '">' + esc(a.name) + '</button>';
+  }).join('');
+}
+
+function studio_arrangePick(how) {
+  // Pressing Shuffle again is how you ask for another draw, so it re-rolls
+  // rather than doing nothing.
+  // Pressing Shuffle again is how you ask for another draw, so it always
+  // re-rolls rather than doing nothing the second time.
+  if (how === 'shuffle') studio.shuffleSeed = Math.floor(Math.random() * 2147483000) + 1;
+  studio.arrange = how;
+  studio_arrangeDraw();
+  toast('Make the reel again to see it.');
+}
+
+/* PINNING A CLIP TO A SLOT. Moving a shot with the arrows moves it once; a pin
+   survives every rebuild, every style change and every new draw, which is what
+   somebody means by "this one opens it". */
+const PIN_SLOTS = [
+  {k: 'open', name: 'Opens', done: 'Opens the reel'},
+  {k: 'climax', name: 'Climax', done: 'Is the climax'},
+  {k: 'close', name: 'Closes', done: 'Closes the reel'}
+];
+
+function studio_pinRow(clip) {
+  const mine = PIN_SLOTS.filter(function (x) { return studio.pins[x.k] === clip; });
+  return '<div class="field-inline studio-pins">' +
+    '<span class="field-label">Pin</span>' +
+    PIN_SLOTS.map(function (x) {
+      const on = studio.pins[x.k] === clip;
+      const taken = studio.pins[x.k] && !on;
+      return '<button type="button" class="btn btn-ghost btn-sm' + (on ? ' is-active' : '') +
+        '" data-act="studio-pin" data-slot="' + x.k + '" data-clip="' + esc(clip) + '"' +
+        ' aria-pressed="' + on + '" title="' + (on ? 'Unpin' : taken ? 'Takes the slot from another clip' : x.done) +
+        '">' + esc(x.name) + '</button>';
+    }).join('') +
+    (mine.length ? '<span class="muted">' + esc(mine[0].done) + ' on every rebuild.</span>' : '') +
+    '</div>';
+}
+
+function studio_pin(slot, clip) {
+  if (!slot || !clip) return;
+  // One clip per slot and one slot per clip: pinning the opener to a clip that
+  // was already the closer would otherwise ask for it in two places at once.
+  if (studio.pins[slot] === clip) delete studio.pins[slot];
+  else {
+    Object.keys(studio.pins).forEach(function (k) {
+      if (studio.pins[k] === clip) delete studio.pins[k];
+    });
+    studio.pins[slot] = clip;
+  }
+  studio_drawInspector();
+  toast('Make the reel again to move it.');
+}
+
 function studio_shapeIsCentred() {
   return SHAPE_DIALS.every(function (d) { return Math.abs(studio.shaping[d.k] - 1) < 0.01; });
 }
@@ -1459,6 +1532,7 @@ function studio_binDraw() {
     fo.disabled = !studio.favParts.length && !studio.favOnly;
   }
   studio_shapeDraw();
+  studio_arrangeDraw();
   studio_binSlots();
   studio_binWatch();
 }
@@ -1653,7 +1727,8 @@ async function studio_build() {
          narrowed every drawer to the one part the style leads with, and a
          montage came out with the same kill effect on all six kills. */
       template: studio.picks || null,
-      shaping: studio.shaping
+      shaping: Object.assign({}, studio.shaping, {arrange: studio.arrange,
+        pins: studio.pins, shuffle_seed: studio.shuffleSeed})
     };
     if (studio.song && studio.songShape && studio.mk.mode === 'part' && studio.mk.end > studio.mk.start) {
       body.part_start = studio.mk.start;
@@ -2979,6 +3054,7 @@ function studio_drawInspector() {
       '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-move" data-d="1"' + (i < p.shots.length - 1 ? '' : ' disabled') + ' aria-label="Move later">▶</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-remove">Remove</button></span></div>' +
       '<p class="muted truncate" title="' + esc(s.name) + '">' + esc(s.name) + '</p>' +
+      studio_pinRow(s.clip) +
       '<p class="muted mono">' + studio_secs(r.start) + ' → ' + studio_secs(r.end) + ' · kill at ' + studio_secs(r.kill_reel) + '</p>' +
       '<div class="studio-field"><span class="field-label">Kill</span>' +
       (s.kills.length > 1 ? '<select class="select" id="studio-f-kill">' + kills + '</select>' : '<span class="muted">' + s.kill.toFixed(2) + ' s into the clip</span>') +
@@ -3226,6 +3302,8 @@ function studio_wire() {
     else if (act === 'studio-bin-favonly') studio_binFavOnly();
     else if (act === 'studio-shape') studio_shapeNudge(b.getAttribute('data-dial'), Number(b.getAttribute('data-by')));
     else if (act === 'studio-shape-reset') studio_shapeReset();
+    else if (act === 'studio-arrange') studio_arrangePick(b.getAttribute('data-how'));
+    else if (act === 'studio-pin') studio_pin(b.getAttribute('data-slot'), b.getAttribute('data-clip'));
     else if (act === 'studio-hand-next') studio_handNext(b.getAttribute('data-kind'));
     else if (act === 'studio-deal') studio_deal();
     else if (act === 'studio-deal-reset') studio_dealReset();
@@ -3529,7 +3607,8 @@ async function studio_restyle() {
     const clips = [];
     from.forEach(c => { if (clips.indexOf(c) < 0) clips.push(c); });
     const r = await API.post('/api/studio/plan', {clips: clips, style: key,
-      song: p.song, format: p.format, name: p.name, shaping: studio.shaping});
+      song: p.song, format: p.format, name: p.name, shaping: Object.assign({}, studio.shaping,
+        {arrange: studio.arrange, pins: studio.pins, shuffle_seed: studio.shuffleSeed})});
     if (!r || !r.ok) { toast((r && r.error) || 'Could not rebuild with that style.', 'warn'); return; }
     studio_pushUndo(snapshot);
     studio.gen++;

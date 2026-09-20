@@ -248,3 +248,87 @@ def test_no_drums_in_means_the_first_loud_phrase():
 def test_the_ending_fade_is_most_of_a_bar():
     assert rb.ending_fade(60 / 82.81) == pytest.approx(2.174, abs=1e-3)
     assert 1.2 <= rb.ending_fade(60 / 180) <= 2.2
+
+
+# ------------------------------------------------------- order and pins
+
+def _seq(name, strength, at="10m00s", mtime=100, kills=(3.0,)):
+    c = {"path": f"C:/clips/{name}.mp4", "name": name, "duration": 20.0,
+         "at": at, "mtime": mtime, "round": 1, "kills": list(kills)}
+    m = rb.Moment(clip=c, kills=list(kills), group=abs(hash(name)) % 9973)
+    m.strength = strength
+    return [m]
+
+
+def test_at_seconds_reads_the_clip_names_the_cutter_writes():
+    assert rb._at_seconds("57s") == 57
+    assert rb._at_seconds("43m43s") == 43 * 60 + 43
+    assert rb._at_seconds("1h04m20s") == 3600 + 4 * 60 + 20
+    assert rb._at_seconds("") == 0.0
+
+
+def test_chronological_puts_the_fights_back_in_the_order_they_happened():
+    late = _seq("late", 9.0, at="1h04m20s")
+    early = _seq("early", 2.0, at="05m00s")
+    mid = _seq("mid", 5.0, at="30m00s")
+    got = rb.order(late + early + mid, arrange="time")
+    assert [m.clip["name"] for m in got] == ["early", "mid", "late"]
+
+
+def test_best_first_opens_on_the_strongest():
+    a, b, c = _seq("a", 2.0), _seq("b", 9.0), _seq("c", 5.0)
+    got = rb.order(a + b + c, arrange="best")
+    assert [m.clip["name"] for m in got] == ["b", "c", "a"]
+
+
+def test_a_shuffle_is_the_same_reel_for_the_same_seed():
+    ms = _seq("a", 1.0) + _seq("b", 2.0) + _seq("c", 3.0) + _seq("d", 4.0)
+    one = [m.clip["name"] for m in rb.order(list(ms), arrange="shuffle", seed=7)]
+    two = [m.clip["name"] for m in rb.order(list(ms), arrange="shuffle", seed=7)]
+    other = [m.clip["name"] for m in rb.order(list(ms), arrange="shuffle", seed=8)]
+    assert one == two, "the same seed has to give the same reel"
+    assert sorted(one) == sorted(other), "a shuffle may not lose a clip"
+
+
+@pytest.mark.parametrize("how", rb.ARRANGEMENTS)
+def test_a_pin_beats_every_rule_above_it(how):
+    """A pin is a promise the player made to themselves."""
+    ms = []
+    for i in range(6):
+        ms += _seq(f"c{i}", float(i), at=f"{i:02d}m00s")
+    want = "C:/clips/c0.mp4"                       # the weakest, and the earliest
+    opened = rb.order(list(ms), arrange=how, pins={"open": want})
+    assert opened[0].clip["path"] == want
+    closed = rb.order(list(ms), arrange=how, pins={"close": want})
+    assert closed[-1].clip["path"] == want
+    both = rb.order(list(ms), arrange=how, pins={"open": want, "close": "C:/clips/c3.mp4"})
+    assert both[0].clip["path"] == want and both[-1].clip["path"] == "C:/clips/c3.mp4"
+
+
+def test_a_pinned_climax_lands_in_the_middle_third():
+    ms = []
+    for i in range(9):
+        ms += _seq(f"c{i}", float(i))
+    got = rb.order(list(ms), arrange="best", pins={"climax": "C:/clips/c0.mp4"})
+    at = [m.clip["name"] for m in got].index("c0")
+    assert len(got) // 3 <= at <= len(got) - 2, f"climax landed at {at} of {len(got)}"
+
+
+def test_no_arrangement_ever_loses_or_repeats_a_clip():
+    ms = []
+    for i in range(7):
+        ms += _seq(f"c{i}", float(i), at=f"{i:02d}m00s")
+    want = sorted(m.clip["name"] for m in ms)
+    for how in rb.ARRANGEMENTS:
+        for pins in ({}, {"open": "C:/clips/c4.mp4"}, {"climax": "C:/clips/c2.mp4"},
+                     {"open": "C:/clips/c1.mp4", "close": "C:/clips/c6.mp4"}):
+            got = rb.order(list(ms), arrange=how, pins=pins)
+            assert sorted(m.clip["name"] for m in got) == want, f"{how} {pins}"
+
+
+def test_a_pin_on_a_clip_that_is_not_there_changes_nothing():
+    ms = _seq("a", 1.0) + _seq("b", 2.0) + _seq("c", 3.0)
+    plain = [m.clip["name"] for m in rb.order(list(ms), arrange="best")]
+    pinned = [m.clip["name"] for m in rb.order(list(ms), arrange="best",
+                                               pins={"open": "C:/clips/gone.mp4"})]
+    assert plain == pinned
