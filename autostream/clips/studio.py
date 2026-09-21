@@ -2717,8 +2717,11 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
         push = False
         if "k04" in s["fx"]:
             freeze = 0.4
-        if s["hero"] and "h02" in s["hero_fx"]:
-            freeze, push = max(freeze, 0.75), True
+        # By FAMILY, not by id: "h02" is only the middle of the freeze family,
+        # and an exact match left "Freeze and push in (a long beat)" offered,
+        # picked and doing nothing at all.
+        if s["hero"] and (pid := picked(s["hero_fx"], "h02")):
+            freeze, push = max(freeze, knob(pid, "hold", 0.75)), True
         kill_at = hsec + min(s["pre"], dur)
         # Every kill this shot shows, where it plays in the segment -- through
         # the speed map, so a slowed kill is still gated at the right moment.
@@ -2739,8 +2742,8 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
             pieces=[[round(a, 5), round(b, 5), r] for a, b, r in seg_ps], kill_at=round(kill_at, 5),
             fx=list(s["fx"]), hero_fx=list(s["hero_fx"]) if s["hero"] else [],
             camera=s["camera"], grade=project["grade"], vignette=project["vignette"],
-            caption=s["caption"] if (s["hero"] and "h05" in s["hero_fx"]) else "",
-            beats=seg_beats if s["camera"] == "c04" else [],
+            caption=s["caption"] if (s["hero"] and picked(s["hero_fx"], "h05")) else "",
+            beats=seg_beats if fam(s["camera"]) == "c04" else [],
             freeze=freeze, freeze_push=push, has_audio=has_audio(s["clip"]),
             outro_freeze=1.0 if (i == len(shots) - 1 and project["outro"] == "e02") else 0.0,
             sat_trim=float(project.get("saturation", 1.0)),
@@ -2954,7 +2957,9 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
         # chosen from the 1920-pixel height is wider than 1080 pixels.
         fit = W * 0.9 / max(1, len(seg.caption) * 0.62)
         size = int(min(max(28, round(H * 0.075)), fit))
-        big = int(min(round(size * 1.9), fit))
+        # How far it slams in from is the slam family's own knob, so "gently"
+        # and "hard" are different edits rather than three names for 1.9x.
+        big = int(min(round(size * knob(picked(seg.hero_fx, "h05"), "scale", 1.9)), fit))
         v.append(f"drawtext={_font()}expansion=none:textfile={_path_arg(text_file(textdir, seg.caption))}:"
                  f"fontcolor=white:borderw=3:"
                  f"bordercolor=black@0.55:fontsize='if(lt(t-{kt:.4f},0.1),{big}-{(big - size) * 10}*(t-{kt:.4f}),{size})':"

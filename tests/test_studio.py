@@ -456,6 +456,41 @@ def test_a_freeze_never_changes_how_long_a_shot_is(root):
     assert derived["length"] == pytest.approx(sum(s["duration"] for s in got["shots"]))
 
 
+def test_a_variant_reaches_the_renderer_the_way_its_base_does(root):
+    """Every variant of a family must arrive, not just the id the family is named for.
+
+    Three checks here read the id rather than the family, and the parts bin
+    proved it: the four Beat bounce cards rendered byte-identical because no
+    beats were passed for c04hard, and the two Freeze cards were identical to
+    a plain hard cut. A dead variant is still offered, picked and shipped in a
+    built-in style -- montage uses c04hard -- so it fails silently.
+    """
+    for part, hold in (("h02", 0.75), ("h02short", 0.35), ("h02long", 1.0)):
+        _, _, segs = _built(root, hero=True, hero_fx=[part])
+        assert [s.freeze for s in segs] == [pytest.approx(hold)] * len(segs), part
+        assert all(s.freeze_push for s in segs), part
+    for part in ("h05", "h05soft", "h05hard"):
+        _, _, segs = _built(root, hero=True, hero_fx=[part], caption="ACE")
+        assert all(s.caption == "ACE" for s in segs), part
+    for part in ("c04", "c04hair", "c04soft", "c04hard", "c04slam"):
+        _, _, segs = _built(root, camera=part)
+        assert all(s.beats for s in segs), part
+    # and a camera that is not the beat family still gets none
+    _, _, segs = _built(root, camera="c01soft")
+    assert not any(s.beats for s in segs)
+
+
+def test_the_text_slam_slams_in_from_its_own_scale(root):
+    sizes = []
+    for part in ("h05soft", "h05", "h05hard"):
+        _, _, segs = _built(root, hero=True, hero_fx=[part], caption="ACE")
+        argv = studio.segment_command(segs[0], Path("o.mp4"))
+        graph = argv[argv.index("-filter_complex") + 1]
+        big = int(re.search(r"fontsize='if\(lt\(t-[\d.]+,0\.1\),(\d+)-", graph).group(1))
+        sizes.append(big)
+    assert sizes[0] < sizes[1] < sizes[2], sizes
+
+
 def test_each_transition_is_centred_on_its_cut(root):
     proj, _ = studio.plan(_clips(root), "montage", shape=Shape(bpm=120.0))
     proj["song"] = ""
