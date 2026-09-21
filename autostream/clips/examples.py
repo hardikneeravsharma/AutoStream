@@ -154,12 +154,21 @@ def _project(part: str, kind: str, clips: list[dict]) -> dict | None:
         proj["grade"] = part
     elif kind == "overlay":
         proj["overlays"] = [part]
+        # The watermark draws the reel's handle, and a project without one
+        # draws nothing -- so that card was an unmarked shot. A placeholder is
+        # honest here: the card is showing where the handle sits, not whose.
+        proj["handle"] = proj.get("handle") or "@yourhandle"
     elif kind == "transition":
         if len(shots) < 2:
             return None
         shots[1]["transition"] = part
     elif kind == "hero":
         shots[0]["hero"], shots[0]["hero_fx"] = True, [part]
+        # The Text slam draws the shot's caption, and the clips an example is
+        # cut from are single kills, which carry none -- so those cards came
+        # out as a plain shot with nothing slamming into it. Give the hero
+        # shot the caption a multi-kill would have earned.
+        shots[0]["caption"] = shots[0].get("caption") or "DOUBLE KILL"
     else:                                   # kill, speed, camera
         key = {"kill": "fx", "speed": "speed", "camera": "camera"}[kind]
         for s in shots:
