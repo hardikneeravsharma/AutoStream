@@ -1249,6 +1249,37 @@ def test_the_intro_head_matches_the_reel_so_the_two_can_splice(root, intro_home)
     assert args[args.index("-ac") + 1] == "2"
 
 
+def test_prepend_intro_actually_runs(root, intro_home, tmp_path, monkeypatch):
+    """The join step itself, not just the argv it builds.
+
+    The argv builders are pure and were covered; _prepend_intro was not, and
+    shipped calling video_codec_args without importing it. Every name in it is
+    resolved only when a real render reaches it, so a test has to reach it too.
+    """
+    got, derived, _ = _with_intro(root, intro_home)
+    job = studio.StudioJob(got, derived, root, tmp_path / "out.mp4")
+    ran: list[list[str]] = []
+
+    def fake_ff(argv, *, capture=False):
+        ran.append(list(argv))
+        # The head encode and the concat each write the file named last.
+        Path(argv[-1]).write_bytes(b"x")
+        return ""
+    monkeypatch.setattr(job, "_run_ff", fake_ff)
+    reel = tmp_path / "reel.part.mp4"
+    reel.write_bytes(b"reel")
+    job._prepend_intro("ffmpeg", reel)
+
+    assert len(ran) == 2, ran                      # encode the head, then splice
+    assert got["intro_clip"]["path"] in ran[0]     # the intro is what was encoded
+    assert ran[1][ran[1].index("-f") + 1] == "concat"
+    assert "-c" in ran[1] and ran[1][ran[1].index("-c") + 1] == "copy"
+    # The reel it was handed is what came back, and no scratch file is left.
+    assert reel.is_file()
+    assert not list(reel.parent.glob("*.join.txt"))
+    assert not list(reel.parent.glob("*.intro.mp4"))
+
+
 def test_no_intro_means_no_extra_pass_at_all(root, intro_home):
     plain, _ = studio.plan(_clips(root), "montage", shape=Shape(bpm=120.0))
     plain["song"] = ""

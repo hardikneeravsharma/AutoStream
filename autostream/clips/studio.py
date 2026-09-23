@@ -3443,6 +3443,8 @@ class StudioJob:
         Joining costs one encode of the intro alone. The reel itself is copied,
         so not a frame of what it was cut to have moves, softens or re-encodes.
         """
+        from .tools import video_codec_args
+
         if not self.project.get("intro_clip"):
             return
         head = path.with_name(path.stem + ".intro.mp4")
