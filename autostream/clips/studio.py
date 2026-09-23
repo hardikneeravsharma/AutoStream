@@ -2454,10 +2454,11 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
             continue
         s["tlen"] = round(half * 2, 4)
 
-    # THE INTRO CLIP, LAST, BECAUSE IT IS CLAMPED AGAINST THE FINISHED REEL.
-    # It plays over the head of the reel rather than in front of it (see
-    # clips/intros.py), so the one thing it cannot do is outlast what it is
-    # covering -- an intro longer than the reel would be the whole reel.
+    # THE INTRO CLIP, LAST, BECAUSE IT IS MEASURED AGAINST THE FINISHED REEL.
+    # It plays in front of the reel, so it cannot swallow anything and its
+    # length is its own business -- intros.MAX_SECONDS is the only cap, and
+    # import already applied it. What is still worth saying is when the opener
+    # is longer than the reel behind it, which is nearly always a mistrim.
     out["intro_clip"] = None
     raw = project.get("intro_clip")
     if isinstance(raw, dict) and str(raw.get("path") or "").strip():
@@ -2475,9 +2476,8 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
                 b = src
             reel = sum(float(s["duration"]) for s in shots)
             if b - a > reel:
-                b = a + reel
-                notes.append(f"The intro was trimmed to {reel:.1f} s: an intro cannot "
-                             "be longer than the reel it opens.")
+                notes.append(f"The intro runs {b - a:.1f} s, longer than the "
+                             f"{reel:.1f} s reel behind it. It still plays in full.")
             if b - a < MIN_INTRO_SECONDS:
                 notes.append("The intro was too short to see, so the reel opens without it.")
             else:
@@ -3038,19 +3038,18 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
     song = project.get("song") or ""
     if song:
         args += ["-ss", f"{project['song_offset']:.4f}", "-t", f"{L + 1.0:.4f}", "-i", song]
-    # THE INTRO CLIP IS AN INPUT, NOT A SHOT. Trimmed by ffmpeg on the way in,
-    # so only the chosen part is ever decoded, and last in the input list so
-    # the segment and song indices above it do not move.
-    ic = project.get("intro_clip") or None
-    ic_len = round(float(ic["end"]) - float(ic["start"]), 4) if ic else 0.0
-    ic_i = n + (1 if song else 0)
-    if ic:
-        args += ["-ss", f"{float(ic['start']):.4f}", "-t", f"{ic_len:.4f}", "-i", str(ic["path"])]
-    # THE MARK IS TWO MORE INPUTS, last of all, for the same reason the intro
-    # clip is: every index above it would move otherwise. The animated strip
-    # covers the first seconds and the still covers the rest, each gated by
-    # `enable`, so nothing is decoded that is not on screen.
-    mark_i = ic_i + (1 if ic else 0)
+    # THE INTRO CLIP IS NOT IN THIS PASS. It used to be one more input, laid
+    # over the head of the reel for its own length -- which meant that whatever
+    # the reel opened with played underneath it and was lost. On a reel that
+    # opens on a kill, that is the kill. It is joined in front of the finished
+    # reel instead, by StudioJob._prepend_intro, so the reel keeps every frame
+    # it was cut to have and the intro plays before the first of them.
+    #
+    # THE MARK IS TWO MORE INPUTS, last of all, so the segment and song indices
+    # below them do not move. The animated strip covers the first seconds and
+    # the still covers the rest, each gated by `enable`, so nothing is decoded
+    # that is not on screen.
+    mark_i = n + (1 if song else 0)
     if mark_at:
         mfolder, mstill, _mx, _my = mark_at
         args += ["-framerate", f"{mark_mod.FPS:g}", "-i", str(Path(mfolder) / "f%04d.png")]
@@ -3166,23 +3165,6 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
                     f"[bs][bg]blend=all_expr='A*min(1,T/{b})+B*(1-min(1,T/{b}))'[bl]")
         g.append(chain_in)
         acc_label = "bl"
-    # THE INTRO GOES ON BEFORE THE POST CHAIN, NOT AFTER IT. Everything in
-    # `post` is what the reel looks like -- the fade up from black, the kill
-    # counter, the handle in the corner -- and all of it should apply to the
-    # intro too. Laid over the top afterwards, the intro would punch a hole in
-    # the reel's own opening: a fade from black that the intro ignores, a
-    # handle that vanishes for nine seconds and comes back.
-    if ic:
-        fit = ("scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d" % (W, H, W, H)
-               if ic.get("fit", "cover") == "cover" else
-               "scale=%d:%d:force_original_aspect_ratio=decrease,"
-               "pad=%d:%d:(ow-iw)/2:(oh-ih)/2:black" % (W, H, W, H))
-        g.append(f"[{ic_i}:v]fps={F},{fit},setsar=1,format=yuv420p,setpts=PTS-STARTPTS[icv]")
-        # eof_action=pass: the intro ends long before the reel does, and the
-        # default would end the whole video with it.
-        g.append(f"[{acc_label}][icv]overlay=0:0:eof_action=pass:"
-                 f"enable='lt(t,{ic_len:.4f})'[icj]")
-        acc_label = "icj"
     post.append(f"trim=end_frame={Lf},format=yuv420p")
     if mark_at:
         # Above everything the post chain drew: a mark under the film grain or
@@ -3253,17 +3235,9 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         last = "[mixed]"
     else:
         last = "[game]"
-    # THE INTRO'S OWN SOUND, IF IT WAS ASKED FOR AND THERE IS ANY. Mixed over
-    # the finished bed rather than into the game mix, which would put it
-    # through game_db -- the intro is not gameplay, and a user who pulls the
-    # game down to hear the music should not lose their intro's sound with it.
-    # apad carries it to full length so amix does not end the track early.
-    if ic and ic.get("audio") and ic.get("has_audio"):
-        g.append(f"[{ic_i}:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
-                 f"asetpts=PTS-STARTPTS,atrim=0:{ic_len:.4f},"
-                 f"apad=whole_dur={L:.4f},atrim=0:{L:.4f}[ica]")
-        g.append(f"{last}[ica]amix=inputs=2:normalize=0:duration=first[icmix]")
-        last = "[icmix]"
+    # The intro's own sound travels with the intro, in the join that puts it in
+    # front of this reel. Mixing it in here would have played it over the
+    # reel's opening, which is the picture problem in the other track.
     g.append(f"{last}alimiter=limit=0.9:level=disabled,aresample=48000,"
              f"apad=whole_dur={L:.4f},atrim=0:{L:.4f}[a]")
 
@@ -3290,6 +3264,41 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         script = text_file(textdir, graph)
         return args + [filter_script_flag(), str(script)] + tail
     return args + ["-filter_complex", graph] + tail
+
+
+def intro_head_command(project: dict, head: Path, ff: str = "ffmpeg",
+                       encoder_args=None) -> list[str]:
+    """ffmpeg argv that renders the intro clip to the reel's own shape.
+
+    The product is one short file matching the reel frame for frame -- size,
+    rate, pixel format, one stereo track -- so that the two can be spliced
+    without re-encoding the reel. Trimmed on the way in, so only the chosen
+    part is ever decoded. -> [] when there is no intro to render.
+    """
+    ic = project.get("intro_clip") or None
+    seconds = round(float(ic["end"]) - float(ic["start"]), 4) if ic else 0.0
+    if not ic or seconds <= 0:
+        return []
+    W, H = SIZES[project["format"]]
+    fit = (f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H}"
+           if ic.get("fit", "cover") == "cover" else
+           f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
+           f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black")
+    # The reel always carries exactly one stereo track. A silent intro, or one
+    # whose sound was not asked for, has to carry one too: concat lines streams
+    # up by position and refuses a pair that does not match.
+    keep = bool(ic.get("audio") and ic.get("has_audio"))
+    enc = encoder_args if encoder_args is not None else [
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p"]
+    args = [ff, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+            "-ss", f"{float(ic['start']):.4f}", "-t", f"{seconds:.4f}", "-i", str(ic["path"])]
+    if not keep:
+        args += ["-f", "lavfi", "-t", f"{seconds:.4f}", "-i",
+                 "anullsrc=channel_layout=stereo:sample_rate=48000"]
+    return args + ["-map", "0:v:0", "-map", ("0:a:0" if keep else "1:a:0"),
+                   "-vf", f"fps={FPS},{fit},setsar=1,format=yuv420p", *enc,
+                   "-c:a", "aac", "-b:a", "256k", "-ar", "48000", "-ac", "2",
+                   "-movflags", "+faststart", str(head)]
 
 
 # ============================================================== the job
@@ -3423,6 +3432,51 @@ class StudioJob:
         finally:
             _unlink(fixed)
 
+    def _prepend_intro(self, ff: str, path: Path) -> None:
+        """Join the intro clip in front of the finished reel.
+
+        The intro used to be laid OVER the reel's first seconds. That was meant
+        for a reel whose song takes a long time to arrive, where the opening is
+        a single held shot and there is nothing to cover -- but on a reel that
+        opens on a kill it covered the kill, and those seconds were gone.
+
+        Joining costs one encode of the intro alone. The reel itself is copied,
+        so not a frame of what it was cut to have moves, softens or re-encodes.
+        """
+        if not self.project.get("intro_clip"):
+            return
+        head = path.with_name(path.stem + ".intro.mp4")
+        listing = path.with_name(path.stem + ".join.txt")
+        joined = path.with_name(path.stem + ".joined.mp4")
+        args = intro_head_command(self.project, head, ff, video_codec_args("auto", cq=19))
+        if not args:
+            return
+        try:
+            self._run_ff(args)
+            listing.write_text(f"file '{head.as_posix()}'\nfile '{path.as_posix()}'\n",
+                               encoding="utf-8")
+            base = [ff, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                    "-f", "concat", "-safe", "0", "-i", str(listing)]
+            try:
+                # Stream copy: the intro was just written with the same encoder
+                # settings as the reel, so the two should splice untouched.
+                self._run_ff([*base, "-c", "copy", "-movflags", "+faststart", str(joined)])
+            except Cancelled:
+                raise
+            except RuntimeError as e:
+                # They did not splice -- a hardware encoder that varies its
+                # headers, most likely. Re-encoding the join is slower, but an
+                # intro that was asked for is not optional.
+                log.info("studio: the intro would not splice (%s); joining the long way", e)
+                self._run_ff([*base, *video_codec_args("auto", cq=19),
+                              "-c:a", "aac", "-b:a", "256k", "-ar", "48000", "-ac", "2",
+                              "-movflags", "+faststart", str(joined)])
+            joined.replace(path)
+        finally:
+            _unlink(head)
+            _unlink(listing)
+            _unlink(joined)
+
     def run(self) -> None:
         from .tools import binary, media_info, video_codec_args
         self._set(state="running")
@@ -3485,6 +3539,11 @@ class StudioJob:
                     raise
                 except RuntimeError as e:
                     raise RuntimeError(f"Joining the shots: {e}") from e
+                # BEFORE the loudness pass, so the intro is measured with the
+                # reel rather than left sitting at its own level in front of it.
+                if self.project.get("intro_clip"):
+                    self._set(step="join", message="Putting the intro in front")
+                    self._prepend_intro(ff, tmp)
                 self._set(step="sound", message="Matching loudness")
                 self._loudness(ff, tmp)
                 tmp.replace(self.out)
@@ -3494,7 +3553,15 @@ class StudioJob:
                 _unlink(tmp)
             meta = dict(self.project)
             meta["output"] = str(self.out)
-            meta["render"] = {"length": self.derived["length"], "when": int(time.time()),
+            # The intro is in front of the reel, not over it, so the file on
+            # disk is longer than the reel the timeline describes. `length` is
+            # what was rendered; `reel` stays the cut the beat grid was built
+            # from, which is what every time in the project is measured against.
+            ic = self.project.get("intro_clip") or None
+            intro = round(float(ic["end"]) - float(ic["start"]), 3) if ic else 0.0
+            meta["render"] = {"length": round(self.derived["length"] + intro, 3),
+                              "reel": self.derived["length"], "intro": intro,
+                              "when": int(time.time()),
                               "shots": len(segs), "cached": len(segs) - len(todo)}
             self.out.with_suffix(".reel.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
             self._set(state="done", step="done", done=self.total, message="Reel ready",

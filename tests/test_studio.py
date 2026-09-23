@@ -1174,13 +1174,14 @@ def test_an_intro_clip_survives_normalise_with_its_trim_and_its_sound(root, intr
     assert derived["intro_clip"]["seconds"] == pytest.approx(2.0)
 
 
-def test_an_intro_can_never_be_longer_than_the_reel(root, intro_home):
-    # A source longer than the whole reel: left alone it would BE the reel.
+def test_an_intro_longer_than_the_reel_is_kept_but_remarked_on(root, intro_home):
+    """It plays in front of the reel now, so it can no longer swallow it --
+    but an opener longer than the reel behind it is nearly always a mistrim."""
     long_one = _fake_intro(intro_home, "long", seconds=600.0)
     got, derived, notes = _with_intro(root, intro_home, path=long_one, start=0.0, end=600.0)
-    reel = derived["length"]
-    assert got["intro_clip"]["end"] - got["intro_clip"]["start"] == pytest.approx(reel, abs=1e-3)
-    assert any("longer than the reel" in n for n in notes)
+    assert got["intro_clip"]["end"] - got["intro_clip"]["start"] == pytest.approx(600.0)
+    assert derived["length"] == pytest.approx(derived["length"])
+    assert any("longer than the" in n for n in notes)
 
 
 def test_an_intro_the_user_deleted_drops_off_the_project(root, intro_home):
@@ -1215,16 +1216,45 @@ def _graph(got, derived):
     return argv, argv[argv.index("-filter_complex") + 1]
 
 
-def test_the_intro_is_trimmed_by_ffmpeg_and_laid_over_the_head_of_the_reel(root, intro_home):
+def test_the_intro_is_trimmed_by_ffmpeg_and_never_touches_the_reel_pass(root, intro_home):
+    """The reel's own pass must not know about the intro at all.
+
+    It used to overlay it on the reel's first seconds, so whatever the reel
+    opened with played underneath and was lost -- on a reel that opens on a
+    kill, the kill.
+    """
     got, derived, _ = _with_intro(root, intro_home)
     argv, graph = _graph(got, derived)
-    # Only the chosen part is ever decoded.
-    i = argv.index(got["intro_clip"]["path"])
-    assert argv[i - 5:i] == ["-ss", "1.0000", "-t", "2.0000", "-i"]
-    # Laid over the reel for exactly its own length, and never ending it early.
-    assert "overlay=0:0:eof_action=pass:enable='lt(t,2.0000)'" in graph
-    # It goes on BEFORE the post chain, so the reel's own opening applies to it.
-    assert graph.index("[icj]") < graph.index("trim=end_frame=")
+    assert got["intro_clip"]["path"] not in argv
+    assert "overlay=0:0:eof_action=pass" not in graph
+    assert "[icv]" not in graph and "[icj]" not in graph and "[ica]" not in graph
+    # It is its own pass, and only the chosen part is ever decoded.
+    head = studio.intro_head_command(got, Path("head.mp4"))
+    i = head.index(got["intro_clip"]["path"])
+    assert head[i - 5:i] == ["-ss", "1.0000", "-t", "2.0000", "-i"]
+
+
+def test_the_intro_head_matches_the_reel_so_the_two_can_splice(root, intro_home):
+    """The join copies the reel rather than re-encoding it, which it can only
+    do if the intro was written to the same shape: size, rate, one stereo
+    track. A mismatch here is a re-encode of the whole reel at best."""
+    got, _, _ = _with_intro(root, intro_home)
+    args = studio.intro_head_command(got, Path("head.mp4"))
+    W, H = studio.SIZES[got["format"]]
+    vf = args[args.index("-vf") + 1]
+    assert vf.startswith(f"fps={studio.FPS},") and f"{W}:{H}" in vf
+    assert vf.endswith("setsar=1,format=yuv420p")
+    assert args[args.index("-c:a") + 1] == "aac"
+    assert args[args.index("-ar") + 1] == "48000"
+    assert args[args.index("-ac") + 1] == "2"
+
+
+def test_no_intro_means_no_extra_pass_at_all(root, intro_home):
+    plain, _ = studio.plan(_clips(root), "montage", shape=Shape(bpm=120.0))
+    plain["song"] = ""
+    got, _, _ = studio.normalise(plain, root)
+    assert got["intro_clip"] is None
+    assert studio.intro_head_command(got, Path("head.mp4")) == []
 
 
 def test_the_intro_never_moves_a_cut_or_changes_the_length(root, intro_home):
@@ -1237,28 +1267,31 @@ def test_the_intro_never_moves_a_cut_or_changes_the_length(root, intro_home):
     assert derived["kills"] == pytest.approx(d_plain["kills"])
 
 
-def test_a_muted_intro_contributes_no_audio_at_all(root, intro_home):
-    got, derived, _ = _with_intro(root, intro_home, audio=False)
-    _, graph = _graph(got, derived)
-    assert "[ica]" not in graph
-    got2, derived2, _ = _with_intro(root, intro_home, audio=True)
-    _, graph2 = _graph(got2, derived2)
-    # Mixed over the finished bed, so the game level never touches it.
-    assert "[ica]amix=inputs=2" in graph2
+def test_a_muted_intro_plays_silence_rather_than_no_track(root, intro_home):
+    """Concat lines streams up by position: both halves need one stereo track,
+    whether or not the intro is meant to be heard."""
+    got, _, _ = _with_intro(root, intro_home, audio=False)
+    quiet = studio.intro_head_command(got, Path("head.mp4"))
+    assert "anullsrc=channel_layout=stereo:sample_rate=48000" in quiet
+    assert quiet[quiet.index("-map") + 3] == "1:a:0"     # the silence, not the clip
+    got2, _, _ = _with_intro(root, intro_home, audio=True)
+    loud = studio.intro_head_command(got2, Path("head.mp4"))
+    assert "anullsrc=channel_layout=stereo:sample_rate=48000" not in loud
+    assert loud[loud.index("-map") + 3] == "0:a:0"       # the clip's own sound
 
 
-def test_a_silent_intro_asked_to_play_its_sound_adds_no_audio_leg(root, intro_home):
+def test_a_silent_intro_asked_to_play_its_sound_gets_a_silent_track(root, intro_home):
     path = _fake_intro(intro_home, "silent", has_audio=False)
-    got, derived, _ = _with_intro(root, intro_home, path=path, audio=True)
-    _, graph = _graph(got, derived)
-    assert "[ica]" not in graph
+    got, _, _ = _with_intro(root, intro_home, path=path, audio=True)
+    args = studio.intro_head_command(got, Path("head.mp4"))
+    assert "anullsrc=channel_layout=stereo:sample_rate=48000" in args
 
 
 @pytest.mark.parametrize("fit,want,avoid", [("cover", "crop=", "pad="), ("contain", "pad=", "crop=")])
 def test_the_intro_fills_or_fits_as_asked(root, intro_home, fit, want, avoid):
-    got, derived, _ = _with_intro(root, intro_home, fit=fit)
-    _, graph = _graph(got, derived)
-    chain = next(c for c in graph.split(";") if c.endswith("[icv]"))
+    got, _, _ = _with_intro(root, intro_home, fit=fit)
+    args = studio.intro_head_command(got, Path("head.mp4"))
+    chain = args[args.index("-vf") + 1]
     assert want in chain and avoid not in chain
 
 

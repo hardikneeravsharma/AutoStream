@@ -1,4 +1,4 @@
-"""The intro clips a reel can open over -- a GIF or a video the user supplies.
+"""The intro clips a reel can open with -- a GIF or a video the user supplies.
 
 WHY THIS EXISTS
     A reel cut to a song starts where the song starts, and some songs take a
@@ -12,10 +12,18 @@ WHY THIS EXISTS
 WHAT AN INTRO CLIP IS, AND IS NOT
     It is NOT a shot. Shots carry kills, land on beats, and every time in the
     reel is derived from them; threading a clip with no kill through that would
-    touch every calculation in studio.py. An intro clip instead plays OVER the
-    head of the reel -- reel seconds 0 to its own length -- while the song runs
-    underneath exactly as it did. The reel's length, its cuts, its kills and
-    its beat grid are all untouched, which is why this module can be small.
+    touch every calculation in studio.py. An intro clip is joined in FRONT of
+    the finished reel instead -- its own seconds, then the reel entire. The
+    reel's length, its cuts, its kills and its beat grid are all untouched,
+    which is why this module can be small.
+
+    It used to be laid OVER the reel's first seconds rather than in front of
+    them, which is the same small-module trick and looks identical on a reel
+    that opens on a held shot. On a reel that opens on a kill it covered the
+    kill, and those seconds were gone from the render with nothing to say so.
+    Joining costs one encode of the intro alone: see studio.intro_head_command
+    and StudioJob._prepend_intro, which splice the two without the reel being
+    re-encoded at all.
 
 WHY FILES ARE COPIED IN AND RE-ENCODED
     Reusable was the requirement, and a path to somewhere on the user's disk is

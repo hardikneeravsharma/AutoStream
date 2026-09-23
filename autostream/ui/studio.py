@@ -2293,9 +2293,9 @@ function studio_introLede() {
   const lead = d ? Number(d.lead_in || 0) : 0;
   studio_el('studio-intro-lede').textContent = lead > 0.5
     ? 'This reel opens with a ' + lead.toFixed(1) + ' s run-up before its first kill — the song has '
-      + 'not arrived yet. An intro clip plays over that, with the song underneath.'
-    : 'An intro clip plays over the start of the reel, with the song and the reel underneath. '
-      + 'It never changes the length or where anything is cut.';
+      + 'not arrived yet. An intro clip plays before all of it.'
+    : 'An intro clip plays before the reel, then the reel runs in full. '
+      + 'It covers nothing and never changes where anything is cut.';
   const b = studio_el('studio-intro-fit-lead');
   studio_show('studio-intro-fit-lead', lead > 0.5);
   if (b && lead > 0.5) b.textContent = 'Fill the lead-in (' + lead.toFixed(1) + ' s)';
@@ -2370,7 +2370,7 @@ function studio_introDraw() {
   au.checked = iv.audio && iv.hasAudio;
   au.disabled = !iv.hasAudio;
   studio_el('studio-intro-audionote').textContent = iv.hasAudio
-    ? (iv.audio ? 'Mixed over the reel, on top of the song.' : 'The clip plays silent; the song carries it.')
+    ? (iv.audio ? 'Plays with the intro, before the song starts.' : 'The clip plays silent.')
     : 'This clip has no sound of its own.';
   studio_el('studio-intro-fitnote').textContent = iv.fit === 'cover'
     ? 'Cropped to fill the reel. Anything outside the frame is cut off.'
