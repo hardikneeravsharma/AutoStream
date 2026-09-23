@@ -2686,13 +2686,18 @@ class Server:
         if not clips.available():
             return {"ok": False, "error": "ffmpeg is not available, so nothing can be rendered."}
         root = self._clips_dir(c)
-        try:
-            proj, derived, notes = studio.normalise(body.get("project"), root)
-        except studio.ProjectError as e:
-            return {"ok": False, "error": str(e)}
         run = studio.runner()
         if run.busy():
             return {"ok": False, "error": "A reel is already rendering."}
+        # Claimed before the preparation below, not after it: the page shows
+        # its Cancel button the moment the button is pressed, so a cancel can
+        # arrive while this request is still working.
+        claim = run.claim()
+        try:
+            proj, derived, notes = studio.normalise(body.get("project"), root)
+        except studio.ProjectError as e:
+            run.release(claim)
+            return {"ok": False, "error": str(e)}
         outdir = root / "reels"
         outdir.mkdir(parents=True, exist_ok=True)
         out = Path(proj["output"]) if proj.get("output") else \
@@ -2701,8 +2706,9 @@ class Server:
         job = studio.StudioJob(proj, derived, root, out)
         # start() is the gate that holds the lock; busy() above is only the
         # fast answer. Two POSTs that both passed it must not both be "ok".
-        if not run.start(job):
-            return {"ok": False, "error": "A reel is already rendering."}
+        err = run.start(job, claim)
+        if err:
+            return {"ok": False, "error": err}
         log.info("studio: rendering %d shots -> %s", len(proj["shots"]), out.name)
         return {"ok": True, "job": job.id, "output": str(out), "project": proj,
                 "derived": derived, "notes": notes}

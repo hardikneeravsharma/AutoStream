@@ -3536,18 +3536,45 @@ class Runner:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.job: StudioJob | None = None
+        # A render is prepared before it is started, and the page offers its
+        # Cancel button for that whole gap. A cancel landing in the gap used to
+        # find no job, return False, and the render began anyway a moment
+        # later. A claim is taken before the preparation so that cancel has
+        # something to void.
+        self._claims = 0
+        self._preparing: set[int] = set()
+        self._voided: set[int] = set()
 
     def busy(self) -> bool:
         with self._lock:
             return self.job is not None and self.job.state in ("queued", "running")
 
-    def start(self, job: StudioJob) -> bool:
+    def claim(self) -> int:
+        """Take a ticket before preparing a render, to hand to `start`."""
         with self._lock:
+            self._claims += 1
+            self._preparing.add(self._claims)
+            return self._claims
+
+    def release(self, claim: int) -> None:
+        """Drop a claim whose render never got as far as a job."""
+        with self._lock:
+            self._preparing.discard(claim)
+            self._voided.discard(claim)
+
+    def start(self, job: StudioJob, claim: int = 0) -> str:
+        """-> "" once the job is running, else why it is not."""
+        with self._lock:
+            if claim:
+                self._preparing.discard(claim)
+                if claim in self._voided:
+                    self._voided.discard(claim)
+                    return "The render was cancelled before it started."
             if self.job is not None and self.job.state in ("queued", "running"):
-                return False
+                return "A reel is already rendering."
             self.job = job
         threading.Thread(target=job.run, name="autostream-studio", daemon=True).start()
-        return True
+        return ""
 
     def status(self) -> dict | None:
         with self._lock:
@@ -3557,8 +3584,14 @@ class Runner:
     def cancel(self) -> bool:
         with self._lock:
             job = self.job
-        if job is None or job.state not in ("queued", "running"):
-            return False
+            if job is None or job.state not in ("queued", "running"):
+                # Nothing is running, but a render may be between its claim and
+                # its start. Voiding the outstanding claims stops it there.
+                if not self._preparing:
+                    return False
+                self._voided |= self._preparing
+                self._preparing.clear()
+                return True
         job.cancel()
         return True
 

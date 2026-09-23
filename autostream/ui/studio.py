@@ -563,7 +563,7 @@ const studio = {
   folds: {build: false, clips: false},
   sel: -1, pps: 60, snap: true, undo: [], checking: 0, checkTimer: null,
   polling: null, drag: null, clipIndex: {},
-  gen: 0, jobId: 0, seenJob: -1, watching: -1, busy: false, pollTok: 0,
+  gen: 0, jobId: 0, seenJob: -1, watching: -1, busy: false, pollTok: 0, buildGen: 0,
   favParts: [], favOnly: false,
   /* SHAPING THE REEL. Multipliers on what the style's references measured,
      so 1 is 'as the style has it' and the dials read as louder/quieter
@@ -1718,6 +1718,12 @@ function studio_ordered() {
 async function studio_build() {
   const btn = studio_el('studio-build-btn');
   btn.disabled = true;
+  /* The dialog's Cancel sits beside this button and stays live while the plan
+     is fetched. Pressing it bumps this counter, which is how the rest of the
+     build below learns it is no longer wanted -- it used to close the dialog
+     and nothing else, so the render started anyway a moment later and looked
+     like a Cancel that had been ignored. */
+  const gen = ++studio.buildGen;
   studio_el('studio-make-msg').textContent = studio.song ? 'Finding the beat and planning every shot…' : 'Planning every shot…';
   try {
     const body = {
@@ -1735,6 +1741,7 @@ async function studio_build() {
       body.part_end = studio.mk.end;
     }
     const r = await API.post('/api/studio/plan', body);
+    if (gen !== studio.buildGen) return;          /* cancelled while planning */
     if (!r || !r.ok) { studio_el('studio-make-msg').textContent = (r && r.error) || 'Could not plan that reel.'; return; }
     studio_closeModals();
     const ad = studio.adding;
@@ -1754,6 +1761,18 @@ async function studio_build() {
   } finally {
     btn.disabled = false;
   }
+}
+
+/* The dialog's Cancel. Closing the dialog was all it used to do, so a build
+   whose plan was still in flight carried on and started rendering a moment
+   later -- indistinguishable, from the page, from a Cancel that was ignored.
+   Bumping the counter is what abandons it. Nothing is posted: the render has
+   not been asked for yet, and the dialog is already gone by the time one has
+   (studio_build closes it before it renders), so a POST from here could only
+   reach an unrelated render. */
+function studio_buildCancel() {
+  studio.buildGen++;
+  studio_closeModals();
 }
 
 /* ------------------------------------------------------------ project */
@@ -3283,7 +3302,8 @@ function studio_wire() {
     else if (act === 'studio-pick') studio_pick(b.getAttribute('data-clip'), e.shiftKey);
     else if (act === 'studio-folder') studio_folderToggle(b.getAttribute('data-folder'));
     else if (act === 'studio-preview') studio_preview(b.getAttribute('data-clip'));
-    else if (act === 'studio-preview-close' || act === 'studio-make-cancel') studio_closeModals();
+    else if (act === 'studio-preview-close') studio_closeModals();
+    else if (act === 'studio-make-cancel') studio_buildCancel();
     else if (act === 'studio-clear') { studio.selected = []; studio.adding = null; studio_syncSelection(); }
     else if (act === 'studio-make') studio_openMake();
     else if (act === 'studio-style') {
