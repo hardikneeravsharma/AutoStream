@@ -832,16 +832,48 @@ def test_cancel_is_reported_as_cancelled_not_as_a_failure(root, tmp_path, monkey
 def test_only_one_reel_renders_at_a_time():
     run = studio.Runner()
     a, b = _Job(), _Job()
-    assert run.start(a)
-    assert run.busy() and not run.start(b)
+    assert run.start(a) == ""
+    assert run.busy() and run.start(b) == "A reel is already rendering."
     assert run.cancel() and a.cancelled
     for _ in range(100):
         if not run.busy():
             break
         import time
         time.sleep(0.02)
-    assert not run.busy() and run.start(b)
+    assert not run.busy() and run.start(b) == ""
     b.release.set()
+
+
+def test_cancel_reaches_a_render_that_has_only_been_claimed():
+    """The gap the page's Cancel button is offered in.
+
+    A render is claimed, then prepared, then started. Cancel landing in the
+    middle used to find no job and be dropped, and the render began anyway.
+    """
+    run = studio.Runner()
+    claim = run.claim()
+    assert run.cancel()                      # nothing running, but one claimed
+    job = _Job()
+    assert run.start(job, claim) == "The render was cancelled before it started."
+    assert not run.busy()
+    assert run.job is None                   # never handed to a thread
+
+
+def test_a_claim_that_was_not_cancelled_still_starts():
+    run = studio.Runner()
+    claim = run.claim()
+    job = _Job()
+    assert run.start(job, claim) == ""
+    assert run.busy()
+    run.cancel()
+    job.release.set()
+
+
+def test_cancel_says_no_when_there_is_nothing_to_cancel():
+    run = studio.Runner()
+    assert not run.cancel()
+    run.release(run.claim())
+    assert not run.cancel()
 
 
 # ------------------------------------------------------------------ the part of the song, chosen first
