@@ -79,9 +79,8 @@ rules:
   quota_reserve: 500
   # The notification-area icon with the current phase, pause and force stop. Turning it off leaves this window as your only way in.
   tray_icon: true
-  # Turning this off stops the local web server that draws this page, on the next start. You would then have to edit config.yaml by hand to get back in.
-  # WRITTEN BY SETUP - editing this by hand breaks streaming.
-  web_dashboard: true
+  # On, a phone or another PC on your network can open this page with its link. Off, only this computer can -- the app window works either way. Takes effect on the next start.
+  web_lan: true
   # TCP port this dashboard listens on. Change it only if something else on the machine already owns 8787.
   web_port: 8787
   # Appended to every request this page makes. Anyone on your network holding it can read your chat and stop your stream. Generated on first run; clear it and restart to have a new one issued, which also logs out every other tab.

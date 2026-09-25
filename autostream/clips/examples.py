@@ -199,12 +199,15 @@ def _shrink(out: Path) -> None:
     small.unlink(missing_ok=True)
 
 
-def build(root: Path, only: list[str] | None = None, on_step=None) -> dict:
+def build(root: Path, only: list[str] | None = None, on_step=None,
+          should_stop=None) -> dict:
     """Render an example for every part that has none. -> what was made.
 
     `on_step(done, total, part)` is called before each one, so a page can show
     progress; it is the only way this reports itself, and it is slow -- about
-    a second a part on a machine with a GPU encoder.
+    a second a part on a machine with a GPU encoder, and about four without:
+    562 missing parts measured 37 minutes. `should_stop()` is asked between
+    parts, so that can be ended without quitting the app.
     """
     root = Path(root)
     parts = known()
@@ -221,6 +224,10 @@ def build(root: Path, only: list[str] | None = None, on_step=None) -> dict:
     made: list[str] = []
     failed: dict[str, str] = {}
     for i, part in enumerate(want):
+        if should_stop and should_stop():
+            return {"ok": True, "made": made, "failed": failed, "stopped": True,
+                    "message": f"Stopped. {len(made)} example(s) cut, "
+                               f"{len(want) - i} left for next time."}
         if on_step:
             on_step(i, len(want), part)
         out = here / f"{part}.mp4"
@@ -261,10 +268,21 @@ class _Runner:
         self._lock = threading.Lock()
         self._thread = None
         self._state = {"state": "idle"}
+        self._stop = threading.Event()
 
     def status(self) -> dict:
         with self._lock:
             return dict(self._state)
+
+    def busy(self) -> bool:
+        with self._lock:
+            return self._thread is not None and self._thread.is_alive()
+
+    def cancel(self) -> dict:
+        """Stop after the part being cut. -> the status."""
+        self._stop.set()
+        self._set(message="Stopping after this one...")
+        return self.status()
 
     def _set(self, **kw) -> None:
         with self._lock:
@@ -278,14 +296,26 @@ class _Runner:
                 return dict(self._state)
             self._state = {"state": "running", "done": 0, "total": 0, "part": "",
                            "made": [], "failed": {}, "message": "Starting"}
+        self._stop.clear()
+        began = time.monotonic()
 
         def work() -> None:
             def step(done: int, total: int, part: str) -> None:
+                if self._stop.is_set():
+                    return
+                left = ""
+                if done >= 3 and total > done:
+                    # Measured off this run, not assumed: an encoder on a GPU
+                    # is four times quicker than one on the CPU.
+                    each = (time.monotonic() - began) / done
+                    mins = each * (total - done) / 60
+                    left = (", about " + (f"{mins:.0f} min" if mins >= 1.5
+                                          else "a minute") + " left")
                 self._set(done=done, total=total, part=part,
-                          message=f"Cutting {part} ({done + 1} of {total})" if part
-                          else "Finishing")
+                          message=(f"Cutting {part} ({done + 1} of {total}{left})"
+                                   if part else "Finishing"))
             try:
-                out = build(root, only, step)
+                out = build(root, only, step, self._stop.is_set)
             except Exception as e:                   # noqa: BLE001
                 log.info("examples: rebuild failed: %s", e)
                 self._set(state="failed", message=str(e)[:200])

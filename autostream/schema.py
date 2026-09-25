@@ -499,14 +499,13 @@ CONFIG_SCHEMA: list[Section] = [
                 restart=True,
             ),
             _field(
-                "rules.web_dashboard",
-                "Serve this dashboard",
-                "Turning this off stops the local web server that draws this page, on "
-                "the next start. You would then have to edit config.yaml by hand to "
-                "get back in.",
+                "rules.web_lan",
+                "Open this dashboard from other devices",
+                "On, a phone or another PC on your network can open this page with "
+                "its link. Off, only this computer can -- the app window works "
+                "either way. Takes effect on the next start.",
                 "toggle",
                 advanced=True,
-                danger=True,
                 restart=True,
             ),
         ],
@@ -617,9 +616,10 @@ CONFIG_SCHEMA: list[Section] = [
             _field(
                 "thumbnail.channel_name",
                 "Channel name",
-                "Available to the templates below as {channel}.",
+                "Available to the templates below as {channel}, and written "
+                "as @name in the corner of every clip. Empty draws no name.",
                 "text",
-                placeholder="YuvaNeta",
+                placeholder="YourChannel",
                 nullable=True,
                 max_chars=80,
             ),
@@ -1423,12 +1423,111 @@ def _check_hotkey(value: Any) -> str | None:
     return None
 
 
+# PATHS ARE CHECKED WHEN THEY ARE SAVED. Any string used to be accepted --
+# relative, misspelt, a NUL byte, a newline -- so a typo was found out at the
+# next go-live, or several minutes into a clip job. The Library's thumbnail
+# picker already checked its file existed; these do the same here.
+def _bad_chars(value: str) -> str | None:
+    if any(ord(c) < 32 for c in value):
+        return "That path has a line break or control character in it."
+    return None
+
+
+def _full(value: str) -> str | None:
+    import ntpath
+
+    if not ntpath.isabs(value) or not ntpath.splitdrive(value)[0]:
+        return r"Give the full path, starting with the drive, like C:\..."
+    return None
+
+
+def _check_file(*exts: str) -> Callable[[Any], str | None]:
+    def check(value: Any) -> str | None:
+        if not isinstance(value, str) or not value:
+            return None
+        import os
+
+        err = _bad_chars(value) or _full(value)
+        if err:
+            return err
+        if exts and not value.lower().endswith(exts):
+            return "Expected a " + " or ".join(e.lstrip(".").upper()
+                                              for e in exts) + " file."
+        if not os.path.isfile(value):
+            return "There is no file there."
+        return None
+    return check
+
+
+def _check_file_or_url(value: Any) -> str | None:
+    if isinstance(value, str) and value.lower().startswith(("http://", "https://")):
+        return _bad_chars(value)
+    return _check_file()(value)
+
+
+def _check_folder(value: Any) -> str | None:
+    """A folder that may not exist yet -- OBS creates it -- but whose drive
+    does."""
+    if not isinstance(value, str) or not value:
+        return None
+    import ntpath
+    import os
+
+    err = _bad_chars(value) or _full(value)
+    if err:
+        return err
+    if os.path.isfile(value):
+        return "That is a file. Give the folder it should go in."
+    if not os.path.isdir(ntpath.splitdrive(value)[0] + "\\"):
+        return "That drive is not there."
+    return None
+
+
+def _check_file_or_folder(value: Any) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    import os
+
+    err = _bad_chars(value) or _full(value)
+    if err:
+        return err
+    if not os.path.exists(value):
+        return "There is nothing at that path."
+    return None
+
+
+# The one thing between the dashboard and anybody on the network, and "a" could
+# be saved as it. Empty stays allowed: that is how a new one is asked for, and
+# the next start issues it.
+WEB_TOKEN_MIN = 12
+
+
+def _check_web_token(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str) or len(value) < WEB_TOKEN_MIN:
+        return f"Use at least {WEB_TOKEN_MIN} characters."
+    if any(c.isspace() or ord(c) < 32 for c in value):
+        return "No spaces or line breaks."
+    return None
+
+
 # Per-key checks that do not fall out of the control type. Run after conversion.
 _EXTRA_CHECKS: dict[str, Callable[[Any], str | None]] = {
     "title.template": _check_template,
     "description.template": _check_template,
     "rules.paused_flag_file": _check_flag_file,
     "rules.kill_switch_hotkey": _check_hotkey,
+    "rules.web_token": _check_web_token,
+    "record.directory": _check_folder,
+    "obs.path": _check_file(".exe"),
+    "thumbnail.logo": _check_file(".png", ".jpg", ".jpeg", ".webp"),
+    "thumbnail.base_image": _check_file(".png", ".jpg", ".jpeg", ".webp"),
+    "clips.music": _check_file(),
+    "clips.ffmpeg_path": _check_file_or_folder,
+    "screens.starting_file": _check_file_or_url,
+    "screens.paused_file": _check_file_or_url,
+    "screens.ending_file": _check_file_or_url,
 }
 
 

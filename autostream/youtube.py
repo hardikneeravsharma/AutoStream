@@ -60,6 +60,26 @@ class Cancelled(RuntimeError):
     """The user stopped an upload between chunks."""
 
 
+class _Prompt(str):
+    """The message run_local_server prints, which is also the only place it
+    lets the sign-in URL out: it calls .format(url=...) on this after opening
+    the browser and before it starts waiting. Handing the URL on from there
+    means a page can offer the link itself when no browser opened."""
+
+    def __new__(cls, text: str, on_url=None):
+        obj = super().__new__(cls, text)
+        obj.on_url = on_url
+        return obj
+
+    def format(self, *args, **kwargs):  # noqa: A003 - str's own name
+        if self.on_url and kwargs.get("url"):
+            try:
+                self.on_url(kwargs["url"])
+            except Exception:  # noqa: BLE001 - a display hook must not break sign-in
+                pass
+        return str(self)
+
+
 def _now_rfc3339() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -72,7 +92,11 @@ class YouTube:
 
     # ---------------- auth ----------------
 
-    def authorise(self, interactive: bool = False):
+    def authorise(self, interactive: bool = False, *,
+                  timeout: float | None = None, on_url=None):
+        """`timeout` bounds the wait for the browser; `on_url` is handed the
+        sign-in link as soon as it exists, so a page can show it on a machine
+        whose default browser never opened."""
         creds = None
         if paths.TOKEN_FILE.exists():
             try:
@@ -109,11 +133,12 @@ class YouTube:
                 port=0,
                 prompt="consent",
                 access_type="offline",
-                authorization_prompt_message=(
+                timeout_seconds=timeout,
+                authorization_prompt_message=_Prompt(
                     "\nOpening your browser to authorise AutoStream.\n"
                     "You WILL see 'Google hasn't verified this app' — that is expected "
-                    "for a personal app.\nClick Advanced -> Go to <app> (unsafe).\n"
-                ),
+                    "for a personal app.\nClick Advanced -> Go to <app> (unsafe).\n",
+                    on_url),
             )
 
         paths.ensure_dirs()

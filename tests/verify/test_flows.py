@@ -185,9 +185,38 @@ def test_chat_is_capped_before_it_reaches_the_engine(server):
     assert sent and len(sent[-1]) == 200
 
 
-def test_launch_carries_the_key_and_the_stream_intent(server):
-    server.post("/api/launch", {"key": "cs2.exe", "stream": True})
+def test_launch_carries_the_key_and_the_stream_intent(server, monkeypatch):
+    import sys
+
+    from autostream import catalog as apps
+
+    here = apps.App(key="cs2.exe", name="Counter-Strike 2",
+                    path=sys.executable, exe="cs2.exe")
+    monkeypatch.setattr(apps, "load", lambda: [here])
+    r = server.post("/api/launch", {"key": "cs2.exe", "stream": True})
+    assert r.status == 200
     assert ("launch", {"key": "cs2.exe", "stream": True}) in server.engine.submitted
+
+
+def test_launching_an_app_that_is_not_there_says_so(server, monkeypatch):
+    """FROM THE TEST REPORT. This answered ok before the engine had tried, so
+    a missing path toasted "Launching X and taking it live." and then nothing
+    happened."""
+    from autostream import catalog as apps
+
+    gone = apps.App(key="gone.exe", name="Gone", path="C:/nowhere/gone.exe",
+                    exe="gone.exe")
+    monkeypatch.setattr(apps, "load", lambda: [gone])
+    r = server.post("/api/launch", {"key": "gone.exe", "stream": True})
+    assert r.status == 409 and "Gone" in r.json()["error"]
+    assert server.engine.submitted == []
+
+
+def test_chat_with_no_live_chat_is_refused(server):
+    server.engine._chat_id = None
+    r = server.post("/api/chat", {"text": "hello"})
+    assert r.status == 409
+    assert server.engine.submitted == []
 
 
 # ------------------------------------------------------------ malformed

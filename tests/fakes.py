@@ -45,12 +45,33 @@ class FakeObs:
         self.started = self.stopped = 0
         self.scene = None
         self.built = []
+        # False stands in for an OBS that is not answering at all -- closed,
+        # crashed, or mid-restart -- as distinct from one that answers and
+        # says its outputs are off.
+        self.reachable = True
+        self.output_restarts = 0
+
+    def connect(self, wait=False):
+        from autostream.obs import ObsUnavailable
+
+        if not self.reachable:
+            raise ObsUnavailable("OBS is not answering (fake)")
+
+    def health(self):
+        self.connect()
+        return {"active": self.streaming, "recording": self.recording,
+                "rec_paused": self.rec_paused}
+
+    def start_stream_output(self):
+        self.connect()
+        self.output_restarts += 1
+        self.streaming = True
 
     def is_streaming(self):
-        return self.streaming
+        return self.streaming and self.reachable
 
     def recording_active(self):
-        return self.recording
+        return self.recording and self.reachable
 
     def recording_paused(self):
         return self.rec_paused
@@ -208,6 +229,8 @@ class FakeEngine:
         self.chat: collections.deque = collections.deque(maxlen=120)
         self.client_seen = 0.0
         self.pending_scan = None
+        # A live chat to send to; /api/chat refuses when there is none.
+        self._chat_id = "verify-chat"
         self.submitted: list = []
         self.stop_requests = 0
         self._phase_since = 0.0

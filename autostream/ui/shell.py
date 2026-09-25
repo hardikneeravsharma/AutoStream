@@ -353,9 +353,12 @@ function shell_paint(s) {
   /* One pause control, always in the same place, on every page. */
   const tog = shell_$('top-toggle');
   if (tog) {
-    const running = phase !== 'IDLE' || s.paused;
+    /* Three failed starts hold every game back the way a pause does, and
+       Resume is what clears them. */
+    const held = !!(s.paused || s.start_blocked);
+    const running = phase !== 'IDLE' || held;
     tog.classList.toggle('hide', !running);
-    shell_setText(tog, s.paused ? 'Resume' : 'Pause');
+    shell_setText(tog, held ? 'Resume' : 'Pause');
   }
 
   const readout = shell_$('rail-readout');
@@ -363,7 +366,8 @@ function shell_paint(s) {
     const bits = [];
     if (SHELL_BOOT.version) bits.push('v' + SHELL_BOOT.version);
     if (s.session) bits.push('session ' + s.session);
-    if (s.quota_spent !== null && s.quota_spent !== undefined) {
+    /* The API budget means nothing with YouTube off. */
+    if (s.streaming !== false && s.quota_spent !== null && s.quota_spent !== undefined) {
       bits.push('quota ' + shell_group(s.quota_spent) + '/10,000');
     }
     shell_setText(readout, bits.join(' \u00b7 '));   /* escaped so the source file stays ASCII */
@@ -446,7 +450,8 @@ async function shell_toggle_pause() {
   const btn = shell_$('top-toggle');
   if (btn) btn.disabled = true;
   try {
-    const r = await API.post('/api/cmd', {command: STATUS.paused ? 'resume' : 'pause'});
+    const r = await API.post('/api/cmd', {
+      command: (STATUS.paused || STATUS.start_blocked) ? 'resume' : 'pause'});
     if (r && r.error) toast(r.error, 'error');
   } catch (e) {
     if (!shell_dead) toast('Could not reach AutoStream', 'error');

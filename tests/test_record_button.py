@@ -40,7 +40,7 @@ def an_engine(recording=True, enabled=True) -> Engine:
     eng.state.recording = recording
     eng.state.save = lambda: None            # type: ignore[method-assign]
     eng.obs = Obs()
-    eng._stopped_recording = None
+    eng._marks = []
     eng._start_recording = lambda: setattr(eng.state, "recording", True)
     return eng
 
@@ -59,7 +59,7 @@ def test_the_stopped_file_is_remembered():
     no recording at all and vanish from the Clips page."""
     eng = an_engine(recording=True)
     eng.toggle_recording("test")
-    assert eng._stopped_recording == "C:/v/rec.mp4"
+    assert [f["path"] for f in eng._earlier_files] == ["C:/v/rec.mp4"]
 
 
 def test_starting_again_sets_it_recording():

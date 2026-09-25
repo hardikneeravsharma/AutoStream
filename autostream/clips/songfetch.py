@@ -350,6 +350,11 @@ class Runner:
             job = self.job
         return job.snapshot() if job else {"state": "idle"}
 
+    def busy(self) -> bool:
+        with self._lock:
+            job = self.job
+        return job is not None and job.running
+
     def cancel(self) -> bool:
         with self._lock:
             job = self.job

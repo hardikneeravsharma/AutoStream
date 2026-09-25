@@ -32,6 +32,25 @@ DISCORD_SOURCES = [
 
 UA = {"User-Agent": "AutoStream/1.0 (+local game detection)"}
 
+# NAMES TOO GENERIC TO MEAN ONE GAME. The public index maps every one of these
+# to a single title, and matches on the bare name with nothing to corroborate
+# it -- so an installer went live on a real channel as "Earth 2150 Trilogy"
+# (setup.exe), every Minecraft player would have streamed as "Spiral Knights"
+# (javaw.exe), and Git Bash's sh.exe was taken for SUPERHOT. Also here: the
+# Windows and compiler tools that collided (fc, at, cl, cc).
+#
+# Built in rather than added to games.yaml, because an existing install keeps
+# its own games.yaml and would never see the list. Only the PUBLIC index is
+# refused: a games.yaml entry for one of these is the user's own word, and
+# still counts.
+GENERIC_EXES = frozenset({
+    "sh.exe", "setup.exe", "install.exe", "installer.exe", "update.exe",
+    "updater.exe", "launcher.exe", "java.exe", "javaw.exe", "main.exe",
+    "start.exe", "game.exe", "client.exe", "run.exe", "play.exe", "app.exe",
+    "application.exe", "engine.exe", "editor.exe", "demo.exe", "nw.exe",
+    "cl.exe", "cc.exe", "fc.exe", "at.exe",
+})
+
 
 @dataclass
 class GameHit:
@@ -281,7 +300,7 @@ class GameIndex:
                 username=str(o.get("username") or ""),
                 thumbnail=str(o.get("thumbnail") or ""),
             )
-        if exe in self.public:
+        if exe in self.public and exe not in GENERIC_EXES:
             return GameHit(key=exe, name=self.public[exe], source="public")
         return None
 

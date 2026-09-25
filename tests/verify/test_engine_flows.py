@@ -278,8 +278,78 @@ def test_three_failed_starts_in_a_row_pause_the_app():
         eng.state.broadcast_id = "bid-x"
         eng._starting_deadline = time.monotonic() - 1
         eng.tick()
-    assert eng.state.paused is True
+    assert eng._start_blocked is True
     assert eng._start_failures >= 3
+    # "Until restart" means until restart: it used to set state.paused, which
+    # is saved to state.json and so outlived the restart it promised.
+    assert eng.state.paused is False
+
+
+def test_three_failed_starts_block_every_game_until_resume():
+    eng = session_engine(st.IDLE, active=a_hit())
+    eng._start_blocked = True
+    assert "3 failed start attempts" in (_blocked(eng) or "")
+    assert eng.state.phase == st.IDLE
+    eng._resume()
+    eng.tick()
+    assert eng.state.phase == st.ARMING
+
+
+def test_an_unreachable_obs_creates_no_broadcast():
+    """FROM THE TEST REPORT. Each failed start created, bound and deleted a
+    real broadcast -- about 450 quota units per cycle of three -- before
+    finding out OBS was not there. Reaching OBS costs nothing, so it is first."""
+    hit = a_hit()
+    eng = session_engine(st.ARMING, active=hit, armed=hit)
+    eng.obs.reachable = False
+    eng.tick()
+    assert eng.state.phase == st.IDLE
+    assert eng.yt.created == [], "a broadcast was created for an OBS that was not there"
+    assert eng._start_failures == 1
+
+
+def test_arming_names_the_game_it_is_about_to_stream():
+    """current_game is only set once the session begins, so for the whole arm
+    delay the dashboard said "this game"."""
+    hit = a_hit()
+    eng = session_engine(st.IDLE, active=hit)
+    eng.tick()
+    assert eng.state.phase == st.ARMING
+    assert eng.candidate == hit.name
+    eng.watcher._active = None
+    eng.watcher._running = False
+    eng.tick()
+    assert eng.state.phase == st.IDLE
+    assert eng.candidate is None
+
+
+def test_open_without_stream_survives_a_launcher():
+    """FROM THE TEST REPORT. A game opened through a launcher appears seconds
+    later. Its intent was pruned on the first idle tick because the exe was
+    not running YET, so when it did appear it went live -- as "Open", which
+    is the button for not streaming."""
+    eng = session_engine(st.IDLE, active=None, running=False)
+    eng._intent_at = {"cs2.exe": time.monotonic()}
+    eng._intent_seen = set()
+    eng.launch_intent["cs2.exe"] = "silent"
+    eng.tick()                                  # launcher running, game not yet
+    assert eng.launch_intent.get("cs2.exe") == "silent"
+    eng.watcher._active = a_hit()               # the game arrives
+    eng.tick()
+    assert eng.state.phase == st.IDLE
+    assert eng.blocked_reason == "opened without streaming"
+    eng.watcher._active = None                  # ...and closes
+    eng.tick()
+    assert "cs2.exe" not in eng.launch_intent
+
+
+def test_an_intent_whose_game_never_arrives_expires():
+    eng = session_engine(st.IDLE, active=None, running=False)
+    eng._intent_at = {"cs2.exe": time.monotonic() - eng.LAUNCH_GRACE - 1}
+    eng._intent_seen = set()
+    eng.launch_intent["cs2.exe"] = "silent"
+    eng.tick()
+    assert "cs2.exe" not in eng.launch_intent
 
 
 def test_a_successful_start_clears_the_failure_count():
@@ -348,10 +418,13 @@ def test_live_stops_when_the_pause_flag_file_appears(tmp_path):
 
 
 def test_live_stops_after_a_sustained_obs_outage():
-    """Only after a sustained one -- OBS is allowed to reconnect first."""
+    """Only after a sustained one -- OBS is allowed to reconnect first.
+
+    An OBS that is not answering at all: one that answers with its output
+    off is asked to start it again instead (see the restart test below)."""
     eng = session_engine(st.LIVE, active=a_hit())
     eng.state.session_start = time.time()
-    eng.obs.streaming = False
+    eng.obs.reachable = False
     eng.tick()
     assert eng.state.phase == st.LIVE, "gave up on the first missed tick"
     eng._obs_down_since = time.monotonic() - 121
@@ -431,6 +504,110 @@ def test_stopping_serves_a_full_arm_delay_to_the_next_session():
     before = eng.watcher.debounce_resets
     eng.tick()
     assert eng.watcher.debounce_resets > before
+
+
+def test_quit_mid_session_ends_it_before_returning(monkeypatch):
+    """FROM THE TEST REPORT. Quit called force_stop, which put the ending card
+    up and left the rest to a tick loop the exiting process no longer ran:
+    OBS kept streaming and recording, and the broadcast stayed open."""
+    from autostream import screens
+
+    monkeypatch.setattr(screens, "configured", lambda *a, **kw: True)
+    eng = session_engine(st.LIVE, active=a_hit())
+    eng.state.broadcast_id = "bid-1"
+    eng.state.session_start = time.time()
+    eng.state.recording = True
+    eng.obs.streaming = True
+    eng.shutdown("the Quit button")
+    assert eng.state.phase == st.IDLE
+    assert ("bid-1", "complete") in eng.yt.transitions
+    assert eng.obs.streaming is False, "OBS was left streaming"
+    assert eng.state.recording is False, "OBS was left recording"
+    assert eng.journalled == ["C:/verify/rec.mp4"]
+
+
+def test_cancelling_before_anyone_saw_it_skips_the_ending_card(monkeypatch):
+    """A broadcast cancelled in TESTING was never shown to anyone, and used to
+    hold a fifteen-second ending card over it anyway."""
+    from autostream import screens
+
+    shown = []
+    monkeypatch.setattr(screens, "configured", lambda *a, **kw: True)
+    monkeypatch.setattr(screens, "show", lambda *a, **kw: shown.append(a) or True)
+    eng = session_engine(st.TESTING, active=a_hit())
+    eng.state.broadcast_id = "bid-1"
+    eng._unseen = True
+    eng.force_stop("cancel")
+    assert shown == []
+    assert eng.state.phase == st.IDLE
+
+
+def test_obs_coming_back_idle_gets_its_stream_restarted():
+    """FROM THE TEST REPORT. An OBS that crashed or was restarted comes back
+    with its outputs off; the watchdog waited for a reconnect that such an OBS
+    never makes, and ended the broadcast at 120 s with OBS sitting there."""
+    eng = session_engine(st.LIVE, active=a_hit())
+    eng.state.session_start = time.time()
+    eng.state.current_key = "cs2.exe"
+    eng.obs.reachable = False
+    eng._obs_checked = 0.0
+    eng.tick()
+    assert eng._obs_reachable is False
+    eng.obs.reachable = True                    # back, idle
+    eng.obs.streaming = False
+    eng._obs_checked = 0.0
+    eng.tick()
+    assert eng.obs.output_restarts == 1
+    assert eng.obs.streaming is True
+    assert eng.state.phase == st.LIVE
+
+
+def test_a_recording_that_stops_on_its_own_is_noticed_and_kept():
+    """FROM THE TEST REPORT. OBS stopped the recording a second in; status
+    said recording for three minutes, and the session was journalled with no
+    file although the partial one was on disk."""
+    eng = session_engine(st.LIVE, active=a_hit())
+    eng.state.session_start = time.time()
+    eng.state.current_key = "cs2.exe"
+    eng.state.recording = True
+    eng.obs.recording = False                   # OBS answers: not recording
+    eng._adopt_recording = lambda start=None: "C:/verify/partial.mp4"
+    for _ in range(2):
+        eng._obs_checked = 0.0
+        eng.tick()
+    assert eng.state.recording is False
+    assert [f["path"] for f in eng._earlier_files] == ["C:/verify/partial.mp4"]
+
+
+def test_no_sound_is_not_reported_while_obs_is_not_answering():
+    """The meters stop arriving from an OBS that is not there, and that read
+    as ninety seconds of silence: "check the Audio Mixer", about the wrong
+    thing entirely."""
+    eng = session_engine(st.LIVE, active=a_hit())
+    eng._obs_reachable = False
+    eng._silent_said = False
+    eng.obs.silent_for = lambda: 600.0
+    engine_mod.Engine._check_audio(eng)
+    assert eng._silent_said is False
+
+
+def test_a_new_broadcast_per_game_journals_the_first_one():
+    """FROM THE TEST REPORT. The first broadcast's id and VOD were recorded
+    nowhere, and the second was titled with both games."""
+    eng = session_engine(st.LIVE, active=a_hit("valorant.exe", "VALORANT"))
+    eng.state.session_start = time.time()
+    eng.state.broadcast_id = "bid-1"
+    eng.state.current_game = "Counter-Strike 2"
+    eng.state.current_key = "cs2.exe"
+    eng.state.session_games = ["Counter-Strike 2"]
+    before = eng.state.session_number
+    set_cfg(eng, "youtube.switch_policy", "new_broadcast")
+    set_cfg(eng, "title.template", "{games}")
+    eng._restart_broadcast(a_hit("valorant.exe", "VALORANT"))
+    assert eng.journalled == ["C:/verify/rec.mp4"], "the first broadcast was not journalled"
+    assert eng.state.session_games == ["VALORANT"]
+    assert "Counter-Strike" not in eng.yt.created[-1][0]
+    assert eng.state.session_number == before + 1
 
 
 def test_force_stop_moves_to_stopping_and_suppresses_the_game():
@@ -582,6 +759,7 @@ SCENARIOS: dict[tuple[str, str], str] = {
         "test_stopping_completes_the_broadcast_and_returns_to_idle",
     ("force_stop", "STOPPING"):
         "test_force_stop_moves_to_stopping_and_suppresses_the_game",
+    ("shutdown", "STOPPING"): "test_quit_mid_session_ends_it_before_returning",
     ("_restart_broadcast", "STARTING"):
         "test_a_game_switch_restarts_the_broadcast_under_that_policy",
     ("_restart_broadcast", "STOPPING"):
@@ -628,6 +806,8 @@ def test_every_preflight_reason_has_a_test():
         "quota too low ({self.state.quota_left(DAILY_QUOTA)} units left)":
             "test_an_exhausted_quota_blocks_a_start",
         "on battery power": "test_running_on_battery_blocks_a_start",
+        "3 failed start attempts - press Resume, or restart AutoStream":
+            "test_three_failed_starts_block_every_game_until_resume",
     }
     missing = sorted(reasons - set(covered))
     assert missing == [], f"preflight can refuse for reasons nothing tests: {missing}"

@@ -1017,7 +1017,9 @@ function set_wireUpdates(){
   });
   /* The version is known without asking anybody. */
   var sub = set_el('set-ver-sub');
-  if (sub && window.SHELL_BOOT && SHELL_BOOT.version){
+  /* SHELL_BOOT is a `let`, so it is a global binding but never a property of
+     window: `window.SHELL_BOOT` was always undefined, and this never ran. */
+  if (sub && typeof SHELL_BOOT !== 'undefined' && SHELL_BOOT && SHELL_BOOT.version){
     sub.textContent = 'AutoStream ' + SHELL_BOOT.version;
   }
 }

@@ -102,6 +102,24 @@ def test_one_named_stream_can_still_be_forgotten(journal):
     assert [r["session"] for r in journal.state["rows"]] == [2, 3, 4]
 
 
+def test_a_stream_with_no_recording_at_all_counts_as_gone(journal):
+    """FROM THE TEST REPORT. A row journalled with no recording_path is listed
+    as "Recording gone" and counted in the banner, but was kept -- so the
+    banner never cleared and a second press said every stream still had its
+    recording."""
+    journal.state["rows"].append({"session": 5, "game": "VALORANT"})
+    out = journal.app.clips_forget("", -1, missing_only=True)
+    assert out["removed"] == 3
+    assert [r["session"] for r in journal.state["rows"]] == [1, 3]
+
+
+def test_a_stream_with_no_recording_can_be_forgotten_by_session(journal):
+    journal.state["rows"].append({"session": 5, "game": "VALORANT"})
+    out = journal.app.clips_forget("", 5)
+    assert out["removed"] == 1
+    assert 5 not in [r["session"] for r in journal.state["rows"]]
+
+
 def test_forgetting_by_name_with_no_name_is_refused(journal):
     """Otherwise an empty path would match every row with no recording."""
     assert "error" in journal.app.clips_forget("", -1)

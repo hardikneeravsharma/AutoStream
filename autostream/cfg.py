@@ -61,7 +61,7 @@ DEFAULTS: dict[str, Any] = {
         # estimate must not be able to spend a day's streaming on uploads.
         "upload_daily_max": 5,
         "tray_icon": True,
-        "web_dashboard": True,
+        "web_lan": True,
         "web_port": 8787,
         "web_token": "",
     },

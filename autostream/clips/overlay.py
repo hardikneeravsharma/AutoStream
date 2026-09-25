@@ -28,7 +28,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from .. import paths
 from .tools import ffmpeg, video_codec_args
 
 log = logging.getLogger("autostream.clips.overlay")
@@ -308,17 +307,42 @@ def text_png(text: str, out: Path, *, size: int = 96, colour=(255, 255, 255),
         return None
 
 
-def brand_logo() -> Path | None:
-    """The channel mark, light variant -- gameplay is more often dark than not,
-    and the dark variant disappears into a blurred background entirely."""
-    for name in ("yuvaneta-light.png", "channel-light.png"):
-        p = paths.ROOT / "autostream" / "ui" / "assets" / name
-        if p.is_file():
-            return p
-        p = Path(__file__).resolve().parent.parent / "ui" / "assets" / name
-        if p.is_file():
-            return p
-    return None
+def handle_for(channel: str) -> str:
+    """`thumbnail.channel_name` as the watermark writes it: "@Name", or
+    nothing at all when there is no name."""
+    name = " ".join(str(channel or "").split()).lstrip("@")
+    return f"@{name}" if name else ""
+
+
+def branding(opt: dict | None = None) -> tuple[str, Path | None]:
+    """-> (handle, logo) for a clip's watermark: the USER'S channel.
+
+    This used to fall back to the developer's own handle and a logo bundled
+    with the app, so every stranger's Shorts advertised the developer's
+    channel.
+    Both now come from the thumbnail settings -- the same name and logo the
+    stream's thumbnail already uses -- and an unset one draws nothing.
+
+    `opt` is a clip run's options. A run records the branding it was cut with,
+    so re-editing a clip later keeps it; a run from before that falls through
+    to the settings as they are now.
+    """
+    opt = opt or {}
+    if "handle" in opt or "logo" in opt:
+        handle = str(opt.get("handle") or "")
+        logo = str(opt.get("logo") or "")
+    else:
+        try:
+            from .. import cfg                   # local: cfg must not import clips
+
+            c = cfg.load()
+            handle = handle_for(c.thumbnail.channel_name or "")
+            logo = str(c.thumbnail.logo or "")
+        except Exception as e:                   # noqa: BLE001
+            log.warning("could not read the branding settings: %s", e)
+            handle, logo = "", ""
+    path = Path(logo) if logo else None
+    return handle, (path if path is not None and path.is_file() else None)
 
 
 def build_filter(width: int, height: int, caption: str, handle: str,
@@ -414,7 +438,7 @@ def build_filter(width: int, height: int, caption: str, handle: str,
     return ";".join(parts), inputs
 
 
-def apply(src: Path, out: Path, *, caption: str, handle: str = "@YuvaNeta",
+def apply(src: Path, out: Path, *, caption: str, handle: str = "",
           logo: Path | None = None, encoder: str = "auto",
           cq: int = 20, subtitle: str = "", subtitle_until: float = 0.0,
           caption_seconds: float = CAPTION_SECONDS) -> Path:
@@ -429,7 +453,6 @@ def apply(src: Path, out: Path, *, caption: str, handle: str = "@YuvaNeta",
 
     info = media_info(src)
     w, h = info["width"], info["height"]
-    logo = logo if logo is not None else brand_logo()
     out.parent.mkdir(parents=True, exist_ok=True)
 
     sub_file = None

@@ -370,6 +370,7 @@ class ClipJob:
 
         opt = self.options
         info = cutter.probe_source(self.source)
+        handle, logo = overlay.branding(opt)
 
         # ---- 1. find the kills -------------------------------------------
         self._set(step="scan", done=0, total=1, message="Looking for kills...")
@@ -886,7 +887,7 @@ class ClipJob:
                         tmp = v.with_suffix(".tmp.mp4")
                         overlay.apply(
                             v, tmp, caption=cap,
-                            handle=str(opt.get("handle") or "@YuvaNeta"),
+                            handle=handle, logo=logo,
                             encoder=enc, subtitle=spoken,
                             subtitle_until=(voice.LEAD_IN + speech.duration
                                             if speech else 0.0))
@@ -946,7 +947,7 @@ class ClipJob:
                 got = promo.build(
                     self.source, spare, kills, self.folder,
                     game=self.game,
-                    handle=str(opt.get("handle") or "@YuvaNeta"),
+                    handle=handle, logo=logo,
                     caption=str(opt.get("promo_caption")
                                or "LIVE MOST EVENINGS \U0001F3AE"),
                     encoder=enc, vertical_mode=(vmode if want_vertical else "fit"),

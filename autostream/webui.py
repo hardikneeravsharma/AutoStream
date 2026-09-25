@@ -59,6 +59,24 @@ def is_configured() -> bool:
         return False
 
 
+def _not_an_image(path: str) -> str | None:
+    """Why `path` cannot be a thumbnail, or None when it can."""
+    if Path(path).suffix.lower() not in (".png", ".jpg", ".jpeg"):
+        return "A thumbnail has to be a PNG or JPG."
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            im.verify()
+            if (im.format or "").upper() not in ("PNG", "JPEG"):
+                return "That file is not really a PNG or JPG."
+    except ImportError:
+        return None                    # Pillow is optional; the name will do
+    except Exception:  # noqa: BLE001
+        return "That file is not an image that can be read."
+    return None
+
+
 def lan_ip() -> str:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -403,8 +421,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(200, page(self.app.theme_id()).encode("utf-8"),
                        "text/html; charset=utf-8")
         elif u.path == "/api/bootstrap":
+            from . import __version__
+
             setup_mode = not is_configured()
             self._json({
+                # The rail and the Settings page both read this, and it was
+                # never sent: the version was shown nowhere in the app.
+                "version": __version__,
                 "mode": "setup" if setup_mode else "dash",
                 "theme": self.app.theme_id(),
                 "themes": theme.listing(),
@@ -565,19 +588,18 @@ class _Handler(BaseHTTPRequestHandler):
                 if not t:
                     self._json({"error": "empty"}, 400)
                     return
-                if self.app.engine:
-                    self.app.engine.submit(("chat", t[:200]))
+                # Answering ok with nowhere to send it made a message typed
+                # while idle look sent.
+                e = self.app.engine
+                if e is None or not getattr(e, "_chat_id", None):
+                    self._json({"error": "There is no live chat to send to."},
+                               409)
+                    return
+                e.submit(("chat", t[:200]))
                 self._json({"ok": True})
 
             elif p == "/api/launch":
-                key = str(b.get("key", ""))
-                if not key:
-                    self._json({"error": "no key"}, 400)
-                    return
-                if self.app.engine:
-                    self.app.engine.submit(
-                        ("launch", {"key": key, "stream": bool(b.get("stream"))}))
-                self._json({"ok": True})
+                self._json(*self.app.launch(b))
 
             elif p == "/api/apps/scan":
                 # Re-scan from the dashboard. Needed whenever a new game is
@@ -592,6 +614,14 @@ class _Handler(BaseHTTPRequestHandler):
                         a.stream = prev.stream
                         a.scene = prev.scene
                         a.favourite = prev.favourite
+                # Apps added by hand are not on disk anywhere a scan looks, so
+                # saving only what the scan found deleted them -- and the
+                # Library tells people to add entries by hand. Kept unless a
+                # scan found the same executable.
+                have = {a.exe for a in found if a.exe}
+                kept = [a for a in existing.values()
+                        if a.source == "manual" and a.exe not in have]
+                found = sorted(found + kept, key=lambda a: a.name.lower())
                 catalog.save(found)
                 log.info("rescan found %d apps", len(found))
                 self._json({"ok": True, "count": len(found),
@@ -659,6 +689,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_favourite(b))
             elif p == "/api/studio/examples/build":
                 self._json(self.app.studio_examples_build(b))
+            elif p == "/api/studio/examples/cancel":
+                from .clips import examples as _ex
+
+                self._json({"ok": True, "build": _ex.runner().cancel()})
             elif p == "/api/studio/songfetch/cancel":
                 self._json(self.app.studio_songfetch_cancel())
             elif p == "/api/update/install":
@@ -705,6 +739,15 @@ class _Handler(BaseHTTPRequestHandler):
                 if path and not Path(path).is_file():
                     self._json({"error": f"no file at {path}"}, 400)
                     return
+                # AN IMAGE, checked by decoding it. Any existing file used to
+                # be accepted -- secrets\token.json and win.ini were both
+                # saved as a thumbnail -- and go-live would have sent it to
+                # YouTube's thumbnail endpoint.
+                if path:
+                    why = _not_an_image(path)
+                    if why:
+                        self._json({"error": why}, 400)
+                        return
                 ok = cfg.save_game_field(key, "thumbnail", path)
                 self._json({"ok": ok, "path": path}
                            if ok else {"error": "could not save"})
@@ -744,6 +787,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.setup.save_client_secret(str(b.get("json", ""))))
             elif p == "/api/setup/auth":
                 self._json(self.app.setup.authorise())
+            elif p == "/api/setup/auth_link":
+                self._json(self.app.setup.auth_link())
             elif p == "/api/setup/obs_detect":
                 self._json(self.app.setup.detect_obs())
             elif p == "/api/setup/webview2":
@@ -842,10 +887,14 @@ def _free_reel(root: Path, name: str) -> Path:
 
 
 class Server:
-    def __init__(self, token: str, port: int = 8787, engine=None):
+    def __init__(self, token: str, port: int = 8787, engine=None,
+                 lan: bool = True):
         self.token = token
         self.port = port
         self.engine = engine
+        # rules.web_lan: off binds loopback only, so nothing else on the
+        # network can reach this page, token or not.
+        self.lan = lan
         self.window = None            # set by cmd_run once the MainWindow exists
         self.httpd = None
         self._thread = None
@@ -958,6 +1007,33 @@ class Server:
             for a in catalog.load()
         ]
 
+    def launch(self, body: dict) -> tuple[dict, int]:
+        """Open an app from the Library. -> (answer, HTTP status).
+
+        Checked HERE, before answering, because the launch itself happens a
+        tick later on the engine thread -- and this used to answer ok first,
+        so a missing path showed "Launching X and taking it live." and then
+        nothing happened, with the reason only in the log.
+        """
+        from . import catalog
+
+        key = str(body.get("key", ""))
+        if not key:
+            return {"error": "no key"}, 400
+        if self.engine is None:
+            return {"error": "AutoStream is not running yet. Quit it and "
+                             "start it again to finish setting up."}, 409
+        app = catalog.find(catalog.load(), key)
+        if app is None:
+            return {"error": "That app is no longer in the Library. "
+                             "Press Rescan."}, 409
+        if not app.path or not os.path.exists(app.path):
+            return {"error": f"{app.name} is not where the Library says it "
+                             f"is ({app.path or 'no path'}). Press Rescan."}, 409
+        self.engine.submit(("launch", {"key": key,
+                                       "stream": bool(body.get("stream"))}))
+        return {"ok": True}, 200
+
     def build_screens(self) -> dict:
         """Create or update the screen-saver scenes in OBS now.
 
@@ -986,8 +1062,13 @@ class Server:
         s = e.state
         return {
             "phase": s.phase,
-            "game": s.current_game,
+            # During ARMING the session has not begun, so current_game is
+            # still empty; the candidate is what is about to go live.
+            "game": s.current_game or getattr(e, "candidate", None),
             "paused": s.paused,
+            # Three failed starts: held back like a pause, cleared by Resume.
+            "start_blocked": bool(getattr(e, "_start_blocked", False)),
+            "privacy": getattr(e, "_privacy", None),
             "session": s.session_number,
             "quota_spent": s.quota_spent,
             "viewers": getattr(e, "viewers", None),
@@ -1713,6 +1794,7 @@ class Server:
 
     def clips_run(self, body: dict) -> dict:
         from . import clips, history
+        from .clips import overlay
         from .clips.jobs import ClipJob
 
         c = cfg.load()
@@ -1784,6 +1866,10 @@ class Server:
             "promo": bool(body.get("promo", c.clips.promo)),
             "promo_caption": str(body.get("promo_caption")
                                  or c.clips.promo_caption),
+            # The watermark is the user's own channel, recorded with the run so
+            # a later re-edit of one clip keeps the branding it was cut with.
+            "handle": overlay.handle_for(c.thumbnail.channel_name or ""),
+            "logo": str(c.thumbnail.logo or ""),
         }
         # WHICH PART OF THE FILE. Chosen on the Clips page against a filmstrip
         # of the recording, because one file routinely holds more than one
@@ -1871,7 +1957,10 @@ class Server:
             return {"error": "A clip job is already running."}
         log.info("clip job started: %s", path.name)
         return {"ok": True, "folder": str(job.folder),
-                "reused_kills": bool(cached and not body.get("rescan"))}
+                # What the job was actually handed, not whether a cache
+                # existed: round mode rescans even with one, and the toast
+                # promised a quick re-cut while a full scan ran.
+                "reused_kills": bool(opt.get("kills"))}
 
     def _cached_kills(self, source: Path, config=None,
                       window: tuple[float, float] | None = None) -> list | None:
@@ -2149,6 +2238,18 @@ class Server:
         # The installer closes the app, and a reel mid-render would go with it.
         if studio_mod.runner().busy():
             return {"error": "A reel is rendering in the Studio. Wait for it to finish."}
+        # The rest of what quitting would lose. An upload is the costly one: a
+        # half-sent resumable upload is lost after its quota is spent.
+        from .clips import examples as examples_mod, songfetch, upload as upload_mod
+
+        if upload_mod.runner().busy():
+            return {"error": "Clips are uploading to YouTube. Wait for them to finish."}
+        if songfetch.runner().busy():
+            return {"error": "A song is downloading. Wait for it, or cancel it."}
+        if examples_mod.runner().busy():
+            return {"error": "The Studio is cutting examples. Stop it first."}
+        if self.engine is not None and getattr(self.engine.state, "recording", False):
+            return {"error": "AutoStream is recording. Stop the recording first."}
 
         # The zip has no installer to run; it is extracted by hand. Say so
         # rather than trying to execute an archive.
@@ -2653,6 +2754,13 @@ class Server:
                                   part=part,
                                   shape_it=body.get("shaping")
                                   if isinstance(body.get("shaping"), dict) else None)
+        # The intro chosen on the Make dialog. It used to be reachable only
+        # from the timeline, which meant the first render of every reel went
+        # out without one and you had to render twice to open with an intro.
+        # Passed through untouched: normalise is the guard, here as everywhere.
+        ic = body.get("intro_clip")
+        if isinstance(ic, dict) and str(ic.get("path") or "").strip():
+            proj["intro_clip"] = ic
         try:
             proj, derived, more = studio.normalise(proj, root)
         except studio.ProjectError as e:
@@ -2998,6 +3106,12 @@ class Server:
         if not str(path).strip():
             return b"", "No recording given."
         src = Path(path)
+        # A VIDEO, not any file. This is the one media route with no folder to
+        # confine it to -- "Clip a video file" can point anywhere -- so it was
+        # running ffmpeg on whatever path it was given and handing ffmpeg's
+        # stderr, full path included, back to the caller.
+        if src.suffix.lower() not in self.FRAME_TYPES:
+            return b"", "That is not a video file."
         if not src.is_file():
             return b"", "That recording is no longer on disk."
         import tempfile
@@ -3010,9 +3124,14 @@ class Server:
                          width=min(1920, width) if width > 0 else 960)
             return png.read_bytes(), None
         except Exception as e:  # noqa: BLE001
-            return b"", str(e)
+            log.warning("no frame at %.1fs of %s: %s", at, src.name, e)
+            return b"", "No frame could be read there."
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    # What a recording or a picked video can be. OBS writes the first two.
+    FRAME_TYPES = (".mp4", ".mkv", ".mov", ".flv", ".avi", ".ts", ".webm",
+                   ".m4v", ".mts", ".m2ts", ".wmv")
 
     # Stripped BOTH ways, because neither alone is enough.
     #
@@ -3127,6 +3246,17 @@ class Server:
                   secret("obs", "password_env")):
             if len(v) >= 6:          # short values would scrub ordinary words
                 text = text.replace(v, "(removed)")
+        # A StreamElements overlay URL carries the overlay's access token as
+        # its last segment, and screens.*_file holds exactly that -- so the
+        # report that says it is "safe to paste anywhere" was carrying it.
+        text = re.sub(r"(streamelements\.com/overlay/[^/\s]+/)[^\s\"'?&#]+",
+                      lambda m: m.group(1) + "(removed)", text,
+                      flags=re.IGNORECASE)
+        # A password written into a log line by a library, as obsws-python
+        # did before the log filter existed.
+        text = re.sub(r"(password\s*[=:]\s*)(['\"]?)[^'\"\s,)}]*\2",
+                      lambda m: m.group(1) + m.group(2) + "(removed)" + m.group(2),
+                      text, flags=re.IGNORECASE)
         # Any token-bearing URL, including one from a config this process has
         # not loaded -- an older log line, or a second install.
         return re.sub(r"([?&]k=)[^\s&\"']+",
@@ -3418,17 +3548,22 @@ class Server:
 
         rows = history.read()
         if missing_only:
+            # A row with NO path is gone too. The page lists it as "Recording
+            # gone" and counts it in "N streams no longer have their
+            # recordings" -- and this kept it, so the banner never cleared and
+            # a second press answered that every stream still had one.
             keep = [r for r in rows
-                    if not r.get("recording_path")
-                    or Path(str(r["recording_path"])).exists()]
+                    if r.get("recording_path")
+                    and Path(str(r["recording_path"])).exists()]
             if len(keep) == len(rows):
                 return {"ok": True, "removed": 0,
                         "detail": "Every stream still has its recording."}
         else:
-            if not recording_path:
+            # A row with no recording is named by its session alone.
+            if not recording_path and session < 0:
                 return {"error": "No recording given."}
             keep = [r for r in rows
-                    if not (r.get("recording_path") == recording_path
+                    if not ((r.get("recording_path") or "") == recording_path
                             and (session < 0 or r.get("session") == session))]
             if len(keep) == len(rows):
                 return {"error": "No matching entry."}
@@ -3486,6 +3621,8 @@ class Server:
     # ---------------- lifecycle ----------------
 
     def url(self, host: str | None = None) -> str:
+        if not self.lan and host is None:
+            return self.local_url()
         return f"http://{host or lan_ip()}:{self.port}/?k={self.token}"
 
     def local_url(self) -> str:
@@ -3493,8 +3630,9 @@ class Server:
 
     def start(self) -> str | None:
         try:
-            self.httpd = ThreadingHTTPServer(("0.0.0.0", self.port),
-                                             partial(_Handler, self))
+            self.httpd = ThreadingHTTPServer(
+                ("0.0.0.0" if self.lan else "127.0.0.1", self.port),
+                partial(_Handler, self))
         except OSError as e:
             log.error("web UI could not bind port %d: %s", self.port, e)
             return None

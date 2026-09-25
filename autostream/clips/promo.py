@@ -95,7 +95,7 @@ def strongest(leftovers, limit: int) -> list:
 
 
 def build(source: Path, leftovers, kills, outdir: Path, *,
-          game: str = "Session", handle: str = "@YuvaNeta",
+          game: str = "Session", handle: str = "", logo: Path | None = None,
           caption: str = "LIVE MOST EVENINGS \U0001F3AE",
           encoder: str = "auto", vertical_mode: str = "fit",
           transition: str = "fade", transition_ms: int = 400) -> Path | None:
@@ -150,7 +150,7 @@ def build(source: Path, leftovers, kills, outdir: Path, *,
     name = (f"{plan.slug(game)}_promo_{len(pieces)}clips"
             f"_{int(round(total))}s.mp4")
     final = outdir / "promo" / name
-    _brand(vert, final, caption, handle, encoder)
+    _brand(vert, final, caption, handle, logo, encoder)
 
     # The intermediates are large and reproducible; only the reel is wanted.
     for p in pieces:
@@ -166,7 +166,8 @@ def build(source: Path, leftovers, kills, outdir: Path, *,
     return final
 
 
-def _brand(src: Path, out: Path, caption: str, handle: str, encoder: str) -> None:
+def _brand(src: Path, out: Path, caption: str, handle: str,
+           logo: Path | None, encoder: str) -> None:
     """Promo caption as an image overlay, held for the whole reel.
 
     An image rather than drawtext because the caption carries emoji, and
@@ -178,7 +179,6 @@ def _brand(src: Path, out: Path, caption: str, handle: str, encoder: str) -> Non
     w, h = info["width"], info["height"]
     tmp = out.parent / "_caption.png"
     img = overlay.text_png(caption, tmp, size=max(46, int(h * 0.040)))
-    logo = overlay.brand_logo()
 
     parts: list[str] = []
     inputs: list[str] = []
