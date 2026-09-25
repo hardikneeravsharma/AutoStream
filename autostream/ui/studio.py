@@ -366,6 +366,23 @@ STUDIO_HTML = r"""
           <p class="muted" id="studio-mk-facts"></p>
         </div>
       </div>
+      <!-- THE INTRO, HERE AND NOT ONLY ON THE TIMELINE. It used to be
+           reachable only after a reel had been rendered once, so the first
+           render always went out without one. The trim and the fit stay on the
+           timeline's own dialog; what belongs here is which clip and whether
+           it is heard, because those are the two that change the render. -->
+      <div class="studio-mk-intro hide" id="studio-mk-intro">
+        <h3 class="studio-h">Intro clip</h3>
+        <div class="field-inline">
+          <select class="input studio-mk-introsel" id="studio-mk-introsel" aria-label="Intro clip">
+            <option value="">No intro</option>
+          </select>
+          <label class="studio-check" id="studio-mk-introaudio-wrap">
+            <input type="checkbox" id="studio-mk-introaudio"> Play its own sound
+          </label>
+        </div>
+        <p class="muted" id="studio-mk-intronote"></p>
+      </div>
       <h3 class="studio-h">Shape</h3>
       <div class="field-inline studio-shape">
         <div class="seg" role="group" aria-label="Format">
@@ -583,7 +600,9 @@ const studio = {
   /* The intro-clip dialog: the library, which one is being edited, and the
      trim being made to it. Nothing here touches the project until Use. */
   intro: {list: null, pick: '', seconds: 0, hasAudio: false,
-          start: 0, end: 0, audio: false, fit: 'cover', tick: null}
+          start: 0, end: 0, audio: false, fit: 'cover', tick: null},
+  /* What the Make dialog chose, before any project exists to hang it on. */
+  mkIntro: {path: '', audio: false}
 };
 
 const studio_el = (id) => document.getElementById(id);
@@ -847,6 +866,10 @@ async function studio_openMake() {
   studio_el('studio-make-title').textContent = ad ? 'Rebuild ' + ad.name : 'Make a reel';
   studio_el('studio-build-btn').textContent = ad ? 'Rebuild and render' : 'Build and render';
   studio_el('studio-make-msg').textContent = '';
+  /* Draw from what is already known, then fetch once if the library has never
+     been read -- the dialog must not wait on a request to appear. */
+  studio_mkIntroDraw();
+  if (studio.intro.list === null) studio_introLoad();
   if (ad) {
     studio.style = ad.style || studio.style;
     studio.fmt = ad.fmt || studio.fmt;
@@ -1736,6 +1759,15 @@ async function studio_build() {
       shaping: Object.assign({}, studio.shaping, {arrange: studio.arrange,
         pins: studio.pins, shuffle_seed: studio.shuffleSeed})
     };
+    /* The whole clip, cover-fitted: the trim and the fit are the timeline
+       dialog's job, and normalise clamps both anyway. What is chosen here is
+       which intro and whether it is heard. */
+    if (studio.mkIntro.path) {
+      const got = (studio.intro.list || []).find(x => x.path === studio.mkIntro.path);
+      body.intro_clip = {path: studio.mkIntro.path, start: 0,
+                         end: got ? Number(got.seconds) : 0,
+                         audio: !!studio.mkIntro.audio, fit: 'cover'};
+    }
     if (studio.song && studio.songShape && studio.mk.mode === 'part' && studio.mk.end > studio.mk.start) {
       body.part_start = studio.mk.start;
       body.part_end = studio.mk.end;
@@ -2305,6 +2337,40 @@ async function studio_introLoad() {
   const r = await API.get('/api/studio/intros');
   studio.intro.list = (r && r.ok) ? (r.intros || []) : [];
   studio_introLib();
+  studio_mkIntroDraw();
+}
+
+/* THE MAKE DIALOG'S INTRO ROW. The whole section hides when there are no
+   intros in the library: an empty picker is a question nobody can answer. */
+function studio_mkIntroDraw() {
+  const sel = studio_el('studio-mk-introsel');
+  if (!sel) return;
+  const list = studio.intro.list || [];
+  studio_show('studio-mk-intro', list.length > 0);
+  if (!list.length) return;
+  const keep = studio.mkIntro.path;
+  sel.innerHTML = '<option value="">No intro</option>' + list.map(x =>
+    '<option value="' + esc(x.path) + '">' + esc(x.name) + ' · ' +
+    Number(x.seconds).toFixed(1) + ' s' + (x.has_audio ? '' : ' · silent') +
+    '</option>').join('');
+  /* A chosen intro deleted from the library falls back to none rather than
+     leaving a name selected that no longer resolves. */
+  sel.value = list.some(x => x.path === keep) ? keep : '';
+  studio.mkIntro.path = sel.value;
+  const got = list.find(x => x.path === sel.value) || null;
+  const au = studio_el('studio-mk-introaudio');
+  au.disabled = !got || !got.has_audio;
+  if (au.disabled) studio.mkIntro.audio = false;
+  au.checked = !!studio.mkIntro.audio;
+  studio_el('studio-mk-intronote').textContent = !got
+    ? ''
+    : studio.mkIntro.audio
+      ? 'The intro plays its own sound. The song starts with the reel.'
+      : (studio.song
+          ? 'The song starts ' + Number(got.seconds).toFixed(1) + ' s earlier and plays '
+            + 'through the intro, so it runs into the reel unbroken.'
+          : 'No song chosen, so the intro plays silent.')
+      + (got.has_audio ? '' : ' This clip has no sound of its own.');
 }
 
 function studio_introLib() {
@@ -3534,6 +3600,16 @@ function studio_wire() {
     const v = studio_el('studio-intro-video');
     if (v) v.muted = !(studio.intro.audio && studio.intro.hasAudio);
     studio_introDraw();
+  });
+  const mis = studio_el('studio-mk-introsel');
+  if (mis) mis.addEventListener('change', () => {
+    studio.mkIntro.path = mis.value;
+    studio_mkIntroDraw();
+  });
+  const mia = studio_el('studio-mk-introaudio');
+  if (mia) mia.addEventListener('change', () => {
+    studio.mkIntro.audio = mia.checked;
+    studio_mkIntroDraw();
   });
   const ivid = studio_el('studio-intro-video');
   if (ivid) {
