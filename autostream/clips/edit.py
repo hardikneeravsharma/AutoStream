@@ -255,7 +255,7 @@ def recut(spec: Spec) -> Result:
 
     opt = data.get("options") or {}
     enc = str(opt.get("encoder", "auto"))
-    handle = str(opt.get("handle") or "@YuvaNeta")
+    handle, logo = overlay.branding(opt)
     mode = spec.vertical_mode or str(opt.get("vertical_mode") or "crop")
 
     # Two ways of saying where the clip begins and ends. start_at/end_at are
@@ -395,7 +395,7 @@ def recut(spec: Spec) -> Result:
     if caption:
         tmp = vert.with_suffix(".tmp.mp4")
         try:
-            overlay.apply(vert, tmp, caption=caption, handle=handle,
+            overlay.apply(vert, tmp, caption=caption, handle=handle, logo=logo,
                           encoder=enc, subtitle=said,
                           subtitle_until=(voice.LEAD_IN + speech.duration
                                           if speech else 0.0))

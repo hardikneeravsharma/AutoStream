@@ -29,6 +29,14 @@ the main one:
 - **panel thread** — `panel.ControlPanel` (tkinter overlay HUD), unless `--no-panel`
 - **hotkey listener** — global kill switch via the `keyboard` package
 
+On a first run there is no configuration, so only the server and the window
+start, serving the setup wizard. The engine, tray and hotkey start **in the same
+process** the moment the wizard finishes (`await_setup` in `cmd_run`, once no
+request is in flight). The process used to exit instead and leave the restart
+to the user -- but only after ten idle seconds, which a dashboard polling every
+two never gave it, so a finished setup looked like a working dashboard with
+nothing behind it.
+
 The UI layer (panel, tray, web dashboard) never calls OBS/YouTube directly. It calls
 `engine.submit(command)` — a thread-safe queue — and reads `engine.state` for display.
 
@@ -252,11 +260,15 @@ soon as it sees `state.paused`, well before the output-health check that ends a
 session after a 120-second outage.
 
 The dashboard follows. The stop button cannot go on saying *End stream* when
-nothing is being streamed, so it reads **Stop recording**; and the ingest panel,
+nothing is being streamed, so it reads **End session** -- not *Stop recording*,
+which is the record toggle's label and does something different (it closes the
+file and leaves the session running). The ingest panel,
 which would otherwise sit on `OFFLINE` all session, reports the recording
 instead — `RECORDING` / `PAUSED`, with its running length and size. That panel
 is the only place a paused recording is visible, since the phase stays LIVE and
-the file keeps its size.
+the file keeps its size. It is fed by `_poll_obs`, which runs every LIVE tick in
+both modes; it used to ride the streaming-only extras, so a recording-only
+session's panel said *Not recording* while OBS was recording.
 
 ### Clips-only mode (`youtube.enabled: false`)
 
@@ -336,7 +348,7 @@ give dotted attribute access (e.g. `cfg.obs.port`).
 | `youtube:` | **`enabled`** (off = clips-only, see below), `privacy` (`unlisted` recommended initially), `latency`, `category_id`, `stream_id`/`ingestion_address` (written by setup — the permanent reusable stream), `made_for_kids`, `switch_policy` (`rolling` / `new_broadcast`) |
 | `obs:` | `host`/`port` (4455), `password`, `password_env` (`AUTOSTREAM_OBS_PW`), path to `obs64.exe`, `default_scene`, `overlay_source`, `service_mode` |
 | `timing:` | `poll_interval`, `arm_delay`, `abort_grace`, `switch_delay`, `cooldown`, `ingestion_timeout`, `max_session_hours`, `index_refresh_days` |
-| `rules:` | `quiet_hours` (`[start, end]` as `HH:MM`), `require_ac_power`, `min_free_disk_gb`, `kill_switch_hotkey`, `paused_flag_file` (`NOSTREAM`), `quota_reserve`, `tray_icon`, `web_token` (dashboard auth token) |
+| `rules:` | `quiet_hours` (`[start, end]` as `HH:MM`), `require_ac_power`, `min_free_disk_gb`, `kill_switch_hotkey`, `paused_flag_file` (`NOSTREAM`), `quota_reserve`, `tray_icon`, `web_token` (dashboard auth token, at least 12 characters), `web_lan` (off binds the dashboard to 127.0.0.1 only) |
 | `title:` | `template` (placeholders like `{game} {hook} {day}`), `hooks` (rotating flavour text), `max_len`, `fallback_game` |
 | `description:` | `template`, `tags` |
 | `record:` | `enabled`, `directory`, `min_free_gb`, `warn_free_gb`, `auto_scan` |
@@ -381,7 +393,7 @@ stream" is offered on the dashboard. Distinct from `games.yaml`'s detection over
 | `voice` | `cmd_voice` | Checks the Kokoro voice model, `--download`s it (177 MB), `--list-voices` grouped by accent, `--sample`s every voice to wav, or `--say`s one line |
 | `run` | `cmd_run` | The daemon (see §1). Accepts `--no-panel` |
 | `status` | `cmd_status` | Prints `State.load()` as JSON: phase, broadcast id/URL, game, session info, paused, quota spent/left |
-| `stop` | `cmd_stop` | `Engine(cfg.load()).force_stop("cli stop")` |
+| `stop` | `cmd_stop` | `Engine(cfg.load()).shutdown("cli stop")` |
 
 Global flags: `-v/--verbose`, `-q/--quiet`.
 
@@ -429,6 +441,33 @@ All gating is centralized in `Engine._preflight()`, called from `_tick_idle` and
   and quota checks are never bypassed even with `force=True`.
 - **Orphan sweep on startup** — `Engine._recover()` + `youtube.sweep_orphans()`
   completes any broadcast left `active`/`testing` after an unclean shutdown.
+- **Quit ends the session before the process exits** — `cmd_run` stops the tick
+  loop, joins it, then calls `Engine.shutdown()`, which stops recording and the
+  stream output, completes the broadcast and journals the session synchronously,
+  with no ending card. `force_stop()` is not enough on the way out: it puts the
+  card up and leaves the rest to a tick loop that no longer runs, which is how a
+  Quit once left OBS streaming the ending card with the broadcast open.
+- **OBS and recording watchdog** — `_poll_obs()` asks OBS for its health every
+  five seconds of LIVE, in both modes. An OBS that stops answering is reported as
+  that (and the no-sound check stands down, since no meters arrive from it); one
+  that comes back idle after a crash or restart has its stream output started
+  again (`obs.start_stream_output()`, no scene change) and its metering
+  reconnected. A recording OBS stopped on its own is noticed within two polls,
+  its partial file found on disk and kept for the journal, and -- after an OBS
+  restart -- a new file started. Nothing is restarted while OBS stayed answering
+  throughout: an output turned off in OBS may have been turned off by hand, and
+  restarting it would put somebody back on air who had just left it. Every file
+  a session made gets its own `history.jsonl` row, as does a recording started
+  from the idle dashboard.
+- **Three failed starts** — `_abandon_start()` sets an in-memory
+  `_start_blocked`, surfaced as a preflight reason and cleared by Resume or a
+  restart. It used to set `state.paused`, which is persisted, so "pausing until
+  restart" outlived the restart. OBS is reached before any broadcast is created,
+  so a start that fails on OBS costs no quota.
+- **Launch intents outlive the launcher** — "Open" and "Open & stream" record an
+  intent against the game's exe, kept until that exe has run and closed or
+  `Engine.LAUNCH_GRACE` passes without it; a game started through Steam, Riot or
+  its own launcher appears seconds later and must still find it.
 - **Debounce** — `arm_delay` and `switch_delay` prevent alt-tab flicker from spamming
   session starts or retitles.
 
@@ -442,6 +481,9 @@ All gating is centralized in `Engine._preflight()`, called from `_tick_idle` and
 - **gameindex.py** — `GameHit` dataclass; `GameIndex` merges `games.yaml` > Discord
   detectable-apps > Steam applist, caches to `index.cache.json`;
   `lookup()`/`is_blocked()`/`is_veto()`/`steam_name()`/`coverage_warning()`.
+  `GENERIC_EXES` (setup.exe, javaw.exe, sh.exe, main.exe, game.exe ...) are never
+  taken from the public index, which maps each to one arbitrary title; a
+  `games.yaml` entry for one still counts.
 - **titles.py** — `SafeDict` (tolerant `str.format_map`); `build_vars()` assembles
   template variables; `render_title`/`render_description` apply templates with
   word-boundary truncation; `pick_hook()` picks a random flavour line.

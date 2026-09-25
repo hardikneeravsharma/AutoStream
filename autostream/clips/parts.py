@@ -117,7 +117,7 @@ SAT = [
     ("mid", "Saturation pop", "Muted colour until the kill, then it floods in.", {"from": 0.40, "to": 1.45, "fall": 0.60}),
     ("hard", "Colour slam", "Grey to full colour in one frame.", {"from": 0.10, "to": 1.70, "fall": 0.45}),
     ("drain", "Colour drain", "Full colour until the kill, then the colour goes.", {"from": 1.30, "to": 0.45, "fall": 0.70}),
-    ("slow", "Slow bloom", "Colour arrives over a second.", {"from": 0.55, "to": 1.30, "fall": 1.00}),
+    ("slow", "Slow colour bloom", "Colour arrives over a second.", {"from": 0.55, "to": 1.30, "fall": 1.00}),
 ]
 
 TILT = [
@@ -426,6 +426,35 @@ def variants(kinds: dict[str, str]) -> list[Part]:
                 _name(f"Fade to {cword}", word),
                 f"The last shot fades out to {cword}.",
                 "fade_out", {"secs": secs, "colour": float(FADE_COLOURS.index((csuffix, cword, colour)))})
+    return out
+
+
+def distinct(parts) -> list[Part]:
+    """Every part with a label no other part of its kind shares.
+
+    A generated variant at a family's middle setting carries the family's
+    plain name -- "RGB split", "White flash", "Fade to black" -- and so does
+    the hand-built part it varies. Twenty-eight pairs read identically in the
+    inspector and the drawers, two "RGB split" boxes side by side with one
+    ticked. The ids stay as they are, because saved reels name them; only the
+    later label gains what sets it apart.
+    """
+    seen: set[tuple[str, str]] = set()
+    out: list[Part] = []
+    for p in parts:
+        key = (p.kind, p.label)
+        if key in seen:
+            knobs = dict(p.knobs or ())
+            if "secs" in knobs:
+                word = f"{knobs['secs']:g} s"
+            elif p.id.endswith("mid"):
+                word = "medium"
+            else:
+                word = p.id
+            p = Part(p.id, p.kind, _name(p.label, word), p.blurb, p.base, p.knobs)
+            key = (p.kind, p.label)
+        seen.add(key)
+        out.append(p)
     return out
 
 

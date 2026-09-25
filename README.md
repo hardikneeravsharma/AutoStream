@@ -291,6 +291,7 @@ and **OK**. OBS does not open the port until that dialog is committed.
    Windows SmartScreen will warn you because the app is not code-signed —
    **More info → Run anyway**.
 3. A setup wizard opens. It takes about ten minutes, most of it waiting on Google.
+   When it finishes, AutoStream is running -- no restart needed.
 
 No Python needed. The zip contains no accounts or keys; you connect your own channel
 during setup.
@@ -798,8 +799,12 @@ because it is about the channel rather than the play:
 ```
 LIVE MOST EVENINGS 🎮
                               ... seven leftover kills, ~5s each
-@YuvaNeta
+@YourChannel
 ```
+
+The name and logo in the corner of every clip are your own: `thumbnail.channel_name`
+(written as `@name`) and `thumbnail.logo`, the same pair the stream thumbnail uses.
+Leave them empty and nothing is drawn there.
 
 Set the line with `clips.promo_caption`, or turn the whole thing off with
 `clips.promo`.

@@ -26,6 +26,44 @@ SESSION_COST = 250   # insert + bind + 2 transitions + complete
 
 
 class Engine:
+    # Plain defaults for bookkeeping the tick reads. Class attributes rather
+    # than __init__ assignments only so an engine built without __init__ (the
+    # tests do) still has them; every write replaces rather than mutates.
+    #
+    # Whether OBS answered the last health poll. A no-sound alarm while OBS is
+    # not answering at all is a false alarm about the wrong thing.
+    _obs_reachable: bool = True
+    _obs_checked: float = 0.0
+    # Consecutive polls in which OBS answered and said it was NOT recording
+    # while this session believes it is.
+    _rec_missing: int = 0
+    # When the current recording began, so a file OBS stopped writing on its
+    # own can be found on disk afterwards.
+    _rec_began: float | None = None
+    # Files this session finished before its last one -- stopped by hand, or
+    # ended by OBS -- each with the chat marks placed while it was being
+    # written. Journalled one row apiece, so none of them is invisible on the
+    # Clips page.
+    _earlier_files: tuple = ()
+    # A recording started from the idle dashboard, outside any session.
+    _loose_recording: bool = False
+    # Three failed starts in a row. Held in memory, NOT in state.json: the
+    # message says "until restart", and a persisted flag broke that promise.
+    _start_blocked: bool = False
+    # This session's broadcast has not been shown to anyone yet. The ending
+    # card is for viewers; a session cancelled in TESTING had none.
+    _unseen: bool = False
+    # The game ARMING is waiting on, so the dashboard can name it.
+    candidate: str | None = None
+    # Who can see the broadcast, for the toasts that describe it.
+    _privacy: str = "public"
+
+    # How long an "Open" or "Open & stream" intent waits for its game to
+    # appear. A launcher (Steam, Riot, Ubisoft, Delta Force's own) starts the
+    # game seconds to minutes later, and an intent dropped before then turned
+    # "Open" into a broadcast.
+    LAUNCH_GRACE = 300.0
+
     def __init__(self, config):
         self.cfg = config
         self.state = st.State.load()
@@ -108,6 +146,11 @@ class Engine:
         # the dashboard, so "Open" and "Open & stream" behave differently.
         # Cleared when that executable is no longer running.
         self.launch_intent: dict[str, str] = {}
+        # exe -> when it was launched, and the exes seen running since. An
+        # intent is only forgotten once its game has run and gone, or never
+        # arrived within LAUNCH_GRACE.
+        self._intent_at: dict[str, float] = {}
+        self._intent_seen: set[str] = set()
         # Why we are sitting idle while a game IS running. Surfaced on the
         # dashboard - a silent refusal looks identical to a bug.
         self.blocked_reason: str | None = None
@@ -139,8 +182,7 @@ class Engine:
             # remembered with no recording_path is INVISIBLE on the Clips page,
             # and that is how a 44 GB recording became unreachable with nothing
             # anywhere saying so.
-            rec_path = (self._stop_recording() or self._stopped_recording
-                        or self._adopt_recording())
+            rec_path = self._stop_recording() or self._adopt_recording()
             try:
                 self.obs.stop()
             except Exception:  # noqa: BLE001
@@ -162,14 +204,15 @@ class Engine:
     # window stays tight.
     ADOPT_WINDOW = 180.0
 
-    def _adopt_recording(self) -> str | None:
+    def _adopt_recording(self, start: float | None = None) -> str | None:
         """Find the file a crashed session left behind. -> its path, or None.
 
         Matched on OBS's own filename stamp against the session's start, which
         is the same evidence a person would use and the only evidence there is
-        once OBS has forgotten the output.
+        once OBS has forgotten the output. `start` is when the recording
+        began, for a file other than the session's first.
         """
-        start = self.state.session_start
+        start = start or self.state.session_start
         if not start:
             return None
         folder = self.cfg.record.directory or ""
@@ -214,7 +257,33 @@ class Engine:
                 log.exception("tick failed: %s", e)
             time.sleep(interval)
         log.info("stop requested — shutting down")
-        self.force_stop("daemon shutting down", suppress=False)
+        self.shutdown("daemon shutting down")
+
+    def shutdown(self, reason: str = "shutdown") -> None:
+        """End whatever is running NOW, because the process is about to exit.
+
+        force_stop() is not enough here. It puts the ending card up and leaves
+        the rest to the tick loop -- which a quitting process no longer runs.
+        Quit used to exit 0.6 seconds later with only the scene switched: OBS
+        still streaming and recording, the broadcast open on YouTube with the
+        ending card on air until the next launch, and the session journalled
+        only then. The Quit dialog promises the broadcast ends immediately, so
+        it does: no card, everything stopped and journalled before returning.
+
+        Call it from one thread, with the tick loop already stopped.
+        """
+        self._ending_until = None
+        if self._loose_recording and self.state.recording:
+            # Record was pressed on the idle dashboard. The app that started
+            # it is going away, so the file is closed and remembered rather
+            # than left running with nothing that knows about it.
+            self.toggle_recording(reason)
+        if self.state.phase in (st.IDLE, st.ARMING):
+            self.force_stop(reason, suppress=False)
+            return
+        log.warning("shutting down mid-session (%s): ending it now", reason)
+        self._goto(st.STOPPING)
+        self._tick_stopping(card=False)
 
     # ================= gating =================
 
@@ -248,6 +317,8 @@ class Engine:
             return f"paused ({self.cfg.rules.paused_flag_file} present)"
         if self.state.paused:
             return "paused via kill switch"
+        if self._start_blocked:
+            return "3 failed start attempts - press Resume, or restart AutoStream"
         if not force and self._in_quiet_hours():
             return "inside quiet hours"
         if not force and self.cfg.rules.require_ac_power:
@@ -271,6 +342,8 @@ class Engine:
         if phase == self.state.phase:
             return
         log.info("phase %s -> %s", self.state.phase, phase)
+        if phase != st.ARMING:
+            self.candidate = None
         self.state.phase = phase
         self.state.save()          # persist BEFORE the side effect
         self._phase_since = time.monotonic()
@@ -376,10 +449,16 @@ class Engine:
         if app is None:
             log.warning("launch: unknown app %r", key)
             return
-        if app.exe:
-            self.launch_intent[app.exe.lower()] = "stream" if want_stream else "silent"
+        exe = (app.exe or "").lower()
+        if exe:
+            self.launch_intent[exe] = "stream" if want_stream else "silent"
+            self._intent_at[exe] = time.monotonic()
+            self._intent_seen.discard(exe)
         if not catalog.launch(app):
-            self.launch_intent.pop((app.exe or "").lower(), None)
+            self.launch_intent.pop(exe, None)
+            self._intent_at.pop(exe, None)
+            notify.toast("AutoStream", f"Could not launch {app.name}. "
+                                       "See the log for why.")
             return
         log.info("launched %s with intent=%s", app.name,
                  "stream" if want_stream else "silent")
@@ -391,14 +470,35 @@ class Engine:
         return self.launch_intent.get((hit.key or "").lower())
 
     def _prune_intents(self) -> None:
-        """Forget intents for things that are no longer running."""
+        """Forget intents for things that have run and closed.
+
+        NOT for things that have not started YET. This used to drop any intent
+        whose exe was not running on the very next idle tick, three seconds
+        after the launch -- but a game opened through a launcher appears
+        seconds or minutes later, so "Open" (no stream) lost its intent and
+        the game went live as an ordinary detection, and "Open & stream" lost
+        its override. An intent now lasts until its game has been seen and
+        has gone, or until LAUNCH_GRACE passes with no sign of it.
+        """
         if not self.launch_intent:
             return
         seen, _u, _v = self.watcher.snapshot()
         running = {h.key.lower() for h in seen.values()}
+        now = time.monotonic()
+        at = getattr(self, "_intent_at", {})
+        was_seen = getattr(self, "_intent_seen", set())
         for exe in list(self.launch_intent):
-            if exe not in running:
-                self.launch_intent.pop(exe, None)
+            if exe in running:
+                was_seen.add(exe)
+                continue
+            # "stopped" is set on games already running, never by a launch.
+            waiting = (exe not in was_seen and exe in at
+                       and now - at[exe] < self.LAUNCH_GRACE)
+            if waiting:
+                continue
+            self.launch_intent.pop(exe, None)
+            at.pop(exe, None)
+            was_seen.discard(exe)
 
     def _tick_idle(self) -> None:
         self._prune_intents()
@@ -428,6 +528,9 @@ class Engine:
         self.blocked_reason = None
         log.info("candidate detected: %s (%s, via %s)", hit.name, hit.key, hit.source)
         self._goto(st.ARMING)
+        # current_game is only set once the session begins, so for the whole
+        # arm delay the dashboard had no name for what it was about to stream.
+        self.candidate = hit.name
 
     # ---- ARMING -----------------------------------------------------
 
@@ -446,6 +549,8 @@ class Engine:
             if not self.watcher.any_game_running():
                 log.info("candidate went away before arming completed")
                 self._goto(st.IDLE)
+            elif express is not None:
+                self.candidate = express.name
             return
         reason = self._preflight()
         if reason:
@@ -467,12 +572,23 @@ class Engine:
         title = titles.render_title(self.cfg, v)
         desc = titles.render_description(self.cfg, v)
         self._last_title = title
+        self._privacy = str(hit.privacy or self.cfg.youtube.privacy or "public")
+        self._unseen = True
+        self._earlier_files = ()
+        # Record pressed on the idle dashboard: that file now belongs to this
+        # session, which adopts it and journals it at the end.
+        self._loose_recording = False
 
         self._goto(st.STARTING)
         if not self.streaming:
             self._begin_recording_only(hit)
             return
         try:
+            # OBS FIRST. A broadcast is 50 units to create, 50 to bind and 50
+            # to delete again, and with OBS unreachable every attempt did all
+            # three before finding out -- about 450 units and three real
+            # broadcasts per failed cycle. Reaching OBS is free.
+            self.obs.connect(wait=True)
             self.yt.check_budget(SESSION_COST)
             bid = self.yt.create_broadcast(title, desc, privacy=hit.privacy)
             self.state.broadcast_id = bid
@@ -566,6 +682,8 @@ class Engine:
             self.state.recording = True
             self.state.recording_adopted = already
             self.state.save()
+            self._rec_began = time.time()
+            self._rec_missing = 0
             if already:
                 log.info("OBS was already recording; adopting that file. Its "
                          "earlier footage is not part of this session.")
@@ -578,6 +696,115 @@ class Engine:
         path = self.obs.stop_recording()          # already swallows its errors
         self.state.recording = False
         return path
+
+    def _set_aside(self, path: str | None) -> None:
+        """Keep a finished file of this session for the journal, with the chat
+        marks placed while it was the one being written."""
+        if path:
+            self._earlier_files = (*self._earlier_files,
+                                   {"path": path, "marks": list(self._marks)})
+        self._marks = []
+
+    def _recording_lost(self, *, restart: bool) -> None:
+        """OBS stopped writing the file. Remember it, say so, and -- when OBS
+        itself went away and came back -- start a new one.
+
+        Nothing used to notice. /api/status said recording for the rest of
+        the session while OBS said otherwise in the same payload, the
+        dashboard kept offering Stop recording, and at the end the session
+        was journalled with no recording at all -- invisible on the Clips page
+        although the partial file was sitting on disk.
+        """
+        path = self._adopt_recording(self._rec_began)
+        self.state.recording = False
+        self.state.save()
+        self._rec_missing = 0
+        self._set_aside(path)
+        log.error("OBS stopped recording on its own%s",
+                  f"; the file so far is {path}" if path else
+                  " and the file could not be found")
+        if restart and self.cfg.record.enabled:
+            self._start_recording()
+            if self.state.recording:
+                log.info("recording again, into a new file")
+                notify.toast("AutoStream: recording restarted",
+                             "OBS stopped recording on its own, so a new file "
+                             "was started. Both are on the Clips page.")
+                return
+        notify.toast("AutoStream: recording stopped",
+                     "OBS stopped recording on its own. Press Record to start "
+                     "again.")
+
+    # How often OBS is asked how it is. A local websocket, so it costs nothing
+    # that matters -- but the engine loop is serial, so not every tick either.
+    OBS_POLL = 5.0
+
+    def _poll_obs(self) -> None:
+        """OBS health, whether OBS is answering at all, and what to do when it
+        comes back. Every LIVE tick, streaming or not.
+
+        It used to run only while streaming, so in a recording-only session
+        the Ingest card said "Not recording" while OBS was recording.
+        """
+        now = time.monotonic()
+        if now - self._obs_checked < self.OBS_POLL:
+            return
+        self._obs_checked = now
+        try:
+            h = self.obs.health()
+        except Exception as e:  # noqa: BLE001
+            if self._obs_reachable:
+                log.warning("OBS is not answering: %s", e)
+            self._obs_reachable = False
+            self.obs_health = {}
+            return
+        self.obs_health = h
+        if not self._obs_reachable:
+            self._obs_reachable = True
+            self._obs_returned(h)
+            return
+        # Two polls in a row, not one: StartRecord is asynchronous, and the
+        # first status after it can still say inactive.
+        if self.state.recording and not h.get("recording"):
+            self._rec_missing += 1
+            if self._rec_missing >= 2:
+                # Not started again: with OBS answering throughout, the one
+                # who stopped it may well be the user, in OBS, on purpose.
+                # Noticed, kept and said is what was missing.
+                self._recording_lost(restart=False)
+        else:
+            self._rec_missing = 0
+
+    def _obs_returned(self, h: dict) -> None:
+        """OBS answers again after an outage.
+
+        An OBS that crashed or was restarted comes back IDLE -- not streaming,
+        not recording. The watchdog below waited only for OBS's own output
+        reconnect, which a restarted OBS never does, so it counted two
+        minutes of "output inactive" against an OBS that was sitting there
+        ready and ended the broadcast.
+
+        Only after an outage this process SAW. An OBS that stays answering
+        and turns its own output off may have had it turned off by hand, and
+        restarting that would put somebody back on air who had just left it.
+        """
+        log.info("OBS is answering again")
+        # The meter connection died with the old OBS.
+        try:
+            self.obs.audio_watch_stop()
+            self.obs.audio_watch_start()
+        except Exception:  # noqa: BLE001
+            pass
+        self._silent_said = False
+        if self.streaming and not h.get("active"):
+            log.warning("OBS came back idle; starting the stream output again")
+            try:
+                self.obs.start_stream_output()
+                self._obs_down_since = None
+            except Exception as e:  # noqa: BLE001
+                log.warning("could not restart the stream output: %s", e)
+        if self.state.recording and not h.get("recording"):
+            self._recording_lost(restart=True)
 
     # A completely black program output while live. Every other readout says
     # healthy in this state -- OBS reports streaming, YouTube reports ingest,
@@ -648,6 +875,12 @@ class Engine:
         Costs nothing per tick. obs.silent_for() reads a number kept by the
         metering thread rather than asking OBS anything.
         """
+        if not self._obs_reachable:
+            # No meter events arrive from an OBS that is not answering, and
+            # that read as ninety seconds of silence: "check the Audio Mixer"
+            # about an OBS that was not there. The outage is already being
+            # reported as what it is.
+            return
         quiet = self.obs.silent_for()
         if quiet is None:
             return                        # no metering: never a false alarm
@@ -735,6 +968,32 @@ class Engine:
         """Write the finished session to history.jsonl. Call before
         reset_session()."""
         bid = self.state.broadcast_id
+        # Every earlier file of this session first, one row each. The journal
+        # held one path, so a recording stopped and started again kept only
+        # its newest file and the rest could only be found by browsing for
+        # them -- and one stopped and never restarted was journalled with no
+        # recording at all.
+        written = 0
+        for i, f in enumerate(self._earlier_files):
+            if f["path"] == recording_path:
+                continue
+            written += 1
+            try:
+                history.record_session(
+                    self.state,
+                    watch_url=self.yt.watch_url(bid) if bid else None,
+                    title=(f"{self._last_title} (part {i + 1})"
+                           if self._last_title else None),
+                    recording_path=f["path"],
+                    marks=f["marks"],
+                )
+            except Exception as e:  # noqa: BLE001
+                log.warning("could not journal %s: %s", f["path"], e)
+        self._earlier_files = ()
+        if not recording_path and written:
+            # The broadcast is already on those rows; a last one naming no
+            # file would only be listed as a recording that has gone.
+            return
         try:
             entry = history.record_session(
                 self.state,
@@ -839,11 +1098,13 @@ class Engine:
         self.state.save()
         self._goto(st.IDLE)
         if self._start_failures >= 3:
-            log.error("3 consecutive start failures — pausing until restart")
-            self.state.paused = True
-            self.state.save()
+            log.error("3 consecutive start failures — pausing until restart "
+                      "or Resume")
+            self._start_blocked = True
+            self.blocked_reason = None       # so the new reason is shown
             notify.toast("AutoStream paused",
-                         "3 failed start attempts. Check logs/autostream.log.")
+                         "3 failed start attempts. Check logs/autostream.log, "
+                         "then press Resume.")
 
     # ---- STARTING ---------------------------------------------------
 
@@ -869,9 +1130,13 @@ class Engine:
             try:
                 self.yt.transition(self.state.broadcast_id, "testing")
                 self._goto(st.TESTING)
+                # Said as what it will be: "public" on an unlisted or private
+                # broadcast told the user something alarming and untrue.
+                seen_as = ("public" if self._privacy == "public"
+                           else f"live ({self._privacy})")
                 notify.toast(
                     "AutoStream going live",
-                    f"{self.state.current_game} — public in "
+                    f"{self.state.current_game} — {seen_as} in "
                     f"{self.cfg.timing.abort_grace}s. Kill switch to cancel.",
                     self.yt.watch_url(self.state.broadcast_id),
                 )
@@ -898,6 +1163,7 @@ class Engine:
             self._abandon_start()
             return
         self._goto(st.LIVE)
+        self._unseen = False
         self._show_starting()
         self.obs.audio_watch_start()
         url = self.yt.watch_url(self.state.broadcast_id)
@@ -954,6 +1220,10 @@ class Engine:
             self._goto(st.STOPPING)
             return
 
+        # Before the pause check: a session parked on its be-right-back card
+        # still has an OBS that can crash and a recording that can stop.
+        self._poll_obs()
+
         if self._paused():
             # The flag FILE is a different thing from the pause button: it is a
             # "do not stream" switch meant to be left in place, so it still
@@ -1007,7 +1277,7 @@ class Engine:
             self._switch_candidate = None
 
     def _poll_live_extras(self) -> None:
-        """Viewers/likes/views, OBS health, and chat — all best-effort.
+        """Viewers/likes/views and chat — all best-effort.
 
         Quota: the details call is 1 unit a minute. Chat is 1 unit per poll but
         ONLY while a dashboard is open, so an unattended stream costs ~60/hour.
@@ -1028,13 +1298,7 @@ class Engine:
             except Exception:  # noqa: BLE001
                 pass
 
-        # free — local websocket
-        if now - self._obs_checked > 5:
-            self._obs_checked = now
-            try:
-                self.obs_health = self.obs.health()
-            except Exception:  # noqa: BLE001
-                self.obs_health = {}
+        # OBS health is _poll_obs's, which runs whether or not this does.
 
         # 1 unit per poll, only while someone is looking
         if watching and self._chat_id and now >= self._chat_next_poll:
@@ -1128,6 +1392,9 @@ class Engine:
 
         self._switch_candidate = None
         log.info("game switch: %s -> %s", self.state.current_game, hit.name)
+        if self.streaming and self.cfg.youtube.switch_policy == "new_broadcast":
+            self._restart_broadcast(hit)
+            return
         self.state.current_game = hit.name
         self.state.current_key = hit.key
         if hit.name not in self.state.session_games:
@@ -1142,15 +1409,15 @@ class Engine:
             # on across the switch, and history.jsonl already records every
             # game a session covered.
             return
-        if self.cfg.youtube.switch_policy == "new_broadcast":
-            self._restart_broadcast(hit)
-            return
 
         v = self._vars(hit)
+        title = titles.render_title(self.cfg, v)
         try:
-            self.yt.retitle(self.state.broadcast_id,
-                            titles.render_title(self.cfg, v),
+            self.yt.retitle(self.state.broadcast_id, title,
                             titles.render_description(self.cfg, v))
+            # The journal carries the title the VOD ends up with, not the one
+            # it started with.
+            self._last_title = title
         except Exception as e:  # noqa: BLE001
             log.warning("retitle failed (non-fatal): %s", e)
         # The title now says the new game, so the picture has to as well.
@@ -1168,19 +1435,54 @@ class Engine:
             log.warning("could not update the thumbnail on the switch: %s", e)
 
     def _restart_broadcast(self, hit: GameHit) -> None:
+        """One VOD per game: finish this broadcast, start the next.
+
+        The finished one is JOURNALLED here, with its own recording. It used
+        to be recorded nowhere: the session's single journal row was written
+        at the very end and named only the last broadcast, so the first game's
+        id and VOD link were lost. The recording is split at the same moment,
+        so each row's file holds the game its row names.
+        """
         old = self.state.broadcast_id
         try:
             self.yt.transition(old, "complete")
         except Exception as e:  # noqa: BLE001
             log.warning("could not complete old broadcast: %s", e)
-        v = self._vars(hit)
+        was_recording = bool(self.state.recording)
+        rec_path = self._stop_recording()
+        self._journal(rec_path)
+
+        # A new broadcast is a new session: its own number, its own start,
+        # and only its own game in the title. session_games carried over used
+        # to title it "first game and second game" although it only ever
+        # showed the second.
+        self.state.broadcast_id = None
+        self.state.session_start = time.time()
+        self.state.session_number += 1
+        self.state.current_game = hit.name
+        self.state.current_key = hit.key
+        self.state.session_games = [hit.name]
+        self.state.save()
+        self._marks = []
+        self._mark_seen = {}
+        self._unseen = True
+        self._privacy = str(hit.privacy or self.cfg.youtube.privacy or "public")
         try:
-            bid = self.yt.create_broadcast(titles.render_title(self.cfg, v),
+            self.obs.set_scene(hit.scene)
+            self.obs.set_overlay_text(hit.name)
+        except Exception:  # noqa: BLE001
+            pass
+        v = self._vars(hit)
+        self._last_title = titles.render_title(self.cfg, v)
+        try:
+            bid = self.yt.create_broadcast(self._last_title,
                                            titles.render_description(self.cfg, v),
                                            privacy=hit.privacy)
             self.yt.bind(bid, self.cfg.youtube.stream_id)
             self.state.broadcast_id = bid
             self.state.save()
+            if was_recording:
+                self._start_recording()
             self._starting_deadline = time.monotonic() + self.cfg.timing.ingestion_timeout
             self._goto(st.STARTING)
         except Exception as e:  # noqa: BLE001
@@ -1204,13 +1506,19 @@ class Engine:
 
     # ---- STOPPING ---------------------------------------------------
 
-    def _tick_stopping(self) -> None:
+    def _tick_stopping(self, card: bool = True) -> None:
         # The ending card, held before anything is torn down. This is the only
         # window in which it can be seen at all: afterwards the broadcast is
         # complete and there is nothing to show it on.
+        #
+        # Only for a broadcast somebody could have watched. Cancelling in
+        # TESTING held a fifteen-second card over a broadcast that was never
+        # shown to anyone.
         from . import screens
 
-        if self._ending_until is None and screens.configured(
+        if not card:
+            self._ending_until = None
+        elif self._ending_until is None and not self._unseen and screens.configured(
                 self.cfg, screens.ENDING) and self.state.broadcast_id:
             if screens.show(self.cfg, self.obs, screens.ENDING):
                 hold = screens.hold_for(self.cfg, screens.ENDING)
@@ -1257,6 +1565,10 @@ class Engine:
         self._quiet_said = set()
         self._marks = []
         self._mark_seen = {}
+        self._unseen = False
+        self._rec_missing = 0
+        self._rec_began = None
+        self._obs_reachable = True
         self.obs.audio_watch_stop()
         self.viewers = self.likes = self.views = None
         self.obs_health = {}
@@ -1378,9 +1690,18 @@ class Engine:
         """
         if self.state.recording:
             path = self._stop_recording()
-            if path:
-                self._stopped_recording = path
             log.warning("recording stopped (%s) -> %s", reason, path or "?")
+            if self.state.phase in (st.IDLE, st.ARMING):
+                # Outside any session, so nothing would ever journal it and
+                # the file would only be reachable through "Clip a video
+                # file". Journalled now, as a recording of its own.
+                self._journal_loose(path)
+                notify.toast("AutoStream", "Recording stopped. It is on the "
+                                           "Clips page.")
+                return False
+            # Mid-session: kept for the journal, which is written at the far
+            # end of the session -- by when OBS has forgotten this file.
+            self._set_aside(path)
             notify.toast("AutoStream", "Recording stopped. The stream is "
                                        "unaffected.")
             return False
@@ -1392,15 +1713,51 @@ class Engine:
             return False
         self._start_recording()
         if self.state.recording:
-            # A second file for the same session. The journal holds one path,
-            # so the newest is the one it will carry -- said plainly rather
-            # than discovered later.
-            if self._stopped_recording:
-                log.info("recording again; this session now has more than one "
-                         "file and the journal will name the latest")
+            if self.state.phase in (st.IDLE, st.ARMING):
+                # No session to own it. One that begins now adopts it.
+                self._loose_recording = True
+            elif self._earlier_files:
+                # A second file for the same session. Each gets its own row
+                # in the journal.
+                log.info("recording again; this session now has %d files",
+                         len(self._earlier_files) + 1)
             log.warning("recording started (%s)", reason)
             notify.toast("AutoStream", "Recording.")
         return bool(self.state.recording)
+
+    def _journal_loose(self, path: str | None) -> None:
+        """Journal a recording made outside any session: Record pressed on the
+        idle dashboard."""
+        self._loose_recording = False
+        if not path:
+            return
+        try:
+            seen, _u, _v = self.watcher.snapshot()
+            hit = next(iter(seen.values()), None)
+        except Exception:  # noqa: BLE001
+            hit = None
+        entry = {
+            "session": None,
+            "broadcast_id": None,
+            "title": "Recording",
+            "game": hit.name if hit else None,
+            "game_key": hit.key if hit else None,
+            "games": [hit.name] if hit else None,
+            "started": self._rec_began,
+            "ended": time.time(),
+            "recording_path": path,
+            "recording_bytes": None,
+            "recording_started": history._started_from_name(path),  # noqa: SLF001
+            "recording_seconds": history._probe_duration(path),     # noqa: SLF001
+            "recording_adopted": False,
+        }
+        try:
+            entry["recording_bytes"] = Path(path).stat().st_size
+        except OSError:
+            pass
+        history.append(entry)
+        self._rec_began = None
+        log.info("journalled a recording made outside a session: %s", path)
 
     def kill(self, reason: str = "kill switch") -> None:
         """Stop everything now, and stay stopped. The hotkey's job.
@@ -1434,6 +1791,10 @@ class Engine:
             if intent == "stopped":
                 self.launch_intent.pop(exe, None)
                 log.info("%s may stream again", exe)
+        if self._start_blocked:
+            log.info("clearing the pause after three failed starts")
+        self._start_blocked = False
+        self._start_failures = 0
         # A fresh arm_delay rather than an expired timer inherited from before
         # the pause, which could otherwise start a session the same tick.
         self.watcher.reset_debounce()

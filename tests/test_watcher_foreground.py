@@ -20,6 +20,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 os.environ.setdefault("AUTOSTREAM_HOME", str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -131,6 +133,52 @@ def test_a_browser_reading_about_valorant_is_not_playing_it(monkeypatch):
                    title="valorantstrategies.gg - best crosshair codes")
     wt.index = Idx()
     assert wt._hidden_foreground() is None
+
+
+@pytest.mark.parametrize("title", [
+    "valorant pro settings - Google Chrome",
+    "VALORANT Esports: Champions 2026 - YouTube - Brave",
+    "Why I quit Valorant | reddit - Mozilla Firefox",
+    "valorant-tracker.gg",
+])
+def test_a_tab_with_valorant_in_its_title_is_not_the_game(monkeypatch, title):
+    """FROM THE TEST REPORT. The whole-word test matched every one of these,
+    including the very tab the docstring said it would not."""
+    class Idx(FakeIndex):
+        def lookup(self, exe):
+            return GameHit(key=exe, name="VALORANT", source="override")
+
+    wt = a_watcher(monkeypatch, {}, fg=None, title=title)
+    wt.index = Idx()
+    assert wt._hidden_foreground() is None
+
+
+def test_the_game_window_itself_still_counts_with_its_trailing_spaces(monkeypatch):
+    class Idx(FakeIndex):
+        def lookup(self, exe):
+            return GameHit(key=exe, name="VALORANT", source="override")
+
+    wt = a_watcher(monkeypatch, {}, fg=None, title="VALORANT  ")
+    wt.index = Idx()
+    got = wt._hidden_foreground()
+    assert got is not None and got.name == "VALORANT"
+
+
+def test_generic_executable_names_are_not_games(tmp_path):
+    """FROM THE TEST REPORT. setup.exe went live as "Earth 2150 Trilogy"; the
+    public index names javaw.exe, sh.exe, main.exe and friends as one game
+    each. A games.yaml entry for one is still honoured."""
+    from autostream import gameindex
+
+    idx = gameindex.GameIndex.__new__(gameindex.GameIndex)
+    idx.overrides = {"game.exe": {"name": "My Game"}}
+    idx.public = {"setup.exe": "Earth 2150 Trilogy", "javaw.exe": "Spiral Knights",
+                  "sh.exe": "SUPERHOT", "game.exe": "Neighbours From Hell",
+                  "cs2.exe": "Counter-Strike 2"}
+    for exe in ("setup.exe", "javaw.exe", "sh.exe"):
+        assert idx.lookup(exe) is None, exe
+    assert idx.lookup("game.exe").name == "My Game"
+    assert idx.lookup("cs2.exe").name == "Counter-Strike 2"
 
 
 def test_the_foreground_game_still_wins_over_an_older_process(monkeypatch):

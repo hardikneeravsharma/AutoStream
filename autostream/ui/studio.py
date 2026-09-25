@@ -83,6 +83,7 @@ STUDIO_HTML = r"""
         <button type="button" class="btn btn-sm" data-act="studio-bin-favonly" id="bin-favonly"
                 aria-pressed="false" title="Show only the parts you have kept">&#9733; Favourites</button>
         <button type="button" class="btn btn-sm" data-act="studio-bin-build" id="bin-build">Cut the missing examples</button>
+        <button type="button" class="btn btn-sm btn-ghost hide" data-act="studio-bin-stop" id="bin-build-stop">Stop</button>
         <span id="bin-build-msg"></span>
       </div>
       <div id="bin-drawers"></div>
@@ -1581,7 +1582,18 @@ async function studio_binBuild() {
   if (!r || !r.ok) { if (msg) msg.textContent = (r && r.error) || 'Could not start.'; return; }
   const b = studio_el('bin-build');
   if (b) b.disabled = true;
+  studio_show('bin-build-stop', true);
   studio_binPoll();
+}
+
+/* A few hundred examples is most of an hour of full CPU, and there was no way
+   to end it short of quitting. It stops after the part it is cutting. */
+async function studio_binStop() {
+  const s = studio_el('bin-build-stop');
+  if (s) s.disabled = true;
+  const r = await API.post('/api/studio/examples/cancel', {});
+  const msg = studio_el('bin-build-msg');
+  if (msg && r && r.build) msg.textContent = r.build.message || '';
 }
 
 function studio_binPoll() {
@@ -1592,7 +1604,10 @@ function studio_binPoll() {
     const b = r.build || {};
     const msg = studio_el('bin-build-msg');
     if (msg) msg.textContent = b.message || '';
+    studio_show('bin-build-stop', b.state === 'running');
     if (b.state === 'running') return;
+    const s = studio_el('bin-build-stop');
+    if (s) s.disabled = false;
     clearInterval(studio.binTimer);
     studio.binTimer = null;
     studio.examples = r;
@@ -2365,7 +2380,9 @@ function studio_introDraw() {
   studio_el('studio-intro-astamp').textContent = studio_secs(iv.start);
   studio_el('studio-intro-bstamp').textContent = studio_secs(iv.end);
   studio_el('studio-intro-range').textContent =
-    len.toFixed(2) + ' s of ' + iv.seconds.toFixed(1) + ' s';
+    /* The same precision both sides: 4.02 of a 4.02 s clip read as
+       "4.02 s of 4.0 s", more than the whole. */
+    len.toFixed(2) + ' s of ' + iv.seconds.toFixed(2) + ' s';
   const au = studio_el('studio-intro-audio');
   au.checked = iv.audio && iv.hasAudio;
   au.disabled = !iv.hasAudio;
@@ -2441,6 +2458,11 @@ async function studio_introAdd() {
 }
 
 async function studio_introDelete(path, name) {
+  /* Asked first, like a clip or a reel. One click used to delete the file,
+     and it is the only copy the app keeps. */
+  if (!window.confirm('Delete the intro “' + name + '”? Its file is removed ' +
+                      'from your intros folder, and any reel that uses it ' +
+                      'opens without it.')) return;
   const msg = studio_el('studio-intro-msg');
   msg.textContent = 'Deleting “' + name + '”…';
   const r = await API.post('/api/studio/intro-delete', {path: path});
@@ -3328,6 +3350,7 @@ function studio_wire() {
     else if (act === 'studio-deal') studio_deal();
     else if (act === 'studio-deal-reset') studio_dealReset();
     else if (act === 'studio-bin-build') studio_binBuild();
+    else if (act === 'studio-bin-stop') studio_binStop();
     else if (act === 'studio-song') studio_pickSong();
     else if (act === 'studio-nosong') {
       studio.song = ''; studio.songShape = null;
@@ -3472,7 +3495,7 @@ function studio_wire() {
     else if (act === 'studio-sg-play') studio_sgPlay();
     else if (act === 'studio-sg-mark') studio_sgMark();
     else if (act === 'studio-sg-fromkills') studio_sgFromKills();
-    else if (act === 'studio-sg-marknudge') studio_sgNudgeMark(t.getAttribute('data-d'));
+    else if (act === 'studio-sg-marknudge') studio_sgNudgeMark(b.getAttribute('data-d'));
     else if (act === 'studio-sg-markplay') studio_sgHearMark();
     else if (act === 'studio-sg-markdrop') studio_sgDropMark();
     else if (act === 'studio-sg-unmark') { studio.sg.marks.pop(); studio.sg.sel = -1; studio_sgDraw(); }

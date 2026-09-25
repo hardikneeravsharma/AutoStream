@@ -191,6 +191,52 @@ def test_the_ids_go_back_into_clips_json(tmp_path):
     assert row["shorts_url"].endswith("vid1")
 
 
+def test_the_ids_land_on_a_real_manifest_row(tmp_path):
+    """FROM THE TEST REPORT. A clips.json row names its files `vertical` and
+    `master`, never `path` -- the test above was written against a shape the
+    cutter does not produce, so no id was ever written back and the same
+    Shorts could be uploaded again and again."""
+    run = tmp_path / "run"
+    (run / "clips").mkdir(parents=True)
+    vert = run / "vertical" / "VALORANT_01_2kills_vertical.mp4"
+    vert.parent.mkdir()
+    vert.write_bytes(b"x")
+    master = run / "clips" / "VALORANT_01_2kills.mp4"
+    master.write_bytes(b"x")
+    (run / "clips.json").write_text(json.dumps({"clips": [
+        {"rank": 1, "master": str(master), "vertical": str(vert)}]}),
+        encoding="utf-8")
+    # And the folder the page sent: the clip FILE, which is what its
+    # forward-slash-only pattern produced from a Windows path.
+    job = up.UploadJob([{"path": str(vert), "caption": "X", "kills": 2}],
+                       yt=FakeYT(), game="VALORANT", folder=master)
+    job.run()
+    row = json.loads((run / "clips.json").read_text(encoding="utf-8"))["clips"][0]
+    assert row["video_id"] == "vid1"
+
+
+def test_a_cancelled_batch_still_records_what_went_up(tmp_path):
+    """Two of five up, then Cancel: those two used to be offered again."""
+    clip_a = a_clip(tmp_path, "a.mp4")
+    clip_b = a_clip(tmp_path, "b.mp4")
+    (tmp_path / "clips.json").write_text(json.dumps({"clips": [
+        {"vertical": clip_a["path"]}, {"vertical": clip_b["path"]}]}),
+        encoding="utf-8")
+
+    class Stops(FakeYT):
+        def upload_video(self, path, **kw):
+            got = super().upload_video(path, **kw)
+            job.cancel()                          # pressed during the first
+            return got
+
+    job = a_job([clip_a, clip_b], tmp_path, yt=Stops())
+    job.run()
+    assert job.state == "cancelled"
+    rows = json.loads((tmp_path / "clips.json").read_text(encoding="utf-8"))["clips"]
+    assert rows[0].get("video_id") == "vid1"
+    assert not rows[1].get("video_id")
+
+
 def test_a_cancelled_batch_stops_and_says_so(tmp_path):
     job = a_job([a_clip(tmp_path, "a.mp4"), a_clip(tmp_path, "b.mp4")], tmp_path)
     job.cancel()

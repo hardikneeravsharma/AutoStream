@@ -597,7 +597,6 @@ def test_the_subtitle_file_is_written_with_unix_newlines(tmp_path,
     monkeypatch.setattr(overlay, "ffmpeg", fake_ffmpeg)
     monkeypatch.setattr(tools, "media_info",
                         lambda p: {"width": 1080, "height": 1920})
-    monkeypatch.setattr(overlay, "brand_logo", lambda: None)
     overlay.apply(tmp_path / "in.mp4", tmp_path / "out.mp4",
                   caption="1v2 CLUTCH",
                   subtitle="Two of them left, and they still lost it.",
@@ -612,7 +611,6 @@ def test_the_subtitle_file_is_cleaned_up(tmp_path, monkeypatch):
     monkeypatch.setattr(overlay, "ffmpeg", lambda *a: None)
     monkeypatch.setattr(tools, "media_info",
                         lambda p: {"width": 1080, "height": 1920})
-    monkeypatch.setattr(overlay, "brand_logo", lambda: None)
     out = tmp_path / "out.mp4"
     overlay.apply(tmp_path / "in.mp4", out, caption="ACE",
                   subtitle="Nobody was getting out of that one.",

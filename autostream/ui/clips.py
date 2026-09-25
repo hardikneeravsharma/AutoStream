@@ -226,7 +226,7 @@ CLIPS_HTML: str = (
         <div class="field-inline">
           <button class="switch is-on" type="button" role="switch"
                   id="clip-play-capsw" aria-checked="true"
-                  aria-label="Burn a caption"><span class="switch-dot"></span></button>
+                  aria-label="Burn a caption"><span class="switch-track"><span class="switch-thumb"></span></span></button>
           <input class="input" id="clip-play-cap" type="text"
                  placeholder="the caption to burn" style="flex:1 1 8rem">
         </div>
@@ -237,7 +237,7 @@ CLIPS_HTML: str = (
         <div class="field-inline">
           <button class="switch" type="button" role="switch"
                   id="clip-play-saysw" aria-checked="false"
-                  aria-label="Speak a line"><span class="switch-dot"></span></button>
+                  aria-label="Speak a line"><span class="switch-track"><span class="switch-thumb"></span></span></button>
           <input class="input" id="clip-play-say" type="text"
                  placeholder="what it should say" style="flex:1 1 8rem">
         </div>
@@ -268,7 +268,7 @@ CLIPS_HTML: str = (
           <button class="switch is-on" type="button" role="switch"
                   id="clip-fx-preview" aria-checked="true"
                   aria-label="Show the effects while playing">
-            <span class="switch-dot"></span></button>
+            <span class="switch-track"><span class="switch-thumb"></span></span></button>
           <span class="muted">Show them while playing</span>
         </div>
         <div class="field-inline">
@@ -495,7 +495,7 @@ One per line - a long session often covers several matches."></textarea>
       <span class="field-label">What to clip</span>
       <div class="field-inline">
         <button class="switch is-on" type="button" role="switch" id="clip-rounds"
-                aria-checked="true"><span class="switch-dot"></span></button>
+                aria-checked="true"><span class="switch-track"><span class="switch-thumb"></span></span></button>
         <label for="clip-rounds">Whole rounds, not bursts of kills</label>
       </div>
       <p class="field-help">Counter-Strike is scored by the round, so a 1v3 won
@@ -504,7 +504,7 @@ One per line - a long session often covers several matches."></textarea>
       <div class="clip-types" id="clip-types"></div>
       <div class="field-inline" style="margin-top:8px">
         <button class="switch is-on" type="button" role="switch" id="clip-whole"
-                aria-checked="true"><span class="switch-dot"></span></button>
+                aria-checked="true"><span class="switch-track"><span class="switch-thumb"></span></span></button>
         <label for="clip-whole">Keep the whole round</label>
       </div>
       <p class="field-help">A round runs 30 to 115 seconds. Off trims to the
@@ -1794,8 +1794,14 @@ function clip_renderUpload() {
 
   var t = clip_el('clip-up-title');
   if (t && !t.value) t.value = clip_state.upTitle || '{caption} - {game}';
+  /* The default, once. This runs on every two-second status tick, and set
+     every time it put the saved default back over the user's choice: a
+     batch picked "private" to review first went out unlisted. */
   var pv = clip_el('clip-up-privacy');
-  if (pv && clip_state.upPrivacy) pv.value = clip_state.upPrivacy;
+  if (pv && clip_state.upPrivacy && !pv.dataset.chosen) {
+    pv.value = clip_state.upPrivacy;
+    pv.dataset.chosen = '1';
+  }
 
   var n = clip_upSelection().length;
   var go = clip_el('clip-up-go');
@@ -1840,7 +1846,9 @@ async function clip_load() {
          the run they came from. */
       var any = (lj.clips || [])[0];
       var mp = any && (any.master || any.vertical);
-      if (mp) clip_state.upFolder = mp.replace(/[\/][^\/]+[\/][^\/]+$/, '');
+      /* [\\/], both separators: with only / this matched nothing on
+         Windows, and the "folder" was the clip file itself. */
+      if (mp) clip_state.upFolder = mp.replace(/[\\/][^\\/]+[\\/][^\\/]+$/, '');
     }
     clip_state.loaded = true;
 
@@ -1979,6 +1987,33 @@ function clip_playerLoad() {
   clip_playerMeta();
   clip_playerForm();
   clip_playerTrimText();
+  /* What "unchanged" looks like for this clip -- see clip_playerDirty. */
+  p.saved = clip_playerSig();
+}
+
+/* Everything the panel can change about the open clip, as one comparable
+   string: the caption, the spoken line, the framing, the effects, the cut. */
+function clip_playerSig() {
+  var p = clip_state.player;
+  var seg = clip_el('clip-play-vert');
+  var on = seg ? seg.querySelector('.is-on') : null;
+  var e = (p && p.edit) || {};
+  return JSON.stringify([
+    clip_switchOn('clip-play-capsw'), (clip_el('clip-play-cap') || {}).value || '',
+    clip_switchOn('clip-play-saysw'), (clip_el('clip-play-say') || {}).value || '',
+    on ? on.getAttribute('data-vert') : '',
+    clip_fxPayload(),
+    p ? [p.trim.in, p.trim.out] : null,
+    [e.in == null ? null : e.in, e.out == null ? null : e.out, (e.drop || []).length]
+  ]);
+}
+
+/* Edits made and not yet applied. Moving to another clip reloads the whole
+   panel from that clip's saved values, so this is what stands between an
+   edit and losing it. */
+function clip_playerDirty() {
+  var p = clip_state.player;
+  return !!(p && p.saved != null && clip_playerSig() !== p.saved);
 }
 
 function clip_playerMeta() {
@@ -2052,10 +2087,13 @@ function clip_playerTrimText() {
 function clip_playerStep(by) {
   var p = clip_state.player;
   if (!p) return;
-  /* Leave the recording behind. Its window belongs to the clip being left. */
-  if (p.edit && p.edit.on) clip_trimToggle();
   var next = p.i + by;
   if (next < 0 || next >= p.list.length) return;
+  if (clip_playerDirty() &&
+      !window.confirm('This clip has changes you have not applied. ' +
+                      'Leave it and lose them?')) return;
+  /* Leave the recording behind. Its window belongs to the clip being left. */
+  if (p.edit && p.edit.on) clip_trimToggle();
   p.i = next;
   clip_playerLoad();
 }
@@ -3320,14 +3358,16 @@ function clip_renderEdit(ed) {
 /* ------------------------------------------------- clips a run already made */
 
 async function clip_loadMade(s) {
-  if (!s || !s.made_folder || !s.made_clips) {
-    clip_state.made = null;
-    clip_show('clip-made-card', false);
-    return;
-  }
+  /* Hidden first, so the last stream's card is never shown under this one
+     while the answer is on its way. */
+  clip_state.made = null;
+  clip_show('clip-made-card', false);
+  if (!s || !s.made_folder || !s.made_clips) return;
   try {
     var r = await API.get('/api/clips/existing?folder=' +
                           encodeURIComponent(s.made_folder));
+    /* A quicker click has picked another stream since this was asked. */
+    if (s !== clip_state.pick) return;
     if (!r || r.error || !(r.clips || []).length) {
       clip_state.made = null;
       clip_show('clip-made-card', false);
@@ -3448,7 +3488,7 @@ function clip_reviewRowHTML(r, i) {
             ' role="switch" data-rev="caption" data-i="' + i + '"' +
             ' aria-checked="' + (r.caption_on ? 'true' : 'false') + '"' +
             ' aria-label="Burn a caption on this clip">' +
-            '<span class="switch-dot"></span></button>' +
+            '<span class="switch-track"><span class="switch-thumb"></span></span></button>' +
           '<label class="field-label">Caption</label>' +
           '<input class="input" type="text" data-rev="caption_text" data-i="' + i + '"' +
             ' placeholder="' + esc(r.caption_default || 'no caption') + '"' +
@@ -3460,7 +3500,7 @@ function clip_reviewRowHTML(r, i) {
             ' role="switch" data-rev="voice" data-i="' + i + '"' +
             ' aria-checked="' + (r.voice_on ? 'true' : 'false') + '"' +
             ' aria-label="Speak a line over this clip">' +
-            '<span class="switch-dot"></span></button>' +
+            '<span class="switch-track"><span class="switch-thumb"></span></span></button>' +
           '<label class="field-label">Spoken</label>' +
           '<input class="input" type="text" data-rev="voice_text" data-i="' + i + '"' +
             ' placeholder="' + esc(r.voice_default || 'nothing to say') + '"' +
@@ -4158,7 +4198,8 @@ async function clip_upload() {
       return {path: c.vertical, caption: c.caption || '', kills: c.kills,
               at: c.at, video_id: c.video_id || ''};
     }),
-    folder: clip_state.upFolder || '',
+    /* The run the ticked list came from -- which is not always the last job. */
+    folder: clip_state.resultsFolder || clip_state.upFolder || '',
     game: clip_state.upGame || '',
     privacy: (clip_el('clip-up-privacy') || {}).value || 'unlisted',
     title: (clip_el('clip-up-title') || {}).value || ''
@@ -4823,6 +4864,11 @@ function clip_wire() {
          file is not a signal that this clip has finished playing. */
       var t = clip_state.player && clip_state.player.edit;
       if (t && t.on) return;
+      /* Nor while this clip has edits on it. A four-second clip ends while
+         you are still typing its caption, and moving on reloaded the panel
+         from the next clip -- the edits gone, and Apply then re-rendering a
+         clip nobody had touched. It waits here instead. */
+      if (clip_playerDirty()) return;
       clip_playerStep(1);
     });
   }
@@ -5002,6 +5048,10 @@ function clip_wire() {
     } else if (act === 'pick') {
       clip_state.pick = clip_state.shown[Number(b.getAttribute('data-i'))] || null;
       clip_renderList(); clip_renderOptions(); clip_stripOpen();
+      /* The "already has clips" card belongs to the stream it describes. It
+         was only loaded with the page, so it kept describing the first
+         stream -- and "Play them" played that stream's clips under another. */
+      clip_loadMade(clip_state.pick);
     } else if (act === 'min') {
       clip_state.min = b.getAttribute('data-val'); clip_renderOptions();
     } else if (act === 'len') {

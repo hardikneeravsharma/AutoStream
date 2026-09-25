@@ -15,12 +15,37 @@ import argparse
 import json
 import logging
 import logging.handlers
+import re
 import signal
 import sys
 import time
 from pathlib import Path
 
 from . import cfg, notify, paths, single
+
+
+class RedactSecrets(logging.Filter):
+    """Blank any password written into a log line, whoever wrote it.
+
+    obsws-python logs its connection arguments at INFO -- `password='...'`
+    in full -- and the root logger is at INFO, so the OBS websocket password
+    was in plain text in autostream.log: on the Logs page, behind "Open log",
+    and in any log pasted into an issue on a public repo. Its logger is turned
+    down below as well; this catches the next library that does the same.
+    """
+
+    PATTERN = re.compile(r"(password\s*[=:]\s*)(['\"]?)[^'\"\s,)}]*\2",
+                         re.IGNORECASE)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:  # noqa: BLE001 - a bad format string is not ours to fix
+            return True
+        if "password" in msg.lower():
+            record.msg = self.PATTERN.sub(r"\1\2(removed)\2", msg)
+            record.args = None
+        return True
 
 
 def setup_logging(level: str = "INFO", console: bool = True) -> None:
@@ -39,16 +64,20 @@ def setup_logging(level: str = "INFO", console: bool = True) -> None:
     fh = logging.handlers.TimedRotatingFileHandler(
         paths.LOG_FILE, when="midnight", backupCount=7, encoding="utf-8")
     fh.setFormatter(fmt)
+    fh.addFilter(RedactSecrets())
     root.addHandler(fh)
 
     if console:
         ch = logging.StreamHandler(sys.stdout)
         ch.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", "%H:%M:%S"))
+        ch.addFilter(RedactSecrets())
         root.addHandler(ch)
 
     logging.getLogger("googleapiclient").setLevel(logging.ERROR)
     logging.getLogger("google_auth_oauthlib").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+    # Its INFO line is the connection arguments, password included.
+    logging.getLogger("obsws_python").setLevel(logging.WARNING)
 
     # Said only once, on the run that actually moves anything -- and said at
     # all because "where did my settings go" is the first question an upgrade
@@ -216,7 +245,7 @@ def cmd_stop(_args) -> int:
 
     setup_logging("INFO")
     eng = Engine(cfg.load())
-    eng.force_stop("cli stop")
+    eng.shutdown("cli stop")
     print("stopped")
     return 0
 
@@ -301,12 +330,6 @@ def cmd_voice(args) -> int:
     return 0
 
 
-# How long the setup server keeps answering after the install becomes
-# configured. Long enough for the finish response to arrive, for the page to
-# render what it says, and for a person to read it before the process exits.
-SETUP_LINGER = 10.0
-
-
 def cmd_run(args) -> int:
     """Main entry: web UI + native window + tray + engine.
 
@@ -351,7 +374,8 @@ def cmd_run(args) -> int:
     first_run = not is_configured()
     engine = None if first_run else Engine(config)
 
-    server = Server(token, port, engine)
+    server = Server(token, port, engine,
+                    lan=bool(getattr(config.rules, "web_lan", True)))
     if server.start() is None:
         log.error("could not start the UI server on port %d", port)
         return 1
@@ -360,11 +384,14 @@ def cmd_run(args) -> int:
         log.info("no configuration found - starting the setup wizard")
 
     win_ref = {}
+    # What is running, filled in by start_engine() -- at once when already
+    # configured, or the moment the setup wizard finishes.
+    run = {"engine": engine, "loop": None, "interval": 3}
 
     def _sig(_signum, _frame):
         log.info("signal received - stopping")
-        if engine:
-            engine.request_stop()
+        if run["engine"]:
+            run["engine"].request_stop()
         w = win_ref.get("w")
         if w is not None:
             w.request_quit("shutting down")          # otherwise webview.start() never returns
@@ -382,14 +409,14 @@ def cmd_run(args) -> int:
     if not window_available():
         log.info("pywebview unavailable - the UI is at %s", server.url())
 
-    # --- tray, only once configured ---
-    tray = None
-    if engine is not None:
-        tray = Tray(engine)
+    def start_engine(eng) -> None:
+        """Tray, hotkey and the engine loop. Needs a configured install."""
+        tray = Tray(eng)
         tray.window = win
         tray.start()
 
-        hotkey = config.rules.kill_switch_hotkey
+        c = eng.cfg
+        hotkey = c.rules.kill_switch_hotkey
         if hotkey:
             try:
                 import keyboard
@@ -397,61 +424,81 @@ def cmd_run(args) -> int:
                 # "kill", not "toggle_pause": pause now holds a live stream on
                 # the be-right-back card instead of ending it, and a kill
                 # switch that does that is not a kill switch.
-                keyboard.add_hotkey(hotkey, lambda: engine.submit("kill"))
+                keyboard.add_hotkey(hotkey, lambda: eng.submit("kill"))
                 log.info("kill switch hotkey: %s", hotkey)
             except Exception as e:  # noqa: BLE001
                 log.info("hotkey unavailable (%s) - use the tray icon", e)
 
-        engine.startup()
-        interval = max(1, int(config.timing.poll_interval))
-        threading.Thread(target=_engine_loop,
-                         args=(engine, tray, interval, log),
-                         name="autostream-engine", daemon=True).start()
+        eng.startup()
+        interval = max(1, int(c.timing.poll_interval))
+        loop = threading.Thread(target=_engine_loop,
+                                args=(eng, tray, interval, log),
+                                name="autostream-engine", daemon=True)
+        loop.start()
+        run.update(engine=eng, loop=loop, interval=interval)
 
+    def await_setup() -> None:
+        """Start the engine in THIS process once the wizard has finished.
+
+        It used to exit instead and leave the restart to the user -- except
+        the exit only happened after ten seconds with no request at all, and
+        the dashboard the wizard reloads into polls every two, so it never
+        came. The user got a dashboard that looked fine with nothing behind
+        it: no game watched, "Open + stream" answering ok and doing nothing,
+        and no screen saying why.
+
+        Not while a request is in flight: finish() saves youtube.stream_id,
+        which is what makes the install count as configured, part-way through
+        its work, and the engine must not start on a half-written setup.
+        """
+        while not win._quit:                              # noqa: SLF001
+            try:
+                if is_configured() and server.idle_for() > 0:
+                    eng = Engine(cfg.load())
+                    server.engine = eng
+                    start_engine(eng)
+                    log.info("setup complete - AutoStream is running")
+                    return
+            except Exception as e:  # noqa: BLE001
+                log.exception("could not start after setup: %s", e)
+                return
+            time.sleep(0.5)
+
+    if engine is not None:
+        start_engine(engine)
+    else:
+        log.info("setup wizard running at %s", server.url())
+        threading.Thread(target=await_setup, name="autostream-setup",
+                         daemon=True).start()
 
     # blocks until the window is destroyed (or returns at once without pywebview)
     win.run()
 
-    if engine is None:
-        # Setup mode with no native window: hold the process open so the
-        # wizard in the browser can finish.
-        #
-        # THE WIZARD'S OWN SUCCESS USED TO KILL IT. finish() saves
-        # youtube.stream_id part-way through its work, which is the moment
-        # is_configured() turns true -- while the request that caused it is
-        # still being answered. This loop saw that within two seconds and
-        # stopped the server underneath the response, so the browser got a
-        # connection reset and the last thing every new user saw was "Failed
-        # to fetch" on a setup that had in fact worked.
-        #
-        # So: never while a request is in flight, and not until the answer has
-        # had time to arrive and be read.
-        log.info("setup wizard running at %s", server.url())
-        try:
-            while not win._quit:                          # noqa: SLF001
-                if is_configured() and server.idle_for() >= SETUP_LINGER:
-                    log.info("setup complete - restart AutoStream to begin "
-                             "streaming")
-                    break
-                time.sleep(0.5)
-        except KeyboardInterrupt:
-            pass
-    else:
-        if win.fell_back:
-            # No native window to block on, so THIS loop is what keeps the
-            # daemon -- and the server the browser was just pointed at --
-            # alive. Without it a machine with no WebView2 runtime ran the
-            # whole daemon for the fraction of a second run() took to return,
-            # and the UI it had opened could not even load.
-            log.info("the UI is in your browser at %s", server.url())
-            try:
-                while not win._quit:              # noqa: SLF001
-                    time.sleep(1)
-            except KeyboardInterrupt:
-                pass
-        engine.request_stop()
-        time.sleep(0.6)
-        engine.force_stop("shutdown")
+    # No native window to block on (no pywebview, or no WebView2 runtime), so
+    # THIS loop is what keeps the daemon -- and the server the browser was
+    # just pointed at -- alive. Without it such a machine ran for the fraction
+    # of a second run() took to return, and the UI it opened could not load.
+    if win.fell_back or not window_available():
+        log.info("the UI is in your browser at %s", server.url())
+    try:
+        while not win._quit:                              # noqa: SLF001
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        pass
+
+    eng = run["engine"]
+    if eng is not None:
+        eng.request_stop()
+        # Let the tick in progress finish rather than racing it from this
+        # thread -- a tick can be mid-way through talking to OBS or YouTube.
+        if run["loop"] is not None:
+            run["loop"].join(timeout=run["interval"] + 60)
+        # And then END the session, here, before the process exits. This used
+        # to be force_stop(), which puts the ending card up and leaves the
+        # rest to a tick loop that no longer runs: OBS kept streaming and
+        # recording, and the broadcast stayed open on the card until the next
+        # launch.
+        eng.shutdown("shutdown")
 
     server.stop()
     single.release()

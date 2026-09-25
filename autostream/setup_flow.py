@@ -10,8 +10,9 @@ import json
 import logging
 import os
 import pathlib
+import threading
 
-from . import cfg, paths
+from . import cfg, paths, schema
 
 log = logging.getLogger("autostream.setup")
 
@@ -62,10 +63,27 @@ def explain_auth_error(err: Exception) -> str:
     return raw[:300]
 
 
+def _check(fields: dict) -> str | None:
+    """The Settings page's validation, for a wizard step. -> the first
+    problem, named, or None."""
+    for path, value in fields.items():
+        err = schema.validate(path, value)
+        if err:
+            label = schema.FIELDS_BY_PATH[path].get("label") or path
+            return f"{label}: {err}"
+    return None
+
+
+# How long "Authorise with YouTube" waits for the browser to come back.
+AUTH_TIMEOUT = 180
+
+
 class SetupFlow:
     def __init__(self):
         self._channel: str | None = None
         self._apps: list = []
+        self._auth_lock = threading.Lock()
+        self._auth_url = ""
 
     # ---------------- state shown to the UI ----------------
 
@@ -221,15 +239,41 @@ class SetupFlow:
 
         if not paths.CLIENT_SECRET.exists():
             return {"ok": False, "error": "No credentials saved yet."}
+        # ONE LISTENER AT A TIME. The wait used to have no end, so the only
+        # way to get a working button back was Back then Continue -- which
+        # started a second local OAuth listener beside the first one, still
+        # waiting.
+        if not self._auth_lock.acquire(blocking=False):
+            return {"ok": False, "url": self._auth_url,
+                    "error": "Still waiting for the last sign-in. Finish it in "
+                             "the browser, or open the link below."}
+        self._auth_url = ""
         try:
             yt = YouTube(cfg.load(), State.load())
-            yt.authorise(interactive=True)
+            yt.authorise(interactive=True, timeout=AUTH_TIMEOUT,
+                         on_url=lambda u: setattr(self, "_auth_url", u))
             self._channel = yt.channel_title()
             log.info("authorised as %s", self._channel)
             return {"ok": True, "setup": self.snapshot()}
         except Exception as e:  # noqa: BLE001
+            if type(e).__name__ == "WSGITimeoutError":
+                log.warning("setup auth: nothing came back from the browser "
+                            "within %ds", AUTH_TIMEOUT)
+                return {"ok": False, "url": self._auth_url,
+                        "error": "Nothing came back from Google within "
+                                 f"{AUTH_TIMEOUT // 60} minutes. Press "
+                                 "Authorise to try again -- and if no browser "
+                                 "opened, open the link below yourself."}
             log.exception("setup auth failed")
             return {"ok": False, "error": explain_auth_error(e)}
+        finally:
+            self._auth_lock.release()
+
+    def auth_link(self) -> dict:
+        """The sign-in link of the wait in progress, for a page to show while
+        the browser is (or is not) open."""
+        return {"ok": True, "url": self._auth_url,
+                "waiting": self._auth_lock.locked()}
 
     # ---------------- the app window ----------------
 
@@ -340,14 +384,28 @@ class SetupFlow:
                 cfg.save_field("title", "template", str(v["title"])[:200])
 
         elif section == "timing":
-            cfg.save_field("timing", "arm_delay", max(0, _int(v.get("arm_delay"), 30)))
-            cfg.save_field("timing", "abort_grace", max(0, _int(v.get("abort_grace"), 20)))
-            cfg.save_field("timing", "cooldown", max(0, _int(v.get("cooldown"), 300)))
-            cfg.save_field("timing", "max_session_hours",
-                           max(1, _int(v.get("max_session_hours"), 8)))
             a, b = str(v.get("quiet_from", "")).strip(), str(v.get("quiet_to", "")).strip()
-            cfg.save_field("rules", "quiet_hours", [a, b] if (a and b) else [])
+            # THROUGH THE SETTINGS PAGE'S OWN CHECKS. This step used to save
+            # whatever it was given: "25:00" went into config.yaml as quiet
+            # hours, where the engine could not parse it and quietly treated it
+            # as no quiet hours at all, and -5 was clamped to 0 without a word.
+            fields = {
+                "timing.arm_delay": _int(v.get("arm_delay"), 30),
+                "timing.abort_grace": _int(v.get("abort_grace"), 20),
+                "timing.cooldown": _int(v.get("cooldown"), 300),
+                "timing.max_session_hours": _int(v.get("max_session_hours"), 8),
+                "rules.quiet_hours": [a, b] if (a and b) else [],
+            }
+            err = _check(fields)
+            if err:
+                return {"ok": False, "error": err}
+            cfg.save_fields({k: schema.coerce(k, x) for k, x in fields.items()})
         elif section == "branding":
+            err = _check({"thumbnail.logo": str(v.get("logo", ""))[:400],
+                          "thumbnail.base_image":
+                              str(v.get("base_image", ""))[:400]})
+            if err:
+                return {"ok": False, "error": err}
             fields = {
                 "thumbnail.channel_name": str(v.get("channel_name", ""))[:80],
                 "thumbnail.logo": str(v.get("logo", ""))[:400],

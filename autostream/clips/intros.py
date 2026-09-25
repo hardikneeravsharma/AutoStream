@@ -182,7 +182,14 @@ def add(src: str | Path, *, measure=_measure, encode=None) -> dict:
     try:
         info = measure(p)
     except Exception as e:                                   # noqa: BLE001
-        raise ValueError(f"That file could not be read: {str(e)[:160]}") from e
+        # ffprobe runs quiet, so its failure usually carries no reason at all
+        # -- "ffprobe.EXE failed (1):" and nothing after the colon. Only a
+        # reason that says something is passed on.
+        detail = str(e).strip()
+        detail = "" if re.fullmatch(r"\S+ failed \(-?\d+\):?", detail) else detail
+        raise ValueError("That file could not be read as a video -- it may be "
+                         "damaged, or in a format ffmpeg does not know"
+                         + (f" ({detail[:160]})" if detail else "") + ".") from e
     seconds = float(info.get("duration") or 0.0)
     if seconds <= 0.05:
         raise ValueError("That file has no video in it.")

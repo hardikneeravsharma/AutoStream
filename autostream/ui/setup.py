@@ -247,7 +247,8 @@ function setup_draw(){
       ? '<div class="note ok">Connected as <b>' + esc(setup_state.channel) + '</b></div>'
       : '<button type="button" class="btn btn-primary btn-block" id="setup-authb" ' +
         'data-act="doAuth">Authorise with YouTube</button>' +
-        '<p class="muted" id="setup-authmsg"></p>') +
+        '<p class="muted" id="setup-authmsg"></p>' +
+        '<div class="field" id="setup-authlink"></div>') +
     setup_nav(true, setup_state.channel ? null : false));
 
   else if (setup_step === 3) c.innerHTML = setup_card(
@@ -367,11 +368,11 @@ function setup_draw(){
       '<div class="field">' +
       '<label class="field-label" for="setup-chan">Channel name</label>' +
       '<input class="input" id="setup-chan" type="text" autocomplete="off" ' +
-      'placeholder="YuvaNeta" value="' + setup_attr(setup_state.channel_name || '') + '"></div>' +
+      'placeholder="YourChannel" value="' + setup_attr(setup_state.channel_name || '') + '"></div>' +
       '<div class="field">' +
       '<label class="field-label" for="setup-logo">Channel logo</label>' +
       '<input class="input mono" id="setup-logo" type="text" spellcheck="false" ' +
-      'autocomplete="off" placeholder="C:\Users\you\Pictures\logo.png" value="' +
+      'autocomplete="off" placeholder="C:\\Users\\you\\Pictures\\logo.png" value="' +
       setup_attr(setup_state.logo || '') + '">' +
       '<div class="field-help">Full path to a PNG. Transparency strongly preferred - ' +
       'a logo on a white background shows its box over the gameplay.</div></div>' +
@@ -417,15 +418,39 @@ async function setup_saveSecret(){
   else setup_say('setup-csmsg', 'bad', esc(r.error || 'Invalid JSON'));
 }
 
+/* The sign-in link, shown while waiting. The wait is for a browser the app
+   opened, and on a machine with no default browser -- or after the consent
+   tab was closed -- nothing ever comes back; the link is the way through. */
+function setup_authLink(url){
+  const box = setup_$('setup-authlink');
+  if (!box) return;
+  box.innerHTML = url
+    ? '<div class="field-help">No browser opened, or closed it? Open this ' +
+      'link yourself:</div><input class="input mono" readonly ' +
+      'onfocus="this.select()" value="' + setup_attr(url) + '">'
+    : '';
+}
+
 async function setup_doAuth(){
   const b = setup_$('setup-authb');
   if (b) b.disabled = true;
   setup_say('setup-authmsg', '', setup_spin('Waiting for your browser...'));
+  setup_authLink('');
+  /* The request below is held open for the whole wait, so the link is
+     fetched beside it. */
+  const poll = setInterval(async () => {
+    try {
+      const l = await API.post('/api/setup/auth_link', {});
+      if (l && l.url) setup_authLink(l.url);
+    } catch (e) { /* the next tick tries again */ }
+  }, 1500);
   const r = await setup_post('/api/setup/auth', {});
+  clearInterval(poll);
   if (r.ok) { setup_state = r.setup || setup_state; setup_draw(); }
   else {
     if (b) b.disabled = false;
     setup_say('setup-authmsg', 'bad', esc(r.error || 'Failed'));
+    setup_authLink(r.url || '');
   }
 }
 
@@ -517,7 +542,7 @@ async function setup_saveBranding(){
     enabled: !!(chan || setup_val('setup-logo')),
     upload: true,
     usernames: names}});
-  if (r._failed) { setup_toast(r.error, 'error'); return; }
+  if (!r.ok) { setup_toast(r.error || 'Could not save that.', 'error'); return; }
   setup_go(setup_step + 1);
 }
 
@@ -539,7 +564,9 @@ async function setup_saveTiming(){
     max_session_hours: setup_val('setup-maxh'),
     quiet_from: setup_val('setup-q1'),
     quiet_to: setup_val('setup-q2')}});
-  if (r._failed) { setup_toast(r.error, 'error'); return; }
+  /* !r.ok, not r._failed: a value the Settings page would refuse comes back
+     as an ordinary answer, and has to stop the wizard here. */
+  if (!r.ok) { setup_toast(r.error || 'Could not save that.', 'error'); return; }
   setup_go(setup_step + 1);
 }
 
@@ -598,9 +625,10 @@ async function setup_finish(){
    somebody whose whole ask is "make clips from this file", and cutting a file
    that already exists needs none of it. So this saves one setting and stops.
 
-   The server exits shortly after, because youtube.enabled=false makes the
-   install count as configured and the wizard's job is done. The card says so;
-   it is the same restart the full path ends with. */
+   youtube.enabled=false makes the install count as configured, and the app
+   starts itself behind this card -- no restart. It used to end by telling
+   the user to start AutoStream again, on the path sold as "ready in
+   seconds". */
 async function setup_wantClips(){
   setup_say('setup-pickmsg', '', setup_spin('Setting up the clipper...'));
   const r = await setup_post('/api/setup/clips_only', {});
@@ -620,9 +648,10 @@ async function setup_wantClips(){
        had been picked and the run started. Somebody who has just been told
        "that is the whole setup" and then hits either has been misled. */
     '<div id="setup-tools"></div>' +
-    '<div class="note ok"><b>Start AutoStream again</b>, open <b>Clips</b>, and ' +
-    'choose <b>Clip a video file</b>. Pick the video, pick the game, and it cuts ' +
-    'the highlights.</div>' +
+    '<div class="note ok">Open <b>Clips</b> and choose <b>Clip a video file</b>. ' +
+    'Pick the video, pick the game, and it cuts the highlights.</div>' +
+    '<div class="nav"><button type="button" class="btn btn-primary" ' +
+    'data-act="openApp">Open AutoStream</button></div>' +
     '<div class="note">Want it to go live on YouTube later? Settings &rarr; ' +
     'YouTube &rarr; <b>Go live on YouTube</b>, and this wizard comes back.</div>');
   const bar = setup_$('setup-stepbar');
@@ -762,7 +791,8 @@ const setup_ACTIONS = {
   saveTiming: setup_saveTiming,
   scanApps:   setup_scanApps,
   saveApps:   setup_saveApps,
-  finish:     setup_finish
+  finish:     setup_finish,
+  openApp:    () => location.reload()
 };
 
 function setup_wire(){

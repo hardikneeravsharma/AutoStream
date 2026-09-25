@@ -93,9 +93,17 @@ def test_counting_is_thread_safe():
     assert s.idle_for() >= 0.0       # balanced: nothing left in flight
 
 
-def test_the_linger_is_long_enough_to_be_read():
-    """Ten seconds is not arbitrary: the old loop gave the response zero, and
-    a person has to read what the page says before the process exits."""
-    from autostream.__main__ import SETUP_LINGER
+def test_setup_starts_the_engine_instead_of_exiting():
+    """The process used to exit once setup was done and idle for ten seconds
+    -- which never happened, because the dashboard the wizard reloads into
+    polls every two. The user was left with a dashboard and no engine behind
+    it. Now the engine starts in the same process, and nothing waits on the
+    page going quiet."""
+    import inspect
 
-    assert SETUP_LINGER >= 5.0
+    from autostream import __main__ as main
+
+    assert not hasattr(main, "SETUP_LINGER")
+    src = inspect.getsource(main.cmd_run)
+    assert "restart AutoStream to begin" not in src
+    assert "server.engine = eng" in src

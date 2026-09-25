@@ -516,7 +516,9 @@ function dash_renderRing(s) {
     const txt = dash_el('dash-abort-text');
     if (txt) {
       txt.textContent = s.phase === 'TESTING'
-        ? 'This goes PUBLIC when the ring runs out'
+        ? (s.privacy && s.privacy !== 'public'
+            ? 'This goes live (' + s.privacy + ') when the ring runs out'
+            : 'This goes PUBLIC when the ring runs out')
         : (s.phase === 'ARMING' ? 'Getting ready to stream ' + (s.game || 'this game')
                                 : 'Waiting for YouTube to receive video');
     }
@@ -697,13 +699,16 @@ function dash_applyActions(s) {
   const stop = dash_el('dash-btn-stop');
   if (stop) stop.disabled = dash_busy || !active;
 
+  /* Three failed starts hold every game back just as a pause does, and
+     Resume is what clears it -- so the button offers Resume for either. */
+  const held = paused || !!s.start_blocked;
   const pause = dash_el('dash-btn-pause');
   if (pause) {
     pause.disabled = dash_busy;
-    if (dash_pauseState !== paused) {
-      dash_pauseState = paused;
-      dash_setLabel('dash-btn-pause', paused ? 'resume' : 'pause',
-                    paused ? 'Resume' : 'Pause');
+    if (dash_pauseState !== held) {
+      dash_pauseState = held;
+      dash_setLabel('dash-btn-pause', held ? 'resume' : 'pause',
+                    held ? 'Resume' : 'Pause');
     }
   }
 
@@ -712,7 +717,8 @@ function dash_applyActions(s) {
      exist in clips-only mode. The STOP BUTTON STAYS -- a recording still has
      to be stoppable -- but it cannot go on calling itself "End stream". */
   const clipsOnly = s.streaming === false;
-  ['dash-stats', 'dash-chat'].forEach(function (id) {
+  /* The API budget too: with YouTube off nothing spends it. */
+  ['dash-stats', 'dash-chat', 'dash-session'].forEach(function (id) {
     const el = dash_el(id);
     if (el) el.classList.toggle('hide', clipsOnly);
   });
@@ -741,8 +747,11 @@ function dash_applyActions(s) {
      that every two-second poll would fight the browser for no reason. */
   if (dash_stopClipsOnly !== clipsOnly) {
     dash_stopClipsOnly = clipsOnly;
+    /* Not "Stop recording": that is the record toggle's label, and the two
+       do different things -- this ends the session, the toggle only closes
+       the file. */
     dash_setLabel('dash-btn-stop', 'stop',
-                  clipsOnly ? 'Stop recording' : 'End stream');
+                  clipsOnly ? 'End session' : 'End stream');
   }
 
   const open = dash_el('dash-btn-open');
@@ -918,7 +927,11 @@ function dash_wire() {
   const abort = dash_el('dash-btn-abort');
   if (abort) {
     abort.addEventListener('click', function () {
-      dash_cmd(dash_last && dash_last.phase === 'ARMING' ? 'pause' : 'stop');
+      /* 'stop' in every phase. ARMING used to send 'pause', which is the
+         global kill switch: it outlived the cancel, survived a restart, and
+         refused every other game until someone found Resume. Stop holds back
+         only the game that was about to go live. */
+      dash_cmd('stop');
     });
   }
 

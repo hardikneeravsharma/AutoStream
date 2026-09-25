@@ -106,8 +106,9 @@ CONTROLS: list[Control] = [
     # ----------------------------------------------------------- library
     Control("/api/launch", "POST", CALL, "Open / Open + stream", "library",
             body={"key": "verify-nonexistent.exe", "stream": False},
-            expect=_ok, reject={"key": ""},
-            why="queued on the engine; nothing is launched by the fake"),
+            status=(409,), expect=_has("error"), reject={"key": ""},
+            why="an app that is not in the Library is refused before anything "
+                "is queued, so the page can say so instead of toasting success"),
     Control("/api/apps/scan", "POST", CALL, "Rescan", "library",
             body={}, expect=_has("ok", "count", "apps"),
             why="reads Steam/Epic/Start Menu off disk; no network"),
@@ -316,6 +317,9 @@ CONTROLS: list[Control] = [
             why="validated as JSON before it is written to secrets/"),
     Control("/api/setup/auth", "POST", STATIC, "Sign in with Google", "setup",
             why="opens a browser and blocks on an OAuth round trip"),
+    Control("/api/setup/auth_link", "POST", CALL, "the sign-in link", "setup",
+            body={}, expect=_has("ok", "url", "waiting"),
+            why="polled while the sign-in waits, so the link can be shown"),
     Control("/api/setup/obs_detect", "POST", CALL, "Detect OBS", "setup",
             body={}, expect=_dict,
             why="reads the OBS profile off disk; does not connect"),
@@ -405,6 +409,10 @@ CONTROLS: list[Control] = [
             body={}, expect=_has("ok", "build"), acts=("studio-bin-build",),
             why="renders the missing examples from the player's own clips in "
                 "the background, so the page can watch it"),
+    Control("/api/studio/examples/cancel", "POST", CALL, "stop cutting examples", "studio",
+            body={}, expect=_has("ok", "build"), acts=("studio-bin-stop",),
+            why="a few hundred examples is most of an hour; it stops after "
+                "the part being cut"),
     Control("/api/studio/favourite-part", "POST", CALL, "star a part of the bin", "studio",
             body={"part": "", "on": True}, expect=_has("error"),
             acts=("studio-bin-fav",),

@@ -260,8 +260,9 @@ async function lib_launch(btn, key, stream) {
 
   const name = lib_name(key);
   try {
-    await API.post('/api/launch', { key: key, stream: !!stream });
-    toast(stream ? 'Launching ' + name + ' and taking it live.' : 'Launching ' + name + '.', 'ok');
+    const r = await API.post('/api/launch', { key: key, stream: !!stream });
+    if (r && r.error) toast(r.error, 'error');
+    else toast(stream ? 'Launching ' + name + ' and taking it live.' : 'Launching ' + name + '.', 'ok');
   } catch (e) {
     toast('Could not launch ' + name + '.', 'error');
   }

@@ -205,21 +205,22 @@ class Watcher:
     def _hidden_foreground(self) -> GameHit | None:
         """The foreground game when its process cannot be enumerated.
 
-        Only for the handful in TITLE_HINTS, and only when the title is a
-        whole word in the window name -- so a browser tab reading "valorant
-        pro settings" does not count as playing it.
+        Only for the handful in TITLE_HINTS, and only when the window's title
+        IS the game's name -- so a browser tab reading "valorant pro settings"
+        does not count as playing it.
         """
         title = foreground_title().strip().lower()
         if not title:
             return None
-        # WHOLE WORDS, not a substring. A browser tab reading
-        # "valorantstrategies.gg" contains "valorant" and is not somebody
-        # playing it. Split on anything not alphanumeric rather than reach
-        # for a regex: the test that matters is membership, and this says so.
-        words = set("".join(c if c.isalnum() else " " for c in title).split())
-
+        # THE WHOLE TITLE, not a word in it. The game's own window is titled
+        # with its name and nothing else ("VALORANT  ", trailing spaces and
+        # all). A whole-word test was here before and let through exactly the
+        # tabs this docstring promised it would not: "valorant pro settings -
+        # Google Chrome", "VALORANT Esports ... - YouTube - Brave", a reddit
+        # thread. Any of those in front while another recognised process ran
+        # would have gone live titled VALORANT.
         for needle, exe in TITLE_HINTS.items():
-            if needle not in words:
+            if title != needle:
                 continue
             if self.index.is_blocked(exe) or self.index.is_veto(exe):
                 return None

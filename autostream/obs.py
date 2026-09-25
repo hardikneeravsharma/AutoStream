@@ -683,6 +683,16 @@ class Obs:
         else:
             log.info("OBS already streaming — reusing output")
 
+    def start_stream_output(self) -> None:
+        """Start the stream output again, touching nothing else. For an OBS
+        that was restarted mid-session: it comes back on whatever scene it
+        was left on, and switching scene here could pull a be-right-back card
+        off the air."""
+        self.connect()
+        if not self.ws.get_stream_status().output_active:
+            self.ws.start_stream()
+            log.info("OBS StartStream issued (output restarted)")
+
     def stop(self) -> None:
         try:
             self.connect()

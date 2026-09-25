@@ -136,10 +136,16 @@ class UploadJob:
         try:
             self._set(state="running", step="check")
             self._check()
-            self._upload_all()
+            try:
+                self._upload_all()
+            finally:
+                # Whatever went up is recorded, however the batch ended. A
+                # cancel after two of five used to record nothing, and those
+                # two were offered again as never uploaded.
+                if self.results:
+                    self._record()
             if self.state == "cancelled":
                 return
-            self._record()
             self._set(state="done", step="verify", done=len(self.results),
                       message=self._summary())
         except _Refused as e:
@@ -244,7 +250,11 @@ class UploadJob:
         recognised as the duplicate it is rather than quietly publishing again.
         """
         self._set(step="verify")
-        manifest = self.folder / "clips.json"
+        manifest = self._manifest()
+        if manifest is None:
+            log.warning("upload: no clips.json beside %s, so the ids of what "
+                        "went up are not recorded", self.folder)
+            return
         try:
             data = json.loads(manifest.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -252,13 +262,24 @@ class UploadJob:
         rows = data.get("clips") if isinstance(data, dict) else data
         if not isinstance(rows, list):
             return
-        by_path = {r["source"]: r for r in self.results if r.get("source")}
+        by_path = {_key(r["source"]): r for r in self.results if r.get("source")}
+        hit = 0
         for row in rows:
-            got = by_path.get(str(row.get("path") or ""))
+            if not isinstance(row, dict):
+                continue
+            # A row names its files as `vertical` and `master`; `path` is
+            # checked too for any older manifest. Matching on `path` alone
+            # matched nothing, so no id was ever written back.
+            got = next((by_path[_key(row[k])] for k in ("vertical", "master", "path")
+                        if row.get(k) and _key(row[k]) in by_path), None)
             if got:
                 row["video_id"] = got["id"]
                 row["url"] = got["url"]
                 row["shorts_url"] = got["shorts_url"]
+                hit += 1
+        if hit < len(by_path):
+            log.warning("upload: recorded %d of %d ids in %s", hit,
+                        len(by_path), manifest)
         try:
             # THE MOST IMPORTANT ONE. This is where the YouTube ids of
             # clips already uploaded are written back. A truncated write here
@@ -268,12 +289,41 @@ class UploadJob:
         except OSError as e:
             log.warning("could not record the upload ids: %s", e)
 
+    def _manifest(self) -> Path | None:
+        """The run's clips.json: in the folder given, or found above the
+        clips themselves.
+
+        Not trusted to the folder alone. The page worked it out from a clip's
+        path with a pattern that only knew forward slashes, so on Windows the
+        "folder" was the clip file itself, and clips.json was looked for
+        inside an mp4.
+        """
+        seen: list[Path] = []
+        for start in [self.folder] + [Path(str(c.get("path") or ""))
+                                      for c in self.clips]:
+            here = start
+            for _ in range(4):
+                if here in seen or not str(here) or str(here) == ".":
+                    break
+                seen.append(here)
+                if (here / "clips.json").is_file():
+                    return here / "clips.json"
+                here = here.parent
+        return None
+
     def _summary(self) -> str:
         n = len(self.results)
         out = f"{n} clip{'s' if n != 1 else ''} uploaded"
         if self.failures:
             out += f", {len(self.failures)} skipped"
         return out
+
+
+def _key(path: Any) -> str:
+    """A path as a comparison key: one spelling for / and \\, and for case."""
+    import os
+
+    return os.path.normcase(os.path.normpath(str(path)))
 
 
 class UploadRunner:

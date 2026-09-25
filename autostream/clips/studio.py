@@ -577,7 +577,8 @@ PARTS: tuple[Part, ...] = (
     Part("e02", "outro", "Freeze and fade colour", "The final second freezes and drains to grey."),
     Part("e03", "outro", "Slow-mo exit", "The last kill slows down and fades."),
 )
-PARTS = PARTS + tuple(parts_mod.variants({p.id: p.kind for p in PARTS}))
+PARTS = tuple(parts_mod.distinct(
+    PARTS + tuple(parts_mod.variants({p.id: p.kind for p in PARTS}))))
 PART = {p.id: p for p in PARTS}
 
 
