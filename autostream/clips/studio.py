@@ -3275,6 +3275,13 @@ def intro_head_command(project: dict, head: Path, ff: str = "ffmpeg",
     rate, pixel format, one stereo track -- so that the two can be spliced
     without re-encoding the reel. Trimmed on the way in, so only the chosen
     part is ever decoded. -> [] when there is no intro to render.
+
+    WHAT THE INTRO IS HEARD OVER. Its own sound when that was asked for and
+    there is any. Otherwise THE SONG, taken from the seconds BEFORE the reel's
+    own start -- so the reel still begins on song_offset, exactly where its beat
+    grid was built, and the intro carries the run-up into it. An intro over
+    silence followed by a reel that starts the song from nothing is the seam
+    this removes: the song is already playing when the first kill lands.
     """
     ic = project.get("intro_clip") or None
     seconds = round(float(ic["end"]) - float(ic["start"]), 4) if ic else 0.0
@@ -3285,18 +3292,42 @@ def intro_head_command(project: dict, head: Path, ff: str = "ffmpeg",
            if ic.get("fit", "cover") == "cover" else
            f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
            f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:black")
-    # The reel always carries exactly one stereo track. A silent intro, or one
-    # whose sound was not asked for, has to carry one too: concat lines streams
-    # up by position and refuses a pair that does not match.
     keep = bool(ic.get("audio") and ic.get("has_audio"))
+    song = "" if keep else str(project.get("song") or "")
+    # How much song there is before the reel starts. A reel cut to the first
+    # bars has less run-up than the intro is long; the head then opens on
+    # silence and the song joins partway through it, still landing on
+    # song_offset at the cut. Never negative, never more than the intro.
+    offset = float(project.get("song_offset") or 0.0)
+    lead = round(min(seconds, max(0.0, offset)), 4) if song else 0.0
     enc = encoder_args if encoder_args is not None else [
         "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p"]
     args = [ff, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
             "-ss", f"{float(ic['start']):.4f}", "-t", f"{seconds:.4f}", "-i", str(ic["path"])]
-    if not keep:
+    afilter = None
+    if keep:
+        amap = "0:a:0"
+    elif lead > 0:
+        args += ["-ss", f"{offset - lead:.4f}", "-t", f"{lead:.4f}", "-i", song]
+        amap = "[ia]"
+        # adelay when the song is shorter than the intro: it has to END on the
+        # cut, not start on it, or the run-up lands in the wrong place.
+        pad = round(seconds - lead, 4)
+        delay = f"adelay={int(pad * 1000)}:all=1," if pad > 0.001 else ""
+        afilter = (f"[1:a]aformat=sample_fmts=fltp:sample_rates=48000:"
+                   f"channel_layouts=stereo,asetpts=PTS-STARTPTS,{delay}"
+                   f"volume={project.get('music_db', 0.0)}dB,"
+                   f"apad=whole_dur={seconds:.4f},atrim=0:{seconds:.4f}[ia]")
+    else:
+        # The reel always carries exactly one stereo track, so a silent intro
+        # has to carry one too: concat lines streams up by position and refuses
+        # a pair that does not match.
         args += ["-f", "lavfi", "-t", f"{seconds:.4f}", "-i",
                  "anullsrc=channel_layout=stereo:sample_rate=48000"]
-    return args + ["-map", "0:v:0", "-map", ("0:a:0" if keep else "1:a:0"),
+        amap = "1:a:0"
+    if afilter:
+        args += ["-filter_complex", afilter]
+    return args + ["-map", "0:v:0", "-map", amap,
                    "-vf", f"fps={FPS},{fit},setsar=1,format=yuv420p", *enc,
                    "-c:a", "aac", "-b:a", "256k", "-ar", "48000", "-ac", "2",
                    "-movflags", "+faststart", str(head)]

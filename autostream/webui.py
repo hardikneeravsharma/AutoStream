@@ -2754,6 +2754,13 @@ class Server:
                                   part=part,
                                   shape_it=body.get("shaping")
                                   if isinstance(body.get("shaping"), dict) else None)
+        # The intro chosen on the Make dialog. It used to be reachable only
+        # from the timeline, which meant the first render of every reel went
+        # out without one and you had to render twice to open with an intro.
+        # Passed through untouched: normalise is the guard, here as everywhere.
+        ic = body.get("intro_clip")
+        if isinstance(ic, dict) and str(ic.get("path") or "").strip():
+            proj["intro_clip"] = ic
         try:
             proj, derived, more = studio.normalise(proj, root)
         except studio.ProjectError as e:

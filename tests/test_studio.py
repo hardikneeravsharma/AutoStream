@@ -1234,6 +1234,52 @@ def test_the_intro_is_trimmed_by_ffmpeg_and_never_touches_the_reel_pass(root, in
     assert head[i - 5:i] == ["-ss", "1.0000", "-t", "2.0000", "-i"]
 
 
+def _song_proj(intro_home, *, offset, audio=False, has_audio=True, song="C:/s/track.m4a"):
+    """A project by hand: these assert on the argv, not on normalise."""
+    return {"format": "landscape", "song": song, "song_offset": offset, "music_db": -3.0,
+            "intro_clip": {"path": _fake_intro(intro_home), "start": 0.0, "end": 3.0,
+                           "audio": audio, "has_audio": has_audio, "fit": "cover"}}
+
+
+def test_the_intro_carries_the_song_run_up_into_the_reel(intro_home):
+    """The seam this removes: an intro over silence, then a reel starting the
+    song from nothing. The intro plays the seconds BEFORE song_offset, so the
+    song is already going when the first kill lands and the reel still begins
+    exactly where its beat grid was built."""
+    args = studio.intro_head_command(_song_proj(intro_home, offset=20.0), Path("h.mp4"))
+    i = args.index("C:/s/track.m4a")
+    assert args[i - 5:i] == ["-ss", "17.0000", "-t", "3.0000", "-i"]  # 3s ending on 20.0
+    fc = args[args.index("-filter_complex") + 1]
+    assert "volume=-3.0dB" in fc                                  # the reel's music level
+    assert "adelay" not in fc                                     # run-up fills the intro
+    assert "anullsrc" not in " ".join(args)
+
+
+def test_the_intros_own_sound_wins_and_the_song_waits_for_the_reel(intro_home):
+    args = studio.intro_head_command(_song_proj(intro_home, offset=20.0, audio=True),
+                                     Path("h.mp4"))
+    assert "C:/s/track.m4a" not in args
+    assert "-filter_complex" not in args
+    assert args[args.index("-map") + 3] == "0:a:0"                # the clip's own track
+
+
+def test_a_reel_starting_near_the_songs_beginning_still_lands_on_the_cut(intro_home):
+    """Less run-up than the intro is long: the song has to END on the cut, not
+    start on it, so what there is sits at the tail of the intro."""
+    args = studio.intro_head_command(_song_proj(intro_home, offset=1.0), Path("h.mp4"))
+    i = args.index("C:/s/track.m4a")
+    assert args[i - 5:i] == ["-ss", "0.0000", "-t", "1.0000", "-i"]
+    assert "adelay=2000:all=1" in args[args.index("-filter_complex") + 1]
+
+
+def test_no_run_up_and_no_song_both_fall_back_to_a_silent_track(intro_home):
+    for proj in (_song_proj(intro_home, offset=0.0),
+                 _song_proj(intro_home, offset=20.0, song="")):
+        args = studio.intro_head_command(proj, Path("h.mp4"))
+        assert "anullsrc=channel_layout=stereo:sample_rate=48000" in args
+        assert "-filter_complex" not in args
+
+
 def test_the_intro_head_matches_the_reel_so_the_two_can_splice(root, intro_home):
     """The join copies the reel rather than re-encoding it, which it can only
     do if the intro was written to the same shape: size, rate, one stereo
