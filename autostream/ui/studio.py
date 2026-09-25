@@ -4028,6 +4028,8 @@ function studio_sgReset() {
   if (sg.song && sg.seeded !== sg.song && !sg.marks.length && (p.song_marks || []).length) {
     sg.marks = p.song_marks.slice().sort((a, b) => a - b);
     sg.sel = -1;
+    // Placed against the part the reel was planned on -- see studio_sgFollow.
+    sg.marksAt = p.song_offset || 0;
   }
   if (sg.song) sg.seeded = sg.song;
   studio_el('studio-sg-atdrop').disabled = !sh.drop;
@@ -4212,9 +4214,28 @@ function studio_sgTick() {
   if (!a.paused) requestAnimationFrame(studio_sgTick);
 }
 
+/* THE MARKS RIDE WITH THE PART. A mark is where a kill lands, and a kill sits
+   a fixed time into the reel -- so when the reel's start moves along the song,
+   every mark moves with it. They were song seconds that stayed put: move the
+   part from 2:12 to 0:56 and all thirty-nine marks were left behind at 2:12,
+   outside the part, drawn nowhere, and "Use these marks" would have placed
+   every kill in a stretch of song the reel no longer plays. */
+function studio_sgFollow() {
+  const sg = studio.sg, sh = sg.shape;
+  if (!sh) return;
+  if (sg.marksAt != null && sg.marks.length && Math.abs(sg.start - sg.marksAt) > 1e-6) {
+    const dt = sg.start - sg.marksAt;
+    // Kept even where they fall past the song's end: dragging the part to the
+    // end and back must not cost marks, and none past the end is used.
+    sg.marks = sg.marks.map(m => Math.round((m + dt) * 1000) / 1000);
+  }
+  sg.marksAt = sg.start;
+}
+
 function studio_sgDraw() {
   const sg = studio.sg, sh = sg.shape, d = studio.derived, p = studio.project;
   if (!sh) return;
+  studio_sgFollow();
   studio_el('studio-sg-start').textContent = studio_secs(sg.start);
   studio_el('studio-sg-end').textContent = studio_secs(sg.end);
   studio_el('studio-sg-range').textContent = 'Using ' + studio_secs(sg.start) + ' → ' + studio_secs(sg.end) +
@@ -4252,6 +4273,7 @@ function studio_sgCanvas(id, H) {
 }
 
 function studio_sgDrawWaves() {
+  studio_sgFollow();                    /* mid-drag too, so the marks travel with it */
   studio_svDraw();                      /* the lanes follow the playhead too */
   const sg = studio.sg, sh = sg.shape;
   if (!sh || !sh.peaks) return;

@@ -383,3 +383,16 @@ def test_the_prompt_hands_over_the_sign_in_link():
     msg = _Prompt("Opening your browser.", got.append)
     assert msg.format(url="https://x/y") == "Opening your browser."
     assert got == ["https://x/y"]
+
+
+def test_song_marks_move_with_the_part():
+    """Moving the part from 2:12 to 0:56 left every mark at 2:12, outside the
+    part and drawn nowhere. The marks are kill times into the reel, so they
+    follow its start -- on every redraw, and mid-drag."""
+    js = _ui("studio")
+    assert "function studio_sgFollow()" in js
+    for fn in ("function studio_sgDraw()", "function studio_sgDrawWaves()"):
+        i = js.index(fn)
+        assert "studio_sgFollow();" in js[i:i + 300], fn
+    i = js.index("function studio_sgFollow()")
+    assert "sg.start - sg.marksAt" in js[i:i + 500]
