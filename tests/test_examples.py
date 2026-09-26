@@ -99,6 +99,28 @@ def test_taking_examples_rendered_elsewhere_ignores_anything_else(root, tmp_path
     assert sorted(p.name for p in examples.folder(root).iterdir()) == ["k04.gif", "t05.mp4"]
 
 
+def _run_of(root, name, game, seconds):
+    run = root / name
+    (run / "clips").mkdir(parents=True)
+    master = run / "clips" / f"{name}.mp4"
+    master.write_bytes(b"x")
+    (run / "clips.json").write_text(json.dumps({"game": game, "clips": [{
+        "master": str(master), "start": 0.0, "end": seconds, "duration": seconds}]}),
+        encoding="utf-8")
+    (run / "session.json").write_text(json.dumps({"game": game, "kills": [{"time": 2.5}]}),
+                                      encoding="utf-8")
+
+
+def test_the_stock_set_is_cut_from_one_games_clips_only(root):
+    """The shortest clips would be the other game's; asked for VALORANT, they are skipped."""
+    _run_of(root, "cs-a", "Counter-Strike 2", 5.0)
+    _run_of(root, "cs-b", "Counter-Strike 2", 5.5)
+    _run_of(root, "val-a", "VALORANT", 8.0)
+    _run_of(root, "val-b", "VALORANT", 9.0)
+    assert [c["game"] for c in examples.sources(root)] == ["Counter-Strike 2"] * 2
+    assert [c["game"] for c in examples.sources(root, game="valorant")] == ["VALORANT"] * 2
+
+
 def test_a_gif_and_an_mp4_are_both_playable(root):
     f = examples.folder(root)
     f.mkdir(parents=True)

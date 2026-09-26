@@ -23,10 +23,12 @@ UNTIL THEN, STOCK ONES
     A new install has no clips, and cutting examples needs two -- so the bin
     was a wall of empty cards for exactly the person who most needed to see
     what each part does. A stock set ships with the app
-    (clips/stock_examples, made by scripts/make_stock_examples.py) from
-    footage drawn by that script rather than recorded, so it carries nobody's
-    gameplay. Any card cut from the player's own clips replaces its stock one,
-    and the page says which it is showing.
+    (clips/stock_examples, made by scripts/make_stock_examples.py). It was
+    first cut from footage that script drew -- a skyline and a strafing
+    blob -- and nobody could judge a grade or a kill effect on that; the
+    maintainer gave two of their own VALORANT clips for it instead, used for
+    these cards and nothing else. Any card cut from the player's own clips
+    replaces its stock one, and the page says which it is showing.
 """
 from __future__ import annotations
 
@@ -139,15 +141,17 @@ def take_from(root: Path, src: Path) -> dict:
     return {"ok": True, "taken": sorted(taken), "folder": str(here)}
 
 
-def sources(root: Path, want: int = 2) -> list[dict]:
+def sources(root: Path, want: int = 2, game: str = "") -> list[dict]:
     """The clips an example is cut from: the shortest with a kill well inside.
 
     Short, because every example is re-cut from these and a 90-second clip
     makes ffmpeg seek through it each time; a kill with footage either side,
-    because a card that opens on a body falling shows nothing.
+    because a card that opens on a body falling shows nothing. `game` keeps
+    to one game's clips -- the stock set is cut from VALORANT alone.
     """
     lib = studio.library(Path(root))
     pool = [c for g in lib.get("games") or [] for f in g.get("folders") or []
+            if not game or str(g.get("game") or "").lower() == game.lower()
             for c in f.get("clips") or []
             if (c.get("kills") or []) and float(c.get("duration") or 0) > 4.0
             and float(c["kills"][0]) > 1.5]
