@@ -587,3 +587,112 @@ def test_a_deathmatch_has_no_rounds_to_cut():
     rds = vm.rounds_from(m, ME, _sync(m))
     assert not vm.rounds_usable(rds)
     assert vm.rounds_usable(vm.rounds_from(_m(), ME, _sync(_m())))
+
+
+# ============================================ saying so on screen
+#
+# The fetch was visible in the log and nowhere else. A player could not tell
+# that AutoStream was reading their Riot Client, or that it had failed and the
+# clips would be cut from the screen after all.
+
+def _fresh_status(monkeypatch):
+    monkeypatch.setattr(vm, "_last", {})
+    monkeypatch.setattr(vm, "_saved", [])
+
+
+def test_status_says_nothing_was_tried_before_the_first_attempt(monkeypatch):
+    _fresh_status(monkeypatch)
+    monkeypatch.setattr(vm, "_explained", True)
+    got = vm.status()
+    assert got["checked"] is None and got["saved_count"] == 0
+
+
+def test_a_failed_attempt_carries_its_reason_to_the_screen(monkeypatch):
+    _fresh_status(monkeypatch)
+    monkeypatch.setattr(vm, "_explained", True)
+    monkeypatch.setattr(valorant_api, "session", lambda: (_ for _ in ()).throw(
+        valorant_api.Unavailable("the Riot Client is not running")))
+    vm.collect()
+    got = vm.status()
+    assert got["checked"] and not got["ok"]
+    assert "not running" in got["why"]
+
+
+def test_a_saved_record_is_counted_for_the_screen(tmp_path, monkeypatch):
+    _fresh_status(monkeypatch)
+    monkeypatch.setattr(vm, "_explained", True)
+    monkeypatch.setattr(vm, "CACHE", tmp_path)
+
+    class FakeSession:
+        puuid = ME
+
+    monkeypatch.setattr(valorant_api, "session", lambda: FakeSession())
+    monkeypatch.setattr(valorant_api, "history",
+                        lambda s, limit=5: [{"MatchID": "abc12345"}])
+    monkeypatch.setattr(valorant_api, "details", lambda s, mid: _match())
+    vm.collect()
+    vm.collect()                      # already cached: not counted twice
+    got = vm.status()
+    assert got["ok"] and got["saved_count"] == 1
+    assert got["saved"][0]["id"] == "abc12345"
+
+
+def test_the_explanation_is_shown_once_and_remembered(tmp_path, monkeypatch):
+    from autostream import paths
+
+    monkeypatch.setattr(paths, "GAMES_FILE", tmp_path / "games.yaml")
+    monkeypatch.setattr(vm, "_explained", None)
+    assert vm.explained() is False
+    assert vm.mark_explained() is True
+    monkeypatch.setattr(vm, "_explained", None)     # as after a restart
+    assert vm.explained() is True
+
+
+# ------------------------------------------------------------ the server
+
+@pytest.fixture
+def server():
+    from autostream import webui
+
+    return webui.Server.__new__(webui.Server)
+
+
+def test_the_dashboard_card_is_only_there_during_a_live_valorant_session(server):
+    from types import SimpleNamespace
+
+    from autostream import state as st
+
+    server.engine = SimpleNamespace(state=SimpleNamespace(phase=st.IDLE),
+                                    match_watch=True)
+    assert server._valorant_status() is None           # stale flag, not live
+    server.engine.state.phase = st.LIVE
+    server.engine.match_watch = False
+    assert server._valorant_status() is None           # live, another game
+    server.engine.match_watch = True
+    assert server._valorant_status() is not None
+
+
+def test_fetch_now_says_what_to_open_when_the_client_is_closed(server, monkeypatch):
+    monkeypatch.setattr(valorant_api, "available", lambda: False)
+    monkeypatch.setattr(valorant_api, "why_not", lambda: "not running")
+    assert "Open VALORANT" in server.clips_valorant_fetch({})["error"]
+
+
+def test_fetch_now_answers_for_the_recording_on_the_page(server, tmp_path, monkeypatch):
+    """A recording made with AutoStream closed: the record is fetched
+    afterwards and then found for the recording being looked at."""
+    _fresh_status(monkeypatch)
+    monkeypatch.setattr(vm, "_explained", True)
+    monkeypatch.setattr(vm, "CACHE", tmp_path)
+    monkeypatch.setattr(valorant_api, "available", lambda: True)
+
+    class FakeSession:
+        puuid = ME
+
+    monkeypatch.setattr(valorant_api, "session", lambda: FakeSession())
+    monkeypatch.setattr(valorant_api, "history",
+                        lambda s, limit=5: [{"MatchID": "abc12345"}])
+    monkeypatch.setattr(valorant_api, "details", lambda s, mid: _match())
+    out = server.clips_valorant_fetch({"started": REC_STARTED, "seconds": 1800})
+    assert out["added"] == 1
+    assert out["match_state"] == "have" and out["match_count"] == 1

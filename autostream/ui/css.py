@@ -2482,9 +2482,8 @@ ol.steps-list li{margin-block:var(--space-4)}
 .clip-verdict.is-weak{border-left-color:var(--warn)}
 .clip-verdict.is-bad{border-left-color:var(--danger)}
 
-/* One line, stated plainly. Not a panel: there is nothing to do about it here
-   -- the record is captured while the game runs -- so it informs rather than
-   asks. */
+/* Stated plainly, with one thing to do about it: fetch the records now, for a
+   recording made while AutoStream was not running to fetch them itself. */
 .clip-matchline{
   margin:0 0 var(--space-4);
   padding:var(--space-2) var(--space-3);

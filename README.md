@@ -83,7 +83,12 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
   Riot client will hand over the match — exact kill times, and who was still alive
   at each one, *counted* rather than guessed, which is what tells a 3-kill round
   from a 1v3. It is fetched while you play, because the credentials go when the
-  game closes — or when the clips are cut, if the client is open then. A recording
+  game closes — or when the clips are cut, if the client is open then. The
+  dashboard shows it happening (a *VALORANT match record* card, with each match
+  as it is saved, or the reason it could not be), and explains once where the
+  record comes from: the Riot Client on your PC, talking only to Riot. For a
+  recording made with AutoStream closed, the Clips page has **Fetch match
+  records now** — Riot keeps your last twenty matches. A recording
   that holds several matches uses every one of them: a deathmatch is cut in bursts
   and a competitive match beside it round by round.
 - **Clips Counter-Strike by the round, not by the kill**, and takes the rounds from
