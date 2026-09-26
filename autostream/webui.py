@@ -250,6 +250,21 @@ class _Handler(BaseHTTPRequestHandler):
         self._media(path, self.app._clips_dir(cfg.load()),
                     (".mp4", ".m4v", ".webm"), "video")
 
+    def _facecam_video(self, path: str) -> None:
+        """Stream a facecam video, so it can be lined up with the game by eye.
+
+        Only a file the facecam links name -- each written with a path the OS
+        dialog returned -- and nothing else, for the reason _reel_audio gives:
+        a route that serves whatever path it is asked for is a file browser.
+        """
+        from .clips import facecam
+
+        root = self.app._clips_dir(cfg.load())
+        if str(Path(path)).lower() not in facecam.linked_files(root):
+            self._json({"error": "not a linked facecam"}, 403)
+            return
+        self._media(path, Path(path).parent, facecam.VIDEO_EXTS, "video")
+
     def _intro(self, path: str) -> None:
         """Stream one intro clip, so it can be previewed and trimmed by eye.
 
@@ -525,6 +540,14 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json({"error": err}, 400)
             else:
                 self._send_cached(blob, "application/octet-stream")
+        elif u.path == "/api/studio/facecam":
+            self._json(self.app.studio_facecam())
+        elif u.path == "/api/studio/facecam/video":
+            self._facecam_video((parse_qs(u.query).get("path") or [""])[0])
+        elif u.path == "/api/studio/import/detect/status":
+            from .clips import uploads as _up
+
+            self._json(_up.detector().status())
         elif u.path == "/api/studio/examples":
             self._json(self.app.studio_examples())
         elif u.path == "/api/studio/example":
@@ -687,6 +710,28 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_songfetch(b))
             elif p == "/api/studio/favourite":
                 self._json(self.app.studio_favourite(b))
+            elif p == "/api/studio/import":
+                self._json(self.app.studio_import(b))
+            elif p == "/api/studio/import/info":
+                self._json(self.app.studio_import_info(b))
+            elif p == "/api/studio/import/save":
+                self._json(self.app.studio_import_save(b))
+            elif p == "/api/studio/import/detect":
+                self._json(self.app.studio_import_detect(b))
+            elif p == "/api/studio/import/detect/cancel":
+                from .clips import uploads as _up
+
+                self._json(_up.detector().cancel())
+            elif p == "/api/studio/facecam/link":
+                self._json(self.app.studio_facecam_link(b))
+            elif p == "/api/studio/facecam/offset":
+                self._json(self.app.studio_facecam_offset(b))
+            elif p == "/api/studio/facecam/unlink":
+                self._json(self.app.studio_facecam_unlink(b))
+            elif p == "/api/studio/facecam/inset":
+                self._json(self.app.studio_facecam_inset(b))
+            elif p == "/api/studio/facecam/sync":
+                self._json(self.app.studio_facecam_sync(b))
             elif p == "/api/studio/examples/build":
                 self._json(self.app.studio_examples_build(b))
             elif p == "/api/studio/examples/cancel":
@@ -2819,6 +2864,14 @@ class Server:
         ic = body.get("intro_clip")
         if isinstance(ic, dict) and str(ic.get("path") or "").strip():
             proj["intro_clip"] = ic
+        if body.get("vfit") in ("zoom", "fit"):
+            proj["vfit"] = body["vfit"]
+        # Rebuilding a reel keeps what belongs to the reel rather than to the
+        # plan. Untouched here: normalise clamps every one of them.
+        keep = body.get("keep") if isinstance(body.get("keep"), dict) else {}
+        for k in ("cam", "vfit", "handle", "handle_pos", "outro_len", "overlays"):
+            if keep.get(k) is not None:
+                proj[k] = keep[k]
         try:
             proj, derived, more = studio.normalise(proj, root)
         except studio.ProjectError as e:
@@ -2993,6 +3046,122 @@ class Server:
 
         return {"ok": True, "intros": intros.listing(),
                 "max_seconds": intros.MAX_SECONDS}
+
+    # ---------------------------------------------------- the player's own clips
+
+    def studio_import(self, body: dict) -> dict:
+        """Add a video file the player already has to the Studio. See clips/uploads.py.
+
+        The path comes from the OS dialog (`/api/clips/pick`), as for an intro.
+        """
+        from . import clips as clips_mod
+        from .clips import uploads
+
+        c = cfg.load()
+        clips_mod.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+        return uploads.add(self._clips_dir(c), str(body.get("path") or "").strip(),
+                           game=str(body.get("game") or "")[:60],
+                           title=str(body.get("title") or "")[:80])
+
+    def studio_import_info(self, body: dict) -> dict:
+        from .clips import uploads
+
+        return uploads.info(self._clips_dir(cfg.load()), str(body.get("path") or ""))
+
+    def studio_import_save(self, body: dict) -> dict:
+        from .clips import uploads
+
+        title = body.get("title")
+        return uploads.save(self._clips_dir(cfg.load()), str(body.get("path") or ""),
+                            body.get("kills") or [],
+                            title=None if title is None else str(title),
+                            game=str(body.get("game") or "") or None)
+
+    def studio_import_detect(self, body: dict) -> dict:
+        from . import clips as clips_mod
+        from .clips import uploads
+
+        c = cfg.load()
+        clips_mod.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+        if clips_mod.runner().busy():
+            return {"state": "failed", "message": "A clip job is running; find kills once it has finished."}
+        return uploads.detector().start(self._clips_dir(c), str(body.get("path") or ""),
+                                        str(body.get("game_key") or ""), str(body.get("game") or ""))
+
+    # ---------------------------------------------------------------- facecam
+
+    def studio_facecam(self) -> dict:
+        from .clips import facecam
+
+        d = facecam.load(self._clips_dir(cfg.load()))
+        return {"ok": True, "inset": d["inset"], "links": d["links"]}
+
+    def studio_facecam_link(self, body: dict) -> dict:
+        from .clips import facecam, studio
+
+        root = self._clips_dir(cfg.load())
+        key = str(body.get("key") or "")
+        if body.get("clip"):
+            clip = Path(str(body["clip"]))
+            key = studio.clip_id(clip) if body.get("own") else facecam.key_for(clip)
+        return facecam.link(root, key, str(body.get("path") or ""),
+                            float(body.get("offset") or 0.0))
+
+    def studio_facecam_offset(self, body: dict) -> dict:
+        from .clips import facecam
+
+        try:
+            off = float(body.get("offset"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "The offset is not a number."}
+        return facecam.set_offset(self._clips_dir(cfg.load()), str(body.get("key") or ""), off)
+
+    def studio_facecam_unlink(self, body: dict) -> dict:
+        from .clips import facecam
+
+        return facecam.unlink(self._clips_dir(cfg.load()), str(body.get("key") or ""))
+
+    def studio_facecam_inset(self, body: dict) -> dict:
+        from .clips import facecam
+
+        return facecam.remember_inset(self._clips_dir(cfg.load()), body.get("box"))
+
+    def studio_facecam_sync(self, body: dict) -> dict:
+        """Line a facecam file up with a clip by their shared sound.
+
+        -> {ok, offset} where offset is what the link stores (camera time minus
+        recording time for a run, camera time minus clip time for a clip), or
+        an error saying to do it by ear.
+        """
+        from . import clips as clips_mod
+        from .clips import facecam
+
+        c = cfg.load()
+        clips_mod.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+        root = self._clips_dir(c)
+        key = str(body.get("key") or "")
+        link = facecam.load(root)["links"].get(key)
+        clip = Path(str(body.get("clip") or ""))
+        if not isinstance(link, dict) or not clip.is_file():
+            return {"ok": False, "error": "Attach a facecam video first."}
+        try:
+            clip.resolve().relative_to(root.resolve())
+        except (OSError, ValueError):
+            return {"ok": False, "error": "That clip is not in the clips folder."}
+        # A run's link is against the recording; the clip starts `start` into it.
+        start = facecam.clip_start(clip) if key == facecam.key_for(clip) else 0.0
+        guess = float(link.get("offset") or 0.0)
+        if not guess and start:
+            # Not lined up yet: start from when the two files were recorded.
+            try:
+                src = json.loads((clip.parent.parent / "session.json").read_text(encoding="utf-8")).get("source")
+            except (OSError, ValueError, AttributeError):
+                src = None
+            guess = facecam.wall_guess(Path(src) if src else None, Path(link["file"]))
+        got = facecam.sync(clip, 0.0, Path(link["file"]), guess=guess + start)
+        if got.get("offset") is not None:
+            got["offset"] = round(got["offset"] - start, 3)
+        return got
 
     def studio_intro_add(self, body: dict) -> dict:
         """Take a GIF or video into the intros library. -> {ok, intro}.

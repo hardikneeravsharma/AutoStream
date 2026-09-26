@@ -39,6 +39,8 @@ STUDIO_HTML = r"""
               data-act="studio-tab" data-tab="timeline" id="studio-tab-timeline" disabled>Timeline</button>
       <button type="button" class="seg-btn" role="tab" aria-selected="false"
               data-act="studio-tab" data-tab="song" id="studio-tab-song" disabled>Song</button>
+      <button type="button" class="seg-btn" role="tab" aria-selected="false"
+              data-act="studio-tab" data-tab="facecam" id="studio-tab-facecam" disabled>Facecam</button>
     </div>
   </header>
 
@@ -66,6 +68,9 @@ STUDIO_HTML = r"""
              placeholder="Search clips, captions or runs" aria-label="Search clips">
       <div class="studio-games" id="studio-games" role="group" aria-label="Games"></div>
       <button type="button" class="btn btn-ghost btn-sm" data-act="studio-refresh">Refresh</button>
+      <!-- CLIPS THE PLAYER ALREADY HAS: saved by the game, by Medal, sent by a
+           friend. Added here they are clips like any other. -->
+      <button type="button" class="btn btn-sm" data-act="studio-imp-add">Add your own clip…</button>
     </div>
     <div class="studio-reels" id="studio-reels"></div>
     <div id="studio-lib" class="studio-lib"></div>
@@ -102,77 +107,62 @@ STUDIO_HTML = r"""
     </div>
   </section>
 
-  <section id="studio-pane-timeline" class="hide" aria-label="Timeline">
-    <div class="studio-top">
-      <div class="studio-player">
-        <video id="studio-video" controls playsinline preload="metadata"></video>
-        <div class="studio-player-empty" id="studio-player-empty">The reel appears here once it has rendered.</div>
-        <!-- THE PLAYER IS WHERE THE EYES ARE. A sidebar saying the edits are
-             not in the video yet is missed by someone watching the video, so
-             the video says it too, over its own top corner. -->
-        <div class="studio-stale hide" id="studio-stale" aria-hidden="true"></div>
-      </div>
-      <div class="studio-render card">
-        <div class="card-body">
-          <label class="field-label" for="studio-pname">Reel name</label>
-          <input class="input" id="studio-pname" maxlength="80">
-          <p class="muted studio-facts" id="studio-facts"></p>
-
-          <!-- DOES THE VIDEO MATCH THE TIMELINE? The one question the page was
-               unable to answer: "Render changes" against "Render again" is a
-               two-word difference nobody reads, so an edit could sit unrendered
-               for an hour. One strip owns the answer -- a colour, a sentence,
-               and, when they differ, the list of what has not reached the
-               video yet. -->
-          <div class="studio-sync is-none" id="studio-sync">
-            <p class="studio-sync-line">
-              <span class="studio-sync-dot" aria-hidden="true"></span>
-              <span class="studio-sync-head" id="studio-sync-head">Not rendered yet</span>
-            </p>
-            <!-- studio-state is the job's own words (Ready, Cancelled, the
-                 error). Kept as its own node: it is what the render tests read. -->
-            <p class="studio-sync-sub" id="studio-sync-sub"></p>
-            <p class="studio-state" id="studio-state" role="status" aria-live="polite"></p>
-            <div class="meter hide" id="studio-meter-wrap" aria-hidden="true"><div class="meter-fill" id="studio-meter" style="width:0%"></div></div>
-            <ul class="studio-pending hide" id="studio-pending"></ul>
-          </div>
-
-          <div class="field-inline studio-acts">
-            <button type="button" class="btn btn-primary" data-act="studio-render" id="studio-render-btn">Render</button>
-            <button type="button" class="btn btn-ghost hide" data-act="studio-cancel" id="studio-cancel-btn">Cancel</button>
-            <button type="button" class="btn btn-ghost" data-act="studio-undo" id="studio-undo-btn" disabled>Undo</button>
-            <button type="button" class="btn btn-ghost" data-act="studio-show" id="studio-show-btn" disabled>Show file</button>
-          </div>
-
-          <!-- WHY THE REEL IS THE WAY IT IS. Five amber bullets shouting at
-               once read as five problems; they are mostly the planner saying
-               what it did. Anything wrong with the reel as it stands is above,
-               in its own plate; the planner's account of the build is folded
-               away, where it can be opened by someone who wants it. -->
-          <div class="studio-why" id="studio-why"></div>
+  <!-- THE EDITOR. One screen, no page scroll: the picture where the eyes are,
+       the tracks under it, and everything about the selected thing in one
+       column beside both. It used to be a page -- player and render card, then
+       the tracks, then an inspector beside only the tracks -- so editing an
+       effect meant scrolling down to the tracks and back up to see it, and the
+       page jumped every time the inspector redrew. Every id below is the one
+       the old layout had; only where things sit has changed. -->
+  <section id="studio-pane-timeline" class="hide studio-editor" aria-label="Timeline">
+    <div class="ed-main">
+      <div class="ed-toolbar">
+        <label class="sr-only" for="studio-pname">Reel name</label>
+        <input class="input ed-name" id="studio-pname" maxlength="80" placeholder="Reel name">
+        <p class="muted studio-facts ed-facts" id="studio-facts"></p>
+        <span class="studio-spacer"></span>
+        <div class="field-inline studio-acts">
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-undo" id="studio-undo-btn" disabled>Undo</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-show" id="studio-show-btn" disabled>Show file</button>
+          <button type="button" class="btn btn-ghost btn-sm hide" data-act="studio-cancel" id="studio-cancel-btn">Cancel</button>
+          <button type="button" class="btn btn-primary" data-act="studio-render" id="studio-render-btn">Render</button>
         </div>
       </div>
-    </div>
 
-    <div class="studio-tl-bar">
-      <button type="button" class="btn btn-sm studio-transport" data-act="studio-play" id="studio-play-btn">Play</button>
-      <span class="mono studio-clock" id="studio-clock">0:00.00</span>
-      <span class="media-knobs" data-for="studio-video"></span>
-      <label class="studio-check"><input type="checkbox" id="studio-snap" checked> Snap to beats</label>
-      <!-- WHAT THE MUSIC LANE SHOWS. A waveform cannot say whether a kill sat
-           on the kick it was aimed at; the spectrogram and the song's own hit
-           marks can, so both are on by default and either can be turned off. -->
-      <label class="studio-check"><input type="checkbox" id="studio-tl-spec" checked> Spectrogram</label>
-      <label class="studio-check"><input type="checkbox" id="studio-tl-marks" checked> Song's hits</label>
-      <span class="studio-spacer"></span>
-      <span class="muted studio-hint" id="studio-tl-sync" role="status" aria-live="polite"></span>
-      <span class="muted studio-hint">Drag a shot to move it, its edge to trim, its diamond to move the kill. Ctrl+wheel zooms.</span>
-      <button type="button" class="btn btn-ghost btn-sm" data-act="studio-zoom" data-z="-1" aria-label="Zoom out">−</button>
-      <button type="button" class="btn btn-ghost btn-sm" data-act="studio-zoom" data-z="0">Fit</button>
-      <button type="button" class="btn btn-ghost btn-sm" data-act="studio-zoom" data-z="1" aria-label="Zoom in">+</button>
-      <span class="mono studio-zoomlab" id="studio-zoomlab" aria-hidden="true"></span>
-    </div>
-    <div class="studio-edit">
+      <div class="ed-stage">
+        <div class="studio-player" id="studio-player">
+          <video id="studio-video" controls playsinline preload="metadata"></video>
+          <div class="studio-player-empty" id="studio-player-empty">The reel appears here once it has rendered.</div>
+          <!-- THE PLAYER IS WHERE THE EYES ARE. A sidebar saying the edits are
+               not in the video yet is missed by someone watching the video, so
+               the video says it too, over its own top corner. -->
+          <div class="studio-stale hide" id="studio-stale" aria-hidden="true"></div>
+          <!-- THE HANDLE, WHERE IT WILL BE. Dragged on the picture itself,
+               because "a bit higher than the kill counter" is a place you
+               point at, not a number. Shown while the Reel tab is open. -->
+          <div class="ed-frame hide" id="studio-frame" aria-hidden="true">
+            <span class="ed-handle" id="studio-handle-chip" title="Drag to move your handle"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="studio-tl-bar ed-transport">
+        <button type="button" class="btn btn-sm studio-transport" data-act="studio-play" id="studio-play-btn">Play</button>
+        <span class="mono studio-clock" id="studio-clock">0:00.00</span>
+        <span class="media-knobs" data-for="studio-video"></span>
+        <label class="studio-check"><input type="checkbox" id="studio-snap" checked> Snap to beats</label>
+        <!-- WHAT THE MUSIC LANE SHOWS. A waveform cannot say whether a kill sat
+             on the kick it was aimed at; the spectrogram and the song's own hit
+             marks can, so both are on by default and either can be turned off. -->
+        <label class="studio-check"><input type="checkbox" id="studio-tl-spec" checked> Spectrogram</label>
+        <label class="studio-check"><input type="checkbox" id="studio-tl-marks" checked> Song's hits</label>
+        <span class="studio-spacer"></span>
+        <span class="muted studio-hint" id="studio-tl-sync" role="status" aria-live="polite"></span>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-zoom" data-z="-1" aria-label="Zoom out">−</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-zoom" data-z="0">Fit</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-zoom" data-z="1" aria-label="Zoom in">+</button>
+        <span class="mono studio-zoomlab" id="studio-zoomlab" aria-hidden="true"></span>
+      </div>
       <div class="studio-tl" id="studio-tl" tabindex="0" aria-label="Timeline, use arrow keys to move between shots">
         <div class="studio-labels" aria-hidden="true">
           <div class="st-lab st-lab-ruler"></div>
@@ -187,7 +177,134 @@ STUDIO_HTML = r"""
           <div class="studio-tracks" id="studio-tracks"></div>
         </div>
       </div>
-      <aside class="studio-insp card" id="studio-insp" aria-label="Inspector"></aside>
+      <p class="muted studio-hint ed-hint">Drag a shot to move it, its edge to trim, its diamond to move the kill.
+        Ctrl+wheel zooms. Arrow keys move between shots, Space plays.</p>
+    </div>
+
+    <aside class="ed-side" aria-label="Inspector">
+      <!-- DOES THE VIDEO MATCH THE TIMELINE? The one question the page was
+           unable to answer: "Render changes" against "Render again" is a
+           two-word difference nobody reads, so an edit could sit unrendered
+           for an hour. One strip owns the answer -- a colour, a sentence,
+           and, when they differ, the list of what has not reached the
+           video yet. -->
+      <div class="studio-sync is-none" id="studio-sync">
+        <p class="studio-sync-line">
+          <span class="studio-sync-dot" aria-hidden="true"></span>
+          <span class="studio-sync-head" id="studio-sync-head">Not rendered yet</span>
+        </p>
+        <!-- studio-state is the job's own words (Ready, Cancelled, the
+             error). Kept as its own node: it is what the render tests read. -->
+        <p class="studio-sync-sub" id="studio-sync-sub"></p>
+        <p class="studio-state" id="studio-state" role="status" aria-live="polite"></p>
+        <div class="meter hide" id="studio-meter-wrap" aria-hidden="true"><div class="meter-fill" id="studio-meter" style="width:0%"></div></div>
+        <ul class="studio-pending hide" id="studio-pending"></ul>
+      </div>
+
+      <!-- WHAT AN EFFECT LOOKS LIKE, BEFORE IT IS PICKED. Pointing at any
+           part in the inspector plays its example here -- the same two-second
+           cards the parts bin shows -- so a list of names becomes a list of
+           things you can watch. -->
+      <div class="ed-fx hide" id="studio-fxprev" aria-live="polite">
+        <div class="ed-fx-shot" id="studio-fxprev-shot"></div>
+        <div class="ed-fx-text">
+          <strong id="studio-fxprev-name"></strong>
+          <span class="muted" id="studio-fxprev-blurb"></span>
+        </div>
+      </div>
+
+      <div class="studio-insp card" id="studio-insp" aria-label="Inspector"></div>
+
+      <!-- WHY THE REEL IS THE WAY IT IS. Five amber bullets shouting at
+           once read as five problems; they are mostly the planner saying
+           what it did. Anything wrong with the reel as it stands is above,
+           in its own plate; the planner's account of the build is folded
+           away, where it can be opened by someone who wants it. -->
+      <div class="studio-why" id="studio-why"></div>
+    </aside>
+  </section>
+
+  <!-- THE FACECAM. Its own place, because both jobs it has are done by eye:
+       drawing a box round a camera that is already in the recording, or
+       lining up a separate camera video until the laugh lands on the kill. -->
+  <section id="studio-pane-facecam" class="hide studio-fc" aria-label="Facecam">
+    <div class="studio-fc-head">
+      <div>
+        <h2 class="studio-h">Facecam</h2>
+        <p class="muted studio-small">Where your camera comes from, and where it goes in this reel.</p>
+      </div>
+      <div class="seg" role="group" aria-label="Facecam source" id="studio-fc-src"></div>
+    </div>
+
+    <div class="studio-fc-grid">
+      <div class="card"><div class="card-body studio-fc-card">
+        <!-- IN THE VIDEO: a box drawn once on a frame of their own footage. -->
+        <div id="studio-fc-inset" class="hide">
+          <h3 class="studio-h">Draw a box round your camera</h3>
+          <p class="muted studio-small">Drag on the frame. The box is kept for every reel, so a camera that is always in
+            the same corner is drawn once.</p>
+          <div class="field-inline">
+            <label class="field-label" for="studio-fc-clip">Frame from</label>
+            <select class="select" id="studio-fc-clip"></select>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-fc-frame" data-d="-2">−2 s</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-fc-frame" data-d="2">+2 s</button>
+          </div>
+          <div class="studio-fc-stage" id="studio-fc-stage">
+            <img id="studio-fc-img" alt="A frame of your recording">
+            <div class="ed-cambox hide" id="studio-fc-box"><span>Facecam</span></div>
+          </div>
+          <div class="field-inline">
+            <button type="button" class="btn btn-sm" data-act="studio-fc-boxreset">Start over</button>
+            <span class="muted studio-small" id="studio-fc-boxnote"></span>
+          </div>
+        </div>
+
+        <!-- A SEPARATE VIDEO: attached to the session it was recorded with,
+             and lined up by sound or by eye. -->
+        <div id="studio-fc-file" class="hide">
+          <h3 class="studio-h">Attach your camera video</h3>
+          <p class="muted studio-small">Attach it to the session it was recorded beside, once, and every clip from that
+            session uses it. Then line it up: "Find it from the sound" matches the two recordings' audio; the nudges are for
+            finishing by eye.</p>
+          <div id="studio-fc-links" class="studio-fc-links"></div>
+          <div class="studio-fc-sync hide" id="studio-fc-syncbox">
+            <div class="studio-fc-pair">
+              <figure><video id="studio-fc-game" playsinline preload="metadata" muted></video><figcaption>Game</figcaption></figure>
+              <figure><video id="studio-fc-cam" playsinline preload="metadata"></video><figcaption>Camera</figcaption></figure>
+            </div>
+            <div class="studio-tl-bar">
+              <button type="button" class="btn btn-sm studio-transport" data-act="studio-fc-play" id="studio-fc-play">Play both</button>
+              <span class="mono" id="studio-fc-clock">0:00.00</span>
+              <span class="media-knobs" data-for="studio-fc-cam"></span>
+            </div>
+            <div class="field-inline studio-nudge">
+              <span class="field-label">Camera offset</span>
+              <button type="button" class="btn btn-ghost btn-sm" data-act="studio-fc-nudge" data-d="-1">−1 s</button>
+              <button type="button" class="btn btn-ghost btn-sm" data-act="studio-fc-nudge" data-d="-0.1">−0.1</button>
+              <button type="button" class="btn btn-ghost btn-sm" data-act="studio-fc-nudge" data-d="-0.02">−1 f</button>
+              <span class="mono" id="studio-fc-offset">0.00 s</span>
+              <button type="button" class="btn btn-ghost btn-sm" data-act="studio-fc-nudge" data-d="0.02">+1 f</button>
+              <button type="button" class="btn btn-ghost btn-sm" data-act="studio-fc-nudge" data-d="0.1">+0.1</button>
+              <button type="button" class="btn btn-ghost btn-sm" data-act="studio-fc-nudge" data-d="1">+1 s</button>
+              <button type="button" class="btn btn-sm" data-act="studio-fc-sync" id="studio-fc-syncbtn">Find it from the sound</button>
+            </div>
+            <p class="muted studio-small" id="studio-fc-syncnote"></p>
+          </div>
+        </div>
+
+        <p class="muted" id="studio-fc-none">No facecam in this reel. Choose where yours comes from above.</p>
+      </div></div>
+
+      <div class="card"><div class="card-body studio-fc-card">
+        <h3 class="studio-h">Where it goes</h3>
+        <div id="studio-fc-layout"></div>
+        <!-- A mock of the frame, drawn from a still of the game and a still of
+             the camera cut, so the layout is judged before anything renders. -->
+        <div class="studio-fc-mockwrap"><canvas id="studio-fc-mock" aria-label="How the reel will be laid out"></canvas></div>
+        <div class="field-inline">
+          <button type="button" class="btn btn-primary" data-act="studio-tab-go" data-tab="timeline">Back to the timeline</button>
+        </div>
+      </div></div>
     </div>
   </section>
 
@@ -397,6 +514,12 @@ STUDIO_HTML = r"""
           <button type="button" class="seg-btn is-active" data-act="studio-fmt" data-fmt="landscape">Landscape 16:9</button>
           <button type="button" class="seg-btn" data-act="studio-fmt" data-fmt="vertical">Vertical 9:16</button>
         </div>
+        <!-- HOW A 16:9 GAME FILLS A 9:16 FRAME: cropped to its middle, or all
+             of it over a blurred copy. Only asked when it is a question. -->
+        <div class="seg hide" role="group" aria-label="Vertical framing" id="studio-mk-fit">
+          <button type="button" class="seg-btn is-active" data-act="studio-mk-fit" data-fit="zoom">Zoom to fill</button>
+          <button type="button" class="seg-btn" data-act="studio-mk-fit" data-fit="fit">Fit the whole picture</button>
+        </div>
         <div class="seg" role="group" aria-label="Order">
           <button type="button" class="seg-btn is-active" data-act="studio-order" data-order="chosen">As chosen</button>
           <button type="button" class="seg-btn" data-act="studio-order" data-order="kills">Most kills first</button>
@@ -552,6 +675,52 @@ STUDIO_HTML = r"""
   </div>
   </div>
 
+  <!-- YOUR OWN CLIP. A file the player brings, its kills and what it is.
+       Marked the way a song is marked: play it, press K on each kill. -->
+  <div class="scrim hide" id="studio-imp-scrim">
+  <div class="modal studio-imp" id="studio-imp" role="dialog" aria-modal="true" aria-labelledby="studio-imp-title">
+    <h2 class="modal-title" id="studio-imp-title">Your clip</h2>
+    <div class="modal-body studio-imp-body">
+      <div class="studio-imp-player">
+        <video id="studio-imp-video" playsinline preload="metadata"></video>
+        <canvas class="studio-imp-lane" id="studio-imp-lane" height="46" aria-label="The clip: click to move the playhead"></canvas>
+        <div class="studio-tl-bar">
+          <button type="button" class="btn btn-sm studio-transport" data-act="studio-imp-play" id="studio-imp-play">Play</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-imp-step" data-d="-1">−1 s</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-imp-step" data-d="-0.0333">−1 f</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-imp-step" data-d="0.0333">+1 f</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-imp-step" data-d="1">+1 s</button>
+          <span class="mono studio-clock" id="studio-imp-clock">0:00.00</span>
+          <span class="media-knobs" data-for="studio-imp-video"></span>
+        </div>
+      </div>
+      <div class="studio-imp-side">
+        <label class="field-label" for="studio-imp-game">Game</label>
+        <select class="select" id="studio-imp-game"></select>
+        <label class="field-label" for="studio-imp-name">Title</label>
+        <input class="input" id="studio-imp-name" maxlength="80" placeholder="e.g. 1v3 clutch">
+        <div class="reel-chips" id="studio-imp-presets"></div>
+
+        <h3 class="studio-h">Kills</h3>
+        <p class="muted studio-small">Play it and press <kbd>K</kbd> the moment each kill lands, or let AutoStream find them
+          for the game you chose. <kbd>Space</kbd> plays and pauses; <kbd>,</kbd> and <kbd>.</kbd> step a frame.</p>
+        <div class="field-inline">
+          <button type="button" class="btn btn-primary btn-sm" data-act="studio-imp-mark">Kill here (K)</button>
+          <button type="button" class="btn btn-sm" data-act="studio-imp-detect" id="studio-imp-detect">Find the kills</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-imp-clear">Clear</button>
+        </div>
+        <p class="muted studio-small" id="studio-imp-detnote" role="status" aria-live="polite"></p>
+        <div class="reel-chips" id="studio-imp-kills"></div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <span class="muted" id="studio-imp-msg"></span>
+      <button type="button" class="btn btn-ghost" data-act="studio-imp-close">Close</button>
+      <button type="button" class="btn btn-primary" data-act="studio-imp-save" id="studio-imp-save">Save</button>
+    </div>
+  </div>
+  </div>
+
   <div class="scrim hide" id="studio-preview-scrim">
   <div class="modal studio-modal" id="studio-preview" role="dialog" aria-modal="true" aria-labelledby="studio-preview-title">
     <h2 class="modal-title" id="studio-preview-title">Clip</h2>
@@ -578,7 +747,7 @@ const studio = {
   /* The music lane: the whole song's spectrogram as one image, which song has
      been asked for, and what the lane is showing. */
   spec: null, musicWant: '', musicPending: false, showSpec: true, showMarks: true, waveTick: 0,
-  style: '', song: '', songShape: null, fmt: 'landscape', order: 'chosen',
+  style: '', song: '', songShape: null, fmt: 'landscape', vfit: 'zoom', order: 'chosen',
   project: null, derived: null, notes: [], dirty: true, output: '', renderedAt: 0,
   /* WHAT HAS NOT REACHED THE VIDEO YET. `dirty` could say that something had
      changed; it could not say what, so pressing render was an act of faith and
@@ -612,7 +781,14 @@ const studio = {
   intro: {list: null, pick: '', seconds: 0, hasAudio: false,
           start: 0, end: 0, audio: false, fit: 'cover', tick: null},
   /* What the Make dialog chose, before any project exists to hang it on. */
-  mkIntro: {path: '', audio: false}
+  mkIntro: {path: '', audio: false},
+  /* Which inspector groups are open, by key; see studio_grp. */
+  grpOpen: {},
+  /* The facecam tab: the links (clips/facecam.py), the box last drawn, the
+     clip a frame is taken from, and the pair being lined up. */
+  fc: {inset: null, links: {}, clips: [], clipI: null, t: 0, drag: null, key: '', clip: '', start: 0, offset: 0},
+  /* A clip the player added, open in its dialog. */
+  imp: {path: '', seconds: 0, kills: [], sel: -1, dirty: false, games: null}
 };
 
 const studio_el = (id) => document.getElementById(id);
@@ -763,7 +939,7 @@ function studio_tile(c, n) {
     '<img loading="lazy" alt="" width="320" height="180" src="' + studio_media('/api/studio/thumb', c.path, '&t=' + at + '&v=' + (c.mtime || 0)) + '">' +
     '<span class="studio-clip-n">' + (n || '') + '</span>' +
     '<span class="studio-clip-dur mono">' + studio_dur(c.duration) + '</span>' +
-    '<span class="studio-clip-kills">' + (c.kill_count > 1 ? c.kill_count + ' kills' : '1 kill') + '</span>' +
+    '<span class="studio-clip-kills">' + (c.unmarked ? 'no kills marked' : c.kill_count > 1 ? c.kill_count + ' kills' : '1 kill') + '</span>' +
     '</button>' +
     '<div class="studio-clip-foot"><span class="truncate" title="' + esc(c.name) + '">' +
     esc(c.caption || c.name) + '</span>' +
@@ -771,6 +947,8 @@ function studio_tile(c, n) {
       esc(c.id) + '" title="' + (c.fav ? 'A favourite. Click to unstar.' : 'Mark as a favourite') +
       '" aria-pressed="' + (c.fav ? 'true' : 'false') + '" aria-label="Favourite">' +
       (c.fav ? '\u2605' : '\u2606') + '</button>' +
+    (c.imported ? '<button type="button" class="btn btn-ghost btn-sm' + (c.unmarked ? ' is-warn' : '') + '" data-act="studio-imp-edit" data-path="' +
+      esc(c.path) + '" title="Mark its kills and give it a title">' + (c.unmarked ? 'Mark kills' : 'Edit') + '</button>' : '') +
     '<button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="studio-preview" data-clip="' +
     esc(c.id) + '" aria-label="Play ' + esc(c.name) + '">' + icon('play') + '</button></div></div>';
 }
@@ -857,6 +1035,7 @@ function studio_closeModals() {
   if (a && !a.paused) a.pause();
   ['studio-preview-scrim', 'studio-make-scrim', 'studio-del-scrim',
    'studio-rdel-scrim', 'studio-intro-scrim'].forEach(id => studio_show(id, false));
+  if (!studio_el('studio-imp-scrim').classList.contains('hide')) studio_impClose(false);
   const iv = studio_el('studio-intro-video');
   if (iv && !iv.paused) iv.pause();
   if (!studio.yt.running) studio_show('studio-yt-scrim', false);
@@ -903,6 +1082,7 @@ async function studio_openMake() {
   studio_renderStyles();
   studio_hand();
   studio_show('studio-make-scrim', true);
+  studio_show('studio-mk-fit', studio.fmt === 'vertical');
   studio_mkDefault();
 }
 
@@ -1802,7 +1982,8 @@ async function studio_build() {
   try {
     const body = {
       clips: studio_ordered().map(c => c.path), style: studio.style, song: studio.song,
-      format: studio.fmt, name: studio_el('studio-name').value.trim(),
+      format: studio.fmt, vfit: studio.fmt === 'vertical' ? studio.vfit : 'zoom',
+      name: studio_el('studio-name').value.trim(),
       /* Only what was DEALT or CLICKED. Sending the style's own picks back
          narrowed every drawer to the one part the style leads with, and a
          montage came out with the same kill effect on all six kills. */
@@ -1823,6 +2004,9 @@ async function studio_build() {
       body.part_start = studio.mk.start;
       body.part_end = studio.mk.end;
     }
+    /* A rebuild keeps the reel's own choices -- facecam, handle, ending --
+       which belong to the reel and not to the plan being redone. */
+    if (studio.adding && studio.adding.keep) body.keep = studio.adding.keep;
     const r = await API.post('/api/studio/plan', body);
     if (gen !== studio.buildGen) return;          /* cancelled while planning */
     if (!r || !r.ok) { studio_el('studio-make-msg').textContent = (r && r.error) || 'Could not plan that reel.'; return; }
@@ -1866,6 +2050,7 @@ function studio_setProject(project, derived, notes, songShape) {
   if (project.output) studio.output = project.output;
   studio_el('studio-tab-timeline').disabled = false;
   studio_el('studio-tab-song').disabled = false;
+  studio_el('studio-tab-facecam').disabled = false;
   studio_el('studio-pname').value = project.name || '';
   if (studio.sel >= project.shots.length) studio.sel = project.shots.length - 1;
   studio_drawAll();
@@ -2264,7 +2449,9 @@ async function studio_addClips() {
     name: p.name, style: p.style, song: p.song || '', fmt: p.format,
     output: studio.output || p.output || '',
     start: p.song_offset || 0, end: p.part_end || ((p.song_offset || 0) + (d ? d.length : 0)),
-    edited: !!(d && d.edited) || studio.undo.length > 0
+    edited: !!(d && d.edited) || studio.undo.length > 0,
+    keep: {cam: p.cam, vfit: p.vfit, handle: p.handle, handle_pos: p.handle_pos,
+           outro_len: p.outro_len, overlays: p.overlays}
   };
   studio_tab('clips');
   studio_renderLib();
@@ -2673,6 +2860,7 @@ const STUDIO_ROW = {ruler: 26, video: 64, trans: 30, fx: 34, speed: 38, text: 30
 const STUDIO_ZOOM = [8, 1600];
 
 function studio_drawAll() {
+  studio_fitEditor();
   studio_drawRenderCard();
   studio_drawTimeline();
   /* Rebuilding the panel under a focused field throws away what is being
@@ -2681,6 +2869,8 @@ function studio_drawAll() {
   const typing = a && a.closest && a.closest('#studio-insp') &&
     /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'checkbox' && a.type !== 'range';
   if (!typing) studio_drawInspector();
+  studio_frameDraw();
+  if (!studio_el('studio-pane-facecam').classList.contains('hide')) studio_fcDraw();
 }
 
 function studio_fit() {
@@ -2810,7 +3000,7 @@ function studio_drawTimeline() {
     const room = Math.min((r.end - r.start) * pps, (d.shots[i - 1].end - d.shots[i - 1].start) * pps);
     const compact = room < 44;
     h += '<button type="button" class="st-tr' + (hard ? ' is-cut' : '') + (compact ? ' is-compact' : '') +
-      (i === studio.sel ? ' is-sel' : '') + '" data-act="studio-select" data-shot="' + i + '" style="left:' + X(r.start) +
+      (i === studio.sel ? ' is-sel' : '') + '" data-act="studio-select" data-shot="' + i + '" data-part="' + esc(s.transition) + '" style="left:' + X(r.start) +
       'px;top:' + rows.trans + 'px' + (compact ? '' : ';width:' + Math.max(26, s.tlen * pps).toFixed(1) + 'px') +
       '" title="Shot ' + (i + 1) + ': ' + esc(part.label) + '">' +
       (compact ? '' : esc(hard ? '|' : s.transition.toUpperCase())) + '</button>';
@@ -2825,7 +3015,7 @@ function studio_drawTimeline() {
     const full = ids.map(x => x.toUpperCase()).join(' ');
     const label = room >= full.length * 7 + 16 ? full : room >= 30 ? String(ids.length) : '';
     h += '<button type="button" class="st-fx' + (s.hero ? ' is-hero' : '') + (label === full ? '' : ' is-compact') +
-      '" data-act="studio-select" data-shot="' + i +
+      '" data-act="studio-select" data-shot="' + i + '" data-part="' + esc(ids[0]) +
       '" style="left:' + X(r.kill_reel) + 'px;top:' + (rows.fx + 6) + 'px" title="Shot ' + (i + 1) + ': ' +
       esc(ids.map(id => studio_part(id).label).join(', ')) + ' — click to change">' + esc(label) + '</button>';
   });
@@ -3173,8 +3363,8 @@ function studio_pool_html(kind, values) {
     esc(p.label) + '</label>').join('') + '</div>';
 }
 
-function studio_checks_html(name, kind, values) {
-  return '<div class="studio-checks">' + studio_parts(kind).map(p =>
+function studio_checks_html(name, kind, values, skip) {
+  return '<div class="studio-checks">' + studio_parts(kind).filter(p => !(skip || []).includes(p.id)).map(p =>
     '<label class="studio-check-chip' + (values.indexOf(p.id) >= 0 ? ' is-on' : '') + '" title="' + esc(p.blurb) + '">' +
     '<input type="checkbox" data-list="' + name + '" value="' + esc(p.id) + '"' + (values.indexOf(p.id) >= 0 ? ' checked' : '') + '> ' +
     esc(p.label) + '</label>').join('') + '</div>';
@@ -3199,6 +3389,35 @@ function studio_drawInspector() {
   if (pageHost && pageHost.scrollTop !== pageTop) pageHost.scrollTop = pageTop;
 }
 
+/* A folded group of the inspector. Which groups are open is remembered for
+   the session, so the one being worked in stays open through every redraw. */
+const STUDIO_GROUPS_OPEN = {timing: true, fx: true, look: true, pools: true, ending: true, cam: true, handle: true, sound: false,
+                            trans: true, hero: false, camera: false};
+function studio_grp(key, title, body, note) {
+  const open = key in (studio.grpOpen || {}) ? studio.grpOpen[key] : STUDIO_GROUPS_OPEN[key] !== false;
+  return '<details class="ed-group" data-grp="' + key + '"' + (open ? ' open' : '') + '><summary>' + esc(title) +
+    (note ? ' <span class="ed-group-note">' + esc(note) + '</span>' : '') + '</summary>' +
+    '<div class="ed-group-body">' + body + '</div></details>';
+}
+
+/* Nine places, laid out as the frame they stand for. `at` is [x, y] in 0..1. */
+function studio_grid9(act, at) {
+  let h = '<div class="ed-grid9" role="group">';
+  [0, 0.5, 1].forEach(y => [0, 0.5, 1].forEach(x => {
+    const on = at && Math.abs(at[0] - x) < 0.01 && Math.abs(at[1] - y) < 0.01;
+    h += '<button type="button" class="' + (on ? 'is-on' : '') + '" data-act="' + act + '" data-x="' + x + '" data-y="' + y + '"' +
+      ' aria-label="' + (y === 0 ? 'top' : y === 1 ? 'bottom' : 'middle') + ' ' + (x === 0 ? 'left' : x === 1 ? 'right' : 'centre') + '"></button>';
+  }));
+  return h + '</div>';
+}
+
+function studio_seg(act, key, value, opts) {
+  return '<div class="seg" role="group">' + opts.map(o =>
+    '<button type="button" class="seg-btn' + (o[0] === value ? ' is-active' : '') + '" data-act="' + act + '" data-' + key + '="' + o[0] + '">' + esc(o[1]) + '</button>').join('') + '</div>';
+}
+
+const STUDIO_OUTRO_LENS = [[0, 'Style’s own'], [2, '2 s'], [3, '3 s'], [4, '4 s'], [5, '5 s'], [6, '6 s'], [8, '8 s']];
+
 function studio_drawInspectorBody() {
   const box = studio_el('studio-insp');
   const p = studio.project;
@@ -3218,75 +3437,122 @@ function studio_drawInspectorBody() {
       '<p class="muted truncate" title="' + esc(s.name) + '">' + esc(s.name) + '</p>' +
       studio_pinRow(s.clip) +
       '<p class="muted mono">' + studio_secs(r.start) + ' → ' + studio_secs(r.end) + ' · kill at ' + studio_secs(r.kill_reel) + '</p>' +
-      '<div class="studio-field"><span class="field-label">Kill</span>' +
-      (s.kills.length > 1 ? '<select class="select" id="studio-f-kill">' + kills + '</select>' : '<span class="muted">' + s.kill.toFixed(2) + ' s into the clip</span>') +
-      '<span class="field-inline studio-nudge"><button type="button" class="btn btn-ghost btn-sm" data-act="studio-slip" data-d="-0.1">−0.1s</button>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-slip" data-d="-0.0167">−1f</button>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-slip" data-d="0.0167">+1f</button>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-slip" data-d="0.1">+0.1s</button></span></div>' +
-      '<div class="studio-field"><span class="field-label">Run-up</span><span class="field-inline">' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-beats" data-what="pre" data-d="-1">−</button>' +
-      '<span class="mono">' + (s.pre / beat).toFixed(s.pre % beat < 0.01 ? 0 : 1) + ' beats · ' + s.pre.toFixed(2) + ' s</span>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-beats" data-what="pre" data-d="1">+</button></span></div>' +
-      '<div class="studio-field"><span class="field-label">Length</span><span class="field-inline">' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-beats" data-what="duration" data-d="-1">−</button>' +
-      '<span class="mono">' + (s.duration / beat).toFixed(s.duration % beat < 0.01 ? 0 : 1) + ' beats · ' + s.duration.toFixed(2) + ' s</span>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-beats" data-what="duration" data-d="1">+</button></span></div>' +
-      '<div class="studio-field"><label class="field-label" for="studio-f-speed">Speed</label>' + studio_select_html('studio-f-speed', 'speed', s.speed) +
-      (s.stretch ? '<span class="muted studio-small">Run-up slowed to ' + Number(s.stretch[0]).toFixed(2) + '× so its kill reaches its mark; the last ' +
-        Number(s.stretch[1]).toFixed(1) + ' s play as recorded. Choosing a speed replaces it.</span>' : '') + '</div>' +
-      '<div class="studio-field"><label class="field-label" for="studio-f-trans">Transition in</label>' +
-      (i ? studio_select_html('studio-f-trans', 'transition', s.transition) +
-        '<input type="range" id="studio-f-tlen" min="0.1" max="1" step="0.05" value="' + (s.tlen || 0.3) + '"' + (s.transition === 't01' ? ' disabled' : '') + ' aria-label="Transition length">'
-         : '<span class="muted">The first shot opens the reel.</span>') + '</div>' +
-      '<div class="studio-field"><span class="field-label">Kill effects</span>' + studio_checks_html('fx', 'kill', s.fx) +
-      '<span class="field-inline"><button type="button" class="btn btn-ghost btn-sm" data-act="studio-fx-all">Use these on every shot</button>' +
-      (i ? '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-tr-all">Use this transition on every cut</button>' : '') +
-      '</span></div>' +
-      '<div class="studio-field"><label class="studio-check"><input type="checkbox" id="studio-f-hero"' + (s.hero ? ' checked' : '') + '> Hero moment</label>' +
-      (s.hero ? studio_checks_html('hero_fx', 'hero', s.hero_fx) +
-        '<label class="field-label" for="studio-f-caption">Caption</label><input class="input" id="studio-f-caption" maxlength="40" value="' + esc(s.caption) + '">' : '') + '</div>' +
-      '<div class="studio-field"><label class="field-label" for="studio-f-camera">Camera</label>' + studio_select_html('studio-f-camera', 'camera', s.camera) + '</div>' +
+      studio_grp('timing', 'Timing',
+        '<div class="studio-field"><span class="field-label">Kill</span>' +
+        (s.kills.length > 1 ? '<select class="select" id="studio-f-kill">' + kills + '</select>' : '<span class="muted">' + s.kill.toFixed(2) + ' s into the clip</span>') +
+        '<span class="field-inline studio-nudge"><button type="button" class="btn btn-ghost btn-sm" data-act="studio-slip" data-d="-0.1">−0.1s</button>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-slip" data-d="-0.0167">−1f</button>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-slip" data-d="0.0167">+1f</button>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-slip" data-d="0.1">+0.1s</button></span></div>' +
+        '<div class="studio-field"><span class="field-label">Run-up</span><span class="field-inline">' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-beats" data-what="pre" data-d="-1">−</button>' +
+        '<span class="mono">' + (s.pre / beat).toFixed(s.pre % beat < 0.01 ? 0 : 1) + ' beats · ' + s.pre.toFixed(2) + ' s</span>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-beats" data-what="pre" data-d="1">+</button></span></div>' +
+        '<div class="studio-field"><span class="field-label">Length</span><span class="field-inline">' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-beats" data-what="duration" data-d="-1">−</button>' +
+        '<span class="mono">' + (s.duration / beat).toFixed(s.duration % beat < 0.01 ? 0 : 1) + ' beats · ' + s.duration.toFixed(2) + ' s</span>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-beats" data-what="duration" data-d="1">+</button></span></div>' +
+        '<div class="studio-field"><label class="field-label" for="studio-f-speed">Speed</label>' + studio_select_html('studio-f-speed', 'speed', s.speed) +
+        (s.stretch ? '<span class="muted studio-small">Run-up slowed to ' + Number(s.stretch[0]).toFixed(2) + '× so its kill reaches its mark; the last ' +
+          Number(s.stretch[1]).toFixed(1) + ' s play as recorded' + (Number(s.stretch[2] || 0) > 0 ? ', after its first frame holds ' + Number(s.stretch[2]).toFixed(1) + ' s' : '') +
+          '. Choosing a speed replaces it.</span>' : '') + '</div>') +
+      studio_grp('trans', 'Transition in',
+        (i ? '<div class="studio-field">' + studio_select_html('studio-f-trans', 'transition', s.transition) +
+          '<input type="range" id="studio-f-tlen" min="0.1" max="1" step="0.05" value="' + (s.tlen || 0.3) + '"' + (s.transition === 't01' ? ' disabled' : '') + ' aria-label="Transition length">' +
+          '<button type="button" class="btn btn-ghost btn-sm studio-add-btn" data-act="studio-tr-all">Use this transition on every cut</button></div>'
+          : '<span class="muted">The first shot opens the reel.</span>')) +
+      studio_grp('fx', 'Kill effects',
+        studio_checks_html('fx', 'kill', s.fx) +
+        '<button type="button" class="btn btn-ghost btn-sm studio-add-btn" data-act="studio-fx-all">Use these on every shot</button>',
+        s.fx.length ? s.fx.length + ' on' : 'none') +
+      studio_grp('hero', 'Hero moment',
+        '<label class="studio-check"><input type="checkbox" id="studio-f-hero"' + (s.hero ? ' checked' : '') + '> Make this the hero shot</label>' +
+        (s.hero ? studio_checks_html('hero_fx', 'hero', s.hero_fx) +
+          '<label class="field-label" for="studio-f-caption">Caption</label><input class="input" id="studio-f-caption" maxlength="40" value="' + esc(s.caption) + '">' : ''),
+        s.hero ? 'on' : '') +
+      studio_grp('camera', 'Camera move',
+        studio_select_html('studio-f-camera', 'camera', s.camera)) +
       '</div>';
     return;
   }
   const styles = (studio.catalog ? studio.catalog.styles : []);
   const pools = p.pools || {};
+  const cam = p.cam || {source: 'none'};
+  const vertical = p.format === 'vertical';
+  const showHandle = (p.overlays || []).indexOf('o07') >= 0;
+  const outroLen = Number(p.outro_len || 0);
   box.innerHTML = tabs + '<div class="card-body studio-insp-body">' +
-    '<p class="studio-tip">To change one shot\'s kill effects, speed or transition, click that shot on the timeline.</p>' +
-    '<div class="studio-field"><span class="field-label">Effects every shot draws from</span>' +
-    '<p class="muted studio-small">Each kill gets its own mix from these, never the same as the shot before.</p>' +
-    '<span class="field-label">Kill effects</span>' + studio_pool_html('kill', pools.kill || []) +
-    '<span class="field-label">Transitions</span>' + studio_pool_html('transition', pools.transition || []) +
-    '<span class="field-inline">' +
-    '<button type="button" class="btn btn-sm" data-act="studio-mix" data-what="kill">Mix kill effects</button>' +
-    '<button type="button" class="btn btn-sm" data-act="studio-mix" data-what="transition">Mix transitions</button>' +
-    '<button type="button" class="btn btn-sm" data-act="studio-mix" data-what="all">Mix everything</button></span></div>' +
-    '<div class="studio-field"><label class="field-label" for="studio-r-style">Style</label>' +
-    '<select class="select" id="studio-r-style">' + styles.map(s => '<option value="' + esc(s.key) + '"' + (s.key === p.style ? ' selected' : '') + '>' + esc(s.label) + '</option>').join('') + '</select>' +
-    '<button type="button" class="btn btn-sm" data-act="studio-restyle" id="studio-restyle-btn"' + (studio.busy ? ' disabled' : '') + '>Rebuild with this style</button>' +
-    '<span class="muted studio-small">Replans every shot. Undo brings your edits back.</span></div>' +
-    '<div class="studio-field"><label class="field-label" for="studio-r-grade">Colour</label>' + studio_select_html('studio-r-grade', 'grade', p.grade) +
-    '<label class="studio-check"><input type="checkbox" id="studio-r-vignette"' + (p.vignette ? ' checked' : '') + '> Soft vignette</label></div>' +
-    '<div class="studio-field"><label class="field-label" for="studio-r-intro">Intro</label>' + studio_select_html('studio-r-intro', 'intro', p.intro) +
-    studio_introRow(p) + '</div>' +
-    '<div class="studio-field"><label class="field-label" for="studio-r-outro">Outro</label>' + studio_select_html('studio-r-outro', 'outro', p.outro) + '</div>' +
-    '<div class="studio-field"><span class="field-label">Overlays</span>' + studio_checks_html('overlays', 'overlay', p.overlays) +
-    '<label class="field-label" for="studio-r-handle">Handle</label><input class="input" id="studio-r-handle" maxlength="40" placeholder="@yourhandle" value="' + esc(p.handle) + '"></div>' +
-    '<div class="studio-field"><span class="field-label">Song</span>' +
-    '<span class="muted truncate">' + (p.song ? esc(p.song.split(/[\\/]/).pop()) : 'No song') + '</span>' +
-    '<button type="button" class="btn btn-sm" data-act="studio-edit-song">' + (p.song ? 'Edit the song and mark kills…' : 'Add a song…') + '</button>' +
-    (p.song ? '<span class="field-inline"><button type="button" class="btn btn-ghost btn-sm" data-act="studio-offset" data-d="-4">−1 bar</button>' +
-      '<span class="mono">starts at ' + studio_secs(p.song_offset) + '</span>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-offset" data-d="4">+1 bar</button></span>' : '') +
-    '<label class="field-label" for="studio-r-music">Music ' + p.music_db.toFixed(0) + ' dB</label>' +
-    '<input type="range" id="studio-r-music" min="-20" max="6" step="1" value="' + p.music_db + '"' + (p.song ? '' : ' disabled') + '>' +
-    '<label class="field-label" for="studio-r-game">Game sound ' + p.game_db.toFixed(0) + ' dB</label>' +
-    '<input type="range" id="studio-r-game" min="-20" max="12" step="1" value="' + p.game_db + '">' +
-    '<label class="studio-check"><input type="checkbox" id="studio-r-duck"' + (p.duck ? ' checked' : '') + '> Duck the music under gunfire</label></div>' +
-    '<div class="studio-field"><span class="field-label">Format</span><div class="seg">' +
-    '<button type="button" class="seg-btn' + (p.format === 'landscape' ? ' is-active' : '') + '" data-act="studio-rfmt" data-fmt="landscape">16:9</button>' +
-    '<button type="button" class="seg-btn' + (p.format === 'vertical' ? ' is-active' : '') + '" data-act="studio-rfmt" data-fmt="vertical">9:16</button></div></div>' +
+    '<p class="studio-tip">To change one shot\'s kill effects, speed or transition, click that shot on the timeline. Point at any effect to see it.</p>' +
+    studio_grp('look', 'Look and shape',
+      '<div class="studio-field"><span class="field-label">Format</span>' +
+      studio_seg('studio-rfmt', 'fmt', p.format, [['landscape', 'Normal 16:9'], ['vertical', 'Vertical 9:16']]) + '</div>' +
+      '<div class="studio-field"><span class="field-label">Framing</span>' +
+      studio_seg('studio-rfit', 'fit', p.vfit || 'zoom', [['zoom', 'Zoom to fill'], ['fit', 'Fit the whole picture']]) +
+      '<span class="muted studio-small">' + ((p.vfit || 'zoom') === 'fit'
+        ? 'All of the game shows, over a blurred copy of itself.'
+        : (vertical ? 'The middle of the game fills the tall frame; the sides are cropped.' : 'The game fills the frame.')) + '</span></div>' +
+      '<div class="studio-field"><label class="field-label" for="studio-r-style">Style</label>' +
+      '<select class="select" id="studio-r-style">' + styles.map(s => '<option value="' + esc(s.key) + '"' + (s.key === p.style ? ' selected' : '') + '>' + esc(s.label) + '</option>').join('') + '</select>' +
+      '<button type="button" class="btn btn-sm studio-add-btn" data-act="studio-restyle" id="studio-restyle-btn"' + (studio.busy ? ' disabled' : '') + '>Rebuild with this style</button>' +
+      '<span class="muted studio-small">Replans every shot. Undo brings your edits back.</span></div>' +
+      '<div class="studio-field"><label class="field-label" for="studio-r-grade">Colour</label>' + studio_select_html('studio-r-grade', 'grade', p.grade) +
+      '<label class="studio-check"><input type="checkbox" id="studio-r-vignette"' + (p.vignette ? ' checked' : '') + '> Soft vignette</label></div>') +
+    studio_grp('cam', 'Facecam',
+      '<div class="studio-field">' +
+      studio_seg('studio-cam-src', 'src', cam.source || 'none', [['none', 'None'], ['inset', 'In the video'], ['file', 'Separate video']]) +
+      '<span class="muted studio-small">' + (cam.source === 'inset' ? 'Cut out of a corner of the recording itself.'
+        : cam.source === 'file' ? 'Its own video file, lined up with each clip.' : 'No facecam in this reel.') + '</span>' +
+      '<button type="button" class="btn btn-sm studio-add-btn" data-act="studio-tab-go" data-tab="facecam">' +
+      (cam.source === 'none' ? 'Set up a facecam…' : 'Facecam setup…') + '</button></div>' +
+      (cam.source && cam.source !== 'none'
+        ? (vertical ? '<div class="studio-field"><span class="field-label">Layout</span>' +
+            studio_seg('studio-cam-layout', 'layout', cam.layout || 'stack', [['stack', 'Camera on top'], ['corner', 'In a corner']]) + '</div>' : '') +
+          (vertical && (cam.layout || 'stack') === 'stack'
+            ? '<div class="studio-field"><label class="field-label" for="studio-r-camsplit">Camera height ' + Math.round((cam.split || 0.38) * 100) + '%</label>' +
+              '<input type="range" id="studio-r-camsplit" min="0.2" max="0.6" step="0.01" value="' + (cam.split || 0.38) + '"></div>'
+            : '<div class="studio-field"><span class="field-label">Where</span><div class="ed-row">' + studio_grid9('studio-cam-pos', cam.pos || [0, 0]) +
+              '<label class="field-label" for="studio-r-camsize">Size ' + Math.round((cam.size || 0.3) * 100) + '%</label>' +
+              '<input type="range" id="studio-r-camsize" min="0.12" max="0.6" step="0.01" value="' + (cam.size || 0.3) + '"></div>' +
+              '<label class="studio-check"><input type="checkbox" id="studio-r-camborder"' + (cam.border !== false ? ' checked' : '') + '> Thin border</label></div>')
+        : ''),
+      cam.source === 'inset' ? 'in the video' : cam.source === 'file' ? 'separate' : 'off') +
+    studio_grp('handle', 'Your handle',
+      '<div class="studio-field"><label class="studio-check"><input type="checkbox" id="studio-r-showhandle"' + (showHandle ? ' checked' : '') + '> Show my handle on the reel</label>' +
+      '<input class="input" id="studio-r-handle" maxlength="40" placeholder="@yourhandle" value="' + esc(p.handle) + '"></div>' +
+      '<div class="studio-field"><span class="field-label">Where</span><div class="ed-row">' + studio_grid9('studio-handle-pos', p.handle_pos || [1, 1]) +
+      '<span class="muted studio-small">Or drag it on the picture.</span></div></div>',
+      showHandle && p.handle ? p.handle : 'off') +
+    studio_grp('ending', 'Opening and ending',
+      '<div class="studio-field"><label class="field-label" for="studio-r-intro">Intro</label>' + studio_select_html('studio-r-intro', 'intro', p.intro) +
+      studio_introRow(p) + '</div>' +
+      '<div class="studio-field"><label class="field-label" for="studio-r-outro">Ending</label>' + studio_select_html('studio-r-outro', 'outro', p.outro) +
+      '<label class="field-label" for="studio-r-outrolen">How long it takes</label>' +
+      '<select class="select" id="studio-r-outrolen"' + (p.outro === 'e12' ? ' disabled' : '') + '>' +
+      STUDIO_OUTRO_LENS.map(o => '<option value="' + o[0] + '"' + (Math.abs(o[0] - outroLen) < 0.01 ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' +
+      '<span class="muted studio-small">' + (p.outro === 'e12' ? 'A hard cut has no length. Pick a fading ending to make it longer.'
+        : outroLen ? 'The picture and the song fade together over ' + outroLen + ' s, and the last frame is held if the footage runs out, so the last kill is never faded.'
+        : 'Longer endings fade the picture and the song together, and ease rather than stop.') + '</span></div>') +
+    studio_grp('pools', 'Effects every shot draws from',
+      '<p class="muted studio-small">Each kill gets its own mix from these, never the same as the shot before.</p>' +
+      '<span class="field-label">Kill effects</span>' + studio_pool_html('kill', pools.kill || []) +
+      '<span class="field-label">Transitions</span>' + studio_pool_html('transition', pools.transition || []) +
+      '<span class="field-inline">' +
+      '<button type="button" class="btn btn-sm" data-act="studio-mix" data-what="kill">Mix kill effects</button>' +
+      '<button type="button" class="btn btn-sm" data-act="studio-mix" data-what="transition">Mix transitions</button>' +
+      '<button type="button" class="btn btn-sm" data-act="studio-mix" data-what="all">Mix everything</button></span>' +
+      '<span class="field-label">Overlays</span>' + studio_checks_html('overlays', 'overlay', (p.overlays || []).filter(o => o !== 'o07'), ['o07'])) +
+    studio_grp('sound', 'Song and sound',
+      '<div class="studio-field">' +
+      '<span class="muted truncate">' + (p.song ? esc(p.song.split(/[\\/]/).pop()) : 'No song') + '</span>' +
+      '<button type="button" class="btn btn-sm studio-add-btn" data-act="studio-edit-song">' + (p.song ? 'Edit the song and mark kills…' : 'Add a song…') + '</button>' +
+      (p.song ? '<span class="field-inline"><button type="button" class="btn btn-ghost btn-sm" data-act="studio-offset" data-d="-4">−1 bar</button>' +
+        '<span class="mono">starts at ' + studio_secs(p.song_offset) + '</span>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-offset" data-d="4">+1 bar</button></span>' : '') +
+      '<label class="field-label" for="studio-r-music">Music ' + p.music_db.toFixed(0) + ' dB</label>' +
+      '<input type="range" id="studio-r-music" min="-20" max="6" step="1" value="' + p.music_db + '"' + (p.song ? '' : ' disabled') + '>' +
+      '<label class="field-label" for="studio-r-game">Game sound ' + p.game_db.toFixed(0) + ' dB</label>' +
+      '<input type="range" id="studio-r-game" min="-20" max="12" step="1" value="' + p.game_db + '">' +
+      '<label class="studio-check"><input type="checkbox" id="studio-r-duck"' + (p.duck ? ' checked' : '') + '> Duck the music under gunfire</label></div>') +
     '</div>';
 }
 
@@ -3307,7 +3573,12 @@ function studio_inspectorInput(e) {
   const list = t.getAttribute('data-list');
   if (list) {
     const vals = Array.prototype.slice.call(studio_el('studio-insp').querySelectorAll('input[data-list="' + list + '"]:checked')).map(x => x.value);
-    studio_change(pr => { if (list === 'overlays') pr.overlays = vals; else pr.shots[i][list] = vals; },
+    /* The handle has its own switch, so its overlay is not in this list and
+       must survive the list being rewritten. */
+    studio_change(pr => {
+      if (list === 'overlays') pr.overlays = vals.concat((pr.overlays || []).includes('o07') ? ['o07'] : []);
+      else pr.shots[i][list] = vals;
+    },
                   list === 'overlays' ? 'Overlays' : studio_shotName(i) + ' · effects', list === 'overlays' ? -1 : i);
     return;
   }
@@ -3324,6 +3595,14 @@ function studio_inspectorInput(e) {
     'studio-r-vignette': () => studio_change(pr => { pr.vignette = t.checked; }, 'Vignette'),
     'studio-r-intro': () => studio_change(pr => { pr.intro = t.value; }, 'The opening'),
     'studio-r-outro': () => studio_change(pr => { pr.outro = t.value; }, 'The ending'),
+    'studio-r-outrolen': () => studio_change(pr => { pr.outro_len = Number(t.value) || 0; }, 'How long the ending takes'),
+    'studio-r-camsplit': () => studio_change(pr => { pr.cam = Object.assign({}, pr.cam, {split: Number(t.value)}); }, 'Facecam height'),
+    'studio-r-camsize': () => studio_change(pr => { pr.cam = Object.assign({}, pr.cam, {size: Number(t.value)}); }, 'Facecam size'),
+    'studio-r-camborder': () => studio_change(pr => { pr.cam = Object.assign({}, pr.cam, {border: t.checked}); }, 'Facecam border'),
+    'studio-r-showhandle': () => studio_change(pr => {
+      const ov = (pr.overlays || []).filter(o => o !== 'o07');
+      pr.overlays = t.checked ? ov.concat(['o07']) : ov;
+    }, t.checked ? 'Your handle · shown' : 'Your handle · hidden'),
     'studio-r-handle': () => studio_change(pr => { pr.handle = t.value; }, 'Your handle'),
     'studio-r-music': () => studio_change(pr => { pr.music_db = Number(t.value); }, 'Music level'),
     'studio-r-game': () => studio_change(pr => { pr.game_db = Number(t.value); }, 'Game sound level'),
@@ -3420,7 +3699,9 @@ async function studio_open(path) {
 }
 
 function studio_tab(which) {
-  ['clips', 'timeline', 'song'].forEach(k => {
+  const view = document.getElementById('view-studio');
+  if (view) view.classList.toggle('is-editing', which === 'timeline');
+  ['clips', 'timeline', 'song', 'facecam'].forEach(k => {
     studio_show('studio-pane-' + k, k === which);
     const b = studio_el('studio-tab-' + k);
     b.classList.toggle('is-active', k === which);
@@ -3428,8 +3709,596 @@ function studio_tab(which) {
   });
   const a = studio_el('studio-sg-audio');
   if (which !== 'song' && a && !a.paused) a.pause();
-  if (which === 'timeline') { studio_fit(); studio_drawAll(); }
+  if (which === 'timeline') { studio_fitEditor(); studio_fit(); studio_drawAll(); }
   if (which === 'song') studio_sgOpen();
+  if (which === 'facecam') studio_fcOpen();
+  const fg = studio_el('studio-fc-game');
+  if (which !== 'facecam' && fg && !fg.paused) studio_fcPlay();
+}
+
+/* ------------------------------------------------------------ the editor */
+
+/* The editor fills the window and nothing else: its height is what the view
+   has left below the Studio's own header, so the page never scrolls while
+   editing and the tracks are never below the fold. */
+function studio_fitEditor() {
+  const ed = studio_el('studio-pane-timeline'), host = document.getElementById('views');
+  if (!ed || !host || ed.classList.contains('hide')) return;
+  const top = ed.getBoundingClientRect().top - host.getBoundingClientRect().top + host.scrollTop;
+  const h = Math.max(600, host.clientHeight - top - 20);
+  ed.style.setProperty('--ed-h', h + 'px');
+  const pl = studio_el('studio-player');
+  if (pl && studio.project) pl.classList.toggle('is-vertical', studio.project.format === 'vertical');
+  studio_frameDraw();
+}
+
+/* WHAT AN EFFECT LOOKS LIKE. The example of the part the pointer is on --
+   the same card the parts bin plays -- over the inspector. */
+function studio_fxPreview(id) {
+  const box = studio_el('studio-fxprev');
+  if (!box) return;
+  const part = id ? studio_part(id) : null;
+  if (!part || !part.id) { return; }
+  if (studio.fxShown === id) return;
+  studio.fxShown = id;
+  if (!studio.examples && !studio.exLoading) {
+    studio.exLoading = true;
+    studio_binLoad(false).then(() => { studio.exLoading = false; const was = studio.fxShown; studio.fxShown = ''; studio_fxPreview(was); });
+  }
+  studio_el('studio-fxprev-shot').innerHTML = studio_binShot(id);
+  studio_el('studio-fxprev-name').textContent = part.label || id;
+  studio_el('studio-fxprev-blurb').textContent = part.blurb || '';
+  box.classList.remove('hide');
+  const v = box.querySelector('video');
+  if (v) { v.preload = 'auto'; v.play().catch(() => {}); }
+  document.querySelectorAll('#studio-insp .studio-check-chip.is-previewing').forEach(x => x.classList.remove('is-previewing'));
+}
+
+function studio_fxHover(e) {
+  const t = e.target;
+  if (!t || !t.closest) return;
+  const chip = t.closest('#studio-insp .studio-check-chip');
+  if (chip) {
+    const inp = chip.querySelector('input');
+    if (inp) { studio_fxPreview(inp.value); chip.classList.add('is-previewing'); }
+    return;
+  }
+  /* The effect and transition marks on the tracks show theirs too. */
+  const mark = t.closest('#studio-tracks [data-part]');
+  if (mark) { studio_fxPreview(mark.getAttribute('data-part')); return; }
+  const sel = t.closest('#studio-insp select');
+  if (sel && /^studio-(f|r)-(speed|trans|camera|grade|intro|outro)$/.test(sel.id)) studio_fxPreview(sel.value);
+}
+
+/* THE FRAME OVER THE PLAYER: where the handle will be, dragged into place.
+   Drawn over the picture the video actually occupies (object-fit leaves bars),
+   with the same arithmetic the render uses: the handle's position is a share
+   of the room the text leaves, margins included. */
+function studio_videoRect() {
+  const v = studio_el('studio-video'), pl = studio_el('studio-player');
+  if (!v || !pl) return null;
+  const W = pl.clientWidth, H = pl.clientHeight;
+  const vert = studio.project && studio.project.format === 'vertical';
+  const ar = vert ? 9 / 16 : 16 / 9;
+  let w = W, h = W / ar;
+  if (h > H) { h = H; w = H * ar; }
+  return {x: (W - w) / 2, y: (H - h) / 2, w: w, h: h};
+}
+
+function studio_frameDraw() {
+  const fr = studio_el('studio-frame'), chip = studio_el('studio-handle-chip'), p = studio.project;
+  if (!fr || !chip) return;
+  const on = !!(p && studio.sel < 0 && (p.overlays || []).indexOf('o07') >= 0 && p.handle);
+  fr.classList.toggle('hide', !on);
+  if (!on) return;
+  const r = studio_videoRect();
+  if (!r) return;
+  chip.textContent = p.handle;
+  /* The reel draws it at 3.2% of the frame's height. */
+  chip.style.fontSize = Math.max(9, r.h * 0.032) + 'px';
+  const pos = (studio.handleDrag && studio.handleDrag.pos) || p.handle_pos || [1, 1];
+  const mx = r.w * 0.025, my = r.h * 0.03;
+  const tw = chip.offsetWidth, th = chip.offsetHeight;
+  chip.style.left = (r.x + mx + (r.w - tw - 2 * mx) * pos[0]) + 'px';
+  chip.style.top = (r.y + my + (r.h - th - 2 * my) * pos[1]) + 'px';
+}
+
+function studio_handlePointer(e) {
+  const chip = studio_el('studio-handle-chip'), p = studio.project;
+  if (!chip || !p) return;
+  if (e.type === 'pointerdown') {
+    if (e.target !== chip) return;
+    const r = studio_videoRect();
+    studio.handleDrag = {x0: e.clientX, y0: e.clientY, pos: (p.handle_pos || [1, 1]).slice(),
+                         start: (p.handle_pos || [1, 1]).slice(), r: r, id: e.pointerId};
+    try { chip.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
+    e.preventDefault();
+    return;
+  }
+  const g = studio.handleDrag;
+  if (!g || e.pointerId !== g.id) return;
+  const roomX = g.r.w * 0.95 - chip.offsetWidth, roomY = g.r.h * 0.94 - chip.offsetHeight;
+  const cl = v => Math.max(0, Math.min(1, v));
+  g.pos = [cl(g.start[0] + (e.clientX - g.x0) / Math.max(1, roomX)),
+           cl(g.start[1] + (e.clientY - g.y0) / Math.max(1, roomY))];
+  if (e.type === 'pointermove') { studio_frameDraw(); return; }
+  studio.handleDrag = null;
+  const pos = [Math.round(g.pos[0] * 1000) / 1000, Math.round(g.pos[1] * 1000) / 1000];
+  if (Math.abs(pos[0] - g.start[0]) + Math.abs(pos[1] - g.start[1]) > 0.002) {
+    studio_change(pr => { pr.handle_pos = pos; }, 'Your handle · moved');
+  } else studio_frameDraw();
+}
+
+/* ------------------------------------------------------------ the facecam tab */
+
+async function studio_fcLoad() {
+  const r = await API.get('/api/studio/facecam');
+  if (r && r.ok) { studio.fc.inset = r.inset; studio.fc.links = r.links || {}; }
+}
+
+/* The run a clip belongs to, the way clips/facecam.py keys its links. */
+function studio_fcKey(path) {
+  const parts = String(path || '').split(/[\\/]/);
+  return parts.length >= 3 && parts[parts.length - 2] === 'clips' ? parts[parts.length - 3] : parts[parts.length - 2] || '';
+}
+
+function studio_fcClipRow(path) {
+  const lc = String(path).toLowerCase();
+  for (const id in studio.clipIndex) {
+    const c = studio.clipIndex[id];
+    if (String(c.path).toLowerCase() === lc) return c;
+  }
+  return null;
+}
+
+async function studio_fcOpen() {
+  await studio_fcLoad();
+  const p = studio.project;
+  if (!p) return;
+  const clips = [];
+  const seen = {};
+  p.shots.forEach(s => { if (!seen[s.clip]) { seen[s.clip] = 1; clips.push(s); } });
+  const sel = studio_el('studio-fc-clip');
+  sel.innerHTML = clips.map((s, i) => '<option value="' + i + '">' + esc(s.name) + '</option>').join('');
+  studio.fc.clips = clips;
+  if (studio.fc.clipI == null || studio.fc.clipI >= clips.length) studio.fc.clipI = 0;
+  sel.value = String(studio.fc.clipI);
+  const s0 = clips[studio.fc.clipI];
+  studio.fc.t = s0 ? Math.max(0, s0.kill - 0.5) : 0;
+  studio_fcFrame();
+  studio_fcDraw();
+}
+
+function studio_fcFrame() {
+  const s = (studio.fc.clips || [])[studio.fc.clipI];
+  const img = studio_el('studio-fc-img');
+  if (!s || !img) return;
+  studio.fc.t = Math.max(0, Math.min(Number(s.clip_seconds || 0) - 0.1, studio.fc.t));
+  img.onload = () => { studio_fcBox(); studio_fcMock(); };
+  img.src = studio_media('/api/studio/thumb', s.clip, '&t=' + studio.fc.t.toFixed(2) + '&w=960');
+}
+
+function studio_fcDraw() {
+  const p = studio.project;
+  if (!p) return;
+  const cam = p.cam || {source: 'none'};
+  const src = cam.source || 'none';
+  studio_el('studio-fc-src').innerHTML = [['none', 'No facecam'], ['inset', 'It is in my recording'], ['file', 'It is a separate video']].map(o =>
+    '<button type="button" class="seg-btn' + (o[0] === src ? ' is-active' : '') + '" data-act="studio-cam-src" data-src="' + o[0] + '">' + o[1] + '</button>').join('');
+  studio_show('studio-fc-inset', src === 'inset');
+  studio_show('studio-fc-file', src === 'file');
+  studio_show('studio-fc-none', src === 'none');
+  studio_el('studio-fc-layout').innerHTML = src === 'none'
+    ? '<p class="muted">Choose where your camera comes from first.</p>'
+    : studio_camControls(p, 'fcl');
+  if (src === 'inset') studio_fcBox();
+  if (src === 'file') studio_fcLinks();
+  studio_fcMock();
+}
+
+/* The layout controls, for the inspector's Facecam group and this tab alike.
+   `pre` keeps their ids apart: both are in the page at once. */
+function studio_camControls(p, pre) {
+  const cam = p.cam || {}, vertical = p.format === 'vertical';
+  const layout = vertical ? (cam.layout || 'stack') : 'corner';
+  return (vertical ? '<div class="studio-field"><span class="field-label">Layout</span>' +
+      studio_seg('studio-cam-layout', 'layout', layout, [['stack', 'Camera on top, game below'], ['corner', 'Camera in a corner']]) + '</div>'
+      : '<p class="muted studio-small">A 16:9 reel keeps the whole game; the camera sits in a corner of it.</p>') +
+    (layout === 'stack'
+      ? '<div class="studio-field"><label class="field-label" for="studio-' + pre + '-camsplit">Camera height ' + Math.round((cam.split || 0.38) * 100) + '% of the frame</label>' +
+        '<input type="range" id="studio-' + pre + '-camsplit" data-cam="split" min="0.2" max="0.6" step="0.01" value="' + (cam.split || 0.38) + '"></div>' +
+        '<div class="studio-field"><span class="field-label">The game below it</span>' +
+        studio_seg('studio-rfit', 'fit', p.vfit || 'zoom', [['zoom', 'Zoom to fill'], ['fit', 'Fit the whole picture']]) + '</div>'
+      : '<div class="studio-field"><span class="field-label">Where</span><div class="ed-row">' + studio_grid9('studio-cam-pos', cam.pos || [0, 0]) +
+        '<div class="studio-field"><label class="field-label" for="studio-' + pre + '-camsize">Size ' + Math.round((cam.size || 0.3) * 100) + '% of the width</label>' +
+        '<input type="range" id="studio-' + pre + '-camsize" data-cam="size" min="0.12" max="0.6" step="0.01" value="' + (cam.size || 0.3) + '"></div></div>' +
+        '<label class="studio-check"><input type="checkbox" id="studio-' + pre + '-camborder" data-cam="border"' + (cam.border !== false ? ' checked' : '') + '> Thin border</label></div>');
+}
+
+/* ---- in the video: the box */
+
+function studio_fcBox() {
+  const p = studio.project, img = studio_el('studio-fc-img'), box = studio_el('studio-fc-box');
+  if (!p || !img || !box) return;
+  const b = (studio.fc.drag && studio.fc.drag.box) || ((p.cam || {}).box) || [0, 0, 1, 1];
+  const full = b[2] >= 0.999 && b[3] >= 0.999;
+  box.classList.toggle('hide', full || !img.naturalWidth);
+  box.style.left = (img.offsetLeft + b[0] * img.clientWidth) + 'px';
+  box.style.top = (img.offsetTop + b[1] * img.clientHeight) + 'px';
+  box.style.width = (b[2] * img.clientWidth) + 'px';
+  box.style.height = (b[3] * img.clientHeight) + 'px';
+  studio_el('studio-fc-boxnote').textContent = full ? 'No box yet: drag one round your camera.' :
+    'Box at ' + Math.round(b[0] * 100) + '%, ' + Math.round(b[1] * 100) + '% · ' + Math.round(b[2] * 100) + '% × ' + Math.round(b[3] * 100) + '% of the frame.';
+}
+
+function studio_fcPointer(e) {
+  const img = studio_el('studio-fc-img');
+  if (!img || !studio.project) return;
+  if (e.type === 'pointerdown') {
+    if (!e.target.closest || !e.target.closest('#studio-fc-stage')) return;
+    const r = img.getBoundingClientRect();
+    studio.fc.drag = {r: r, x0: (e.clientX - r.left) / r.width, y0: (e.clientY - r.top) / r.height, id: e.pointerId};
+    try { studio_el('studio-fc-stage').setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
+    e.preventDefault();
+    return;
+  }
+  const g = studio.fc.drag;
+  if (!g || e.pointerId !== g.id) return;
+  const cl = v => Math.max(0, Math.min(1, v));
+  const x1 = cl((e.clientX - g.r.left) / g.r.width), y1 = cl((e.clientY - g.r.top) / g.r.height);
+  g.box = [Math.min(g.x0, x1), Math.min(g.y0, y1), Math.abs(x1 - g.x0), Math.abs(y1 - g.y0)];
+  if (e.type === 'pointermove') { studio_fcBox(); studio_fcMock(); return; }
+  studio.fc.drag = null;
+  if (!g.box || g.box[2] < 0.03 || g.box[3] < 0.03) { studio_fcBox(); return; }   /* a click, not a box */
+  const box = g.box.map(v => Math.round(v * 10000) / 10000);
+  studio.fc.inset = box;
+  API.post('/api/studio/facecam/inset', {box: box});
+  studio_change(pr => { pr.cam = Object.assign({}, pr.cam, {source: 'inset', box: box}); }, 'Facecam · the box round it');
+}
+
+/* ---- a separate video: the links, and lining one up */
+
+function studio_fcLinks() {
+  const p = studio.project, host = studio_el('studio-fc-links');
+  if (!p || !host) return;
+  const runs = {};
+  p.shots.forEach(s => {
+    const k = studio_fcKey(s.clip);
+    (runs[k] = runs[k] || {key: k, clips: []}).clips.push(s);
+  });
+  host.innerHTML = Object.keys(runs).map(k => {
+    const link = studio.fc.links[k];
+    const n = runs[k].clips.length;
+    return '<div class="studio-fc-link' + (studio.fc.key === k ? ' is-on' : '') + '">' +
+      '<div class="studio-fc-link-text"><strong class="truncate">' + esc(k.indexOf('import-') === 0 ? 'Added clip · ' + k.slice(7) : k) + '</strong>' +
+      '<span class="muted studio-small">' + n + (n === 1 ? ' shot' : ' shots') + ' · ' +
+      (link ? esc(String(link.file).split(/[\\/]/).pop()) + ' · offset ' + Number(link.offset || 0).toFixed(2) + ' s' : 'no camera video') + '</span></div>' +
+      '<span class="field-inline">' +
+      '<button type="button" class="btn btn-sm" data-act="studio-fc-attach" data-key="' + esc(k) + '" data-clip="' + esc(runs[k].clips[0].clip) + '">' + (link ? 'Change…' : 'Attach…') + '</button>' +
+      (link ? '<button type="button" class="btn btn-sm" data-act="studio-fc-lineup" data-key="' + esc(k) + '" data-clip="' + esc(runs[k].clips[0].clip) + '">Line up</button>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-fc-unlink" data-key="' + esc(k) + '">Remove</button>' : '') +
+      '</span></div>';
+  }).join('');
+}
+
+async function studio_fcAttach(key, clip) {
+  const r = await API.post('/api/clips/pick', {kind: 'video'});
+  if (!r || !r.path) return;
+  const got = await API.post('/api/studio/facecam/link', {key: key, path: r.path, offset: 0});
+  if (!got || !got.ok) { toast((got && got.error) || 'Could not attach that video.', 'warn'); return; }
+  studio.fc.links = got.links;
+  studio_fcTouched('Facecam · camera video attached');
+  studio_fcLineup(key, clip);
+  studio_fcSync();
+}
+
+async function studio_fcUnlink(key) {
+  const got = await API.post('/api/studio/facecam/unlink', {key: key});
+  if (got && got.ok) studio.fc.links = got.links;
+  if (studio.fc.key === key) { studio.fc.key = ''; studio_show('studio-fc-syncbox', false); }
+  studio_fcTouched('Facecam · camera video removed');
+}
+
+/* A link lives outside the project, so the timeline cannot see it change.
+   An empty edit of `cam` makes the page ask the server again, which is where
+   the per-shot facecam files come from, and puts the change on the render list. */
+function studio_fcTouched(label) {
+  studio_change(pr => { pr.cam = Object.assign({}, pr.cam); }, label);
+  studio_fcDraw();
+}
+
+function studio_fcLineup(key, clip) {
+  const link = studio.fc.links[key];
+  if (!link) return;
+  studio.fc.key = key; studio.fc.clip = clip;
+  const row = studio_fcClipRow(clip);
+  /* A link on a session is against its recording; this clip starts `start` into it. */
+  studio.fc.start = row && key === studio_fcKey(clip) ? Number(row.start || 0) : 0;
+  studio.fc.offset = Number(link.offset || 0);
+  const g = studio_el('studio-fc-game'), c = studio_el('studio-fc-cam');
+  g.src = studio_media('/api/clips/video', clip);
+  c.src = studio_media('/api/studio/facecam/video', link.file);
+  studio_show('studio-fc-syncbox', true);
+  studio_el('studio-fc-syncnote').textContent = '';
+  studio_fcClock();
+  studio_fcLinks();
+}
+
+function studio_fcCamTime() {
+  const g = studio_el('studio-fc-game');
+  return (g ? g.currentTime : 0) + studio.fc.start + studio.fc.offset;
+}
+
+function studio_fcClock() {
+  studio_el('studio-fc-offset').textContent = (studio.fc.offset >= 0 ? '+' : '') + studio.fc.offset.toFixed(2) + ' s';
+  const g = studio_el('studio-fc-game');
+  studio_el('studio-fc-clock').textContent = studio_secs(g ? g.currentTime : 0);
+  studio_el('studio-fc-play').textContent = g && !g.paused ? 'Pause' : 'Play both';
+}
+
+function studio_fcPlay() {
+  const g = studio_el('studio-fc-game'), c = studio_el('studio-fc-cam');
+  if (!g || !c) return;
+  if (!g.paused) { g.pause(); c.pause(); studio_fcClock(); return; }
+  c.currentTime = Math.max(0, studio_fcCamTime());
+  g.play().catch(() => {}); c.play().catch(() => {});
+  const tick = () => {
+    if (g.paused) { c.pause(); studio_fcClock(); return; }
+    /* Two players drift apart; pull the camera back when it is a frame or two out. */
+    const want = studio_fcCamTime();
+    if (Math.abs(c.currentTime - want) > 0.08) c.currentTime = Math.max(0, want);
+    studio_fcClock();
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+function studio_fcNudge(d) {
+  studio.fc.offset = Math.round((studio.fc.offset + d) * 1000) / 1000;
+  const c = studio_el('studio-fc-cam');
+  if (c) c.currentTime = Math.max(0, studio_fcCamTime());
+  studio_fcClock();
+  clearTimeout(studio.fc.saveT);
+  studio.fc.saveT = setTimeout(studio_fcSaveOffset, 500);
+}
+
+async function studio_fcSaveOffset() {
+  const got = await API.post('/api/studio/facecam/offset', {key: studio.fc.key, offset: studio.fc.offset});
+  if (got && got.ok) { studio.fc.links = got.links; studio_fcTouched('Facecam · lined up'); }
+}
+
+async function studio_fcSync() {
+  const btn = studio_el('studio-fc-syncbtn'), note = studio_el('studio-fc-syncnote');
+  if (!studio.fc.key) return;
+  btn.disabled = true;
+  note.textContent = 'Listening to both recordings…';
+  const r = await API.post('/api/studio/facecam/sync', {key: studio.fc.key, clip: studio.fc.clip});
+  btn.disabled = false;
+  if (r && r.ok) {
+    studio.fc.offset = Number(r.offset);
+    note.textContent = 'Lined up by their sound (confidence ' + r.confidence + '). Play both to check it.';
+    await studio_fcSaveOffset();
+  } else {
+    note.textContent = (r && r.error) || 'Could not line them up.';
+  }
+  studio_fcClock();
+}
+
+/* ---- the mock: the layout drawn from stills, before anything renders */
+
+function studio_fcMock() {
+  const cv = studio_el('studio-fc-mock'), p = studio.project, img = studio_el('studio-fc-img');
+  if (!cv || !p) return;
+  const vertical = p.format === 'vertical';
+  const W = vertical ? 1080 : 1920, H = vertical ? 1920 : 1080;
+  const scale = vertical ? 0.16 : 0.18;
+  cv.width = Math.round(W * scale); cv.height = Math.round(H * scale);
+  const x = cv.getContext('2d');
+  x.setTransform(scale, 0, 0, scale, 0, 0);
+  x.fillStyle = '#000'; x.fillRect(0, 0, W, H);
+  const cam = p.cam || {}, have = img && img.naturalWidth;
+  const src = cam.source || 'none';
+  const lay = studio_camLayout(p.format, W, H, cam, p.vfit || 'zoom', src !== 'none');
+  const [gx, gy, gw, gh] = lay.game;
+  const drawCover = (sx, sy, sw, sh, dx, dy, dw, dh) => {
+    const sa = sw / sh, da = dw / dh;
+    let cx = sx, cy = sy, cw = sw, ch = sh;
+    if (sa > da) { cw = sh * da; cx = sx + (sw - cw) / 2; } else { ch = sw / da; cy = sy + (sh - ch) / 2; }
+    x.drawImage(img, cx, cy, cw, ch, dx, dy, dw, dh);
+  };
+  if (have) {
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    if (lay.fit === 'fit') {
+      x.save(); x.filter = 'blur(20px) brightness(0.8)'; drawCover(0, 0, iw, ih, gx, gy, gw, gh); x.restore();
+      const k = Math.min(gw / iw, gh / ih);
+      x.drawImage(img, gx + (gw - iw * k) / 2, gy + (gh - ih * k) / 2, iw * k, ih * k);
+    } else drawCover(0, 0, iw, ih, gx, gy, gw, gh);
+    if (lay.cam) {
+      const [cx, cy, cw, ch] = lay.cam;
+      if (src === 'inset') {
+        const b = cam.box || [0, 0, 1, 1];
+        drawCover(b[0] * iw, b[1] * ih, b[2] * iw, b[3] * ih, cx, cy, cw, ch);
+      } else {
+        x.fillStyle = '#2a2f3a'; x.fillRect(cx, cy, cw, ch);
+        x.fillStyle = '#9aa3b2'; x.font = 'bold ' + Math.round(ch * 0.12) + 'px sans-serif';
+        x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText('CAMERA', cx + cw / 2, cy + ch / 2);
+      }
+      if (cam.border !== false && lay.cam[2] < W) { x.strokeStyle = 'rgba(255,255,255,.9)'; x.lineWidth = 6; x.strokeRect(cx, cy, cw, ch); }
+    }
+  }
+}
+
+/* The same arithmetic as clips/facecam.py layout(), for the mock only: the
+   render asks the server, which is the one that has to be right. */
+function studio_camLayout(fmt, W, H, cam, fit, has) {
+  const even = v => Math.max(2, Math.round(v / 2) * 2);
+  const out = {fit: fit === 'fit' ? 'fit' : 'zoom', game: [0, 0, W, H], cam: null};
+  if (!has) return out;
+  if (fmt === 'vertical' && (cam.layout || 'stack') === 'stack') {
+    const ch = even(H * (cam.split || 0.38));
+    out.cam = [0, 0, W, ch]; out.game = [0, ch, W, H - ch];
+    return out;
+  }
+  const b = cam.box || [0, 0, 1, 1];
+  const aspect = (b[3] / Math.max(b[2], 1e-3)) / (16 / 9);
+  let cw = even(W * (cam.size || 0.3)), ch = even(cw * aspect);
+  if (ch > H * 0.7) { ch = even(H * 0.7); cw = even(ch / Math.max(aspect, 1e-3)); }
+  const m = even(Math.min(W, H) * 0.03), pos = cam.pos || [0, 0];
+  out.cam = [even(m + (W - cw - 2 * m) * pos[0]), even(m + (H - ch - 2 * m) * pos[1]), cw, ch];
+  return out;
+}
+
+/* The layout controls' inputs, wherever they are. */
+function studio_camInput(e) {
+  const t = e.target;
+  const what = t && t.getAttribute && t.getAttribute('data-cam');
+  if (!what || !studio.project || !t.closest('#view-studio')) return;
+  if (t.closest('#studio-insp')) return;           /* the inspector's own handler has it */
+  const v = what === 'border' ? t.checked : Number(t.value);
+  if (e.type === 'input' && what !== 'border') {
+    /* Live while dragging, into the mock only; the edit lands on release. */
+    studio.project.cam = Object.assign({}, studio.project.cam, {[what]: v});
+    studio_fcMock();
+    return;
+  }
+  studio_change(pr => { pr.cam = Object.assign({}, pr.cam, {[what]: v}); }, 'Facecam · ' + what);
+}
+
+/* ------------------------------------------------------------ your own clips */
+
+async function studio_impAdd() {
+  const r = await API.post('/api/clips/pick', {kind: 'video'});
+  if (!r || !r.path) return;
+  toast('Adding ' + r.path.split(/[\\/]/).pop() + '…');
+  const got = await API.post('/api/studio/import', {path: r.path});
+  if (!got || !got.ok) { toast((got && got.error) || 'Could not add that clip.', 'warn'); return; }
+  await studio_impOpen(got.clip.path, true);
+}
+
+async function studio_impGames() {
+  if (studio.imp.games) return studio.imp.games;
+  const r = await API.get('/api/clips/games');
+  studio.imp.games = (r && r.games) || (Array.isArray(r) ? r : []);
+  return studio.imp.games;
+}
+
+async function studio_impOpen(path, fresh) {
+  const info = await API.post('/api/studio/import/info', {path: path});
+  if (!info || !info.ok) { toast((info && info.error) || 'Could not open that clip.', 'warn'); return; }
+  const imp = studio.imp;
+  imp.path = path; imp.seconds = Number(info.seconds) || 0; imp.kills = (info.kills || []).slice();
+  imp.fresh = !!fresh; imp.dirty = false; imp.sel = -1;
+  const games = await studio_impGames();
+  const gsel = studio_el('studio-imp-game');
+  gsel.innerHTML = games.map(g => '<option value="' + esc(g.game_key) + '" data-name="' + esc(g.game) + '"' +
+    (g.game === info.game ? ' selected' : '') + '>' + esc(g.game) + '</option>').join('') +
+    '<option value=""' + (games.some(g => g.game === info.game) ? '' : ' selected') + ' data-name="Other">Another game (mark by hand)</option>';
+  studio_el('studio-imp-name').value = info.title || '';
+  studio_el('studio-imp-presets').innerHTML = (info.presets || []).map(t =>
+    '<button type="button" class="reel-chip" data-act="studio-imp-preset" data-t="' + esc(t) + '">' + esc(t) + '</button>').join('');
+  studio_el('studio-imp-title').textContent = fresh ? 'Added · mark its kills' : 'Your clip';
+  studio_el('studio-imp-detnote').textContent = '';
+  studio_el('studio-imp-msg').textContent = '';
+  const v = studio_el('studio-imp-video');
+  v.src = studio_media('/api/clips/video', path);
+  studio_show('studio-imp-scrim', true);
+  studio_impDraw();
+}
+
+function studio_impDraw() {
+  const imp = studio.imp, v = studio_el('studio-imp-video');
+  imp.kills.sort((a, b) => a - b);
+  studio_el('studio-imp-kills').innerHTML = imp.kills.length
+    ? imp.kills.map((k, i) => '<span class="reel-chip' + (i === imp.sel ? ' is-on' : '') + '" data-act="studio-imp-seek" data-i="' + i + '">' +
+        (i + 1) + ' · ' + studio_secs(k) + ' <button type="button" class="studio-imp-x" data-act="studio-imp-drop" data-i="' + i + '" aria-label="Remove kill ' + (i + 1) + '">×</button></span>').join('')
+    : '<span class="muted studio-small">No kills marked yet.</span>';
+  const t = v ? v.currentTime || 0 : 0;
+  studio_el('studio-imp-clock').textContent = studio_secs(t);
+  studio_el('studio-imp-play').textContent = v && !v.paused ? 'Pause' : 'Play';
+  const c = studio_sgCanvas('studio-imp-lane', 46);
+  if (!c) return;
+  const {ctx, W, H} = c, dur = imp.seconds || (v && v.duration) || 1, X = s => s / dur * W;
+  ctx.fillStyle = studio_tok('--surface-sunken') || '#111'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = studio_tok('--border-subtle') || '#333';
+  for (let s = 0; s <= dur; s += 1) ctx.fillRect(X(s), H - 8, 1, 8);
+  imp.kills.forEach((k, i) => {
+    ctx.fillStyle = i === imp.sel ? studio_tok('--warn') || '#e3b341' : studio_tok('--accent') || '#5aa9ff';
+    ctx.save(); ctx.translate(X(k), H / 2); ctx.rotate(Math.PI / 4); ctx.fillRect(-6, -6, 12, 12); ctx.restore();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 11px sans-serif'; ctx.fillText(String(i + 1), X(k) + 9, 14);
+  });
+  ctx.fillStyle = '#ff5c5c'; ctx.fillRect(X(t) - 1, 0, 2, H);
+}
+
+function studio_impMark() {
+  const v = studio_el('studio-imp-video'), imp = studio.imp;
+  if (!v) return;
+  const t = Math.round(v.currentTime * 1000) / 1000;
+  if (imp.kills.some(k => Math.abs(k - t) < 0.05)) return;
+  if (imp.kills.length >= 12) { toast('Twelve kills is the most one clip can carry.', 'warn'); return; }
+  imp.kills.push(t); imp.dirty = true;
+  studio_impDraw();
+}
+
+async function studio_impDetect() {
+  const gsel = studio_el('studio-imp-game'), opt = gsel.selectedOptions[0];
+  const note = studio_el('studio-imp-detnote'), btn = studio_el('studio-imp-detect');
+  if (!gsel.value) { note.textContent = 'AutoStream has no kill detector for another game. Mark them by hand while it plays.'; return; }
+  btn.disabled = true;
+  note.textContent = 'Reading the kills…';
+  let st = await API.post('/api/studio/import/detect', {path: studio.imp.path, game_key: gsel.value, game: opt ? opt.getAttribute('data-name') : ''});
+  while (st && st.state === 'running') {
+    note.textContent = 'Reading the kills' + (st.total ? ' · ' + st.done + ' of ' + st.total : '') + '…';
+    await new Promise(r => setTimeout(r, 700));
+    st = await API.get('/api/studio/import/detect/status');
+  }
+  btn.disabled = false;
+  if (!st) { note.textContent = 'Detection stopped.'; return; }
+  note.textContent = st.message || '';
+  if (st.state === 'done' && (st.kills || []).length) {
+    const had = studio.imp.kills;
+    /* What it found is a proposal: kept beside anything marked by hand. */
+    (st.kills || []).forEach(k => { if (!had.some(h => Math.abs(h - k) < 0.3)) had.push(k); });
+    studio.imp.dirty = true;
+    studio_impDraw();
+  }
+}
+
+async function studio_impSave(close) {
+  const imp = studio.imp, gsel = studio_el('studio-imp-game'), opt = gsel.selectedOptions[0];
+  const got = await API.post('/api/studio/import/save', {path: imp.path, kills: imp.kills,
+    title: studio_el('studio-imp-name').value, game: opt ? opt.getAttribute('data-name') : ''});
+  if (!got || !got.ok) { studio_el('studio-imp-msg').textContent = (got && got.error) || 'Could not save.'; return false; }
+  imp.dirty = false;
+  if (!got.kills.length) toast('Saved without kills: mark at least one, or the reel has nothing to cut to.', 'warn');
+  else toast('Saved ' + got.kills.length + (got.kills.length === 1 ? ' kill.' : ' kills.'), 'ok');
+  if (close) studio_impClose(true);
+  studio_load(true);
+  return true;
+}
+
+function studio_impClose(force) {
+  const imp = studio.imp;
+  if (!force && imp.dirty && !confirm('Close without saving the kills you marked?')) return;
+  const v = studio_el('studio-imp-video');
+  if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
+  /* A detection this dialog started has nothing left to report to. */
+  API.post('/api/studio/import/detect/cancel', {});
+  studio_show('studio-imp-scrim', false);
+}
+
+function studio_impKey(e) {
+  if (studio_el('studio-imp-scrim').classList.contains('hide')) return false;
+  const a = document.activeElement;
+  if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'range') return false;
+  const v = studio_el('studio-imp-video');
+  if (e.key === 'k' || e.key === 'K') { studio_impMark(); }
+  else if (e.key === ' ') { if (v.paused) v.play().catch(() => {}); else v.pause(); }
+  else if (e.key === ',') { v.pause(); v.currentTime = Math.max(0, v.currentTime - 1 / 30); }
+  else if (e.key === '.') { v.pause(); v.currentTime = Math.min(v.duration || 1e9, v.currentTime + 1 / 30); }
+  else if (e.key === 'Escape') { studio_impClose(false); }
+  else return false;
+  e.preventDefault();
+  return true;
 }
 
 /* ------------------------------------------------------------ wiring */
@@ -3536,7 +4405,11 @@ function studio_wire() {
       const key = act === 'studio-fmt' ? 'fmt' : 'order';
       studio[key] = b.getAttribute('data-' + key);
       b.parentElement.querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('is-active', x === b));
-      if (key === 'fmt') studio_mkDefault();
+      if (key === 'fmt') { studio_mkDefault(); studio_show('studio-mk-fit', studio.fmt === 'vertical'); }
+    }
+    else if (act === 'studio-mk-fit') {
+      studio.vfit = b.getAttribute('data-fit');
+      b.parentElement.querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('is-active', x === b));
     }
     else if (act === 'studio-build') studio_build();
     else if (act === 'studio-open') studio_open(b.getAttribute('data-path'));
@@ -3602,6 +4475,47 @@ function studio_wire() {
     }
     else if (act === 'studio-rfmt' && p) studio_change(pr => { pr.format = b.getAttribute('data-fmt'); },
       'Format · ' + (b.getAttribute('data-fmt') === 'vertical' ? '9:16' : '16:9'));
+    else if (act === 'studio-rfit' && p) studio_change(pr => { pr.vfit = b.getAttribute('data-fit'); },
+      'Framing · ' + (b.getAttribute('data-fit') === 'fit' ? 'fit the whole picture' : 'zoom to fill'));
+    else if (act === 'studio-cam-src' && p) {
+      const src = b.getAttribute('data-src');
+      studio_change(pr => {
+        pr.cam = Object.assign({}, pr.cam, {source: src});
+        /* The box drawn last time, so a streamer whose camera is always in
+           the same corner draws it once, ever. */
+        if (src === 'inset' && studio.fc.inset && !(pr.cam.box && pr.cam.box[2] < 1)) pr.cam.box = studio.fc.inset.slice();
+      }, 'Facecam · ' + (src === 'none' ? 'off' : src === 'inset' ? 'in the video' : 'separate video'));
+      if (src !== 'none' && !(src === 'inset' && studio.fc.inset)) studio_tab('facecam');
+    }
+    else if (act === 'studio-cam-layout' && p) studio_change(pr => { pr.cam = Object.assign({}, pr.cam, {layout: b.getAttribute('data-layout')}); },
+      'Facecam layout');
+    else if (act === 'studio-cam-pos' && p) studio_change(pr => {
+      pr.cam = Object.assign({}, pr.cam, {pos: [Number(b.getAttribute('data-x')), Number(b.getAttribute('data-y'))]});
+    }, 'Facecam position');
+    else if (act === 'studio-handle-pos' && p) studio_change(pr => {
+      pr.handle_pos = [Number(b.getAttribute('data-x')), Number(b.getAttribute('data-y'))];
+    }, 'Your handle · moved');
+    else if (act === 'studio-tab-go') studio_tab(b.getAttribute('data-tab'));
+    else if (act === 'studio-fc-frame') { studio.fc.t += Number(b.getAttribute('data-d')); studio_fcFrame(); }
+    else if (act === 'studio-fc-boxreset' && p) studio_change(pr => { pr.cam = Object.assign({}, pr.cam, {box: [0, 0, 1, 1]}); }, 'Facecam · box cleared');
+    else if (act === 'studio-fc-attach') studio_fcAttach(b.getAttribute('data-key'), b.getAttribute('data-clip'));
+    else if (act === 'studio-fc-unlink') studio_fcUnlink(b.getAttribute('data-key'));
+    else if (act === 'studio-fc-lineup') studio_fcLineup(b.getAttribute('data-key'), b.getAttribute('data-clip'));
+    else if (act === 'studio-fc-play') studio_fcPlay();
+    else if (act === 'studio-fc-nudge') studio_fcNudge(Number(b.getAttribute('data-d')));
+    else if (act === 'studio-fc-sync') studio_fcSync();
+    else if (act === 'studio-imp-add') studio_impAdd();
+    else if (act === 'studio-imp-edit') studio_impOpen(b.getAttribute('data-path'), false);
+    else if (act === 'studio-imp-play') { const v = studio_el('studio-imp-video'); if (v.paused) v.play().catch(() => {}); else v.pause(); }
+    else if (act === 'studio-imp-step') { const v = studio_el('studio-imp-video'); v.pause(); v.currentTime = Math.max(0, v.currentTime + Number(b.getAttribute('data-d'))); }
+    else if (act === 'studio-imp-mark') studio_impMark();
+    else if (act === 'studio-imp-clear') { studio.imp.kills = []; studio.imp.dirty = true; studio_impDraw(); }
+    else if (act === 'studio-imp-drop') { e.stopPropagation(); studio.imp.kills.splice(Number(b.getAttribute('data-i')), 1); studio.imp.sel = -1; studio.imp.dirty = true; studio_impDraw(); }
+    else if (act === 'studio-imp-seek') { const i = Number(b.getAttribute('data-i')); studio.imp.sel = i; const v = studio_el('studio-imp-video'); v.pause(); v.currentTime = studio.imp.kills[i]; studio_impDraw(); }
+    else if (act === 'studio-imp-preset') { studio_el('studio-imp-name').value = b.getAttribute('data-t'); studio.imp.dirty = true; }
+    else if (act === 'studio-imp-detect') studio_impDetect();
+    else if (act === 'studio-imp-save') studio_impSave(true);
+    else if (act === 'studio-imp-close') studio_impClose(false);
     else if (act === 'studio-restyle' && p) studio_restyle();
     else if (act === 'studio-mix' && p) studio_mix(b.getAttribute('data-what'), true);
     else if (act === 'studio-fx-all' && p && studio.sel >= 0) {
@@ -3632,6 +4546,45 @@ function studio_wire() {
     else if (act === 'studio-sg-apply') studio_sgApply(false);
   });
   document.addEventListener('change', studio_inspectorInput);
+  document.addEventListener('change', studio_camInput);
+  document.addEventListener('input', studio_camInput);
+  /* The inspector's groups remember whether they are open (toggle does not
+     bubble, so it is caught on the way down). */
+  document.addEventListener('toggle', e => {
+    const d = e.target;
+    if (d && d.matches && d.matches('#studio-insp details.ed-group')) studio.grpOpen[d.getAttribute('data-grp')] = d.open;
+  }, true);
+  document.addEventListener('mouseover', studio_fxHover);
+  document.addEventListener('focusin', studio_fxHover);
+  document.addEventListener('change', e => { if (e.target && e.target.closest && e.target.closest('#studio-insp select')) { studio.fxShown = ''; studio_fxHover(e); } });
+  ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(ev => {
+    const chip = studio_el('studio-handle-chip');
+    if (chip) chip.addEventListener(ev, studio_handlePointer);
+    const st = studio_el('studio-fc-stage');
+    if (st) st.addEventListener(ev, studio_fcPointer);
+  });
+  window.addEventListener('resize', () => { studio_fitEditor(); studio_fcBox(); });
+  const fsel = studio_el('studio-fc-clip');
+  if (fsel) fsel.addEventListener('change', () => {
+    studio.fc.clipI = Number(fsel.value);
+    const s0 = (studio.fc.clips || [])[studio.fc.clipI];
+    studio.fc.t = s0 ? Math.max(0, s0.kill - 0.5) : 0;
+    studio_fcFrame();
+  });
+  const iv = studio_el('studio-imp-video');
+  if (iv) ['timeupdate', 'play', 'pause', 'seeked', 'loadedmetadata'].forEach(ev => iv.addEventListener(ev, () => {
+    if (ev === 'play') { const tick = () => { studio_impDraw(); if (!iv.paused) requestAnimationFrame(tick); }; requestAnimationFrame(tick); }
+    studio_impDraw();
+  }));
+  const ilane = studio_el('studio-imp-lane');
+  if (ilane) ilane.addEventListener('pointerdown', e => {
+    const r = ilane.getBoundingClientRect(), v = studio_el('studio-imp-video');
+    v.currentTime = Math.max(0, (e.clientX - r.left) / r.width * (studio.imp.seconds || v.duration || 0));
+  });
+  const iname = studio_el('studio-imp-name');
+  if (iname) iname.addEventListener('input', () => { studio.imp.dirty = true; });
+  const fv = studio_el('studio-fc-game');
+  if (fv) fv.addEventListener('seeked', () => { const c = studio_el('studio-fc-cam'); if (c && fv.paused) c.currentTime = Math.max(0, studio_fcCamTime()); studio_fcClock(); });
   document.addEventListener('change', e => {
     const b = e.target && e.target.closest ? e.target.closest('[data-act="studio-bin-slot"]') : null;
     if (!b) return;
@@ -3736,6 +4689,7 @@ function studio_wire() {
   });
   document.addEventListener('keydown', e => {
     if (shell_page !== 'studio') return;
+    if (studio_impKey(e)) return;
     if (e.key === 'Escape') { studio_closeModals(); return; }
     const tag = (e.target.tagName || '').toUpperCase();
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;

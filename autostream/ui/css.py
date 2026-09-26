@@ -3518,3 +3518,123 @@ STUDIO_CSS = r"""
 """
 
 CSS = CSS + STUDIO_CSS
+
+# The Studio's editor: the timeline tab laid out as one screen. Its own block,
+# after the Studio's, so it wins where the two describe the same element.
+EDITOR_CSS = r"""
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+#view-studio.is-editing{max-width:none;padding-top:var(--space-5);padding-bottom:var(--space-5)}
+#view-studio.is-editing .studio{padding-bottom:0;gap:var(--space-4)}
+.studio-editor{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:var(--space-5);
+  height:var(--ed-h,calc(100vh - 170px));min-height:600px}
+.studio-editor.hide{display:none}
+.ed-main{display:flex;flex-direction:column;gap:var(--space-3);min-width:0;min-height:0}
+.ed-toolbar{display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap}
+.ed-name{flex:0 1 320px;min-width:180px;font-weight:600}
+.ed-facts{margin:0;font-size:12.5px}
+.ed-stage{flex:1 1 auto;min-height:200px;display:flex;align-items:center;justify-content:center;
+  background:#000;border-radius:var(--radius-md);overflow:hidden;position:relative}
+.ed-stage .studio-player{height:100%;max-width:100%;aspect-ratio:16/9;border-radius:0}
+.ed-stage .studio-player.is-vertical{aspect-ratio:9/16}
+.ed-stage .studio-player video{width:100%;height:100%}
+.ed-transport{flex:none}
+.ed-main .studio-tl{flex:none;max-height:340px}
+.ed-hint{margin:0;font-size:11.5px}
+.ed-side{display:flex;flex-direction:column;gap:var(--space-4);min-height:0;overflow:hidden}
+.ed-side .studio-sync{flex:none;padding:var(--space-4)}
+.ed-side .studio-pending{max-height:96px;overflow:auto}
+.ed-side .studio-insp{position:static;flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.ed-side .studio-insp-body{flex:1 1 auto;max-height:none;min-height:0;overflow:auto;overscroll-behavior:contain}
+.ed-side .studio-why{flex:none;max-height:28%;overflow:auto}
+.ed-side .studio-why:empty{display:none}
+@media (max-width:1100px){
+  .studio-editor{grid-template-columns:1fr;height:auto}
+  .ed-stage{min-height:300px}
+  .ed-side{overflow:visible}
+  .ed-side .studio-insp-body{max-height:70vh}
+}
+
+/* The effect preview: the example of whatever part the pointer is on. */
+.ed-fx{flex:none;display:grid;grid-template-columns:168px minmax(0,1fr);gap:var(--space-4);align-items:center;
+  padding:var(--space-3);border-radius:var(--radius-md);background:var(--surface-sunken);
+  border:var(--border-hair) solid var(--border-subtle)}
+.ed-fx.hide{display:none}
+.ed-fx-shot{aspect-ratio:16/9;background:#000;border-radius:var(--radius-sm);overflow:hidden;position:relative}
+.ed-fx-shot video,.ed-fx-shot img{width:100%;height:100%;object-fit:cover;display:block}
+.ed-fx-shot .bin-none{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font:500 10px var(--font-mono);color:var(--text-tertiary);text-transform:uppercase;letter-spacing:.08em}
+.ed-fx-text{display:flex;flex-direction:column;gap:4px;font-size:12.5px;min-width:0}
+.ed-fx-text strong{color:var(--text-primary);font-size:13.5px}
+
+/* Inspector groups: folded sections so a long list of options is a short
+   list of headings, and the one being worked on stays open. */
+.ed-group{border-top:var(--border-hair) solid var(--border-subtle);padding-top:var(--space-3)}
+.ed-group > summary{display:flex;align-items:center;gap:var(--space-3);cursor:pointer;list-style:none;
+  font:600 12px/1.3 var(--font-text);letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary);
+  padding:4px 0}
+.ed-group > summary::-webkit-details-marker{display:none}
+.ed-group > summary::after{content:"";margin-left:auto;width:6px;height:6px;border-right:1.5px solid currentColor;
+  border-bottom:1.5px solid currentColor;transform:rotate(45deg);transition:transform var(--dur-fast) var(--ease-standard)}
+.ed-group:not([open]) > summary::after{transform:rotate(-45deg)}
+.ed-group > summary:hover{color:var(--text-primary)}
+.ed-group-body{display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-3) 0 var(--space-2)}
+.ed-group-note{font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-tertiary);font-size:11.5px}
+.studio-check-chip:hover{border-color:var(--border-strong);color:var(--text-primary)}
+.studio-check-chip.is-previewing{box-shadow:0 0 0 1px var(--accent)}
+
+/* Nine places for the handle, laid out as the frame they stand for. */
+.ed-grid9{display:grid;grid-template-columns:repeat(3,28px);gap:4px}
+.ed-grid9 button{height:22px;border-radius:4px;border:var(--border-hair) solid var(--border-subtle);
+  background:var(--surface-sunken);cursor:pointer;padding:0}
+.ed-grid9 button.is-on{background:var(--accent);border-color:var(--accent)}
+.ed-row{display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap}
+
+/* The frame over the player: where the handle and the camera will be. */
+.ed-frame{position:absolute;inset:0;pointer-events:none}
+.ed-frame.hide{display:none}
+.ed-handle{position:absolute;pointer-events:auto;cursor:grab;padding:2px 8px;border-radius:4px;
+  font:600 13px/1.4 var(--font-text);color:#fff;background:rgba(0,0,0,.35);
+  outline:1px dashed rgba(255,255,255,.8);white-space:nowrap;user-select:none;touch-action:none}
+.ed-handle:active{cursor:grabbing}
+.ed-cambox{position:absolute;border:2px dashed var(--warn);background:rgba(255,200,60,.12);pointer-events:none}
+.ed-cambox span{position:absolute;left:4px;top:2px;font:600 11px var(--font-text);color:var(--warn)}
+"""
+
+CSS = CSS + EDITOR_CSS
+
+FACECAM_CSS = r"""
+.studio-fc{display:flex;flex-direction:column;gap:var(--space-5)}
+.studio-fc.hide{display:none}
+.studio-fc-head{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--space-5);flex-wrap:wrap}
+.studio-fc-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(300px,1fr);gap:var(--space-5);align-items:start}
+@media (max-width:1100px){.studio-fc-grid{grid-template-columns:1fr}}
+.studio-fc-card{display:flex;flex-direction:column;gap:var(--space-4)}
+.studio-fc-stage{position:relative;background:#000;border-radius:var(--radius-sm);overflow:hidden;cursor:crosshair;
+  touch-action:none;user-select:none;line-height:0}
+.studio-fc-stage img{width:100%;height:auto;display:block;pointer-events:none}
+.studio-fc-links{display:flex;flex-direction:column;gap:var(--space-3)}
+.studio-fc-link{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);padding:var(--space-3) var(--space-4);
+  border-radius:var(--radius-sm);border:var(--border-hair) solid var(--border-subtle);background:var(--surface-sunken)}
+.studio-fc-link.is-on{border-color:var(--accent)}
+.studio-fc-link-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+.studio-fc-sync{display:flex;flex-direction:column;gap:var(--space-3)}
+.studio-fc-sync.hide{display:none}
+.studio-fc-pair{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3)}
+.studio-fc-pair figure{margin:0;display:flex;flex-direction:column;gap:4px}
+.studio-fc-pair video{width:100%;aspect-ratio:16/9;background:#000;border-radius:var(--radius-sm)}
+.studio-fc-pair figcaption{font-size:11.5px;color:var(--text-tertiary)}
+.studio-fc-mockwrap{display:flex;justify-content:center;background:var(--surface-sunken);border-radius:var(--radius-sm);padding:var(--space-4)}
+.studio-fc-mockwrap canvas{max-width:100%;max-height:52vh;border-radius:4px;box-shadow:var(--shadow-md)}
+
+.studio-imp{width:min(1100px,calc(100vw - 48px))}
+.studio-imp-body{max-width:none;display:grid;grid-template-columns:minmax(0,1.6fr) minmax(260px,1fr);gap:var(--space-5);align-items:start}
+@media (max-width:900px){.studio-imp-body{grid-template-columns:1fr}}
+.studio-imp-player{display:flex;flex-direction:column;gap:var(--space-3);min-width:0}
+.studio-imp-player video{width:100%;max-height:56vh;background:#000;border-radius:var(--radius-sm)}
+.studio-imp-lane{width:100%;height:46px;border-radius:var(--radius-sm);cursor:pointer;display:block}
+.studio-imp-side{display:flex;flex-direction:column;gap:var(--space-3)}
+.studio-imp-x{margin-left:4px;border:0;background:none;color:inherit;cursor:pointer;font-size:14px;line-height:1;padding:0 2px}
+.btn.is-warn{color:var(--warn)}
+"""
+
+CSS = CSS + FACECAM_CSS

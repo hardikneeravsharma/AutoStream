@@ -112,6 +112,17 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
   from every game and every run, grouped the way they were made. Pick any of them —
   one at a time, a range, or a whole run — choose a style and a song, and it builds
   the reel with every cut and every kill on the beat.
+  - **Your own clips too.** "Add your own clip…" takes any video you already have —
+    saved by the game, by Medal, sent by a friend — and you mark its kills by pressing
+    <kbd>K</kbd> as it plays (or let the Valorant / Counter-Strike detector find them),
+    and give it a title such as "4K" or "1v3 clutch".
+  - **Facecam.** Either cut out of a corner of the recording (draw a box round it once)
+    or a separate camera video, lined up with the game by their shared sound. On top
+    of a vertical reel like a Short, or in any corner of either format.
+  - **Vertical reels zoom or fit**: crop the game to fill 9:16, or show all of it over
+    a blurred copy.
+  - Kills land on the song's marks even when a clip is short: the run-up is slowed to
+    fill the time before the mark, and the kill frame stays on it.
   - The styles are measured, not guessed: each one's pace, flash rate and opening are
     the medians of the popular montage edits it is modelled on (26 of them — 25
     Valorant, one Call of Duty — 137 thousand to 5.9 million views), or of your own
