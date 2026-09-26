@@ -594,6 +594,7 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-sg-atdrop": "moves the part so it builds into the song's drop",
     "studio-sg-fit": "sets the part's end to the timeline's length",
     "studio-mk-mode": "chooses the part of the song or lets the planner choose; sent with Build",
+    "studio-mk-fit": "chooses whether a vertical reel crops the game or fits all of it; sent with Build",
     "studio-mk-nudge": "moves the chosen part's start or end by a bar; sent with Build",
     "studio-mk-preset": "moves the chosen part to the drums, into the drop, or to the whole song; sent with Build",
     "studio-mk-play": "plays or pauses the chosen part of the song in the dialog",

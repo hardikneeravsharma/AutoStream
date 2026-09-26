@@ -514,6 +514,12 @@ STUDIO_HTML = r"""
           <button type="button" class="seg-btn is-active" data-act="studio-fmt" data-fmt="landscape">Landscape 16:9</button>
           <button type="button" class="seg-btn" data-act="studio-fmt" data-fmt="vertical">Vertical 9:16</button>
         </div>
+        <!-- HOW A 16:9 GAME FILLS A 9:16 FRAME: cropped to its middle, or all
+             of it over a blurred copy. Only asked when it is a question. -->
+        <div class="seg hide" role="group" aria-label="Vertical framing" id="studio-mk-fit">
+          <button type="button" class="seg-btn is-active" data-act="studio-mk-fit" data-fit="zoom">Zoom to fill</button>
+          <button type="button" class="seg-btn" data-act="studio-mk-fit" data-fit="fit">Fit the whole picture</button>
+        </div>
         <div class="seg" role="group" aria-label="Order">
           <button type="button" class="seg-btn is-active" data-act="studio-order" data-order="chosen">As chosen</button>
           <button type="button" class="seg-btn" data-act="studio-order" data-order="kills">Most kills first</button>
@@ -741,7 +747,7 @@ const studio = {
   /* The music lane: the whole song's spectrogram as one image, which song has
      been asked for, and what the lane is showing. */
   spec: null, musicWant: '', musicPending: false, showSpec: true, showMarks: true, waveTick: 0,
-  style: '', song: '', songShape: null, fmt: 'landscape', order: 'chosen',
+  style: '', song: '', songShape: null, fmt: 'landscape', vfit: 'zoom', order: 'chosen',
   project: null, derived: null, notes: [], dirty: true, output: '', renderedAt: 0,
   /* WHAT HAS NOT REACHED THE VIDEO YET. `dirty` could say that something had
      changed; it could not say what, so pressing render was an act of faith and
@@ -1076,6 +1082,7 @@ async function studio_openMake() {
   studio_renderStyles();
   studio_hand();
   studio_show('studio-make-scrim', true);
+  studio_show('studio-mk-fit', studio.fmt === 'vertical');
   studio_mkDefault();
 }
 
@@ -1975,7 +1982,8 @@ async function studio_build() {
   try {
     const body = {
       clips: studio_ordered().map(c => c.path), style: studio.style, song: studio.song,
-      format: studio.fmt, name: studio_el('studio-name').value.trim(),
+      format: studio.fmt, vfit: studio.fmt === 'vertical' ? studio.vfit : 'zoom',
+      name: studio_el('studio-name').value.trim(),
       /* Only what was DEALT or CLICKED. Sending the style's own picks back
          narrowed every drawer to the one part the style leads with, and a
          montage came out with the same kill effect on all six kills. */
@@ -1996,6 +2004,9 @@ async function studio_build() {
       body.part_start = studio.mk.start;
       body.part_end = studio.mk.end;
     }
+    /* A rebuild keeps the reel's own choices -- facecam, handle, ending --
+       which belong to the reel and not to the plan being redone. */
+    if (studio.adding && studio.adding.keep) body.keep = studio.adding.keep;
     const r = await API.post('/api/studio/plan', body);
     if (gen !== studio.buildGen) return;          /* cancelled while planning */
     if (!r || !r.ok) { studio_el('studio-make-msg').textContent = (r && r.error) || 'Could not plan that reel.'; return; }
@@ -2438,7 +2449,9 @@ async function studio_addClips() {
     name: p.name, style: p.style, song: p.song || '', fmt: p.format,
     output: studio.output || p.output || '',
     start: p.song_offset || 0, end: p.part_end || ((p.song_offset || 0) + (d ? d.length : 0)),
-    edited: !!(d && d.edited) || studio.undo.length > 0
+    edited: !!(d && d.edited) || studio.undo.length > 0,
+    keep: {cam: p.cam, vfit: p.vfit, handle: p.handle, handle_pos: p.handle_pos,
+           outro_len: p.outro_len, overlays: p.overlays}
   };
   studio_tab('clips');
   studio_renderLib();
@@ -4387,7 +4400,11 @@ function studio_wire() {
       const key = act === 'studio-fmt' ? 'fmt' : 'order';
       studio[key] = b.getAttribute('data-' + key);
       b.parentElement.querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('is-active', x === b));
-      if (key === 'fmt') studio_mkDefault();
+      if (key === 'fmt') { studio_mkDefault(); studio_show('studio-mk-fit', studio.fmt === 'vertical'); }
+    }
+    else if (act === 'studio-mk-fit') {
+      studio.vfit = b.getAttribute('data-fit');
+      b.parentElement.querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('is-active', x === b));
     }
     else if (act === 'studio-build') studio_build();
     else if (act === 'studio-open') studio_open(b.getAttribute('data-path'));

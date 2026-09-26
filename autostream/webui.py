@@ -2864,6 +2864,14 @@ class Server:
         ic = body.get("intro_clip")
         if isinstance(ic, dict) and str(ic.get("path") or "").strip():
             proj["intro_clip"] = ic
+        if body.get("vfit") in ("zoom", "fit"):
+            proj["vfit"] = body["vfit"]
+        # Rebuilding a reel keeps what belongs to the reel rather than to the
+        # plan. Untouched here: normalise clamps every one of them.
+        keep = body.get("keep") if isinstance(body.get("keep"), dict) else {}
+        for k in ("cam", "vfit", "handle", "handle_pos", "outro_len", "overlays"):
+            if keep.get(k) is not None:
+                proj[k] = keep[k]
         try:
             proj, derived, more = studio.normalise(proj, root)
         except studio.ProjectError as e:
