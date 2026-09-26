@@ -3000,7 +3000,7 @@ function studio_drawTimeline() {
     const room = Math.min((r.end - r.start) * pps, (d.shots[i - 1].end - d.shots[i - 1].start) * pps);
     const compact = room < 44;
     h += '<button type="button" class="st-tr' + (hard ? ' is-cut' : '') + (compact ? ' is-compact' : '') +
-      (i === studio.sel ? ' is-sel' : '') + '" data-act="studio-select" data-shot="' + i + '" style="left:' + X(r.start) +
+      (i === studio.sel ? ' is-sel' : '') + '" data-act="studio-select" data-shot="' + i + '" data-part="' + esc(s.transition) + '" style="left:' + X(r.start) +
       'px;top:' + rows.trans + 'px' + (compact ? '' : ';width:' + Math.max(26, s.tlen * pps).toFixed(1) + 'px') +
       '" title="Shot ' + (i + 1) + ': ' + esc(part.label) + '">' +
       (compact ? '' : esc(hard ? '|' : s.transition.toUpperCase())) + '</button>';
@@ -3015,7 +3015,7 @@ function studio_drawTimeline() {
     const full = ids.map(x => x.toUpperCase()).join(' ');
     const label = room >= full.length * 7 + 16 ? full : room >= 30 ? String(ids.length) : '';
     h += '<button type="button" class="st-fx' + (s.hero ? ' is-hero' : '') + (label === full ? '' : ' is-compact') +
-      '" data-act="studio-select" data-shot="' + i +
+      '" data-act="studio-select" data-shot="' + i + '" data-part="' + esc(ids[0]) +
       '" style="left:' + X(r.kill_reel) + 'px;top:' + (rows.fx + 6) + 'px" title="Shot ' + (i + 1) + ': ' +
       esc(ids.map(id => studio_part(id).label).join(', ')) + ' — click to change">' + esc(label) + '</button>';
   });
@@ -3763,6 +3763,9 @@ function studio_fxHover(e) {
     if (inp) { studio_fxPreview(inp.value); chip.classList.add('is-previewing'); }
     return;
   }
+  /* The effect and transition marks on the tracks show theirs too. */
+  const mark = t.closest('#studio-tracks [data-part]');
+  if (mark) { studio_fxPreview(mark.getAttribute('data-part')); return; }
   const sel = t.closest('#studio-insp select');
   if (sel && /^studio-(f|r)-(speed|trans|camera|grade|intro|outro)$/.test(sel.id)) studio_fxPreview(sel.value);
 }
