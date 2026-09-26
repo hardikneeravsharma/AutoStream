@@ -1341,7 +1341,9 @@ class Engine:
 
         prof = profiles.for_game(self.state.current_key,
                                  self.state.current_game)
-        if not (prof and getattr(prof, "matches", False)):
+        # So the dashboard shows the match-record card only while it applies.
+        self.match_watch = bool(prof and getattr(prof, "matches", False))
+        if not self.match_watch:
             return
         now = time.time()
         if now - getattr(self, "_matches_at", 0.0) < self.MATCH_POLL:

@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,6 +42,24 @@ log = logging.getLogger("autostream.clips.valorant_match")
 # The last reason given for each kind of failure, so a poll every two minutes
 # does not write the same line to the log all evening.
 _said: dict[str, str] = {}
+
+# WHAT THE LAST ATTEMPT CAME TO, FOR THE SCREEN. The log said all of this and
+# nothing else did: a player could stream a whole evening of VALORANT without
+# learning that AutoStream was reading their Riot Client, or that it had
+# failed to and the clips would be cut from pixels. The dashboard reads this.
+_last: dict = {}
+_saved: list[dict] = []              # every record saved by this process
+
+# The engine polls and the Clips page's "Fetch now" button can both run at
+# once; two passes over the same history would fetch every match twice.
+_busy = threading.Lock()
+
+# games.yaml's key for the game, and the flag that says the one-time
+# explanation has been read. Kept per game because it is about this game's
+# client, not about AutoStream in general.
+GAME_KEY = "valorant-win64-shipping.exe"
+EXPLAINED = "match_record_explained"
+_explained: bool | None = None       # read once, then trusted
 
 # Beside the recordings, NOT in the application folder: a rebuild deletes
 # that whole directory, and a match record cannot be fetched again once the
@@ -154,9 +174,18 @@ def cached() -> list[Match]:
 def collect(limit: int = 5) -> list[str]:
     """Fetch any recent match not already cached. -> the ids added.
 
-    Called while the game is running. Never raises: a match record that cannot
-    be had costs the extra context for that match and nothing else.
+    Called while the game is running, and from the Clips page when asked.
+    Never raises: a match record that cannot be had costs the extra context for
+    that match and nothing else. What the attempt came to is kept for status().
     """
+    with _busy:
+        added, why = _collect(limit)
+    _last.update(at=time.time(), ok=not why, why=why, added=len(added))
+    return added
+
+
+def _collect(limit: int) -> tuple[list[str], str]:
+    """-> (ids added, why the pass fell short or "")."""
     try:
         sess = valorant_api.session()
     except valorant_api.Unavailable as e:
@@ -167,13 +196,14 @@ def collect(limit: int = 5) -> list[str]:
         if _said.get("session") != str(e):
             _said["session"] = str(e)
             log.info("no Valorant match record available: %s", e)
-        return []
+        return [], str(e)
     try:
         rows = valorant_api.history(sess, limit=limit)
     except valorant_api.Unavailable as e:
         log.info("could not read the Valorant match list: %s", e)
-        return []
+        return [], str(e)
     added: list[str] = []
+    failed = 0
     for row in rows:
         mid = str(row.get("MatchID") or row.get("matchId") or "")
         if not mid:
@@ -185,6 +215,7 @@ def collect(limit: int = 5) -> list[str]:
             data = valorant_api.details(sess, mid)
         except valorant_api.Unavailable as e:
             log.info("could not read Valorant match %s: %s", mid[:8], e)
+            failed += 1
             continue
         # WHOSE RECORD THIS IS, written into it now. The record itself does
         # not say which player is the local one, and the only thing that knows
@@ -199,13 +230,57 @@ def collect(limit: int = 5) -> list[str]:
             atomic.write_json(target, data, indent=None)
         except OSError as e:
             log.warning("could not cache Valorant match %s: %s", mid[:8], e)
+            failed += 1
             continue
         added.append(mid)
+        info = data.get("matchInfo") or {}
+        minutes = float(info.get("gameLengthMillis") or 0) / 60000
+        _saved.append({"id": mid[:8], "mode": str(info.get("queueID") or ""),
+                       "minutes": round(minutes), "at": time.time()})
         log.info("cached Valorant match %s (%s, %.0f min)", mid[:8],
-                 (data.get("matchInfo") or {}).get("queueID", "?"),
-                 float((data.get("matchInfo") or {}).get("gameLengthMillis") or 0)
-                 / 60000)
-    return added
+                 info.get("queueID", "?"), minutes)
+    why = f"{failed} match record(s) could not be read" if failed else ""
+    return added, why
+
+
+def status() -> dict:
+    """What this run has done with the Riot Client, for the dashboard.
+
+    `checked` is None until the first attempt, so the page can tell "has not
+    looked yet" from "looked and found nothing new".
+    """
+    return {"checked": _last.get("at"), "ok": bool(_last.get("ok")),
+            "why": str(_last.get("why") or ""),
+            "saved": list(_saved[-10:]), "saved_count": len(_saved),
+            "explained": explained()}
+
+
+def explained() -> bool:
+    """Whether the player has read, once, what the match record is and where
+    it comes from. Read from games.yaml the first time and trusted after."""
+    global _explained
+    if _explained is None:
+        try:
+            from .. import cfg               # local: cfg must not import clips
+
+            entry = (cfg.load_games().get("games") or {}).get(GAME_KEY) or {}
+            _explained = bool(isinstance(entry, dict) and entry.get(EXPLAINED))
+        except Exception as e:               # noqa: BLE001
+            log.debug("could not read %s: %s", EXPLAINED, e)
+            return False
+    return _explained
+
+
+def mark_explained() -> bool:
+    """Never show the explanation again. -> whether it was written."""
+    global _explained
+    from .. import cfg
+
+    ok = cfg.save_game_field(GAME_KEY, EXPLAINED, True)
+    # Hidden for this run even if the file would not take it: a notice that
+    # comes back after "Got it" reads as the button not working.
+    _explained = True
+    return ok
 
 
 def puuid_of(match: Match, name_hint: str = "") -> str:

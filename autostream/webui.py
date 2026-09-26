@@ -812,6 +812,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.clips_pick(str(b.get("kind") or "video")))
             elif p == "/api/clips/probe":
                 self._json(self.app.clips_probe(b))
+            elif p == "/api/clips/valorant/fetch":
+                self._json(self.app.clips_valorant_fetch(b))
+            elif p == "/api/clips/valorant/explained":
+                self._json(self.app.clips_valorant_explained())
             elif p == "/api/clips/install":
                 self._json(self.app.clips_install(b))
             elif p == "/api/setup/scan":
@@ -1098,8 +1102,62 @@ class Server:
             "edit": self._edit_status(),
             "update": self.update_status(),
             "upload": self._upload_status(),
+            # None except during a live VALORANT session, so every other poll
+            # carries nothing extra.
+            "valorant": self._valorant_status(),
             **self._phase_clock(),
         }
+
+    def _valorant_status(self) -> dict | None:
+        """What AutoStream has fetched from the Riot Client this session.
+
+        The fetch was invisible outside the log: a player had no way to know
+        that their match records were being read, or that the reading had
+        failed and the clips would come from the screen after all.
+        """
+        from . import state as st
+
+        e = self.engine
+        if e.state.phase != st.LIVE or not getattr(e, "match_watch", False):
+            return None
+        from .clips import valorant_match
+
+        return valorant_match.status()
+
+    def clips_valorant_fetch(self, body: dict) -> dict:
+        """Fetch VALORANT match records now, while the Riot Client is open.
+
+        For a recording made without AutoStream running: nothing polled the
+        client while it was played, but Riot keeps the recent history, so the
+        records can still be had afterwards -- as long as the client is open
+        now. Answers with the state for the recording the page is looking at.
+        """
+        from . import valorant_api
+        from .clips import valorant_match
+
+        if not valorant_api.available():
+            return {"error": "Open VALORANT (or the Riot Client) and sign in, "
+                             "then press this again. "
+                             + (valorant_api.why_not() or "")}
+        added = valorant_match.collect(limit=valorant_api.HISTORY_MAX)
+        snap = valorant_match.status()
+        out: dict = {"ok": snap["ok"], "added": len(added),
+                     "why": snap["why"]}
+        try:
+            started = float(body.get("started") or 0)
+            seconds = float(body.get("seconds") or 0)
+        except (TypeError, ValueError):
+            started = seconds = 0.0
+        if started:
+            got = valorant_match.state(started, seconds)
+            out.update(match_state=got["state"], match_count=got["matches"],
+                       match_why=got.get("why", ""))
+        return out
+
+    def clips_valorant_explained(self) -> dict:
+        from .clips import valorant_match
+
+        return {"ok": valorant_match.mark_explained()}
 
     # ================= clips =================
 

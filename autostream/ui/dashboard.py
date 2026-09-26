@@ -137,6 +137,35 @@ DASH_HTML: str = """
     </div>
   </section>
 
+  <!-- Only during a live VALORANT session. Fetching the match record used to
+       be visible in the log and nowhere else, so a player had no way to know
+       AutoStream was reading their Riot Client -- or that it had failed to and
+       the clips would be cut from the screen after all. -->
+  <section class="card hide" id="dash-vmatch">
+    <div class="card-head">
+      <div>
+        <div class="card-title">VALORANT match record</div>
+        <div class="card-sub">Kills, rounds and clutches for your clips</div>
+      </div>
+      <span class="pill pill-idle"
+            id="dash-vmatch-pill"><i></i><span id="dash-vmatch-state">WAITING</span></span>
+    </div>
+    <div class="card-body">
+      <div class="status-meta" id="dash-vmatch-detail"></div>
+      <div class="panel hide" id="dash-vmatch-explain" style="margin-top:8px">
+        <p class="muted" style="margin:0 0 8px">
+          While you play, AutoStream asks the Riot Client on this PC for the
+          record of each match you finish, and keeps it next to your
+          recordings. Clips then take their kills, rounds and clutches from
+          the game instead of reading them off the screen. The request goes
+          only to Riot, using the sign-in the Riot Client already has; nothing
+          is sent anywhere else, and nothing is needed from you.
+        </p>
+        <button type="button" class="btn btn-sm" id="dash-vmatch-ok">Got it</button>
+      </div>
+    </div>
+  </section>
+
   <section class="card" id="dash-session">
     <div class="card-head">
       <div>
@@ -668,6 +697,48 @@ function dash_renderIngest(s) {
   }
 }
 
+/* The match-record card: whether the Riot Client is being read, what it has
+   given this session, and -- once, until "Got it" -- what that means. */
+function dash_renderVMatch(s) {
+  const v = s.valorant;
+  const card = dash_el('dash-vmatch');
+  if (!card) return;
+  card.classList.toggle('hide', !v);
+  if (!v) return;
+  const n = Number(v.saved_count) || 0;
+  let variant = 'pill-idle', word = 'WAITING', text;
+  if (!v.checked) {
+    text = 'Checking the Riot Client...';
+  } else if (!v.ok && !n) {
+    variant = 'pill-warn'; word = 'NOT READ';
+    text = 'Could not read the match record: ' + (v.why || 'unknown reason')
+      + '. Clips will be cut from the screen instead.';
+  } else if (n) {
+    variant = 'pill-ok'; word = 'SAVED';
+    const last = (v.saved || [])[(v.saved || []).length - 1] || {};
+    text = n + (n === 1 ? ' match' : ' matches') + ' saved this session'
+      + (last.minutes ? ' ' + dash_MIDDOT + ' last one ' + last.minutes + ' min' : '')
+      + (v.why ? ' ' + dash_MIDDOT + ' ' + v.why : '');
+  } else {
+    variant = 'pill-ok'; word = 'CONNECTED';
+    text = 'Connected to the Riot Client. Each match is saved a minute or two '
+      + 'after it ends.';
+  }
+  dash_pill('dash-vmatch-pill', 'dash-vmatch-state', variant, word);
+  const d = dash_el('dash-vmatch-detail');
+  if (d) d.textContent = text;
+  const ex = dash_el('dash-vmatch-explain');
+  if (ex) ex.classList.toggle('hide', !!v.explained);
+}
+
+async function dash_vmatchExplained() {
+  const ex = dash_el('dash-vmatch-explain');
+  if (ex) ex.classList.add('hide');
+  if (dash_last && dash_last.valorant) dash_last.valorant.explained = true;
+  try { await API.post('/api/clips/valorant/explained', {}); }
+  catch (e) { /* hidden for this page either way */ }
+}
+
 function dash_renderSession(s) {
   const n = dash_int(s.session);
   const meta = dash_el('dash-session-meta');
@@ -901,6 +972,8 @@ function dash_wire() {
 
   const rec = dash_el('dash-btn-record');
   if (rec) rec.addEventListener('click', function () { dash_cmd('record'); });
+  const vok = dash_el('dash-vmatch-ok');
+  if (vok) vok.addEventListener('click', dash_vmatchExplained);
 
   const send = dash_el('dash-chat-send');
   if (send) send.addEventListener('click', function () { dash_send(); });
@@ -965,6 +1038,7 @@ function dash_onTick(status) {
   dash_renderHero(s);
   dash_renderStats(s);
   dash_renderIngest(s);
+  dash_renderVMatch(s);
   dash_renderSession(s);
   dash_renderRing(s);
   dash_renderSpark(s);

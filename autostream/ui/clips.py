@@ -473,7 +473,13 @@ One per line - a long session often covers several matches."></textarea>
     </div>
   </div>
 
-  <p class="clip-matchline hide" id="clip-matchline"></p>
+  <div class="clip-matchline hide" id="clip-matchline">
+    <span id="clip-matchtext"></span>
+    <div class="field-inline" style="margin-top:6px">
+      <button class="btn btn-sm" type="button" data-act="fetch-matches">Fetch match records now</button>
+      <span class="muted" id="clip-matchmsg"></span>
+    </div>
+  </div>
 
   <div class="panel clip-warn hide" id="clip-wrongwrap">
     <p class="muted" id="clip-wrongtext"></p>
@@ -4300,34 +4306,70 @@ function clip_renderDemoBox() {
 }
 
 function clip_renderMatchLine() {
-  /* Whether Valorant's own record of the match is on hand. The record is
-     fetched while the game is running and read when the clip is cut, so the
-     only moment it can be FIXED is the next time you play -- which makes
-     saying so worth a line of its own. Counter-Strike has the demo box for the
-     same reason; this is the equivalent for a game whose record lives on
-     Riot's servers rather than on disk. */
+  /* Whether Valorant's own record of the match is on hand. AutoStream fetches
+     it from the Riot Client while the game is running -- but a recording made
+     with AutoStream closed never had that chance, so the line also offers to
+     fetch now: Riot keeps the recent history, and all it needs is the client
+     open. Counter-Strike has the demo box for the same reason; this is the
+     equivalent for a game whose record lives on Riot's servers. */
   var s = clip_state.pick;
   var el = clip_el('clip-matchline');
   if (!el) return;
   var st = s && s.match_state;
   el.classList.toggle('hide', !st);
   if (!st) return;
+  var t = clip_el('clip-matchtext');
+  var btn = el.querySelector('[data-act="fetch-matches"]');
+  var FROM = ' Match records are read from the Riot Client on this PC and go '
+    + 'only to Riot.';
   if (st === 'have') {
-    el.textContent = s.match_count === 1
-      ? 'VALORANT match record: 1 match cached, so the kills, rounds and '
-        + 'clutches come from the game rather than from the screen.'
-      : 'VALORANT match record: ' + s.match_count + ' matches cached, so the '
+    t.textContent = (s.match_count === 1
+      ? 'VALORANT match record: 1 match found for this recording, so the '
         + 'kills, rounds and clutches come from the game rather than from the '
-        + 'screen.';
+        + 'screen.'
+      : 'VALORANT match record: ' + s.match_count + ' matches found for this '
+        + 'recording, so the kills, rounds and clutches come from the game '
+        + 'rather than from the screen.')
+      + (s.match_why ? ' (' + s.match_why + ')' : '');
     el.classList.remove('is-warn');
-    if (s.match_why) el.textContent += ' (' + s.match_why + ')';
+    if (btn) btn.textContent = 'Check for more matches';
     return;
   }
   el.classList.add('is-warn');
-  el.textContent = 'No VALORANT match record for this recording' +
+  if (btn) btn.textContent = 'Fetch match records now';
+  t.textContent = 'No VALORANT match record for this recording' +
     (s.match_why ? ' - ' + s.match_why : '') +
-    '. The clips still get cut from the screen; a record can only be captured '
-    + 'while the game is running, so the next session is the one that fixes it.';
+    '. The clips will be cut from the screen. If the matches were played '
+    + 'recently, open VALORANT and press Fetch: Riot keeps your last twenty '
+    + 'matches.' + FROM;
+}
+
+async function clip_fetchMatches() {
+  var s = clip_state.pick;
+  if (!s) return;
+  clip_say('clip-matchmsg', 'Asking the Riot Client...');
+  var r;
+  try {
+    r = await API.post('/api/clips/valorant/fetch', {
+      started: s.started || 0,
+      seconds: s.duration || 0
+    });
+  } catch (e) { clip_say('clip-matchmsg', ''); toast('Could not ask the Riot Client.', 'error'); return; }
+  if (!r || r.error) { clip_say('clip-matchmsg', ''); toast((r && r.error) || 'Could not ask the Riot Client.', 'error'); return; }
+  var cur = clip_state.pick;
+  if (cur === s && r.match_state) {
+    cur.match_state = r.match_state;
+    cur.match_count = r.match_count || 0;
+    cur.match_why = r.match_why || '';
+    clip_renderMatchLine();
+  }
+  var said = r.added
+    ? (r.added === 1 ? '1 new match record saved.' : r.added + ' new match records saved.')
+    : 'No new matches - everything Riot has was already saved.';
+  if (r.why) said += ' ' + r.why + '.';
+  if (r.match_state && r.match_state !== 'have')
+    said += ' None of them was played during this recording.';
+  clip_say('clip-matchmsg', said);
 }
 
 /* Two boxes ask this now -- the one on the options card, and the one on a run
@@ -5082,6 +5124,8 @@ function clip_wire() {
       clip_useLocal();
     } else if (act === 'get-demos') {
       clip_getDemos();
+    } else if (act === 'fetch-matches') {
+      clip_fetchMatches();
     } else if (act === 'needsdemo-get') {
       clip_getDemos('clip-needsdemo-codes', 'clip-needsdemo-msg');
     } else if (act === 'demo-anyway') {
