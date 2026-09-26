@@ -687,8 +687,54 @@ def test_more_marks_than_shots_says_so(long_run):
 
 def test_a_mark_the_footage_cannot_reach_is_reported(long_run):
     proj, _ = studio.plan(_clips(long_run)[:2], "story", shape=Shape(bpm=120.0))
-    notes = studio.apply_marks(proj, [9.0, 10.0])           # 6 s of footage before the kill
+    # 6 s of footage before the kill; even slowed to MIN_STRETCH it cannot
+    # fill 60 s.
+    notes = studio.apply_marks(proj, [60.0, 61.0])
     assert any("Shot 1 has only" in n for n in notes)
+
+
+def test_a_short_run_up_is_slowed_so_the_kill_still_lands_on_its_mark(long_run):
+    """The mark is authoritative: too little footage stretches the approach,
+    it never moves the kill."""
+    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=Shape(bpm=120.0))
+    proj["shots"][0]["speed"] = "s00"
+    marks = [10.0, 11.5, 13.0]                              # 6 s of footage before the kill
+    notes = studio.apply_marks(proj, marks)
+    assert any("slowed" in n for n in notes), notes
+    got, derived, _ = studio.normalise(proj, long_run)
+    assert not got["shots"][0].get("lead_in")
+    rate, real = got["shots"][0]["stretch"][:2]
+    assert studio.MIN_STRETCH <= rate < 1 and real == pytest.approx(studio.STRETCH_REAL)
+    for i, m in enumerate(marks):
+        assert derived["shots"][i]["kill_reel"] == pytest.approx(m, abs=1.0 / studio.FPS), i
+    # the last seconds into the kill play as recorded, the rest slowed, and no
+    # more footage is asked for than the clip has before its kill
+    ps = derived["shots"][0]["pieces"]
+    assert ps[-1][2] == 1.0 and ps[0][2] == pytest.approx(rate)
+    assert derived["shots"][0]["source_in"] >= -1e-3
+
+
+def test_past_the_slowest_stretch_the_opening_frame_is_held(long_run):
+    proj, _ = studio.plan(_clips(long_run)[:3], "story", shape=Shape(bpm=120.0))
+    proj["shots"][0]["speed"] = "s00"
+    studio.apply_marks(proj, [45.0, 46.5])                 # 6 s of footage before the kill
+    got, derived, _ = studio.normalise(proj, long_run)
+    rate, real, hold = got["shots"][0]["stretch"]
+    assert rate == pytest.approx(studio.MIN_STRETCH, rel=0.01) and 0 < hold <= studio.MAX_HOLD
+    assert derived["shots"][0]["kill_reel"] == pytest.approx(45.0, abs=1.0 / studio.FPS)
+    assert derived["shots"][0]["source_in"] >= -1e-3
+    segs = studio.segments(got, derived)
+    cmd = studio.segment_command(segs[0], Path("s.mp4"))
+    assert "setpts=" in " ".join(cmd)
+
+
+def test_a_stretch_survives_the_round_trip_and_junk_is_dropped(long_run):
+    proj, _ = studio.plan(_clips(long_run)[:2], "story", shape=Shape(bpm=120.0))
+    proj["shots"][0]["stretch"] = [0.5, 1.0]
+    proj["shots"][1]["stretch"] = ["evil", None]
+    got, _, _ = studio.normalise(proj, long_run)
+    assert "stretch" not in got["shots"][1]
+    assert got["shots"][0].get("stretch", [0.5])[0] == 0.5
 
 
 def test_a_first_mark_out_of_reach_goes_to_the_next_shot(long_run):
@@ -703,7 +749,8 @@ def test_a_first_mark_out_of_reach_goes_to_the_next_shot(long_run):
     # Straight speed, so the reach is the footage: a slowed opener spends its
     # 6 s over twelve and could reach the mark after all.
     proj["shots"][0]["speed"] = "s00"
-    marks = [9.0, 10.5, 12.0, 13.5]                         # 6 s of footage before the kill
+    # 6 s of footage before the kill: not enough even slowed to MIN_STRETCH.
+    marks = [50.0, 51.5, 53.0, 54.5]
     studio.apply_marks(proj, marks)
     got, derived, _ = studio.normalise(proj, long_run)
     assert got["shots"][0]["lead_in"] is True
@@ -727,7 +774,7 @@ def test_the_lead_in_stretches_the_intro_over_itself(long_run):
     proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=Shape(bpm=120.0))
     proj["intro"] = "i03"
     proj["shots"][0]["speed"] = "s00"
-    studio.apply_marks(proj, [9.0, 10.5, 12.0])
+    studio.apply_marks(proj, [50.0, 51.5, 53.0])
     assert proj["shots"][0]["lead_in"] is True
     got, derived, _ = studio.normalise(proj, long_run)
     segs = studio.segments(got, derived)

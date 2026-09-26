@@ -159,7 +159,7 @@ CLIPS_HTML: str = (
   <div class="card-body clip-play-body">
     <div class="clip-play-left">
       <div class="clip-play-stage">
-        <video id="clip-video" playsinline preload="metadata"></video>
+        <video id="clip-video" playsinline preload="metadata" data-knobs="off"></video>
         <!-- What the effects will look like, drawn over the player rather
              than encoded. Outside the video element on purpose: the zoom
              scales the VIDEO, and in the render the captions are drawn after
@@ -518,9 +518,9 @@ One per line - a long session often covers several matches."></textarea>
     </div>
 
     <div class="field" id="clip-min-field">
-      <span class="field-label">Minimum kills in a clip</span>
+      <span class="field-label" id="clip-min-label">Minimum kills in a clip</span>
       <div class="seg" id="clip-min" role="group" aria-label="Minimum kills"></div>
-      <p class="field-help">A clip is only kept if this many kills land inside it,
+      <p class="field-help" id="clip-min-help">A clip is only kept if this many kills land inside it,
          not just inside the fight it came from.</p>
     </div>
 
@@ -1276,11 +1276,18 @@ function clip_renderCal() {
        correctly ("1h 45m - read 2 kills"), which is what made it look like the
        sampling had failed rather than the images. */
     var url = clip_frameURL(s ? s.recording_path : '', sh.time, 640);
+    /* The box sits in a frame of its own, clipped to the picture. It shades
+       everything outside itself with a 9999px shadow, and inside a figure
+       that clipped nothing that shadow covered the whole page -- reading
+       kills with the card reader dimmed the entire app. The frame is also
+       what its percentages are of: the figure's height includes the
+       caption, so a box placed against it sat low on the picture. */
     return '<figure class="clip-cal-shot" data-i="' + i + '">'
+      + '<span class="clip-cal-frame">'
       + '<img src="' + url + '" alt="Frame at ' + clip_dur(sh.time) + '">'
       + '<span class="clip-cal-box" style="left:' + (box.x * 100) + '%;top:'
       + (box.y * 100) + '%;width:' + (box.w * 100) + '%;height:'
-      + (box.h * 100) + '%"></span>'
+      + (box.h * 100) + '%"></span></span>'
       + '<figcaption>' + clip_dur(sh.time)
       + (sh.kills ? ' · read ' + sh.kills + ' kill'
                     + (sh.kills > 1 ? 's' : '') : '')
@@ -1412,9 +1419,18 @@ function clip_renderOptions() {
   var supports = !!(clip_state.pick && clip_state.pick.rounds);
   clip_show('clip-rounds-field', supports);
   var roundMode = supports && clip_state.rounds !== false;
-  /* Minimum kills is meaningless for a round clip -- the round decides, not a
-     kill count -- so it is hidden rather than left to mislead. */
-  clip_show('clip-min-field', !roundMode);
+  /* SHOWN FOR ROUNDS TOO. It was hidden in round mode on the grounds that
+     the round decides -- but rounds.highlights() has always cut every round
+     with this many of the player's kills as well as the labelled ones, so
+     Counter-Strike was being cut to a minimum nobody could see or change. */
+  clip_show('clip-min-field', true);
+  var minLab = clip_el('clip-min-label'), minHelp = clip_el('clip-min-help');
+  if (minLab) minLab.textContent = roundMode ? 'Minimum kills in a round' : 'Minimum kills in a clip';
+  if (minHelp) minHelp.textContent = roundMode
+    ? 'Every round you got this many kills in becomes a clip, alongside the '
+      + 'rounds that earned a highlight type below.'
+    : 'A clip is only kept if this many kills land inside it, not just inside '
+      + 'the fight it came from.';
   if (supports) clip_renderTypes();
   clip_segs('clip-min', CLIP_MINS, clip_state.min, 'min');
   clip_segs('clip-len', CLIP_LENS, clip_state.len, 'len');
@@ -2088,6 +2104,15 @@ function clip_playerTrimText() {
   var b = p.trim.out == null ? dur : p.trim.out;
   el.textContent = clip_fmtTime(a) + ' to ' + clip_fmtTime(b) +
                    '  (' + Math.max(0, Math.round(b - a)) + 's)';
+}
+
+/* Fullscreen takes the whole left column, not the stage alone. The stage was
+   what went fullscreen, and the play bar lives beside it, so a fullscreen clip
+   had no seek, volume or speed until you came back out of it. */
+function clip_toggleFull() {
+  var left = document.querySelector('#clip-player-card .clip-play-left');
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (left && left.requestFullscreen) left.requestFullscreen();
 }
 
 function clip_playerStep(by) {
@@ -4750,9 +4775,7 @@ function clip_wire() {
       v.muted = !v.muted;
       el.innerHTML = v.muted ? '&#128263;' : '&#128266;';
     } else if (what === 'full') {
-      var stage = pcard.querySelector('.clip-play-stage');
-      if (document.fullscreenElement) document.exitFullscreen();
-      else if (stage && stage.requestFullscreen) stage.requestFullscreen();
+      clip_toggleFull();
     } else if (what === 'setin' && v && p) {
       clip_trimSetIn(clip_trimAt());
     } else if (what === 'setout' && v && p) {
@@ -4843,6 +4866,7 @@ function clip_wire() {
   if (vid) vid.addEventListener('click', function (e) {
     if (clip_fxAimAt(e)) { e.preventDefault(); e.stopPropagation(); }
   });
+  if (vid) vid.addEventListener('dblclick', clip_toggleFull);
 
   var pv = clip_el('clip-fx-preview');
   if (pv) pv.addEventListener('click', function () {
@@ -4973,11 +4997,7 @@ function clip_wire() {
     else if (k === 'm' || k === 'M') { v.muted = !v.muted; }
     else if (k === 'n' || k === 'N') { clip_playerStep(1); }
     else if (k === 'p' || k === 'P') { clip_playerStep(-1); }
-    else if (k === 'f' || k === 'F') {
-      var stage = document.querySelector('.clip-play-stage');
-      if (document.fullscreenElement) document.exitFullscreen();
-      else if (stage && stage.requestFullscreen) stage.requestFullscreen();
-    }
+    else if (k === 'f' || k === 'F') { clip_toggleFull(); }
   });
 
   /* ---- clips a previous run already produced */

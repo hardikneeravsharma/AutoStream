@@ -18,6 +18,15 @@ FROM THE PLAYER'S OWN FOOTAGE, NEVER SHIPPED
 
     Files are whatever was put there -- .mp4 from a rebuild, .gif from an
     earlier batch -- and the page plays either.
+
+UNTIL THEN, STOCK ONES
+    A new install has no clips, and cutting examples needs two -- so the bin
+    was a wall of empty cards for exactly the person who most needed to see
+    what each part does. A stock set ships with the app
+    (clips/stock_examples, made by scripts/make_stock_examples.py) from
+    footage drawn by that script rather than recorded, so it carries nobody's
+    gameplay. Any card cut from the player's own clips replaces its stock one,
+    and the page says which it is showing.
 """
 from __future__ import annotations
 
@@ -53,13 +62,27 @@ def folder(root: Path) -> Path:
     return Path(root) / studio.CACHE_DIR / FOLDER
 
 
+# Shipped beside this module, so a frozen build finds it the same way.
+STOCK = Path(__file__).resolve().parent / "stock_examples"
+
+
+def stock_path(part: str) -> Path | None:
+    f = STOCK / f"{part}.mp4"
+    return f if part in known() and f.is_file() else None
+
+
 def known() -> dict[str, str]:
     """Every part the Studio can use. -> {id: kind}"""
     return {p["id"]: p["kind"] for p in studio.catalog()["parts"]}
 
 
-def path_for(root: Path, part: str) -> Path | None:
-    """The example file for one part, or None. Never leaves the folder."""
+def path_for(root: Path, part: str, stock: bool = True) -> Path | None:
+    """The example file for one part, or None. Never leaves the folder.
+
+    The player's own example first; the stock one only where there is none,
+    and not at all with `stock=False` -- which is how a rebuild asks what is
+    still missing, since a stock card is not one of theirs.
+    """
     if part not in known():
         return None
     here = folder(root)
@@ -67,7 +90,7 @@ def path_for(root: Path, part: str) -> Path | None:
         f = here / f"{part}{ext}"
         if f.is_file():
             return f
-    return None
+    return stock_path(part) if stock else None
 
 
 def manifest(root: Path) -> dict:
@@ -83,8 +106,12 @@ def manifest(root: Path) -> dict:
         except OSError:
             continue
         have[part] = {"file": f.name, "type": TYPES.get(f.suffix.lower(), "video/mp4"),
-                      "bytes": st.st_size, "when": int(st.st_mtime)}
-    missing = sorted(p for p in parts if p not in have and p not in NOTHING)
+                      "bytes": st.st_size, "when": int(st.st_mtime),
+                      "stock": f.parent == STOCK}
+    # Missing means "not cut from your clips yet": a rebuild's job, whether or
+    # not a stock card is standing in for it.
+    missing = sorted(p for p in parts if p not in NOTHING
+                     and (p not in have or have[p]["stock"]))
     return {"ok": True, "examples": have, "missing": missing,
             "nothing": sorted(p for p in parts if p in NOTHING),
             "folder": str(folder(root))}
@@ -213,7 +240,7 @@ def build(root: Path, only: list[str] | None = None, on_step=None,
     parts = known()
     want = [p for p in (only or sorted(parts)) if p in parts and p not in NOTHING]
     if not only:
-        want = [p for p in want if not path_for(root, p)]
+        want = [p for p in want if not path_for(root, p, stock=False)]
     if not want:
         return {"ok": True, "made": [], "failed": {}, "message": "Every part already has one."}
     clips = sources(root)

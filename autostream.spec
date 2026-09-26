@@ -107,6 +107,10 @@ for _pkg in ("webview",):
 # the package rather than in config/ precisely so they survive here -- the
 # share-package step deletes config/ wholesale to strip credentials.
 datas += [("autostream/clips/templates/*.npy", "autostream/clips/templates")]
+# The stock effect examples: what the Studio's parts bin shows a new user who
+# has no clips of their own to cut examples from. Drawn, not recorded -- see
+# scripts/make_stock_examples.py.
+datas += [("autostream/clips/stock_examples/*.mp4", "autostream/clips/stock_examples")]
 
 # The app icon. Embedded in the exe below for Explorer and the taskbar, and
 # also shipped as a file so shortcuts and the installer can point at it without

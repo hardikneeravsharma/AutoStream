@@ -1037,15 +1037,29 @@ def _grid_div(shot_seconds: float, beat: float) -> int:
 
 # ============================================================== speed
 
-def pieces(speed: str, dur: float, pre: float) -> list[tuple[float, float, float]]:
+def pieces(speed: str, dur: float, pre: float,
+           stretch=None) -> list[tuple[float, float, float]]:
     """Output-time pieces of one shot: (start, end, playback rate), covering [0, dur].
 
     `pre` is where the kill falls in the shot's output time. Every preset keeps
     the kill inside a slow piece or at real speed, so it is still on screen
     when it lands on its beat.
+
+    `stretch` is (rate, real, hold): the run-up slowed to `rate` up to the
+    last `real` seconds before the kill, which play as recorded, after the
+    opening frame is held for `hold` seconds -- see stretch_to(). It is how a
+    clip with three seconds of footage fills the ten seconds before its mark
+    while its kill still lands exactly on it.
     """
     k = max(0.0, min(dur, pre))
-    if speed == "s01":
+    if stretch:
+        rate, real = float(stretch[0]), max(0.0, min(k, float(stretch[1])))
+        hold = max(0.0, min(k - real, float(stretch[2]) if len(stretch) > 2 else 0.0))
+        # A held frame is a piece so slow that one source frame covers it:
+        # the renderer's fps filter repeats that frame, which is a freeze,
+        # and nothing downstream needs to know freezes exist.
+        raw = [(0.0, hold, HOLD_RATE), (hold, k - real, rate), (k - real, dur, 1.0)]
+    elif speed == "s01":
         raw = [(0.0, dur, 0.5)]
     elif speed == "s02":
         raw = [(0.0, k - 0.45, 1.6), (k - 0.45, k - 0.15, 0.7), (k - 0.15, k + 0.55, 0.3),
@@ -1075,6 +1089,25 @@ def pieces(speed: str, dur: float, pre: float) -> list[tuple[float, float, float
     fixed[0] = (0.0, fixed[0][1], fixed[0][2])
     fixed[-1] = (fixed[-1][0], dur, fixed[-1][2])
     return fixed
+
+
+def shot_pieces(shot: dict, dur: float | None = None, pre: float | None = None,
+                speed: str | None = None) -> list[tuple[float, float, float]]:
+    """pieces() for a shot as it stands, stretch included."""
+    return pieces(speed or shot["speed"], shot["duration"] if dur is None else dur,
+                  shot["pre"] if pre is None else pre, _stretch_of(shot))
+
+
+def _stretch_of(shot: dict):
+    st = shot.get("stretch")
+    if not st:
+        return None
+    try:
+        rate, real = float(st[0]), float(st[1])
+        hold = float(st[2]) if len(st) > 2 else 0.0
+    except (TypeError, ValueError, IndexError):
+        return None
+    return (rate, real, hold) if 0 < rate < 1 else None
 
 
 def source_used(ps: list[tuple[float, float, float]], upto: float) -> float:
@@ -2053,6 +2086,52 @@ def max_post(shot: dict, pre: float, want: float) -> float:
     return lo
 
 
+# The slowest a run-up is stretched to fill the time before its mark. Below this
+# a clip reads as stills, not as play -- so what is still missing past it is a
+# held opening frame instead, up to MAX_HOLD; past that the mark is given up.
+MIN_STRETCH = 0.12
+MAX_HOLD = 8.0
+HOLD_RATE = 0.001
+# Seconds before the kill that stay at real speed when a run-up is stretched:
+# the action that leads into the kill plays as it happened.
+STRETCH_REAL = 1.5
+
+
+def stretch_to(shot: dict, pre: float) -> bool:
+    """Give `shot` a run-up of `pre` seconds, slowing its footage if it has too little.
+
+    THE KILL IS THE FIXED POINT. A mark says where the kill lands, so when the
+    clip holds fewer seconds before its kill than the mark leaves room for, the
+    kill does not move and neither does the cut -- the run-up is slowed
+    instead: the last STRETCH_REAL seconds before the kill play as recorded,
+    and everything before them is stretched to fill what is left. Three seconds
+    of footage in front of a mark ten seconds in plays as 8.5 s of slow approach
+    and 1.5 s of real action, and the kill frame is on the mark.
+
+    -> whether the run-up now reaches `pre` (False only when it would have to
+    run slower than MIN_STRETCH, and then the shot is left as it was).
+    """
+    shot.pop("stretch", None)
+    pre = max(0.0, float(pre))
+    if max_pre(shot, pre) >= pre - 1.0 / FPS:
+        return True
+    have = float(shot["kill"])                 # source seconds before the kill
+    real = min(STRETCH_REAL, have * 0.5, pre * 0.5)
+    if pre - real <= 1e-6 or have - real <= 1e-6:
+        return False
+    rate, hold = (have - real) / (pre - real), 0.0
+    if rate < MIN_STRETCH:
+        rate = MIN_STRETCH
+        hold = pre - real - (have - real) / rate
+        if hold > MAX_HOLD:
+            return False
+    shot["speed"] = "s00"
+    # A hair slower than exact, so rounding never asks for a frame the clip
+    # does not have before its kill.
+    shot["stretch"] = [round(rate * 0.995, 4), round(real, 4), round(hold, 4)]
+    return True
+
+
 def apply_marks(project: dict, marks: list[float]) -> list[str]:
     """Re-time the timeline so the shots' kills land on the marks (reel seconds).
 
@@ -2088,7 +2167,9 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
     # WHICH kill lands on the drop matters far less than that one does.
     lead = 0
     slack = max(0.25, float(project.get("beat") or 0.5))
-    if len(shots) > 1 and max_pre(shots[0], marks[0]) < marks[0] - slack:
+    for s in shots:
+        s.pop("stretch", None)              # the marks decide every stretch afresh
+    if len(shots) > 1 and max_pre(shots[0], marks[0]) < marks[0] - slack             and not stretch_to(dict(shots[0]), marks[0]):
         lead = 1
     n = min(len(marks), len(shots) - lead)
     if n <= 0:
@@ -2116,8 +2197,13 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
         if i == 0 and not lead:
             pre = max_pre(s, k)
             if pre < k - 1.0 / FPS:
-                notes.append(f"Shot 1 has only {pre:.2f} s of footage before its kill, so it lands "
-                             f"{k - pre:.2f} s before the first mark.")
+                if stretch_to(s, k):
+                    notes.append(f"Shot 1 has {float(s['kill']):.2f} s of footage before its kill; "
+                                 f"its run-up is slowed to fill the {k:.2f} s before the first mark.")
+                    pre = k
+                else:
+                    notes.append(f"Shot 1 has only {pre:.2f} s of footage before its kill, so it lands "
+                                 f"{k - pre:.2f} s before the first mark.")
             cuts.append(0.0)
             pres.append(pre)
             continue
@@ -2130,9 +2216,13 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
         need = cut - (cuts[j - 1] + pres[j - 1])       # time after the previous kill
         room = max_post(prev, pres[j - 1], need)
         if room < need - 1.0 / FPS:
-            # The previous shot runs out: start this one earlier if its own
-            # footage allows, and say so if it still cannot reach.
-            longer = max_pre(s, max(0.0, k - (cuts[j - 1] + pres[j - 1] + room)))
+            # The previous shot runs out: start this one earlier -- on its own
+            # footage if it has enough, slowed if it has not -- so the gap is
+            # filled with this shot's approach and its kill stays on the mark.
+            reach = max(0.0, k - (cuts[j - 1] + pres[j - 1] + room))
+            longer = max_pre(s, reach)
+            if longer < reach - 1.0 / FPS and stretch_to(s, reach):
+                longer = reach
             cut = k - longer
             pre = longer
             if cut > cuts[j - 1] + pres[j - 1] + room + 1.0 / FPS:
@@ -2225,7 +2315,7 @@ def _fit(shot: dict, beat: float, notes: list[str] | None = None) -> None:
         return
     kill = min(max(0.0, float(shot["kill"])), dur_clip)
     for _ in range(64):
-        ps = pieces(shot["speed"], shot["duration"], shot["pre"])
+        ps = shot_pieces(shot)
         before = source_used(ps, shot["pre"])
         after = source_used(ps, shot["duration"]) - before
         ok_head = kill - before >= -1e-6
@@ -2239,6 +2329,8 @@ def _fit(shot: dict, beat: float, notes: list[str] | None = None) -> None:
             shot["duration"] = round(shot["duration"] - cut, 5)
         elif not ok_tail and shot["duration"] - shot["pre"] > step:
             shot["duration"] = round(shot["duration"] - step, 5)
+        elif shot.get("stretch"):
+            shot.pop("stretch", None)       # a stretch that no longer fits is dropped
         elif shot["speed"] != "s00":
             shot["speed"] = "s00"           # a clip too short to ramp plays straight
         else:
@@ -2402,6 +2494,12 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
             "caption": re.sub(r"[\r\n]", " ", str(raw.get("caption") or ""))[:40],
         }
         shot["pre"] = round(_num(raw.get("pre"), 0.0, shot["duration"], shot["duration"] / 2), 5)
+        st = raw.get("stretch")
+        if isinstance(st, (list, tuple)) and len(st) in (2, 3):
+            rate = _num(st[0], MIN_STRETCH * 0.99, 1.0, 1.0)
+            if rate < 0.999:
+                shot["stretch"] = [round(rate, 4), round(_num(st[1], 0.0, 60.0, 0.0), 4),
+                                   round(_num(st[2] if len(st) > 2 else 0, 0.0, MAX_HOLD + 0.01, 0.0), 4)]
         before = (shot["pre"], shot["duration"], shot["speed"])
         _fit(shot, out["step"])
         if (shot["pre"], shot["duration"], shot["speed"]) != before:
@@ -2495,7 +2593,7 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
 
 def _span(shot: dict) -> tuple[float, float]:
     """Source seconds the shot's own (handle-free) footage covers."""
-    ps = pieces(shot["speed"], shot["duration"], shot["pre"])
+    ps = shot_pieces(shot)
     start = shot["kill"] - source_used(ps, shot["pre"])
     return start, start + source_used(ps, shot["duration"])
 
@@ -2516,7 +2614,7 @@ def derive(project: dict) -> dict:
     kills_reel = []
     rows = []
     for i, (s, t0) in enumerate(zip(shots, starts)):
-        ps = pieces(s["speed"], s["duration"], s["pre"])
+        ps = shot_pieces(s)
         a, b = _span(s)
         inside = []
         for k in s["kills"]:
@@ -2705,7 +2803,7 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
         speed = s["speed"]
         if i == len(shots) - 1 and project["outro"] == "e03":
             speed = "exit"
-        ps = pieces(speed, dur, min(s["pre"], dur))
+        ps = pieces(speed, dur, min(s["pre"], dur), _stretch_of(s))
         src_body_start = s["kill"] - source_used(ps, min(s["pre"], dur))
         hsec, tsec = head / FPS, tail / FPS
         seg_ps = []
