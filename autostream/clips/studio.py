@@ -71,7 +71,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import hits as hits_mod, mark as mark_mod, parts as parts_mod, rulebook, studio_refs
+from . import facecam, hits as hits_mod, mark as mark_mod, parts as parts_mod, rulebook, studio_refs
 
 log = logging.getLogger(__name__)
 
@@ -2349,6 +2349,16 @@ class ProjectError(ValueError):
     pass
 
 
+def _pos(v, default=(0.0, 0.0)) -> list[float]:
+    try:
+        x, y = (float(n) for n in v)
+        if not (math.isfinite(x) and math.isfinite(y)):
+            raise ValueError
+    except (TypeError, ValueError):
+        x, y = default
+    return [round(max(0.0, min(1.0, x)), 4), round(max(0.0, min(1.0, y)), 4)]
+
+
 def _num(v, lo: float, hi: float, default: float) -> float:
     try:
         f = float(v)
@@ -2393,6 +2403,17 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         "vignette": bool(project.get("vignette")),
         "overlays": [o for o in dict.fromkeys(project.get("overlays") or []) if o in ids_of("overlay")],
         "handle": re.sub(r"[\r\n]", " ", str(project.get("handle") or ""))[:40],
+        # Where the handle sits, as a fraction of the room the frame leaves it:
+        # 0,0 is the top-left corner and 1,1 the bottom-right, which is where
+        # it always was before it could be moved.
+        "handle_pos": _pos(project.get("handle_pos"), (1.0, 1.0)),
+        # How the footage fills the frame: "zoom" crops it to fill (what a
+        # vertical reel always did), "fit" shows all of it over a blurred copy.
+        "vfit": "fit" if project.get("vfit") == "fit" else "zoom",
+        # Seconds the ending takes, 0 for the style's own. A longer one holds
+        # the last frame, easing in, while the picture and the song fade.
+        "outro_len": round(_num(project.get("outro_len"), 0.0, 8.0, 0.0), 2),
+        "cam": facecam.settings(project.get("cam")),
         "music_db": _num(project.get("music_db"), -30, 12, 0.0),
         "game_db": _num(project.get("game_db"), -30, 12, 0.0),
         "duck": bool(project.get("duck", True)),
@@ -2509,6 +2530,19 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
     if not out["shots"]:
         raise ProjectError("There are no usable clips in this reel.")
 
+    # THE FACECAM FILE FOR EACH SHOT comes from the links the Facecam tab
+    # made, never from the page: a link is only ever written with a path the
+    # OS dialog returned, which is what makes a file outside the clips folder
+    # safe to hand to ffmpeg here.
+    if out["cam"]["source"] == "file":
+        links = facecam.load(root)["links"]
+        for shot in out["shots"]:
+            got = facecam.for_clip(root, Path(shot["clip"]), links)
+            if got:
+                shot["cam_file"], shot["cam_offset"] = got[0], round(got[1], 4)
+        if not any(s.get("cam_file") for s in out["shots"]):
+            notes.append("No facecam video is attached to these clips, so the reel has no facecam.")
+
     # The clips that were chosen for this reel and why any are not in it: what
     # "Add clips" rebuilds from. Only for display and for a new plan, which
     # checks every path against the library again.
@@ -2606,6 +2640,10 @@ def _tail_room(shot: dict) -> float:
     return max(0.0, float(shot["clip_seconds"]) - _span(shot)[1])
 
 
+# Seconds after the last kill before a long ending may start fading.
+OUTRO_AFTER_KILL = 0.6
+
+
 def derive(project: dict) -> dict:
     """Everything the timeline draws that follows from the project."""
     shots = project["shots"]
@@ -2626,6 +2664,15 @@ def derive(project: dict) -> dict:
                      "lead_in": bool(s.get("lead_in")),
                      "source_in": round(a, 4), "source_out": round(b, 4),
                      "pieces": [[round(x, 4), round(y, 4), r] for x, y, r in ps]})
+    # A LONGER ENDING NEVER FADES THE LAST KILL. The fade runs over the last
+    # `outro_len` seconds, and where the last shot ends sooner after its kill
+    # than that, the reel is held on its last frame for the difference.
+    fade = float(project.get("outro_len") or 0.0) if project.get("outro") != "e12" else 0.0
+    hold = 0.0
+    if fade and rows:
+        last_kill = max(rows[-1]["kills_reel"] or [rows[-1]["kill_reel"]])
+        hold = round(max(0.0, last_kill + OUTRO_AFTER_KILL + fade - length), 4)
+        length += hold
     beat = float(project.get("beat") or 60.0 / NO_SONG_BPM)
     beats = [round(k * beat, 4) for k in range(int(length / beat) + 2) if k * beat <= length + 1e-6]
     # WHERE THE SONG SAID EACH KILL SHOULD LAND. The marks are song seconds and
@@ -2665,6 +2712,7 @@ def derive(project: dict) -> dict:
             "beats": beats, "beat": beat, "bpm": round(60.0 / beat, 2),
             "marks": marks, "on_marks": on_marks, "on_mark_window": ON_MARK,
             "selection": selection, "lead_in": lead_in, "intro_clip": intro_clip,
+            "outro_hold": hold, "outro_fade": round(fade, 4),
             "edited": bool(project.get("plan_sig")) and signature(shots) != project.get("plan_sig")}
 
 
@@ -2775,10 +2823,19 @@ class Segment:
     sat_trim: float = 1.0
     kill_times: list = field(default_factory=list)   # every kill shown, segment seconds
     game_gate: bool = False                          # game sound only around the kills
+    hold: int = 0                                    # frames the last frame is held for a long ending
+    layout: dict = field(default_factory=dict)       # facecam.layout(): where game and camera go
+    cam_file: str = ""                               # a separate facecam video, if any
+    cam_start: float = 0.0                           # its seconds at the segment's first source frame
 
     def key(self) -> str:
         d = dict(self.__dict__)
         d.pop("index", None)
+        # Left out at their defaults, so a shot that uses none of them keeps
+        # the cache key -- and the render -- it had before they existed.
+        for k, default in (("hold", 0), ("layout", {}), ("cam_file", ""), ("cam_start", 0.0)):
+            if d.get(k) == default:
+                d.pop(k, None)
         blob = json.dumps(d, sort_keys=True, default=str)
         return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:20]
 
@@ -2794,12 +2851,15 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
     shots = project["shots"]
     starts = [round(r["start"] * FPS) for r in derived["shots"]]
     ends = starts[1:] + [round(derived["length"] * FPS)]
+    hold_f = round(float(derived.get("outro_hold") or 0.0) * FPS)
+    cam = project.get("cam") or facecam.settings(None)
     out = []
     for i, s in enumerate(shots):
         head = round(s["tlen"] / 2 * FPS) if i > 0 else 0
         tail = round(shots[i + 1]["tlen"] / 2 * FPS) if i + 1 < len(shots) else 0
         body = max(1, ends[i] - starts[i])
-        dur = body / FPS
+        held = min(hold_f, body - 1) if i == len(shots) - 1 else 0
+        dur = (body - held) / FPS
         speed = s["speed"]
         if i == len(shots) - 1 and project["outro"] == "e03":
             speed = "exit"
@@ -2847,8 +2907,92 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
             outro_freeze=1.0 if (i == len(shots) - 1 and project["outro"] == "e02") else 0.0,
             sat_trim=float(project.get("saturation", 1.0)),
             kill_times=kill_times or [round(kill_at, 4)],
-            game_gate=bool(project.get("song")) and bool(project.get("kill_sound", True))))
+            game_gate=bool(project.get("song")) and bool(project.get("kill_sound", True)),
+            hold=held,
+            layout=_layout_for(project, s, W, H, cam),
+            cam_file=str(s.get("cam_file") or "") if cam["source"] == "file" else "",
+            cam_start=round(float(s.get("cam_offset") or 0.0) + src_body_start - hsec, 4)
+            if cam["source"] == "file" and s.get("cam_file") else 0.0))
     return out
+
+
+def _layout_for(project: dict, shot: dict, W: int, H: int, cam: dict) -> dict:
+    """Where the game and the camera go in this shot, or {} for the plain frame.
+
+    {} rather than a dict saying "zoom, no camera" so a reel that uses neither
+    renders -- and caches -- exactly as it did before either existed.
+    """
+    has_cam = cam["source"] == "inset" or (cam["source"] == "file" and bool(shot.get("cam_file")))
+    fit = project.get("vfit") or "zoom"
+    if not has_cam and fit == "zoom":
+        return {}
+    return facecam.layout(project["format"], W, H, cam, fit, has_cam)
+
+
+def _cam_input(seg: Segment, src_len: float) -> list[str]:
+    """The facecam file as input 1, cued to the same moment as the clip."""
+    if not seg.cam_file:
+        return []
+    return ["-ss", f"{max(0.0, seg.cam_start):.4f}", "-t", f"{src_len + 0.5:.4f}", "-i", seg.cam_file]
+
+
+def _layout_graph(seg: Segment, time_ops: list[str], effects: list[str], end: str,
+                  FW: int, FH: int) -> str:
+    """The video graph for a shot with a layout: the game framed into its area
+    with its effects, the camera cut out and placed, one frame out.
+
+    The camera goes through the same time map as the game -- speed ramps,
+    freezes, the held ending -- so a laugh stays with the kill that caused it.
+    Kill effects touch the game only: a zoom punch that also punched the
+    streamer's face in was measured as the thing that made those reels look
+    home-made.
+    """
+    lay = seg.layout
+    gx, gy, GW, GH = (int(n) for n in lay["game"])
+    camb = lay.get("cam")
+    g = []
+    if camb and not seg.cam_file:
+        g.append("[0:v]" + ",".join(time_ops) + ",split[gt][ct]")
+    else:
+        g.append("[0:v]" + ",".join(time_ops) + "[gt]")
+    if camb and seg.cam_file:
+        cam_ops = [_setpts_expr(seg.pieces), f"fps={FPS}"]
+        if seg.cam_start < 0:
+            cam_ops.append(f"tpad=start_duration={-seg.cam_start:.4f}:start_mode=clone")
+        # Held to the end rather than dropped: a camera file that stops early
+        # must not leave a hole in the corner of the reel.
+        cam_ops.append(f"tpad=stop_mode=clone:stop_duration={seg.frames / FPS:.4f}")
+        g.append("[1:v]" + ",".join(cam_ops) + "[ct]")
+    if lay.get("fit") == "fit":
+        g.append(f"[gt]split[ga][gb];"
+                 f"[ga]scale={GW}:{GH}:force_original_aspect_ratio=increase,crop={GW}:{GH},"
+                 f"boxblur=24:2,eq=brightness=-0.12:saturation=0.8[gbg];"
+                 f"[gb]scale={GW}:{GH}:force_original_aspect_ratio=decrease:flags=lanczos[gfg];"
+                 f"[gbg][gfg]overlay=(W-w)/2:(H-h)/2,setsar=1[gf]")
+    else:
+        g.append(f"[gt]scale={GW}:{GH}:force_original_aspect_ratio=increase:flags=lanczos,"
+                 f"crop={GW}:{GH},setsar=1[gf]")
+    g.append("[gf]" + ",".join(effects + ["format=yuv420p"]) + "[g]")
+    base = "[g]"
+    if (gx, gy, GW, GH) != (0, 0, FW, FH):
+        g.append(f"[g]pad={FW}:{FH}:{gx}:{gy}:color=black[gp]")
+        base = "[gp]"
+    if camb:
+        cx, cy, CW, CH = (int(n) for n in camb)
+        bx, by, bw, bh = lay.get("crop") or [0, 0, 1, 1]
+        cam = [f"crop=iw*{bw:.4f}:ih*{bh:.4f}:iw*{bx:.4f}:ih*{by:.4f}",
+               f"scale={CW}:{CH}:force_original_aspect_ratio=increase:flags=lanczos",
+               f"crop={CW}:{CH}", "setsar=1"]
+        stacked = (CW, cx) == (FW, 0)
+        if lay.get("border") and not stacked:
+            b = max(2, round(min(FW, FH) * 0.004))
+            cam.append(f"pad={CW + 2 * b}:{CH + 2 * b}:{b}:{b}:color=white@0.9")
+            cx, cy = cx - b, cy - b
+        g.append("[ct]" + ",".join(cam) + "[c]")
+        g.append(f"{base}[c]overlay=x={max(0, cx)}:y={max(0, cy)}:eof_action=repeat[gc]")
+        base = "[gc]"
+    g.append(base + end + "[v]")
+    return ";".join(g)
 
 
 def _setpts_expr(ps: list) -> str:
@@ -2882,19 +3026,35 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     if seg.freeze > 0:
         v.append(f"loop=loop={round(seg.freeze * F)}:size=1:start={round(kt * F)}")
         v.append(f"setpts=N/{F}/TB")
+    if seg.hold > 0:
+        # A long ending: the footage has run out, so its last frame is held
+        # while the picture and the song fade (the push-in is below).
+        v.append(f"tpad=stop_mode=clone:stop_duration={seg.hold / F:.4f}")
     if seg.outro_freeze > 0:
         n = round(seg.outro_freeze * F)
         v.append(f"loop=loop={n}:size=1:start={max(0, total - n)}")
         v.append(f"setpts=N/{F}/TB")
-    if seg.fmt == "vertical":
+    lay = seg.layout or {}
+    FW, FH = W, H                       # the whole frame; W, H become the game's area
+    time_ops = list(v)
+    if lay:
+        v = []
+        W, H = int(lay["game"][2]), int(lay["game"][3])
+    elif seg.fmt == "vertical":
         v.append(f"crop='min(iw,ih*9/16)':ih,scale={W}:{H}:flags=lanczos")
     else:
         v.append(f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{H}")
-    v.append("setsar=1")
+    if not lay:
+        v.append("setsar=1")
 
     hold = seg.freeze
     T = "in_time"                       # zoompan's clock; every other filter uses t
     z_terms = []
+    if seg.hold > 0:
+        # Held, not frozen: a slow push over the held frame, eased at both
+        # ends, so the ending settles rather than stopping.
+        h0, hs = (total - seg.hold) / F, seg.hold / F
+        z_terms.append(f"0.06*(1-cos(PI*min(1,max(0,({T}-{h0:.4f})/{hs:.4f}))))/2")
     if (pid := picked(seg.fx, "k01")):
         z_terms.append(_pulse(T, kt, knob(pid, "amt", 0.12), knob(pid, "fall", 0.35)))
     if (pid := picked(seg.hero_fx, "h01")):
@@ -3063,8 +3223,11 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
                  f"fontcolor=white:borderw=3:"
                  f"bordercolor=black@0.55:fontsize='if(lt(t-{kt:.4f},0.1),{big}-{(big - size) * 10}*(t-{kt:.4f}),{size})':"
                  f"x=(w-tw)/2:y=h*0.68:enable='{_between(kt, kt + 1.4)}'")
-    v.append(f"format=yuv420p,trim=end_frame={total},setpts=PTS-STARTPTS")
-    vchain = "[0:v]" + ",".join(v) + "[v]"
+    end = f"format=yuv420p,trim=end_frame={total},setpts=PTS-STARTPTS"
+    if not lay:
+        vchain = "[0:v]" + ",".join(v + [end]) + "[v]"
+    else:
+        vchain = _layout_graph(seg, time_ops, v, end, FW, FH)
 
     # Game audio: the clip's own sound at real speed; silence where the
     # footage is slowed or sped (a stretched gunshot sounds broken, and the
@@ -3113,6 +3276,7 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     enc = encoder_args if encoder_args is not None else ["-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p"]
     return [ff, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
             "-ss", f"{start:.4f}", "-t", f"{src_len + 0.5:.4f}", "-i", seg.clip,
+            *_cam_input(seg, src_len),
             "-filter_complex", vchain + ";" + achain,
             "-map", "[v]", "-map", "[a]", "-r", str(F), *enc,
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
@@ -3208,15 +3372,23 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         post.append(f"eq=saturation='if(lt(t,{k1:.4f}),0.15,1)':eval=frame")
         post.append(f"fade=in:st=0:d={over(0.6, 0.5, 2.5)}")
     end_fade = rulebook.ending_fade(project["beat"])
+    # THE ENDING'S OWN LENGTH, when one was chosen: every fading ending runs
+    # for it, the song fades with it, and derive() has held the last frame
+    # long enough that the fade never starts before the last kill has landed.
+    long_end = float(derived.get("outro_fade") or 0.0)
+    if long_end:
+        end_fade = min(long_end, L)
     if fam(outro) == "fade_out":
-        d = _fade_seconds(outro, 0.7)
+        d = end_fade if long_end else _fade_seconds(outro, 0.7)
         post.append(f"fade=out:st={max(0.0, L - d):.4f}:d={d:.4f}:color={_fade_colour(outro)}")
     elif outro == "e01" or outro == "e03":
         post.append(f"fade=out:st={max(0.0, L - end_fade):.4f}:d={end_fade:.4f}")
     elif outro == "e05":
-        post.append(f"fade=out:st={max(0.0, L - 0.35):.4f}:d=0.35:color=white")
+        d = end_fade if long_end else 0.35
+        post.append(f"fade=out:st={max(0.0, L - d):.4f}:d={d:.4f}:color=white")
     elif outro == "e02":
-        post.append(f"hue=s='if(gt(t,{L - 1.0:.4f}),max(0,1-(t-{L - 1.0:.4f})/0.8),1)'")
+        d = end_fade if long_end else 1.0
+        post.append(f"hue=s='if(gt(t,{L - d:.4f}),max(0,1-(t-{L - d:.4f})/{d * 0.8:.4f}),1)'")
     ov = project["overlays"]
     if (pid := picked(ov, "o04")):
         post.append(f"noise=alls={int(knob(pid, 'amt', 10.0))}:allf=t")
@@ -3244,9 +3416,13 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
                         f"enable='{_between(ks[j], ks[j + 1])}'")
     if "o07" in ov and project.get("handle"):
         size = max(18, round(H * 0.032))
+        # Anywhere in the frame, as a share of the room the text leaves:
+        # 1,1 is the bottom-right corner it always used to sit in.
+        px, py = project.get("handle_pos") or [1.0, 1.0]
+        mx, my = round(W * 0.025), round(H * 0.03)
         post.append(f"drawtext={font}expansion=none:textfile={_path_arg(text_file(textdir, project['handle']))}:"
-                    f"fontsize={size}:fontcolor=white@0.7:"
-                    f"x=w-tw-{round(W * 0.025)}:y=h-th-{round(H * 0.03)}")
+                    f"fontsize={size}:fontcolor=white@0.7:borderw=1:bordercolor=black@0.35:"
+                    f"x={mx}+(w-tw-{2 * mx})*{float(px):.4f}:y={my}+(h-th-{2 * my})*{float(py):.4f}")
     if "i04" in ov and song:
         from .reel import NOWPLAYING_FROM, NOWPLAYING_SECONDS, song_tags
         tags = song_tags(Path(song))
@@ -3289,8 +3465,11 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         fades = []
         if intro in ("i03", "i05") or fam(intro) == "fade_in":
             fades.append("afade=t=in:st=0:d=1.0")
-        if outro in ("e01", "e03", "e02") or fam(outro) == "fade_out":
-            fades.append(f"afade=t=out:st={max(0.0, L - end_fade):.4f}:d={end_fade:.4f}")
+        if outro in ("e01", "e03", "e02") or fam(outro) == "fade_out" or long_end:
+            # A long ending eases out rather than ramping down in a straight
+            # line, which sounds like the song being switched off slowly.
+            curve = ":curve=qsin" if long_end else ""
+            fades.append(f"afade=t=out:st={max(0.0, L - end_fade):.4f}:d={end_fade:.4f}{curve}")
         # A BREATH BEFORE THE BIG ONE: the music drops away for the half beat
         # before each hero kill and comes back on it.
         holes, hits = [], []
