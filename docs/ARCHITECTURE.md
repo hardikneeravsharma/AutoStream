@@ -300,6 +300,15 @@ a LIVE phase with nothing being written looks healthy and produces nothing. And
 if streaming and recording are both off, startup logs an error and toasts,
 because that combination can only ever sit at IDLE.
 
+Neither watchdog trusts OBS's `outputActive` on its own. When the encoder dies
+under an output (an NVENC device loss, measured) OBS keeps reporting the output
+active with its timecode and bytes frozen, while refusing to stop it (501). So
+`is_streaming()`, `recording_active()` and `health()` count an output as running
+only while its duration or byte count moves (`STALL_AFTER`, paused and
+reconnecting exempt), and `start()` / `start_recording()` probe an output that
+claims to be active before adopting it: a frozen one gets OBS restarted, the
+only thing that clears it, instead of a session built on dead air.
+
 The dashboard reads `streaming` out of `/api/status` and shows **RECORDING**
 rather than LIVE, and hides the viewer/like counters and the chat column.
 

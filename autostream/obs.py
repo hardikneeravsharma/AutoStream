@@ -135,6 +135,9 @@ class Obs:
         self._down_until = 0.0
         self._audio_since = 0.0
         self._audio_ok = False
+        # Per output: its last (duration, bytes) and when that last changed.
+        # See _moving().
+        self._progress: dict[str, tuple[tuple[int, int], float]] = {}
 
     # ---------------- connection ----------------
 
@@ -346,9 +349,95 @@ class Obs:
     def is_streaming(self) -> bool:
         try:
             self.connect()
-            return bool(self.ws.get_stream_status().output_active)
+            return self._moving("stream", self.ws.get_stream_status())
         except Exception:  # noqa: BLE001
             return False
+
+    # ---------------- is an "active" output actually running ----------------
+    #
+    # outputActive is not proof of life. When the encoder dies under an output
+    # -- measured here: NVENC failed with NV_ENC_ERR_INVALID_DEVICE mid-game, a
+    # GPU device loss -- OBS finalises the recording, stops sending the stream,
+    # and still reports BOTH outputs active, with timecode and byte counts
+    # frozen, indefinitely. Its own frontend knows better: StopStream and
+    # StopRecord answer 501 "not running". So the stream sat on YouTube as dead
+    # air, every later session "reused" the corpse and timed out waiting for
+    # ingestion, and three of those paused the engine.
+    #
+    # So an output counts as running only while its duration or byte count
+    # moves. Paused and reconnecting are exempt: both stand still by design.
+
+    STALL_AFTER = 20.0        # seconds without progress before it is dead
+    STALL_PROBE = 3.0         # the wait when a verdict is needed right now
+
+    def _moving(self, kind: str, status) -> bool:
+        if not getattr(status, "output_active", False):
+            self._progress.pop(kind, None)
+            return False
+        if (getattr(status, "output_paused", False)
+                or getattr(status, "output_reconnecting", False)):
+            self._progress.pop(kind, None)
+            return True
+        mark = (int(getattr(status, "output_duration", 0) or 0),
+                int(getattr(status, "output_bytes", 0) or 0))
+        now = time.monotonic()
+        seen = self._progress.get(kind)
+        if seen is None or seen[0] != mark:
+            self._progress[kind] = (mark, now)
+            return True
+        return now - seen[1] < self.STALL_AFTER
+
+    def _frozen(self, kind: str) -> bool:
+        """-> True when `kind`'s output says active but is provably not moving.
+
+        For the start paths, which cannot wait STALL_AFTER for the tracker to
+        make up its mind. Costs nothing unless the output claims to be active.
+        """
+        get = (self.ws.get_stream_status if kind == "stream"
+               else self.ws.get_record_status)
+        first = get()
+        if not first.output_active or getattr(first, "output_paused", False) \
+                or getattr(first, "output_reconnecting", False):
+            return False
+        time.sleep(self.STALL_PROBE)
+        second = get()
+        if not second.output_active:
+            return False
+        return ((first.output_duration, first.output_bytes)
+                == (second.output_duration, second.output_bytes))
+
+    def _restart_frozen(self, kind: str) -> None:
+        """Close and relaunch an OBS whose `kind` output is frozen.
+
+        Nothing short of a restart clears it: OBS refuses to stop an output it
+        believes is not running, and refuses to start one it reports active.
+        The recording that output was writing was already finalised when the
+        encoder died, so killing OBS loses nothing that was still being saved.
+        """
+        log.error("OBS reports its %s output running, but it has not moved "
+                  "in %.0fs and OBS will not stop it -- its encoder died (see "
+                  "OBS's own log). Restarting OBS; nothing else clears this.",
+                  "stream" if kind == "stream" else "recording", self.STALL_PROBE)
+        self.close()
+        self._progress.clear()
+        procs, refused = [], False
+        for p in psutil.process_iter(["name"]):
+            try:
+                if (p.info.get("name") or "").lower() in ("obs64.exe", "obs32.exe", "obs"):
+                    procs.append(p)
+                    p.kill()
+            except psutil.NoSuchProcess:
+                continue
+            except psutil.Error:
+                refused = True
+        _gone, alive = psutil.wait_procs(procs, timeout=15)
+        if alive or refused:
+            # An elevated OBS cannot be killed from an unelevated AutoStream.
+            raise ObsUnavailable(
+                f"OBS's {kind} output is frozen and OBS could not be closed. "
+                "Restart OBS, then press Resume.")
+        self._down_until = 0.0
+        self.connect(wait=True)
 
     # ---------------- is anything being heard ----------------
     #
@@ -489,7 +578,7 @@ class Obs:
         self.connect()
         s = self.ws.get_stream_status()
         out = {
-            "active": bool(s.output_active),
+            "active": self._moving("stream", s),
             "congestion": getattr(s, "output_congestion", 0.0),
             "skipped": getattr(s, "output_skipped_frames", 0),
             "total": getattr(s, "output_total_frames", 0),
@@ -501,7 +590,7 @@ class Obs:
         # written.
         try:
             r = self.ws.get_record_status()
-            out["recording"] = bool(r.output_active)
+            out["recording"] = self._moving("record", r)
             out["rec_paused"] = bool(getattr(r, "output_paused", False))
             out["rec_bytes"] = int(getattr(r, "output_bytes", 0))
             out["rec_ms"] = int(getattr(r, "output_duration", 0))
@@ -674,6 +763,8 @@ class Obs:
         # The one call worth waiting for: a session is beginning and OBS may
         # still be loading, so this is also the only path allowed to launch it.
         self.connect(wait=True)
+        if self._frozen("stream"):
+            self._restart_frozen("stream")
         self.set_scene(scene or self.cfg.obs.default_scene or None)
         if overlay:
             self.set_overlay_text(overlay)
@@ -716,7 +807,7 @@ class Obs:
     def recording_active(self) -> bool:
         try:
             self.connect()
-            return bool(self.ws.get_record_status().output_active)
+            return self._moving("record", self.ws.get_record_status())
         except Exception:  # noqa: BLE001
             return False
 
@@ -813,7 +904,8 @@ class Obs:
                 except Exception as e:  # noqa: BLE001
                     log.info("could not set the audio tracks for %s: %s", name, e)
 
-    def start_recording(self) -> None:
+    def start_recording(self) -> bool:
+        """-> True when an output already running was adopted, not started."""
         # wait=True FOR THE SAME REASON start() HAS IT, and it was missing.
         # With streaming off -- record and clip only, which is how most people
         # who came here for the clipper run it -- start() is never called, so
@@ -824,11 +916,14 @@ class Obs:
         # pauses itself until restart, and the user is told to "check OBS" for
         # an app that was waiting to be told to open it.
         self.connect(wait=True)
+        if self._frozen("record"):
+            self._restart_frozen("record")
         if self.ws.get_record_status().output_active:
             log.info("OBS already recording — reusing output")
-            return
+            return True
         self.ws.start_record()
         log.info("OBS StartRecord issued")
+        return False
 
     def record_offset(self) -> float | None:
         """Seconds into the file OBS is writing. -> None when not recording.

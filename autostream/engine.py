@@ -677,8 +677,10 @@ class Engine:
             # but that means the file can predate the session by a long way --
             # and cover a completely different game. Remember which it was, so
             # the journal does not later claim the whole file is this session.
-            already = self.obs.recording_active()
-            self.obs.start_recording()
+            # Asked of start_recording() rather than checked beforehand: an
+            # output that only LOOKED active gets OBS restarted there, and the
+            # file is then a fresh one after all.
+            already = bool(self.obs.start_recording())
             self.state.recording = True
             self.state.recording_adopted = already
             self.state.save()
