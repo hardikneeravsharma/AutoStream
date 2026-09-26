@@ -3150,8 +3150,15 @@ class Server:
             return {"ok": False, "error": "That clip is not in the clips folder."}
         # A run's link is against the recording; the clip starts `start` into it.
         start = facecam.clip_start(clip) if key == facecam.key_for(clip) else 0.0
-        got = facecam.sync(clip, 0.0, Path(link["file"]),
-                           guess=float(link.get("offset") or 0.0) + start)
+        guess = float(link.get("offset") or 0.0)
+        if not guess and start:
+            # Not lined up yet: start from when the two files were recorded.
+            try:
+                src = json.loads((clip.parent.parent / "session.json").read_text(encoding="utf-8")).get("source")
+            except (OSError, ValueError, AttributeError):
+                src = None
+            guess = facecam.wall_guess(Path(src) if src else None, Path(link["file"]))
+        got = facecam.sync(clip, 0.0, Path(link["file"]), guess=guess + start)
         if got.get("offset") is not None:
             got["offset"] = round(got["offset"] - start, 3)
         return got

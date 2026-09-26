@@ -53,9 +53,11 @@ FILE = "facecam.json"
 SOURCES = ("none", "inset", "file")
 LAYOUTS = ("stack", "corner")
 VIDEO_EXTS = (".mp4", ".mkv", ".mov", ".m4v", ".webm", ".avi", ".flv")
-# A sync that cannot tell its best lag from its second best is a guess, and a
-# guessed offset is worse than none: it looks right on the timeline.
-SYNC_CONFIDENCE = 3.0
+# A sync that cannot tell its best lag from the rest is a guess, and a guessed
+# offset is worse than none: it looks right on the timeline. In standard
+# deviations of the other lags: unrelated sound over a few thousand lags reaches
+# about 4 by chance alone, and a real match measured 15-55.
+SYNC_CONFIDENCE = 6.0
 
 
 def _path(root: Path) -> Path:
@@ -242,6 +244,26 @@ def layout(fmt: str, W: int, H: int, cam: dict, fit: str, has_cam: bool,
 
 # ------------------------------------------------------------------ sync
 
+def wall_guess(recording: Path | None, cam: Path) -> float:
+    """camera_time - recording_time, from when each file was written.
+
+    Recorders write a file until they stop, so a file's start is its
+    modification time less its length. Two recordings made side by side start
+    within seconds of each other, which puts the sound search in the right
+    place; without it, a camera started five minutes early was never found.
+    0.0 when either cannot be read.
+    """
+    from .tools import media_info
+    try:
+        if recording is None or not Path(recording).is_file():
+            return 0.0
+        r0 = Path(recording).stat().st_mtime - float(media_info(recording)["duration"])
+        c0 = Path(cam).stat().st_mtime - float(media_info(cam)["duration"])
+    except Exception:                                    # noqa: BLE001
+        return 0.0
+    return round(r0 - c0, 3)
+
+
 def _envelope(path: Path, start: float, seconds: float, rate: int = 100):
     """Loudness at `rate` Hz, from a mono 8 kHz decode. None when there is no sound."""
     import subprocess
@@ -283,8 +305,11 @@ def sync(game: Path, game_t: float, cam: Path, guess: float = 0.0,
     g = _envelope(game, game_t, window, rate)
     c0 = game_t + guess - search
     c = _envelope(cam, max(0.0, c0), window + 2 * search, rate)
-    if g is None or c is None:
-        return {"ok": False, "error": "One of the two has no sound to line them up by."}
+    if g is None:
+        return {"ok": False, "error": "This clip has no sound to line the camera up by. Set the offset by ear."}
+    if c is None:
+        return {"ok": False, "error": "The camera video has no sound near this clip -- check it is the "
+                                      "right file, or set the offset by ear."}
     if c0 < 0:                              # the camera cannot start before 0
         # Silence for the stretch before the camera started, so index 0 is
         # still time c0.

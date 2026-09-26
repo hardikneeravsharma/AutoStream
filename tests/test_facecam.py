@@ -190,3 +190,34 @@ def test_marks_can_only_be_saved_on_an_imported_clip(root):
     clip = _run(root, "2026-09-01_VALORANT")
     assert not uploads.save(root, str(clip), [1.0])["ok"]
     assert not uploads.save(root, str(root.parent / "import-x" / "clips" / "a.mp4"), [1.0])["ok"]
+
+
+# ------------------------------------------------------------------ lining up
+
+def test_the_offset_is_found_from_the_sound_both_share(monkeypatch):
+    """The camera started 7.3 s before the game: its sound is the game's,
+    7.3 s later in the file."""
+    import numpy as np
+    rng = np.random.default_rng(3)
+    rate, true = 100, 7.3
+    world = rng.standard_normal(rate * 400)              # 400 s of onsets
+    game_t = 150.0
+
+    def env(path, start, seconds, rate=100):
+        # the game file's clock is world time; the camera's is world + true
+        at = start - (true if str(path) == "cam" else 0.0)
+        i = int(round(at * rate))
+        return world[max(0, i):i + int(seconds * rate)].copy()
+    monkeypatch.setattr(facecam, "_envelope", env)
+    got = facecam.sync(Path("game"), game_t, Path("cam"), guess=0.0, window=30, search=20)
+    assert got["ok"], got
+    assert got["offset"] == pytest.approx(true, abs=0.02)
+
+
+def test_noise_that_lines_up_nowhere_is_refused(monkeypatch):
+    import numpy as np
+    rng = np.random.default_rng(5)
+    monkeypatch.setattr(facecam, "_envelope",
+                        lambda path, start, seconds, rate=100: rng.standard_normal(int(seconds * rate)))
+    got = facecam.sync(Path("game"), 10.0, Path("cam"), window=30, search=20)
+    assert not got["ok"] and "by ear" in got["error"]
