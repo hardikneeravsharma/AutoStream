@@ -430,8 +430,13 @@ class Obs:
                 continue
             except psutil.Error:
                 refused = True
-        _gone, alive = psutil.wait_procs(procs, timeout=15)
-        if alive or refused:
+        # Polled by name rather than psutil.wait_procs: waiting on a process
+        # needs a handle, and an elevated OBS denies one even after the kill
+        # itself went through -- measured, the kill worked and the wait raised.
+        deadline = time.monotonic() + 15
+        while procs and _obs_process_alive() and time.monotonic() < deadline:
+            time.sleep(0.5)
+        if refused or (procs and _obs_process_alive()):
             # An elevated OBS cannot be killed from an unelevated AutoStream.
             raise ObsUnavailable(
                 f"OBS's {kind} output is frozen and OBS could not be closed. "
