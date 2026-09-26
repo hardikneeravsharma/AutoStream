@@ -19,9 +19,18 @@ def root(tmp_path):
     return tmp_path
 
 
+@pytest.fixture
+def stock(tmp_path, monkeypatch):
+    """A stock set of our own, so these do not depend on what is checked in."""
+    d = tmp_path / "stock"
+    d.mkdir()
+    monkeypatch.setattr(examples, "STOCK", d)
+    return d
+
+
 # ---------------------------------------------------------------- the store
 
-def test_a_fresh_install_has_no_examples_and_says_which(root):
+def test_a_fresh_install_has_no_examples_and_says_which(root, stock):
     m = examples.manifest(root)
     assert m["ok"] and m["examples"] == {}
     parts = {p["id"] for p in studio.catalog()["parts"]}
@@ -40,6 +49,36 @@ def test_an_example_is_found_by_its_part_id(root):
     assert m["examples"]["k04"]["type"] == "video/mp4"
     assert m["examples"]["k04"]["bytes"] == 18
     assert "k04" not in m["missing"]
+
+
+def test_a_new_user_sees_the_stock_example_until_they_cut_their_own(root, stock):
+    (stock / "k04.mp4").write_bytes(b"stock")
+    assert examples.path_for(root, "k04") == stock / "k04.mp4"
+    m = examples.manifest(root)
+    assert m["examples"]["k04"]["stock"] is True
+    # Still missing: a stock card is not cut from their clips, and a rebuild
+    # is what replaces it.
+    assert "k04" in m["missing"]
+    assert examples.path_for(root, "k04", stock=False) is None
+
+    f = examples.folder(root)
+    f.mkdir(parents=True)
+    (f / "k04.mp4").write_bytes(b"theirs")
+    assert examples.path_for(root, "k04") == f / "k04.mp4"
+    m = examples.manifest(root)
+    assert m["examples"]["k04"]["stock"] is False and "k04" not in m["missing"]
+
+
+def test_a_stock_example_is_only_found_for_a_part_the_catalog_knows(root, stock):
+    (stock / "nonsense.mp4").write_bytes(b"x")
+    assert examples.path_for(root, "nonsense") is None
+
+
+def test_the_shipped_stock_set_covers_every_part_there_is_something_to_show():
+    """The point of shipping them: a new user's bin has no empty cards."""
+    have = {f.stem for f in examples.STOCK.glob("*.mp4")}
+    want = {p for p in examples.known() if p not in examples.NOTHING}
+    assert want - have == set()
 
 
 @pytest.mark.parametrize("asked", ["", "nonsense", "../../secrets/token",

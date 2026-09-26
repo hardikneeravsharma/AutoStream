@@ -2519,9 +2519,13 @@ ol.steps-list li{margin-block:var(--space-4)}
   overflow:hidden;
   max-height:62vh;
 }
-.clip-play-stage:fullscreen{max-height:none;border:0;border-radius:0}
 #clip-video{max-width:100%;max-height:62vh;display:block}
-.clip-play-stage:fullscreen #clip-video{max-height:100vh}
+/* Fullscreen is the player column: the picture takes what is left over after
+   the effects lane and the play bar, so the controls stay on screen. */
+.clip-play-left:fullscreen{background:#000;padding:var(--space-3);gap:var(--space-2)}
+.clip-play-left:fullscreen > :not(.clip-play-stage):not(.clip-fx-timeline):not(.clip-play-bar){display:none}
+.clip-play-left:fullscreen .clip-play-stage{flex:1 1 auto;min-height:0;max-height:none;border:0;border-radius:0}
+.clip-play-left:fullscreen #clip-video{max-height:100%;max-width:100%;width:auto;height:100%}
 
 .clip-play-bar{
   display:flex;
@@ -2543,6 +2547,13 @@ ol.steps-list li{margin-block:var(--space-4)}
 .clip-play-seek{flex:1 1 8rem;min-width:6rem;accent-color:var(--accent)}
 .clip-play-vol{flex:0 0 4.5rem;accent-color:var(--accent)}
 .clip-play-speed{flex:0 0 5.5rem;max-width:5.5rem}
+
+/* Volume and speed, beside every player in the app (shell.js mediaKnobs). */
+.media-knobs{display:inline-flex}
+.knobs{display:inline-flex;align-items:center;gap:var(--space-2);flex:0 0 auto}
+.knob-vol{display:inline-flex;align-items:center;gap:.3rem;color:var(--text-muted);font-size:var(--font-sm)}
+.knob-vol input{width:5rem;accent-color:var(--accent)}
+.knob-rate{width:auto;min-width:4.6rem;padding-top:.2rem;padding-bottom:.2rem;font-size:var(--font-sm)}
 
 .clip-play-right{display:flex;flex-direction:column;gap:var(--space-3)}
 .clip-play-h{
@@ -2913,8 +2924,10 @@ CLIPS_FLOW_CSS = """
   margin-top:4px;font-size:11px;color:var(--text-secondary);
   font-variant-numeric:tabular-nums;
 }
-.clip-cal-box{
+.clip-cal-frame{position:relative;display:block;overflow:hidden;border-radius:var(--radius-sm)}
+.clip-cal-frame .clip-cal-box{
   position:absolute;border:2px solid var(--accent);border-radius:2px;
+  background:none;
   box-shadow:0 0 0 9999px rgba(0,0,0,.35);pointer-events:none;
 }
 .clip-cal-verdict{
@@ -3175,6 +3188,9 @@ STUDIO_CSS = r"""
   text-align:center;padding:0 10px}
 .bin-shot .bin-tag{position:absolute;left:6px;top:6px;padding:2px 6px;border-radius:4px;
   background:var(--scrim);color:var(--text-primary);font:500 10.5px var(--font-mono);letter-spacing:.06em}
+.bin-shot .bin-sample{position:absolute;right:6px;bottom:6px;padding:1px 6px;border-radius:4px;
+  background:var(--scrim);color:var(--text-secondary);font:500 10px var(--font-mono);letter-spacing:.08em;
+  text-transform:uppercase}
 .bin-meat{display:grid;gap:4px;padding:10px 11px 12px}
 .bin-name{font-weight:600;color:var(--text-primary);font-size:13.5px;line-height:1.25}
 .bin-blurb{font-size:12px;line-height:1.45;color:var(--text-secondary)}

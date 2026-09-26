@@ -57,6 +57,7 @@ REEL_HTML: str = (
       <div class="hide" id="reel-quick-result">
         <video class="reel-quick-video" id="reel-quick-video" controls
                playsinline preload="metadata"></video>
+        <span class="media-knobs" data-for="reel-quick-video"></span>
         <p class="muted" id="reel-quick-facts"></p>
         <p class="reel-quick-ask" id="reel-quick-ask">How is it?</p>
         <div class="field-inline">
@@ -156,6 +157,7 @@ REEL_HTML: str = (
          <kbd>&larr;</kbd><kbd>&rarr;</kbd> nudge (hold <kbd>Shift</kbd> for a
          second), <kbd>Backspace</kbd> undoes. Click the wave to jump.</p>
       <audio id="reel-audio" controls preload="auto"></audio>
+      <span class="media-knobs" data-for="reel-audio"></span>
       <canvas class="reel-wave" id="reel-mark-wave" height="120"></canvas>
       <div class="field-inline">
         <span class="reel-clock" id="reel-mark-clock">0.000s</span>

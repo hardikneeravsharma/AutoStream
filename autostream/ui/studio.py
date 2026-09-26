@@ -157,6 +157,7 @@ STUDIO_HTML = r"""
     <div class="studio-tl-bar">
       <button type="button" class="btn btn-sm studio-transport" data-act="studio-play" id="studio-play-btn">Play</button>
       <span class="mono studio-clock" id="studio-clock">0:00.00</span>
+      <span class="media-knobs" data-for="studio-video"></span>
       <label class="studio-check"><input type="checkbox" id="studio-snap" checked> Snap to beats</label>
       <!-- WHAT THE MUSIC LANE SHOWS. A waveform cannot say whether a kill sat
            on the kick it was aimed at; the spectrogram and the song's own hit
@@ -239,6 +240,7 @@ STUDIO_HTML = r"""
         <label class="studio-check"><input type="checkbox" id="studio-sg-loop" checked> Loop</label>
         <span class="mono studio-clock" id="studio-sg-clock">0:00.00</span>
         <span class="muted" id="studio-sg-range"></span>
+        <span class="media-knobs" data-for="studio-sg-audio"></span>
       </div>
       <div class="studio-sg-grid">
         <div class="card"><div class="card-body studio-sg-card">
@@ -337,6 +339,9 @@ STUDIO_HTML = r"""
         </div>
         <div class="studio-mk-body" id="studio-mk-body">
           <canvas class="studio-sg-wave" id="studio-mk-wave" height="70" aria-label="The song: drag the highlighted part or its edges"></canvas>
+          <!-- Only the choosing is hidden when AutoStream chooses: the song
+               still has to be heard, so the player below stays. -->
+          <div id="studio-mk-partctl">
           <div class="field-inline studio-nudge">
             <span class="muted">Starts</span>
             <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-nudge" data-what="start" data-d="-bar">−1 bar</button>
@@ -352,6 +357,7 @@ STUDIO_HTML = r"""
             <button type="button" class="btn btn-sm" data-act="studio-mk-preset" data-preset="drop" id="studio-mk-drop">Build into the drop</button>
             <button type="button" class="btn btn-sm" data-act="studio-mk-preset" data-preset="whole">Whole song</button>
           </div>
+          </div>
           <!-- LISTEN BEFORE CHOOSING: a part is picked by ear, so it plays, pauses where
                it is, and seeks anywhere inside it. -->
           <div class="studio-mk-transport" role="group" aria-label="Play the part">
@@ -362,6 +368,7 @@ STUDIO_HTML = r"""
             <input type="range" class="studio-mk-seek" id="studio-mk-seek" min="0" max="1000" step="1" value="0" aria-label="Position in the part">
             <span class="mono studio-mk-clock" id="studio-mk-clock">0:00.0 / 0:00.0</span>
             <label class="studio-check"><input type="checkbox" id="studio-mk-loop"> Loop</label>
+            <span class="media-knobs" data-for="studio-mk-audio"></span>
             <audio id="studio-mk-audio" preload="metadata"></audio>
           </div>
           <p class="muted" id="studio-mk-facts"></p>
@@ -470,6 +477,7 @@ STUDIO_HTML = r"""
           <label class="studio-check"><input type="checkbox" id="studio-intro-loop" checked> Loop</label>
           <span class="mono studio-clock" id="studio-intro-clock">0:00.00</span>
           <span class="muted" id="studio-intro-range"></span>
+          <span class="media-knobs" data-for="studio-intro-video"></span>
         </div>
 
         <!-- TRIMMED TWO WAYS, BECAUSE THEY ARE TWO DIFFERENT JOBS. The sliders
@@ -549,6 +557,7 @@ STUDIO_HTML = r"""
     <h2 class="modal-title" id="studio-preview-title">Clip</h2>
     <div class="modal-body"><video id="studio-preview-video" controls playsinline></video></div>
     <div class="modal-actions">
+      <span class="media-knobs" data-for="studio-preview-video"></span>
       <button type="button" class="btn btn-ghost" data-act="studio-preview-close">Close</button>
     </div>
   </div>
@@ -973,22 +982,34 @@ function studio_mkDefault() {
   studio_mkDraw();
 }
 
+/* What the dialog's player plays: the chosen part, or the whole song while
+   AutoStream is choosing. Letting it choose used to hide the player with the
+   part controls, so the song could not be heard at all. */
+function studio_mkSpan() {
+  const sh = studio.songShape, mk = studio.mk;
+  if (mk.mode === 'part' || !sh) return {start: mk.start, end: mk.end};
+  return {start: 0, end: sh.seconds};
+}
+
 function studio_mkDraw() {
   const sh = studio.songShape, mk = studio.mk;
-  studio_show('studio-mk-body', mk.mode === 'part');
+  const choosing = mk.mode === 'part';
+  studio_show('studio-mk-partctl', choosing);
   document.querySelectorAll('#studio-mk-part [data-act="studio-mk-mode"]').forEach(x =>
     x.classList.toggle('is-active', x.getAttribute('data-mode') === mk.mode));
   if (!sh) return;
-  if (mk.mode !== 'part') {
-    studio_el('studio-mk-facts').textContent = '';
-    return;
+  const span = studio_mkSpan();
+  if (!choosing) {
+    studio_el('studio-mk-facts').textContent = 'AutoStream picks the part when it plans the reel. ' +
+      'The player above plays the whole song.';
+  } else {
+    const len = mk.end - mk.start, bars = Math.round(len / studio_mkBar());
+    studio_el('studio-mk-start').textContent = studio_secs(mk.start);
+    studio_el('studio-mk-end').textContent = studio_secs(mk.end);
+    studio_el('studio-mk-facts').textContent = studio_dur(len) + ' · ' + bars + (bars === 1 ? ' bar' : ' bars') +
+      '. Every clip you chose goes in unless the part is full. If they are short of it, each kill gets a ' +
+      'longer run-up, as far as its clip has footage (never over 8 s); if that is still not enough, the reel ends early.';
   }
-  const len = mk.end - mk.start, bars = Math.round(len / studio_mkBar());
-  studio_el('studio-mk-start').textContent = studio_secs(mk.start);
-  studio_el('studio-mk-end').textContent = studio_secs(mk.end);
-  studio_el('studio-mk-facts').textContent = studio_dur(len) + ' · ' + bars + (bars === 1 ? ' bar' : ' bars') +
-    '. Every clip you chose goes in unless the part is full. If they are short of it, each kill gets a ' +
-    'longer run-up, as far as its clip has footage (never over 8 s); if that is still not enough, the reel ends early.';
   const c = studio_sgCanvas('studio-mk-wave', 70);
   if (!c || !sh.peaks) return;
   const {ctx, W, H} = c, n = sh.peaks.length, X = t => t / sh.seconds * W, mid = H / 2;
@@ -999,13 +1020,16 @@ function studio_mkDraw() {
   for (let x = 0; x < W; x++) {
     const k = Math.min(n - 1, Math.floor(x / W * n));
     const amp = sh.peaks[k] * (mid - 2);
-    ctx.globalAlpha = (x >= X(mk.start) && x <= X(mk.end)) ? 1 : 0.3;
+    ctx.globalAlpha = (x >= X(span.start) && x <= X(span.end)) ? 1 : 0.3;
     ctx.fillRect(x, mid - amp, 1, amp * 2);
   }
-  ctx.globalAlpha = 0.18;
-  ctx.fillRect(X(mk.start), 0, X(mk.end) - X(mk.start), H);
+  if (choosing) {
+    ctx.globalAlpha = 0.18;
+    ctx.fillRect(X(mk.start), 0, X(mk.end) - X(mk.start), H);
+    ctx.globalAlpha = 1;
+    ctx.fillRect(X(mk.start) - 2, 0, 4, H); ctx.fillRect(X(mk.end) - 2, 0, 4, H);
+  }
   ctx.globalAlpha = 1;
-  ctx.fillRect(X(mk.start) - 2, 0, 4, H); ctx.fillRect(X(mk.end) - 2, 0, 4, H);
   if (sh.drop) { ctx.fillStyle = warn; ctx.fillRect(X(sh.drop) - 1, 0, 2, H); }
   const a = studio_el('studio-mk-audio');
   if (a && a.getAttribute('data-song') === studio.song && (!a.paused || a.currentTime > 0)) {
@@ -1062,9 +1086,9 @@ function studio_mkLoad() {
 }
 
 function studio_mkSeek(t) {
-  const a = studio_mkLoad(), mk = studio.mk;
+  const a = studio_mkLoad(), mk = studio.mk, span = studio_mkSpan();
   if (!a) return;
-  t = Math.max(mk.start, Math.min(mk.end, t));
+  t = Math.max(span.start, Math.min(span.end, t));
   if (a.readyState >= 1) a.currentTime = t; else mk.seekTo = t;
   studio_mkDraw();
 }
@@ -1074,24 +1098,25 @@ function studio_mkPlay() {
   if (!a) return;
   if (!a.paused) { a.pause(); return; }
   const at = a.readyState >= 1 ? a.currentTime : (mk.seekTo == null ? -1 : mk.seekTo);
-  if (at < mk.start - 0.05 || at >= mk.end - 0.05) studio_mkSeek(mk.start);
+  const span = studio_mkSpan();
+  if (at < span.start - 0.05 || at >= span.end - 0.05) studio_mkSeek(span.start);
   a.play().catch(() => toast('The song could not be played.', 'warn'));
 }
 
 function studio_mkSkip(d) {
   const a = studio_mkLoad();
   if (!a) return;
-  const now = a.readyState >= 1 ? a.currentTime : (studio.mk.seekTo == null ? studio.mk.start : studio.mk.seekTo);
+  const now = a.readyState >= 1 ? a.currentTime : (studio.mk.seekTo == null ? studio_mkSpan().start : studio.mk.seekTo);
   studio_mkSeek(now + d);
 }
 
 /* Where playback is, inside the part: the slider, the clock and the playhead. */
 function studio_mkClock() {
-  const a = studio_el('studio-mk-audio'), mk = studio.mk;
-  const len = Math.max(0, mk.end - mk.start);
+  const a = studio_el('studio-mk-audio'), mk = studio.mk, span = studio_mkSpan();
+  const len = Math.max(0, span.end - span.start);
   const ours = a && a.getAttribute('data-song') === studio.song;
-  const t = ours ? (a.readyState >= 1 ? a.currentTime : (mk.seekTo == null ? mk.start : mk.seekTo)) : mk.start;
-  const pos = Math.max(0, Math.min(len, t - mk.start));
+  const t = ours ? (a.readyState >= 1 ? a.currentTime : (mk.seekTo == null ? span.start : mk.seekTo)) : span.start;
+  const pos = Math.max(0, Math.min(len, t - span.start));
   const seek = studio_el('studio-mk-seek');
   if (seek && document.activeElement !== seek) seek.value = String(len ? Math.round(pos / len * 1000) : 0);
   const clock = studio_el('studio-mk-clock');
@@ -1108,9 +1133,10 @@ function studio_mkAudio(e) {
   const a = studio_el('studio-mk-audio'), mk = studio.mk;
   if (!a) return;
   if (e.type === 'loadedmetadata' && mk.seekTo != null) { a.currentTime = mk.seekTo; mk.seekTo = null; }
-  if (e.type === 'timeupdate' && !a.paused && a.currentTime >= mk.end) {
-    if (studio_el('studio-mk-loop').checked) a.currentTime = mk.start;
-    else { a.pause(); a.currentTime = mk.start; }
+  const span = studio_mkSpan();
+  if (e.type === 'timeupdate' && !a.paused && a.currentTime >= span.end - 0.02) {
+    if (studio_el('studio-mk-loop').checked) a.currentTime = span.start;
+    else { a.pause(); a.currentTime = span.start; }
   }
   if (e.type === 'play' && !mk.ticking) { mk.ticking = true; requestAnimationFrame(studio_mkTick); }
   studio_mkDraw();
@@ -1120,14 +1146,14 @@ function studio_mkAudio(e) {
 function studio_mkTick() {
   const a = studio_el('studio-mk-audio'), mk = studio.mk;
   if (!a || a.paused || studio_el('studio-make-scrim').classList.contains('hide')) { mk.ticking = false; return; }
-  if (a.currentTime >= mk.end) studio_mkAudio({type: 'timeupdate'});
+  if (a.currentTime >= studio_mkSpan().end - 0.02) studio_mkAudio({type: 'timeupdate'});
   studio_mkDraw();
   requestAnimationFrame(studio_mkTick);
 }
 
 function studio_mkSeekInput() {
-  const mk = studio.mk, seek = studio_el('studio-mk-seek');
-  studio_mkSeek(mk.start + Number(seek.value) / 1000 * (mk.end - mk.start));
+  const span = studio_mkSpan(), seek = studio_el('studio-mk-seek');
+  studio_mkSeek(span.start + Number(seek.value) / 1000 * (span.end - span.start));
 }
 
 /* ------------------------------------------------------------ a song from a YouTube link */
@@ -1274,6 +1300,12 @@ async function studio_ytClose() {
 function studio_mkPointer(e) {
   const sh = studio.songShape, mk = studio.mk, cv = studio_el('studio-mk-wave');
   if (!sh || !cv) return;
+  if (e.type === 'pointerdown' && mk.mode !== 'part') {
+    /* Nothing to drag while AutoStream chooses; a click is a seek. */
+    const r = cv.getBoundingClientRect();
+    studio_mkSeek((e.clientX - r.left) / r.width * sh.seconds);
+    return;
+  }
   if (e.type === 'pointerdown') {
     const r = cv.getBoundingClientRect();
     const t = (e.clientX - r.left) / r.width * sh.seconds;
@@ -1359,8 +1391,9 @@ function studio_binShot(id) {
     '&id=' + encodeURIComponent(id) + '&v=' + (ex.when || 0);
   const media = ex.type === 'image/gif'
     ? '<img src="' + src + '" alt="" loading="lazy">'
-    : '<video src="' + src + '" muted loop playsinline preload="none" aria-hidden="true"></video>';
-  return '<span class="bin-shot">' + media + tag + '</span>';
+    : '<video src="' + src + '" muted loop playsinline preload="none" aria-hidden="true" data-knobs="off"></video>';
+  const sample = ex.stock ? '<span class="bin-sample" title="Shown on sample footage until it is cut from your own clips">sample</span>' : '';
+  return '<span class="bin-shot">' + media + tag + sample + '</span>';
 }
 
 function studio_binCard(p, on, act) {
@@ -1539,14 +1572,17 @@ function studio_binDraw() {
       '</div></section>';
   }).join('');
   const ex = studio.examples || {};
-  const have = Object.keys(ex.examples || {}).length;
+  const list = ex.examples || {};
+  const own = Object.keys(list).filter(k => !list[k].stock).length;
+  const stock = Object.keys(list).length - own;
   const miss = (ex.missing || []).length;
   const c = studio_el('bin-count');
-  if (c) c.textContent = have + ' of ' + (have + miss) + ' cut from your own clips';
+  if (c) c.textContent = own + ' of ' + (own + miss) + ' cut from your own clips' +
+    (stock ? ' · ' + stock + ' shown on sample footage' : '');
   const b = studio_el('bin-build');
   if (b) {
     b.disabled = !miss;
-    b.textContent = miss ? 'Cut the ' + miss + ' missing example' + (miss === 1 ? '' : 's')
+    b.textContent = miss ? (stock ? 'Cut ' + miss + ' from your own clips' : 'Cut the ' + miss + ' missing example' + (miss === 1 ? '' : 's'))
       : 'Every part has an example';
   }
   const fo = studio_el('bin-favonly');
@@ -3144,7 +3180,26 @@ function studio_checks_html(name, kind, values) {
     esc(p.label) + '</label>').join('') + '</div>';
 }
 
+/* The inspector is rebuilt from the project on every edit, and a rebuilt
+   panel starts scrolled to its top -- so ticking an effect halfway down the
+   list threw the list back to the top on every click. Its scroll position
+   survives a redraw of the same view, and resets only for a different one. */
 function studio_drawInspector() {
+  const box = studio_el('studio-insp');
+  if (!box) return;
+  const view = String(studio.sel);
+  const old = box.querySelector('.studio-insp-body');
+  const top = old && box.getAttribute('data-view') === view ? old.scrollTop : 0;
+  const pageHost = document.getElementById('views');
+  const pageTop = pageHost ? pageHost.scrollTop : 0;
+  studio_drawInspectorBody();
+  box.setAttribute('data-view', view);
+  const body = box.querySelector('.studio-insp-body');
+  if (body) body.scrollTop = top;
+  if (pageHost && pageHost.scrollTop !== pageTop) pageHost.scrollTop = pageTop;
+}
+
+function studio_drawInspectorBody() {
   const box = studio_el('studio-insp');
   const p = studio.project;
   if (!box || !p) return;
@@ -3428,7 +3483,7 @@ function studio_wire() {
     else if (act === 'studio-mk-preset') studio_mkPreset(b.getAttribute('data-preset'));
     else if (act === 'studio-mk-play') studio_mkPlay();
     else if (act === 'studio-mk-skip') studio_mkSkip(Number(b.getAttribute('data-d')) || 0);
-    else if (act === 'studio-mk-restart') studio_mkSeek(studio.mk.start);
+    else if (act === 'studio-mk-restart') studio_mkSeek(studio_mkSpan().start);
     else if (act === 'studio-yt') studio_ytOpen(b.getAttribute('data-for'));
     else if (act === 'studio-yt-go') studio_ytGo();
     else if (act === 'studio-yt-close') studio_ytClose();

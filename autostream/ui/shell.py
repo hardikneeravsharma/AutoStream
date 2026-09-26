@@ -219,6 +219,76 @@ function icon(name) {
          ' aria-hidden="true" focusable="false">' + body + '</svg>';
 }
 
+/* ---------------- media knobs ----------------
+   Every player in the app gets the same two controls: how loud and how fast.
+   A page marks where they go with <span class="media-knobs" data-for="ID">
+   and this fills it in, so a new player cannot ship without them. The choice
+   is remembered per viewer, and re-applied whenever a player loads new media,
+   because loading a new src resets playbackRate to the default. */
+const SHELL_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
+const SHELL_KNOB_KEY = 'autostream.knobs';
+
+function shell_knobPrefs() {
+  let v = {};
+  try { v = JSON.parse(localStorage.getItem(SHELL_KNOB_KEY) || '{}') || {}; } catch (e) { v = {}; }
+  return {vol: typeof v.vol === 'number' ? v.vol : 1, rate: typeof v.rate === 'number' ? v.rate : 1};
+}
+
+function shell_knobSave(prefs) {
+  try { localStorage.setItem(SHELL_KNOB_KEY, JSON.stringify(prefs)); } catch (e) { /* private window */ }
+}
+
+function shell_knobApply(m) {
+  if (!m || m.getAttribute('data-knobs') === 'off') return;
+  const k = shell_knobPrefs();
+  m.volume = Math.max(0, Math.min(1, k.vol));
+  m.defaultPlaybackRate = k.rate;
+  m.playbackRate = k.rate;
+  m.preservesPitch = true;
+}
+
+function mediaKnobs(id) {
+  const k = shell_knobPrefs();
+  return '<span class="knobs" role="group" aria-label="Volume and speed">' +
+    '<label class="knob-vol" title="Volume"><span aria-hidden="true">&#128266;</span>' +
+    '<input type="range" min="0" max="100" step="1" value="' + Math.round(k.vol * 100) + '"' +
+    ' data-knob="vol" data-for="' + esc(id) + '" aria-label="Volume"></label>' +
+    '<select class="select knob-rate" data-knob="rate" data-for="' + esc(id) + '" aria-label="Playback speed" title="Playback speed">' +
+    SHELL_RATES.map(r => '<option value="' + r + '"' + (r === k.rate ? ' selected' : '') + '>' + r + 'x</option>').join('') +
+    '</select></span>';
+}
+
+function shell_knobsFill(root) {
+  (root || document).querySelectorAll('.media-knobs[data-for]').forEach(h => {
+    if (!h.firstChild) h.innerHTML = mediaKnobs(h.getAttribute('data-for'));
+  });
+}
+
+function shell_knobsBind() {
+  shell_knobsFill(document);
+  document.querySelectorAll('audio, video').forEach(shell_knobApply);
+  /* loadedmetadata does not bubble; captured at the document it still arrives
+     for every player, including ones a page creates later. */
+  document.addEventListener('loadedmetadata', e => shell_knobApply(e.target), true);
+  const onKnob = e => {
+    const t = e.target;
+    const which = t && t.getAttribute && t.getAttribute('data-knob');
+    if (!which) return;
+    const prefs = shell_knobPrefs();
+    if (which === 'vol') prefs.vol = Number(t.value) / 100;
+    else prefs.rate = Number(t.value) || 1;
+    shell_knobSave(prefs);
+    /* One choice for the whole app: every player follows, and every other
+       set of knobs shows the new value. */
+    document.querySelectorAll('audio, video').forEach(shell_knobApply);
+    document.querySelectorAll('[data-knob="' + which + '"]').forEach(o => {
+      if (o !== t) o.value = which === 'vol' ? String(Math.round(prefs.vol * 100)) : String(prefs.rate);
+    });
+  };
+  document.addEventListener('input', onKnob);
+  document.addEventListener('change', onKnob);
+}
+
 /* ---------------- transport ---------------- */
 
 function shell_denied() {
@@ -484,6 +554,7 @@ function shell_bind() {
 
   const host = shell_$('views');
   if (host) host.addEventListener('scroll', () => shell_scrolled(host), {passive: true});
+  shell_knobsBind();
 
   /* Reveal the skip link on focus without depending on CSS having a rule for
      it -- clearing the inline hide is enough to make it a normal link. */
