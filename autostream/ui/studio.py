@@ -3687,7 +3687,9 @@ async function studio_open(path) {
   if (!r || !r.ok) { toast((r && r.error) || 'Could not open that reel.', 'warn'); return; }
   studio.undo = []; studio.sel = -1;
   studio_setProject(r.project, r.derived, r.notes, r.song);
-  studio.output = r.project.output; studio.renderedAt = r.when || Date.now();
+  /* `when` is the file's mtime in SECONDS; the page counts in milliseconds,
+     so an opened reel read as rendered 20,000 days ago. */
+  studio.output = r.project.output; studio.renderedAt = r.when ? r.when * 1000 : Date.now();
   studio_settled();
   studio.renderNote = '';
   studio_tab('timeline');
