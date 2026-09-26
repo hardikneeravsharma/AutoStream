@@ -182,7 +182,28 @@ def test_an_obs_that_cannot_be_closed_says_what_to_do(monkeypatch):
             raise obsmod.psutil.AccessDenied()
 
     monkeypatch.setattr(obsmod.psutil, "process_iter", lambda *a, **k: iter([Proc()]))
-    monkeypatch.setattr(obsmod.psutil, "wait_procs",
-                        lambda procs, timeout=None: ([], list(procs)))
     with pytest.raises(ObsUnavailable, match="Restart OBS"):
         _obs(_Ws())._restart_frozen("stream")
+
+
+def test_an_elevated_obs_that_was_killed_is_relaunched(clock, monkeypatch):
+    """Measured: killing an elevated OBS works, but WAITING on it needs a
+    handle it will not give, so psutil.wait_procs raised AccessDenied and the
+    restart failed with OBS already gone. Gone is judged by name instead."""
+    alive = {"obs": True}
+
+    class Proc:
+        info = {"name": "obs64.exe"}
+
+        def kill(self):
+            alive["obs"] = False
+
+        def wait(self, timeout=None):
+            raise obsmod.psutil.AccessDenied()
+
+    monkeypatch.setattr(obsmod.psutil, "process_iter", lambda *a, **k: iter([Proc()]))
+    monkeypatch.setattr(obsmod, "_obs_process_alive", lambda: alive["obs"])
+    connected = []
+    monkeypatch.setattr(Obs, "connect", lambda self, wait=False: connected.append(wait))
+    _obs(_Ws())._restart_frozen("stream")
+    assert connected == [True], "OBS was not relaunched"
