@@ -3232,7 +3232,9 @@ function studio_drawInspectorBody() {
       '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-beats" data-what="duration" data-d="-1">−</button>' +
       '<span class="mono">' + (s.duration / beat).toFixed(s.duration % beat < 0.01 ? 0 : 1) + ' beats · ' + s.duration.toFixed(2) + ' s</span>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-beats" data-what="duration" data-d="1">+</button></span></div>' +
-      '<div class="studio-field"><label class="field-label" for="studio-f-speed">Speed</label>' + studio_select_html('studio-f-speed', 'speed', s.speed) + '</div>' +
+      '<div class="studio-field"><label class="field-label" for="studio-f-speed">Speed</label>' + studio_select_html('studio-f-speed', 'speed', s.speed) +
+      (s.stretch ? '<span class="muted studio-small">Run-up slowed to ' + Number(s.stretch[0]).toFixed(2) + '× so its kill reaches its mark; the last ' +
+        Number(s.stretch[1]).toFixed(1) + ' s play as recorded. Choosing a speed replaces it.</span>' : '') + '</div>' +
       '<div class="studio-field"><label class="field-label" for="studio-f-trans">Transition in</label>' +
       (i ? studio_select_html('studio-f-trans', 'transition', s.transition) +
         '<input type="range" id="studio-f-tlen" min="0.1" max="1" step="0.05" value="' + (s.tlen || 0.3) + '"' + (s.transition === 't01' ? ' disabled' : '') + ' aria-label="Transition length">'
@@ -3312,7 +3314,7 @@ function studio_inspectorInput(e) {
   /* Each edit names itself for the card's list of what is not rendered yet. */
   const map = {
     'studio-f-kill': () => studio_change(pr => { pr.shots[i].kill = Number(t.value); }, studio_shotName(i) + ' · where the kill is', i),
-    'studio-f-speed': () => studio_change(pr => { pr.shots[i].speed = t.value; }, studio_shotName(i) + ' · speed', i),
+    'studio-f-speed': () => studio_change(pr => { pr.shots[i].speed = t.value; delete pr.shots[i].stretch; }, studio_shotName(i) + ' · speed', i),
     'studio-f-trans': () => studio_change(pr => { pr.shots[i].transition = t.value; pr.shots[i].tlen = 0; }, studio_shotName(i) + ' · transition', i),
     'studio-f-tlen': () => studio_change(pr => { pr.shots[i].tlen = Number(t.value); }, studio_shotName(i) + ' · transition length', i),
     'studio-f-hero': () => studio_change(pr => { const sh = pr.shots[i]; sh.hero = t.checked; if (t.checked && !sh.hero_fx.length) sh.hero_fx = ['h01']; }, studio_shotName(i) + (t.checked ? ' · made a hero shot' : ' · no longer a hero shot'), i),
@@ -4081,10 +4083,11 @@ function studio_sgReset() {
   // of what is there rather than a blank sheet. Once per song: retyping them
   // over the player's own edits every redraw would be worse than no seeding.
   if (sg.song && sg.seeded !== sg.song && !sg.marks.length && (p.song_marks || []).length) {
-    sg.marks = p.song_marks.slice().sort((a, b) => a - b);
+    // Placed against the part the reel was planned on, so if the part has
+    // since been moved they keep their place in it -- see studio_sgMovePart.
+    const dt = sg.song === p.song ? sg.start - (p.song_offset || 0) : 0;
+    sg.marks = p.song_marks.map(m => Math.round((m + dt) * 1000) / 1000).sort((a, b) => a - b);
     sg.sel = -1;
-    // Placed against the part the reel was planned on -- see studio_sgFollow.
-    sg.marksAt = p.song_offset || 0;
   }
   if (sg.song) sg.seeded = sg.song;
   studio_el('studio-sg-atdrop').disabled = !sh.drop;
@@ -4113,9 +4116,7 @@ function studio_sgNudge(what, how) {
   const step = {bar: 4 * beat, '-bar': -4 * beat, beat: beat, '-beat': -beat, ms: 0.01, '-ms': -0.01}[how] || 0;
   sg.touched = true;
   if (what === 'start') {
-    const len = sg.end - sg.start;
-    sg.start = Math.max(0, Math.min(sh.seconds - 1, sg.start + step));
-    sg.end = Math.min(sh.seconds, sg.start + len);
+    studio_sgMovePart(sg.start + step);
   } else {
     sg.end = Math.max(sg.start + beat, Math.min(sh.seconds, sg.end + step));
   }
@@ -4128,8 +4129,8 @@ function studio_sgSnapBar() {
   const bars = sh.beats.filter((b, i) => (i % 4) === (sh.downbeat_pos || 0));
   let best = sg.start, d = 1e9;
   bars.forEach(b => { const x = Math.abs(b - sg.start); if (x < d) { d = x; best = b; } });
-  const len = sg.end - sg.start;
-  sg.touched = true; sg.start = best; sg.end = Math.min(sh.seconds, best + len);
+  sg.touched = true;
+  studio_sgMovePart(best);
   studio_sgDraw();
 }
 
@@ -4139,8 +4140,7 @@ function studio_sgAtDrop() {
   const len = sg.end - sg.start;
   const lead = Math.min(8 * 4 * studio_sgBeat(), sh.drop, Math.max(4 * studio_sgBeat(), len / 3));
   sg.touched = true;
-  sg.start = Math.max(0, studio_sgNearestBeat(sh.drop - lead));
-  sg.end = Math.min(sh.seconds, sg.start + len);
+  studio_sgMovePart(Math.max(0, studio_sgNearestBeat(sh.drop - lead)));
   studio_sgDraw();
 }
 
@@ -4269,28 +4269,37 @@ function studio_sgTick() {
   if (!a.paused) requestAnimationFrame(studio_sgTick);
 }
 
-/* THE MARKS RIDE WITH THE PART. A mark is where a kill lands, and a kill sits
-   a fixed time into the reel -- so when the reel's start moves along the song,
-   every mark moves with it. They were song seconds that stayed put: move the
-   part from 2:12 to 0:56 and all thirty-nine marks were left behind at 2:12,
-   outside the part, drawn nowhere, and "Use these marks" would have placed
-   every kill in a stretch of song the reel no longer plays. */
-function studio_sgFollow() {
+/* THE MARKS ARE SONG SECONDS, AND THEY MOVE ONLY WHEN THE PART MOVES.
+   A mark is a moment of the song -- the snare a kill lands on -- so it is
+   stored as song time and drawn from it. Moving the whole part (dragging it,
+   clicking elsewhere on the song, the start nudges, snapping to a bar, "build
+   into the drop") carries every mark with it by exactly the distance the part
+   moved, so a kill ten seconds into the part is still ten seconds in.
+   Resizing the part by an edge moves nothing: the marks stay on the beats
+   they were tapped on.
+
+   It used to be inferred instead -- any change to the start since the last
+   redraw shifted the marks -- so dragging the START EDGE dragged every mark
+   along with it, off the beats they were tapped on, and the release's snap to
+   a beat moved them again. Now each thing that moves the part says so. */
+function studio_sgMovePart(start) {
   const sg = studio.sg, sh = sg.shape;
   if (!sh) return;
-  if (sg.marksAt != null && sg.marks.length && Math.abs(sg.start - sg.marksAt) > 1e-6) {
-    const dt = sg.start - sg.marksAt;
+  const len = sg.end - sg.start;
+  const to = Math.max(0, Math.min(sh.seconds - Math.min(len, sh.seconds), start));
+  const dt = to - sg.start;
+  sg.start = to;
+  sg.end = Math.min(sh.seconds, to + len);
+  if (Math.abs(dt) > 1e-6) {
     // Kept even where they fall past the song's end: dragging the part to the
     // end and back must not cost marks, and none past the end is used.
     sg.marks = sg.marks.map(m => Math.round((m + dt) * 1000) / 1000);
   }
-  sg.marksAt = sg.start;
 }
 
 function studio_sgDraw() {
   const sg = studio.sg, sh = sg.shape, d = studio.derived, p = studio.project;
   if (!sh) return;
-  studio_sgFollow();
   studio_el('studio-sg-start').textContent = studio_secs(sg.start);
   studio_el('studio-sg-end').textContent = studio_secs(sg.end);
   studio_el('studio-sg-range').textContent = 'Using ' + studio_secs(sg.start) + ' → ' + studio_secs(sg.end) +
@@ -4328,7 +4337,6 @@ function studio_sgCanvas(id, H) {
 }
 
 function studio_sgDrawWaves() {
-  studio_sgFollow();                    /* mid-drag too, so the marks travel with it */
   studio_svDraw();                      /* the lanes follow the playhead too */
   const sg = studio.sg, sh = sg.shape;
   if (!sh || !sh.peaks) return;
@@ -4425,10 +4433,8 @@ function studio_sgPointer(e) {
     const kind = Math.abs(t - sg.start) < edge ? 'start' : Math.abs(t - sg.end) < edge ? 'end'
       : (t > sg.start && t < sg.end) ? 'move' : 'jump';
     if (kind === 'jump') {
-      const len = sg.end - sg.start;
       sg.touched = true;
-      sg.start = Math.max(0, Math.min(sh.seconds - len, t - len / 2));
-      sg.end = sg.start + len;
+      studio_sgMovePart(t - (sg.end - sg.start) / 2);
       studio_sgDraw();
       return;
     }
@@ -4444,18 +4450,15 @@ function studio_sgPointer(e) {
     sg.touched = true;
     if (g.kind === 'start') sg.start = Math.max(0, Math.min(sg.end - 1, g.start + dt));
     else if (g.kind === 'end') sg.end = Math.max(sg.start + 1, Math.min(sh.seconds, g.end + dt));
-    else {
-      const len = g.end - g.start;
-      sg.start = Math.max(0, Math.min(sh.seconds - len, g.start + dt));
-      sg.end = sg.start + len;
-    }
+    else studio_sgMovePart(g.start + dt);
     studio_sgDraw();
   } else {
     sg.drag = null;
-    /* Dragging lands the part on a beat; the 10 ms nudges are for leaving it. */
-    const len = sg.end - sg.start;
-    if (g.kind !== 'end') { sg.start = studio_sgNearestBeat(sg.start); if (g.kind === 'move') sg.end = Math.min(sh.seconds, sg.start + len); }
-    if (g.kind === 'end') sg.end = studio_sgNearestBeat(sg.end);
+    /* Dragging lands the part on a beat; the 10 ms nudges are for leaving it.
+       A moved part takes its marks to the beat with it; a resized one does not. */
+    if (g.kind === 'move') studio_sgMovePart(studio_sgNearestBeat(sg.start));
+    else if (g.kind === 'start') sg.start = Math.min(sg.end - 0.5, studio_sgNearestBeat(sg.start));
+    else sg.end = Math.max(sg.start + 0.5, studio_sgNearestBeat(sg.end));
     studio_sgDraw();
   }
 }
@@ -4472,7 +4475,8 @@ async function studio_sgUseSong(path) {
   const got = await API.post('/api/reel/song', {song: path});
   if (!got || !got.ok) { studio_el('studio-sg-facts').textContent = (got && got.error) || 'Could not read that song.'; return false; }
   const sg = studio.sg, sh = got.song, len = (studio.derived && studio.derived.length) || 30;
-  sg.song = path; sg.shape = sh; sg.marks = []; sg.touched = true;
+  /* A new song: the marks were beats of the old one, so they go. */
+  sg.song = path; sg.shape = sh; sg.marks = []; sg.sel = -1; sg.touched = true;
   studio.songShape = sh;
   studio_sgSongs();
   studio_svLoad(path);
