@@ -544,7 +544,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.app.studio_facecam())
         elif u.path == "/api/studio/facecam/video":
             self._facecam_video((parse_qs(u.query).get("path") or [""])[0])
-        elif u.path == "/api/studio/import/detect":
+        elif u.path == "/api/studio/import/detect/status":
             from .clips import uploads as _up
 
             self._json(_up.detector().status())

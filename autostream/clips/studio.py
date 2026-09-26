@@ -107,6 +107,12 @@ _FOLDER_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})_(.+?)(?:_(\d+)
 
 def _folder_label(name: str) -> str:
     """"2026-09-14_0045_VALORANT_2" -> "14 Sep 2026, 00:45 · run 2"."""
+    if name.startswith("import-"):
+        # import-2026-09-26_0801-my-ace -> "Added · my ace"
+        rest = name[len("import-"):]
+        rest = rest.split("-", 3)[-1] if rest[:4].isdigit() else rest
+        rest = rest.split("-", 1)[1] if "_" in rest.split("-", 1)[0] else rest
+        return "Added · " + rest.replace("-", " ")
     m = _FOLDER_RE.match(name)
     if not m:
         return name
@@ -255,7 +261,14 @@ def library(root: Path) -> dict:
                 "rank": int(c.get("rank") or 0),
                 "game": game,
                 "round": c.get("round"),
+                # Where the clip starts in its recording: what lines a facecam
+                # attached to the whole session up with this one clip.
+                "start": round(start, 3),
                 **({"recorded": True} if from_record else {}),
+                # A file the player added (clips/uploads.py), and whether its
+                # kills have been marked yet -- until they are, the one "kill"
+                # above is only the clip's first frame.
+                **({"imported": True, "unmarked": not rows_k} if sess.get("imported") else {}),
             })
         if not clips:
             continue
