@@ -239,6 +239,16 @@ CONTROLS: list[Control] = [
             "Got it (match record notice)", "dashboard", body={}, expect=_has("ok"),
             acts=("dash-vmatch-ok",),
             why="one flag in games.yaml; the notice never shows again"),
+    Control("/api/audio", "GET", STATIC, "Audio card (read the mixer)",
+            "dashboard", acts=("dash-audio-refresh",),
+            why="opens a websocket to the running OBS; covered against a "
+                "fake client in test_mixer.py"),
+    Control("/api/audio/set", "POST", STATIC, "Audio card (device, faders, mute)",
+            "dashboard",
+            acts=("dash-audio-device", "dash-audio-mic", "dash-audio-desktop",
+                  "dash-audio-mic-mute", "dash-audio-desktop-mute"),
+            why="changes the running OBS's mixer; covered against a fake "
+                "client in test_mixer.py"),
     Control("/api/clips/calibrate", "POST", CALL, "Calibrate a game", "clips",
             body={}, expect=_dict, acts=("calibrate",),
             why="refuses a template that matches everything"),

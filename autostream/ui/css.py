@@ -1169,6 +1169,21 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
   gap:var(--gap-grid);
   min-width:0;
 }
+/* Mixer faders beside the chat: name, readout and mute on one line, the slider
+   the full width of the card under them. On one line the side column left the
+   slider about forty pixels -- too short to set anything by. */
+.dash-fader{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto auto;
+  grid-template-areas:"name db mute" "slider slider slider";
+  align-items:center;
+  gap:var(--space-3) var(--gap-control);
+}
+.dash-fader>label{grid-area:name}
+.dash-fader>.dash-fader-db{grid-area:db;font-size:12.5px;color:var(--text-secondary)}
+.dash-fader>.chip{grid-area:mute}
+.dash-fader input[type=range]{grid-area:slider;width:100%;min-width:0;margin:0;
+  accent-color:var(--accent)}
 .controls{
   display:flex;
   flex-wrap:wrap;
@@ -1996,6 +2011,7 @@ ol.steps-list li{margin-block:var(--space-4)}
     max-height:calc(100vh - var(--h-topbar) - var(--space-6) * 4);
   }
   .dash-side>.chat{min-height:0;flex:1 1 auto}
+  .dash-side>#dash-audio{flex:0 0 auto}
 }
 
 /* >=1000px: settings gains its sticky section nav column. */

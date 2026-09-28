@@ -579,6 +579,148 @@ class Obs:
             return max(0.0, time.monotonic() - self._audio_since)
         return max(0.0, time.monotonic() - self._audio_heard)
 
+    # ---------------- the mixer, from the dashboard ----------------
+    #
+    # Which microphone OBS listens to, and how loud it sits against the game,
+    # used to mean opening OBS -- which AutoStream starts minimised to the tray
+    # precisely so nobody has to. Only the first microphone and the first
+    # desktop source are offered: that is OBS's own default pair (Mic/Aux and
+    # Desktop Audio), and the pair split_audio_tracks routes.
+    #
+    # On a connection of its own, never self.ws. That one belongs to the engine
+    # thread, and obsws-python sends a request and then reads whichever reply
+    # arrives next, so two threads sharing it can each be handed the other's
+    # answer. A fader dragged mid-session is exactly that race.
+
+    # The fader's range. OBS itself stops at 0 dB; below -60 nothing is heard.
+    MIXER_MIN_DB = -60.0
+    MIXER_MAX_DB = 0.0
+
+    def _side(self):
+        """A short-lived client for the dashboard. Never launches OBS."""
+        if obsws is None:
+            raise ObsUnavailable("obsws-python is not installed.")
+        if not _obs_process_alive():
+            raise ObsUnavailable("OBS is not running.")
+        return self._connect(timeout=3)
+
+    def _mixer_names(self, ws) -> dict[str, str]:
+        """-> {"mic": name, "desktop": name}, leaving out what OBS lacks."""
+        out: dict[str, str] = {}
+        for i in ws.get_input_list().inputs:
+            kind = str(i.get("inputKind") or "")
+            for key, kinds in (("mic", self.MIC_KINDS),
+                               ("desktop", self.DESKTOP_KINDS)):
+                if kind in kinds and key not in out:
+                    out[key] = str(i.get("inputName") or "")
+        return out
+
+    def _mixer_read(self, ws) -> dict:
+        out: dict = {"ok": True, "mic": None, "desktop": None,
+                     "min_db": self.MIXER_MIN_DB, "max_db": self.MIXER_MAX_DB}
+        for key, name in self._mixer_names(ws).items():
+            db = getattr(ws.get_input_volume(name), "input_volume_db", None)
+            try:
+                db = float(db)
+            except (TypeError, ValueError):
+                db = self.MIXER_MIN_DB   # -inf, a fader pulled right down,
+                                         # arrives as null: JSON has no -inf
+            if db != db or db < self.MIXER_MIN_DB:
+                db = self.MIXER_MIN_DB
+            entry = {"name": name, "db": round(db, 1),
+                     "muted": bool(getattr(ws.get_input_mute(name),
+                                           "input_muted", False))}
+            if key == "mic":
+                settings = ws.get_input_settings(name).input_settings or {}
+                current = str(settings.get("device_id") or "default")
+                items = ws.get_input_properties_list_property_items(
+                    name, "device_id").property_items or []
+                devices = [{"id": str(it.get("itemValue") or ""),
+                            "name": str(it.get("itemName") or "")}
+                           for it in items
+                           if it.get("itemEnabled", True) and it.get("itemValue")]
+                # A headset that was unplugged is still what OBS is set to, and
+                # it is the most common reason a mic goes quiet -- so it is
+                # shown as missing rather than silently replaced by the first
+                # device in the list.
+                if not any(d["id"] == current for d in devices):
+                    devices.append({"id": current,
+                                    "name": "Not connected - pick another",
+                                    "missing": True})
+                entry.update(device=current, devices=devices)
+            out[key] = entry
+        return out
+
+    def audio_mixer(self) -> dict:
+        """The microphone and desktop sources as the OBS mixer has them.
+
+        -> {ok, mic, desktop, min_db, max_db} or {ok: False, error}. `mic` and
+        `desktop` are None when OBS has no such source, else {name, db, muted},
+        and `mic` also carries {device, devices}. Never raises.
+        """
+        try:
+            ws = self._side()
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e) or "OBS is not answering."}
+        try:
+            return self._mixer_read(ws)
+        except Exception as e:  # noqa: BLE001
+            log.info("could not read the OBS mixer: %s", e)
+            return {"ok": False, "error": f"OBS did not answer: {e}"}
+        finally:
+            try:
+                ws.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def set_audio(self, change: dict) -> dict:
+        """Apply what the dashboard changed, then read the mixer back.
+
+        `change` may carry mic_device, mic_db, desktop_db, mic_muted and
+        desktop_muted; anything absent is left alone. -> audio_mixer()'s shape,
+        so the page shows what OBS actually holds rather than what was asked.
+        """
+        try:
+            ws = self._side()
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e) or "OBS is not answering."}
+        try:
+            names = self._mixer_names(ws)
+            for key, fields, what in (
+                    ("mic", ("mic_device", "mic_db", "mic_muted"), "microphone"),
+                    ("desktop", ("desktop_db", "desktop_muted"), "desktop audio")):
+                if not any(f in change for f in fields):
+                    continue
+                name = names.get(key)
+                if not name:
+                    return {"ok": False, "error": f"OBS has no {what} source."}
+                if key == "mic" and "mic_device" in change:
+                    want = str(change["mic_device"] or "")
+                    items = ws.get_input_properties_list_property_items(
+                        name, "device_id").property_items or []
+                    if want not in {str(it.get("itemValue") or "") for it in items}:
+                        return {"ok": False,
+                                "error": "That device is not connected."}
+                    ws.set_input_settings(name, {"device_id": want}, True)
+                    log.info("%s now listens to %s", name, want)
+                if f"{key}_db" in change:
+                    db = min(self.MIXER_MAX_DB,
+                             max(self.MIXER_MIN_DB, float(change[f"{key}_db"])))
+                    ws.set_input_volume(name, vol_db=db)
+                if f"{key}_muted" in change:
+                    ws.set_input_mute(name, bool(change[f"{key}_muted"]))
+            return self._mixer_read(ws)
+        except (TypeError, ValueError) as e:
+            return {"ok": False, "error": f"Not a volume: {e}"}
+        except Exception as e:  # noqa: BLE001
+            log.info("could not change the OBS mixer: %s", e)
+            return {"ok": False, "error": f"OBS refused: {e}"}
+        finally:
+            try:
+                ws.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+
     def health(self) -> dict:
         self.connect()
         s = self.ws.get_stream_status()
