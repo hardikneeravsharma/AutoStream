@@ -102,6 +102,8 @@ class Engine:
         # Black-output watchdog; see _check_picture.
         self._blank_checked = 0.0
         self._blank_strikes = 0
+        # Recording-drive watchdog; see _check_disk.
+        self._disk_checked = 0.0
         # Silent-output watchdog; see _check_audio. One flag, not strikes:
         # the metering thread is already smoothing over individual samples.
         self._silent_said = False
@@ -865,6 +867,30 @@ class Engine:
             notify.toast("AutoStream: no picture",
                          "The stream is black. Check your OBS capture source.")
 
+    # The drive a recording is written to, watched for the whole session.
+    # record.min_free_gb was only checked when a recording STARTED, so a drive
+    # with 60 GB free passed and a long session at a high bitrate could then
+    # fill it -- and a full system drive takes OBS, the game and Windows with
+    # it. Below the same floor the recording stops and the stream carries on:
+    # the broadcast costs no disk, and ending it would lose the audience to
+    # save a file.
+    DISK_EVERY = 60.0
+
+    def _check_disk(self) -> None:
+        if not self.state.recording:
+            return
+        now = time.monotonic()
+        if now - self._disk_checked < self.DISK_EVERY:
+            return
+        self._disk_checked = now
+        free = self._free_gb()
+        if free is None or free >= self.cfg.record.min_free_gb:
+            return
+        log.warning("only %.0f GB free on the recording drive (floor %s GB) "
+                    "- stopping the recording; the stream carries on",
+                    free, self.cfg.record.min_free_gb)
+        self.toggle_recording(f"only {free:.0f} GB free")
+
     def _check_audio(self) -> None:
         """Say so when the stream has been going out silent.
 
@@ -1225,6 +1251,7 @@ class Engine:
         # Before the pause check: a session parked on its be-right-back card
         # still has an OBS that can crash and a recording that can stop.
         self._poll_obs()
+        self._check_disk()
 
         if self._paused():
             # The flag FILE is a different thing from the pause button: it is a

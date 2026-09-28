@@ -78,7 +78,8 @@ DEFAULTS: dict[str, Any] = {
     # canvas straight to disk instead.
     #
     # Nothing here deletes anything. Below min_free_gb AutoStream declines to
-    # start a recording and streams anyway, rather than making room for itself.
+    # start a recording, or stops one mid-session, and streams anyway, rather
+    # than making room for itself.
     "record": {
         "enabled": False,
         "directory": "",              # blank -> whatever OBS is already set to

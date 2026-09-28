@@ -101,3 +101,44 @@ def test_the_api_accepts_the_record_command():
 
     src = inspect.getsource(webui._Handler.do_POST)
     assert '"record"' in src, "the endpoint would reject the button"
+
+
+# ------------------------------------------------- the recording drive fills
+
+def a_live_engine_with(free_gb, recording=True):
+    eng = an_engine(recording=recording)
+    eng._disk_checked = 0.0
+    eng._free_gb = lambda: free_gb
+    return eng
+
+
+def test_a_drive_below_the_floor_stops_the_recording_not_the_stream():
+    """min_free_gb was only checked when a recording started, so a long
+    session could fill the drive. Below it the file stops; the broadcast
+    costs no disk and carries on."""
+    eng = a_live_engine_with(10.0)          # the floor is 50 by default
+    eng._check_disk()
+    assert eng.state.recording is False
+    assert eng.state.phase == LIVE
+    assert [f["path"] for f in eng._earlier_files] == ["C:/v/rec.mp4"]
+
+
+def test_a_roomy_drive_leaves_the_recording_alone():
+    eng = a_live_engine_with(500.0)
+    eng._check_disk()
+    assert eng.state.recording is True and eng.obs.stopped == 0
+
+
+def test_the_drive_is_not_asked_every_tick():
+    eng = a_live_engine_with(500.0)
+    asked = []
+    eng._free_gb = lambda: asked.append(1) or 500.0
+    eng._check_disk()
+    eng._check_disk()
+    assert len(asked) == 1
+
+
+def test_nothing_is_checked_when_not_recording():
+    eng = a_live_engine_with(1.0, recording=False)
+    eng._check_disk()
+    assert eng.obs.stopped == 0
