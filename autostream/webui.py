@@ -474,6 +474,8 @@ class _Handler(BaseHTTPRequestHandler):
                           for x in tail_lines(paths.LOG_FILE, max(1, min(n, _TAIL_MAX)))],
                 "path": str(paths.LOG_FILE),
             })
+        elif u.path == "/api/audio":
+            self._json(self.app.obs_for_ui().audio_mixer())
         elif u.path == "/api/clips/tools":
             self._json(self.app.clips_tools())
         elif u.path == "/api/clips/games":
@@ -819,6 +821,8 @@ class _Handler(BaseHTTPRequestHandler):
                 out["suggest"] = se.suggest()
                 out["expires_days"] = round(se.expires_in() / 86400)
                 self._json(out)
+            elif p == "/api/audio/set":
+                self._json(self.app.obs_for_ui().set_audio(b))
             elif p == "/api/screens/build":
                 self._json(self.app.build_screens())
             elif p == "/api/clips/forget":
@@ -1105,6 +1109,14 @@ class Server:
         if not made:
             return {"error": "Nothing to build - no files are set."}
         return {"ok": True, "scenes": sorted(made.values())}
+
+    def obs_for_ui(self):
+        """The Obs a page may ask about OBS through, engine or not."""
+        if getattr(self.engine, "obs", None) is not None:
+            return self.engine.obs
+        from .obs import Obs
+
+        return Obs(cfg.load())
 
     def status(self) -> dict:
         e = self.engine

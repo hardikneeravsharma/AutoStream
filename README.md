@@ -270,7 +270,8 @@ button. That window is the whole point — see
 Closing the window does not quit — it keeps running in the tray so it can detect games.
 
 - **Dashboard** — live status, the countdown ring, viewers/likes/views with a live
-  graph, OBS ingest health, and live chat.
+  graph, OBS ingest health, and live chat. The *Audio* card beside the chat picks
+  OBS's microphone and sets it against desktop audio, without opening OBS.
 - **Library** — every game it found. *Open + stream* launches one and goes live
   deliberately.
 - **Clips** — every stream you have recorded. Pick one, choose what counts as a

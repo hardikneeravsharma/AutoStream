@@ -220,6 +220,42 @@ DASH_HTML: str = """
       </button>
     </div>
   </section>
+
+  <!-- The two OBS mixer settings a streamer reaches for mid-session: which
+       microphone, and how loud it sits against the game. Beside the chat
+       rather than in the main column, whose height budget is already spent,
+       and it stays in clips-only mode where the chat goes away. -->
+  <section class="card" id="dash-audio">
+    <div class="card-head">
+      <div>
+        <div class="card-title">Audio</div>
+        <div class="card-sub" id="dash-audio-sub">Microphone and desktop, as OBS mixes them</div>
+      </div>
+      <button type="button" class="btn btn-icon btn-ghost btn-sm" id="dash-audio-refresh"
+              title="Read the mixer from OBS again" aria-label="Refresh audio"></button>
+    </div>
+    <div class="card-body">
+      <div class="field">
+        <label class="field-help" for="dash-audio-device">Input device</label>
+        <select class="select" id="dash-audio-device" disabled></select>
+      </div>
+      <div class="dash-fader">
+        <label class="field-help" for="dash-audio-mic">Mic</label>
+        <input type="range" id="dash-audio-mic" min="-60" max="0" step="0.5" disabled>
+        <span class="mono dash-fader-db" id="dash-audio-mic-db">&#8212;</span>
+        <button type="button" class="chip" id="dash-audio-mic-mute"
+                aria-pressed="false" disabled>Mute</button>
+      </div>
+      <div class="dash-fader">
+        <label class="field-help" for="dash-audio-desktop">Desktop</label>
+        <input type="range" id="dash-audio-desktop" min="-60" max="0" step="0.5" disabled>
+        <span class="mono dash-fader-db" id="dash-audio-desktop-db">&#8212;</span>
+        <button type="button" class="chip" id="dash-audio-desktop-mute"
+                aria-pressed="false" disabled>Mute</button>
+      </div>
+      <div class="status-meta" id="dash-audio-balance"></div>
+    </div>
+  </section>
 </aside>
 </div>
 """
@@ -948,6 +984,150 @@ async function dash_send() {
   input.focus();
 }
 
+/* ---------------------------- audio ---------------------------- */
+
+/* The mixer is read on a connection of its own, so it is not part of the
+   two-second status poll: every 15s is plenty for something that only changes
+   when someone touches it, and a read is skipped while a fader is held so the
+   knob never jumps out from under the pointer. */
+const dash_AUDIO_EVERY = 15000;
+let dash_audio = null;        /* last mixer reading */
+let dash_audioAt = 0;         /* when it was asked for */
+let dash_audioHeld = false;   /* a fader is being dragged */
+let dash_audioTimer = 0;      /* debounce for a fader's writes */
+
+async function dash_audioLoad(force) {
+  if (!force && (dash_audioHeld || Date.now() - dash_audioAt < dash_AUDIO_EVERY)) return;
+  dash_audioAt = Date.now();
+  try {
+    dash_renderAudio(await API.get('/api/audio'));
+  } catch (e) {
+    dash_renderAudio({ ok: false, error: 'AutoStream did not answer.' });
+  }
+}
+
+function dash_db(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return dash_EMDASH;
+  return n.toFixed(1) + ' dB';
+}
+
+/* "Compared to desktop" is the whole question, so it is answered in words
+   rather than left for someone to subtract two dB readouts in their head. */
+function dash_audioBalance(a) {
+  const mic = a.mic, desk = a.desktop;
+  if (!mic && !desk) return 'OBS has no audio sources. Add them in OBS: Settings > Audio.';
+  if (!mic) return 'OBS has no microphone. Add one in OBS: Settings > Audio > Mic/Auxiliary Audio.';
+  if (!desk) return 'OBS has no desktop audio. Add it in OBS: Settings > Audio > Desktop Audio.';
+  if (mic.muted) return 'Your mic is muted: nobody can hear you.';
+  if (desk.muted) return 'Desktop audio is muted: the game is silent on stream.';
+  const d = Math.round((Number(mic.db) - Number(desk.db)) * 2) / 2;
+  if (Math.abs(d) < 0.5) return 'Your mic sits level with the desktop.';
+  return 'Your mic sits ' + Math.abs(d).toFixed(1).replace(/\.0$/, '') + ' dB '
+    + (d > 0 ? 'above' : 'below') + ' the desktop.';
+}
+
+function dash_renderFader(key, src, ok) {
+  const range = dash_el('dash-audio-' + key);
+  const label = dash_el('dash-audio-' + key + '-db');
+  const mute = dash_el('dash-audio-' + key + '-mute');
+  const on = !!(ok && src);
+  if (range) {
+    range.disabled = !on;
+    if (on && !dash_audioHeld) range.value = String(src.db);
+    range.title = on ? src.name : '';
+  }
+  if (label) label.textContent = on ? dash_db(src.db) : dash_EMDASH;
+  if (mute) {
+    mute.disabled = !on;
+    const m = on && !!src.muted;
+    mute.classList.toggle('is-on', m);
+    mute.setAttribute('aria-pressed', m ? 'true' : 'false');
+    mute.textContent = m ? 'Muted' : 'Mute';
+  }
+}
+
+function dash_renderAudio(a) {
+  a = a || {};
+  const ok = !!a.ok;
+  if (ok) dash_audio = a;
+  const sub = dash_el('dash-audio-sub');
+  if (sub) {
+    sub.textContent = ok ? 'Microphone and desktop, as OBS mixes them'
+                         : (a.error || 'OBS is not answering.');
+  }
+  const sel = dash_el('dash-audio-device');
+  if (sel) {
+    const mic = ok ? a.mic : null;
+    sel.disabled = !mic;
+    const devs = mic ? (mic.devices || []) : [];
+    /* Rebuilt only when the list changes, so an open dropdown is not closed
+       under the cursor by a background refresh. */
+    const key = JSON.stringify(devs) + '|' + (mic ? mic.device : '');
+    if (sel.dataset.key !== key) {
+      sel.dataset.key = key;
+      sel.innerHTML = devs.map(function (d) {
+        return '<option value="' + esc(d.id) + '">' + esc(d.name) + '</option>';
+      }).join('') || '<option value="">No microphone</option>';
+      if (mic) sel.value = mic.device;
+    }
+  }
+  dash_renderFader('mic', ok ? a.mic : null, ok);
+  dash_renderFader('desktop', ok ? a.desktop : null, ok);
+  const bal = dash_el('dash-audio-balance');
+  if (bal) bal.textContent = ok ? dash_audioBalance(a) : '';
+}
+
+async function dash_audioSet(change) {
+  try {
+    const r = await API.post('/api/audio/set', change);
+    if (!r || !r.ok) throw new Error((r && r.error) || 'OBS refused');
+    dash_audioAt = Date.now();
+    dash_renderAudio(r);
+  } catch (e) {
+    toast('Audio not changed: ' + e.message, 'error');
+    dash_audioLoad(true);          /* put the controls back to what OBS has */
+  }
+}
+
+/* A fader answers while it moves -- the point is to hear the balance change --
+   but only one write is in flight per pause in the drag. */
+function dash_wireFader(key) {
+  const range = dash_el('dash-audio-' + key);
+  if (range) {
+    const send = function () {
+      const change = {};
+      change[key + '_db'] = Number(range.value);
+      dash_audioSet(change);
+    };
+    range.addEventListener('input', function () {
+      dash_audioHeld = true;
+      const label = dash_el('dash-audio-' + key + '-db');
+      if (label) label.textContent = dash_db(range.value);
+      if (dash_audio && dash_audio[key]) {
+        dash_audio[key].db = Number(range.value);
+        const bal = dash_el('dash-audio-balance');
+        if (bal) bal.textContent = dash_audioBalance(dash_audio);
+      }
+      clearTimeout(dash_audioTimer);
+      dash_audioTimer = setTimeout(send, 150);
+    });
+    range.addEventListener('change', function () {
+      clearTimeout(dash_audioTimer);
+      dash_audioHeld = false;
+      send();
+    });
+  }
+  const mute = dash_el('dash-audio-' + key + '-mute');
+  if (mute) {
+    mute.addEventListener('click', function () {
+      const change = {};
+      change[key + '_muted'] = mute.getAttribute('aria-pressed') !== 'true';
+      dash_audioSet(change);
+    });
+  }
+}
+
 /* ---------------------------- wiring ---------------------------- */
 
 function dash_wire() {
@@ -974,6 +1154,18 @@ function dash_wire() {
   if (rec) rec.addEventListener('click', function () { dash_cmd('record'); });
   const vok = dash_el('dash-vmatch-ok');
   if (vok) vok.addEventListener('click', dash_vmatchExplained);
+
+  dash_setLabel('dash-audio-refresh', 'refresh', '');
+  const aref = dash_el('dash-audio-refresh');
+  if (aref) aref.addEventListener('click', function () { dash_audioLoad(true); });
+  const dev = dash_el('dash-audio-device');
+  if (dev) {
+    dev.addEventListener('change', function () {
+      if (dev.value) dash_audioSet({ mic_device: dev.value });
+    });
+  }
+  dash_wireFader('mic');
+  dash_wireFader('desktop');
 
   const send = dash_el('dash-chat-send');
   if (send) send.addEventListener('click', function () { dash_send(); });
@@ -1025,6 +1217,7 @@ function dash_wire() {
 
 function dash_onShow() {
   dash_wire();
+  dash_audioLoad(true);
   if (dash_last) dash_onTick(dash_last);
   const box = dash_el('dash-chat-msgs');
   if (box) box.scrollTop = box.scrollHeight;
@@ -1044,6 +1237,7 @@ function dash_onTick(status) {
   dash_renderSpark(s);
   dash_applyActions(s);
   dash_renderChat(s);
+  dash_audioLoad(false);
   dash_last = s;
 }
 
