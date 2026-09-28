@@ -763,8 +763,9 @@ CONFIG_SCHEMA: list[Section] = [
                 "record.min_free_gb",
                 "Never record below",
                 "If the recording drive has less space than this, AutoStream streams "
-                "anyway but does not record. It will not delete anything to make "
-                "room.",
+                "anyway but does not record -- and a recording already running "
+                "stops when the drive fills past it, while the stream carries on. "
+                "It will not delete anything to make room.",
                 "number",
                 min=1,
                 max=10000,
