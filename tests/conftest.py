@@ -30,3 +30,33 @@ os.environ.setdefault("AUTOSTREAM_HOME", str(REPO))
 for p in (str(REPO), str(HERE)):
     if p not in sys.path:
         sys.path.insert(0, p)
+
+
+import shutil                                                    # noqa: E402
+from collections import namedtuple                               # noqa: E402
+
+import pytest                                                    # noqa: E402
+
+_Usage = namedtuple("_Usage", "total used free")
+
+
+@pytest.fixture(autouse=True)
+def _plenty_of_disk():
+    """The engine refuses to start below rules.min_free_disk_gb, and it asks
+    the REAL drive. So twelve engine tests failed on a machine that merely had
+    a full C: -- each one asserting a quota or arming reason and getting
+    "only 23.7 GB free" instead, and the build refused to ship over it.
+
+    Free space is not what those tests are about, so every test sees a
+    roomy disk. The one that is about it (test_a_full_disk_blocks_a_start)
+    patches disk_usage itself, which overrides this.
+
+    Swapped by hand rather than through monkeypatch: requesting monkeypatch
+    here would make it the first fixture set up and so the LAST torn down,
+    after test_data_home's own teardown has already deleted the sys.frozen
+    that monkeypatch then tries to put back.
+    """
+    real = shutil.disk_usage
+    shutil.disk_usage = lambda p: _Usage(16 * 1024 ** 4, 0, 16 * 1024 ** 4)
+    yield
+    shutil.disk_usage = real
