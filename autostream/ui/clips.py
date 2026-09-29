@@ -1562,6 +1562,23 @@ function clip_renderOptions() {
       note += ' Check the tally area first if you have never done it on this ' +
               'PC - a card box pointed at the wrong pixels finds almost nothing.';
     }
+  } else if (!why && s.scan_mode === 'summary') {
+    /* NOT CLIPS. Every option above this is about cutting around kills, and
+       none of them applies -- so the note says what the run makes instead. */
+    var srate = Number(s.scan_rate) || 16.0;
+    var swin = clip_stripWindow();
+    var sspan = swin ? ((swin.scan_end || s.duration || 0) - swin.scan_start)
+                     : (s.duration || 0);
+    note = esc(s.game || 'This game') + ' is made into a match summary, not ' +
+           'clips: one video per match, whole and in order, with the setup, ' +
+           'the time spent dead and the walk back to the fight cut out. ' +
+           'Chapters for YouTube are written beside each one. The clip ' +
+           'options below do not apply.';
+    if (sspan > 0) {
+      note += ' ' + (swin ? 'You have chosen ' + clip_dur(sspan) + ' of it, so a'
+                          : 'That is a') +
+              'bout ' + clip_dur(sspan / srate) + ' of reading, then the cut.';
+    }
   } else if (!why && s.scan_mode === 'killfeed') {
     /* HOW LONG IT WILL ACTUALLY TAKE, from the rate the job itself uses.
        This said "roughly a minute per 10 minutes of footage" for every
@@ -1593,7 +1610,8 @@ function clip_renderOptions() {
      still be reviewed -- and the review then worked, which is a page arguing
      with itself. Whatever stops one has to stop the other. */
   var rev = clip_el('clip-review');
-  if (rev) rev.disabled = !!why;
+  /* A summary has no clips to review: the whole match is the one output. */
+  if (rev) rev.disabled = !!why || s.scan_mode === 'summary';
   /* The fix for THIS reason, beside this reason. Only when OCR is what is in
      the way -- a missing in-game name is typed in, not installed, and offering
      an install there would send someone to the wrong place. */

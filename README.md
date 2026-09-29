@@ -79,6 +79,13 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     the demo's own tick for nine kills in ten — and a team-mate's kill while you
     spectate is told apart by the emblem under the cards, which is learnt from
     your own recording.
+- **Makes Marvel Rivals into match summaries, not clips.** What people watch of it is
+  one match, whole and in order, with the dead time taken out — so that is what it
+  makes: one video per match, with the setup in spawn, the time spent dead and the
+  walk back to the fight cut, ending on the VICTORY or DEFEAT screen, and YouTube
+  chapters written beside it. It reads the HUD — the ult meter, the health bar and
+  the objective line — so there is nothing to set up. Checked on two hand-labelled
+  matches: 99% of fighting kept, 88% of the quiet time cut.
 - **Reads the Counter-Strike demo when you have one.** Valve's own `.dem` gives
   exact kills, deaths and rounds — plus kills *through smoke* and *while flashed*,
   which no amount of looking at the screen can tell you. It finds the right demo
@@ -874,6 +881,8 @@ Clips page shows what is missing and the rest of AutoStream is unaffected.
 | [`clips/valorant_feed.py`](autostream/clips/valorant_feed.py) | Valorant kills from the feed's coloured bars. No OCR, no in-game name. |
 | [`clips/killmark.py`](autostream/clips/killmark.py) | Valorant's kill emblem: confirms, re-times and adds screen-read kills, leaving out a team-mate's seen while spectating. |
 | [`clips/cs2_cards.py`](autostream/clips/cs2_cards.py) | Counter-Strike kills from the round card tally, each timed to the flash it makes. No OCR; the HUD colour and your own emblem are measured, not asked for. |
+| [`clips/rivals.py`](autostream/clips/rivals.py) | Marvel Rivals: reads the HUD (ult meter, health bar, objective line) and plans a match summary — matches, deaths, ults, the result, and what to cut. |
+| [`clips/summary.py`](autostream/clips/summary.py) | Cuts one summary per match from that plan, all audio tracks kept, with YouTube chapters beside it. |
 | [`clips/cs2_demo.py`](autostream/clips/cs2_demo.py) | Counter-Strike `.dem` parsing, and the fingerprint sync that maps demo time onto your recording. |
 | [`clips/beatsync.py`](autostream/clips/beatsync.py) | Tempo, beat phase and the drop, from an onset envelope — no librosa. |
 | [`clips/story.py`](autostream/clips/story.py) | The arc: opening, the slide, the turn, the push, match point. Clips stay in order and the music is offset so the drop lands on the peak. |

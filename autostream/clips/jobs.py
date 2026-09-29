@@ -59,8 +59,9 @@ log = logging.getLogger("autostream.clips.jobs")
 # BEFORE the run and an estimate that undersells is the one that gets somebody
 # to press the button. The page advertised a 43-minute selection as "about 4m
 # of scanning" against a real 40.
+#   summary   (Marvel Rivals) 38 min in 118s -> 19x; 16 quoted for margin
 SCAN_RATE = {"feedbar": 14.0, "killfeed": 4.5, "cardcount": 10.0,
-             "template": 14.0, "colour": 14.0}
+             "template": 14.0, "colour": 14.0, "summary": 16.0}
 # Keyed separately rather than overwriting "killfeed": the same profile scans
 # at either rate depending on whether rounds are switched on for the run.
 ROUND_SCAN_RATE = {"killfeed": 1.2}
@@ -341,8 +342,10 @@ class ClipJob:
         try:
             self._set(state="running")
             self._run()
+            what = ("match summar" + ("y" if len(self.results) == 1 else "ies")
+                    if self.scan_mode == "summary" else "clips")
             self._set(state="done", step="montage", done=self.total,
-                      message=f"{len(self.results)} clips in {self.folder.name}")
+                      message=f"{len(self.results)} {what} in {self.folder.name}")
         except detect.Cancelled:
             self._set(state="cancelled", message="Cancelled")
             log.info("clip job cancelled")
@@ -413,6 +416,12 @@ class ClipJob:
             log.info("clipping part of %s only: %s to %s of %s",
                      self.source.name, _hms(self.win_start),
                      _hms(self.win_end), _hms(total))
+
+        # A game summarised rather than clipped has nothing below to do with
+        # kills -- see clips/rivals.py -- so it takes its own short path.
+        if prof is not None and prof.mode == "summary":
+            self._summarise(span)
+            return
 
         # Counter-Strike is clipped per ROUND, which needs the scoreboard as
         # well as the feed. Both are read from ONE decode pass -- see
@@ -1658,6 +1667,54 @@ class ClipJob:
         self._set(message=f"{match.map_name}: {len(rounds)} rounds and "
                           f"{len(exact)} kills, exactly")
         return {"kills": exact, "rounds": rounds, "about": about}
+
+    def _summarise(self, span: float) -> None:
+        """Marvel Rivals: one summary per match instead of clips around kills."""
+        from . import rivals, summary
+
+        if self.options.get("plan_only"):
+            raise RuntimeError(
+                f"{self.game} is made into a match summary, which has no clips "
+                f"to review. Use Make clips.")
+
+        def prog(d, t):
+            self._set(done=d, total=t,
+                      message=f"Reading the HUD - {d} of {t} chunks")
+        self._set(step="scan", message="Reading the HUD...")
+        r = rivals.scan(self.source, start=self.win_start, duration=span,
+                        progress=prog, cancelled=lambda: self._cancel.is_set())
+        self._check()
+        if not rivals.hud_found(r):
+            raise RuntimeError(
+                f"No {self.game} HUD found in this recording. The summary reads "
+                f"the HUD at the game's default scale on a 16:9 recording; a "
+                f"different HUD scale or a stretched resolution will not read.")
+        found = rivals.matches(r)
+        if not found:
+            self._set(summary={"matches": 0, "clips": 0})
+            raise RuntimeError(
+                f"The {self.game} HUD is in this recording, but no whole match "
+                f"is -- a summary needs at least three minutes of one.")
+        self._set(clip_count=len(found))
+        # Kept beside the output so a re-plan never needs the scan again.
+        self.folder.mkdir(parents=True, exist_ok=True)
+        r.save(self.folder / "readings.npz")
+
+        def cut_prog(d, t, msg):
+            self._set(step="cut", done=d, total=t, message=msg)
+        self.results = summary.build(
+            self.source, r, self.folder / "summaries", game=self.game,
+            when=self.session.get("started") or self.started_at,
+            encoder=self.options.get("encoder", "auto"),
+            progress=cut_prog, check=self._check)
+        kept = sum(x["duration"] for x in self.results)
+        self._set(summary={
+            "matches": len(self.results), "clips": len(self.results),
+            "kills": 0, "covered": round(kept, 1),
+            "deaths": sum(x["deaths"] for x in self.results),
+            "ults": sum(x["ults"] for x in self.results),
+            "cut_seconds": round(sum(x["cut_seconds"] for x in self.results), 1),
+        })
 
     def _write_manifest(self) -> None:
         """A record of what was produced, next to the files themselves."""

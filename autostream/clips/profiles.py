@@ -56,6 +56,8 @@ class Profile:
     #   "killfeed"  OCR the feed and find your own name
     #   "feedbar"   read the feed's coloured bars, no OCR   (Valorant)
     #   "cardcount" read the round kill tally, no OCR        (CS2)
+    #   "summary"   no kills at all: the whole match, dead time cut out
+    #               (Marvel Rivals -- see clips/rivals.py)
     #
     # Not every game draws a fixed marker. CS2 has no centre-screen kill
     # confirmation at all -- no hitmarker, no banner -- and announces kills only
@@ -215,7 +217,7 @@ class Profile:
         by the colour the game draws around them, so there is no name to get
         wrong and no template to cut.
         """
-        if self.mode in ("colour", "feedbar", "cardcount"):
+        if self.mode in ("colour", "feedbar", "cardcount", "summary"):
             return not self.missing()
         if self.mode == "killfeed":
             return not self.missing()
@@ -268,7 +270,7 @@ class Profile:
                 out["hud_hue"] = round(self.hud_hue, 1)
             if self.card_box:
                 out["card_box"] = [round(float(v), 4) for v in self.card_box]
-        elif self.mode == "feedbar":
+        elif self.mode in ("feedbar", "summary"):
             # Nothing else to carry: no template, no name, no threshold. The
             # band is the whole configuration.
             out["mode"] = self.mode
@@ -421,6 +423,25 @@ BUILTIN: dict[str, dict[str, Any]] = {
                  "person's HUD scale; a different scale needs recalibrating "
                  "from the Clips page.",
     },
+    # Marvel Rivals is not clipped around kills at all. What people watch of
+    # it is one match, in order, with the respawns and the walks back taken
+    # out -- so the job makes a match summary instead: see clips/rivals.py.
+    # The band is unused; the reader has its own HUD regions, measured at the
+    # default HUD scale on 16:9.
+    "marvel-win64-shipping.exe": {
+        "label": "Marvel Rivals",
+        "mode": "summary",
+        "band": [0.0, 0.0, 1.0, 1.0],
+        "template": "",
+        "ref_height": 1080,
+        "scan_fps": 2.0,
+        "notes": "Makes a match summary rather than kill clips: each match "
+                 "whole and in order, with the setup, the time spent dead and "
+                 "the walk back to the fight cut out, ending on the VICTORY or "
+                 "DEFEAT screen. Reads the HUD -- ult meter, health bar and "
+                 "objective line -- so it needs no name and no OCR, but it "
+                 "assumes the default HUD scale on a 16:9 recording.",
+    },
 }
 
 # Calibration starting points for games whose marker geometry is known but whose
@@ -513,7 +534,7 @@ def _build(key: str, raw: dict) -> Profile | None:
             raise KeyError("template")
         mode = str(raw.get("mode", "template")).lower()
         if mode not in ("template", "colour", "killfeed", "feedbar",
-                        "cardcount"):
+                        "cardcount", "summary"):
             raise ValueError(f"unknown mode {mode!r}")
         colour = tuple(int(v) for v in raw.get("colour", (255, 60, 60)))
         if len(colour) != 3:
