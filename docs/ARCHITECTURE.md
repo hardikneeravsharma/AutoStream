@@ -40,9 +40,11 @@ nothing behind it.
 The UI layer (panel, tray, web dashboard) never calls OBS/YouTube directly. It calls
 `engine.submit(command)` — a thread-safe queue — and reads `engine.state` for display.
 The one exception is the dashboard's *Audio* card (`/api/audio`, `/api/audio/set`):
-it reads and sets the OBS mixer through `Obs.audio_mixer` / `Obs.set_audio`, each on a
-short-lived websocket of its own, never the engine's — obsws-python reads whichever
-reply arrives next, so two threads sharing one connection can swap answers.
+it reads and sets the OBS mixer through `Obs.audio_mixer` / `Obs.set_audio`, on a
+websocket of its own behind a lock, never the engine's — obsws-python reads whichever
+reply arrives next, so two threads sharing one connection can swap answers. That
+connection stays open between reads: OBS notifies on every client that comes and goes,
+and reopening it every 15 seconds per tab flashed "connected"/"disconnected" all session.
 
 ## 2. Module map
 
