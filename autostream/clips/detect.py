@@ -447,9 +447,16 @@ def scan_cardcount(video: Path, profile: Profile, total: float, height: int,
     band = tuple(profile.card_box) if len(profile.card_box) == 4 else None
     if band:
         log.info("using the calibrated card area %s", band)
+    # The name and the feed band are only for the few flashes the pixels
+    # cannot settle -- see cs2_cards.confirm_in_feed. Without a name those few
+    # are left out, and everything else still needs nothing set up.
+    from .profiles import username_for
+
     events = cs2_cards.scan(video, duration=total, start=start,
                             fps=profile.scan_fps,
                             hue=hue, frame_height=height, band=band,
+                            player=profile.player or username_for(profile.key),
+                            feed_band=tuple(profile.band),
                             progress=progress, cancelled=cancelled)
     if cancelled and cancelled():
         raise Cancelled("scan cancelled")
