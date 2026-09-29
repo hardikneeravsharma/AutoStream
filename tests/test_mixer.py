@@ -85,7 +85,48 @@ def test_the_reading_names_the_device_and_both_faders():
     assert r["mic"]["device"] == "default"      # absent from settings = default
     assert [d["id"] for d in r["mic"]["devices"]] == ["default", "{usb}", "{cam}"]
     assert r["desktop"] == {"name": "Desktop Audio", "db": -6.0, "muted": False}
-    assert ws.closed, "the side connection must not be left open"
+
+
+class CountingObs(obsmod.Obs):
+    """Counts handshakes, since OBS toasts every client that comes and goes."""
+
+    def __init__(self, make):
+        super().__init__(cfg.load())
+        self.make, self.opened = make, []
+
+    def _connect(self, timeout=5):
+        ws = self.make()
+        self.opened.append(ws)
+        return ws
+
+
+def test_the_dashboard_reuses_one_connection(monkeypatch):
+    """Reading every 15s from each open tab used to connect and disconnect
+    each time, and OBS flashed a notification for every one."""
+    monkeypatch.setattr(obsmod, "_obs_process_alive", lambda: True)
+    monkeypatch.setattr(obsmod, "obsws", object())
+    monkeypatch.setattr(FakeWs, "get_version",
+                        lambda self: SimpleNamespace(obs_version="30"), raising=False)
+    o = CountingObs(FakeWs)
+    for _ in range(5):
+        assert o.audio_mixer()["ok"]
+    assert o.set_audio({"mic_db": -3})["ok"]
+    assert len(o.opened) == 1 and not o.opened[0].closed
+
+
+def test_a_dead_dashboard_connection_is_replaced(monkeypatch):
+    monkeypatch.setattr(obsmod, "_obs_process_alive", lambda: True)
+    monkeypatch.setattr(obsmod, "obsws", object())
+    monkeypatch.setattr(FakeWs, "get_version",
+                        lambda self: SimpleNamespace(obs_version="30"), raising=False)
+    o = CountingObs(FakeWs)
+    o.audio_mixer()
+
+    def gone(self):
+        raise ConnectionError("OBS restarted")
+    o.opened[0].get_version = gone.__get__(o.opened[0])
+    assert o.audio_mixer()["ok"]
+    assert len(o.opened) == 2 and o.opened[0].closed
 
 
 def test_a_missing_source_is_none_not_an_error():
