@@ -330,6 +330,50 @@ def cmd_voice(args) -> int:
     return 0
 
 
+def cmd_summary(args) -> int:
+    """Marvel Rivals match summaries from a recording, without the dashboard.
+
+    --plan prints what would be kept and stops, which is the quick way to see
+    the cut on a new recording before spending minutes encoding it.
+    """
+    from .clips import rivals, summary, tools
+
+    src = Path(args.recording)
+    if not src.is_file():
+        print(f"no such file: {src}")
+        return 1
+    if not tools.available():
+        print(tools.missing_reason())
+        return 1
+
+    def show(done, total):
+        print(f"\r  reading the HUD  {done}/{total}", end="", flush=True)
+    r = rivals.scan(src, progress=show)
+    print()
+    if not rivals.hud_found(r):
+        print("no Marvel Rivals HUD found (default HUD scale, 16:9 only)")
+        return 1
+    found = rivals.matches(r)
+    for i, m in enumerate(found, start=1):
+        spans = rivals.plan(r, m)
+        kept = sum(b - a for a, b in spans)
+        print(f"match {i}: {tools.hms(m.start)} - {tools.hms(m.end)}  "
+              f"{tools.hms(m.seconds)} -> {tools.hms(kept)}  "
+              f"{len(m.deaths)} deaths, {len(m.casts)} ults, "
+              f"{m.result or 'no result'}")
+    if not found:
+        print("the HUD is there but no whole match is")
+        return 1
+    if args.plan:
+        return 0
+    out = Path(args.out) if args.out else src.with_name(src.stem + "_summaries")
+    made = summary.build(src, r, out, game="Marvel Rivals",
+                         when=src.stat().st_mtime)
+    for x in made:
+        print(f"  {x['master']}")
+    return 0
+
+
 def cmd_run(args) -> int:
     """Main entry: web UI + native window + tray + engine.
 
@@ -539,6 +583,7 @@ def main(argv=None) -> int:
         ("status", cmd_status, "print current state"),
         ("stop", cmd_stop, "force-stop the current stream"),
         ("voice", cmd_voice, "check or download the spoken-hook voice model"),
+        ("summary", cmd_summary, "Marvel Rivals match summaries from a recording"),
     ):
         sp = sub.add_parser(name, help=helptext, parents=[common])
         sp.set_defaults(func=fn)
@@ -555,6 +600,12 @@ def main(argv=None) -> int:
                             help="print every English voice, grouped")
             sp.add_argument("--sample", action="store_true",
                             help="render one wav per voice, to choose by ear")
+        if name == "summary":
+            sp.add_argument("recording", help="the recording to summarise")
+            sp.add_argument("--out", metavar="DIR",
+                            help="where to write (default: beside it)")
+            sp.add_argument("--plan", action="store_true",
+                            help="print what would be kept and stop")
 
     args = p.parse_args(argv)
     if not getattr(args, "func", None):
