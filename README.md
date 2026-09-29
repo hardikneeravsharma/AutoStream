@@ -74,7 +74,11 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
   - Valorant needs neither. It draws a yellow border round your own half of a feed
     row, so the colours are read directly — no OCR, no Tesseract, nothing to set up.
   - Counter-Strike also draws a card tally of your kills this round, which can be
-    read the same way — no OCR, no in-game name, and assists cannot leak in.
+    read the same way — no OCR, no in-game name, and assists cannot leak in. Each
+    kill *flashes* the tally, so every kill is timed to its flash — within 0.2s of
+    the demo's own tick for nine kills in ten — and a team-mate's kill while you
+    spectate is told apart by the emblem under the cards, which is learnt from
+    your own recording.
 - **Reads the Counter-Strike demo when you have one.** Valve's own `.dem` gives
   exact kills, deaths and rounds — plus kills *through smoke* and *while flashed*,
   which no amount of looking at the screen can tell you. It finds the right demo
@@ -869,7 +873,7 @@ Clips page shows what is missing and the rest of AutoStream is unaffected.
 | [`clips/`](autostream/clips/) | Optional. `detect` finds kill markers, `plan` decides what to cut, `cutter` and `montage` produce the files, `jobs` runs it off the engine thread, `calibrate` teaches it a new game. |
 | [`clips/valorant_feed.py`](autostream/clips/valorant_feed.py) | Valorant kills from the feed's coloured bars. No OCR, no in-game name. |
 | [`clips/killmark.py`](autostream/clips/killmark.py) | Valorant's kill emblem: confirms, re-times and adds screen-read kills, leaving out a team-mate's seen while spectating. |
-| [`clips/cs2_cards.py`](autostream/clips/cs2_cards.py) | Counter-Strike kills from the round card tally. No OCR; the HUD colour is measured, not asked for. |
+| [`clips/cs2_cards.py`](autostream/clips/cs2_cards.py) | Counter-Strike kills from the round card tally, each timed to the flash it makes. No OCR; the HUD colour and your own emblem are measured, not asked for. |
 | [`clips/cs2_demo.py`](autostream/clips/cs2_demo.py) | Counter-Strike `.dem` parsing, and the fingerprint sync that maps demo time onto your recording. |
 | [`clips/beatsync.py`](autostream/clips/beatsync.py) | Tempo, beat phase and the drop, from an onset envelope — no librosa. |
 | [`clips/story.py`](autostream/clips/story.py) | The arc: opening, the slide, the turn, the push, match point. Clips stay in order and the music is offset so the drop lands on the peak. |

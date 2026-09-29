@@ -390,3 +390,221 @@ def test_the_sample_puts_the_fullest_tally_first():
             _sight(kills=3, mask=300, t=3.0), _sight(kills=2, mask=200, t=4.0)]
     rows.sort(key=lambda s: (s.kills or 0, s.mask), reverse=True)
     assert [r.time for r in rows] == [3.0, 4.0, 1.0, 2.0]
+
+
+# ------------------------------------------------------------- the flash
+#
+# Synthetic sweeps, at the numbers measured on two demo-scored matches: a kill
+# is a beam of 1050-1750 px held 0.6-1.1s with the emblem whitening by 440+,
+# over the player's OWN emblem; a team-mate's kill while spectating is the
+# same flash over somebody else's.
+
+FPS = 10.0
+_rng = np.random.default_rng(7)
+OWN = _rng.standard_normal(cc.EMBLEM_GRID ** 2).astype(np.float32)
+MATE = _rng.standard_normal(cc.EMBLEM_GRID ** 2).astype(np.float32)
+MENU = _rng.standard_normal(cc.EMBLEM_GRID ** 2).astype(np.float32)
+GEO = cc.Geometry(crop=(0, 0, 364, 140), k=1.0)
+
+
+def _norm(v):
+    return (v - v.mean()) / v.std()
+
+
+class _Sweep:
+    """Builds a Sweep, second by second."""
+
+    def __init__(self, seconds=60.0, width=0):
+        n = int(seconds * FPS)
+        self.t = np.arange(n) / FPS
+        self.beam = np.zeros(n, int)
+        self.wb = np.zeros(n, int)
+        self.ew = np.full(n, 20, int)
+        self.w = np.full(n, width, int)
+        self.dark = np.zeros(n, bool)
+        self.emblem = [OWN] * n
+        self.panel = np.full(n, 0.1)
+        self.energy = np.full(n, 10.0)
+
+    def i(self, t):
+        return int(round(t * FPS))
+
+    def flash(self, at, length=0.85, beam=1300, rise=900, cards=None):
+        a, b = self.i(at), self.i(at + length)
+        self.beam[a:b] = beam
+        self.ew[a:a + int(0.6 * FPS)] += rise  # measured: faded in 0.6s
+        self.w[a:b] = 90                     # mid-flash the width is nonsense
+        if cards is not None:
+            self.w[b:] = 0 if cards == 0 else cc.CARD_W0 + cc.CARD_PITCH * cards
+        return self
+
+    def cards(self, at, n):
+        self.w[self.i(at):] = 0 if n == 0 else cc.CARD_W0 + cc.CARD_PITCH * n
+        return self
+
+    def die(self, at, cam=2.0):
+        """The death cam has no HUD at all, then the view is a team-mate's."""
+        self.energy[self.i(at):self.i(at + cam)] = 0.0
+        return self.spectate(at + cam, at + cam + 20.0)
+
+    def spectate(self, a, b):
+        for j in range(self.i(a), self.i(b)):
+            self.emblem[j] = MATE
+            self.panel[j] = 0.8
+        return self
+
+    def build(self):
+        every = int(FPS / cc.EMBLEM_FPS)
+        idx = np.arange(0, len(self.t), every)
+        return cc.Sweep(fps=FPS, t=self.t, beam=self.beam, white_beam=self.wb,
+                        emblem_white=self.ew, width=self.w, dark=self.dark,
+                        et=self.t[idx],
+                        emaps=np.stack([_norm(self.emblem[j]) for j in idx]),
+                        energy=self.energy[idx], panel=self.panel[idx])
+
+
+def _read(sw):
+    fl = cc.flashes(sw, GEO)
+    own = cc.judge(fl, sw, cc.own_emblems(sw))
+    kills = [f.time for f in fl for _ in range(f.kills)]
+    return kills, fl, own
+
+
+def test_a_flash_over_your_own_emblem_is_a_kill_at_its_onset():
+    sw = _Sweep().flash(20.0, cards=1).build()
+    kills, _, _ = _read(sw)
+    assert kills == [pytest.approx(20.0)]
+
+
+def test_a_kill_and_a_death_a_second_later_is_still_a_kill():
+    """FROM FOOTAGE, and the reason for this reader. The width reader needed
+    the new count to hold for two samples; dying a second after the kill
+    never gave it that, and six of Dust2's thirty kills went missing."""
+    sw = _Sweep().cards(10.0, 1).flash(20.0, cards=2).spectate(21.0, 40.0).build()
+    kills, _, _ = _read(sw)
+    assert kills == [pytest.approx(20.0)]
+
+
+def test_a_team_mates_kill_while_you_are_dead_is_not_yours():
+    """FROM FOOTAGE: 30 of these in two matches -- the same flash and the
+    same beam, over the watched player's avatar instead of your own emblem."""
+    sw = (_Sweep().spectate(15.0, 45.0).flash(20.0, cards=1)
+          .flash(30.0, cards=2).build())
+    kills, _, _ = _read(sw)
+    assert kills == []
+
+
+def test_a_blip_of_hud_colour_is_not_a_flash():
+    """FROM FOOTAGE: HUD-coloured blips above the fan held 0.4s at most,
+    and none whitened the emblem as a kill does."""
+    sw = (_Sweep().flash(10.0, length=0.2, rise=420)
+          .flash(20.0, length=0.9, rise=40).build())
+    kills, _, _ = _read(sw)
+    assert kills == []
+
+
+def test_two_kills_inside_one_flash_are_two_kills():
+    """FROM FOOTAGE at 1h26m42s: two kills 0.1s apart, one flash. The fan
+    settles two cards wider, and says so."""
+    sw = _Sweep().flash(20.0, cards=2).build()
+    kills, _, _ = _read(sw)
+    assert kills == [pytest.approx(20.0)] * 2
+
+
+def test_back_to_back_kills_each_count_once():
+    """Kills 1.2s apart: the second flash starts before the first has
+    settled, so the count after the first must not swallow the second."""
+    sw = _Sweep().flash(20.0).flash(21.2, cards=2).build()
+    kills, _, _ = _read(sw)
+    assert kills == [pytest.approx(20.0), pytest.approx(21.2)]
+
+
+def test_a_kill_under_a_flashbang_is_recovered_from_the_count():
+    """FROM FOOTAGE at 2h27m26s: the screen whited out as the kill landed,
+    so no beam was ever visible -- but the fan came back one card wider."""
+    s = _Sweep().flash(10.0, cards=1)
+    s.w[s.i(20.0):] = 0                       # the next round
+    a, b = s.i(30.0), s.i(32.0)
+    s.wb[a:b] = 3900                          # white
+    s.w[b:] = cc.CARD_W0 + cc.CARD_PITCH * 1
+    sw = s.build()
+    kills, _, own = _read(sw)
+    assert cc.hidden_kills(sw, GEO, own, kills) == [pytest.approx(30.0)]
+
+
+def test_the_scoreboard_hiding_the_fan_does_not_invent_kills():
+    s = _Sweep().flash(10.0, cards=2)
+    s.w[s.i(20.0):s.i(24.0)] = 0              # Tab: the tally is gone...
+    s.dark[s.i(20.0):s.i(24.0)] = True
+    sw = s.build()                            # ...and back unchanged
+    kills, _, own = _read(sw)
+    assert cc.hidden_kills(sw, GEO, own, kills) == []
+
+
+def test_an_emblem_that_never_flashed_is_not_trusted():
+    """FROM FOOTAGE: a menu is common in a session and carries no spectator
+    panel, so it looks like an own emblem -- and it read two kills out of
+    thin air -- until you notice that it never once flashed."""
+    s = _Sweep(seconds=120.0).flash(10.0, cards=1)
+    for j in range(s.i(60.0), s.i(120.0)):
+        s.emblem[j] = MENU
+    s.w[s.i(60.0):s.i(80.0)] = 0
+    s.w[s.i(80.0):] = cc.CARD_W0 + cc.CARD_PITCH * 2
+    sw = s.build()
+    kills, _, own = _read(sw)
+    assert len(cc.own_emblems(sw)) == 2, "both look like candidates"
+    assert len(own) == 1, "only the one that flashed is kept"
+    assert cc.hidden_kills(sw, GEO, own, kills) == []
+
+
+def test_a_death_is_when_your_emblem_goes():
+    """FROM FOOTAGE: at every one of 34 demo deaths the emblem was gone
+    inside half a second -- the death cam draws no HUD -- and a team-mate's
+    view followed. 27 of 34 found, against 1 by the spectator panel alone."""
+    sw = _Sweep().flash(10.0, cards=1).die(25.0).build()
+    _, _, own = _read(sw)
+    assert cc.deaths(sw, own) == [pytest.approx(25.0)]
+
+
+def test_a_flashbang_is_not_a_death():
+    """The emblem goes under a flashbang too -- and comes back as yours."""
+    s = _Sweep().flash(10.0, cards=1)
+    s.energy[s.i(25.0):s.i(27.0)] = 0.0
+    sw = s.build()
+    _, _, own = _read(sw)
+    assert cc.deaths(sw, own) == []
+
+
+def test_a_borderline_flash_is_doubtful_not_decided():
+    sw = _Sweep().flash(20.0, length=0.4, rise=900).build()
+    _, fl, _ = _read(sw)
+    assert [f.kills for f in fl] == [0]
+    assert fl[0].doubt
+
+
+def test_the_view_is_where_it_was_measured():
+    """At 1080p the reader's view is exactly the crop its thresholds were
+    measured in; anywhere else it scales with the frame and the band."""
+    g = cc.geometry((1920, 1080))
+    assert g.crop == (748, 918, 364, 140) and g.k == pytest.approx(1.0)
+    g2 = cc.geometry((2560, 1440))
+    assert g2.k == pytest.approx(1440 / 1080)
+    assert abs(g2.crop[2] - 364 * g2.k) <= 2
+
+
+def test_an_emblem_is_recognised_whatever_is_behind_it():
+    """The emblem is translucent, so its fill is whatever the scenery is.
+    Its outlines are not -- which is why it is compared by edges."""
+    rng = np.random.default_rng(3)
+    icon = np.zeros((52, 52, 3), np.uint8)
+    icon[10:42, 24:28] = 200
+    icon[24:28, 10:42] = 200
+    over_sand = np.clip(icon.astype(int) + (40, 30, 20), 0, 255).astype(np.uint8)
+    over_dark = np.clip(icon.astype(int) + (5, 8, 10), 0, 255).astype(np.uint8)
+    other = rng.integers(0, 255, (52, 52, 3)).astype(np.uint8)
+    a, _ = cc.emblem_map(over_sand)
+    b, _ = cc.emblem_map(over_dark)
+    c, _ = cc.emblem_map(other)
+    d = len(a)
+    assert float(a @ b) / d >= cc.EMBLEM_OWN
+    assert float(a @ c) / d < cc.EMBLEM_OWN

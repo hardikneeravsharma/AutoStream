@@ -138,6 +138,9 @@ class Obs:
         # Per output: its last (duration, bytes) and when that last changed.
         # See _moving().
         self._progress: dict[str, tuple[tuple[int, int], float]] = {}
+        # The dashboard's own connection; see _side().
+        self._side_ws = None
+        self._side_lock = threading.Lock()
 
     # ---------------- connection ----------------
 
@@ -322,6 +325,8 @@ class Obs:
         except Exception:  # noqa: BLE001
             pass
         self.ws = None
+        with self._side_lock:
+            self._side_drop()
 
     # ---------------- setup-time ----------------
 
@@ -596,13 +601,37 @@ class Obs:
     MIXER_MIN_DB = -60.0
     MIXER_MAX_DB = 0.0
 
+    # Kept open between reads. It used to be opened and closed per request,
+    # and the dashboard reads the mixer every 15 seconds from every open tab
+    # -- so OBS, which toasts each websocket client that comes and goes,
+    # flashed "connected" and "disconnected" all session long.
+
     def _side(self):
-        """A short-lived client for the dashboard. Never launches OBS."""
+        """The dashboard's client, reused while it answers. Never launches OBS.
+
+        Call with _side_lock held: obsws-python pairs a request with whichever
+        reply arrives next, so two pages must not share it at once either.
+        """
+        if self._side_ws is not None:
+            try:
+                self._side_ws.get_version()
+                return self._side_ws
+            except Exception:  # noqa: BLE001
+                self._side_drop()
         if obsws is None:
             raise ObsUnavailable("obsws-python is not installed.")
         if not _obs_process_alive():
             raise ObsUnavailable("OBS is not running.")
-        return self._connect(timeout=3)
+        self._side_ws = self._connect(timeout=3)
+        return self._side_ws
+
+    def _side_drop(self) -> None:
+        ws, self._side_ws = self._side_ws, None
+        if ws is not None:
+            try:
+                ws.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
 
     def _mixer_names(self, ws) -> dict[str, str]:
         """-> {"mic": name, "desktop": name}, leaving out what OBS lacks."""
@@ -658,20 +687,17 @@ class Obs:
         `desktop` are None when OBS has no such source, else {name, db, muted},
         and `mic` also carries {device, devices}. Never raises.
         """
-        try:
-            ws = self._side()
-        except Exception as e:  # noqa: BLE001
-            return {"ok": False, "error": str(e) or "OBS is not answering."}
-        try:
-            return self._mixer_read(ws)
-        except Exception as e:  # noqa: BLE001
-            log.info("could not read the OBS mixer: %s", e)
-            return {"ok": False, "error": f"OBS did not answer: {e}"}
-        finally:
+        with self._side_lock:
             try:
-                ws.disconnect()
-            except Exception:  # noqa: BLE001
-                pass
+                ws = self._side()
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": str(e) or "OBS is not answering."}
+            try:
+                return self._mixer_read(ws)
+            except Exception as e:  # noqa: BLE001
+                log.info("could not read the OBS mixer: %s", e)
+                self._side_drop()
+                return {"ok": False, "error": f"OBS did not answer: {e}"}
 
     def set_audio(self, change: dict) -> dict:
         """Apply what the dashboard changed, then read the mixer back.
@@ -680,6 +706,10 @@ class Obs:
         desktop_muted; anything absent is left alone. -> audio_mixer()'s shape,
         so the page shows what OBS actually holds rather than what was asked.
         """
+        with self._side_lock:
+            return self._set_audio(change)
+
+    def _set_audio(self, change: dict) -> dict:
         try:
             ws = self._side()
         except Exception as e:  # noqa: BLE001
@@ -714,12 +744,8 @@ class Obs:
             return {"ok": False, "error": f"Not a volume: {e}"}
         except Exception as e:  # noqa: BLE001
             log.info("could not change the OBS mixer: %s", e)
+            self._side_drop()
             return {"ok": False, "error": f"OBS refused: {e}"}
-        finally:
-            try:
-                ws.disconnect()
-            except Exception:  # noqa: BLE001
-                pass
 
     def health(self) -> dict:
         self.connect()
