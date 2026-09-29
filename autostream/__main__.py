@@ -359,7 +359,7 @@ def cmd_summary(args) -> int:
         kept = sum(b - a for a, b in spans)
         print(f"match {i}: {tools.hms(m.start)} - {tools.hms(m.end)}  "
               f"{tools.hms(m.seconds)} -> {tools.hms(kept)}  "
-              f"{len(m.deaths)} deaths, {len(m.casts)} ults, "
+              f"{len(m.kos)} KOs, {len(m.deaths)} deaths, {len(m.casts)} ults, "
               f"{m.result or 'no result'}")
     if not found:
         print("the HUD is there but no whole match is")
@@ -368,7 +368,8 @@ def cmd_summary(args) -> int:
         return 0
     out = Path(args.out) if args.out else src.with_name(src.stem + "_summaries")
     made = summary.build(src, r, out, game="Marvel Rivals",
-                         when=src.stat().st_mtime)
+                         when=src.stat().st_mtime,
+                         highlights=not args.no_highlight)
     for x in made:
         print(f"  {x['master']}")
     return 0
@@ -606,6 +607,8 @@ def main(argv=None) -> int:
                             help="where to write (default: beside it)")
             sp.add_argument("--plan", action="store_true",
                             help="print what would be kept and stop")
+            sp.add_argument("--no-highlight", action="store_true",
+                            help="summaries only, no highlight videos")
 
     args = p.parse_args(argv)
     if not getattr(args, "func", None):

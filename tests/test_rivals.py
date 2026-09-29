@@ -23,7 +23,8 @@ def build(seconds: float, spec) -> rivals.Readings:
     for x in t:
         v = dict(bullet=True, ult_ncc=0.9, hp_ncc=0.9, tc_ncc=0.7, ult=0,
                  ready=0.0, hpfrac=1.0, green=0.0, red=0.0, tall=0,
-                 tl_yellow=0.0, line=np.zeros(201, np.uint8))
+                 tl_yellow=0.0, line=np.zeros(201, np.uint8), own_rows=0,
+                 motion=5.0, ko=False, ko_sig=np.zeros(rivals.KO_SIG, np.uint8))
         v.update(spec(float(x)))
         for k in rows:
             rows[k].append(v[k])
@@ -39,7 +40,11 @@ def build(seconds: float, spec) -> rivals.Readings:
         red=np.array(rows["red"], np.float32),
         tall=np.array(rows["tall"], np.int16),
         tl_yellow=np.array(rows["tl_yellow"], np.float32),
-        line=np.stack(rows["line"]))
+        line=np.stack(rows["line"]),
+        own_rows=np.array(rows["own_rows"], np.int8),
+        motion=np.array(rows["motion"], np.float32),
+        ko=np.array(rows["ko"], bool),
+        ko_sig=np.stack(rows["ko_sig"]))
 
 
 MENU = dict(bullet=False, ult_ncc=0.0, hp_ncc=0.0, tc_ncc=0.0, ult=-1)
@@ -116,9 +121,25 @@ def test_an_ult_is_never_cut_into():
 
 
 def test_the_practice_range_is_not_a_match():
-    # The full HUD, but no progress bar at the top.
-    r = build(600, lambda x: {"tc_ncc": 0.0})
+    # The full HUD, under the range's big title.
+    r = build(600, lambda x: {"tall": 24})
     assert rivals.matches(r) == []
+
+
+def test_domination_without_its_progress_bar_is_still_a_match():
+    # Domination swaps the bar for a capture ring for minutes at a time.
+    r = build(600, lambda x: {"tc_ncc": 0.05})
+    assert len(rivals.matches(r)) == 1
+
+
+def test_the_results_after_a_match_are_not_part_of_it():
+    # The scoreboard leaves a partial HUD behind, without the objective square.
+    def spec(x):
+        if x >= 500:
+            return dict(bullet=False, ult_ncc=0.5, hp_ncc=0.5)
+        return {}
+    m = rivals.matches(build(560, spec))[0]
+    assert m.end == pytest.approx(499.5, abs=0.6)
 
 
 def test_a_few_minutes_of_hud_is_not_a_match():
@@ -206,13 +227,25 @@ def test_a_clip_job_for_marvel_rivals_makes_summaries(tmp_path, monkeypatch):
         out.write_bytes(b"")
         return out
     monkeypatch.setattr(cutter, "master_segments", fake_master)
+    from autostream.clips import highlight
+    made = []
+
+    def fake_render(source, shots, m, out, **kw):
+        made.append((shots, kw))
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"")
+        return out
+    monkeypatch.setattr(highlight, "render", fake_render)
 
     job = jobs.ClipJob(src, game="Marvel Rivals",
                        game_key="marvel-win64-shipping.exe",
                        outdir=tmp_path / "out", options={})
     job.run()
     assert job.state == "done", job.error
-    assert len(job.results) == 1 and len(cut) == 1
+    assert len(job.results) == 2 and len(cut) == 1 and len(made) == 1
+    assert job.results[1]["kind"] == "highlight"
+    assert made[0][1]["subtitle"].startswith("VICTORY")
+    assert job.summary["matches"] == 1 and job.summary["highlights"] == 1
     got = job.results[0]
     assert got["result"] == "victory" and got["deaths"] == 1 and got["ults"] == 1
     assert "summar" in job.message
@@ -231,3 +264,157 @@ def test_review_is_refused_for_a_summary(tmp_path, monkeypatch):
                        outdir=tmp_path / "out", options={"plan_only": True})
     job.run()
     assert job.state == "failed" and "no clips to review" in job.error
+
+
+# ------------------------------------------------------------ kills, frozen
+
+def with_kills(x: float) -> dict:
+    """one_match, plus feed rows: kills at 150 and 152 (two rows), one at 280,
+    and the white row of YOUR death at 202 -- which is not a kill."""
+    s = one_match(x)
+    if 150 <= x < 155:
+        s["own_rows"] = 1
+    if 152 <= x < 157:
+        s["own_rows"] = 2
+    if 157 <= x < 160:
+        s["own_rows"] = 1
+    if 202 <= x < 207:
+        s["own_rows"] = 1
+    if 280 <= x < 285:
+        s["own_rows"] = 1
+    return s
+
+
+def test_kills_come_from_your_rows_in_the_feed_and_deaths_do_not_count():
+    m = rivals.matches(build(600, with_kills))[0]
+    assert [round(k) for k in m.kills] == [150, 152, 280]
+
+
+def test_frozen_footage_is_found_and_cut():
+    def spec(x):
+        s = one_match(x)
+        if 130 <= x < 170:
+            s["motion"] = 0.0
+        return s
+    r = build(600, spec)
+    m = rivals.matches(r)[0]
+    assert [(round(a), round(b)) for a, b in m.frozen] == [(130, 170)]
+    spans = rivals.plan(r, m)
+    assert not any(a <= 150 <= b for a, b in spans)
+    assert any(a <= 175 <= b for a, b in spans)
+
+
+def test_old_readings_load_without_the_new_fields(tmp_path):
+    r = build(30, lambda x: {})
+    np.savez(tmp_path / "old.npz", **{k: getattr(r, k) for k in r.__dataclass_fields__
+                                       if k not in ("own_rows", "motion", "ko", "ko_sig")})
+    back = rivals.Readings.load(tmp_path / "old.npz")
+    assert len(back.own_rows) == len(back) and (back.motion > 1).all()
+
+
+def test_the_feed_row_reader_counts_white_rows():
+    feed = np.zeros((rivals.FH, rivals.FW, 3), np.uint8)
+    assert rivals.own_rows(feed) == 0
+    feed[20:42, 240:550] = 235                    # one white row
+    feed[60:84, 240:550] = 235                    # and another
+    feed[120:140, 240:550] = (40, 60, 160)        # somebody else's blue row
+    assert rivals.own_rows(feed) == 2
+
+
+# ---------------------------------------------------------------- highlight
+
+def test_a_highlight_is_the_fights_around_kills_and_ults_in_order():
+    from autostream.clips import highlight
+    r = build(600, with_kills)
+    m = rivals.matches(r)[0]
+    shots = highlight.plan(r, m)
+    kinds = [s.kind for s in shots]
+    assert kinds[0] == "intro" and kinds[-1] == "result"
+    fights = [s for s in shots if s.kind == "fight"]
+    covered = lambda at: any(s.start <= at <= s.end for s in fights)  # noqa: E731
+    assert covered(150) and covered(152) and covered(280) and covered(320)
+    assert not covered(230)          # the walk back after the death
+    assert not covered(215)          # the spectator view
+    # In order, never overlapping.
+    assert all(a.end <= b.start for a, b in zip(shots, shots[1:]))
+
+
+def test_no_highlight_without_a_match_to_show():
+    from autostream.clips import highlight
+    r = build(600, one_match)
+    m = rivals.matches(r)[0]
+    m.kills, m.casts = [], []
+    # No kills: it falls back to the summary's fights rather than nothing.
+    assert any(s.kind == "fight" for s in highlight.plan(r, m))
+
+
+def test_the_highlight_graph_has_a_whoosh_per_cut_and_a_hit_per_kill():
+    from autostream.clips import highlight
+    shots = [highlight.Shot(0, 4, "intro"), highlight.Shot(100, 120, "fight"),
+             highlight.Shot(200, 230, "fight"), highlight.Shot(300, 305, "result")]
+    durs = [s.seconds for s in shots]
+    text, total = highlight.graph(shots, durs, kills=[110.0, 210.0, 999.0],
+                                  ults=[215.0], title=True)
+    assert total == pytest.approx(sum(durs) - 3 * highlight.T)
+    assert text.count("xfade=") == 3
+    assert "transition=fadewhite" in text and "transition=smoothleft" in text
+    assert "asplit=3" in text                 # three whooshes
+    assert "asplit=3[h0]" in text             # two kills that are in shots + one ult
+    assert "drawtext" in text and "fade=t=out" in text
+    assert "[aout]" in text and "[vout]" in text
+    no_title, _ = highlight.graph(shots, durs, [], [], title=False)
+    assert "drawtext" not in no_title
+
+
+def test_the_sounds_are_made_once_and_are_real_audio(tmp_path):
+    from autostream.clips import sfx
+    import wave
+    got = sfx.files(tmp_path)
+    for name in ("whoosh", "hit", "outro"):
+        with wave.open(str(got[name])) as w:
+            assert w.getnchannels() == 2 and w.getframerate() == sfx.SR
+            assert w.getnframes() > sfx.SR * 0.3
+    stamp = got["outro"].stat().st_mtime_ns
+    sfx.files(tmp_path)
+    assert got["outro"].stat().st_mtime_ns == stamp
+
+
+
+def name(seed: int) -> np.ndarray:
+    """A KO notice's text bits: a different name for each seed."""
+    rng = np.random.default_rng(seed)
+    return np.packbits(rng.random(rivals.KO_SIG * 8) < 0.2)
+
+
+def with_kos(x: float) -> dict:
+    """one_match plus KO notices: A at 140-144, B at 144-148 (a double), a
+    one-sample flourish at 170, A again at 180, and one under your death."""
+    s = one_match(x)
+    for a, b, who in ((140, 144, 1), (144, 148, 2), (180, 184, 1), (203, 207, 3)):
+        if a <= x < b:
+            s.update(ko=True, ko_sig=name(who))
+    if 170 <= x < 170.5:
+        s.update(ko=True, ko_sig=name(9))
+    return s
+
+
+def test_every_ko_notice_counts_once_and_deaths_do_not():
+    m = rivals.matches(build(600, with_kos))[0]
+    assert [round(k) for k in m.kos] == [140, 144, 180]
+
+
+def test_the_ko_notice_reader():
+    crop = np.zeros((rivals.KH, rivals.KW, 3), np.uint8)
+    assert rivals.ko_notice(crop)[0] is False
+    crop[8:28, 14:32] = 240              # the icon
+    crop[10:26, 44:160] = 240            # the name
+    up, bits = rivals.ko_notice(crop)
+    assert up and len(bits) == rivals.KO_SIG
+
+
+def test_the_highlight_counts_kos_from_both_witnesses():
+    from autostream.clips import highlight
+    m = rivals.Match(start=0, end=600, kills=[150.0, 300.0], kos=[149.5, 200.0])
+    assert highlight.kos(m) == [149.5, 200.0, 300.0]
+    m.result = "victory"
+    assert highlight.subtitle_for(m) == "VICTORY  -  3 KOs"

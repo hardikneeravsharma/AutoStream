@@ -29,9 +29,9 @@ WHAT THE HUD GIVES, AND WHAT IT IS USED FOR
       objective line, top left  A small white square and two lines of text.
                                 The square is absent while you are dead; the
                                 text changing is a new phase of the match.
-      progress bar, top centre  Present in a match, absent in the practice
-                                range -- which has the rest of the HUD and
-                                would otherwise read as a match.
+      big title, top left       The practice range has the rest of the HUD
+                                and would otherwise read as a match; its
+                                "PRACTICE RANGE" title gives it away.
 
     Nothing here needs a name, a colour or Tesseract: the HUD is the same for
     everyone. What it does assume is the DEFAULT HUD SCALE on a 16:9 frame --
@@ -71,12 +71,22 @@ SPAN_SECONDS = 300.0
 
 # The frame is read at HALF of 1080p -- 960x540 -- except the ult digits, which
 # are cropped at full 1080p scale first: at half size a digit is 18 px tall and
-# 6 and 8 start to merge. Both come out of ONE decode as one composite frame,
-# the half-size picture with the digit crop pasted underneath.
+# 6 and 8 start to merge. The kill feed is cropped at full scale too, for the
+# same reason. All of it comes out of ONE decode as one composite frame: the
+# half-size picture, with the digit crop and the feed crop pasted underneath.
 W, H = 960, 540
 ULT_FULL = (1720 / 1920, 940 / 1080, 196 / 1920, 136 / 1080)   # x, y, w, h
 UW, UH = 196, 136
-FRAME_H = H + UH
+FEED_FULL = (1340 / 1920, 30 / 1080, 560 / 1920, 260 / 1080)
+FW, FH = 560, 260
+FX = UW + 4                   # where the feed crop sits in the composite
+# The KO notice: an icon and the victim's name, just right of the crosshair,
+# left-anchored at x 1182. Cropped at full scale, pasted under the other two.
+KO_FULL = (1170 / 1920, 405 / 1080, 380 / 1920, 36 / 1080)
+KW, KH = 380, 36
+FRAME_H = H + FH + KH
+KO_SIG = 291                  # bytes: the notice's text, 2x downsampled, as bits
+THUMB = (48, 27)              # the picture this small, for spotting frozen footage
 
 # Half-size crops, (x0, y0, x1, y1).
 TL = (0, 0, 480, 64)          # objective line, death countdown, result title
@@ -98,7 +108,7 @@ GLYPH_W, GLYPH_H = 14, 24
 # and a dead player's dimmed HUD in between -- 0.25-0.6.
 HUD_FULL = 0.6
 HUD_ULT_PART, HUD_HP_PART = 0.25, 0.35
-PROGRESS_MIN = 0.3            # practice range: ~0.0; a match: 0.5-0.85
+PRACTICE_TITLE = 20           # title rows: practice range median 24, a match 11-13
 
 
 @dataclass
@@ -117,6 +127,10 @@ class Readings:
     tall: np.ndarray           # rows of large bright text, top left (a result title)
     tl_yellow: np.ndarray      # yellow behind that title (VICTORY is yellow)
     line: np.ndarray           # packed bits of the objective line
+    own_rows: np.ndarray       # rows in the kill feed that name YOU (white rows)
+    motion: np.ndarray         # mean change from the previous sample; ~0 = frozen
+    ko: np.ndarray             # bool: a KO notice is up beside the crosshair
+    ko_sig: np.ndarray         # packed bits of the notice's text, to tell two apart
 
     def __len__(self) -> int:
         return len(self.t)
@@ -126,15 +140,23 @@ class Readings:
 
     @classmethod
     def load(cls, path: Path) -> "Readings":
+        """Readings saved by an older version lack the newer fields; those come
+        back as "nothing seen" -- no feed rows, and motion everywhere."""
         with np.load(path) as z:
-            return cls(**{k: z[k] for k in cls.__dataclass_fields__})
+            got = {k: z[k] for k in cls.__dataclass_fields__ if k in z.files}
+        n = len(got["t"])
+        got.setdefault("own_rows", np.zeros(n, np.int8))
+        got.setdefault("motion", np.full(n, 99.0, np.float32))
+        got.setdefault("ko", np.zeros(n, bool))
+        got.setdefault("ko_sig", np.zeros((n, KO_SIG), np.uint8))
+        return cls(**got)
 
     @classmethod
     def join(cls, parts: list["Readings"]) -> "Readings":
         keys = list(cls.__dataclass_fields__)
         if not parts:
-            return cls(**{k: np.zeros((0,) if k != "line" else (0, 1), np.float32)
-                          for k in keys})
+            return cls(**{k: np.zeros({"line": (0, 1), "ko_sig": (0, KO_SIG)}.get(k, (0,)),
+                                      np.float32) for k in keys})
         return cls(**{k: np.concatenate([getattr(p, k) for p in parts])
                       for k in keys})
 
@@ -292,12 +314,53 @@ def read_frame(img: np.ndarray) -> tuple:
     line = np.packbits((tl[y0:y1:2, x0:x1:2] > 200).ravel())
 
     ult = read_ult(img[H:H + UH, :UW].astype(np.uint16).sum(2) // 3)
+    own = own_rows(img[H:H + FH, FX:FX + FW])
+    ko, ko_sig = ko_notice(img[H + FH:H + FH + KH, :KW])
+    tw, th = THUMB
+    thumb = grey[::H // th, ::W // tw][:th, :tw].astype(np.float32)
     return (bullet, ult_ncc, hp_ncc, tc_ncc, ult, ready, hpfrac, green, red,
-            tall, tl_yellow, line)
+            tall, tl_yellow, line, own, thumb, ko, ko_sig)
+
+
+def ko_notice(crop: np.ndarray) -> tuple[bool, np.ndarray]:
+    """Whether a KO notice is up, and its text as bits. -> (up, bits)
+
+    Every KO the player takes part in -- final hit or assist -- puts a small
+    white icon and the victim's name just right of the crosshair for about
+    four seconds. The kill feed shows only final hits: on a 29-KO match the
+    feed had 15 of them, and this notice 26, with no false ones.
+    """
+    a = crop.astype(np.int16)
+    white = (a.min(-1) > 200) & (a.max(-1) - a.min(-1) < 40)
+    icon = int(white[4:32, 12:36].sum())
+    text = white[4:32, 38:370]
+    up = icon >= 25 and int(text.sum()) >= 40
+    return up, np.packbits(text[::2, ::2].ravel())
+
+
+def own_rows(feed: np.ndarray) -> int:
+    """How many kill-feed rows name the player. -> count
+
+    Marvel Rivals draws YOUR rows -- your kills and your deaths -- on a white
+    bar, and everyone else's on the team's translucent blue or orange. So a
+    row is found by colour, not read: 14-34 px of rows at 1080p scale whose
+    right-hand part is mostly light and unsaturated. Nobody's name is needed.
+    Measured on a 10-minute match: 22 appearances, 15 of them kills, 3 deaths
+    and 4 under the death screen -- the latter two are what kills() drops.
+    """
+    a = feed[:, 230:555].astype(np.int16)
+    light = (a.min(-1) > 170) & (a.max(-1) - a.min(-1) < 45)
+    on = light.mean(1) > 0.30
+    return sum(1 for y0, y1 in runs(on) if 14 <= y1 - y0 <= 34)
 
 
 def _pack(t: list[float], rows: list[tuple]) -> Readings:
-    cols = list(zip(*rows)) if rows else [[]] * 12
+    cols = list(zip(*rows)) if rows else [[]] * 16
+    # Motion: how much the small picture changed since the previous sample.
+    # Where OBS stopped getting frames the recording repeats one picture, and
+    # measured, that reads under 0.3 where play never does.
+    thumbs = cols[13]
+    motion = [99.0] + [float(np.abs(b - a).mean()) for a, b in zip(thumbs, thumbs[1:])]
     f32 = lambda c: np.asarray(c, np.float32)  # noqa: E731
     return Readings(
         t=np.asarray(t, np.float64),
@@ -308,6 +371,10 @@ def _pack(t: list[float], rows: list[tuple]) -> Readings:
         green=f32(cols[7]), red=f32(cols[8]),
         tall=np.asarray(cols[9], np.int16), tl_yellow=f32(cols[10]),
         line=(np.stack(cols[11]) if rows else np.zeros((0, 1), np.uint8)),
+        own_rows=np.asarray(cols[12], np.int8),
+        motion=np.asarray(motion if rows else [], np.float32),
+        ko=np.asarray(cols[14], bool),
+        ko_sig=(np.stack(cols[15]) if rows else np.zeros((0, KO_SIG), np.uint8)),
     )
 
 
@@ -315,11 +382,16 @@ def _pack(t: list[float], rows: list[tuple]) -> Readings:
 
 def _chain(on_gpu: bool) -> str:
     x, y, w, h = ULT_FULL
+    fx, fy, fw, fh = FEED_FULL
+    kx, ky, kw, kh = KO_FULL
     head = f"fps={FPS},hwdownload,format=nv12," if on_gpu else f"fps={FPS},"
-    return (f"{head}split[a][b];"
+    return (f"{head}split=4[a][b][c][d];"
             f"[a]scale={W}:{H}[s];"
             f"[b]crop=iw*{w:.6f}:ih*{h:.6f}:iw*{x:.6f}:ih*{y:.6f},scale={UW}:{UH}[u];"
-            f"[s]pad={W}:{FRAME_H}[p];[p][u]overlay=0:{H},format=rgb24")
+            f"[c]crop=iw*{fw:.6f}:ih*{fh:.6f}:iw*{fx:.6f}:ih*{fy:.6f},scale={FW}:{FH}[f];"
+            f"[d]crop=iw*{kw:.6f}:ih*{kh:.6f}:iw*{kx:.6f}:ih*{ky:.6f},scale={KW}:{KH}[k];"
+            f"[s]pad={W}:{FRAME_H}[p];[p][u]overlay=0:{H}[pu];"
+            f"[pu][f]overlay={FX}:{H}[pf];[pf][k]overlay=0:{H + FH},format=rgb24")
 
 
 def _args(video: Path, start: float, dur: float, on_gpu: bool) -> list[str]:
@@ -454,6 +526,9 @@ class Match:
     phases: list[float] = field(default_factory=list)   # objective changes
     result: str = ""                                    # victory | defeat | ""
     result_at: float = 0.0
+    kills: list[float] = field(default_factory=list)    # your final hits, from the feed
+    kos: list[float] = field(default_factory=list)      # every KO, from the notice
+    frozen: list[tuple[float, float]] = field(default_factory=list)
 
     @property
     def seconds(self) -> float:
@@ -474,13 +549,27 @@ def matches(r: Readings) -> list[Match]:
         return []
     hud = (r.ult_ncc > HUD_FULL) | (r.hp_ncc > HUD_FULL)
     part = (r.ult_ncc > HUD_ULT_PART) | (r.hp_ncc > HUD_HP_PART)
-    progress = _smooth(r.tc_ncc > PROGRESS_MIN, 21) > 0.3
-    live = part & progress
+    # What is NOT a match although the HUD is up: the practice range. It was
+    # told apart by the progress bar at the top, but Domination swaps that bar
+    # for a capture ring for minutes at a time (28% of samples on a checked
+    # match) and a whole match went unfound. The range's own tell is better:
+    # its big "PRACTICE RANGE" title where the objective goes -- 77% of its
+    # samples read as a title, 1% of any match's.
+    practice = _smooth(r.tall >= PRACTICE_TITLE, 21) > 0.3
+    live = part & ~practice
     for a, b in runs(~live):
         if 0 < a and b < n and (r.t[b - 1] - r.t[a]) <= MATCH_GAP:
             live[a:b] = True
     out = []
+    playing = hud & r.bullet
     for a, b in runs(live):
+        # Trimmed to the first and last frame of real play. The run itself can
+        # reach into the results: the scoreboard and the MVP screen leave a
+        # partial HUD behind that reads as `part` for up to a minute.
+        inside = np.where(playing[a:b])[0]
+        if not len(inside):
+            continue
+        a, b = a + int(inside[0]), a + int(inside[-1]) + 1
         if r.t[b - 1] - r.t[a] < MATCH_MIN or hud[a:b].mean() <= 0.5:
             continue
         m = Match(start=float(r.t[a]), end=float(r.t[b - 1]))
@@ -492,6 +581,9 @@ def matches(r: Readings) -> list[Match]:
         m.casts = [c for c in _casts(r, a, b)
                    if not any(d0 - 1.0 <= c <= d1 for d0, d1 in m.deaths)]
         m.phases = _phases(r, a, b)
+        m.kills = _kills(r, a, b, m.deaths)
+        m.kos = _kos(r, a, b, m.deaths)
+        m.frozen = _frozen(r, a, b)
         m.result, m.result_at = _result(r, b)
         out.append(m)
     return out
@@ -526,6 +618,87 @@ def _casts(r: Readings, a: int, b: int) -> list[float]:
         vals = nxt[nxt >= 0]
         if len(vals) and vals[0] < 40:
             out.append(float(r.t[min(a + y, len(r) - 1)]))
+    return out
+
+
+def _kills(r: Readings, a: int, b: int,
+           deaths: list[tuple[float, float]]) -> list[float]:
+    """Your kills: each new white row in the feed that is not your death.
+
+    A row counts when the number of your rows goes up and stays up for a
+    second. Your OWN death is a white row too, and so are rows replayed under
+    the death screen; every one of those appeared between the start of a death
+    and a second after it, so that window is dropped. Measured on a 10-minute
+    match: 15 kills found against 16 final hits on the scoreboard, no false
+    ones. What the feed never shows is a KO you only assisted -- the
+    scoreboard's K column counts those, the feed does not.
+    """
+    c = r.own_rows[a:b].astype(int)
+    out: list[float] = []
+    cur = 0
+    for i in range(len(c) - 1):
+        if c[i] > cur and c[i + 1] >= c[i]:
+            out += [float(r.t[a + i])] * (c[i] - cur)
+            cur = c[i]
+        elif c[i] < cur and c[i + 1] <= c[i]:
+            cur = c[i]
+    return [k for k in out
+            if not any(d0 <= k <= d1 + 1.5 for d0, d1 in deaths)]
+
+
+def _kos(r: Readings, a: int, b: int,
+         deaths: list[tuple[float, float]]) -> list[float]:
+    """Every KO: each time the notice beside the crosshair shows a new name.
+
+    New means it came back after being gone, or its text changed. It has to
+    hold for two samples with the same text, because the notice opens on a big
+    red flourish that reads as an icon with no name -- which counted one KO
+    twice before the rule. Notices under the death screen are dropped, as for
+    the feed. Measured: 26 of a match's 29 KOs, none false.
+    """
+    bits = np.unpackbits(r.ko_sig[a:b], axis=1).astype(bool)
+
+    def same(p, q):
+        u = (p | q).sum()
+        return u == 0 or (p & q).sum() / u >= 0.45
+
+    out: list[float] = []
+    last = None
+    gone = 99
+    for i in range(b - a - 1):
+        if r.ko[a + i] and r.ko[a + i + 1] and same(bits[i], bits[i + 1]):
+            if last is None or gone >= 2 or not same(bits[i], last):
+                t = float(r.t[a + i])
+                if not out or t - out[-1] >= 1.0:
+                    out.append(t)
+            last = bits[i]
+            gone = 0
+        else:
+            gone += 1
+    return [k for k in out
+            if not any(d0 <= k <= d1 + 1.5 for d0, d1 in deaths)]
+
+
+# Frozen footage: the same picture for this long. Play is never this still at
+# 2 fps -- measured, frozen stretches read 0.0-0.2 and play 1.5 and up.
+FROZEN_MOTION = 0.3
+FROZEN_MIN = 1.5
+
+
+def _frozen(r: Readings, a: int, b: int) -> list[tuple[float, float]]:
+    """Where the recording repeats one frame -- OBS stopped getting new ones.
+
+    Found on a real match: the first two and a half minutes, hero select and
+    most of round one, were one frame after another of the same picture. A
+    summary or a highlight of that is a slideshow, so it is cut.
+    """
+    still = r.motion[a:b] < FROZEN_MOTION
+    out = []
+    for x, y in runs(still):
+        # The sample before the first repeat is the last real frame.
+        s, e = float(r.t[a + max(0, x - 1)]), float(r.t[a + y - 1])
+        if e - s >= FROZEN_MIN:
+            out.append((s, e))
     return out
 
 
@@ -631,6 +804,7 @@ def plan(r: Readings, m: Match) -> list[tuple[float, float]]:
         until = max(d1, back - LEAD) if back is not None else d1
         if until > d0 + DEATH_KEEP:
             cuts.append((d0 + DEATH_KEEP, until))
+    frozen = list(m.frozen)
 
     # An ult is never cut into, whatever the rules above decided.
     guarded = []
@@ -649,20 +823,42 @@ def plan(r: Readings, m: Match) -> list[tuple[float, float]]:
                     nxt.append((g1, q))
             pieces = nxt
         guarded += pieces
+    # Frozen footage goes even around an ult: there is nothing to see in it.
+    guarded += frozen
 
-    keep: list[tuple[float, float]] = []
-    pos = m.start
-    for a, b in sorted(guarded):
-        if a > pos:
-            keep.append((pos, a))
-        pos = max(pos, b)
-    keep.append((pos, m.end + END_KEEP))
+    keep = subtract([(m.start, m.end + END_KEEP)], guarded)
     if m.result:
         keep.append((m.result_at, m.result_at + RESULT_KEEP))
+    return tidy(keep)
 
+
+def subtract(spans: list[tuple[float, float]],
+             cuts: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """`spans` with every part inside `cuts` removed, in order."""
+    out = []
+    for a, b in spans:
+        pieces = [(a, b)]
+        for c0, c1 in cuts:
+            nxt = []
+            for p, q in pieces:
+                if q <= c0 or p >= c1:
+                    nxt.append((p, q))
+                    continue
+                if p < c0:
+                    nxt.append((p, c0))
+                if q > c1:
+                    nxt.append((c1, q))
+            pieces = nxt
+        out += pieces
+    return sorted(out)
+
+
+def tidy(spans: list[tuple[float, float]],
+         gap: float = MIN_PIECE) -> list[tuple[float, float]]:
+    """Join spans closer than `gap`, drop crumbs shorter than MIN_PIECE."""
     merged: list[tuple[float, float]] = []
-    for a, b in keep:
-        if merged and a - merged[-1][1] < MIN_PIECE:
+    for a, b in sorted(spans):
+        if merged and a - merged[-1][1] < gap:
             merged[-1] = (merged[-1][0], max(merged[-1][1], b))
         else:
             merged.append((a, b))

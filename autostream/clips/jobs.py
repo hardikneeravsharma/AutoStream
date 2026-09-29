@@ -342,7 +342,7 @@ class ClipJob:
         try:
             self._set(state="running")
             self._run()
-            what = ("match summar" + ("y" if len(self.results) == 1 else "ies")
+            what = ("match videos (summaries and highlights)"
                     if self.scan_mode == "summary" else "clips")
             self._set(state="done", step="montage", done=self.total,
                       message=f"{len(self.results)} {what} in {self.folder.name}")
@@ -1706,14 +1706,17 @@ class ClipJob:
             self.source, r, self.folder / "summaries", game=self.game,
             when=self.session.get("started") or self.started_at,
             encoder=self.options.get("encoder", "auto"),
+            highlights=bool(self.options.get("highlights", True)),
             progress=cut_prog, check=self._check)
-        kept = sum(x["duration"] for x in self.results)
+        whole = [x for x in self.results if x.get("kind") != "highlight"]
         self._set(summary={
-            "matches": len(self.results), "clips": len(self.results),
-            "kills": 0, "covered": round(kept, 1),
-            "deaths": sum(x["deaths"] for x in self.results),
-            "ults": sum(x["ults"] for x in self.results),
-            "cut_seconds": round(sum(x["cut_seconds"] for x in self.results), 1),
+            "matches": len(whole), "clips": len(self.results),
+            "highlights": len(self.results) - len(whole),
+            "kills": sum(x.get("kills", 0) for x in whole),
+            "covered": round(sum(x["duration"] for x in whole), 1),
+            "deaths": sum(x["deaths"] for x in whole),
+            "ults": sum(x["ults"] for x in whole),
+            "cut_seconds": round(sum(x["cut_seconds"] for x in whole), 1),
         })
 
     def _write_manifest(self) -> None:
