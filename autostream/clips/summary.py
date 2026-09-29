@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from . import cutter, rivals
+from . import cutter, highlight, rivals
 from .plan import slug
 from .tools import hms, stamp
 
@@ -53,7 +53,9 @@ def describe(r: rivals.Readings, m: rivals.Match,
         "match_seconds": round(m.seconds, 1),
         "duration": round(kept, 2),
         "cut_seconds": round(max(0.0, m.seconds - kept), 1),
-        "deaths": len(m.deaths), "ults": len(m.casts),
+        "deaths": len(m.deaths), "ults": len(m.casts), "kills": len(m.kills),
+        "kos": len(m.kos),
+        "frozen_seconds": round(sum(b - a for a, b in m.frozen), 1),
         "phases": len(m.phases) + 1,
         "result": m.result,
         "spans": [[round(a, 2), round(b, 2)] for a, b in spans],
@@ -62,6 +64,7 @@ def describe(r: rivals.Readings, m: rivals.Match,
 
 def build(source: Path, r: rivals.Readings, outdir: Path, *, game: str,
           when: float | None = None, encoder: str = "auto",
+          highlights: bool = True,
           progress: Callable[[int, int, str], None] | None = None,
           check: Callable[[], None] | None = None) -> list[dict]:
     """Cut every match the readings contain. -> one result dict per match."""
@@ -90,6 +93,9 @@ def build(source: Path, r: rivals.Readings, outdir: Path, *, game: str,
             "chapters": [[round(t, 2), n] for t, n in marks],
             "deaths_at": [[round(a, 2), round(b, 2)] for a, b in m.deaths],
             "ults_at": [round(c, 2) for c in m.casts],
+            "kills_at": [round(k, 2) for k in m.kills],
+            "kos_at": [round(k, 2) for k in m.kos],
+            "frozen": [[round(a, 2), round(b, 2)] for a, b in m.frozen],
             "source": str(source),
         }, indent=2), encoding="utf-8")
         log.info("summary %d/%d: %s -> %s (%d spans, %d deaths, %d ults, %s)",
@@ -101,10 +107,31 @@ def build(source: Path, r: rivals.Readings, outdir: Path, *, game: str,
             "name": name,
             "at": stamp(m.start),
             "caption": head,
-            "kills": 0,
             "master": str(master),
             "vertical": None,
             "chapters": str(chapters),
+        })
+        if not highlights:
+            continue
+        # The highlight: the same match, only its fights, with the theme on.
+        shots = highlight.plan(r, m)
+        if not shots:
+            log.info("match %d: no fights to make a highlight of", i)
+            continue
+        if progress:
+            progress(i - 1, len(ms), f"Making the highlight of match {i} of {len(ms)}")
+        hl = highlight.render(
+            source, shots, m, outdir / f"{name}_highlight.mp4",
+            title=game.upper(), subtitle=highlight.subtitle_for(m), encoder=encoder,
+            check=check)
+        hl_seconds = sum(s.seconds for s in shots) - highlight.T * (len(shots) - 1)
+        out.append({
+            "kind": "highlight", "rank": i, "name": hl.stem,
+            "at": stamp(m.start), "start": round(m.start, 2), "end": round(m.end, 2),
+            "duration": round(hl_seconds, 2),
+            "caption": f"{head} — highlights", "kills": len(highlight.kos(m)),
+            "ults": len(m.casts), "deaths": 0, "cut_seconds": 0.0,
+            "master": str(hl), "vertical": None,
         })
     if progress:
         progress(len(ms), max(1, len(ms)), "Done")

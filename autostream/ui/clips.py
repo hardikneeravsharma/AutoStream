@@ -1569,10 +1569,12 @@ function clip_renderOptions() {
     var swin = clip_stripWindow();
     var sspan = swin ? ((swin.scan_end || s.duration || 0) - swin.scan_start)
                      : (s.duration || 0);
-    note = esc(s.game || 'This game') + ' is made into a match summary, not ' +
-           'clips: one video per match, whole and in order, with the setup, ' +
-           'the time spent dead and the walk back to the fight cut out. ' +
-           'Chapters for YouTube are written beside each one. The clip ' +
+    note = esc(s.game || 'This game') + ' is made into two videos per match ' +
+           'instead of clips: a summary -- the whole match in order, with the ' +
+           'setup, the time spent dead and the walk back to the fight cut out, ' +
+           'and YouTube chapters beside it -- and a highlight of only the ' +
+           'fights, with a title, whip transitions and a whoosh on every cut, ' +
+           'a hit sound on every KO and music under the ending. The clip ' +
            'options below do not apply.';
     if (sspan > 0) {
       note += ' ' + (swin ? 'You have chosen ' + clip_dur(sspan) + ' of it, so a'

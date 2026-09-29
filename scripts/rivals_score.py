@@ -36,7 +36,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from autostream.clips import rivals                           # noqa: E402
+from autostream.clips import highlight, rivals                # noqa: E402
 from autostream.clips.tools import binary                     # noqa: E402
 
 
@@ -119,6 +119,11 @@ def main() -> int:
         print("   ults  ", [round(c) for c in m.casts],
               " phases", [round(p) for p in m.phases])
         print("   kept  ", [(round(x), round(y)) for x, y in spans])
+        # Check these against the scoreboard: K is every KO, Final Hits the feed.
+        print(f"   KOs {len(m.kos)} (notice), final hits {len(m.kills)} (feed), "
+              f"frozen {[(round(x), round(y)) for x, y in m.frozen]}")
+        shots = highlight.plan(r, m)
+        print("   highlight", [(round(s.start), round(s.end), s.kind) for s in shots])
     if a.labels:
         labels = json.loads(Path(a.labels).read_text(encoding="utf-8"))
         for k, iv in labels.items():
