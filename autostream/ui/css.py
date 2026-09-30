@@ -2424,7 +2424,10 @@ ol.steps-list li{margin-block:var(--space-4)}
 .clip-step+.clip-step::before{
   margin-inline-end:var(--space-4);
   color:var(--text-tertiary);
-  content:"\2192";
+  /* The backslash is doubled: this stylesheet is a plain Python string, and
+     a single one was read as an octal escape -- the arrow drew as a box
+     followed by "92". */
+  content:"\\2192";
 }
 .clip-step.is-done{color:var(--ok)}
 .clip-step.is-now{color:var(--accent)}
@@ -2956,6 +2959,76 @@ CLIPS_FLOW_CSS = """
   display:block;margin-top:6px;font-size:11px;color:var(--text-secondary);
   font-variant-numeric:tabular-nums;
 }
+
+/* ------------------------------------------------------------ match videos
+   Marvel Rivals: what to make, the outro, the matches found earlier, and the
+   videos a run made, grouped by match. */
+.clip-mv{display:flex;flex-direction:column;gap:var(--space-5);margin-top:var(--space-4)}
+@media (min-width:900px){.clip-mv-make{grid-template-columns:repeat(2,1fr)}}
+.clip-mv-tile .clip-way-top b{display:flex;align-items:center;gap:var(--space-3)}
+.clip-mv-box{
+  display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;
+  width:18px;height:18px;border-radius:var(--radius-xs);font-size:12px;
+  border:var(--border-hair) solid var(--border-strong);color:var(--text-on-accent);
+}
+.clip-mv-tile.is-on .clip-mv-box{background:var(--accent);border-color:var(--accent)}
+.clip-mv-tile .clip-way-cost{padding-left:26px}
+.clip-mv-tile .clip-way-why{padding-left:26px}
+.clip-mv-outro{
+  display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-4);
+  padding:var(--space-3);border:var(--border-hair) solid var(--border-subtle);
+  border-radius:var(--radius-md);background:var(--surface-sunken);
+}
+.clip-mv-outro-thumb{
+  position:relative;flex:0 0 auto;width:160px;aspect-ratio:16/9;padding:0;
+  border:0;border-radius:var(--radius-sm);overflow:hidden;cursor:pointer;
+  background:var(--surface);max-width:100%;
+}
+.clip-mv-outro-thumb img{display:block;width:100%;height:100%;object-fit:cover}
+.clip-mv-outro-play{
+  position:absolute;inset:auto auto 6px 6px;width:26px;height:26px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;font-size:11px;
+  background:rgba(0,0,0,.6);color:#fff;
+}
+.clip-mv-outro-thumb:hover .clip-mv-outro-play{background:var(--accent)}
+.clip-mv-outro-text{display:flex;flex-direction:column;gap:2px;flex:1 1 180px;min-width:0}
+.clip-mv-outro-text b{color:var(--text-primary);overflow-wrap:anywhere}
+.clip-mv-outro-video{display:block;width:100%;max-width:480px;margin-top:var(--space-3);
+  border-radius:var(--radius-sm);background:#000}
+.clip-mv-warn{color:var(--warn)}
+.clip-known{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3);
+  margin-top:var(--space-3)}
+.clip-known-lead{font:600 10.5px/1 var(--font-micro);text-transform:uppercase;
+  letter-spacing:.08em;color:var(--text-tertiary);margin-right:var(--space-2)}
+.clip-known-chip{
+  display:inline-flex;align-items:center;gap:var(--space-2);height:var(--h-control-sm);
+  padding:0 var(--space-4);border:var(--border-hair) solid var(--border-subtle);
+  border-radius:var(--radius-pill);background:var(--surface);color:var(--text-primary);
+  font:inherit;font-size:12.5px;cursor:pointer;
+}
+.clip-known-chip b{font-variant-numeric:tabular-nums}
+.clip-known-chip .muted{font-variant-numeric:tabular-nums}
+.clip-known-chip.is-win b{color:var(--ok)}
+.clip-known-chip:hover{background:var(--surface-hover)}
+.clip-known-chip.is-on{border-color:var(--accent);background:var(--surface-active)}
+.clip-mv-match{padding:var(--space-4) 0;border-top:var(--border-hair) solid var(--border-subtle)}
+.clip-results>.clip-mv-match:first-child{border-top:0}
+.clip-mv-match-head{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3);
+  margin-bottom:var(--space-2)}
+.clip-mv-match-head b{font-size:15px;color:var(--text-primary)}
+.clip-mv-match-head .tag.is-ok{color:var(--ok);border-color:var(--ok)}
+.clip-mv-row{border-top:0;min-height:44px;padding:var(--space-2) 0}
+.clip-mv-row .clip-res-rank{color:var(--accent)}
+.clip-mv-row.is-failed .clip-res-rank{color:var(--warn)}
+.clip-res-acts{display:flex;flex-wrap:wrap;gap:var(--space-2);justify-content:flex-end}
+/* Watching a match video: only what is about the video stays on the panel. */
+#clip-player-card.is-watch .clip-play-right>.panel:not(:first-child),
+#clip-player-card.is-watch .clip-play-apply,
+#clip-player-card.is-watch #clip-fx-timeline,
+#clip-player-card.is-watch #clip-fx-stage{display:none!important}
+.clip-mv-chapters{display:flex;flex-direction:column;align-items:flex-start;gap:2px}
+.clip-mv-chapters .btn{justify-content:flex-start;height:auto;padding:4px 6px;text-align:left}
+.clip-mv-chapters .mono{color:var(--accent);margin-right:6px}
 """
 
 # Appended rather than inlined above so the clips-flow rules stay one

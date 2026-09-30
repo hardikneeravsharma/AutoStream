@@ -214,6 +214,11 @@ def library(root: Path) -> dict:
         for c in rows:
             if not isinstance(c, dict):
                 continue
+            # Match videos are finished long-form videos -- a ten-minute
+            # summary is not a shot for a thirty-second reel -- and listing
+            # them put two of them among the clips with a made-up kill each.
+            if c.get("kind") in ("summary", "highlight"):
+                continue
             master = Path(str(c.get("master") or ""))
             if not master.is_file():
                 # A moved clips folder keeps its own layout; the absolute path

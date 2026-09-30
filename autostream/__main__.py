@@ -347,7 +347,8 @@ def cmd_summary(args) -> int:
         return 1
 
     def show(done, total):
-        print(f"\r  reading the HUD  {done}/{total}", end="", flush=True)
+        print(f"\r  reading the HUD  {tools.hms(done)} of {tools.hms(total)}",
+              end="", flush=True)
     r = rivals.scan(src, progress=show)
     print()
     if not rivals.hud_found(r):
@@ -359,7 +360,7 @@ def cmd_summary(args) -> int:
         kept = sum(b - a for a, b in spans)
         print(f"match {i}: {tools.hms(m.start)} - {tools.hms(m.end)}  "
               f"{tools.hms(m.seconds)} -> {tools.hms(kept)}  "
-              f"{len(m.kos)} KOs, {len(m.deaths)} deaths, {len(m.casts)} ults, "
+              f"{len(m.all_kos())} KOs, {len(m.deaths)} deaths, {len(m.casts)} ults, "
               f"{m.result or 'no result'}")
     if not found:
         print("the HUD is there but no whole match is")
@@ -375,8 +376,9 @@ def cmd_summary(args) -> int:
                          when=src.stat().st_mtime,
                          highlights=not args.no_highlight, outro=outro or None)
     for x in made:
-        print(f"  {x['master']}")
-    return 0
+        print(f"  {x['master']}" if x.get("master")
+              else f"  match {x.get('match')} {x.get('kind')}: {x.get('error')}")
+    return 0 if all(x.get("master") for x in made) else 1
 
 
 def cmd_run(args) -> int:

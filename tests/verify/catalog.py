@@ -164,6 +164,23 @@ CONTROLS: list[Control] = [
     Control("/api/clips/existing", "GET", CALL, "clips of a folder", "clips",
             query="folder=", acts=("songedit",), expect=lambda j: isinstance(j, (dict, list)),
             why="an empty folder is a normal answer, not an error"),
+    Control("/api/clips/known-matches", "GET", CALL, "matches read before", "clips",
+            query="path=", expect=_has("ok", "matches", "covered"),
+            acts=("known-match",),
+            why="the matches an earlier HUD reading found in a recording, so the "
+                "filmstrip can offer each; a path with no reading is an empty list"),
+    Control("/api/clips/outro", "GET", CALL, "the highlight outro", "clips",
+            expect=_has("ok", "path"),
+            why="what the Clips page shows of the outro; none chosen is path ''"),
+    Control("/api/clips/outro-video", "GET", CALL, "preview the outro", "clips",
+            status=(200, 400), expect=None, acts=("outro-play",),
+            why="streams the one file the outro setting names and takes no path; "
+                "a home with no outro answers 400"),
+    Control("/api/clips/outro-set", "POST", CALL, "Choose / No outro", "clips",
+            body={"path": ""}, expect=_has("ok"), acts=("outro-pick", "outro-none"),
+            reject={"path": "C:/not-a-video.txt"}, reject_soft=True,
+            why="copies a chosen outro in beside the recordings and saves the "
+                "copy; a blank path means no outro"),
     Control("/api/clips/sounds", "GET", CALL, "sound effects", "clips",
             expect=lambda j: isinstance(j, (dict, list)),
             why="lists the sounds dir; empty when there is none"),
@@ -645,6 +662,8 @@ NOT_A_FLOW: dict[str, str] = {
     # --- navigation and layout
     "rail-btn": "client-side page switch; state lives in sessionStorage",
     "rail": "switches the Clips page sub-tab",
+    "mv-make": "ticks the match summary or the highlight; sent with Make match videos",
+    "copy-chapters": "copies a summary's YouTube chapters to the clipboard",
     "back": "steps the setup wizard backwards; no state leaves the browser",
     "pick": "selects a session row in the Clips list",
     # --- plain links and the clipboard
