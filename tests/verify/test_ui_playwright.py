@@ -345,7 +345,9 @@ def test_a_reel_is_made_edited_and_rendered_again_in_the_studio(ui, app):
     assert page.locator(".st-shot").count() == 2
     page.locator(".st-shot").nth(1).click()
     page.locator('#studio-insp input[data-list="fx"][value="k06"]').check()
-    page.wait_for_function("document.getElementById('studio-render-btn').textContent === 'Render changes'")
+    # "Apply 1 change" since the render strip was reworded in v1.33.0; this
+    # waited for the old "Render changes" and timed out on every run since.
+    page.wait_for_function("/^Apply/.test(document.getElementById('studio-render-btn').textContent)")
     page.evaluate("document.getElementById('studio-state').textContent = ''")
     page.click("#studio-render-btn")
     rendered("the render after an edit")
