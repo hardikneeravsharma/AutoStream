@@ -1010,6 +1010,17 @@ CONFIG_SCHEMA: list[Section] = [
                 placeholder=r"C:\Users\you\Music\track.flac",
             ),
             _field(
+                "clips.outro",
+                "Outro for highlights",
+                "Your channel's own outro video, played at the end of every "
+                "match highlight: a white flash in from the result screen, the "
+                "highlight's music crossfading into its sound. Any length and "
+                "frame rate; it is fitted to the highlight. Leave blank to end "
+                "on the result screen.",
+                "text",
+                placeholder=r"C:\Users\you\Videos\my-outro.mp4",
+            ),
+            _field(
                 "clips.arc",
                 "Tell the session's story",
                 "How the reel is arranged. On keeps the clips in the order they "
@@ -1525,6 +1536,7 @@ _EXTRA_CHECKS: dict[str, Callable[[Any], str | None]] = {
     "thumbnail.logo": _check_file(".png", ".jpg", ".jpeg", ".webp"),
     "thumbnail.base_image": _check_file(".png", ".jpg", ".jpeg", ".webp"),
     "clips.music": _check_file(),
+    "clips.outro": _check_file(".mp4", ".mov", ".mkv", ".webm"),
     "clips.ffmpeg_path": _check_file_or_folder,
     "screens.starting_file": _check_file_or_url,
     "screens.paused_file": _check_file_or_url,

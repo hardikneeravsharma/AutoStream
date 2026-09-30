@@ -48,6 +48,16 @@ DEATH_TAIL = 2.5      # a fight that ends in your death keeps this much of it
 MUSIC_LEAD = 7.0      # the music starts this long before the result
 MUSIC_VOL = 0.55      # measured: -21 dB RMS against the game's -29, ducked to 0.3
 FONTS = ("impact.ttf", "arialbd.ttf", "segoeuib.ttf")
+# The channel's outro (clips.outro): joined with a white flash this long, its
+# sound turned down to sit with the game -- a made-for-YouTube outro is
+# mastered near 0 dB, measured 6 dB louder than a highlight's ending -- and
+# faded out over its last moments.
+OUTRO_JOIN = 0.5
+OUTRO_VOL = 0.7
+OUTRO_FADE = 0.7
+# An outro's last frame is usually its point -- the channel name lands in the
+# final second -- so it is held this long before the fade takes it away.
+OUTRO_HOLD = 1.5
 
 
 @dataclass
@@ -143,10 +153,13 @@ def at_output(shots: list[Shot], offs: list[float], src: float) -> float | None:
 
 
 def graph(shots: list[Shot], durations: list[float], kills: list[float],
-          ults: list[float], *, title: bool) -> tuple[str, float]:
+          ults: list[float], *, title: bool,
+          outro: float | None = None) -> tuple[str, float]:
     """The whole filter graph, as text. -> (graph, output seconds)
 
-    Inputs: 0..n-1 the shots, then whoosh, hit, outro. Outputs [vout] [aout].
+    Inputs: 0..n-1 the shots, then whoosh, hit, the music bed, and -- when
+    `outro` is its length -- the channel's outro, already fitted to the shots'
+    size, rate and sound (see _fit_outro). Outputs [vout] [aout].
     Kept free of ffmpeg so it can be checked without running it.
     """
     n = len(shots)
@@ -173,9 +186,19 @@ def graph(shots: list[Shot], durations: list[float], kills: list[float],
         fx.append("drawtext=fontfile=title.ttf:textfile=title2.txt:fontsize=h*0.05:"
                   "fontcolor=0xFFD23C:borderw=4:bordercolor=black@0.8:x=(w-text_w)/2:"
                   f"y=h*0.36+h*0.115:alpha='{fade}':enable='lt(t,2.8)'")
-    fx.append(f"fade=t=out:st={max(0.0, total - 1.5):.3f}:d=1.5")
     fx.append("format=yuv420p")
-    fc.append(f"[{last}]{','.join(fx)}[vout]")
+    if outro:
+        # A white flash from the result screen into the outro, which then
+        # fades out on its own last frame.
+        oi = n + 3
+        fc.append(f"[{last}]{','.join(fx)}[hv]")
+        end = total + outro - OUTRO_JOIN
+        fc.append(f"[hv][{oi}:v]xfade=transition=fadewhite:duration={OUTRO_JOIN}"
+                  f":offset={total - OUTRO_JOIN:.3f},"
+                  f"fade=t=out:st={max(0.0, end - OUTRO_FADE):.3f}:d={OUTRO_FADE}[vout]")
+    else:
+        fx.insert(len(fx) - 1, f"fade=t=out:st={max(0.0, total - 1.5):.3f}:d=1.5")
+        fc.append(f"[{last}]{','.join(fx)}[vout]")
 
     last = "0:a"
     for i in range(1, n):
@@ -207,6 +230,17 @@ def graph(shots: list[Shot], durations: list[float], kills: list[float],
     fc.append(f"[{mi}:a]atrim=0:{mlen:.3f},afade=t=in:d=3,"
               f"afade=t=out:st={max(0.0, mlen - 2.5):.3f}:d=2.5,volume={MUSIC_VOL},"
               f"adelay={int(at * 1000)}|{int(at * 1000)}[md]")
+    if outro:
+        # The music is already fading as the result ends; the outro's own
+        # sound crossfades in under the flash.
+        oi = n + 3
+        end = total + outro - OUTRO_JOIN
+        fc.append("[gd][md]amix=inputs=2:normalize=0:duration=first[hm]")
+        fc.append(f"[{oi}:a]volume={OUTRO_VOL}[oa]")
+        fc.append(f"[hm][oa]acrossfade=d={OUTRO_JOIN}:c1=tri:c2=tri,"
+                  f"afade=t=out:st={max(0.0, end - OUTRO_FADE):.3f}:d={OUTRO_FADE},"
+                  "alimiter=limit=0.95[aout]")
+        return ";\n".join(fc), end
     fc.append(f"[gd][md]amix=inputs=2:normalize=0:duration=first,"
               f"afade=t=out:st={max(0.0, total - 1.5):.3f}:d=1.5,alimiter=limit=0.95[aout]")
     return ";\n".join(fc), total
@@ -225,8 +259,45 @@ def _font(work: Path) -> bool:
     return False
 
 
+def _fit_outro(src: Path, like: Path, out: Path, encoder: str = "auto") -> float | None:
+    """The outro re-encoded to the highlight's own size, frame rate and sound.
+
+    xfade and acrossfade need both sides identical, and an outro is whatever
+    the person made -- 24 fps against a 60 fps recording, another size, often
+    no sound at all (silence is laid in). -> its length, or None if it cannot
+    be used, in which case the highlight simply ends without it.
+    """
+    try:
+        info = media_info(like)
+        w, h = int(info["width"]), int(info["height"])
+        fps = float(info.get("fps") or 60) or 60.0
+        has_audio = int(media_info(src).get("audio_tracks") or 0) > 0
+    except Exception as e:                              # noqa: BLE001
+        log.warning("outro %s could not be read: %s", src, e)
+        return None
+    vf = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
+          f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps:g},"
+          f"tpad=stop_mode=clone:stop_duration={OUTRO_HOLD},format=yuv420p")
+    if has_audio:
+        ins = ["-i", str(Path(src).resolve())]
+        maps = ["-map", "0:v:0", "-map", "0:a:0", "-af", f"apad=pad_dur={OUTRO_HOLD}"]
+    else:
+        ins = ["-i", str(Path(src).resolve()),
+               "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+        maps = ["-map", "0:v:0", "-map", "1:a", "-shortest"]
+    try:
+        _in_dir(out.parent, *ins, *maps, "-vf", vf,
+                "-ar", "48000", "-ac", "2", "-c:a", "aac", "-b:a", "256k",
+                *video_codec_args(encoder, cq=18), "-y", out.name)
+        return float(media_info(out)["duration"])
+    except Exception as e:                              # noqa: BLE001
+        log.warning("outro %s could not be fitted: %s", src, e)
+        return None
+
+
 def render(source: Path, shots: list[Shot], m: rivals.Match, out: Path, *,
            title: str, subtitle: str, encoder: str = "auto",
+           outro: str | Path | None = None,
            check: Callable[[], None] | None = None) -> Path:
     """Cut the shots and join them into the finished highlight at `out`."""
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -246,13 +317,21 @@ def render(source: Path, shots: list[Shot], m: rivals.Match, out: Path, *,
         have_font = _font(work)
         (work / "title1.txt").write_text(title, encoding="utf-8")
         (work / "title2.txt").write_text(subtitle, encoding="utf-8")
-        text, total = graph(shots, durs, kos(m), m.casts, title=have_font)
+        outro_len = None
+        if outro and Path(outro).is_file():
+            outro_len = _fit_outro(Path(outro), parts[0], work / "outro_fit.mp4", encoder)
+        elif outro:
+            log.warning("the outro %s is not there any more; ending without it", outro)
+        text, total = graph(shots, durs, kos(m), m.casts, title=have_font,
+                            outro=outro_len)
         (work / "graph.txt").write_text(text, encoding="utf-8")
         args = []
         for p in parts:
             args += ["-i", p.name]
         for k in ("whoosh", "hit", "outro"):
             args += ["-i", sounds[k].name]
+        if outro_len:
+            args += ["-i", "outro_fit.mp4"]
         tmp = out.with_suffix(".tmp.mp4")
         _in_dir(work, *args, filter_script_flag(), "graph.txt",
                 "-map", "[vout]", "-map", "[aout]",

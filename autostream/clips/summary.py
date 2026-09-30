@@ -64,7 +64,7 @@ def describe(r: rivals.Readings, m: rivals.Match,
 
 def build(source: Path, r: rivals.Readings, outdir: Path, *, game: str,
           when: float | None = None, encoder: str = "auto",
-          highlights: bool = True,
+          highlights: bool = True, outro: str | Path | None = None,
           progress: Callable[[int, int, str], None] | None = None,
           check: Callable[[], None] | None = None) -> list[dict]:
     """Cut every match the readings contain. -> one result dict per match."""
@@ -123,7 +123,7 @@ def build(source: Path, r: rivals.Readings, outdir: Path, *, game: str,
         hl = highlight.render(
             source, shots, m, outdir / f"{name}_highlight.mp4",
             title=game.upper(), subtitle=highlight.subtitle_for(m), encoder=encoder,
-            check=check)
+            outro=outro or None, check=check)
         hl_seconds = sum(s.seconds for s in shots) - highlight.T * (len(shots) - 1)
         out.append({
             "kind": "highlight", "rank": i, "name": hl.stem,

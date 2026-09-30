@@ -367,9 +367,13 @@ def cmd_summary(args) -> int:
     if args.plan:
         return 0
     out = Path(args.out) if args.out else src.with_name(src.stem + "_summaries")
+    outro = args.outro
+    if outro is None:
+        from . import cfg
+        outro = str(cfg.load().clips.outro or "")
     made = summary.build(src, r, out, game="Marvel Rivals",
                          when=src.stat().st_mtime,
-                         highlights=not args.no_highlight)
+                         highlights=not args.no_highlight, outro=outro or None)
     for x in made:
         print(f"  {x['master']}")
     return 0
@@ -609,6 +613,9 @@ def main(argv=None) -> int:
                             help="print what would be kept and stop")
             sp.add_argument("--no-highlight", action="store_true",
                             help="summaries only, no highlight videos")
+            sp.add_argument("--outro", metavar="FILE", default=None,
+                            help="outro video for the highlights "
+                                 "(default: clips.outro; '' for none)")
 
     args = p.parse_args(argv)
     if not getattr(args, "func", None):

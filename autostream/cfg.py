@@ -125,6 +125,10 @@ DEFAULTS: dict[str, Any] = {
         # the track has to be one the user owns, so there is nothing sensible
         # to default it to.
         "music": "",
+        # The channel's own outro, played after every match highlight. The
+        # user's own video, so blank means none -- there is no one else's
+        # outro it would be right to put on a stranger's uploads.
+        "outro": "",
         # Where the sound effects a person can drop into a clip live. A
         # FOLDER rather than a list of files: the app confines what it will
         # play to inside it, so a page can only ask for something the user
