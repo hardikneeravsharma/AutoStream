@@ -248,8 +248,15 @@ def test_a_clip_job_for_marvel_rivals_makes_summaries(tmp_path, monkeypatch):
     assert job.summary["matches"] == 1 and job.summary["highlights"] == 1
     got = job.results[0]
     assert got["result"] == "victory" and got["deaths"] == 1 and got["ults"] == 1
-    assert "summar" in job.message
-    assert (job.folder / "readings.npz").is_file()
+    assert "2 match videos" in job.message
+    assert job.folder.name.endswith("_match-videos")
+    assert got["kind"] == "summary" and got["chapters_text"].startswith("0:00 ")
+    # What the next visit to the page reads to say this was made before.
+    import json
+    sess = json.loads((job.folder / "session.json").read_text(encoding="utf-8"))
+    assert sess["kind"] == "match-videos" and len(sess["matches"]) == 1
+    # The reading is kept for the next run on this recording, not per run.
+    assert list((tmp_path / "out" / ".cache" / "rivals").glob("*.npz"))
     assert (job.folder / "summaries" / f"{got['name']}.chapters.txt").is_file()
 
 

@@ -132,7 +132,7 @@ CLIPS_HTML: str = (
 <div class="card hide" id="clip-made-card">
   <div class="card-head">
     <div>
-      <h2 class="card-title">This stream already has clips</h2>
+      <h2 class="card-title" id="clip-made-title">This stream already has clips</h2>
       <p class="card-sub" id="clip-made-sub">&nbsp;</p>
     </div>
     <div class="field-inline">
@@ -217,7 +217,7 @@ CLIPS_HTML: str = (
 
     <div class="clip-play-right">
       <div class="panel">
-        <h3 class="clip-play-h">This clip</h3>
+        <h3 class="clip-play-h" id="clip-play-h">This clip</h3>
         <dl class="clip-play-info" id="clip-play-meta"></dl>
       </div>
 
@@ -384,6 +384,9 @@ CLIPS_HTML: str = (
              value="1000" step="1" aria-label="End of the part to clip">
     </div>
     <p class="muted" id="clip-strip-msg"></p>
+    <!-- Matches an earlier reading already found in this recording: one
+         press picks exactly that match, and nothing has to be read again. -->
+    <div class="clip-known hide" id="clip-known"></div>
   </div>
 </div>
 
@@ -490,7 +493,28 @@ One per line - a long session often covers several matches."></textarea>
     </div>
   </div>
 
-  <div class="clip-grid">
+  <!-- MATCH VIDEOS. A game made into match videos (Marvel Rivals) has none of
+       the choices below -- no style, no minimum kills, no verticals -- so
+       they are swapped for the two it does have: which videos to make, and
+       the outro the highlight ends on. Shown the kill options were ignored,
+       and a note under them said so, which is two wrongs. -->
+  <div class="clip-mv hide" id="clip-mv">
+    <div class="field">
+      <span class="field-label">What to make from each match</span>
+      <div class="clip-ways clip-mv-make" id="clip-mv-make"></div>
+    </div>
+    <div class="field" id="clip-mv-outro-field">
+      <span class="field-label">Outro</span>
+      <div class="clip-mv-outro" id="clip-mv-outro"></div>
+      <video class="clip-mv-outro-video hide" id="clip-mv-outro-video" controls
+             playsinline preload="none" data-knobs="off"></video>
+      <p class="field-help">Every highlight ends on it, after a white flash from the
+         result screen. A copy is kept in Videos&#92;AutoStream&#92;outros, so it keeps
+         working if the original is moved.</p>
+    </div>
+  </div>
+
+  <div class="clip-grid" id="clip-grid">
     <div class="field clip-span2">
       <span class="field-label">Style</span>
       <div class="seg" id="clip-style" role="group" aria-label="Clip style"></div>
@@ -558,7 +582,8 @@ One per line - a long session often covers several matches."></textarea>
   <div class="clip-actions">
     <span class="muted" id="clip-hint"></span>
     <div class="field-inline">
-      <button class="btn btn-ghost btn-sm" type="button" data-act="calibrate">"""
+      <button class="btn btn-ghost btn-sm" type="button" data-act="calibrate"
+              id="clip-calibrate">"""
     + _svg("wand")
     + """<span>Calibrate a game</span></button>
       <!-- Shown only when THIS game is the one blocked on OCR. The reason
@@ -574,7 +599,7 @@ One per line - a long session often covers several matches."></textarea>
     + """<span>Review clips first</span></button>
       <button class="btn btn-primary" type="button" id="clip-go">"""
     + _svg("scissors")
-    + """<span>Make clips</span></button>
+    + """<span id="clip-go-label">Make clips</span></button>
     </div>
   </div>
 </div>
@@ -750,6 +775,9 @@ var clip_state = {
   soundsFolder: '',
   audio: null,               /* the one <audio> that plays samples */
   made: null,                /* clips a previous run already produced */
+  mv: {summaries: true, highlights: true},   /* match videos: what to make */
+  outro: null,               /* the highlight outro, as /api/clips/outro says */
+  known: null,               /* matches an earlier reading found: {path, matches, covered} */
   player: null,              /* {list, i, folder, trim} while the player is up */
   editing: false,            /* a re-render is in flight */
   stopping: false,           /* Cancel pressed, job not finished yet */
@@ -1047,7 +1075,13 @@ function clip_renderRail() {
   var j = clip_state.lastJob;
   var win = clip_stripWindow();
   var running = !!(j && (j.state === 'running' || j.state === 'queued'));
-  var steps = [
+  var steps = clip_isMV(s) ? [
+    /* Match videos have no style to choose and no plan to review. */
+    ['clip-local', 'Pick a video', !!s],
+    ['clip-strip-card', 'Choose the part', !!(s && win)],
+    ['clip-options', 'What to make', !!s],
+    ['clip-results', 'Your videos', !!(j && j.state === 'done' && j.scan_mode === 'summary')]
+  ] : [
     ['clip-local', 'Pick a video', !!s],
     ['clip-strip-card', 'Choose the part', !!(s && win)],
     ['clip-read-card', 'How to read it', !!(s && s.demos && clip_state.way)],
@@ -1397,6 +1431,7 @@ function clip_renderOptions() {
   }
 
   clip_el('clip-chosen').textContent = s.game || 'Unknown game';
+  clip_mvRender();
   var bits = [clip_when(s.display_started || s.started)];
   if (s.duration) bits.push(clip_dur(s.duration));
   if (s.recording_bytes) bits.push(clip_bytes(s.recording_bytes));
@@ -1483,9 +1518,8 @@ function clip_renderOptions() {
          ' because that is what was running at the end. If that is wrong, correct it here.')
       : multi
       ? ('This session covered ' + played.join(' and ') + '. A scan reads one ' +
-         'game at a time, and this file is set to ' + (s.game || 'unknown') +
-         ' because that is what you finished on. Pick another to cut its ' +
-         'highlights instead.')
+         'game at a time, and this file is being read as ' + (s.game || 'unknown') +
+         '. Pick another to cut its highlights instead.')
       : ('This file is being read as ' + (s.game || 'unknown') + '. A scan ' +
          'reads one game at a time, so if the part you have chosen above is a ' +
          'different game, set it here and run it again for that stretch.');
@@ -1563,23 +1597,26 @@ function clip_renderOptions() {
               'PC - a card box pointed at the wrong pixels finds almost nothing.';
     }
   } else if (!why && s.scan_mode === 'summary') {
-    /* NOT CLIPS. Every option above this is about cutting around kills, and
-       none of them applies -- so the note says what the run makes instead. */
-    var srate = Number(s.scan_rate) || 16.0;
-    var swin = clip_stripWindow();
-    var sspan = swin ? ((swin.scan_end || s.duration || 0) - swin.scan_start)
-                     : (s.duration || 0);
-    note = esc(s.game || 'This game') + ' is made into two videos per match ' +
-           'instead of clips: a summary -- the whole match in order, with the ' +
-           'setup, the time spent dead and the walk back to the fight cut out, ' +
-           'and YouTube chapters beside it -- and a highlight of only the ' +
-           'fights, with a title, whip transitions and a whoosh on every cut, ' +
-           'a hit sound on every KO and music under the ending. The clip ' +
-           'options below do not apply.';
-    if (sspan > 0) {
-      note += ' ' + (swin ? 'You have chosen ' + clip_dur(sspan) + ' of it, so a'
-                          : 'That is a') +
-              'bout ' + clip_dur(sspan / srate) + ' of reading, then the cut.';
+    var mvm = clip_mvMake();
+    var knownHere = clip_mvKnownIn();
+    if (!mvm.summaries && !mvm.highlights) why = 'Choose a summary, a highlight, or both.';
+    /* Already read, and nothing in it: a run could only fail, so say so now
+       instead of after it. */
+    else if (knownHere && !knownHere.length) {
+      why = 'This part was read before and has no whole match in it. ' +
+            'Choose another part, or the whole video.';
+    }
+    else {
+      note = esc(clip_mvEstimate());
+      /* A MIXED SESSION IS MOSTLY THE OTHER GAME. Reading all of a 2h36m
+         recording for the 40 minutes of Marvel Rivals in it costs half an
+         hour for nothing; saying so beside the estimate is what makes the
+         filmstrip above worth using. */
+      var played2 = (s.games || []).filter(function (g) { return !!g; });
+      if (played2.length > 1 && !clip_stripWindow() && !clip_mvKnownIn()) {
+        note += ' This stream was not all ' + esc(s.game) + ' - choose its part ' +
+                'above and only that is read.';
+      }
     }
   } else if (!why && s.scan_mode === 'killfeed') {
     /* HOW LONG IT WILL ACTUALLY TAKE, from the rate the job itself uses.
@@ -1631,7 +1668,9 @@ function clip_renderJob(j) {
   clip_show('clip-progress', running);
 
   if (running) {
-    clip_el('clip-prog-title').textContent = 'Making clips from ' + (j.game || 'the stream');
+    clip_el('clip-prog-title').textContent =
+      (j.scan_mode === 'summary' ? 'Making match videos from ' : 'Making clips from ') +
+      (j.game || 'the stream');
     /* HOW LONG IT HAS RUN AND HOW LONG IS LEFT. A scan of a two-hour
        recording is eight minutes of nothing visible happening, and "Reading
        the feed" does not say whether that means one minute or twenty. */
@@ -1675,13 +1714,17 @@ function clip_renderJob(j) {
     if (fill) fill.style.width = j.percent + '%';
     if (meter) meter.setAttribute('aria-valuenow', String(j.percent));
 
-    var h = '';
-    for (var i = 0; i < CLIP_STEPS.length; i++) {
-      var cls = i < j.step_index ? ' is-done' : (i === j.step_index ? ' is-now' : '');
-      h += '<span class="clip-step' + cls + '">' + esc(CLIP_STEPS[i][1]) + '</span>';
+    if (j.scan_mode === 'summary') {
+      clip_mvRenderSteps(j);
+    } else {
+      var h = '';
+      for (var i = 0; i < CLIP_STEPS.length; i++) {
+        var cls = i < j.step_index ? ' is-done' : (i === j.step_index ? ' is-now' : '');
+        h += '<span class="clip-step' + cls + '">' + esc(CLIP_STEPS[i][1]) + '</span>';
+      }
+      var st = clip_el('clip-steps');
+      if (st) st.innerHTML = h;
     }
-    var st = clip_el('clip-steps');
-    if (st) st.innerHTML = h;
   }
 
   /* Results stay on screen after the run, so closing and reopening the page
@@ -1727,14 +1770,19 @@ function clip_renderJob(j) {
     clip_show('clip-needsdemo-cards', !!(s && s.demos));
   }
 
+  var mvRun = j.scan_mode === 'summary';
   clip_el('clip-res-title').textContent =
     j.needs_demo ? 'Waiting for the replay' :
-    (j.state === 'done' ? 'Clips ready' :
+    (j.state === 'done' ? (mvRun ? 'Your match videos' : 'Clips ready') :
     (j.state === 'cancelled' ? 'Cancelled' : 'Could not finish'));
 
   var sum = j.summary || {};
   var sub;
-  if (j.state === 'done') {
+  if (j.state === 'done' && mvRun) {
+    /* Match videos are not clips: "604 of 12 kills (undefined%)" was the
+       kill-clip sentence reading a match run's numbers. */
+    sub = clip_mvResultsSub(j);
+  } else if (j.state === 'done') {
     /* A run that planned nothing explains itself. "0 clips" alone reads as a
        failure even when the kills were found and swept into the promo reel,
        and the run already knows exactly why -- see summary.why in jobs.py. */
@@ -1744,7 +1792,11 @@ function clip_renderJob(j) {
           '  ·  ' + (j.folder || '');
     if (!j.clips && sum.why) sub = sum.why + '  ·  ' + (j.folder || '');
   } else {
-    sub = j.error || j.message || '';
+    /* "Cancelled" under a heading that already says Cancelled told nobody
+       anything; say what became of the run instead. */
+    sub = j.state === 'cancelled'
+      ? 'Stopped when you pressed Cancel. Anything already finished is in the folder.'
+      : (j.error || j.message || '');
   }
   clip_el('clip-res-sub').textContent = sub;
   clip_show('clip-res-list', j.state === 'done');
@@ -1758,9 +1810,395 @@ function clip_renderJob(j) {
             /valorant/i.test(String(j.game || '')));
 }
 
+/* ------------------------------------------------------- match videos
+
+   A game whose profile makes MATCH VIDEOS (Marvel Rivals, mode "summary")
+   rather than clips around kills. Everything the page says about it lives
+   here: which videos to make, the outro, what the run will cost, what it made.
+   The kill options are hidden for such a game rather than shown and ignored. */
+
+var CLIP_MV_MAKE = [
+  ['summaries', 'Match summary', 'long-form',
+   'The whole match in order, with the respawns, the spectating and the walks ' +
+   'back to the fight cut out. YouTube chapters come with it.'],
+  ['highlights', 'Highlight', 'the fights',
+   'Only the fights, around every KO and ult: a title, fast transitions with a ' +
+   'whoosh, a hit on every KO, music under the ending and your outro.']
+];
+/* Seconds of work per second of video (clips/summary.py), and what the
+   reading costs per second of recording (clips/jobs.py SCAN_RATE). */
+var CLIP_MV_SPEED = {read: 16, summary: 4.4, highlight: 2.4, fixed: 8};
+
+function clip_isMV(s) {
+  s = s || clip_state.pick;
+  return !!(s && s.scan_mode === 'summary');
+}
+
+function clip_mvMake() {
+  var mv = clip_state.mv || (clip_state.mv = {summaries: true, highlights: true});
+  return mv;
+}
+
+/* The matches inside the chosen part, from an earlier reading. */
+function clip_mvKnownIn() {
+  var k = clip_state.known;
+  var s = clip_state.pick;
+  if (!k || !s || k.path !== s.recording_path) return null;
+  var win = clip_stripWindow();
+  var a = win ? win.scan_start : 0;
+  var b = win ? (win.scan_end || s.duration || 0) : (s.duration || 0);
+  var covered = (k.covered || []).some(function (c) {
+    return c[0] <= a + 1 && b - 1 <= c[1];
+  });
+  if (!covered) return null;
+  return (k.matches || []).filter(function (m) {
+    return m.start >= a - 1 && m.end <= b + 1;
+  });
+}
+
+/* How long a run will take, in words, from what is known so far. */
+function clip_mvEstimate() {
+  var s = clip_state.pick;
+  if (!s) return '';
+  var mv = clip_mvMake();
+  var win = clip_stripWindow();
+  var span = win ? ((win.scan_end || s.duration || 0) - win.scan_start)
+                 : (s.duration || 0);
+  if (!(span > 0)) return '';
+  var known = clip_mvKnownIn();
+  var read = known ? 0 : span / CLIP_MV_SPEED.read;
+  var make = 0;
+  if (known) {
+    known.forEach(function (m) {
+      var len = Math.max(0, m.end - m.start);
+      if (mv.summaries) make += len * 0.85 / CLIP_MV_SPEED.summary;
+      if (mv.highlights) make += len * 0.4 / CLIP_MV_SPEED.highlight + CLIP_MV_SPEED.fixed;
+    });
+  } else {
+    /* Per second of recording, before anything says how much of it is
+       matches: the same rates the job's own estimate uses (AFTER_READ). */
+    make = span * ((mv.summaries ? 0.10 : 0) + (mv.highlights ? 0.10 : 0));
+  }
+  var total = read + make;
+  if (known) {
+    return (known.length
+      ? known.length + (known.length === 1 ? ' match' : ' matches') +
+        ' in this part, read before - about ' + clip_dur(Math.max(30, total)) +
+        ' to make the videos.'
+      : 'This part was read before and has no whole match in it.');
+  }
+  return 'About ' + clip_dur(Math.max(60, total)) + ' for ' + clip_dur(span) +
+         ' of recording: ' + clip_dur(Math.max(30, read)) +
+         ' reading the HUD, then the videos are made one match at a time.';
+}
+
+function clip_mvRender() {
+  var on = clip_isMV();
+  clip_show('clip-mv', on);
+  clip_show('clip-grid', !on);
+  clip_show('clip-calibrate', !on);
+  clip_show('clip-review', !on);
+  var lbl = clip_el('clip-go-label');
+  if (lbl) lbl.textContent = on ? 'Make match videos' : 'Make clips';
+  if (!on) { clip_show('clip-known', false); return; }
+  var mv = clip_mvMake();
+  var host = clip_el('clip-mv-make');
+  if (host) {
+    host.innerHTML = CLIP_MV_MAKE.map(function (w) {
+      var is = !!mv[w[0]];
+      return '<button class="clip-way clip-mv-tile' + (is ? ' is-on' : '') + '"' +
+        ' type="button" data-act="mv-make" data-val="' + w[0] + '"' +
+        ' role="checkbox" aria-checked="' + (is ? 'true' : 'false') + '">' +
+        '<span class="clip-way-top"><b><span class="clip-mv-box" aria-hidden="true">' +
+        (is ? '&#10003;' : '') + '</span>' + esc(w[1]) + '</b>' +
+        '<span class="clip-way-cost">' + esc(w[2]) + '</span></span>' +
+        '<span class="clip-way-why">' + esc(w[3]) + '</span></button>';
+    }).join('');
+  }
+  clip_show('clip-mv-outro-field', !!mv.highlights);
+  clip_mvRenderOutro();
+  clip_mvRenderKnown();
+}
+
+function clip_mvRenderOutro() {
+  var host = clip_el('clip-mv-outro');
+  if (!host) return;
+  var o = clip_state.outro;
+  if (!o) { host.innerHTML = '<span class="muted">Looking for your outro&hellip;</span>'; return; }
+  var pick = '<button class="btn btn-sm" type="button" data-act="outro-pick">' +
+             (o.path ? 'Change&hellip;' : 'Choose a video&hellip;') + '</button>';
+  if (!o.path) {
+    host.innerHTML = '<div class="clip-mv-outro-text"><b>No outro</b>' +
+      '<span class="muted">Highlights end on the VICTORY or DEFEAT screen.</span></div>' +
+      '<div class="field-inline">' + pick + '</div>';
+    return;
+  }
+  if (o.missing) {
+    host.innerHTML = '<div class="clip-mv-outro-text"><b>' + esc(o.name || 'Your outro') +
+      '</b><span class="clip-mv-warn">That file is not there any more, so highlights ' +
+      'will end without it. Choose it again.</span></div>' +
+      '<div class="field-inline">' + pick +
+      '<button class="btn btn-sm btn-ghost" type="button" data-act="outro-none">No outro</button></div>';
+    return;
+  }
+  var at = Math.max(0, (Number(o.seconds) || 1) - 0.25);
+  var thumb = '/api/clips/frame?k=' + encodeURIComponent(SHELL_K) +
+              '&path=' + encodeURIComponent(o.path) + '&t=' + at.toFixed(2) + '&w=320';
+  var bits = [];
+  if (o.seconds) bits.push(o.seconds < 60 ? Math.round(o.seconds) + ' s' : clip_fmtTime(o.seconds));
+  if (o.width && o.height) bits.push(o.width + '&times;' + o.height);
+  bits.push(o.sound ? 'with sound' : 'silent');
+  host.innerHTML =
+    '<button class="clip-mv-outro-thumb" type="button" data-act="outro-play"' +
+    ' aria-label="Play the outro"><img alt="" src="' + esc(thumb) + '">' +
+    '<span class="clip-mv-outro-play" aria-hidden="true">&#9654;</span></button>' +
+    '<div class="clip-mv-outro-text"><b>' + esc(o.name) + '</b>' +
+    '<span class="muted">' + bits.join(' &middot; ') + '</span></div>' +
+    '<div class="field-inline">' + pick +
+    '<button class="btn btn-sm btn-ghost" type="button" data-act="outro-none">No outro</button></div>';
+}
+
+async function clip_mvLoadOutro() {
+  try {
+    clip_state.outro = await API.get('/api/clips/outro');
+  } catch (e) { clip_state.outro = {path: ''}; }
+  clip_mvRenderOutro();
+}
+
+async function clip_mvPickOutro() {
+  var r;
+  try { r = await API.post('/api/clips/pick', {kind: 'outro'}); }
+  catch (e) { toast('Could not open the file picker.', 'error'); return; }
+  if (!r || r.error) { toast((r && r.error) || 'Could not open the file picker.', 'error'); return; }
+  if (!r.path) return;                         /* cancelled */
+  clip_el('clip-mv-outro').innerHTML = '<span class="spin"></span> <span class="muted">Copying it in&hellip;</span>';
+  var o = await API.post('/api/clips/outro-set', {path: r.path});
+  if (!o || o.error) {
+    toast((o && o.error) || 'Could not use that video.', 'error');
+    clip_mvRenderOutro();
+    return;
+  }
+  clip_state.outro = o;
+  clip_mvRenderOutro();
+  clip_mvHideOutroVideo();
+  toast('Highlights will end on ' + o.name + '.', 'ok');
+}
+
+async function clip_mvNoOutro() {
+  var o = await API.post('/api/clips/outro-set', {path: ''});
+  if (!o || o.error) { toast((o && o.error) || 'Could not change it.', 'error'); return; }
+  clip_state.outro = o;
+  clip_mvRenderOutro();
+  clip_mvHideOutroVideo();
+  toast('Highlights will end on the result screen.', 'ok');
+}
+
+function clip_mvHideOutroVideo() {
+  var v = clip_el('clip-mv-outro-video');
+  if (!v) return;
+  try { v.pause(); } catch (e) { /* not loaded */ }
+  v.removeAttribute('src');
+  v.classList.add('hide');
+}
+
+function clip_mvPlayOutro() {
+  var v = clip_el('clip-mv-outro-video');
+  if (!v) return;
+  v.src = '/api/clips/outro-video?k=' + encodeURIComponent(SHELL_K) + '&v=' + Date.now();
+  v.classList.remove('hide');
+  v.play().catch(function () { /* the controls work */ });
+}
+
+/* Matches already found in this recording, as one-press choices. */
+async function clip_mvLoadKnown(s) {
+  if (!s || !clip_isMV(s) || !s.recording_path) { clip_state.known = null; clip_mvRenderKnown(); return; }
+  try {
+    var r = await API.get('/api/clips/known-matches?path=' + encodeURIComponent(s.recording_path));
+    if (s !== clip_state.pick) return;
+    clip_state.known = {path: s.recording_path, matches: (r && r.matches) || [],
+                        covered: (r && r.covered) || []};
+  } catch (e) { clip_state.known = null; }
+  clip_mvRenderKnown();
+  clip_renderOptions();
+}
+
+function clip_mvRenderKnown() {
+  var host = clip_el('clip-known');
+  if (!host) return;
+  var k = clip_state.known, s = clip_state.pick;
+  var ms = (k && s && k.path === s.recording_path && clip_isMV(s)) ? k.matches : [];
+  if (!ms.length) { host.classList.add('hide'); return; }
+  var st = clip_state.strip;
+  host.innerHTML = '<span class="clip-known-lead">Matches found earlier</span>' +
+    ms.map(function (m, i) {
+      var a = Math.max(0, m.start - 5), b = (m.result_at || m.end) + 8;
+      var on = st && Math.abs(st.from - a) < 2 && Math.abs((st.to || st.dur) - b) < 2;
+      var res = m.result ? (m.result === 'victory' ? 'Victory' : 'Defeat') : 'Match';
+      return '<button class="clip-known-chip' + (on ? ' is-on' : '') +
+        (m.result === 'victory' ? ' is-win' : '') + '" type="button"' +
+        ' data-act="known-match" data-i="' + i + '">' +
+        '<b>' + (i + 1) + '</b> ' + esc(res) +
+        '<span class="muted">' + clip_fmtTime(m.start) + ' &middot; ' +
+        clip_dur(m.end - m.start) + (m.kos ? ' &middot; ' + m.kos + ' KOs' : '') +
+        '</span></button>';
+    }).join('');
+  host.classList.remove('hide');
+}
+
+function clip_mvPickKnown(i) {
+  var k = clip_state.known, st = clip_state.strip;
+  var m = k && k.matches[i];
+  if (!m || !st || !st.dur) return;
+  st.from = Math.max(0, m.start - 5);
+  st.to = Math.min(st.dur, (m.result_at || m.end) + 8);
+  if (st.to >= st.dur - 1) st.to = 0;
+  clip_stripSync();
+  clip_stripRender();
+  clip_renderOptions();
+}
+
+/* The run's progress, in the steps it will actually take. */
+function clip_mvSteps(j) {
+  var make = (j && j.make) || clip_mvMake();
+  var steps = [['scan', 'Read the HUD']];
+  if (make.summaries) steps.push(['cut', 'Cut the summaries']);
+  if (make.highlights) steps.push(['highlight', 'Make the highlights']);
+  return steps;
+}
+
+function clip_mvRenderSteps(j) {
+  var steps = clip_mvSteps(j);
+  var order = ['scan', 'cut', 'highlight', 'done'];
+  var at = order.indexOf(j.step);
+  var st = clip_el('clip-steps');
+  if (!st) return;
+  st.innerHTML = steps.map(function (s) {
+    var me = order.indexOf(s[0]);
+    var cls = me < at ? ' is-done' : (me === at ? ' is-now' : '');
+    return '<span class="clip-step' + cls + '">' + esc(s[1]) + '</span>';
+  }).join('');
+}
+
+function clip_mvLen(sec) {
+  sec = Math.round(Number(sec) || 0);
+  return sec >= 60 ? clip_fmtTime(sec) : sec + ' s';
+}
+
+function clip_mvResultsSub(j) {
+  var sum = j.summary || {};
+  var bits = [];
+  var n = sum.matches || 0;
+  bits.push(n + (n === 1 ? ' match' : ' matches') +
+            (sum.wins ? ' (' + sum.wins + (sum.wins === 1 ? ' win' : ' wins') + ')' : ''));
+  if (sum.kos) bits.push(sum.kos + ' KOs');
+  if (sum.cut_seconds) bits.push(clip_mvLen(sum.cut_seconds) + ' of dead time cut');
+  if (sum.reused_reading) bits.push('read before, so no reading this time');
+  if (sum.failed) bits.push(sum.failed + ' could not be made - see below');
+  return bits.join('  ·  ');
+}
+
+function clip_mvRenderResults(list) {
+  var host = clip_el('clip-res-list');
+  if (!host) return;
+  var groups = {};
+  var order = [];
+  list.forEach(function (c, i) {
+    var m = c.match || 0;
+    if (!groups[m]) { groups[m] = []; order.push(m); }
+    groups[m].push([c, i]);
+  });
+  host.innerHTML = order.map(function (m) {
+    var rows = groups[m];
+    var first = rows[0][0];
+    var res = first.result === 'victory' ? '<span class="tag is-ok">Victory</span>'
+            : first.result === 'defeat' ? '<span class="tag">Defeat</span>' : '';
+    var facts = [clip_mvLen(first.match_seconds) + ' of play'];
+    if (first.kos) facts.push(first.kos + ' KOs');
+    if (first.deaths != null) facts.push(first.deaths + (first.deaths === 1 ? ' death' : ' deaths'));
+    if (first.ults) facts.push(first.ults + (first.ults === 1 ? ' ult' : ' ults'));
+    return '<div class="clip-mv-match">' +
+      '<div class="clip-mv-match-head"><b>Match ' + m + '</b>' + res +
+      '<span class="muted">' + esc(facts.join('  ·  ')) + '</span></div>' +
+      rows.map(function (pair) {
+        var c = pair[0], i = pair[1];
+        var hl = c.kind === 'highlight';
+        var meta = [clip_mvLen(c.duration)];
+        if (!hl && c.chapter_marks) meta.push(c.chapter_marks.length +
+          (c.chapter_marks.length === 1 ? ' chapter' : ' chapters'));
+        if (!hl && c.cut_seconds) meta.push(clip_mvLen(c.cut_seconds) + ' cut out');
+        if (hl) meta.push(c.outro ? 'ends on your outro' : 'no outro');
+        if (c.error) {
+          return '<div class="clip-res clip-mv-row is-failed">' +
+            '<span class="clip-res-rank">' + icon('alert') + '</span>' +
+            '<span class="clip-res-name">' + (hl ? 'Highlight' : 'Summary') + '</span>' +
+            '<span class="clip-res-meta clip-mv-warn">Could not be made: ' + esc(c.error) + '</span>' +
+            '<span class="clip-res-acts"></span></div>';
+        }
+        return '<div class="clip-res clip-mv-row">' +
+          '<span class="clip-res-rank">' + icon(hl ? 'wand' : 'film') + '</span>' +
+          '<span class="clip-res-name">' + (hl ? 'Highlight' : 'Summary') + '</span>' +
+          '<span class="clip-res-meta muted">' + esc(meta.join('  ·  ')) + '</span>' +
+          '<span class="clip-res-acts">' +
+          '<button class="btn btn-primary btn-sm" type="button" data-res-play="' + i + '">Play</button>' +
+          (!hl && c.chapters_text
+            ? '<button class="btn btn-ghost btn-sm" type="button" data-act="copy-chapters"' +
+              ' data-i="' + i + '">Copy chapters</button>' : '') +
+          '<button class="btn btn-ghost btn-sm" type="button" data-act="reveal"' +
+          ' data-path="' + esc(c.master) + '">Show</button></span></div>';
+      }).join('') + '</div>';
+  }).join('');
+}
+
+async function clip_mvCopyChapters(text) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('Chapters copied - paste them into the YouTube description.', 'ok');
+  } catch (e) {
+    toast('Could not reach the clipboard. The chapters are also in a .txt beside the video.', 'warn');
+  }
+}
+
+/* The player, for a match video: watching, not editing. A ten-minute summary
+   has no caption, no spoken line and no vertical to adjust, and the trim and
+   effects tools are built around a clip's plan -- which a match video does
+   not have. What it does have is chapters, and those are where to jump. */
+function clip_mvPlayerMeta(c) {
+  var host = clip_el('clip-play-meta');
+  if (!host) return;
+  var hl = c.kind === 'highlight';
+  var rows = [
+    ['Match', String(c.match || '-') + (c.result ? ' - ' + (c.result === 'victory' ? 'Victory' : 'Defeat') : '')],
+    ['Length', clip_mvLen(c.duration) + (c.match_seconds ? ' of ' + clip_mvLen(c.match_seconds) + ' played' : '')],
+    ['KOs', String(c.kos == null ? '-' : c.kos)]
+  ];
+  if (hl) rows.push(['Outro', c.outro ? 'yes' : 'none']);
+  rows.push(['File', String(c.master || '').split('\\').pop().split('/').pop()]);
+  var h = rows.map(function (r) {
+    return '<dt>' + esc(r[0]) + '</dt><dd>' + esc(String(r[1])) + '</dd>';
+  }).join('');
+  if (!hl && (c.chapter_marks || []).length) {
+    h += '<dt>Chapters</dt><dd class="clip-mv-chapters">' +
+      c.chapter_marks.map(function (mk) {
+        return '<button class="btn btn-ghost btn-sm" type="button" data-seek="' +
+          Number(mk[0]).toFixed(2) + '"><span class="mono">' + clip_fmtTime(mk[0]) +
+          '</span> ' + esc(mk[1]) + '</button>';
+      }).join('') + '</dd>';
+  }
+  host.innerHTML = h;
+}
+
 function clip_renderResults(list, montagePath) {
   var host = clip_el('clip-res-list');
   if (!host) return;
+  if ((list || []).some(function (c) { return c.kind === 'summary' || c.kind === 'highlight'; })) {
+    clip_mvRenderResults(list);
+    clip_state.results = list;
+    clip_state.resultsFolder = ((list.filter(function (c) { return c.master; })[0] || {}).master || '')
+        .replace(/[\\/][^\\/]*[\\/][^\\/]*$/, '');
+    clip_renderUpload();
+    return;
+  }
   var h = '';
   if (montagePath) {
     h += '<div class="clip-res is-montage">' +
@@ -1935,6 +2373,9 @@ async function clip_load() {
     clip_stripOpen();
     clip_renderTools();
     clip_loadMade(clip_state.pick);
+    clip_mvLoadKnown(clip_state.pick);
+    if (!clip_state.outro) clip_mvLoadOutro();
+    if (clip_state.localGames && clip_state.localGames.length) clip_renderGamesLocal();
   } catch (e) {
     toast('Could not read the stream history.', 'error');
   }
@@ -2009,6 +2450,11 @@ function clip_playerLoadVideo() {
 function clip_playerLoad() {
   var p = clip_state.player, c = clip_playerClip();
   if (!p || !c) return;
+  var card = clip_el('clip-player-card');
+  var watch = c.kind === 'summary' || c.kind === 'highlight';
+  if (card) card.classList.toggle('is-watch', watch);
+  var ph = clip_el('clip-play-h');
+  if (ph) ph.textContent = watch ? 'This video' : 'This clip';
   p.trim = {in: null, out: null};
   p.edit = clip_trimBlank();
   p.fx = clip_fxFrom(c.effects);
@@ -2023,9 +2469,11 @@ function clip_playerLoad() {
   clip_playerLoadVideo();
   clip_el('clip-play-title').textContent =
     (c.caption || (c.kills + ' kill' + (c.kills === 1 ? '' : 's')));
-  clip_el('clip-play-sub').textContent =
-    'clip ' + (p.i + 1) + ' of ' + p.list.length +
-    (c.vertical ? '' : ' - no vertical, showing the 16:9 master');
+  clip_el('clip-play-sub').textContent = watch
+    ? ((c.kind === 'highlight' ? 'Highlight' : 'Summary') + ' of match ' + (c.match || 1) +
+       '  ·  video ' + (p.i + 1) + ' of ' + p.list.length)
+    : ('clip ' + (p.i + 1) + ' of ' + p.list.length +
+       (c.vertical ? '' : ' - no vertical, showing the 16:9 master'));
   clip_playerMeta();
   clip_playerForm();
   clip_playerTrimText();
@@ -2062,6 +2510,7 @@ function clip_playerMeta() {
   var c = clip_playerClip();
   var host = clip_el('clip-play-meta');
   if (!c || !host) return;
+  if (c.kind === 'summary' || c.kind === 'highlight') { clip_mvPlayerMeta(c); return; }
   var path = c.vertical || c.master || '';
   var rows = [
     ['Found at', c.at || '-'],
@@ -3436,8 +3885,18 @@ function clip_renderMade() {
   var m = clip_state.made;
   if (!m) { clip_show('clip-made-card', false); return; }
   var when = m.when ? new Date(m.when * 1000) : null;
+  var mvMade = m.clips.some(function (c) { return c.kind === 'summary' || c.kind === 'highlight'; });
+  var mt = clip_el('clip-made-title');
+  if (mt) mt.textContent = mvMade ? 'You already made videos from this stream'
+                                  : 'This stream already has clips';
   var sub = clip_el('clip-made-sub');
-  if (sub) {
+  if (sub && mvMade) {
+    var nv = m.clips.filter(function (c) { return c.master; }).length;
+    sub.textContent = nv + ' match video' + (nv === 1 ? '' : 's') +
+      (when ? ', made ' + when.toLocaleString() : '') +
+      '. Watch them before making them again - the reading is kept, so a ' +
+      'second run skips straight to cutting.';
+  } else if (sub) {
     sub.textContent = m.clips.length + ' clip' + (m.clips.length === 1 ? '' : 's') +
       ' from ' + (m.folder || '').split('\\').pop().split('/').pop() +
       (when ? ', cut ' + when.toLocaleString() : '') +
@@ -3446,6 +3905,17 @@ function clip_renderMade() {
   var host = clip_el('clip-made-list');
   if (host) {
     host.innerHTML = m.clips.map(function (c, i) {
+      if (c.kind === 'summary' || c.kind === 'highlight') {
+        if (!c.master) return '';
+        return '<div class="clip-made-row">' +
+          '<span class="clip-made-name">Match ' + (c.match || 1) + ' ' +
+            (c.kind === 'highlight' ? 'highlight' : 'summary') +
+            (c.result ? ' - ' + (c.result === 'victory' ? 'Victory' : 'Defeat') : '') + '</span>' +
+          '<span class="muted">' + esc(clip_mvLen(c.duration)) +
+            (c.kos ? '  &middot;  ' + c.kos + ' KOs' : '') + '</span>' +
+          '<button class="btn btn-sm" type="button" data-made="' + i + '">Play</button>' +
+          '</div>';
+      }
       var label = c.caption || ((c.kills || 0) + ' kill' + (c.kills === 1 ? '' : 's'));
       return '<div class="clip-made-row">' +
         '<span class="clip-made-name">' + esc(label) + '</span>' +
@@ -3747,7 +4217,9 @@ function clip_runBody(s) {
     transition_ms: clip_state.transMs,
     rounds: clip_state.rounds !== false,
     whole_round: clip_state.whole !== false,
-    round_types: clip_state.types || null
+    round_types: clip_state.types || null,
+    summaries: !!clip_mvMake().summaries,
+    highlights: !!clip_mvMake().highlights
   });
 }
 
@@ -3789,9 +4261,12 @@ async function clip_run() {
     if (r && r.error) { toast(r.error, 'error'); if (go) go.disabled = false; return; }
     clip_state.busy = true;
     clip_show('clip-results', false);
-    toast(r && r.reused_kills
-      ? 'Re-cutting with the kills found earlier.'
-      : 'Scanning the recording for kills.', 'ok');
+    toast(clip_isMV(s)
+      ? (clip_mvKnownIn() ? 'Making the match videos. This part was read before.'
+                          : 'Reading the HUD, then making the match videos.')
+      : (r && r.reused_kills
+         ? 'Re-cutting with the kills found earlier.'
+         : 'Scanning the recording for kills.'), 'ok');
   } catch (e) {
     toast('Could not start.', 'error');
     if (go) go.disabled = false;
@@ -4042,6 +4517,8 @@ function clip_stripRender() {
          'click a frame to start there and shift-click to end there.')
       : '';
   }
+  /* The known-match chips light up for the match the selection now is. */
+  clip_mvRenderKnown();
   var msg = clip_el('clip-strip-msg');
   if (msg) {
     var whole = !st.from && !st.to;
@@ -4091,6 +4568,18 @@ function clip_fillLocalGames() {
     return '<option value="' + esc(g.game_key) + '">' + esc(g.game) + tail +
            '</option>';
   }).join('') || '<option value="">No games available</option>';
+  /* THE GAME YOU PLAY, NOT THE FIRST IN THE ALPHABET. Counter-Strike 2 led
+     the list for everyone, with its in-game-name prompt open underneath -- a
+     question aimed at somebody who may never have played it. Until a choice
+     is made, the game of the newest stream is the likeliest one. */
+  if (!clip_state.localGamePicked) {
+    var newest = (clip_state.sessions || []).filter(function (s2) {
+      return s2.game_key && clip_state.localGames.some(function (g) {
+        return g.game_key === s2.game_key;
+      });
+    })[0];
+    if (newest) sel.value = newest.game_key;
+  }
 }
 
 function clip_localGame() {
@@ -4142,7 +4631,7 @@ function clip_renderGamesLocal() {
   var sel = clip_el('clip-local-game');
   var keep = sel ? sel.value : '';
   clip_fillLocalGames();
-  if (sel && keep) sel.value = keep;
+  if (sel && keep && clip_state.localGamePicked) sel.value = keep;
   clip_renderNamePrompt();
 }
 
@@ -4235,6 +4724,7 @@ function clip_useLocal() {
   clip_renderOptions();
   clip_probeLocal();
   clip_stripOpen();
+  clip_mvLoadKnown(clip_state.pick);
   var card = clip_el('clip-options');
   if (card && card.scrollIntoView) card.scrollIntoView({behavior: 'smooth', block: 'start'});
 }
@@ -4488,6 +4978,7 @@ function clip_useGameLocally(key, label) {
     if (s.local) clip_probeLocal();
   }
   clip_renderOptions();
+  clip_mvLoadKnown(s);
 }
 
 async function clip_setGame() {
@@ -4745,7 +5236,10 @@ function clip_wire() {
   if (upv) upv.addEventListener('change', clip_renderUpload);
 
   var lg = clip_el('clip-local-game');
-  if (lg) lg.addEventListener('change', clip_renderNamePrompt);
+  if (lg) lg.addEventListener('change', function () {
+    clip_state.localGamePicked = true;
+    clip_renderNamePrompt();
+  });
 
   /* The two range handles and the filmstrip. `input` rather than `change` for
      the strip itself, so the selection reads back while the handle is still
@@ -4774,9 +5268,17 @@ function clip_wire() {
      whenever a clip is loaded and per-button listeners would need rebinding. */
   var pcard = clip_el('clip-player-card');
   if (pcard) pcard.addEventListener('click', function (ev) {
-    var el = ev.target.closest ? ev.target.closest('[data-play],[data-vert]') : null;
+    var el = ev.target.closest ? ev.target.closest('[data-play],[data-vert],[data-seek]') : null;
     if (!el) return;
     var v = clip_el('clip-video');
+    /* A chapter of a match summary: jump there and play. */
+    if (el.hasAttribute('data-seek')) {
+      if (v) {
+        v.currentTime = Number(el.getAttribute('data-seek')) || 0;
+        v.play().catch(function () { /* the button works */ });
+      }
+      return;
+    }
     var vert = el.getAttribute('data-vert');
     if (vert) {
       var seg = clip_el('clip-play-vert');
@@ -5134,6 +5636,7 @@ function clip_wire() {
          was only loaded with the page, so it kept describing the first
          stream -- and "Play them" played that stream's clips under another. */
       clip_loadMade(clip_state.pick);
+      clip_mvLoadKnown(clip_state.pick);
     } else if (act === 'min') {
       clip_state.min = b.getAttribute('data-val'); clip_renderOptions();
     } else if (act === 'len') {
@@ -5211,6 +5714,24 @@ function clip_wire() {
       clip_installTools();
     } else if (act === 'strip-all') {
       clip_stripAll();
+      clip_mvRenderKnown();
+    } else if (act === 'mv-make') {
+      var mvk = b.getAttribute('data-val');
+      var mvs = clip_mvMake();
+      mvs[mvk] = !mvs[mvk];
+      clip_renderOptions();
+    } else if (act === 'outro-pick') {
+      clip_mvPickOutro();
+    } else if (act === 'outro-none') {
+      clip_mvNoOutro();
+    } else if (act === 'outro-play') {
+      clip_mvPlayOutro();
+    } else if (act === 'known-match') {
+      clip_mvPickKnown(Number(b.getAttribute('data-i')));
+      clip_mvRenderKnown();
+    } else if (act === 'copy-chapters') {
+      var cc2 = (clip_state.results || [])[Number(b.getAttribute('data-i'))];
+      clip_mvCopyChapters(cc2 && cc2.chapters_text);
     } else if (act === 'save-name') {
       clip_saveName();
     } else if (act === 'upload') {
@@ -5344,7 +5865,8 @@ window.PAGE_CLIPS = {
     clip_state.lastJob = j;
     if (wasBusy && !clip_state.busy) {
       clip_load();
-      if (j.state === 'done') toast('Clips are ready.', 'ok');
+      if (j.state === 'done') toast(j.scan_mode === 'summary'
+        ? 'Your match videos are ready.' : 'Clips are ready.', 'ok');
       else if (j.state === 'failed') toast(j.error || 'Clip job failed.', 'error');
     }
   }

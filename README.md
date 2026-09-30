@@ -92,10 +92,16 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     the game puts beside the crosshair — 26 of a 29-KO match, none false — so
     assists count too. The sounds and the music are synthesised, so nothing in
     it can draw a copyright claim. Footage where OBS froze is left out of both.
-  - Set **Outro for highlights** in Settings to your channel's own outro video and
-    every highlight ends on it: a white flash in from the result screen, the music
-    crossfading into the outro's sound, its last frame held before the fade. Any
-    size or frame rate works; it is fitted to the highlight.
+  - Your channel's **outro** closes every highlight: a white flash in from the
+    result screen, the music crossfading into the outro's sound, its last frame
+    held before the fade. Choose it on the Clips page (or in Settings); any size
+    or frame rate works, and a copy is kept beside your recordings.
+  - On the Clips page a Marvel Rivals stream offers just what applies: tick the
+    summary, the highlight or both, see the outro, and **Make match videos**.
+    The results come back grouped by match, with the summary's chapters one
+    press from the clipboard. The HUD reading is kept, so a second run on the
+    same recording — another outro, the highlight added — goes straight to
+    cutting, and the matches it found appear under the filmstrip to pick one.
 - **Reads the Counter-Strike demo when you have one.** Valve's own `.dem` gives
   exact kills, deaths and rounds — plus kills *through smoke* and *while flashed*,
   which no amount of looking at the screen can tell you. It finds the right demo

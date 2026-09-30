@@ -52,9 +52,11 @@ HOW A MATCH IS CUT (see plan())
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import subprocess
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -98,6 +100,7 @@ HP = (370, 480, 590, 530)     # the health bar
 BULLET = (1, 22, 10, 29)      # x0, y0, x1, y1 inside TL
 # The line of text under it, downsampled 2x for comparing phases.
 LINE = (12, 30, 470, 44)
+LINE_BYTES = -(-(len(range(LINE[1], LINE[3], 2)) * len(range(LINE[0], LINE[2], 2))) // 8)
 
 # The digits inside the full-scale ult crop.
 DIGITS = (40, 28, 118, 72)    # x0, y0, x1, y1
@@ -155,7 +158,7 @@ class Readings:
     def join(cls, parts: list["Readings"]) -> "Readings":
         keys = list(cls.__dataclass_fields__)
         if not parts:
-            return cls(**{k: np.zeros({"line": (0, 1), "ko_sig": (0, KO_SIG)}.get(k, (0,)),
+            return cls(**{k: np.zeros({"line": (0, LINE_BYTES), "ko_sig": (0, KO_SIG)}.get(k, (0,)),
                                       np.float32) for k in keys})
         return cls(**{k: np.concatenate([getattr(p, k) for p in parts])
                       for k in keys})
@@ -370,7 +373,10 @@ def _pack(t: list[float], rows: list[tuple]) -> Readings:
         ready=f32(cols[5]), hpfrac=f32(cols[6]),
         green=f32(cols[7]), red=f32(cols[8]),
         tall=np.asarray(cols[9], np.int16), tl_yellow=f32(cols[10]),
-        line=(np.stack(cols[11]) if rows else np.zeros((0, 1), np.uint8)),
+        # The right WIDTH even when empty: a span cut short by Cancel reads
+        # nothing, and a (0, 1) array beside the others' (n, 201) made the
+        # join fail -- so cancelling reported a numpy error, not "Cancelled".
+        line=(np.stack(cols[11]) if rows else np.zeros((0, LINE_BYTES), np.uint8)),
         own_rows=np.asarray(cols[12], np.int8),
         motion=np.asarray(motion if rows else [], np.float32),
         ko=np.asarray(cols[14], bool),
@@ -442,42 +448,189 @@ def _gpu_works(video: Path) -> bool:
 
 
 def _span(args) -> tuple[float, Readings]:
-    video, start, dur, on_gpu, cancelled = args
+    video, start, dur, on_gpu, cancelled, tick = args
     t, rows = [], []
     for at, img in _frames(video, start, dur, on_gpu, cancelled):
         t.append(at)
         rows.append(read_frame(img))
+        if tick:
+            tick()
     return start, _pack(t, rows)
 
 
 def scan(video: Path, *, start: float = 0.0, duration: float | None = None,
-         workers: int = 4, progress: Callable[[int, int], None] | None = None,
+         workers: int = 4,
+         progress: Callable[[float, float], None] | None = None,
          cancelled: Callable[[], bool] | None = None) -> Readings:
     """Read the whole window at FPS. -> Readings
 
     Spans run four at a time, as Valorant's do: the decode is the cost and one
     ffmpeg does not saturate a GPU decoder. Measured on a 38-minute 1080p60
     recording: 2 min 19 s (16x) for the same crops.
+
+    `progress(seconds read, seconds to read)`, about once a second. Counted a
+    frame at a time rather than a span at a time: the spans run side by side,
+    so they all finish together, and a count of finished spans sat at zero for
+    most of the read and then jumped -- and the time left was worked out from
+    that count.
     """
     video = Path(video)
     total = float(duration if duration is not None
                   else media_info(video).get("duration") or 0.0)
     on_gpu = _gpu_works(video)
+    lock = threading.Lock()
+    state = {"frames": 0, "said": 0.0}
+
+    def tick():
+        with lock:
+            state["frames"] += 1
+            now = time.monotonic()
+            if now - state["said"] < 1.0:
+                return
+            state["said"] = now
+            read = min(total, state["frames"] / FPS)
+        progress(read, total)
+
     spans = []
     s = 0.0
     while s < total:
-        spans.append((video, start + s, min(SPAN_SECONDS, total - s), on_gpu, cancelled))
+        spans.append((video, start + s, min(SPAN_SECONDS, total - s), on_gpu,
+                      cancelled, tick if progress else None))
         s += SPAN_SECONDS
-    done = 0
     parts: list[tuple[float, Readings]] = []
     with ThreadPoolExecutor(max(1, workers)) as ex:
         for got in ex.map(_span, spans):
             parts.append(got)
-            done += 1
-            if progress:
-                progress(done, len(spans))
+    if cancelled and cancelled():
+        # Whatever was read is a fragment; the caller checks and stops.
+        return Readings.join([])
+    if progress:
+        progress(total, total)
     parts.sort(key=lambda p: p[0])
-    return Readings.join([p for _s, p in parts])
+    return Readings.join([p for _s, p in parts if len(p)])
+
+
+# ------------------------------------------------------------ the cache
+#
+# READING IS MOST OF THE WAIT, and it only has to happen once. A second run on
+# the same recording -- another outro, the highlight switched on, a different
+# match picked out of the same file -- used to read every frame again: five
+# minutes on a 90-minute recording to arrive at readings already on disk. So
+# every read is kept, per recording, with the stretches it covers, and a later
+# window inside those stretches is sliced out instead of decoded.
+#
+# Keyed on the file's size and modification time as well as its path, so a
+# recording that was replaced or is still growing is never answered from stale
+# readings, and on READER_VERSION, so a change to what a frame is read for
+# throws the old readings away instead of planning from them.
+READER_VERSION = 3
+
+
+def cache_file(cache_dir: Path, video: Path) -> Path | None:
+    try:
+        st = Path(video).stat()
+        where = str(Path(video).resolve()).lower()
+    except OSError:
+        return None
+    key = hashlib.sha1(f"{where}|{st.st_size}|{int(st.st_mtime)}|{READER_VERSION}"
+                       .encode("utf-8")).hexdigest()[:20]
+    return Path(cache_dir) / f"{key}.npz"
+
+
+def _cached(path: Path | None) -> tuple[Readings | None, list[list[float]]]:
+    if path is None or not path.is_file():
+        return None, []
+    try:
+        r = Readings.load(path)
+        with np.load(path) as z:
+            covered = z["covered"].tolist() if "covered" in z.files else []
+        return r, covered
+    except Exception as e:                               # noqa: BLE001
+        log.warning("ignoring an unreadable HUD cache %s: %s", path.name, e)
+        return None, []
+
+
+def _covers(covered: list[list[float]], a: float, b: float) -> bool:
+    return any(c0 <= a + 1.0 and b - 1.0 <= c1 for c0, c1 in covered)
+
+
+def _take(r: Readings, sel) -> Readings:
+    return Readings(**{k: getattr(r, k)[sel] for k in Readings.__dataclass_fields__})
+
+
+def _merge(old: Readings | None, new: Readings) -> Readings:
+    """Both readings, in time order, with no two samples closer than 0.4 s --
+    two reads of an overlapping stretch sample it at different phases."""
+    if old is None or not len(old):
+        return new
+    keep = np.ones(len(new), bool)
+    if len(new) and len(old) > 1:
+        idx = np.clip(np.searchsorted(old.t, new.t), 1, len(old) - 1)
+        near = np.minimum(np.abs(old.t[idx] - new.t), np.abs(old.t[idx - 1] - new.t))
+        keep = near > 0.4
+    both = Readings.join([old, _take(new, keep)])
+    return _take(both, np.argsort(both.t, kind="stable"))
+
+
+def cached_scan(video: Path, cache_dir: Path | None, *, start: float = 0.0,
+                duration: float | None = None, workers: int = 4,
+                progress: Callable[[float, float], None] | None = None,
+                cancelled: Callable[[], bool] | None = None) -> tuple[Readings, bool]:
+    """`scan`, answered from an earlier read where one covers the window.
+    -> (readings, whether they came from the cache)"""
+    video = Path(video)
+    total = float(duration if duration is not None
+                  else media_info(video).get("duration") or 0.0)
+    a, b = float(start), float(start) + total
+    path = cache_file(cache_dir, video) if cache_dir else None
+    old, covered = _cached(path)
+    if old is not None and _covers(covered, a, b):
+        log.info("HUD readings for %s %.0f-%.0fs reused from the cache",
+                 video.name, a, b)
+        return _take(old, (old.t >= a - 0.01) & (old.t < b)), True
+    got = scan(video, start=a, duration=total, workers=workers,
+               progress=progress, cancelled=cancelled)
+    if path is None or (cancelled and cancelled()) or not len(got):
+        return got, False
+    try:
+        merged = _merge(old, got)
+        joined: list[list[float]] = []
+        for c0, c1 in sorted(covered + [[a, b]]):
+            if joined and c0 <= joined[-1][1] + 1.0:
+                joined[-1][1] = max(joined[-1][1], c1)
+            else:
+                joined.append([c0, c1])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.stem + ".tmp.npz")
+        np.savez_compressed(tmp, covered=np.asarray(joined, np.float64),
+                            **{k: getattr(merged, k) for k in Readings.__dataclass_fields__})
+        tmp.replace(path)
+    except Exception as e:                               # noqa: BLE001 - a cache is optional
+        log.warning("could not keep the HUD readings: %s", e)
+    return got, False
+
+
+def known_matches(cache_dir: Path, video: Path) -> dict:
+    """The matches already found in a recording, and the stretches already
+    read, from its cached readings. -> {matches, covered}
+
+    Only a stretch that was read whole can say where its matches are, so each
+    covered stretch is analysed on its own. The page draws these on the
+    filmstrip, so one match can be picked without reading anything again.
+    """
+    old, covered = _cached(cache_file(cache_dir, video))
+    if old is None:
+        return {"matches": [], "covered": []}
+    out = []
+    for c0, c1 in covered:
+        for m in matches(_take(old, (old.t >= c0 - 0.01) & (old.t <= c1))):
+            out.append({"start": round(m.start, 1), "end": round(m.end, 1),
+                        "result": m.result,
+                        "result_at": round(m.result_at, 1) if m.result else 0.0,
+                        "kos": len(m.all_kos()),
+                        "deaths": len(m.deaths)})
+    return {"matches": sorted(out, key=lambda m: m["start"]),
+            "covered": [[round(a, 1), round(b, 1)] for a, b in covered]}
 
 
 def hud_found(r: Readings) -> bool:
@@ -533,6 +686,15 @@ class Match:
     @property
     def seconds(self) -> float:
         return self.end - self.start
+
+    def all_kos(self) -> list[float]:
+        """Every KO, from the notice and the feed together.
+
+        The notice is the list; a feed row adds a KO only where no notice was
+        seen. Two notices a second apart are a double KO, not one seen twice.
+        """
+        extra = [k for k in self.kills if not any(abs(k - n) <= 1.5 for n in self.kos)]
+        return sorted(self.kos + extra)
 
 
 # Gaps inside a match that are not the end of it: a round change goes dark for

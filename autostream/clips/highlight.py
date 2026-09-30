@@ -73,10 +73,7 @@ class Shot:
 
 def kos(m: rivals.Match) -> list[float]:
     """Every KO this match, from the notice and the feed together."""
-    # The notice is the list; a feed row adds a KO only where no notice was
-    # seen. Two notices a second apart are a double KO, not one seen twice.
-    extra = [k for k in m.kills if not any(abs(k - n) <= 1.5 for n in m.kos)]
-    return sorted(m.kos + extra)
+    return m.all_kos()
 
 
 def plan(r: rivals.Readings, m: rivals.Match) -> list[Shot]:

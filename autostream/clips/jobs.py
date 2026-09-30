@@ -106,6 +106,11 @@ def clip_key(start: float) -> str:
     return f"{float(start):.1f}"
 
 
+def _mmss(seconds: float) -> str:
+    s = int(max(0.0, seconds))
+    return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
+
+
 def _hms(seconds: float) -> str:
     s = int(max(0.0, seconds))
     return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}"
@@ -133,6 +138,15 @@ def _stamp_folder(started: float | None, game: str | None,
     if style and style != "custom":
         name += f"_{plan.slug(style)}"
     return name
+
+
+def _summary_game(game_key: str | None, game: str | None) -> bool:
+    """Whether this game is made into match videos rather than clips."""
+    try:
+        prof = profiles.for_game(game_key, game)
+    except Exception:                                   # noqa: BLE001
+        return False
+    return bool(prof and prof.mode == "summary")
 
 
 def _free_folder(root: Path, name: str) -> Path:
@@ -163,8 +177,12 @@ class ClipJob:
         self.game_key = game_key
         self.options = options
         self.session = session or {}
-        self.folder = _free_folder(
-            Path(outdir), _stamp_folder(started, game, options.get("style")))
+        # A game made into match videos is not cut in a style at all, and a
+        # folder called "..._shortform" holding two ten-minute videos says the
+        # wrong thing about what is in it.
+        tag = ("match-videos" if _summary_game(game_key, game)
+               else options.get("style"))
+        self.folder = _free_folder(Path(outdir), _stamp_folder(started, game, tag))
 
         self.state = "queued"          # queued|running|done|failed|cancelled
         self.step = "scan"
@@ -224,6 +242,9 @@ class ClipJob:
         self.win_start = 0.0
         self.win_end = 0.0
         self.win_whole = True
+        # A match-video run's progress in estimated seconds of work, and how
+        # long the work already done really took -- see _summary_eta.
+        self.sm: dict = {}
 
         # When Cancel was pressed. A cancelled scan does not stop at once --
         # the chunks already running finish on their own -- so the page has to
@@ -261,6 +282,8 @@ class ClipJob:
         if self.state not in ("running", "queued"):
             return None
         now = time.time()
+        if mode == "summary":
+            return self._summary_eta(now)
 
         after_scan = (clips * CUT_SECONDS_PER_CLIP + MONTAGE_SECONDS
                       if clips else 0.0)
@@ -303,6 +326,11 @@ class ClipJob:
                 "eta": None,          # filled in below, outside the lock
                 "source": self.source.name,
                 "scan_mode": self.scan_mode,
+                # Which match videos this run makes, so the page draws only
+                # the steps it will actually take.
+                "make": ({"summaries": bool(self.options.get("summaries", True)),
+                          "highlights": bool(self.options.get("highlights", True))}
+                         if self.scan_mode == "summary" else None),
                 "demo_note": self.demo_note,
                 "needs_demo": self.needs_demo,
                 "demo_file": self.demo.get("demo", "") if self.demo else "",
@@ -342,10 +370,14 @@ class ClipJob:
         try:
             self._set(state="running")
             self._run()
-            what = ("match videos (summaries and highlights)"
-                    if self.scan_mode == "summary" else "clips")
-            self._set(state="done", step="montage", done=self.total,
-                      message=f"{len(self.results)} {what} in {self.folder.name}")
+            if self.scan_mode == "summary":
+                n = sum(1 for x in self.results if x.get("master"))
+                self._set(state="done", step="done", done=self.total,
+                          message=f"{n} match video{'' if n == 1 else 's'} "
+                                  f"in {self.folder.name}")
+            else:
+                self._set(state="done", step="montage", done=self.total,
+                          message=f"{len(self.results)} clips in {self.folder.name}")
         except detect.Cancelled:
             self._set(state="cancelled", message="Cancelled")
             log.info("clip job cancelled")
@@ -1668,56 +1700,145 @@ class ClipJob:
                           f"{len(exact)} kills, exactly")
         return {"kills": exact, "rounds": rounds, "about": about}
 
+    # ------------------------------------------------ Marvel Rivals
+
+    # What is left after the read, before the read has said how many matches
+    # there are: seconds of work per second of recording, for each kind of
+    # video. From the measured runs -- a 38-minute recording, a third of it
+    # menus, took 212 s after its read for the summaries and 208 s more for
+    # the highlights; an 11-minute window that was all match took 137 s and
+    # 123 s. Somewhere between, for a typical recording.
+    AFTER_READ = {"summaries": 0.10, "highlights": 0.10}
+
+    def _summary_eta(self, now: float) -> int | None:
+        """Seconds left for a match-video run, or None before anything is known.
+
+        While reading: the read's own pace for what is left of it, plus a
+        per-second-of-recording guess at the cutting. After: the cost of every
+        video still to make (clips/summary.py), scaled by how the videos
+        already made compared with their estimate -- a busy PC corrects it.
+        """
+        with self._lock:
+            step, done, total = self.step, self.done, self.total
+            begun = self.step_started
+            sm = dict(self.sm)
+        if step == "scan":
+            if not total:
+                return None
+            left_read = None
+            if done > 0:
+                left_read = (now - begun) / done * max(0, total - done)
+            elif self.scan_seconds:
+                left_read = total / scan_rate("summary") - (now - begun)
+            if left_read is None:
+                return None
+            after = self.scan_seconds * sum(
+                rate for kind, rate in self.AFTER_READ.items() if sm.get(kind, True))
+            return int(max(0.0, left_read) + after)
+        cost_total = sm.get("total") or 0.0
+        if not cost_total:
+            return None
+        cost_done = sm.get("done") or 0.0
+        spent = sm.get("spent") or 0.0
+        ratio = spent / cost_done if cost_done > 1 and spent > 1 else 1.0
+        ratio = min(4.0, max(0.25, ratio))
+        in_unit = now - (sm.get("unit_at") or now)
+        unit = sm.get("unit") or 0.0
+        left = (cost_total - cost_done - unit) * ratio + max(0.0, unit * ratio - in_unit)
+        return int(max(0.0, left))
+
     def _summarise(self, span: float) -> None:
-        """Marvel Rivals: one summary per match instead of clips around kills."""
+        """Marvel Rivals: match videos instead of clips around kills."""
         from . import rivals, summary
 
         if self.options.get("plan_only"):
             raise RuntimeError(
-                f"{self.game} is made into a match summary, which has no clips "
-                f"to review. Use Make clips.")
+                f"{self.game} is made into match videos, which have no clips "
+                f"to review first. Use Make match videos.")
+        want_summaries = bool(self.options.get("summaries", True))
+        want_highlights = bool(self.options.get("highlights", True))
+        if not (want_summaries or want_highlights):
+            raise RuntimeError("Nothing to make: choose a summary, a highlight, or both.")
+        with self._lock:
+            self.sm = {"summaries": want_summaries, "highlights": want_highlights}
 
-        def prog(d, t):
-            self._set(done=d, total=t,
-                      message=f"Reading the HUD - {d} of {t} chunks")
-        self._set(step="scan", message="Reading the HUD...")
-        r = rivals.scan(self.source, start=self.win_start, duration=span,
-                        progress=prog, cancelled=lambda: self._cancel.is_set())
+        def prog(read, total):
+            self._set(done=int(read), total=max(1, int(total)),
+                      message=f"Reading the HUD - {_mmss(read)} of {_mmss(total)} read")
+        self._set(step="scan", done=0, total=max(1, int(span)),
+                  message="Reading the HUD...")
+        cache = Path(self.folder).parent / ".cache" / "rivals"
+        r, reused = rivals.cached_scan(
+            self.source, cache, start=self.win_start, duration=span,
+            progress=prog, cancelled=lambda: self._cancel.is_set())
         self._check()
+        if reused:
+            self._set(message="Using the HUD reading from an earlier run")
         if not rivals.hud_found(r):
             raise RuntimeError(
-                f"No {self.game} HUD found in this recording. The summary reads "
-                f"the HUD at the game's default scale on a 16:9 recording; a "
-                f"different HUD scale or a stretched resolution will not read.")
+                f"No {self.game} HUD found in this part of the recording. It reads "
+                f"the HUD at the game's default scale on a 16:9 recording, so a "
+                f"different HUD scale or a stretched resolution will not read -- "
+                f"and neither will a stretch with no match in it.")
         found = rivals.matches(r)
         if not found:
             self._set(summary={"matches": 0, "clips": 0})
             raise RuntimeError(
-                f"The {self.game} HUD is in this recording, but no whole match "
-                f"is -- a summary needs at least three minutes of one.")
+                f"The {self.game} HUD is in this part of the recording, but no "
+                f"whole match is. A match needs at least three minutes of play; "
+                f"widen the part you chose if it cuts one short.")
         self._set(clip_count=len(found))
-        # Kept beside the output so a re-plan never needs the scan again.
         self.folder.mkdir(parents=True, exist_ok=True)
-        r.save(self.folder / "readings.npz")
+        # WHAT THIS RUN WAS, for the next visit to the page: the stream list
+        # says "made before" from a run's session.json, and without one these
+        # runs were invisible to it -- the same recording could be made into
+        # the same videos again with nothing on screen to say it already had.
+        atomic.write_json(self.folder / "session.json", {
+            "kind": "match-videos",
+            "source": str(self.source), "game": self.game,
+            "game_key": self.game_key,
+            "window": [round(self.win_start, 2), round(self.win_end, 2)],
+            "source_seconds": round(self.source_seconds, 2),
+            "recording_seconds": round(self.source_seconds, 2),
+            "options": {"summaries": want_summaries, "highlights": want_highlights,
+                        "outro": str(self.options.get("outro") or "")},
+            "matches": [{"start": round(m.start, 2), "end": round(m.end, 2),
+                         "result": m.result, "deaths": len(m.deaths),
+                         "ults": len(m.casts), "kos": len(m.all_kos())} for m in found],
+        })
 
-        def cut_prog(d, t, msg):
-            self._set(step="cut", done=d, total=t, message=msg)
+        def cut_prog(p):
+            now = time.time()
+            with self._lock:
+                sm = self.sm
+                if sm.get("unit_at"):
+                    sm["spent"] = sm.get("spent", 0.0) + (now - sm["unit_at"])
+                sm.update(total=p["total"], done=p["done"], unit=p["cost"], unit_at=now)
+            if p["kind"] == "done":
+                return
+            n, i = p["matches"], p["match"]
+            of = f" of {n}" if n > 1 else ""
+            if p["kind"] == "summary":
+                self._set(step="cut", done=int(p["done"]), total=int(p["total"]) or 1,
+                          message=f"Cutting the summary of match {i}{of} - "
+                                  f"{_mmss(p['match_seconds'])} of play down to "
+                                  f"{_mmss(p['seconds'])}")
+            else:
+                self._set(step="highlight", done=int(p["done"]),
+                          total=int(p["total"]) or 1,
+                          message=f"Making the highlight of match {i}{of} - "
+                                  f"{_mmss(p['seconds'])} of fights")
+        self._set(step="cut", done=0, total=1, message="Planning the cuts")
         self.results = summary.build(
             self.source, r, self.folder / "summaries", game=self.game,
             when=self.session.get("started") or self.started_at,
             encoder=self.options.get("encoder", "auto"),
-            highlights=bool(self.options.get("highlights", True)),
+            summaries=want_summaries, highlights=want_highlights,
             outro=str(self.options.get("outro") or "") or None,
             progress=cut_prog, check=self._check)
-        whole = [x for x in self.results if x.get("kind") != "highlight"]
-        self._set(summary={
-            "matches": len(whole), "clips": len(self.results),
-            "highlights": len(self.results) - len(whole),
-            "kills": sum(x.get("kills", 0) for x in whole),
-            "covered": round(sum(x["duration"] for x in whole), 1),
-            "deaths": sum(x["deaths"] for x in whole),
-            "ults": sum(x["ults"] for x in whole),
-            "cut_seconds": round(sum(x["cut_seconds"] for x in whole), 1),
+        over = summary.overview(self.results)
+        self._set(clip_count=over["videos"], summary={
+            **over, "clips": over["videos"], "reused_reading": reused,
         })
 
     def _write_manifest(self) -> None:

@@ -165,6 +165,11 @@ _CONTENT_TYPES = {
 }
 
 
+# Answered WITHOUT the token, before anything else. Only files that are
+# public anyway -- the app's own icon, which every browser asks for unbidden.
+_PUBLIC_FILES = {"/favicon.ico"}
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = "AutoStream"
     protocol_version = "HTTP/1.1"
@@ -277,6 +282,29 @@ class _Handler(BaseHTTPRequestHandler):
         from .clips import intros
 
         self._media(path, intros.folder(), (".mp4",), "intro")
+
+    def _favicon(self) -> None:
+        ico = Path(__file__).resolve().parent / "ui" / "assets" / "autostream.ico"
+        try:
+            self._send(200, ico.read_bytes(), "image/x-icon")
+        except OSError:
+            self._send(404, b"", "image/x-icon")
+
+    def _outro_video(self) -> None:
+        """Stream the chosen outro for its preview, and nothing else.
+
+        Takes no path at all: it serves the one file the outro setting names --
+        a whitelist of exactly one, like the reel's song -- so the query string
+        cannot point it anywhere else. Not confined to the outros folder,
+        because the setting can also be typed on the Settings page, and a
+        preview that refuses the outro actually in use is no preview.
+        """
+        path = str(cfg.load().clips.outro or "")
+        if not path:
+            # 400, not 404: the route is here, there is just nothing to play.
+            self._json({"error": "No outro is chosen."}, 400)
+            return
+        self._media(path, Path(path).parent, self.app.OUTRO_TYPES, "outro")
 
     def _sound(self, path: str) -> None:
         """Stream one sound effect, so the effects preview can play it.
@@ -413,6 +441,12 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path)
+        if u.path in _PUBLIC_FILES:
+            # Every browser asks for this on its own, never with the token, and
+            # a 403 for it was the one error on an otherwise clean console. The
+            # app's own icon, which is public anyway.
+            self._favicon()
+            return
         if not self._authed(u.query):
             self._send(403, b"Add ?k=<token>. See the AutoStream log.",
                        "text/plain; charset=utf-8")
@@ -485,6 +519,13 @@ class _Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/clips/video":
             q = parse_qs(u.query)
             self._video((q.get("path") or [""])[0])
+        elif u.path == "/api/clips/outro":
+            self._json(self.app.clips_outro_info())
+        elif u.path == "/api/clips/outro-video":
+            self._outro_video()
+        elif u.path == "/api/clips/known-matches":
+            q = parse_qs(u.query)
+            self._json(self.app.clips_known_matches((q.get("path") or [""])[0]))
         elif u.path == "/api/clips/existing":
             q = parse_qs(u.query)
             self._json(self.app.clips_existing((q.get("folder") or [""])[0]))
@@ -859,6 +900,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.diagnostics())
             elif p == "/api/clips/pick":
                 self._json(self.app.clips_pick(str(b.get("kind") or "video")))
+            elif p == "/api/clips/outro-set":
+                self._json(self.app.clips_outro_set(b))
             elif p == "/api/clips/probe":
                 self._json(self.app.clips_probe(b))
             elif p == "/api/clips/valorant/fetch":
@@ -1427,6 +1470,7 @@ class Server:
             r["made_clips"] = made["clips"] if made else 0
             r["made_folder"] = made["folder"] if made else ""
             r["made_when"] = made["when"] if made else 0
+            r["made_kind"] = made["kind"] if made else ""
             # Games can only be counted, not distinguished from assists.
             r["counts_assists"] = bool(prof and prof.counts_assists)
             # How this game's kills are found, so the page can say. "killfeed"
@@ -1574,11 +1618,13 @@ class Server:
             made = 0
             try:
                 made = len(list((folder / "vertical").glob("*.mp4"))) or \
-                    len(list((folder / "clips").glob("*.mp4")))
+                    len(list((folder / "clips").glob("*.mp4"))) or \
+                    len(list((folder / "summaries").glob("*.mp4")))
             except OSError:
                 pass
             if made:
                 runs[src] = {"folder": str(folder), "clips": made,
+                             "kind": str(data.get("kind") or "clips"),
                              "when": int(sidecar.stat().st_mtime)}
         return kills, runs
 
@@ -1976,7 +2022,11 @@ class Server:
             "voice": bool(body.get("voice", c.clips.voice)),
             "voice_name": str(body.get("voice_name") or c.clips.voice_name),
             "music": str(body.get("music") or c.clips.music),
-            "outro": str(body.get("outro") or c.clips.outro),
+            # Present in the body means THIS run's choice, blank included --
+            # "no outro this time" must not fall back to the setting.
+            "outro": str(body["outro"] if "outro" in body else c.clips.outro),
+            "summaries": bool(body.get("summaries", True)),
+            "highlights": bool(body.get("highlights", True)),
             "arc": bool(body.get("arc", c.clips.arc)),
             "order": str(body.get("order") or c.clips.order),
             "promo": bool(body.get("promo", c.clips.promo)),
@@ -3534,6 +3584,9 @@ class Server:
                 title = "Choose a GIF or video for the intro"
                 types = [("Video or GIF", " ".join("*" + t for t in intros.TYPES)),
                          ("All files", "*.*")]
+            elif kind == "outro":
+                title = "Choose your channel's outro video"
+                types = [("Video", "*.mp4 *.mov *.mkv *.webm"), ("All files", "*.*")]
             elif audio:
                 title = "Choose a track for the reel"
                 types = [("Audio", "*.mp3 *.flac *.m4a *.wav *.aac *.ogg *.opus")]
@@ -3556,9 +3609,100 @@ class Server:
         # An intro is measured by intros.add() a moment later, and clips_probe
         # also goes looking for a matching replay -- work with no answer to
         # give about a GIF.
-        if kind != "intro":
+        if kind not in ("intro", "outro"):
             out.update(self.clips_probe({"path": str(path)}))
         return out
+
+    # ------------------------------------------------ the highlight outro
+
+    OUTRO_TYPES = (".mp4", ".mov", ".mkv", ".webm")
+
+    @staticmethod
+    def outros_dir() -> Path:
+        return paths.VIDEO_HOME / "outros"
+
+    def clips_outro_info(self) -> dict:
+        """The outro highlights end on, as the Clips page shows it."""
+        from .clips.tools import media_info
+
+        c = cfg.load()
+        path = str(c.clips.outro or "")
+        if not path:
+            return {"ok": True, "path": ""}
+        p = Path(path)
+        if not p.is_file():
+            return {"ok": True, "path": path, "missing": True, "name": p.name}
+        out = {"ok": True, "path": str(p), "name": p.name}
+        try:
+            info = media_info(p)
+            out.update(seconds=round(float(info.get("duration") or 0.0), 2),
+                       width=info.get("width"), height=info.get("height"),
+                       sound=bool(info.get("audio_tracks")))
+        except Exception as e:                              # noqa: BLE001
+            out["error"] = f"Could not read it: {str(e)[:160]}"
+        return out
+
+    def clips_outro_set(self, body: dict) -> dict:
+        """Choose the outro, or none. -> the new clips_outro_info().
+
+        THE FILE IS COPIED IN, to the outros folder beside the recordings. An outro picked
+        out of Downloads is the file most likely to be tidied away, and every
+        highlight after that would quietly end without it; a copy beside the
+        recordings keeps working, and is also the one place the page is
+        allowed to stream it from for the preview.
+        """
+        import shutil
+
+        path = str(body.get("path") or "").strip()
+        if not path:
+            res = self.save_settings({"clips.outro": ""})
+            return (self.clips_outro_info() if res.get("ok")
+                    else {"ok": False, "error": res.get("error") or "Could not save."})
+        src = Path(path)
+        if src.suffix.lower() not in self.OUTRO_TYPES:
+            return {"ok": False, "error": "Choose an MP4, MOV, MKV or WebM video."}
+        if not src.is_file():
+            return {"ok": False, "error": "That file is not there any more."}
+        if src.stat().st_size > 500 * 1024 * 1024:
+            return {"ok": False,
+                    "error": "That is over 500 MB - an outro is a few seconds long."}
+        try:
+            from .clips.tools import media_info
+
+            secs = float(media_info(src).get("duration") or 0.0)
+        except Exception:                                   # noqa: BLE001
+            return {"ok": False, "error": "That file does not play as a video."}
+        if not 1.0 <= secs <= 60.0:
+            return {"ok": False,
+                    "error": f"That video is {secs:.0f} seconds long. An outro "
+                             f"should be between 1 and 60 seconds."}
+        home = self.outros_dir()
+        try:
+            home.mkdir(parents=True, exist_ok=True)
+            dst = home / src.name
+            if src.resolve() != dst.resolve():
+                shutil.copy2(src, dst)
+        except OSError as e:
+            return {"ok": False, "error": f"Could not copy it into {home}: {e}"}
+        res = self.save_settings({"clips.outro": str(dst)})
+        if not res.get("ok"):
+            return {"ok": False, "error": res.get("error")
+                    or "; ".join(res.get("errors", {}).values()) or "Could not save."}
+        return self.clips_outro_info()
+
+    def clips_known_matches(self, path: str) -> dict:
+        """Matches already found in a recording, from an earlier reading."""
+        from .clips import rivals
+
+        src = Path(path or "")
+        if not src.is_file():
+            return {"ok": True, "matches": [], "covered": []}
+        cache = self._clips_dir(cfg.load()) / ".cache" / "rivals"
+        try:
+            return {"ok": True, **rivals.known_matches(cache, src)}
+        except Exception as e:                              # noqa: BLE001
+            log.warning("could not list the known matches: %s", e)
+            return {"ok": True, "matches": [], "covered": []}
 
     def clips_probe(self, body: dict) -> dict:
         """What a file the user picked is, without starting anything.
