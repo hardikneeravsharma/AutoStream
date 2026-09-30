@@ -99,9 +99,10 @@ CONTROLS: list[Control] = [
 
     # --------------------------------------------------------- dashboard
     Control("/api/chat", "POST", CALL, "Send chat", "dashboard",
-            body={"text": "hello from verify"}, expect=_ok,
+            body={"text": "hello from verify"}, expect=_ok, status=(200, 409),
             reject={"text": "   "},
-            why="empty text must not reach the broadcast"),
+            why="empty text must not reach the broadcast; with no live chat to "
+                "send to (the built app's test home streams nothing) it is 409"),
 
     # ----------------------------------------------------------- library
     Control("/api/launch", "POST", CALL, "Open / Open + stream", "library",
