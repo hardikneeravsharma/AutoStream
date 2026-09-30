@@ -1707,6 +1707,7 @@ class ClipJob:
             when=self.session.get("started") or self.started_at,
             encoder=self.options.get("encoder", "auto"),
             highlights=bool(self.options.get("highlights", True)),
+            outro=str(self.options.get("outro") or "") or None,
             progress=cut_prog, check=self._check)
         whole = [x for x in self.results if x.get("kind") != "highlight"]
         self._set(summary={

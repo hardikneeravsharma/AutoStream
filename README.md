@@ -92,6 +92,10 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     the game puts beside the crosshair — 26 of a 29-KO match, none false — so
     assists count too. The sounds and the music are synthesised, so nothing in
     it can draw a copyright claim. Footage where OBS froze is left out of both.
+  - Set **Outro for highlights** in Settings to your channel's own outro video and
+    every highlight ends on it: a white flash in from the result screen, the music
+    crossfading into the outro's sound, its last frame held before the fade. Any
+    size or frame rate works; it is fitted to the highlight.
 - **Reads the Counter-Strike demo when you have one.** Valve's own `.dem` gives
   exact kills, deaths and rounds — plus kills *through smoke* and *while flashed*,
   which no amount of looking at the screen can tell you. It finds the right demo

@@ -1976,6 +1976,7 @@ class Server:
             "voice": bool(body.get("voice", c.clips.voice)),
             "voice_name": str(body.get("voice_name") or c.clips.voice_name),
             "music": str(body.get("music") or c.clips.music),
+            "outro": str(body.get("outro") or c.clips.outro),
             "arc": bool(body.get("arc", c.clips.arc)),
             "order": str(body.get("order") or c.clips.order),
             "promo": bool(body.get("promo", c.clips.promo)),

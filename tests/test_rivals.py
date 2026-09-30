@@ -418,3 +418,43 @@ def test_the_highlight_counts_kos_from_both_witnesses():
     assert highlight.kos(m) == [149.5, 200.0, 300.0]
     m.result = "victory"
     assert highlight.subtitle_for(m) == "VICTORY  -  3 KOs"
+
+
+def test_the_outro_joins_with_a_flash_and_the_music_crossfades_into_it():
+    from autostream.clips import highlight
+    shots = [highlight.Shot(0, 4, "intro"), highlight.Shot(100, 120, "fight"),
+             highlight.Shot(300, 305, "result")]
+    durs = [s.seconds for s in shots]
+    plain, total = highlight.graph(shots, durs, [110.0], [], title=False)
+    text, with_outro = highlight.graph(shots, durs, [110.0], [], title=False, outro=6.0)
+    assert with_outro == pytest.approx(total + 6.0 - highlight.OUTRO_JOIN)
+    # The outro is input n+3, after whoosh, hit and the music bed.
+    assert "[3:v]" not in plain and "[6:v]xfade=transition=fadewhite" in text
+    assert "[6:a]volume=" in text and "acrossfade" in text.split("[6:a]")[1]
+    # The picture fades out at the end of the outro, not of the match.
+    assert f"fade=t=out:st={with_outro - highlight.OUTRO_FADE:.3f}" in text
+
+
+def test_a_missing_outro_file_ends_on_the_result(tmp_path, monkeypatch):
+    from autostream.clips import cutter, highlight
+    seen = {}
+
+    def fake_cut(source, start, dur, out, **kw):
+        out.write_bytes(b"")
+        return out
+    monkeypatch.setattr(cutter, "_cut", fake_cut)
+    monkeypatch.setattr(highlight, "media_info", lambda p: {"duration": 10.0})
+    monkeypatch.setattr(highlight, "filter_script_flag", lambda: "-/filter_complex")
+    shots = [highlight.Shot(0, 10, "fight")]
+    m = rivals.Match(start=0, end=10)
+    out = tmp_path / "hl.mp4"
+    tmp = out.with_suffix(".tmp.mp4")
+
+    def run(folder, *a):
+        seen["args"] = a
+        tmp.write_bytes(b"")
+    monkeypatch.setattr(highlight, "_in_dir", run)
+    highlight.render(tmp_path / "src.mp4", shots, m, out, title="T", subtitle="S",
+                     outro=tmp_path / "gone.mp4")
+    assert "outro_fit.mp4" not in seen["args"]
+    assert out.is_file()
