@@ -868,9 +868,11 @@ function studio_renderLib() {
   const lib = studio.lib;
   if (!lib) return;
   const games = lib.games.length;
+  const runs = lib.games.reduce((n, g) => n + g.folders.length, 0);
   studio_el('studio-sub').textContent = lib.clip_count
-    ? lib.clip_count + ' clips from ' + lib.games.reduce((n, g) => n + g.folders.length, 0) +
-      ' runs across ' + games + (games === 1 ? ' game' : ' games') +
+    ? lib.clip_count + (lib.clip_count === 1 ? ' clip' : ' clips') + ' from ' +
+      runs + (runs === 1 ? ' run' : ' runs') +
+      ' across ' + games + (games === 1 ? ' game' : ' games') +
       '. Pick any of them, from any run, and make a reel.'
     : 'No clips yet. Cut some on the Clips page and they will appear here.';
   studio_el('studio-games').innerHTML =

@@ -389,6 +389,11 @@ class SetupFlow:
             # whatever it was given: "25:00" went into config.yaml as quiet
             # hours, where the engine could not parse it and quietly treated it
             # as no quiet hours at all, and -5 was clamped to 0 without a word.
+            # Half a pair went the same way: "25:99" with the other box empty
+            # was saved as no quiet hours, never checked, never mentioned.
+            if bool(a) != bool(b):
+                return {"ok": False, "error": "Quiet hours: fill in both times, "
+                                              "or leave both empty for none."}
             fields = {
                 "timing.arm_delay": _int(v.get("arm_delay"), 30),
                 "timing.abort_grace": _int(v.get("abort_grace"), 20),

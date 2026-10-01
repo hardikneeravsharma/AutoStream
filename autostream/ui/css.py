@@ -1946,6 +1946,16 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 .pick-title{font-size:1.05rem;font-weight:650}
 .pick-sub{color:var(--text-secondary);font-size:.9rem;line-height:1.45}
 .pick-meta{margin-top:2px;color:var(--text-tertiary);font-size:.8rem}
+/* The cards are <button>s inside the wizard, and `#setup-root button` outranks
+   .pick: it pinned them to one control height and centred them, so three lines
+   of text spilled out over the heading on the first screen anyone sees. */
+#setup-root button.pick{
+  height:auto;display:flex;align-items:stretch;justify-content:flex-start;
+  padding:16px;line-height:1.35;font-size:inherit;font-weight:inherit;
+  border-radius:var(--radius-lg,12px);border-color:var(--border-subtle);
+  background:var(--surface-raised);
+}
+#setup-root button.pick:hover{border-color:var(--accent);background:var(--surface-hover)}
 
 /* A results row that can be ticked for upload. The tick sits where the rank
    number was, so the row does not reflow when a run becomes publishable. */
@@ -2800,6 +2810,11 @@ ol.steps-list li{margin-block:var(--space-4)}
   .app-actions{grid-column:1;grid-row:auto;justify-content:flex-start}
   .grid2{grid-template-columns:1fr}
   .card{padding:var(--pad-card-tight)}
+  /* A title beside its action button ran the button off the card's edge on a
+     phone ("Build a report"); below 480px the button drops under the title. */
+  .card-head{flex-wrap:wrap}
+  /* The log's full path is one unbroken word, wider than a phone. */
+  #log-path{overflow-wrap:anywhere}
 }
 
 /* Reduced motion: durations collapse but the LIVE ring is never removed -- it is
@@ -3255,7 +3270,7 @@ STUDIO_CSS = r"""
 .bin-slot input{accent-color:var(--accent);margin:0}
 .bin-slot:has(input:checked){border-color:var(--accent);background:var(--accent-muted);color:var(--text-primary)}
 
-.bin-sec{display:grid;gap:var(--space-4)}
+.bin-sec{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-4)}
 .bin-sec-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px var(--space-5);align-items:end;
   border-bottom:2px solid var(--text-primary);padding-bottom:8px}
 .bin-sec-head h2{font-family:var(--font-condensed);font-weight:700;text-transform:uppercase;margin:0;
@@ -3263,6 +3278,12 @@ STUDIO_CSS = r"""
 .bin-sec-head .count{font:500 11px var(--font-mono);letter-spacing:.08em;text-transform:uppercase;
   color:var(--text-tertiary);white-space:nowrap}
 .bin-sec-head p{grid-column:1/-1;margin:0;color:var(--text-secondary);font-size:13.5px;max-width:78ch}
+/* On a phone the nowrap count beside the heading was wider than the screen and
+   pushed the whole drawer off its right edge; it goes under the heading there. */
+@media (max-width:479px){
+  .bin-sec-head{grid-template-columns:minmax(0,1fr)}
+  .bin-sec-head .count{white-space:normal}
+}
 
 .bin-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:var(--space-4)}
 .bin-card{display:flex;flex-direction:column;gap:0;text-align:left;padding:0;cursor:pointer;font:inherit;

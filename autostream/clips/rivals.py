@@ -88,6 +88,7 @@ KO_FULL = (1170 / 1920, 405 / 1080, 380 / 1920, 36 / 1080)
 KW, KH = 380, 36
 FRAME_H = H + FH + KH
 KO_SIG = 291                  # bytes: the notice's text, 2x downsampled, as bits
+KO_TEXT_MAX = 0.15            # of that text crop white: a name, not a lit wall
 THUMB = (48, 27)              # the picture this small, for spotting frozen footage
 
 # Half-size crops, (x0, y0, x1, y1).
@@ -817,8 +818,16 @@ def _kos(r: Readings, a: int, b: int,
     red flourish that reads as an icon with no name -- which counted one KO
     twice before the rule. Notices under the death screen are dropped, as for
     the feed. Measured: 26 of a match's 29 KOs, none false.
+
+    A BRIGHT WALL IS NOT A NOTICE. On Yggsgard's cream-and-gold walls the
+    notice's white test passed with nothing on screen: five KOs counted that
+    never happened, all of them the wall filling the crop. A name is a short
+    run of text -- its white covered 1-9% of the crop over 102 real notices
+    (median 5%) -- and a wall covers the whole width, 19% and up. So a sample
+    whose "text" is more than KO_TEXT_MAX of the crop is not read as one.
     """
     bits = np.unpackbits(r.ko_sig[a:b], axis=1).astype(bool)
+    up = r.ko[a:b] & (bits.mean(1) <= KO_TEXT_MAX)
 
     def same(p, q):
         u = (p | q).sum()
@@ -828,7 +837,7 @@ def _kos(r: Readings, a: int, b: int,
     last = None
     gone = 99
     for i in range(b - a - 1):
-        if r.ko[a + i] and r.ko[a + i + 1] and same(bits[i], bits[i + 1]):
+        if up[i] and up[i + 1] and same(bits[i], bits[i + 1]):
             if last is None or gone >= 2 or not same(bits[i], last):
                 t = float(r.t[a + i])
                 if not out or t - out[-1] >= 1.0:
