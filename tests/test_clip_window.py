@@ -457,6 +457,17 @@ def test_asking_for_the_fast_reader_swaps_the_mode(tmp_path):
            jobs.scan_rate(prof.mode, prof.rounds) * 5
 
 
+def test_the_tally_alone_means_no_replay_search(tmp_path):
+    """Chosen as "Kill tally only", a run still matched its kills against
+    every replay on disk afterwards. The demo search keys off prof.demos."""
+    from autostream.clips import profiles
+
+    prof = profiles.for_game("cs2.exe")
+    assert prof.demos
+    assert _job_for(tmp_path)._as_asked(prof, {"fallback_mode": "cards"}).demos is False
+    assert _job_for(tmp_path)._as_asked(prof, {}).demos is True
+
+
 def test_not_asking_changes_nothing(tmp_path):
     from autostream.clips import profiles
 
@@ -484,3 +495,27 @@ def test_the_fast_reader_says_what_it_gives_up(tmp_path):
     job._as_asked(profiles.for_game("cs2.exe"), {"fallback_mode": "cards"})
     assert "kill tally" in job.demo_note
     assert "CLUTCH" in job.demo_note
+
+
+def test_a_recording_with_no_kills_is_a_finished_run(tmp_path, monkeypatch):
+    """Read and found nothing used to end as "failed" -- "Could not finish",
+    "Failed - see the log" and an error toast -- for a run that had done
+    exactly what it was asked."""
+    from autostream.clips import jobs
+
+    src = tmp_path / "menu.mp4"
+    src.write_bytes(b"")
+    job = jobs.ClipJob(src, game="Counter-Strike 2", game_key="cs2.exe",
+                       outdir=tmp_path / "out", options={})
+
+    def nothing():
+        job._set(summary={"kills": 0, "clips": 0, "covered": 0,
+                          "coverage": 0, "runtime": 0})
+        raise jobs.NoKills("No kills found in this recording.")
+
+    monkeypatch.setattr(job, "_run", nothing)
+    job.run()
+    assert job.state == "done" and not job.error
+    assert job.results == []
+    assert job.summary["why"] == "No kills found in this recording."
+    assert "Failed" not in job.message

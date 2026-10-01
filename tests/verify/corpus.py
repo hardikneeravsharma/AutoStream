@@ -240,6 +240,33 @@ def _quiet_windows(hints: list[float], length: int, duration: float,
 # --------------------------------------------------------------- cutting
 
 
+def keyframe_at_or_before(video: Path, at: float) -> float | None:
+    """Where a stream-copied cut asked for at `at` actually starts.
+
+    Recorded beside the asked-for offset because the two differ by up to a
+    keyframe interval, and cs2_03 was cut 3.08 s earlier than its offset
+    said -- measured against the match demo, which anything mapping source
+    time onto the excerpt (a demo, a log) would otherwise be off by.
+    """
+    exe = tools.binary("ffprobe")
+    if not exe:
+        return None
+    lo = max(0.0, at - 15.0)
+    r = subprocess.run(
+        [exe, "-v", "error", "-select_streams", "v:0", "-skip_frame", "nokey",
+         "-read_intervals", f"{lo:.3f}%{at + 0.001:.3f}",
+         "-show_entries", "frame=pts_time", "-of", "csv=p=0", str(video)],
+        capture_output=True, text=True, timeout=300)
+    keys = []
+    for line in r.stdout.split():
+        try:
+            keys.append(float(line.strip(",")))
+        except ValueError:
+            pass
+    keys = [k for k in keys if k <= at + 0.001]
+    return max(keys) if keys else None
+
+
 def cut(video: Path, start: float, length: int, dest: Path) -> dict | None:
     """One excerpt, stream-copied.
 
@@ -355,6 +382,9 @@ def cmd_build(args) -> int:
                 # the cut was ASKED for, not where it landed.
                 "source_name": c.video.name,
                 "source_offset": start,
+                # Where it really begins in the source: the keyframe ffmpeg
+                # snapped back to. Map source times onto the excerpt with this.
+                "source_landed": keyframe_at_or_before(c.video, start),
                 "hints_in_window": hints_in,
                 "seconds": round(info.get("duration", 0), 2),
                 "width": info.get("width"),

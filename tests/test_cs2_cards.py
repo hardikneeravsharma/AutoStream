@@ -608,3 +608,22 @@ def test_an_emblem_is_recognised_whatever_is_behind_it():
     d = len(a)
     assert float(a @ b) / d >= cc.EMBLEM_OWN
     assert float(a @ c) / d < cc.EMBLEM_OWN
+
+
+def test_samples_carry_the_time_of_the_frame_actually_read(monkeypatch):
+    """Samples are read off the keyframe at or before each point, which can
+    be seconds earlier. The page shows the frame at the time it is handed, so
+    that has to be the keyframe's, or the picture holds a different tally."""
+    import numpy as np
+    from autostream.clips import cs2_cards as cc
+
+    asked = []
+
+    def frame(video, at, band, size):
+        asked.append(at)
+        return np.zeros((4, 4, 3), np.uint8), at - 1.5
+
+    monkeypatch.setattr(cc, "_one_frame", frame)
+    seen = cc.sample_tallies("x.mp4", 420.0, 200.0, tries=10, want=0, size=(1920, 1080))
+    assert len(seen) == 10 and len(asked) == 10
+    assert sorted(s.time for s in seen) == sorted(a - 1.5 for a in asked)

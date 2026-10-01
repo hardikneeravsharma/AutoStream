@@ -50,6 +50,7 @@ THE HUD COLOUR IS A USER SETTING
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -401,17 +402,34 @@ def measure_hue(video: Path, duration: float, samples: int = 12,
     from .killfeed import _extract
 
     step = max(30.0, duration / (samples + 1))
-    frames = []
-    for i in range(1, samples + 1):
+
+    def one(i: int):
         at = start + min(duration - 1.0, step * i)
         tmp = _extract(video, HUD_STRIP, at, 0.5, 1.0)
         try:
             got = sorted(tmp.glob("f_*.png"))
-            if got:
-                frames.append(np.asarray(Image.open(got[0]).convert("RGB")))
+            return np.asarray(Image.open(got[0]).convert("RGB")) if got else None
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    frames = [f for f in _seeks(one, range(1, samples + 1)) if f is not None]
     return hud_hue(frames)
+
+
+# Each sample is its own ffmpeg seek, and they were run one after another: the
+# "Check the tally area" panel spent 54 s and "Check it works" 26 s on a
+# 7-minute file the scan itself then read in a minute. The seeks are
+# independent, so they run side by side -- same frames, same order, same answer.
+SEEK_WORKERS = 6
+
+
+def _seeks(fn, items):
+    """fn over items on a small pool, results in the order of items."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    items = list(items)
+    with ThreadPoolExecutor(max_workers=max(1, min(SEEK_WORKERS, len(items)))) as ex:
+        return list(ex.map(fn, items))
 
 
 # ===================================================================
@@ -1086,8 +1104,20 @@ class Check:
 
 
 def _one_frame(video: Path, at: float, band: tuple,
-               size: tuple[int, int]) -> np.ndarray | None:
-    """One frame's crop, by seek. Fast: no decoding up to it."""
+               size: tuple[int, int]) -> tuple[np.ndarray, float] | None:
+    """One frame's crop, by seek. Fast: no decoding up to it.
+
+    THE KEYFRAME AT OR BEFORE `at`, not the frame at `at`. An exact seek
+    decodes forward from the keyframe -- up to four seconds of 1080p60, 0.8 s
+    a sample, measured -- and these samples only need to be spread across the
+    recording, not to land on a particular frame. Decoding the keyframe alone
+    (`-skip_frame nokey`; `-noaccurate_seek` by itself still decoded ahead)
+    costs 0.22 s on one thread, so the samples also run side by side.
+
+    -> (crop, the time of the frame actually read). The keyframe's own time,
+    read off showinfo: the page shows the frame at the time it is given, and
+    a frame from up to four seconds later can hold a different tally.
+    """
     import subprocess
 
     from .killfeed import _NO_WINDOW
@@ -1099,16 +1129,26 @@ def _one_frame(video: Path, at: float, band: tuple,
     cx, cy = int(w * x1), int(h * y1)
     try:
         p = subprocess.run([
-            binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
-            "-ss", f"{at:.3f}", "-i", str(video), "-an", "-sn",
-            "-frames:v", "1", "-filter:v", f"crop={cw}:{ch}:{cx}:{cy}",
+            binary("ffmpeg"), "-hide_banner", "-loglevel", "info", "-nostdin",
+            "-threads", "1", "-skip_frame", "nokey", "-noaccurate_seek",
+            "-copyts", "-ss", f"{at:.3f}", "-i", str(video), "-an", "-sn",
+            "-frames:v", "1",
+            "-filter:v", f"showinfo,crop={cw}:{ch}:{cx}:{cy}",
             "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
         ], capture_output=True, check=False, creationflags=_NO_WINDOW)
     except OSError:
         return None
     if len(p.stdout) < cw * ch * 3:
         return None
-    return np.frombuffer(p.stdout[:cw * ch * 3], np.uint8).reshape(ch, cw, 3)
+    real = at
+    m = re.search(rb"pts_time:\s*([0-9.]+)", p.stderr or b"")
+    if m:
+        try:
+            real = float(m.group(1))
+        except ValueError:
+            pass
+    return (np.frombuffer(p.stdout[:cw * ch * 3], np.uint8).reshape(ch, cw, 3),
+            real)
 
 
 def sample_tallies(video: Path, duration: float, hue: float, *,
@@ -1133,20 +1173,23 @@ def sample_tallies(video: Path, duration: float, hue: float, *,
 
         info = media_info(video)
         size = (int(info["width"]), int(info["height"]))
-    out: list[Sighting] = []
     # Skipping the first and last slice: a match starts in a warm-up and ends
     # on a scoreboard, and neither has a tally.
     step = max(1.0, duration / (tries + 2))
-    for i in range(1, tries + 1):
+
+    def one(i: int) -> Sighting | None:
         if cancelled and cancelled():
-            break
+            return None
         at = start + step * (i + 0.5)
-        a = _one_frame(video, at, band, size)
-        if a is None:
-            continue
+        got = _one_frame(video, at, band, size)
+        if got is None:
+            return None
+        a, at = got
         r = read_frame(a, None, hue, at, frame_height)
-        out.append(Sighting(time=at, kills=r.kills, width=r.width,
-                            mask=r.mask, why=r.why))
+        return Sighting(time=at, kills=r.kills, width=r.width,
+                        mask=r.mask, why=r.why)
+
+    out = [x for x in _seeks(one, range(1, tries + 1)) if x is not None]
     # A real tally first, biggest first; then anything that at least had HUD
     # colour in it, so a failed calibration still has something to show.
     out.sort(key=lambda s: (s.kills or 0, s.mask), reverse=True)

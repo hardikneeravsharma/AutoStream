@@ -853,7 +853,11 @@ function clip_when(ts) {
 
 function clip_dur(s) {
   if (!s) return '';
-  var h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+  /* Under a minute in seconds: a 12-second file read "0m", and so did the
+     estimate for a short scan. Minutes are rounded BEFORE splitting off the
+     hours, or 1h 59m 45s came out as "1h 60m". */
+  if (s < 59.5) return Math.max(1, Math.round(s)) + 's';
+  var t = Math.round(s / 60), h = Math.floor(t / 60), m = t % 60;
   return h ? (h + 'h ' + m + 'm') : (m + 'm');
 }
 
@@ -1451,7 +1455,11 @@ function clip_renderOptions() {
     lenField.parentNode.classList.toggle('hide', clip_state.style !== 'custom');
   }
 
-  var supports = !!(clip_state.pick && clip_state.pick.rounds);
+  /* NOT WHEN THE TALLY IS CHOSEN. The card reader gives kills and nothing
+     else -- the run drops rounds for it (jobs._as_asked) -- so the round
+     switch, the round-type chips and "Keep the whole round" were offered for
+     a run that could not honour one of them. */
+  var supports = !!(clip_state.pick && clip_state.pick.rounds) && !clip_byTally();
   clip_show('clip-rounds-field', supports);
   var roundMode = supports && clip_state.rounds !== false;
   /* SHOWN FOR ROUNDS TOO. It was hidden in round mode on the grounds that
@@ -1771,9 +1779,13 @@ function clip_renderJob(j) {
   }
 
   var mvRun = j.scan_mode === 'summary';
+  /* Read and found nothing is a finished run, not a fault: no "Could not
+     finish", and no "Clips ready" over an empty list either. */
+  var nothing = j.state === 'done' && !mvRun && !j.clips;
   clip_el('clip-res-title').textContent =
     j.needs_demo ? 'Waiting for the replay' :
-    (j.state === 'done' ? (mvRun ? 'Your match videos' : 'Clips ready') :
+    (j.state === 'done' ? (mvRun ? 'Your match videos'
+                                 : (nothing ? 'Nothing to clip' : 'Clips ready')) :
     (j.state === 'cancelled' ? 'Cancelled' : 'Could not finish'));
 
   var sum = j.summary || {};
@@ -4793,6 +4805,12 @@ function clip_renderUploadJob(u) {
    Several at once because a live session routinely covers more than one match,
    and pasting them one at a time would be the tedious way to say the same
    thing. */
+/* Counter-Strike, read by the kill tally rather than the replay or the HUD. */
+function clip_byTally() {
+  var s = clip_state.pick;
+  return !!(s && s.demos && clip_state.way === 'cards');
+}
+
 function clip_renderDemoBox() {
   var s = clip_state.pick;
   var wrap = clip_el('clip-demowrap');
@@ -4806,7 +4824,10 @@ function clip_renderDemoBox() {
      at all. Whether a replay is on hand is the single biggest thing about a
      Counter-Strike run, and it should never have to be inferred from a panel
      that is not there. */
-  var want = !!s && !!s.demo_state;
+  /* Except when the kill tally was chosen: that run reads the cards and
+     nothing else, so a box asking for the replay's sharing code is asking
+     for something the run will not use. */
+  var want = !!s && !!s.demo_state && !clip_byTally();
   wrap.classList.toggle('hide', !want);
   if (!want) return;
   /* Nothing to ask for when the replay is already there. */
@@ -5865,7 +5886,9 @@ window.PAGE_CLIPS = {
     clip_state.lastJob = j;
     if (wasBusy && !clip_state.busy) {
       clip_load();
-      if (j.state === 'done') toast(j.scan_mode === 'summary'
+      if (j.state === 'done' && j.scan_mode !== 'summary' && !j.clips)
+        toast((j.summary && j.summary.why) || 'No clips came out of that run.', 'warn');
+      else if (j.state === 'done') toast(j.scan_mode === 'summary'
         ? 'Your match videos are ready.' : 'Clips are ready.', 'ok');
       else if (j.state === 'failed') toast(j.error || 'Clip job failed.', 'error');
     }
