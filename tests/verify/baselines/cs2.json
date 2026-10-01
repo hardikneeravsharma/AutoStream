@@ -29,6 +29,8 @@
       "kind": "busy",
       "source_name": "2026-08-27 22-59-18.mp4",
       "source_offset": 2158.9,
+      "source_landed": 2158.9,
+      "source_landed_how": "measured: the match demo's kills against the frame each kill-feed row appears",
       "seconds": 100.26,
       "truth": [
         25,
@@ -58,6 +60,8 @@
       "kind": "busy",
       "source_name": "2026-08-27 22-59-18.mp4",
       "source_offset": 2380.7,
+      "source_landed": 2377.62,
+      "source_landed_how": "measured: the match demo's kills against the frame each kill-feed row appears",
       "seconds": 103.65,
       "truth": [
         28.75,
@@ -87,6 +91,8 @@
       "kind": "busy",
       "source_name": "2026-08-27 22-59-18.mp4",
       "source_offset": 2578.9,
+      "source_landed": 2578.9,
+      "source_landed_how": "measured: the match demo's kills against the frame each kill-feed row appears",
       "seconds": 101.23,
       "truth": [
         26,

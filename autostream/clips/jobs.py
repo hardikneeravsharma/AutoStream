@@ -83,6 +83,16 @@ MONTAGE_SECONDS = 25.0
 STEPS = ("scan", "cut", "vertical", "montage")
 
 
+class NoKills(RuntimeError):
+    """The recording was read and there were no kills in it.
+
+    An answer, not a fault: a menu, a spectated match or a bad round all read
+    this way. It was raised as a plain RuntimeError, so the page said "Could
+    not finish", "Failed - see the log" and an error toast about a run that
+    had done exactly what it was asked.
+    """
+
+
 class NeedsDemo(RuntimeError):
     """The replay could not be found, and reading the screen instead is dear.
 
@@ -378,6 +388,14 @@ class ClipJob:
             else:
                 self._set(state="done", step="montage", done=self.total,
                           message=f"{len(self.results)} clips in {self.folder.name}")
+        except NoKills as e:
+            # Done, with nothing to cut. The page reads summary.why for a run
+            # that planned no clips, so the reason travels there.
+            summary = dict(self.summary or {})
+            summary["why"] = str(e)
+            self._set(state="done", step="done", done=self.total,
+                      summary=summary, message=str(e))
+            log.info("clip job found nothing to cut: %s", e)
         except detect.Cancelled:
             self._set(state="cancelled", message="Cancelled")
             log.info("clip job cancelled")
@@ -560,7 +578,7 @@ class ClipJob:
         if not kills:
             self._set(summary={"kills": 0, "clips": 0, "covered": 0,
                                "coverage": 0, "runtime": 0})
-            raise RuntimeError("No kills found in this recording.")
+            raise NoKills("No kills found in this recording.")
 
         # ---- 1a2. the match record, if the game keeps one ----------------
         # Before the demo branch: a record that lines up replaces what the
@@ -643,7 +661,7 @@ class ClipJob:
             if not kills:
                 self._set(summary={"kills": 0, "clips": 0, "covered": 0,
                                    "coverage": 0, "runtime": 0})
-                raise RuntimeError("No kills found in this recording: none of "
+                raise NoKills("No kills found in this recording: none of "
                                    "the kills the feed showed had the game's "
                                    "kill emblem on screen.")
 
@@ -1345,7 +1363,13 @@ class ClipJob:
             "times faster than the kill feed and the scoreboard. Clips are "
             "named by their kill count; round labels like CLUTCH and PISTOL "
             "need the scoreboard, which is what the slower read is for."))
-        return dataclasses.replace(prof, mode="cardcount", rounds=False)
+        # demos=False as well. "Kill tally only" means the tally and nothing
+        # else, but the profile still said Counter-Strike writes demos -- so
+        # the run read the cards and then matched them against every replay
+        # on disk anyway, about twenty seconds that could only ever replace
+        # the reading the user had chosen with a different one.
+        return dataclasses.replace(prof, mode="cardcount", rounds=False,
+                                   demos=False)
 
     def _stop_for_demo(self, opt: dict, why: str, total: float) -> None:
         """Refuse to read the screen instead, unless asked to. Raises.
