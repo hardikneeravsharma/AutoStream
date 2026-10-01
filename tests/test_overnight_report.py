@@ -198,6 +198,21 @@ def test_the_wizard_refuses_a_time_the_settings_page_would(monkeypatch):
     assert out["ok"] is False
 
 
+def test_the_wizard_refuses_half_a_quiet_hours_pair(monkeypatch):
+    """One box filled was saved as no quiet hours, unchecked and unmentioned."""
+    from autostream import cfg
+    from autostream.setup_flow import SetupFlow
+
+    saved = {}
+    monkeypatch.setattr(cfg, "save_fields", lambda f: saved.update(f))
+    for half in ({"quiet_from": "25:99"}, {"quiet_to": "09:00"}):
+        out = SetupFlow().save_section("timing", {"arm_delay": 30, **half})
+        assert out["ok"] is False and "both" in out["error"]
+    assert saved == {}
+    out = SetupFlow().save_section("timing", {"arm_delay": 30})
+    assert out["ok"] is True and saved["rules.quiet_hours"] == []
+
+
 def test_the_wizard_logo_placeholder_keeps_its_backslashes():
     js = _ui("setup")
     assert r'placeholder="C:\\Users\\you\\Pictures\\logo.png"' in js

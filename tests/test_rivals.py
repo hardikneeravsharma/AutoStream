@@ -387,10 +387,14 @@ def test_the_sounds_are_made_once_and_are_real_audio(tmp_path):
 
 
 
-def name(seed: int) -> np.ndarray:
-    """A KO notice's text bits: a different name for each seed."""
+def name(seed: int, white: float = 0.05) -> np.ndarray:
+    """A KO notice's text bits: a different name for each seed.
+
+    5% white by default, the median of 102 real notices. This was 20% until
+    the bright-wall rule, which is exactly the share that rule now refuses.
+    """
     rng = np.random.default_rng(seed)
-    return np.packbits(rng.random(rivals.KO_SIG * 8) < 0.2)
+    return np.packbits(rng.random(rivals.KO_SIG * 8) < white)
 
 
 def with_kos(x: float) -> dict:
@@ -407,6 +411,19 @@ def with_kos(x: float) -> dict:
 
 def test_every_ko_notice_counts_once_and_deaths_do_not():
     m = rivals.matches(build(600, with_kos))[0]
+    assert [round(k) for k in m.kos] == [140, 144, 180]
+
+
+def test_a_bright_wall_behind_the_notice_is_not_a_ko():
+    """Yggsgard's cream walls fill the crop and pass the white test with no
+    notice on screen. Text that covers more than KO_TEXT_MAX is a wall."""
+    def walls(x: float) -> dict:
+        s = with_kos(x)
+        if 300 <= x < 304:
+            s.update(ko=True, ko_sig=name(4, white=0.3))
+        return s
+
+    m = rivals.matches(build(600, walls))[0]
     assert [round(k) for k in m.kos] == [140, 144, 180]
 
 
