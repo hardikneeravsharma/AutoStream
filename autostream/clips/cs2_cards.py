@@ -44,8 +44,24 @@ MEASURED, on 1920x1080 footage, steady (non-flash) frames:
 
 THE HUD COLOUR IS A USER SETTING
     It cannot be hard-coded: this player's is magenta, and the shipped default
-    is not. It is measured instead -- see `hud_hue` -- from the fact that HUD
-    elements hold still while the scenery behind them does not.
+    is not. It is measured instead -- see `hue_candidates` -- from the fact
+    that HUD elements hold still while the scenery behind them does not.
+
+    STILLNESS ALONE IS NOT ENOUGH, and assuming it was cost a user every clip
+    in an 18-minute recording. A facecam is a person sitting in a chair: the
+    stillest, most saturated thing on the screen by a wide margin. On that
+    recording its skin tones outweighed the real HUD 2255 steady pixels to
+    871, and averaging every steady pixel into one answer -- which is what
+    this did -- returned hue 355 for a magenta HUD: a colour almost nothing on
+    the screen is drawn in. Sandstone then read as cards. 218 flashes where
+    there were 13, 5 phantom kills in a single round, 5 of 13 real kills.
+
+    So stillness only PROPOSES. What DECIDES is whether a colour can actually
+    be read as a tally: `score_hue` reads the card area at each candidate and
+    keeps the one whose widths land on the real card levels. On that same
+    recording the facecam scores 0.05 and the true HUD 0.83, so the margin is
+    not a fine one. This needs no palette, no geometry and no setting -- only
+    the arithmetic the reader already does.
 """
 from __future__ import annotations
 
@@ -88,6 +104,20 @@ HUE_TOL = 30.0
 SAT_MIN = 0.18
 VAL_MIN = 0.30
 MASK_MIN = 60         # px before the tally counts as present at all
+
+# Finding the HUD colour. See `sweep_hues`, which searches rather than guesses.
+HUE_STEP = 5.0        # degrees per probe: 72 of them cover the wheel
+# A colour is believed on BOTH counts: it read some tallies, and most of what
+# it saw was readable. MEASURED on the recording that prompted this, over 120
+# samples: the player's purple scored 0.50-1.00 across a 50-degree arc, while
+# every orange and gold probe -- a facecam, the rank emblem, Anubis sandstone
+# -- stayed at or under 0.16 despite finding plenty to look at. 0.5 sits in
+# that gap with room either side.
+HUE_SCORE_MIN = 0.5
+HUE_EXACT_MIN = 3
+# Readings a recording must produce before it may overturn a colour already on
+# file. Under this it has not seen enough tally to have an opinion.
+HUE_EVIDENCE = 6
 
 # ------------------------------------------------------------------- geometry
 CARD_W0 = 18          # px at REF_HEIGHT
@@ -167,39 +197,134 @@ def hud_mask(a: np.ndarray, hue: float) -> np.ndarray:
     return (dh <= HUE_TOL) & (s >= SAT_MIN) & (v >= VAL_MIN)
 
 
-def hud_hue(frames: list[np.ndarray]) -> float | None:
-    """The player's HUD colour, measured rather than asked for.
+def cards_in_strip(frame: np.ndarray, band: tuple = CARDS) -> np.ndarray:
+    """The card area, cut out of a frame already cropped to HUD_STRIP.
 
-    What separates HUD from gameplay is not the hue but the STILLNESS: HUD
-    elements are drawn at the same pixels in the same colour every frame, while
-    the scenery behind them moves constantly. So keep the pixels that are
-    consistently saturated AND consistently the same hue, and report their
-    colour.
-
-    Needs several frames from well apart in the recording; returns None if it
-    cannot find enough steady pixels to be sure, so the caller can fall back
-    rather than scan with a wrong colour.
+    So trying a colour costs no extra decoding: the strip the samples come
+    from already contains the tally.
     """
-    if len(frames) < 4:
+    h, w = frame.shape[:2]
+    sx1, sy1, sx2, sy2 = HUD_STRIP
+    x0 = int((band[0] - sx1) / (sx2 - sx1) * w)
+    x1 = int((band[2] - sx1) / (sx2 - sx1) * w)
+    y0 = int((band[1] - sy1) / (sy2 - sy1) * h)
+    y1 = int((band[3] - sy1) / (sy2 - sy1) * h)
+    return frame[max(0, y0):max(0, y1), max(0, x0):max(0, x1)]
+
+
+def score_hue(frames: list[np.ndarray], hue: float, band: tuple = CARDS,
+              frame_height: int = REF_HEIGHT) -> tuple[int, int]:
+    """Can a tally be READ in this colour? -> (exact readings, unreadable)
+
+    The reader already knows what a real tally looks like: a width that lands
+    on 18 + 16 x kills and nowhere else. So point it at the card area in this
+    colour and count how often it lands.
+
+    The player's own colour lands, or sees nothing at all. A wrong one finds
+    speckle -- scenery, a face, the rank emblem -- at widths that mean nothing,
+    which `read_frame` already reports as "flash".
+    """
+    exact = junk = 0
+    for f in frames:
+        r = read_frame(cards_in_strip(f, band), None, hue, 0.0, frame_height)
+        if r.why == "flash":
+            junk += 1
+        elif r.kills:
+            exact += 1
+    return exact, junk
+
+
+def sweep_hues(frames: list[np.ndarray], band: tuple = CARDS,
+               frame_height: int = REF_HEIGHT) -> list[tuple]:
+    """Every colour on the wheel, scored. -> [(hue, exact, junk, score)]
+
+    EXHAUSTIVE, NOT GUESSED, and that is the whole point. What this replaced
+    proposed a colour from stillness -- HUD elements hold still, scenery does
+    not -- and a facecam is stiller than any HUD. There is no way to rank
+    "steady" things that puts a person's face below a health number, because
+    by that measure the face really is the better answer. Weighting, blurring
+    and skipping regions all move which screens break rather than fixing any.
+
+    Searching removes the question. The space is one dimension, 72 probes wide
+    at HUE_STEP, and a probe is arithmetic on frames already in memory: a whole
+    sweep costs about 1.5s against a scan that runs for minutes. Nothing about
+    a face, an emblem or a map has to be anticipated, so a HUD colour nobody
+    has seen yet is found exactly like a known one.
+    """
+    out = []
+    for i in range(int(round(360.0 / HUE_STEP))):
+        h = i * HUE_STEP
+        exact, junk = score_hue(frames, h, band, frame_height)
+        out.append((h, exact, junk, exact / max(1, exact + junk)))
+    return out
+
+
+def best_hue(rows: list[tuple]) -> float | None:
+    """The winning colour from a sweep, or None if nothing reads as a tally.
+
+    Takes the CENTRE of the winning arc, not the single best probe. A real HUD
+    colour wins a band of neighbouring probes roughly as wide as HUE_TOL, and
+    which one inside it scores highest is noise -- so landing on an edge spends
+    tolerance the colour needs for the next recording. The arc has to be
+    contiguous: a colour passing here and there around the wheel is
+    coincidence, not a HUD.
+    """
+    ok = [r for r in rows if r[1] >= HUE_EXACT_MIN and r[3] >= HUE_SCORE_MIN]
+    if not ok:
         return None
-    a = np.stack([f.astype(np.float32) / 255.0 for f in frames])
-    mx, mn = a.max(axis=3), a.min(axis=3)
-    sat, val = mx - mn, mx
-    r, g, b = a[..., 0], a[..., 1], a[..., 2]
-    d = np.where(mx - mn == 0, 1, mx - mn)
-    h = np.where(mx == r, ((g - b) / d) % 6,
-                 np.where(mx == g, (b - r) / d + 2, (r - g) / d + 4)) * 60.0
-    bright = (sat >= 0.25) & (val >= 0.45)
-    rad = np.deg2rad(h)
-    seen = np.maximum(1, bright.sum(axis=0))
-    cx = np.where(bright, np.cos(rad), 0).sum(axis=0) / seen
-    cy = np.where(bright, np.sin(rad), 0).sum(axis=0) / seen
-    # bright in most frames, and agreeing with itself on the hue
-    steady = (bright.mean(axis=0) >= 0.5) & (np.hypot(cx, cy) >= 0.9)
-    if int(steady.sum()) < 200:
-        return None
-    return float(np.rad2deg(np.arctan2(cy[steady].sum(),
-                                       cx[steady].sum())) % 360)
+    n = len(rows)
+    passing = {int(round(r[0] / HUE_STEP)) % n for r in ok}
+    peak = max(ok, key=lambda r: (r[1], r[3]))
+    i = int(round(peak[0] / HUE_STEP)) % n
+    arc, j = [i], (i - 1) % n
+    while j in passing and len(arc) < n:
+        arc.append(j)
+        j = (j - 1) % n
+    j = (i + 1) % n
+    while j in passing and len(arc) < n:
+        arc.append(j)
+        j = (j + 1) % n
+    # Weighted by how much tally each probe actually read, so the centre sits
+    # where the colour reads best rather than in the middle of the tolerance.
+    ang = np.deg2rad(np.array([rows[k][0] for k in arc], float))
+    w = np.array([rows[k][1] for k in arc], float)
+    if w.sum() <= 0:
+        return float(rows[i][0])
+    return float(np.rad2deg(np.arctan2(float((w * np.sin(ang)).sum()),
+                                       float((w * np.cos(ang)).sum()))) % 360.0)
+
+
+def pick_hue(frames: list[np.ndarray], band: tuple = CARDS,
+             frame_height: int = REF_HEIGHT,
+             cached: float | None = None) -> tuple[float | None, str]:
+    """The HUD colour these frames can be read in. -> (hue, what happened)
+
+    `cached` is a colour already on file. It is KEPT unless this recording
+    contradicts it, which matters because the saved colour is whatever the
+    first recording ever scanned produced, and it outlives the reason it was
+    right: a user who changes their HUD colour, or hands the app a friend's
+    footage, would otherwise have every later recording read in a colour
+    belonging to a different screen.
+
+    "Contradicts" is deliberately strict. A quiet recording where the tally is
+    rarely up has nothing to say about any colour, so silence leaves the saved
+    one alone -- only evidence overturns it.
+    """
+    if cached is not None:
+        exact, junk = score_hue(frames, cached, band, frame_height)
+        if exact + junk < HUE_EVIDENCE or exact >= HUE_SCORE_MIN * (exact + junk):
+            return cached, "kept"
+        log.info("the saved HUD colour (hue %.0f) cannot read this recording: "
+                 "%d tally reading(s) against %d unreadable -- measuring again",
+                 cached, exact, junk)
+    got = best_hue(sweep_hues(frames, band, frame_height))
+    if got is None:
+        return None, "nothing readable"
+    exact, junk = score_hue(frames, got, band, frame_height)
+    log.info("measured CS2 HUD colour: hue %.0f (%d tally reading(s), %.0f%% "
+             "of what it saw was readable)",
+             got, exact, 100.0 * exact / max(1, exact + junk))
+    return got, "measured"
 
 
 def spectating(panel: np.ndarray) -> bool:
@@ -389,9 +514,9 @@ def _extract_two(video: Path, start: float, duration: float, fps: float,
     return tmp
 
 
-def measure_hue(video: Path, duration: float, samples: int = 12,
-                start: float = 0.0) -> float | None:
-    """Sample frames spread across the recording and measure the HUD colour.
+def strip_samples(video: Path, duration: float, samples: int,
+                  start: float = 0.0) -> list[np.ndarray]:
+    """Frames of the bottom strip, spread across the recording.
 
     `start` keeps the samples inside the part being scanned. On a file holding
     two games, frames from the other one carry a different HUD -- or none --
@@ -401,7 +526,7 @@ def measure_hue(video: Path, duration: float, samples: int = 12,
 
     from .killfeed import _extract
 
-    step = max(30.0, duration / (samples + 1))
+    step = max(1.0, (duration - 1.0) / (samples + 1))
 
     def one(i: int):
         at = start + min(duration - 1.0, step * i)
@@ -412,8 +537,47 @@ def measure_hue(video: Path, duration: float, samples: int = 12,
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
-    frames = [f for f in _seeks(one, range(1, samples + 1)) if f is not None]
-    return hud_hue(frames)
+    return [f for f in _seeks(one, range(1, samples + 1)) if f is not None]
+
+
+# How many frames a colour is judged on. The tally is only up for part of a
+# round, so these numbers are about how often a sample lands on one at all:
+# twelve, which this was, caught five tallies in eighteen minutes -- one short
+# of the evidence needed to overturn a wrong saved colour, and short of what
+# the sweep needs to separate an arc from noise. At 120 the same recording
+# caught 108 across the winning arc and the answer stopped moving.
+#
+# So the cheap count is tried first and the dear one only when it settles
+# nothing. A sample is an ffmpeg seek, six at a time: 60 costs about 6s and 180
+# about 18s, against a scan that runs for minutes.
+HUE_SAMPLES = 60
+HUE_SAMPLES_MAX = 180
+
+
+def measure_hue(video: Path, duration: float, samples: int = HUE_SAMPLES,
+                start: float = 0.0, band: tuple | None = None,
+                frame_height: int = REF_HEIGHT,
+                cached: float | None = None) -> float | None:
+    """The HUD colour this recording can be read in, or None.
+
+    None means no colour on the wheel could read the tally -- which is a real
+    answer, not a failure to try. Returning a colour that cannot be read is
+    far worse than returning nothing: the scan then runs happily to the end
+    and reports scenery as kills, and nothing about the run says so until
+    somebody watches the clips.
+    """
+    band = band or CARDS
+    frames = strip_samples(video, duration, samples, start)
+    hue, why = pick_hue(frames, band, frame_height, cached)
+    if hue is not None or samples >= HUE_SAMPLES_MAX:
+        return hue
+    # Nothing read. Before calling that an answer, look harder -- a recording
+    # with two kills in it can miss the tally entirely at this sample rate.
+    log.info("no colour read the tally in %d samples; looking at %d",
+             len(frames), HUE_SAMPLES_MAX)
+    frames = strip_samples(video, duration, HUE_SAMPLES_MAX, start)
+    hue, why = pick_hue(frames, band, frame_height, cached)
+    return hue
 
 
 # Each sample is its own ffmpeg seek, and they were run one after another: the
@@ -860,6 +1024,20 @@ def hidden_kills(sw: Sweep, geo: Geometry, own: np.ndarray,
     own view. A rise that the flashes in between do not account for is a kill
     whose flash was hidden -- placed where the view was lost, since that is
     where it happened.
+
+    AGAINST THE ROUND'S HIGH-WATER MARK, not against the last reading, and the
+    difference is three invented kills in one round of real footage. The tally
+    never falls within a round -- `collapse` has always known that -- but it
+    can be MISREAD low: against bright Anubis sandstone the last card's columns
+    drop under MIN_COL and a steady two reads as a one for a second or more
+    before recovering. Compared against the last reading, that recovery is a
+    rise nothing explains, which is exactly the shape of a hidden kill. One
+    round at 2 kills reported four.
+
+    A high-water mark cannot be fooled by it: a dip to 1 and back to 2 never
+    passes 2, while a real third kill does. The mark resets where the round
+    does -- the tally empties, or the count goes untracked for longer than a
+    round break.
     """
     if not len(own):
         return []
@@ -867,7 +1045,7 @@ def hidden_kills(sw: Sweep, geo: Geometry, own: np.ndarray,
     occluded = (sw.white_beam > OCCLUDED_WHITE * a) | sw.dark
     hold = max(2, int(HIDDEN_HOLD * sw.fps))
     out: list[float] = []
-    cur, cur_t = None, 0.0
+    peak, cur_t = None, 0.0
     i = 0
     while i + hold < len(sw.t):
         seg = slice(i, i + hold)
@@ -882,7 +1060,10 @@ def hidden_kills(sw: Sweep, geo: Geometry, own: np.ndarray,
             continue
         k = lv[0]
         t = float(sw.t[i])
-        if cur is not None and k > cur and t - cur_t < HIDDEN_GAP:
+        if peak is None or t - cur_t >= HIDDEN_GAP or k == 0:
+            # A new round, or too long untracked to tell. Adopt, never count.
+            peak = k
+        elif k > peak:
             seen = sum(1 for c in counted if cur_t - 0.5 <= c <= t + 0.5)
             lost = cur_t
             j = int(np.searchsorted(sw.t, cur_t))
@@ -890,8 +1071,9 @@ def hidden_kills(sw: Sweep, geo: Geometry, own: np.ndarray,
                 j += 1
             if j < i:
                 lost = float(sw.t[j])
-            out += [lost] * max(0, k - cur - seen)
-        cur, cur_t = k, float(sw.t[i + hold - 1])
+            out += [lost] * max(0, k - peak - seen)
+            peak = k
+        cur_t = float(sw.t[i + hold - 1])
         i += hold
     return out
 
@@ -992,16 +1174,16 @@ def scan(video: Path, *, duration: float | None = None, start: float = 0.0,
     info = media_info(video)
     total = duration if duration is not None else info["duration"]
     _sweep_stale_temp()
+    size = (int(info["width"]), int(info["height"]))
     if hue is None:
-        hue = measure_hue(video, total, start=start)
+        hue = measure_hue(video, total, start=start, band=band or CARDS,
+                          frame_height=size[1])
         if hue is None:
             raise RuntimeError(
-                "Could not work out your CS2 HUD colour from this recording. "
-                "Set it by hand on the Clips page, or pick a recording with "
-                "more gameplay in it.")
-        log.info("measured CS2 HUD colour: hue %.0f", hue)
+                "No colour in this recording reads as a CS2 kill tally. Set "
+                "the colour by hand on the Clips page, calibrate the card "
+                "area there, or pick a recording with more gameplay in it.")
 
-    size = (int(info["width"]), int(info["height"]))
     geo = geometry(size, band or CARDS)
     # Never slower than the flash needs. The profile's rate was set for the
     # width reader, which only had to see a count that holds for a round.

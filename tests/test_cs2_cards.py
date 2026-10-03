@@ -41,6 +41,33 @@ def _tally(kills, hue=HUE, x0=15, y0=12, h=40, extra=0):
     return a
 
 
+# A frame of HUD_STRIP, as `measure_hue` samples it: the bottom 14% of a
+# 1920x1080 screen, holding the card area and -- the hazard this reproduces --
+# a facecam far bigger and far steadier than any HUD element.
+SW, SH = 1920, 151
+_FACE_PX = 300 * 140
+
+
+def _strip(kills=2, hue=HUE, junk=True, face=True):
+    a = np.zeros((SH, SW, 3), np.uint8)
+    a[:, :] = (70, 55, 40)                              # sandstone
+    if face:
+        # A person sitting in a chair: skin, always there, never moving. On the
+        # footage this comes from it held 2255 steady pixels to the HUD's 871.
+        a[5:145, 20:320] = _hud_rgb(22.0, v=205)
+    x0 = int(cc.CARDS[0] * SW)
+    y0 = int((cc.CARDS[1] - cc.HUD_STRIP[1])
+             / (cc.HUD_STRIP[3] - cc.HUD_STRIP[1]) * SH)
+    if kills:
+        w = cc.CARD_W0 + cc.CARD_PITCH * kills
+        a[y0 + 10:y0 + 50, x0 + 10:x0 + 10 + w] = _hud_rgb(hue)
+    elif junk:
+        # Bright warm scenery in the card area at a width that is not a level,
+        # so a wrong colour finds something and still cannot read it.
+        a[y0 + 14:y0 + 44, x0 + 30:x0 + 57] = _hud_rgb(22.0, v=230)
+    return a
+
+
 def _panel(text_edges: bool):
     """The spectator panel patch: full of name/ADR text, or smooth gameplay."""
     a = np.zeros((20, 100, 3), np.uint8)
@@ -111,23 +138,48 @@ def test_the_count_is_the_same_across_the_hues_detection_actually_returns():
             assert r.kills == kills, (hue, kills, r.kills, r.width)
 
 
-def test_hud_hue_is_measured_from_what_holds_still():
-    # HUD pixels are drawn in the same place every frame; scenery is not.
-    rng = np.random.default_rng(0)
-    frames = []
-    for _ in range(8):
-        f = rng.integers(0, 255, (40, 200, 3), dtype=np.uint8)   # noisy scene
-        f[10:30, 20:180] = _hud_rgb(300.0)                       # steady HUD
-        frames.append(f)
-    got = cc.hud_hue(frames)
-    assert got is not None
-    assert abs((got - 300.0 + 180) % 360 - 180) < 20, got
+def test_the_hud_colour_is_found_by_reading_the_tally_not_by_stillness():
+    """FROM FOOTAGE: a user's 18-minute recording produced 5 of 13 kills, 12 of
+    them invented, because the colour was taken from whatever held stillest on
+    the bottom strip -- and that was his FACECAM. His face beat his HUD 2255
+    steady pixels to 871, so the answer came out orange on a purple HUD and
+    Anubis sandstone read as cards.
+
+    Stillness cannot be made to rank a face below a health number: by that
+    measure the face IS the steadier thing. So the colour is the one the card
+    area can actually be READ in."""
+    frames = [_strip(kills=(i % 3) + 1, hue=300.0) for i in range(12)]
+    # The hazard, reproduced: the face is both bigger and steadier than the
+    # tally, so anything ranking steady things picks it.
+    tally_px = 40 * (cc.CARD_W0 + cc.CARD_PITCH * 3)
+    assert _FACE_PX > 10 * tally_px, "the test does not reproduce the hazard"
+
+    got, why = cc.pick_hue(frames)
+    assert why == "measured"
+    assert abs((got - 300.0 + 180) % 360 - 180) < cc.HUE_TOL, got
 
 
-def test_hud_hue_gives_up_rather_than_guess():
+def test_a_colour_nothing_can_be_read_in_is_refused_rather_than_guessed():
+    """Returning a colour that cannot read the tally is worse than returning
+    none: the scan runs to the end and reports scenery as kills, and nothing
+    about the run says so until somebody watches the clips."""
     rng = np.random.default_rng(1)
-    frames = [rng.integers(0, 255, (40, 200, 3), dtype=np.uint8) for _ in range(8)]
-    assert cc.hud_hue(frames) is None
+    frames = [rng.integers(0, 90, (151, 1920, 3), dtype=np.uint8)
+              for _ in range(10)]
+    assert cc.pick_hue(frames) == (None, "nothing readable")
+
+
+def test_the_winning_colour_is_the_centre_of_its_arc_not_the_best_probe():
+    """A real HUD colour wins a band of neighbouring probes about as wide as
+    HUE_TOL. Which one inside it scores highest is noise, so landing on an edge
+    spends tolerance the colour needs for the next recording."""
+    rows = [(h * 5.0, 0, 0, 0.0) for h in range(72)]
+    for h, exact in ((60.0, 4), (65.0, 9), (70.0, 10), (75.0, 9), (80.0, 4)):
+        rows[int(h / 5)] = (h, exact, 1, 0.9)
+    # a lone probe elsewhere passes too, and must not drag the answer
+    rows[int(200 / 5)] = (200.0, 5, 1, 0.83)
+    got = cc.best_hue(rows)
+    assert abs(got - 70.0) < 2.0, got
 
 
 # -------------------------------------------------------------- spectating
@@ -268,17 +320,27 @@ def test_a_measured_hud_colour_survives_the_yaml_round_trip():
     assert back.hud_hue == pytest.approx(343.0)
 
 
-def test_a_measured_hud_colour_is_cached_so_only_the_first_scan_pays(
+def test_the_saved_hud_colour_is_rechecked_against_every_recording(
         monkeypatch, tmp_path):
-    """The requirements system says a value that can be measured is never
-    asked for. Measuring is not free, so the answer has to be kept."""
+    """FROM FOOTAGE: the saved colour used to be trusted forever, so the first
+    recording ever scanned decided every later one. A user handed the app a
+    friend's footage and got clips cut from sandstone -- the saved colour was
+    never the friend's, and nothing in the run could notice.
+
+    So the recording is always offered the saved value. Keeping it is cheap;
+    the point is that it CAN be overturned."""
     from autostream import paths
     from autostream.clips import cs2_cards, detect, profiles
 
     monkeypatch.setattr(paths, "CLIP_PROFILES", tmp_path / "profiles.yaml")
-    calls = []
-    monkeypatch.setattr(cs2_cards, "measure_hue",
-                        lambda v, d, **k: calls.append(1) or 341.0)
+    seen = []
+
+    def fake(v, d, **k):
+        seen.append(k.get("cached"))
+        # stands in for a recording that reads at 341 and nothing else
+        return 341.0
+
+    monkeypatch.setattr(cs2_cards, "measure_hue", fake)
     monkeypatch.setattr(cs2_cards, "scan", lambda v, **k: [])
     monkeypatch.setattr(detect, "media_info",
                         lambda p: {"width": 1920, "height": 1080,
@@ -290,12 +352,30 @@ def test_a_measured_hud_colour_is_cached_so_only_the_first_scan_pays(
     profiles.save(prof)
 
     detect.scan(src, profiles.load_all()["cs2.exe"])
-    assert len(calls) == 1
+    assert seen == [None], "the first scan has nothing saved to offer"
     assert profiles.load_all()["cs2.exe"].hud_hue == pytest.approx(341.0)
 
-    # second run: the cached value is used and nothing is measured again
+    # The second scan hands the saved colour to the recording rather than
+    # assuming it. `pick_hue` is what decides whether to keep it.
     detect.scan(src, profiles.load_all()["cs2.exe"])
-    assert len(calls) == 1, "the HUD colour was measured twice"
+    assert seen == [None, 341.0]
+
+
+def test_a_saved_colour_that_still_reads_is_not_measured_again():
+    """Measuring is not free, so a colour the recording agrees with is kept --
+    no sweep, no second guess."""
+    frames = [_strip(kills=2, hue=300.0) for _ in range(10)]
+    got, why = cc.pick_hue(frames, cached=300.0)
+    assert (got, why) == (300.0, "kept")
+
+
+def test_a_quiet_recording_does_not_overturn_a_saved_colour():
+    """A recording where the tally is almost never up has nothing to say about
+    any colour. Silence must not be read as disagreement, or a quiet session
+    would throw away a colour measured on a good one."""
+    frames = [_strip(kills=0, hue=300.0, junk=False) for _ in range(10)]
+    got, why = cc.pick_hue(frames, cached=300.0)
+    assert (got, why) == (300.0, "kept")
 
 
 def test_detect_routes_cardcount_to_the_tally_reader(monkeypatch, tmp_path):
@@ -527,6 +607,40 @@ def test_a_kill_under_a_flashbang_is_recovered_from_the_count():
     a, b = s.i(30.0), s.i(32.0)
     s.wb[a:b] = 3900                          # white
     s.w[b:] = cc.CARD_W0 + cc.CARD_PITCH * 1
+    sw = s.build()
+    kills, _, own = _read(sw)
+    assert cc.hidden_kills(sw, GEO, own, kills) == [pytest.approx(30.0)]
+
+
+def test_a_tally_misread_low_and_recovering_is_not_a_kill():
+    """FROM FOOTAGE, first round of an 18-minute recording: a steady two-card
+    tally over bright Anubis sandstone loses the last card's columns to
+    MIN_COL and reads as a ONE for a second or more, then recovers. Measured
+    against the previous reading that recovery is a rise with no flash to
+    explain it -- a hidden kill -- and the round reported four kills where
+    there were two.
+
+    The count never falls inside a round, so a reading below what the round
+    has already shown is a misread, and climbing back out of one is not a
+    kill."""
+    s = _Sweep().flash(10.0, cards=2)
+    one = cc.CARD_W0 + cc.CARD_PITCH * 1
+    for a, b in ((14.0, 15.6), (21.0, 22.4), (28.0, 29.5)):
+        s.w[s.i(a):s.i(b)] = one              # washed out...
+    sw = s.build()                            # ...and back at two
+    kills, _, own = _read(sw)
+    assert cc.hidden_kills(sw, GEO, own, kills) == []
+
+
+def test_a_real_rise_past_the_rounds_high_water_mark_still_counts():
+    """The guard above must not cost the kill it exists to find: a dip and
+    recovery is nothing, but going one card PAST what the round has shown is
+    still a kill whose flash was missed."""
+    s = _Sweep().flash(10.0, cards=2)
+    s.w[s.i(14.0):s.i(15.6)] = cc.CARD_W0 + cc.CARD_PITCH * 1   # a misread
+    a, b = s.i(30.0), s.i(32.0)
+    s.wb[a:b] = 3900                                            # a flashbang
+    s.w[b:] = cc.CARD_W0 + cc.CARD_PITCH * 3                    # a third kill
     sw = s.build()
     kills, _, own = _read(sw)
     assert cc.hidden_kills(sw, GEO, own, kills) == [pytest.approx(30.0)]
