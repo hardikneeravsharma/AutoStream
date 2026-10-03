@@ -2528,11 +2528,12 @@ class Server:
         except (FileNotFoundError, OSError, ValueError) as e:
             return {"ok": False, "error": str(e)}
         try:
-            hue = cs2_cards.measure_hue(src, secs, start=start)
+            hue = cs2_cards.measure_hue(src, secs, start=start, frame_height=h)
             if hue is None:
                 return {"ok": False,
-                        "error": "Could not work out your HUD colour from this "
-                                 "stretch. Choose a part with more gameplay in it."}
+                        "error": "No colour on this stretch reads as a kill "
+                                 "tally. Choose a part with more gameplay in "
+                                 "it, or drag the box onto your own tally."}
             shots = cs2_cards.sample_tallies(src, secs, hue, start=start,
                                              size=size, frame_height=h)
         except Exception as e:                       # noqa: BLE001
@@ -3348,12 +3349,16 @@ class Server:
             except (KeyError, TypeError, ValueError):
                 band = cs2_cards.CARDS
         try:
-            hue = cs2_cards.measure_hue(src, secs, start=start)
+            # The box being checked is the one the colour is scored against, so
+            # a user dragging the box onto an unusual HUD fixes both at once.
+            hue = cs2_cards.measure_hue(src, secs, start=start, band=band,
+                                        frame_height=h)
             if hue is None:
                 return {"ok": True, "pass": False, "looked": 0, "present": 0,
                         "read": 0,
-                        "why": "Your HUD colour could not be measured from this "
-                               "stretch, so nothing can be read from it."}
+                        "why": "No colour in this stretch reads as a kill "
+                               "tally inside that box, so nothing can be read "
+                               "from it. Check the box is on your tally."}
             got = cs2_cards.check(src, secs, hue, band=band, start=start,
                                   size=size, frame_height=h)
         except Exception as e:                       # noqa: BLE001

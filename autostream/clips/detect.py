@@ -426,18 +426,6 @@ def scan_cardcount(video: Path, profile: Profile, total: float, height: int,
     from . import cs2_cards
 
     log.info("reading the %s kill tally", profile.label)
-    hue = profile.hud_hue or None
-    if hue is None:
-        # Measured off this recording rather than asked for, then cached so
-        # only the first scan of the game ever pays for it.
-        hue = cs2_cards.measure_hue(video, total, start=start)
-        if hue is None:
-            raise RuntimeError(
-                f"Could not work out your {profile.label} HUD colour from this "
-                f"recording. Try one with more gameplay in it.")
-        log.info("measured %s HUD colour: hue %.0f", profile.label, hue)
-        from .profiles import remember
-        remember(profile.key, hud_hue=hue)
 
     # THE CALIBRATED CARD AREA, WHERE THERE IS ONE. The shipped region was
     # measured on a single 16:9 1080p HUD; 4:3 stretched is ordinary in
@@ -447,6 +435,26 @@ def scan_cardcount(video: Path, profile: Profile, total: float, height: int,
     band = tuple(profile.card_box) if len(profile.card_box) == 4 else None
     if band:
         log.info("using the calibrated card area %s", band)
+
+    # CHECKED AGAINST THIS RECORDING, EVERY TIME -- not read from the profile
+    # and trusted. The saved colour is whatever the first recording ever
+    # scanned produced, and it outlives the reason it was right: a user who
+    # changes their HUD colour, or scans a friend's footage, would otherwise
+    # have every later recording read in a colour belonging to another screen.
+    # `pick_hue` keeps the saved one unless the recording contradicts it, so
+    # the common case still costs nothing but the samples.
+    saved = profile.hud_hue or None
+    hue = cs2_cards.measure_hue(video, total, start=start, band=band,
+                                frame_height=height, cached=saved)
+    if hue is None:
+        raise RuntimeError(
+            f"Could not work out your {profile.label} HUD colour from this "
+            f"recording -- no colour on screen reads as a kill tally. If your "
+            f"HUD is somewhere unusual, calibrate the card area on the Clips "
+            f"page; otherwise try a recording with more gameplay in it.")
+    if hue != saved:
+        from .profiles import remember
+        remember(profile.key, hud_hue=hue)
     # The name and the feed band are only for the few flashes the pixels
     # cannot settle -- see cs2_cards.confirm_in_feed. Without a name those few
     # are left out, and everything else still needs nothing set up.
