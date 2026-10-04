@@ -1254,9 +1254,28 @@ class Engine:
     # ---- STARTING ---------------------------------------------------
 
     def _tick_starting(self) -> None:
+        where = self.platform.label
+
+        # WAITING IS YOUTUBE'S. A YouTube broadcast is a real object that has
+        # to receive frames before it can be transitioned, so STARTING polls
+        # until it has. Twitch and Kick have nothing to transition: the
+        # channel is live the moment RTMP arrives, and asking their API
+        # whether it has noticed yet only adds the lag of their own stream
+        # listing -- which on Twitch runs to a minute and is not a promise.
+        #
+        # Polled anyway, this phase could outlast `ingestion_timeout` and
+        # abandon a session that was already on air, with "never saw our
+        # ingestion" as the reason. The capability flag said not to; the
+        # engine was not reading it.
+        if not self.platform.caps.waits_for_ingest:
+            self._start_failures = 0
+            self._go_live()
+            return
+
         if self._starting_deadline and time.monotonic() > self._starting_deadline:
-            log.error("YouTube never saw our ingestion — aborting session")
-            notify.toast("AutoStream", "Stream never reached YouTube. Aborted.")
+            log.error("%s never saw our ingestion — aborting session", where)
+            notify.toast("AutoStream",
+                         f"Stream never reached {where}. Aborted.")
             self._abandon_start()
             return
         try:

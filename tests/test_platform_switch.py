@@ -160,3 +160,98 @@ def test_a_clips_only_install_still_skips_the_wizard(home):
     (home / "config" / "config.yaml").write_text(
         yaml.safe_dump({"youtube": {"enabled": False}}), encoding="utf-8")
     assert webui.is_configured() is True
+
+
+# --------------------------------------- waiting for ingestion is YouTube's
+
+class _Counting:
+    """A platform that records whether the engine asked it about ingestion."""
+
+    def __init__(self, waits: bool) -> None:
+        from autostream.platforms import Capabilities
+
+        self.name = "counting"
+        self.label = "Counting"
+        self.caps = Capabilities(waits_for_ingest=waits, has_preview=waits)
+        self.asked = 0
+
+    def ingest_live(self, session) -> bool:
+        self.asked += 1
+        return False                      # never yet seen by the service
+
+    def go_preview(self, session) -> None: ...
+    def go_live(self, session) -> None: ...
+
+
+def _starting(eng, platform):
+    from autostream import state as stt
+
+    eng.platform = platform
+    eng.state.phase = stt.STARTING
+    eng.state.broadcast_id = "bid-1"
+    eng._starting_deadline = None
+    eng._start_failures = 0
+    eng.streaming = False     # _go_live then just moves the phase; OBS is not here
+    return stt
+
+
+def test_a_platform_that_waits_is_asked_whether_the_stream_arrived(eng):
+    """YouTube's broadcast is a real object that cannot be transitioned until
+    it has received frames, so this poll is the whole point of STARTING."""
+    e, _ = eng
+    pl = _Counting(waits=True)
+    stt = _starting(e, pl)
+    e._tick_starting()
+    assert pl.asked == 1
+    assert e.state.phase == stt.STARTING, "moved on before the stream arrived"
+
+
+def test_a_platform_that_does_not_wait_is_never_asked(eng):
+    """Twitch and Kick are live the moment RTMP arrives -- there is nothing to
+    transition, and their stream listings lag by up to a minute. Polled anyway,
+    STARTING could outlast `ingestion_timeout` and abandon a session that was
+    already on air, reporting that the service never saw the ingestion.
+
+    The capability flag said not to ask. The engine was not reading it."""
+    e, _ = eng
+    pl = _Counting(waits=False)
+    stt = _starting(e, pl)
+    e._tick_starting()
+    assert pl.asked == 0, "asked a platform that declared it does not wait"
+    assert e.state.phase == stt.LIVE
+
+
+@pytest.mark.parametrize("name,waits", [("twitch", False), ("kick", False)])
+def test_the_real_platforms_declare_they_do_not_wait(eng, home, name, waits):
+    """Asserted against the shipped objects, not a stand-in, so a capability
+    edited in one of them fails here rather than at a go-live."""
+    e, _ = eng
+    _write(home, name)
+    cfg.refresh_in_place(e.cfg)
+    assert e.platform.caps.waits_for_ingest is waits
+
+
+def test_youtube_still_waits(eng):
+    e, _ = eng
+    assert e.platform.caps.waits_for_ingest is True
+
+
+def test_the_abort_message_names_the_platform_it_was_waiting_on(eng, monkeypatch):
+    """It said "YouTube never saw our ingestion" whichever service was in use."""
+    import time as _t
+
+    from autostream import engine as eng_mod
+    from autostream import state as stt
+
+    said = []
+    monkeypatch.setattr(eng_mod.notify, "toast",
+                        lambda *a, **k: said.append(" ".join(str(x) for x in a)))
+    e, _ = eng
+    pl = _Counting(waits=True)
+    pl.label = "Hypothetical"
+    _starting(e, pl)
+    e._starting_deadline = _t.monotonic() - 1
+    e._abandon_start = lambda: e._goto(stt.IDLE)
+    e._tick_starting()
+    assert said and "Hypothetical" in said[0], said
+    assert "YouTube" not in said[0]

@@ -45,7 +45,7 @@ matters until these are in.
 
 | # | Feature | Why it is first | Status |
 |---|---|---|---|
-| A1 | **Twitch + Kick auto go-live** | 24% → 89% of gaming watch time, and *cheaper* than the YouTube path already shipped | not started — **credentials ready** |
+| A1 | **Twitch + Kick auto go-live** | 24% → 89% of gaming watch time, and *cheaper* than the YouTube path already shipped | **in progress** — seam, both platforms, sign-in and UI done; no real go-live proven yet |
 | A2 | **Clips-only install path** | Removes the Google account from first run — the hardest step, for a feature most clipper users never want | not started |
 | A3 | **Instant-replay hotkey** | The most-used feature in every competitor. Cheap, and it covers every game at once | not started |
 | A4 | **Generic highlight detection** | Audio energy, kill-sound onset, input burst, scoreboard delta. Turns "4 games" into "any game" | not started |
@@ -139,7 +139,10 @@ Do not add these back without a reason that is written down here.
 - Tests at that release: **2253 offline**, **154 in a browser**, and tier 4
   (clip detectors against real-footage baselines) green in 1908s.
 
-Nothing in Phase A has been started. Credentials for A1 are in place.
+A1 is part-built: the platform seam, Twitch, Kick, the OAuth sign-in and the
+UI that follows the choice are in and tested. What is NOT proven is a real
+go-live on either — no stream has actually been pushed to Twitch or Kick.
+That is the next thing to establish, and it needs the user at the keyboard.
 
 ## UI work, carried alongside
 
@@ -267,6 +270,7 @@ plan**, because a roadmap that never moves was never being followed.
 
 | Date | Item | What landed | What it changed |
 |---|---|---|---|
+| 2026-10-04 | **A1** Twitch + Kick — sign-in and the UI around it | Kick's token exchange fixed (Cloudflare was banning urllib's User-Agent and answering 403 `error code: 1010`, which reads as an OAuth refusal and is not one). The five YouTube-only settings hidden when the platform is Twitch or Kick, with one line saying why. A platform chooser on the dashboard, saving through the same endpoint as the Settings field. Status reports the platform and asks it for the watch url. Three silent defects fixed: the engine built its platform once and never followed a config change; `_session()` memoised an empty session so the status poll made every "is a stream live" test answer yes forever; `is_configured()` held Twitch users in a Google setup wizard. | **A platform is not shipped when its API client passes tests.** Every one of those three let the config, the page and the stored value all say Twitch while the engine streamed to YouTube — nothing failed, nothing logged. Capability flags are only honest if the UI reads them, so each new platform owes a pass over what the pages still claim. Also: the browser tier could not run while the user's own app was open, which is exactly when a UI fix is being checked — fixed with `AUTOSTREAM_INSTANCE` and `AUTOSTREAM_VERIFY_SOURCE`. |
 | 2026-10-04 | *(pre-roadmap)* **v1.40.0** | The Clips page split into six stages; the whole recording plays and a part can be trimmed and saved; the voice pack is installable; the browser test tiers (sweep + journey). Tier 4 green. | Cleared the tree so A1 starts from a clean, released base. Also set the precedent the roadmap assumes: a UI change is not finished until a browser has pressed the button — three bugs in this release passed 2200 unit tests and were caught the moment one did. |
 
 ### How to add a row
