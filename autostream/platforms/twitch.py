@@ -73,6 +73,32 @@ def _post_form(url: str, data: dict) -> dict:
         raise PlatformError(f"Twitch could not be reached: {e}") from e
 
 
+def _clean(value: str, field: str, label: str) -> str:
+    """A credential with whitespace in it is a label pasted with the value.
+
+    FROM A REAL HOUR LOST. A notes file held `<id> - twitch client ID` on each
+    line, the suffix went into the JSON with the value, and the authorize URL
+    carried `client_id=ckldy...+-+twitch+client+ID`. Twitch answered
+    `{"status":400,"message":"invalid client"}`, which is true and says
+    nothing about the cause.
+
+    No credential either platform issues contains a space, so this is never a
+    false positive -- and saying so here costs one line against a 400 that
+    sends somebody back to the developer console to re-copy a value that was
+    always correct.
+    """
+    v = (value or "").strip()
+    if not v:
+        return v
+    if any(c.isspace() for c in v):
+        head = v.split()[0]
+        raise NotConfigured(
+            f"The {label} {field} has something after it: "
+            f"{v[:len(head) + 12]!r}... That looks like a label pasted with "
+            f"the value. It should be {len(head)} characters with no spaces.")
+    return v
+
+
 class Twitch:
     """A Platform for Twitch. See the module docstring for what it is not."""
 
@@ -107,6 +133,9 @@ class Twitch:
                     f"a client_id, a client_secret and a stream_key.") from None
             except (OSError, ValueError) as e:
                 raise NotConfigured(f"Could not read {CRED_FILE}: {e}") from e
+            for key in ("client_id", "client_secret", "stream_key"):
+                if key in self._creds:
+                    self._creds[key] = _clean(self._creds[key], key, "Twitch")
         return self._creds
 
     def configured(self) -> bool:

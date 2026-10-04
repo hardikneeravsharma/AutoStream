@@ -750,7 +750,9 @@ function set_wire(){
       set_tagRender(path);
       set_touch(path);
     } else if (act === 'connect'){
-      set_connect(t.getAttribute('data-platform'));
+      /* `btn`, which is what this handler resolved. `t` is not in scope here
+         and threw on every press -- the button did nothing at all. */
+      set_connect(btn.getAttribute('data-platform'));
     } else if (act === 'theme'){
       set_theme(btn.getAttribute('data-theme'));
     }

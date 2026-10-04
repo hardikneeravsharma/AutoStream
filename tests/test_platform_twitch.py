@@ -269,3 +269,34 @@ def test_twitch_being_unreachable_is_a_platform_error_not_a_crash(creds,
     monkeypatch.setattr(tw.urllib.request, "urlopen", down)
     with pytest.raises(PlatformError):
         tw.Twitch()._call("GET", "/users")
+
+
+def test_a_label_pasted_with_the_value_is_caught_at_the_source(tmp_path,
+                                                               monkeypatch):
+    """FROM A REAL HOUR LOST. A notes file held `<id> - twitch client ID` per
+    line, the suffix reached the JSON, and the authorize URL carried
+    `client_id=ckldy...+-+twitch+client+ID`. Twitch said
+    `{"status":400,"message":"invalid client"}` -- true, and silent about why.
+
+    No credential Twitch issues contains a space, so this cannot be a false
+    positive."""
+    cred = tmp_path / "twitch.json"
+    cred.write_text(json.dumps({
+        "client_id": "ckldyamyr9k068b0pumq95ognabvrl - twitch client ID",
+        "client_secret": "abc", "stream_key": "live_1"}), encoding="utf-8")
+    monkeypatch.setattr(tw, "CRED_FILE", cred)
+    with pytest.raises(NotConfigured) as e:
+        tw.Twitch().creds()
+    said = str(e.value)
+    assert "label" in said
+    assert "30 characters" in said, said
+
+
+def test_a_clean_credential_is_left_alone(tmp_path, monkeypatch):
+    cred = tmp_path / "twitch.json"
+    cred.write_text(json.dumps({
+        "client_id": "ckldyamyr9k068b0pumq95ognabvrl",
+        "client_secret": "s" * 30, "stream_key": "live_abc"}), encoding="utf-8")
+    monkeypatch.setattr(tw, "CRED_FILE", cred)
+    got = tw.Twitch().creds()
+    assert got["client_id"] == "ckldyamyr9k068b0pumq95ognabvrl"
