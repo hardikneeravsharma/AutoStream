@@ -120,6 +120,21 @@ class Platform(Protocol):
         """
         ...
 
+    def ingest(self) -> tuple[str, str]:
+        """-> (rtmp server, stream key) for OBS, without starting anything.
+
+        SETUP NEEDS THIS AND A SESSION DOES NOT. Twitch and Kick push to a
+        persistent key, so the whole of "configure OBS" can be done once at
+        install time -- which is what the first-run wizard wants, and what
+        made a second platform feel like a different product to set up rather
+        than the same one.
+
+        YouTube has nothing to answer with: its ingest is created by the
+        wizard's own finish step and the key is never stored, so it returns
+        empty and the wizard keeps its own path for that one.
+        """
+        ...
+
     def ready(self) -> tuple[bool, str]:
         """-> (can this go live, why not). Cheap, and changes nothing.
 

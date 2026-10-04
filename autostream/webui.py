@@ -50,23 +50,67 @@ def is_configured() -> bool:
     to reach a page that cuts video files locally is the kind of thing that
     makes people close the app.
 
-    ...or unless the platform is not YouTube. Both of those conditions are
-    YouTube's: `stream_id` is a YouTube permanent stream and `TOKEN_FILE` is a
-    Google credential, and neither exists for a Twitch or Kick user, who has
-    no reason to own either. Unqualified, this held somebody who picked Twitch
-    in the setup wizard asking them to sign in to Google -- for a service they
-    were not going to use -- with no way past it. Their sign-in is on
-    Settings -> Stream, which the wizard was standing in front of.
+    ...and otherwise, DID THE WIZARD EVER FINISH. That is the question this
+    is actually asking, and it took three tries to say so:
+
+      1. A YouTube permanent stream and a Google credential. True of every
+         install that existed when it was written, and of no Twitch user --
+         who owns neither and has no reason to. It held somebody who picked
+         Twitch in a wizard asking them to sign in to Google.
+
+      2. "Yes, always" for anything that was not YouTube. That skipped not
+         the Google steps but the WIZARD: a fresh Twitch install opened on a
+         dashboard with no OBS configured, no apps listed and no stream key.
+
+      3. Ask the platform whether it can stream. Right for a first run and
+         wrong afterwards -- it made the answer a property of the platform in
+         use right now, so switching platform on the dashboard threw a
+         working install back into first-run setup because the new one was
+         not signed in yet.
+
+    A flag the wizard writes once is none of those things. Whether the
+    CURRENT platform can go live is a different question, asked separately
+    and answered on the dashboard, where it belongs.
     """
     try:
         c = cfg.load()
+        if bool(getattr(c.rules, "setup_done", False)):
+            return True
         if not getattr(c.youtube, "enabled", True):
             return True
+        # INSTALLS THAT PREDATE THE FLAG. Everyone set up before it existed
+        # was on YouTube, and these two are what the wizard wrote for them.
+        # SCOPED TO YOUTUBE, because a stream id left over from a YouTube
+        # setup says nothing about a Twitch one -- and without the guard,
+        # turning the flag off to re-run the wizard on a converted install
+        # did nothing at all.
         if str(getattr(c.youtube, "platform", "") or "youtube").lower() != "youtube":
-            return True
+            return False
         return bool(c.youtube.stream_id) and paths.TOKEN_FILE.exists()
     except Exception:  # noqa: BLE001
         return False
+
+
+def platform_for(config):
+    """The Platform this config goes live on, built without an engine.
+
+    `is_configured` runs before anything is started -- it is what decides
+    whether the first-run wizard appears at all -- so it cannot ask the
+    engine, which does not exist yet.
+    """
+    name = str(getattr(config.youtube, "platform", "") or "youtube").lower()
+    if name == "twitch":
+        from .platforms.twitch import Twitch
+
+        return Twitch(config)
+    if name == "kick":
+        from .platforms.kick import Kick
+
+        return Kick(config)
+    from .platforms.youtube_platform import YouTubePlatform
+    from .youtube import YouTube
+
+    return YouTubePlatform(config, lambda: YouTube(config, None))
 
 
 def _not_an_image(path: str) -> str | None:
@@ -980,6 +1024,14 @@ class _Handler(BaseHTTPRequestHandler):
                     missing_only=bool(b.get("missing_only"))))
 
             # ---------- setup ----------
+            elif p == "/api/setup/snapshot_only":
+                self._json(self.app.setup.snapshot_only())
+            elif p == "/api/setup/stream_key":
+                self._json(self.app.setup.save_stream_key(
+                    str(b.get("platform", "")), str(b.get("key", ""))))
+            elif p == "/api/setup/platform":
+                self._json(self.app.setup.choose_platform(
+                    str(b.get("platform", ""))))
             elif p == "/api/setup/client_secret":
                 self._json(self.app.setup.save_client_secret(str(b.get("json", ""))))
             elif p == "/api/setup/auth":

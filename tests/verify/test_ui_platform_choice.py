@@ -51,9 +51,16 @@ def app(tmp_path_factory):
     # until one exists, and YouTube is the case these tests need to see. The
     # values are never used: nothing here can reach Google, and the engine
     # never starts a session because no game is running.
+    #
+    # AND SETUP IS MARKED FINISHED, because that is what this home is
+    # pretending to be: an install somebody is using, not one mid-wizard.
+    # Without it, switching platform to one with no credentials makes
+    # `is_configured` false and the whole app correctly becomes the first-run
+    # wizard -- which is right, and is not what these tests are about.
     appd.seed_home(home, port,
                    youtube={"enabled": True, "platform": "youtube",
-                            "stream_id": "verify-stream-id"})
+                            "stream_id": "verify-stream-id"},
+                   rules={"setup_done": True})
     (home / "secrets").mkdir(parents=True, exist_ok=True)
     (home / "secrets" / "token.json").write_text(
         '{"token": "not-a-real-token", "refresh_token": "nor-this"}',

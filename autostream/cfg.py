@@ -70,6 +70,14 @@ DEFAULTS: dict[str, Any] = {
         "web_lan": True,
         "web_port": 8787,
         "web_token": "",
+        # HAS THE FIRST-RUN WIZARD EVER FINISHED. Written once, by the wizard
+        # itself. Everything else that could stand in for it is a property of
+        # the platform in use RIGHT NOW -- and the moment that became the
+        # test, changing platform on the dashboard threw a working install
+        # back into first-run setup, because the new one was not signed in
+        # yet. Installs made before this flag existed fall back to the old
+        # test; see webui.is_configured.
+        "setup_done": False,
     },
     "title": {
         "template": "{game} — live",

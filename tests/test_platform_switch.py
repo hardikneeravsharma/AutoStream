@@ -137,22 +137,70 @@ def test_a_session_rebuilt_after_a_restart_is_still_kept(eng):
 
 # ------------------------------------------- the wizard that stood in the way
 
-@pytest.mark.parametrize("platform,wanted", [
-    ("youtube", False),     # no token, no stream: setup really is unfinished
-    ("twitch", True),
-    ("kick", True),
-])
-def test_only_youtube_needs_a_google_sign_in_before_the_app_opens(
-        home, platform, wanted):
-    """`is_configured` gates the setup wizard on a YouTube permanent stream
-    and a Google credential. A Twitch user owns neither and has no reason to,
-    so picking Twitch left them held in a wizard asking them to sign in to
-    Google for a service they were not going to use -- with their actual
-    sign-in on the Settings page the wizard was standing in front of."""
-    (home / "config" / "config.yaml").write_text(
+@pytest.fixture
+def no_creds(home, monkeypatch):
+    """Point both credential files at the empty home.
+
+    They are module-level and resolve against AUTOSTREAM_HOME at import, which
+    under the suite is the repo -- where a developer's own twitch.json lives.
+    Without this, "an install with nothing set up" quietly meant "an install
+    with my credentials in it" and the test passed for the wrong reason.
+    """
+    from autostream.platforms import kick as kk
+    from autostream.platforms import twitch as tw
+
+    for mod, who in ((tw, "twitch"), (kk, "kick")):
+        monkeypatch.setattr(mod, "CRED_FILE", home / f"{who}-absent.json")
+        monkeypatch.setattr(mod, "TOKEN_FILE", home / f"{who}-no-token.json")
+    return home
+
+
+@pytest.mark.parametrize("platform", ["youtube", "twitch", "kick"])
+def test_an_install_with_nothing_set_up_gets_the_wizard(no_creds, platform):
+    """WHICHEVER PLATFORM. The first version of this answered "yes, always
+    configured" for anything that was not YouTube, which skipped not the
+    Google steps but the WIZARD -- so a fresh Twitch install went straight to
+    a dashboard with no OBS configured, no apps listed and no stream key
+    anywhere."""
+    (no_creds / "config" / "config.yaml").write_text(
         yaml.safe_dump({"youtube": {"enabled": True, "platform": platform}}),
         encoding="utf-8")
-    assert webui.is_configured() is wanted
+    assert webui.is_configured() is False
+
+
+def test_the_wizard_having_finished_is_what_finishes_it(no_creds):
+    """A YouTube permanent stream and a Google credential are YouTube's two
+    conditions and nobody else's, so they cannot be the test -- but neither
+    can "can the current platform stream", which made the answer change every
+    time somebody switched platform on the dashboard, throwing a working
+    install back into first-run setup."""
+    (no_creds / "config" / "config.yaml").write_text(
+        yaml.safe_dump({"youtube": {"enabled": True, "platform": "twitch"},
+                        "rules": {"setup_done": True}}), encoding="utf-8")
+    assert webui.is_configured() is True
+
+
+def test_switching_to_a_platform_you_have_not_signed_into_is_not_a_fresh_install(
+        no_creds):
+    """THE BUG THE FLAG EXISTS FOR. Nothing about Kick is set up here. The
+    dashboard says so, in its own words, on its own line -- and the app stays
+    the app rather than becoming a setup wizard."""
+    (no_creds / "config" / "config.yaml").write_text(
+        yaml.safe_dump({"youtube": {"enabled": True, "platform": "kick"},
+                        "rules": {"setup_done": True}}), encoding="utf-8")
+    assert webui.is_configured() is True
+    from autostream import cfg as _cfg
+
+    assert webui.platform_for(_cfg.load()).ready()[0] is False
+
+
+def test_youtube_with_both_is_finished(no_creds):
+    (no_creds / "secrets").mkdir(parents=True, exist_ok=True)
+    (no_creds / "secrets" / "token.json").write_text("{}", encoding="utf-8")
+    (no_creds / "config" / "config.yaml").write_text(
+        yaml.safe_dump({"youtube": {"enabled": True, "platform": "youtube",
+                                    "stream_id": "abc"}}), encoding="utf-8")
+    assert webui.is_configured() is True
 
 
 def test_a_clips_only_install_still_skips_the_wizard(home):
@@ -364,3 +412,37 @@ def test_preflight_still_refuses_what_ready_refuses(eng, home, monkeypatch):
     with pytest.raises(NotConfigured) as e:
         k.preflight()
     assert str(e.value) == why
+
+
+def test_an_install_made_before_the_flag_existed_is_left_alone(no_creds):
+    """EVERY EXISTING USER. They finished setup when the test was a YouTube
+    permanent stream and a Google credential, and nothing has written the
+    flag into their config. Dropping the old test would have shown every one
+    of them the first-run wizard on the next update."""
+    (no_creds / "secrets").mkdir(parents=True, exist_ok=True)
+    (no_creds / "secrets" / "token.json").write_text("{}", encoding="utf-8")
+    (no_creds / "config" / "config.yaml").write_text(
+        yaml.safe_dump({"youtube": {"enabled": True, "platform": "youtube",
+                                    "stream_id": "made-in-2025"}}),
+        encoding="utf-8")
+    assert webui.is_configured() is True
+
+
+def test_a_clips_only_install_made_before_the_flag_is_too(no_creds):
+    (no_creds / "config" / "config.yaml").write_text(
+        yaml.safe_dump({"youtube": {"enabled": False}}), encoding="utf-8")
+    assert webui.is_configured() is True
+
+
+def test_turning_the_flag_off_is_how_you_run_setup_again(no_creds):
+    """It is on the Advanced page for exactly this, so somebody who wants the
+    wizard back does not have to delete their config to get it."""
+    (no_creds / "secrets").mkdir(parents=True, exist_ok=True)
+    (no_creds / "secrets" / "token.json").write_text("{}", encoding="utf-8")
+    (no_creds / "config" / "config.yaml").write_text(
+        yaml.safe_dump({"youtube": {"enabled": True, "platform": "twitch",
+                                    "stream_id": "irrelevant-now"},
+                        "rules": {"setup_done": False}}), encoding="utf-8")
+    # The legacy fallback is YouTube's, and this install says Twitch -- so a
+    # stream id left over from a YouTube setup must not quietly count.
+    assert webui.is_configured() is False

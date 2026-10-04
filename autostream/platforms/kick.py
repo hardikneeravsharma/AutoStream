@@ -389,6 +389,14 @@ class Kick:
         if not ok:
             raise NotConfigured(why)
 
+    def ingest(self) -> tuple[str, str]:
+        """Pasted if somebody pasted one, otherwise asked for over the API."""
+        try:
+            typed = str(self.creds().get("stream_key") or "")
+        except NotConfigured:
+            typed = ""
+        return INGEST, typed or self.stream_key()
+
     def ready(self) -> tuple[bool, str]:
         """Unlike Twitch, the sign-in is required: the key comes from the API.
 

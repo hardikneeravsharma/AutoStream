@@ -2023,6 +2023,45 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 }
 #setup-root button.pick:hover{border-color:var(--accent);background:var(--surface-hover)}
 
+/* The Google Cloud step: six separate journeys through a console that looks
+   nothing like this page, done one at a time with the browser in front of the
+   app. Ticks are the reader's own note of where they got to. */
+.checklist{display:flex;flex-direction:column;gap:2px;margin:4px 0 10px;padding:0;list-style:none}
+.checkitem{margin:0}
+.checkitem-box{
+  display:flex;align-items:flex-start;gap:10px;cursor:pointer;
+  padding:8px 10px;border-radius:var(--radius-sm);
+  transition:background-color var(--dur-instant);
+}
+.checkitem-box:hover{background:var(--surface-hover)}
+.checkitem-box input{
+  flex:0 0 auto;width:16px;height:16px;margin:2px 0 0;
+  accent-color:var(--accent);cursor:pointer;
+}
+.checkitem-text{flex:1 1 auto;line-height:1.5}
+/* Dimmed, never struck through: the text still has to be re-readable when
+   somebody comes back to check what they did. */
+.checkitem.is-done .checkitem-text{color:var(--text-tertiary)}
+.checkitem.is-done .checkitem-text b,
+.checkitem.is-done .checkitem-text code{color:inherit}
+
+/* THE ONE TO TAKE. Two choices drawn as equals made the ten-minute path look
+   as ordinary as the five-second one. The border carries it rather than a
+   fill, so the card still reads as a choice and not as a button that has
+   already been pressed -- and so the accent budget is untouched. */
+#setup-root button.pick.is-primary,
+.pick.is-primary{border-color:var(--accent);background:var(--surface-hover)}
+.pick-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pick-tag{
+  padding:1px 7px;border-radius:999px;
+  border:1px solid var(--accent);color:var(--accent-text);
+  font-size:.7rem;font-weight:650;letter-spacing:.02em;text-transform:uppercase;
+}
+/* A chosen platform on the second step. Same vocabulary as the segmented
+   control elsewhere, so "this is the one" looks the same everywhere. */
+#setup-root button.pick.is-active,
+.pick.is-active{border-color:var(--accent);background:var(--surface-hover)}
+
 /* A results row that can be ticked for upload. The tick sits where the rank
    number was, so the row does not reflow when a run becomes publishable. */
 .clip-res-tick{

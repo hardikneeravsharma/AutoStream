@@ -345,15 +345,36 @@ class Twitch:
             log.warning("Twitch is not connected, so the title and category "
                         "will not be set. Connect it on the Settings page.")
 
-    def ready(self) -> tuple[bool, str]:
-        """The key is enough. See `preflight` for why the token is not needed.
+    def ingest(self) -> tuple[str, str]:
+        """The key is typed in once and never changes."""
+        try:
+            return INGEST, str(self.creds().get("stream_key") or "")
+        except NotConfigured:
+            return INGEST, ""
 
-        Says nothing and spends nothing: the dashboard asks this on every
-        poll.
+    def ready(self) -> tuple[bool, str]:
+        """THE KEY, AND ONLY THE KEY.
+
+        This asked `configured()`, which wants a client id and a client secret
+        as well -- and those exist for one purpose, which is setting the title
+        and category over the API. Somebody who has pasted a stream key and
+        wants nothing else can stream perfectly well without either, and
+        requiring them left a first run where a valid key had just been saved
+        and Continue stayed grey.
+
+        `configured()` keeps its own meaning: it answers "is there anything in
+        secrets/twitch.json to work with", which is the question the Connect
+        button on the Settings page needs.
+
+        Says nothing and spends nothing: the dashboard asks this every poll.
         """
-        if not self.configured():
-            return False, ("Twitch needs a client id, a client secret and a "
-                           "stream key.")
+        try:
+            key = str(self.creds().get("stream_key") or "")
+        except NotConfigured as e:
+            return False, str(e)
+        if not key:
+            return False, ("Twitch needs a stream key. Paste one from Creator "
+                           "Dashboard -> Settings -> Stream, or sign in.")
         if not self.connected():
             return True, ("Twitch is not signed in, so the title and category "
                           "will not be set. The stream still goes out.")

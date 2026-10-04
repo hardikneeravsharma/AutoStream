@@ -116,7 +116,81 @@ class SetupFlow:
             "headline": c.thumbnail.headline,
             "subtitle": c.thumbnail.subtitle,
             "usernames": self._usernames(),
+            # WHICH SERVICE THIS INSTALL IS BEING SET UP FOR. The wizard was
+            # YouTube end to end -- a Google Cloud project, an OAuth round
+            # trip and a permanent ingestion stream -- none of which a Twitch
+            # user has any use for. The step list is built from this.
+            "platform": str(getattr(c.youtube, "platform", "") or "youtube"),
+            "platform_ready": self._platform_ready(),
         }
+
+    @staticmethod
+    def _platform_ready() -> dict:
+        """Whether the chosen platform could go live, and what is missing."""
+        try:
+            from .webui import platform_for
+
+            p = platform_for(cfg.load())
+            ok, why = p.ready()
+            return {"name": p.name, "label": p.label, "ok": bool(ok), "why": why}
+        except Exception as e:                           # noqa: BLE001
+            return {"name": "", "label": "", "ok": False, "why": str(e)[:200]}
+
+    def snapshot_only(self) -> dict:
+        """The current state and nothing else.
+
+        The sign-in step polls this while the user is away in their browser:
+        the callback lands on this same server, so the page has no other way
+        to find out that it happened.
+        """
+        return {"ok": True, "setup": self.snapshot()}
+
+    def save_stream_key(self, platform: str, key: str) -> dict:
+        """Write a pasted stream key into the platform's own credentials.
+
+        TWITCH ONLY, in practice. Kick's key comes from its API under
+        `streamkey:read`, so there is nothing to paste; Twitch has no endpoint
+        for it and never will, which is why `fetches_stream_key` is a
+        capability rather than an assumption.
+        """
+        want = str(platform or "").lower()
+        if want not in ("twitch", "kick"):
+            return {"ok": False, "error": "That platform has no key to paste."}
+        key = str(key or "").strip()
+        if not key:
+            return {"ok": False, "error": "No key given."}
+        if any(c.isspace() for c in key):
+            return {"ok": False,
+                    "error": "That key has a space in it. It looks like a "
+                             "label was copied with the value."}
+        from . import paths
+
+        f = paths.SECRETS_DIR / f"{want}.json"
+        try:
+            data = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+        data["stream_key"] = key
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except OSError as e:
+            return {"ok": False, "error": f"Could not write {f.name}: {e}"}
+        log.info("setup: %s stream key saved", want)
+        return {"ok": True, "setup": self.snapshot()}
+
+    def choose_platform(self, name: str) -> dict:
+        """Record which service this install goes live on, and turn going
+        live on -- somebody who got here chose "Stream and clip"."""
+        want = str(name or "").lower()
+        if want not in ("youtube", "twitch", "kick"):
+            return {"ok": False, "error": "Not a platform this app streams to."}
+        cfg.save_field("youtube", "platform", want)
+        cfg.save_field("youtube", "enabled", True)
+        log.info("setup: going live on %s", want)
+        return {"ok": True, "setup": self.snapshot()}
 
     @staticmethod
     def _usernames() -> dict:
@@ -146,7 +220,8 @@ class SetupFlow:
         re-arms the full wizard on the next start.
         """
         cfg.save_field("youtube", "enabled", False)
-        log.info("setup: clips-only mode - YouTube is off, no sign-in needed")
+        cfg.save_field("rules", "setup_done", True)
+        log.info("setup: clips-only mode - no sign-in needed")
         return {"ok": True, "setup": self.snapshot()}
 
     # ---------------- step 1: client secret ----------------
@@ -486,6 +561,9 @@ class SetupFlow:
 
         c = cfg.load()
         state = State.load()
+        want = str(getattr(c.youtube, "platform", "") or "youtube").lower()
+        if want != "youtube":
+            return self._finish_rtmp(want)
         try:
             yt = YouTube(c, state)
             yt.authorise(interactive=False)
@@ -536,6 +614,54 @@ class SetupFlow:
         except Exception:  # noqa: BLE001
             pass
 
+        cfg.save_field("rules", "setup_done", True)
         state.save()
         log.info("setup complete")
+        return {"ok": True}
+
+    def _finish_rtmp(self, want: str) -> dict:
+        """Finish for a platform that pushes to a persistent key.
+
+        NOTHING IS CREATED. There is no broadcast object to make, no quota to
+        spend and no stream to bind -- the channel is live the moment OBS
+        pushes, so the whole of finishing is writing the key into OBS once.
+        Running YouTube's path here would have created a YouTube broadcast for
+        somebody who is not streaming to YouTube.
+        """
+        from .obs import Obs
+        from .state import State
+        from .webui import platform_for
+
+        try:
+            p = platform_for(cfg.load())
+            ok, why = p.ready()
+            if not ok:
+                return {"ok": False, "error": why}
+            server, key = p.ingest()
+        except Exception as e:                           # noqa: BLE001
+            return {"ok": False,
+                    "error": f"Could not read the {want} stream key: {str(e)[:200]}"}
+        if not (server and key):
+            return {"ok": False,
+                    "error": f"No {want} stream key to give OBS. Sign in again "
+                             f"on the Settings page."}
+        try:
+            obs = Obs(cfg.load())
+            obs.configure_stream(server, key)
+            scenes = obs.scene_names()
+            obs.close()
+        except Exception as e:                           # noqa: BLE001
+            return {"ok": False, "error": f"OBS refused the key: {str(e)[:200]}"}
+
+        if scenes and not cfg.load().obs.default_scene:
+            cfg.save_field("obs", "default_scene", scenes[0])
+        try:
+            from .gameindex import GameIndex
+
+            GameIndex(cfg.load()).refresh(force=True)
+        except Exception:                                # noqa: BLE001
+            pass
+        cfg.save_field("rules", "setup_done", True)
+        State.load().save()
+        log.info("setup complete (%s)", want)
         return {"ok": True}

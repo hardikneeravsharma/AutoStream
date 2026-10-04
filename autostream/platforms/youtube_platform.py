@@ -85,6 +85,12 @@ class YouTubePlatform:
         except NotAuthorised as e:
             raise NotConfigured(str(e)) from e
 
+    def ingest(self) -> tuple[str, str]:
+        """Nothing to give. YouTube's reusable stream is created by the
+        wizard's finish step, and its key is written straight into OBS there
+        rather than stored -- so there is no persistent pair to hand back."""
+        return "", ""
+
     def ready(self) -> tuple[bool, str]:
         """A permanent stream and a Google credential, which is what setup
         writes. Asked on every poll, so nothing here reaches the network.

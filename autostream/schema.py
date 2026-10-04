@@ -1187,6 +1187,17 @@ CONFIG_SCHEMA: list[Section] = [
         "advanced": True,
         "fields": [
             _field(
+                "rules.setup_done",
+                "First-run setup has finished",
+                "Written once by the setup wizard. While it is off, AutoStream "
+                "opens on the wizard instead of the dashboard. Turning it off "
+                "by hand is how you run first-run setup again -- which is "
+                "sometimes exactly what you want, and is why it is here.",
+                "toggle",
+                danger=True,
+                restart=True,
+            ),
+            _field(
                 "youtube.stream_id",
                 "Reusable stream id",
                 "The permanent YouTube ingest that every broadcast is bound to, "

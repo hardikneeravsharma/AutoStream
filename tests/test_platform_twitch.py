@@ -74,7 +74,11 @@ def test_missing_credentials_are_a_question_for_the_user(tmp_path, monkeypatch):
     assert t.configured() is False
     with pytest.raises(NotConfigured) as e:
         t.preflight()
-    assert "client id" in str(e.value).lower()
+    # It now comes through `creds()`, which names the file as well as the
+    # keys -- `ready()` stopped asking `configured()` because a stream key
+    # alone is enough to go live.
+    said = str(e.value).lower()
+    assert "client_id" in said and "stream_key" in said
 
 
 def test_half_filled_credentials_do_not_count_as_configured(tmp_path,
@@ -290,6 +294,35 @@ def test_a_label_pasted_with_the_value_is_caught_at_the_source(tmp_path,
     said = str(e.value)
     assert "label" in said
     assert "30 characters" in said, said
+
+
+def test_a_stream_key_on_its_own_is_enough_to_go_live(tmp_path, monkeypatch):
+    """The client id and secret exist for ONE purpose: setting the title and
+    category over the API. Somebody who pasted a key and wants nothing else
+    can stream without either, and requiring them left a first run where a
+    valid key had just been saved and Continue stayed grey."""
+    cred = tmp_path / "twitch.json"
+    cred.write_text(json.dumps({"stream_key": "live_only_a_key"}),
+                    encoding="utf-8")
+    monkeypatch.setattr(tw, "CRED_FILE", cred)
+    monkeypatch.setattr(tw, "TOKEN_FILE", tmp_path / "absent.json")
+
+    t = tw.Twitch()
+    ok, why = t.ready()
+    assert ok is True
+    assert "not signed in" in why, "it must still say the title will not be set"
+    t.preflight()                       # and does not raise
+
+
+def test_no_key_is_refused_however_much_else_there_is(tmp_path, monkeypatch):
+    cred = tmp_path / "twitch.json"
+    cred.write_text(json.dumps({"client_id": "a" * 30,
+                                "client_secret": "b" * 30}), encoding="utf-8")
+    monkeypatch.setattr(tw, "CRED_FILE", cred)
+    monkeypatch.setattr(tw, "TOKEN_FILE", tmp_path / "absent.json")
+    ok, why = tw.Twitch().ready()
+    assert ok is False
+    assert "stream key" in why.lower()
 
 
 def test_a_clean_credential_is_left_alone(tmp_path, monkeypatch):

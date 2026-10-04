@@ -394,6 +394,22 @@ CONTROLS: list[Control] = [
     Control("/api/setup/clips_only", "POST", CALL, "Just clips", "setup",
             body={}, expect=_dict,
             why="the supported route into youtube.enabled=false"),
+    Control("/api/setup/platform", "POST", CALL, "Where to go live", "setup",
+            body={"platform": "twitch"}, expect=_dict,
+            reject={"platform": "myspace"}, reject_soft=True,
+            acts=("pickPlatform",),
+            why="decides which steps the wizard has; an unknown name must not "
+                "write a platform the engine cannot build"),
+    Control("/api/setup/snapshot_only", "POST", CALL, "wizard state", "setup",
+            body={}, expect=_has("ok", "setup"),
+            why="the sign-in step polls this while the user is in a browser; "
+                "it must change nothing"),
+    Control("/api/setup/stream_key", "POST", CALL, "Save the key", "setup",
+            body={"platform": "twitch", "key": "verify_not_a_real_key"},
+            expect=_dict, reject={"platform": "youtube", "key": "x"},
+            reject_soft=True, acts=("saveTwitchKey",),
+            why="writes into secrets/<platform>.json; a key with whitespace "
+                "in it is a label pasted with the value"),
     Control("/api/setup/webview2", "POST", CALL, "check WebView2", "setup",
             body={}, expect=_dict, why="registry read; no install"),
     Control("/api/setup/webview2/install", "POST", STATIC,
