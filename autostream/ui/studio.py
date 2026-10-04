@@ -50,11 +50,11 @@ STUDIO_HTML = r"""
          of picking rather than taking the same style every time. -->
     <header class="bin-top">
       <div class="bin-intro">
-        <p class="bin-eyebrow">Reel maker · parts bin</p>
-        <h1 class="bin-title">Pick the clips, deal a template</h1>
-        <p class="bin-lede">Every reel is a set of picks from a few drawers: how it opens, how shots meet,
-          what happens on a kill, how time bends, what colour it is, how it ends. Each pick below is shown
-          by an example cut from your own clips, so you choose by watching. Select clips, then make a reel.</p>
+        <p class="bin-eyebrow">Reel maker</p>
+        <h1 class="bin-title">Pick your clips, then pick a look</h1>
+        <p class="bin-lede">Tick the clips you want, choose a look below, and AutoStream edits them
+          together into one video for TikTok, Reels or Shorts. Every look is shown as a short
+          example made from your own clips &mdash; so just watch them and pick the one you like.</p>
         <p class="bin-lede" id="studio-sub">Reading your clips…</p>
       </div>
       <aside class="bin-calc" aria-label="How many templates">
@@ -132,7 +132,7 @@ STUDIO_HTML = r"""
       <div class="ed-stage">
         <div class="studio-player" id="studio-player">
           <video id="studio-video" controls playsinline preload="metadata"></video>
-          <div class="studio-player-empty" id="studio-player-empty">The reel appears here once it has rendered.</div>
+          <div class="studio-player-empty" id="studio-player-empty">Press Render and your reel plays here.</div>
           <!-- THE PLAYER IS WHERE THE EYES ARE. A sidebar saying the edits are
                not in the video yet is missed by someone watching the video, so
                the video says it too, over its own top corner. -->
@@ -150,12 +150,12 @@ STUDIO_HTML = r"""
         <button type="button" class="btn btn-sm studio-transport" data-act="studio-play" id="studio-play-btn">Play</button>
         <span class="mono studio-clock" id="studio-clock">0:00.00</span>
         <span class="media-knobs" data-for="studio-video"></span>
-        <label class="studio-check"><input type="checkbox" id="studio-snap" checked> Snap to beats</label>
-        <!-- WHAT THE MUSIC LANE SHOWS. A waveform cannot say whether a kill sat
-             on the kick it was aimed at; the spectrogram and the song's own hit
-             marks can, so both are on by default and either can be turned off. -->
-        <label class="studio-check"><input type="checkbox" id="studio-tl-spec" checked> Spectrogram</label>
-        <label class="studio-check"><input type="checkbox" id="studio-tl-marks" checked> Song's hits</label>
+        <label class="studio-check"><input type="checkbox" id="studio-snap" checked> Keep cuts on the beat</label>
+        <!-- WHAT THE MUSIC LANE SHOWS. Loudness alone cannot say whether a kill
+             landed on the kick it was aimed at; the colour view and the song's
+             own hit marks can, so both are on and either can be turned off. -->
+        <label class="studio-check"><input type="checkbox" id="studio-tl-spec" checked> Show the music</label>
+        <label class="studio-check"><input type="checkbox" id="studio-tl-marks" checked> Mark the beats</label>
         <span class="studio-spacer"></span>
         <span class="muted studio-hint" id="studio-tl-sync" role="status" aria-live="polite"></span>
         <button type="button" class="btn btn-ghost btn-sm" data-act="studio-zoom" data-z="-1" aria-label="Zoom out">−</button>
@@ -230,8 +230,9 @@ STUDIO_HTML = r"""
   <section id="studio-pane-facecam" class="hide studio-fc" aria-label="Facecam">
     <div class="studio-fc-head">
       <div>
-        <h2 class="studio-h">Facecam</h2>
-        <p class="muted studio-small">Where your camera comes from, and where it goes in this reel.</p>
+        <h2 class="studio-h">Your camera</h2>
+        <p class="muted studio-small">Put your webcam in the corner of the reel, so people see your
+          reaction as well as the play.</p>
       </div>
       <div class="seg" role="group" aria-label="Facecam source" id="studio-fc-src"></div>
     </div>
@@ -241,8 +242,8 @@ STUDIO_HTML = r"""
         <!-- IN THE VIDEO: a box drawn once on a frame of their own footage. -->
         <div id="studio-fc-inset" class="hide">
           <h3 class="studio-h">Draw a box round your camera</h3>
-          <p class="muted studio-small">Drag on the frame. The box is kept for every reel, so a camera that is always in
-            the same corner is drawn once.</p>
+          <p class="muted studio-small">Your camera is already baked into the recording, so show us where it
+            is: drag a box around your face. Do this once and AutoStream remembers it.</p>
           <div class="field-inline">
             <label class="field-label" for="studio-fc-clip">Frame from</label>
             <select class="select" id="studio-fc-clip"></select>
@@ -315,7 +316,7 @@ STUDIO_HTML = r"""
     <div class="studio-sg-head">
       <div class="studio-sg-title">
         <strong class="studio-sg-name" id="studio-sg-name">No song</strong>
-        <span class="muted" id="studio-sg-facts">Choose a song to cut the reel to.</span>
+        <span class="muted" id="studio-sg-facts">Pick a song and your clips get cut in time with it.</span>
       </div>
       <div class="field-inline">
         <button type="button" class="btn" data-act="studio-sg-pick">Choose a song…</button>
@@ -328,9 +329,10 @@ STUDIO_HTML = r"""
          work the page can do. -->
     <div class="studio-sg-songs" id="studio-sg-songs" role="group" aria-label="Songs you have"></div>
     <div class="studio-sg-body hide" id="studio-sg-body">
-      <p class="field-label">The whole song — drag the highlighted part, or its edges</p>
+      <p class="field-label">The whole song &mdash; drag the lit-up part to move it, or its edges to resize.
+        The faint lines are the beat; bright ones start a bar.</p>
       <canvas class="studio-sg-wave" id="studio-sg-overview" height="90" aria-label="Whole song"></canvas>
-      <p class="field-label">The part you are using — click to move the playhead</p>
+      <p class="field-label">The part you picked, up close &mdash; click anywhere to jump there</p>
       <canvas class="studio-sg-wave studio-sg-detail" id="studio-sg-detail" height="130" aria-label="Chosen part"></canvas>
       <!-- WAYS OF SEEING IT. A waveform shows loudness and nothing else; a
            kill goes on a kick or a hat, and those are only visible once the
@@ -1164,6 +1166,54 @@ function studio_mkDefault() {
   studio_mkDraw();
 }
 
+/* THE BEATS AUTOSTREAM FOUND, drawn on a whole-song canvas.
+
+   These decide everything the page then does -- dragging the part snaps to
+   them, the clips cut on them, the bar count comes off them -- and they were
+   drawn nowhere a person could see them. Only the zoomed detail view had a
+   grid, so the song you pick the part on showed a waveform, a drop, and no
+   reason for the selection to keep jumping as you dragged it.
+
+   THINNED TO WHAT CAN BE SEEN. A three-minute track at 120 BPM is 360 beats;
+   across 900 px that is one every 2.5 px, which is not a grid but a grey
+   wash that hides the waveform underneath. So beats are drawn only while
+   they are far enough apart to read, bars take over when they are not, and
+   when even bars crowd, every Nth bar is drawn instead. The line always
+   means the same thing -- a stronger one is a bar -- so a glance at the
+   spacing is a glance at the tempo. */
+function studio_beatGrid(ctx, X, H, sh, opts) {
+  const o = opts || {};
+  const beats = (sh && sh.beats) || [];
+  if (beats.length < 2) return;
+  const per = Math.max(1, X(beats[1]) - X(beats[0]));   /* px between beats */
+  const down = sh.downbeat_pos || 0;
+  let every = 1;                                        /* draw every Nth beat */
+  if (per < 4) every = 4;                               /* bars only */
+  if (per * 4 < 10) every = 4 * Math.ceil(10 / (per * 4));
+  const css = getComputedStyle(document.documentElement);
+  const faint = css.getPropertyValue('--border-subtle').trim() || '#3a3a3a';
+  const strong = css.getPropertyValue('--text-tertiary').trim() || '#8a8a8a';
+  const top = o.top || 0, h = o.height || H;
+  ctx.save();
+  for (let i = 0; i < beats.length; i += every) {
+    const bar = (i % 4) === down;
+    if (every > 1 && !bar) continue;
+    const x = X(beats[i]);
+    if (x < -2 || x > (o.width || 1e9) + 2) continue;
+    ctx.fillStyle = bar ? strong : faint;
+    ctx.globalAlpha = (bar ? 0.75 : 0.3) * (o.alpha === undefined ? 1 : o.alpha);
+    ctx.fillRect(x, bar ? top : top + h * 0.6, bar ? 1.5 : 1, bar ? h : h * 0.4);
+  }
+  /* Where the drums come in: the moment most people actually want the part to
+     start, and the one fact the facts line names that had no mark. */
+  if (sh.drums_in) {
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = css.getPropertyValue('--ok').trim() || '#3fb950';
+    ctx.fillRect(X(sh.drums_in) - 1, top, 2, h);
+  }
+  ctx.restore();
+}
+
 /* What the dialog's player plays: the chosen part, or the whole song while
    AutoStream is choosing. Letting it choose used to hide the player with the
    part controls, so the song could not be heard at all. */
@@ -1205,7 +1255,11 @@ function studio_mkDraw() {
     ctx.globalAlpha = (x >= X(span.start) && x <= X(span.end)) ? 1 : 0.3;
     ctx.fillRect(x, mid - amp, 1, amp * 2);
   }
+  ctx.globalAlpha = 1;
+  /* Under the selection, so dragging reads as landing ON something. */
+  studio_beatGrid(ctx, X, H, sh, {width: W});
   if (choosing) {
+    ctx.fillStyle = accent;
     ctx.globalAlpha = 0.18;
     ctx.fillRect(X(mk.start), 0, X(mk.end) - X(mk.start), H);
     ctx.globalAlpha = 1;
@@ -4790,11 +4844,14 @@ async function studio_mix(what, announce) {
    kick or a hat; neither is visible in a waveform.
    ======================================================================= */
 
+/* Named by what you would USE them for. These were named after the signal
+   processing that produces them -- "onset strength", "spectrogram" -- which
+   tells somebody deciding where to put a kill precisely nothing. */
 const SG_LANES = [
-  {id: 'wave', h: 74, name: 'Waveform \u2014 the sound itself'},
-  {id: 'bands', h: 96, name: 'Kick \u00b7 snare \u00b7 hats \u2014 energy in three bands'},
-  {id: 'flux', h: 70, name: 'Onset strength \u2014 new sound arriving'},
-  {id: 'spec', h: 128, name: 'Spectrogram \u2014 every frequency over time'}
+  {id: 'wave', h: 74, name: 'Loudness \u2014 where the song gets big'},
+  {id: 'bands', h: 96, name: 'Drums \u2014 kick, snare and hi-hat, separately'},
+  {id: 'flux', h: 70, name: 'New sounds \u2014 spikes are good places for a kill'},
+  {id: 'spec', h: 128, name: 'Everything at once \u2014 bass low, cymbals high'}
 ];
 const SG_PAL = (function () {
   /* magma-ish, so a spectrogram reads the way every other tool draws one */
@@ -5318,6 +5375,8 @@ function studio_sgDrawWaves() {
       ctx.globalAlpha = (x >= X(sg.start) && x <= X(sg.end)) ? 1 : 0.3;
       ctx.fillRect(x, mid - amp, 1, amp * 2);
     }
+    ctx.globalAlpha = 1;
+    studio_beatGrid(ctx, X, H, sh, {width: W});
     ctx.globalAlpha = 0.18; ctx.fillStyle = accent;
     ctx.fillRect(X(sg.start), 0, X(sg.end) - X(sg.start), H);
     ctx.globalAlpha = 1;

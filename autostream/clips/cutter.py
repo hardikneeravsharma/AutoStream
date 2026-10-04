@@ -230,3 +230,37 @@ def probe_source(source: Path) -> dict:
              Path(source).name, info["width"], info["height"], info["fps"],
              info["audio_tracks"], info["duration"] / 60)
     return info
+
+
+def save_part(source: Path, start: float, end: float, out: Path) -> Path:
+    """Write one stretch of a recording to a file the user keeps.
+
+    STREAM COPY, NOT A RE-ENCODE. Trimming an hour off a 20 GB recording by
+    re-encoding is tens of minutes and loses a generation of quality for no
+    reason: the frames wanted are already there and already encoded. Copying
+    them is disk-speed and lossless.
+
+    The cost is that a copy can only cut on a keyframe, so the start lands on
+    the keyframe at or before the chosen moment -- up to a couple of seconds
+    early on an OBS recording. Early is the right direction to be wrong in for
+    this: the part asked for is always wholly inside what comes out, and a
+    scan reading those extra seconds finds nothing it would not have found.
+    `-avoid_negative_ts make_zero` keeps the timestamps starting at zero, so
+    the result seeks normally rather than carrying the source's offsets.
+    """
+    out.parent.mkdir(parents=True, exist_ok=True)
+    ffmpeg(
+        # -ss BEFORE -i, which seeks by index instead of decoding to the point.
+        # After it, trimming two hours in reads two hours of video first.
+        "-ss", f"{max(0.0, start):.3f}",
+        "-i", str(source),
+        "-t", f"{max(0.1, end - start):.3f}",
+        "-map", "0:v:0", "-map", "0:a?",
+        "-c", "copy",
+        "-avoid_negative_ts", "make_zero",
+        # The index at the front, so the saved file can be scrubbed in a
+        # player -- the recordings this is cut from cannot be.
+        "-movflags", "+faststart",
+        "-y", str(out),
+    )
+    return out

@@ -7,6 +7,17 @@ For what the app *is*, read [README.md](README.md). For how it is put together, 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the module map there is kept current and
 is the fastest way to find the file you want.
 
+## What to work on next
+
+[docs/ROADMAP.md](docs/ROADMAP.md) is the order the work is being done in, why that
+order, and what has actually landed. **Read it before starting a feature**, and add
+a row to its Progress table when one lands -- a roadmap nobody updates is worse than
+none, because the next session trusts it.
+
+It also records the state of the working tree, which is not always clean: at the
+time of writing there is a large uncommitted batch on a detached HEAD that wants
+cutting as v1.40.0.
+
 ## Orientation
 
 | Path | What lives there |
@@ -109,6 +120,50 @@ Since v1.6.5 the build preserves the live install itself — config, secrets, lo
 hand-restore config after a build; that backup is older than what the app has, so
 copying it back is now the thing that loses settings. Look for
 `[ok] restored the live install's ...` in the build output instead.
+
+## UI bugs are found in a browser, never by reading the page JS
+
+Most of this program is the page, and the offline suite cannot see it: `clip_show`
+is a class toggle, so a control that is unreachable, invisible or wired to nothing
+passes every unit test there is. Three bugs in one week got through 2200 passing
+tests and were caught the moment a browser pressed the button — a framing control
+that marked its choice with a class nothing styles, a player that never engaged
+because a re-render cleared the flag an in-flight fetch was about to set, and a
+`<video preload="none">` whose duration was therefore always NaN.
+
+**[docs/TESTING-UI.md](docs/TESTING-UI.md) is how to run them.** Short version:
+
+```powershell
+# the app must NOT be running - ask it to quit, do not kill it
+.\.venv\Scripts\python.exe -m pytest testserify -m ui -q -p no:randomly
+```
+
+`-m ui` is required; these are deselected by default, so a plain `pytest -q` runs
+none of them and says nothing. They drive `dist\AutoStream\AutoStream.exe`, so
+**rebuild before testing an edit** or you are testing the last build.
+
+[docs/UI-SCENARIOS.md](docs/UI-SCENARIOS.md) is the catalogue every browser test is
+written from: 62 scenarios across all eight pages, each marked covered, sweep-only
+or a gap. Add to it before adding a test, so the gaps stay countable.
+
+Three rules worth keeping:
+
+- **Nothing a test runs may open a window on the user's screen. Ever.** Two separate
+  things have broken this, and both were fixed by making it impossible rather than
+  by remembering:
+  - **File pickers** — eight controls across four pages reach the OS dialog. The
+    harness sets `AUTOSTREAM_NO_DIALOGS=1` and `webui.clips_pick` refuses outright.
+    Do not replace that with a list of controls to avoid; a denylist fails open the
+    day a ninth control is added, and the dialog is modal with no parent, so it
+    blocks the thread serving the page and hangs the run as well as covering the
+    screen.
+  - **Console windows** — any `subprocess.run` a test adds takes
+    `creationflags=appd.NO_WINDOW`, or every ffmpeg call flashes a console. A verify
+    run makes dozens.
+- **The sweep reaches 117 of the 190 controls the source declares.** `REACHED_FLOOR`
+  pins that so a page which quietly stops rendering fails rather than passing with
+  less under test. Raise it when coverage improves; never lower it without saying
+  what stopped being reachable.
 
 ## Clip bugs are measured, never read
 

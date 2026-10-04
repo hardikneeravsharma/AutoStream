@@ -639,8 +639,8 @@ class ClipJob:
                 kills, round_list = got["kills"], got["rounds"]
                 self.demo = got["about"]
                 self._set(demo_note=(
-                    "Matched the replay after the scan, so the kills and "
-                    "rounds come from the demo rather than off the screen."))
+                    "Found Steam's replay of this match, so the kills and "
+                    "rounds are exact."))
             else:
                 log.info("carrying on with the %d kills the detector found",
                          len(kills))
@@ -648,10 +648,10 @@ class ClipJob:
                 # the probe's reason is the more useful of the two.
                 if not self.demo_note:
                     self._set(demo_note=(
-                        "No replay on disk matched this recording, so the "
-                        "kills come from the screen. Download the match in "
+                        "No Steam replay matched this stream, so the kills "
+                        "were read off the video. Download the match in "
                         "Counter-Strike and run this again for exact kills "
-                        "and real round context."))
+                        "and proper round names."))
 
         # ---- 1c. the game's own kill emblem --------------------------------
         # Last, so it checks whatever the kills came from: the feed, a match
@@ -1359,10 +1359,9 @@ class ClipJob:
         log.info("reading %s by the kill tally rather than the feed, as asked "
                  "-- kills only, no round labels", prof.label)
         self._set(demo_note=(
-            "Reading the kill tally under the crosshair, which is about eight "
-            "times faster than the kill feed and the scoreboard. Clips are "
-            "named by their kill count; round labels like CLUTCH and PISTOL "
-            "need the scoreboard, which is what the slower read is for."))
+            "Counting your kills off the screen. Clips get named by how many "
+            "kills are in them — for names like ACE and CLUTCH, use "
+            "'Kills and round names' instead."))
         # demos=False as well. "Kill tally only" means the tally and nothing
         # else, but the profile still said Counter-Strike writes demos -- so
         # the run read the cards and then matched them against every replay
@@ -1578,9 +1577,9 @@ class ClipJob:
         log.info("the demo was found from the first %.0f minutes, so the rest of "
                  "the recording did not need reading", self.PROBE_SECONDS / 60)
         self._set(demo_note=(
-            f"Matched the replay from the first {self.PROBE_SECONDS / 60:.0f} "
-            f"minutes, so the rest of the recording did not need reading. The "
-            f"kills and rounds come from the demo."))
+            f"Found Steam's replay in the first {self.PROBE_SECONDS / 60:.0f} "
+            f"minutes, so the rest did not need watching. Your kills and "
+            f"rounds are exact."))
         return got
 
     def _source_started(self) -> float | None:

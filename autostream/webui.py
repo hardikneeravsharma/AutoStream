@@ -255,6 +255,20 @@ class _Handler(BaseHTTPRequestHandler):
         self._media(path, self.app._clips_dir(cfg.load()),
                     (".mp4", ".m4v", ".webm"), "video")
 
+    def _source_video(self, path: str) -> None:
+        """Stream a recording the user is clipping, so it can be watched whole.
+
+        Confined to recordings the app already knows about -- see
+        `_known_source`. The parent folder is the root because a recording can
+        live anywhere the user keeps video; the allowlist is what makes that
+        safe, not the folder.
+        """
+        if not self.app._known_source(path):
+            self._json({"error": "That recording is not one of yours."}, 403)
+            return
+        self._media(path, Path(path).parent,
+                    tuple(self.app.FRAME_TYPES), "video")
+
     def _facecam_video(self, path: str) -> None:
         """Stream a facecam video, so it can be lined up with the game by eye.
 
@@ -519,6 +533,14 @@ class _Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/clips/video":
             q = parse_qs(u.query)
             self._video((q.get("path") or [""])[0])
+        elif u.path == "/api/clips/part/status":
+            self._json(self.app.clips_part_status())
+        elif u.path == "/api/clips/source-info":
+            q = parse_qs(u.query)
+            self._json(self.app.clips_source_info((q.get("path") or [""])[0]))
+        elif u.path == "/api/clips/source":
+            q = parse_qs(u.query)
+            self._source_video((q.get("path") or [""])[0])
         elif u.path == "/api/clips/outro":
             self._json(self.app.clips_outro_info())
         elif u.path == "/api/clips/outro-video":
@@ -910,6 +932,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.clips_valorant_explained())
             elif p == "/api/clips/install":
                 self._json(self.app.clips_install(b))
+            elif p == "/api/clips/voices/install":
+                self._json(self.app.clips_voices_install())
+            elif p == "/api/clips/part/preview":
+                self._json(self.app.clips_part_preview(b))
+            elif p == "/api/clips/part/save":
+                self._json(self.app.clips_part_save(b))
             elif p == "/api/setup/scan":
                 self._json(self.app.setup.scan())
             elif p == "/api/setup/apps":
@@ -1090,6 +1118,23 @@ class Server:
             row = games.get((key or "").lower())
             return str(row.get("thumbnail") or "") if isinstance(row, dict) else ""
 
+        # IS THIS A GAME, which is a different question from "can it be
+        # launched and streamed in one click". A title started through a
+        # launcher -- Valorant, League -- carries stream=False, because the
+        # launcher exits while the game runs and keying the intent on it would
+        # take nothing live. That flag used to decide whether a thumbnail
+        # could be set too, so Valorant had no way to get one: seventeen
+        # streams in the journal and no option on the page.
+        index = getattr(self.engine, "index", None)
+
+        def is_game(exe: str) -> bool:
+            if (exe or "").lower() in games:
+                return True              # already configured, so plainly one
+            try:
+                return index is not None and index.lookup(exe) is not None
+            except Exception:  # noqa: BLE001 - a lookup failing hides a button
+                return False
+
         # THE EXE, NOT THE CATALOG KEY. games.yaml is keyed on the executable
         # because that is what the watcher sees running -- Counter-Strike is
         # `cs2.exe` there and `counter-strike-global-offensive` in the Steam
@@ -1099,6 +1144,7 @@ class Server:
         return [
             {"key": a.key, "name": a.name, "source": a.source, "stream": a.stream,
              "game_key": (a.exe or a.key).lower(),
+             "game": is_game(a.exe or a.key),
              "thumbnail": thumb(a.exe or a.key)}
             for a in catalog.load()
         ]
@@ -1674,6 +1720,11 @@ class Server:
 
     _probed: dict = {}
 
+    # Files the user chose through the OS picker this session. A route that
+    # streams any path it is given is a file browser, so what may be played
+    # back is the journal plus this -- nothing else.
+    _picked: set = set()
+
     def _source_seconds(self, plan: dict) -> float:
         """How long a run's recording is. Cached: probing costs a subprocess
         and the answer cannot change for a file that has stopped growing."""
@@ -1699,6 +1750,17 @@ class Server:
         return got
 
     _windowing: dict = {}
+
+    # The longest stretch that gets re-encoded so it can be played in the page.
+    # A preview is a scrubbing aid; encoding half an hour of video to scrub it
+    # is not one, so a longer selection plays from its start and the page says
+    # so rather than appearing to hang.
+    PART_PREVIEW_MAX = 180.0
+
+    # The one save at a time, and what became of it. A dict rather than a
+    # class because there is exactly one and it has no progress to report:
+    # a stream copy is disk-speed, so it is running or it is not.
+    _part_save: dict = {}
 
     SOUND_TYPES = (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".opus")
 
@@ -1913,6 +1975,197 @@ class Server:
         threading.Thread(target=run, name="autostream-preview",
                          daemon=True).start()
         return dict(answer, building=True)
+
+    # ---- playing the recording itself --------------------------------
+    #
+    # A COMMENT IN cutter.preview SAYS THIS CANNOT BE DONE, and for the files
+    # it was written about it could not: OBS can be told to write fragmented
+    # mp4 for crash-resilience, and a fragmented file has no index a browser
+    # can seek with. But that is a SETTING, not a fact about every recording,
+    # and the recordings actually on this machine are ordinary progressive mp4
+    # -- one of them faststart, with its moov at the front. Those a browser
+    # seeks perfectly well over Range, which this server already speaks.
+    #
+    # So the question is asked of the file rather than assumed: a recording
+    # with a moov plays whole, and only one without falls back to building a
+    # small copy of the part being looked at.
+
+    def _is_seekable(self, src: Path) -> bool:
+        """Has this file an index a browser can seek with?
+
+        Walks the top-level boxes looking for a `moov`. It may sit at the
+        front (faststart) or after the media; either is fine, because a Range
+        request fetches the tail and reads it. `moof` without `moov` is the
+        fragmented case that genuinely cannot be seeked.
+        """
+        import struct
+
+        try:
+            with src.open("rb") as f:
+                for _ in range(16):
+                    head = f.read(8)
+                    if len(head) < 8:
+                        break
+                    size = struct.unpack(">I", head[:4])[0]
+                    kind = head[4:8]
+                    if kind == b"moov":
+                        return True
+                    if kind == b"moof":
+                        return False       # fragmented, and no moov first
+                    if size == 1:
+                        size = struct.unpack(">Q", f.read(8))[0]
+                        skip = size - 16
+                    elif size == 0:
+                        break              # runs to EOF
+                    else:
+                        skip = size - 8
+                    if skip < 0:
+                        break
+                    f.seek(skip, 1)
+        except OSError:
+            return False
+        return False
+
+    def _known_source(self, path: str) -> bool:
+        """Is this a recording the app already knows about?
+
+        A ROUTE THAT STREAMS ANY PATH IS A FILE BROWSER, so this one serves
+        only what the user has already pointed the app at: a recording in the
+        journal, or a file probed through "Clip a video file" this session.
+        """
+        from . import history as _h
+
+        want = str(Path(path)).lower()
+        if want in self._picked:
+            return True
+        if want in {str(k).lower() for k in self._probed}:
+            return True
+        try:
+            for row in _h.read():
+                rec = row.get("recording_path") or ""
+                if rec and str(Path(rec)).lower() == want:
+                    return True
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+    def clips_source_info(self, path: str) -> dict:
+        """Can this recording be played whole, and should it be?"""
+        src, why = self._part_source(path)
+        if src is None:
+            return {"ok": False, "error": why}
+        if not self._known_source(path):
+            return {"ok": False, "error": "That recording is not one of yours."}
+        # AND A FORMAT A BROWSER WILL PLAY. FRAME_TYPES is what ffmpeg can read
+        # a frame out of, which is a much longer list: .mkv, .avi and .wmv all
+        # take a frame happily and none of them plays in a <video>.
+        playable = src.suffix.lower() in self.WEB_VIDEO
+        return {"ok": True, "bytes": src.stat().st_size,
+                "seekable": playable and self._is_seekable(src),
+                "why": "" if playable
+                       else "This format does not play in a browser, so only "
+                            "the part you choose can be shown."}
+
+    # ---- watching and keeping a stretch of the recording -------------
+    #
+    # WHY THERE IS NO <video src="the recording">. AutoStream's own recordings
+    # are fragmented mp4 with no seek index -- see cutter.preview -- so a
+    # browser asked to jump an hour into one reads the file from the beginning,
+    # and the file can be 47 GB. Pointing a player at it looks like it works on
+    # a short file picked from Downloads and hangs the page on a real stream.
+    #
+    # So the filmstrip stays the way you move around the whole recording, and
+    # what actually PLAYS is a small seekable copy of the part being asked
+    # about, built on a worker thread exactly as the clip-window preview is.
+
+    def _part_source(self, path: str) -> tuple[Path | None, str]:
+        """The recording a part is being taken from. -> (path, why not)."""
+        if not str(path).strip():
+            return None, "No recording given."
+        src = Path(path)
+        if src.suffix.lower() not in self.FRAME_TYPES:
+            return None, "That is not a video file."
+        if not src.is_file():
+            return None, "That recording is no longer on disk."
+        return src, ""
+
+    def clips_part_preview(self, body: dict) -> dict:
+        """A playable copy of [start, end] of the recording being clipped."""
+        from .clips import cutter
+
+        src, why = self._part_source(str(body.get("path") or ""))
+        if src is None:
+            return {"error": why}
+        start = max(0.0, _float(body.get("start"), 0.0))
+        end = max(start + 0.5, _float(body.get("end"), 0.0))
+        # A PREVIEW IS A SCRUBBING AID, and re-encoding half an hour of video
+        # to scrub it is not one. Longer selections play from their start.
+        end = min(end, start + self.PART_PREVIEW_MAX)
+        folder = self._clips_dir(cfg.load()) / "_part"
+        out = folder / f"{src.stem[:40]}.{int(start)}-{int(end)}.mp4"
+        answer = {"ok": True, "path": str(out), "start": start, "end": end,
+                  "capped": end < max(start + 0.5, _float(body.get("end"), 0.0))}
+        if out.is_file() and out.stat().st_size > 0:
+            return dict(answer, cached=True)
+        key = str(out)
+        if self._windowing.get(key) == "running":
+            return dict(answer, building=True)
+        self._windowing[key] = "running"
+
+        def run():
+            try:
+                cutter.preview(src, start, end, out)
+                _trim_previews(out.parent)
+            except Exception as e:                      # noqa: BLE001
+                log.warning("no part preview for %s: %s", src.name, e)
+            finally:
+                self._windowing.pop(key, None)
+
+        threading.Thread(target=run, name="autostream-part",
+                         daemon=True).start()
+        return dict(answer, building=True)
+
+    def clips_part_save(self, body: dict) -> dict:
+        """Write the chosen part out as a file the user keeps."""
+        from .clips import cutter
+
+        src, why = self._part_source(str(body.get("path") or ""))
+        if src is None:
+            return {"error": why}
+        start = max(0.0, _float(body.get("start"), 0.0))
+        end = _float(body.get("end"), 0.0)
+        if end - start < 0.5:
+            return {"error": "That part is too short to save."}
+        if self._part_save.get("state") == "running":
+            return {"error": "A part is already being saved."}
+        # INTO A FOLDER WE CHOOSE, never a path from the request. A save route
+        # that writes where it is told is a way to put a file anywhere on the
+        # disk, and nothing about this feature needs that.
+        folder = self._clips_dir(cfg.load()) / "trimmed"
+        out = folder / f"{src.stem[:60]}_{int(start)}s-{int(end)}s.mp4"
+        self._part_save = {"state": "running", "out": str(out), "error": "",
+                           "name": out.name, "started": time.time()}
+
+        def run():
+            try:
+                cutter.save_part(src, start, end, out)
+                log.info("saved %.0f-%.0fs of %s to %s",
+                         start, end, src.name, out.name)
+                self._part_save = {"state": "done", "out": str(out),
+                                   "error": "", "name": out.name,
+                                   "started": self._part_save.get("started", 0)}
+            except Exception as e:                      # noqa: BLE001
+                log.warning("could not save that part: %s", e)
+                self._part_save = {"state": "failed", "out": "", "name": "",
+                                   "error": f"The part could not be saved: {e}",
+                                   "started": 0}
+
+        threading.Thread(target=run, name="autostream-trim",
+                         daemon=True).start()
+        return {"ok": True, **self._part_save}
+
+    def clips_part_status(self) -> dict:
+        return {"ok": True, **(self._part_save or {"state": "idle"})}
 
     def clips_window_ready(self, path: str) -> dict:
         """Is that preview finished? The page polls this while it waits."""
@@ -2451,18 +2704,46 @@ class Server:
         return dict(self._update_job) or {"state": "idle"}
 
     def clips_voices(self) -> dict:
-        """The voices installed, grouped, so one can be chosen by ear."""
+        """The voices installed, grouped, so one can be chosen by ear.
+
+        Carries the download job too, so a page already polling this one
+        endpoint can show progress without a second one.
+        """
         from .clips import voice as v
 
+        job = v.fetcher().status()
+        # CAN they be fetched, which is not the same as being absent. The
+        # model files download; the kokoro-onnx package does not, and a
+        # button offering to fix something it cannot is worse than no button.
+        gaps = v.missing()
+        pkg_missing = any("kokoro-onnx" in g for g in gaps)
         if not v.available():
             return {"ok": True, "available": False, "why": v.why_not(),
                     "groups": {}, "default": v.VOICE,
-                    "sample_line": v.SAMPLE_LINE}
+                    "sample_line": v.SAMPLE_LINE,
+                    "can_install": not pkg_missing,
+                    "size_mb": round(sum(v.FILES.values()) / 1e6),
+                    "job": job}
         groups = {}
         for prefix, names in v.catalogue().items():
             groups[v.GROUPS.get(prefix, prefix)] = list(names)
         return {"ok": True, "available": True, "why": "", "groups": groups,
-                "default": v.VOICE, "sample_line": v.SAMPLE_LINE}
+                "default": v.VOICE, "sample_line": v.SAMPLE_LINE,
+                "can_install": False, "job": job}
+
+    def clips_voices_install(self) -> dict:
+        """Download the voice model, at the user's asking.
+
+        NEVER on its own initiative: it is 206 MB over somebody's connection,
+        which is not a thing to start because a page was opened.
+        """
+        from .clips import voice as v
+
+        ok, why = v.fetcher().start()
+        if not ok:
+            return {"ok": False, "error": why}
+        log.info("downloading the voice model at the user's request")
+        return {"ok": True, **self.clips_voices()}
 
     # One rendered sample per voice, kept between requests. Kokoro takes about
     # a second a line and the model a second to load, and choosing a voice
@@ -3425,6 +3706,12 @@ class Server:
             shutil.rmtree(tmp, ignore_errors=True)
 
     # What a recording or a picked video can be. OBS writes the first two.
+    # What a <video> tag will actually play. A browser is far pickier than
+    # ffmpeg: .mkv, .avi, .flv and .wmv all give up a frame and none of them
+    # plays. .mov only when its codecs are h264/aac, which OBS and every
+    # screen recorder write -- a ProRes .mov will not play, and falls back.
+    WEB_VIDEO = (".mp4", ".m4v", ".webm", ".mov")
+
     FRAME_TYPES = (".mp4", ".mkv", ".mov", ".flv", ".avi", ".ts", ".webm",
                    ".m4v", ".mts", ".m2ts", ".wmv")
 
@@ -3572,7 +3859,26 @@ class Server:
         Tk rather than pywebview's dialog: the native window is not always
         there -- plenty of machines fall back to a browser -- and Tk is already
         bundled for the overlay panel.
+
+        REFUSED OUTRIGHT WHEN AUTOSTREAM_NO_DIALOGS IS SET, and that is the
+        only guard worth having. An automated run presses buttons it has not
+        been told about -- that is the point of a sweep -- and eight separate
+        controls across four pages end up here. Keeping a list of which ones
+        to avoid is a denylist that fails open: every control added later
+        opens a picker over whatever the person at the keyboard is doing,
+        until somebody remembers to add it. One modal dialog with no parent
+        window also blocks this thread, so the app stops answering and the run
+        hangs rather than failing.
+
+        So the harness sets the variable and the door is shut here. A control
+        nobody remembered cannot open a dialog, because there is no dialog to
+        open.
         """
+        import os as _os
+
+        if _os.environ.get("AUTOSTREAM_NO_DIALOGS"):
+            log.info("a file picker was asked for and refused: dialogs are off")
+            return {"error": "File pickers are switched off in this run."}
         try:
             import tkinter as tk
             from tkinter import filedialog
@@ -3608,6 +3914,13 @@ class Server:
         path = Path(chosen)
         if not path.is_file():
             return {"error": "That file is not there any more."}
+        # REMEMBERED THE MOMENT THE DIALOG RETURNS. This path came out of a
+        # picker the user drove, so it is unambiguously one they pointed the
+        # app at -- which is what lets it be streamed back to the page. It
+        # used to be learned from the probe instead, and the probe is fired
+        # without being waited for, so the part stage asked whether it could
+        # play the file before anything had registered it and was told no.
+        self._picked.add(str(path).lower())
         out = {"ok": True, "path": str(path), "name": path.name,
                "bytes": path.stat().st_size,
                "size_mb": round(path.stat().st_size / (1024 * 1024))}

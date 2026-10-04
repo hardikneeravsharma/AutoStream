@@ -302,6 +302,20 @@ CONTROLS: list[Control] = [
                 "request thread until a human dismisses it"),
     Control("/api/clips/install", "POST", STATIC, "Install them", "clips",
             why="runs winget and raises a UAC prompt"),
+    Control("/api/clips/voices/install", "POST", STATIC,
+            "Download the voices", "clips",
+            why="starts a 206 MB download over the user's connection"),
+    Control("/api/clips/part/preview", "POST", STATIC, "Play this part", "clips",
+            why="re-encodes a stretch of the recording on a worker thread"),
+    Control("/api/clips/part/save", "POST", STATIC,
+            "Save this part as a file", "clips",
+            why="writes a trimmed copy of the recording to disk"),
+    Control("/api/clips/part/status", "GET", STATIC, "", "clips",
+            why="polled while a part is being saved"),
+    Control("/api/clips/source-info", "GET", STATIC, "", "clips",
+            why="asks whether a recording can be played whole in the page"),
+    Control("/api/clips/source", "GET", STATIC, "", "clips",
+            why="streams a recording the user is clipping, by byte range"),
 
     # ------------------------------------------------------------- reels
     # Every one of these answers 200 with ok:false rather than an HTTP error,
@@ -685,6 +699,16 @@ NOT_A_FLOW: dict[str, str] = {
     "log-filters": "client-side level filter over rows already fetched",
     # --- Clips run options, collected and sent later as part of the run body
     "montage": "toggles montage for the next /api/clips/run",
+    "adv": "folds the second layer of style options open or shut; never "
+           "leaves the browser",
+    "part-mark": "sets the start or end of the part from the video playhead",
+    "part-play": "plays the chosen part, whole-file or from a built preview",
+    "part-save": "writes the chosen part out as its own file",
+    "voice-get": "starts the voice-pack download; the button then polls "
+                 "/api/clips/voices for progress",
+    "review-montage": "the same montage choice asked again on the review page, "
+                      "where the clips finally exist to be counted; sent with "
+                      "the next /api/clips/run",
     "demo-anyway": "sets demo_fallback on the next /api/clips/run",
     "cal-reset": "clears the calibration box in the browser",
     "cal-close": "closes the calibration panel",
