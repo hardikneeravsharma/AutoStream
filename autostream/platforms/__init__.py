@@ -120,6 +120,22 @@ class Platform(Protocol):
         """
         ...
 
+    def ready(self) -> tuple[bool, str]:
+        """-> (can this go live, why not). Cheap, and changes nothing.
+
+        SEPARATE FROM `preflight` because the two are asked at different
+        moments for different reasons. `preflight` is asked once, at the top
+        of a session, and may log, spend quota or warn. This is asked by the
+        dashboard on every two-second poll, so it may do none of those -- the
+        first version called `preflight` there and Twitch's "not connected"
+        warning went into the log thirty times a minute.
+
+        It is here rather than computed by the caller so that each platform's
+        rule lives with the platform. Twitch can stream on the key alone;
+        Kick cannot, because its key comes from the API.
+        """
+        ...
+
     def start(self, title: str, description: str = "", *,
               privacy: str = "public", category: str = "") -> Session:
         """Make ready to broadcast. -> the session.

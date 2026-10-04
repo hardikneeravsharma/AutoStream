@@ -338,12 +338,26 @@ class Twitch:
         goes out, not a refusal -- refusing would mean an expired token three
         weeks from now costs a stream rather than a title.
         """
-        if not self.configured():
-            raise NotConfigured(
-                "Twitch needs a client id, a client secret and a stream key.")
+        ok, why = self.ready()
+        if not ok:
+            raise NotConfigured(why)
         if not self.connected():
             log.warning("Twitch is not connected, so the title and category "
                         "will not be set. Connect it on the Settings page.")
+
+    def ready(self) -> tuple[bool, str]:
+        """The key is enough. See `preflight` for why the token is not needed.
+
+        Says nothing and spends nothing: the dashboard asks this on every
+        poll.
+        """
+        if not self.configured():
+            return False, ("Twitch needs a client id, a client secret and a "
+                           "stream key.")
+        if not self.connected():
+            return True, ("Twitch is not signed in, so the title and category "
+                          "will not be set. The stream still goes out.")
+        return True, ""
 
     def start(self, title: str, description: str = "", *,
               privacy: str = "public", category: str = "") -> Session:

@@ -85,6 +85,20 @@ class YouTubePlatform:
         except NotAuthorised as e:
             raise NotConfigured(str(e)) from e
 
+    def ready(self) -> tuple[bool, str]:
+        """A permanent stream and a Google credential, which is what setup
+        writes. Asked on every poll, so nothing here reaches the network.
+        """
+        from .. import paths
+
+        if not getattr(self.cfg.youtube, "stream_id", ""):
+            return False, ("YouTube has no permanent stream bound yet. Finish "
+                           "setup on the Settings page.")
+        if not paths.TOKEN_FILE.exists():
+            return False, ("YouTube is not signed in. Connect it on the "
+                           "Settings page.")
+        return True, ""
+
     def start(self, title: str, description: str = "", *,
               privacy: str = "public", category: str = "") -> Session:
         """Create the broadcast and bind it to the reusable ingest.

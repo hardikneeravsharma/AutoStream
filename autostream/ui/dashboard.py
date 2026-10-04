@@ -858,26 +858,34 @@ function dash_renderWhere(s) {
 
   /* Rewritten only when something changed: this runs on every two-second
      poll and the note is read, not watched. */
-  const key = now + '|' + live + '|' + !!s.streaming;
+  const key = now + '|' + live + '|' + !!s.streaming + '|' +
+              (s.platform_ready === false) + '|' + (s.platform_why || '');
   if (dash_platform === key) return;
   dash_platform = key;
 
   const note = dash_el('dash-where-note');
   if (note) {
+    /* WHAT WOULD STOP IT, FIRST. A platform that cannot go live is worth
+       saying before a game starts; the alternative is finding out from a
+       toast after one does, with the session already abandoned. */
     if (s.streaming === false) {
       note.textContent = 'Going live is switched off, so this install only ' +
         'records and cuts clips. Turn it on under Settings → Stream.';
     } else if (live) {
       note.textContent = 'Locked while a session is running. End the stream ' +
         'to switch platform.';
+    } else if (s.platform_ready === false) {
+      note.textContent = s.platform_why ||
+        ((s.platform_label || now) + ' is not set up yet.');
     } else if (now === 'youtube') {
       note.textContent = 'YouTube holds the broadcast in a private preview ' +
         'first, so there is a countdown you can still cancel in.';
     } else {
       note.textContent = (s.platform_label || now) + ' is live the moment ' +
         'the stream reaches it — there is no countdown and nothing to ' +
-        'cancel. Sign in under Settings → Stream.';
+        'cancel.' + (s.platform_why ? ' ' + s.platform_why : '');
     }
+    note.classList.toggle('field-error', s.platform_ready === false);
   }
 
   const sub = dash_el('dash-where-sub');

@@ -1316,9 +1316,24 @@ class Server:
         """
         pl = getattr(self.engine, "platform", None)
         caps = getattr(pl, "caps", None)
+        # CAN IT ACTUALLY GO LIVE. Worth knowing before a game starts rather
+        # than from a toast after one does: picking Kick and not signing in
+        # is one press away from a session that aborts on the first thing it
+        # tries. `ready` and not `preflight` -- preflight is asked once, at
+        # the top of a session, and may log or spend quota; this is asked on
+        # every two-second poll. Calling preflight here put Twitch's "not
+        # connected" warning in the log thirty times a minute.
+        ready, why = True, ""
+        try:
+            if pl is not None:
+                ready, why = pl.ready()
+        except Exception as e:                           # noqa: BLE001
+            ready, why = False, str(e)
         return {
             "platform": getattr(pl, "name", "") or "youtube",
             "platform_label": getattr(pl, "label", "") or "YouTube",
+            "platform_ready": ready,
+            "platform_why": why,
             "has_quota": bool(getattr(caps, "has_quota", True)),
             "has_chat": bool(getattr(caps, "has_chat", True)),
         }

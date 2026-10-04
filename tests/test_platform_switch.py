@@ -255,3 +255,112 @@ def test_the_abort_message_names_the_platform_it_was_waiting_on(eng, monkeypatch
     e._tick_starting()
     assert said and "Hypothetical" in said[0], said
     assert "YouTube" not in said[0]
+
+
+# ------------------------------------------- ready(), which the poll asks
+
+def test_ready_is_not_preflight(eng, home, caplog):
+    """FROM A BUG CAUGHT BEFORE IT SHIPPED. The dashboard asked `preflight`
+    on every two-second status poll, and Twitch's preflight warns when it is
+    not connected -- thirty lines a minute, in a log read after something has
+    gone wrong. `ready` says the same thing and writes nothing."""
+    import logging
+
+    e, _ = eng
+    _write(home, "twitch")
+    cfg.refresh_in_place(e.cfg)
+    pl = e.platform
+
+    # Cleared here, not at the top: building the platform logs that it
+    # changed, which is correct and happens once.
+    with caplog.at_level(logging.DEBUG):
+        caplog.clear()
+        for _ in range(30):
+            pl.ready()
+    assert caplog.records == [], (
+        "ready() logged; thirty polls a minute would flood the log")
+
+
+@pytest.mark.parametrize("name", ["youtube", "twitch", "kick"])
+def test_every_platform_answers_ready_with_a_reason(eng, home, name,
+                                                     monkeypatch):
+    """An unset-up install must say which one it is and what is missing, in
+    a sentence the dashboard can print without rewriting.
+
+    The credential files are pointed at the empty home explicitly. They are
+    module-level and resolve against AUTOSTREAM_HOME at import, which under
+    the suite is the repo -- where a developer's own twitch.json lives, and
+    where this read "configured" and passed for the wrong reason."""
+    from autostream.platforms import kick as kk
+    from autostream.platforms import twitch as tw
+
+    for mod, who in ((tw, "twitch"), (kk, "kick")):
+        monkeypatch.setattr(mod, "CRED_FILE", home / f"{who}-absent.json")
+        monkeypatch.setattr(mod, "TOKEN_FILE", home / f"{who}-no-token.json")
+
+    e, _ = eng
+    _write(home, name)
+    cfg.refresh_in_place(e.cfg)
+    ok, why = e.platform.ready()
+    assert ok is False, "nothing is configured in this home"
+    assert why, "refused with no reason"
+    assert e.platform.label.split()[0].lower() in why.lower()
+
+
+def test_twitch_can_go_live_on_the_key_alone(eng, home, monkeypatch):
+    """LIVE WITH A STALE TITLE BEATS NOT LIVE. The key is what makes the
+    broadcast happen; the token only sets title and category. Treating a
+    missing sign-in as a refusal would cost a stream to save a title."""
+    import json
+
+    from autostream.platforms import twitch as tw
+
+    cred = home / "twitch.json"
+    cred.write_text(json.dumps({"client_id": "a" * 30,
+                                "client_secret": "b" * 30,
+                                "stream_key": "live_fake"}), encoding="utf-8")
+    monkeypatch.setattr(tw, "CRED_FILE", cred)
+    monkeypatch.setattr(tw, "TOKEN_FILE", home / "absent.json")
+
+    ok, why = tw.Twitch().ready()
+    assert ok is True
+    assert "not signed in" in why, "it still has to say the title will not be set"
+
+
+def test_kick_cannot_because_the_key_comes_from_the_api(eng, home, monkeypatch):
+    """The difference between the two, asserted so a shared base class can
+    never quietly make them the same."""
+    import json
+
+    from autostream.platforms import kick as kk
+
+    cred = home / "kick.json"
+    cred.write_text(json.dumps({"client_id": "a" * 26,
+                                "client_secret": "b" * 64}), encoding="utf-8")
+    monkeypatch.setattr(kk, "CRED_FILE", cred)
+    monkeypatch.setattr(kk, "TOKEN_FILE", home / "absent.json")
+
+    ok, why = kk.Kick().ready()
+    assert ok is False
+    assert "stream key through the API" in why
+
+
+def test_preflight_still_refuses_what_ready_refuses(eng, home, monkeypatch):
+    """The two must not drift: `ready` is now what `preflight` asks."""
+    import json
+
+    from autostream.platforms import NotConfigured
+    from autostream.platforms import kick as kk
+
+    cred = home / "kick.json"
+    cred.write_text(json.dumps({"client_id": "a" * 26,
+                                "client_secret": "b" * 64}), encoding="utf-8")
+    monkeypatch.setattr(kk, "CRED_FILE", cred)
+    monkeypatch.setattr(kk, "TOKEN_FILE", home / "absent.json")
+
+    k = kk.Kick()
+    ok, why = k.ready()
+    assert ok is False
+    with pytest.raises(NotConfigured) as e:
+        k.preflight()
+    assert str(e.value) == why

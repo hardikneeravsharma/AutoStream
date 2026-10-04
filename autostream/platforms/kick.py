@@ -363,13 +363,24 @@ class Kick:
         authorisation -- there is nothing to push with. A user who pasted a
         key into kick.json is the one exception, and is allowed through.
         """
+        ok, why = self.ready()
+        if not ok:
+            raise NotConfigured(why)
+
+    def ready(self) -> tuple[bool, str]:
+        """Unlike Twitch, the sign-in is required: the key comes from the API.
+
+        Says nothing and spends nothing: the dashboard asks this on every
+        poll.
+        """
         if not self.configured():
-            raise NotConfigured("Kick needs a client id and a client secret.")
+            return False, "Kick needs a client id and a client secret."
         if not self.connected() and not self.creds().get("stream_key"):
-            raise NotConfigured(
+            return False, (
                 "Kick has not been connected yet, and Kick hands over the "
                 "stream key through the API -- so there is nothing to stream "
                 "with until you connect it on the Settings page.")
+        return True, ""
 
     def start(self, title: str, description: str = "", *,
               privacy: str = "public", category: str = "") -> Session:

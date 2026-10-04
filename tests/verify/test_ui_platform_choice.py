@@ -12,6 +12,8 @@ neither is a syntax error, and neither is visible in the source.
 """
 from __future__ import annotations
 
+import json
+
 import appd
 import pytest
 
@@ -56,6 +58,14 @@ def app(tmp_path_factory):
     (home / "secrets" / "token.json").write_text(
         '{"token": "not-a-real-token", "refresh_token": "nor-this"}',
         encoding="utf-8")
+    # TWITCH IS SET UP HERE AND KICK IS NOT, on purpose: the dashboard note
+    # has to say something different for each, and a home where both are
+    # missing would only ever exercise one of the two branches. None of these
+    # values is real and none of them is used -- nothing in this test reaches
+    # Twitch.
+    (home / "secrets" / "twitch.json").write_text(json.dumps({
+        "client_id": "x" * 30, "client_secret": "y" * 30,
+        "stream_key": "live_not_a_real_key"}), encoding="utf-8")
     base, proc = appd.start(home, port)
     try:
         yield {"base": base, "home": home, "token": appd.TOKEN}
@@ -225,13 +235,40 @@ def test_the_note_says_what_changes_about_going_live(pg):
     is no window to cancel in, and that is worth knowing before the press."""
     _dash(pg)
     pg.click("#dash-where-seg [data-platform='twitch']")
-    pg.wait_for_timeout(1200)
+    pg.wait_for_timeout(2600)
     said = pg.locator("#dash-where-note").inner_text()
-    assert "no countdown" in said
+    assert "no countdown" in said, said
 
     pg.click("#dash-where-seg [data-platform='youtube']")
-    pg.wait_for_timeout(1200)
+    pg.wait_for_timeout(2600)
     assert "countdown" in pg.locator("#dash-where-note").inner_text()
+
+
+def test_a_platform_that_cannot_go_live_says_so_before_a_game_starts(pg):
+    """Kick has no credentials in this home. Picking it and hearing nothing
+    means finding out from a toast after a session has already aborted."""
+    _dash(pg)
+    pg.click("#dash-where-seg [data-platform='kick']")
+    pg.wait_for_timeout(2600)
+    note = pg.locator("#dash-where-note")
+    said = note.inner_text()
+    assert "Kick" in said
+    assert "client id" in said or "connected" in said, said
+    # And it reads as a problem, not as a description.
+    assert "field-error" in (note.get_attribute("class") or "")
+
+
+def test_a_platform_that_can_go_live_does_not_read_as_a_problem(pg):
+    """Twitch has a key in this home, which is all it needs -- the sign-in
+    only sets the title. Flagging that as an error would train people to
+    ignore the line."""
+    _dash(pg)
+    pg.click("#dash-where-seg [data-platform='twitch']")
+    pg.wait_for_timeout(2600)
+    note = pg.locator("#dash-where-note")
+    assert "field-error" not in (note.get_attribute("class") or "")
+    # It still says what is missing, because the title will not be set.
+    assert "signed in" in note.inner_text()
 
 
 def test_the_api_budget_is_not_shown_for_a_platform_that_has_none(pg):
