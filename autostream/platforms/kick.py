@@ -308,6 +308,28 @@ class Kick:
         tok = self._stored_token()
         return bool(tok and (tok.get("access_token") or tok.get("refresh_token")))
 
+    def missing_scopes(self) -> list[str]:
+        """Which of SCOPES the sign-in did not actually come back with.
+
+        FROM A REAL SIGN-IN. A connect that looks entirely successful -- a
+        token, a refresh token, two hours of life -- came back with three of
+        the four scopes. `channel:read` was not among them, so `GET /channels`
+        answered 401, and `start()` asks for the channel before anything else.
+        Everything up to the first second of the stream said it was ready.
+
+        Kick returns what it granted in the token's `scope`, so this costs a
+        file read and catches the whole class: a scope dropped by the app's
+        registration, or one the user did not tick.
+        """
+        tok = self._stored_token() or {}
+        got = tok.get("scope") or ""
+        if isinstance(got, str):
+            got = got.split()
+        have = {str(x) for x in got}
+        if not have:
+            return []          # nothing said; not the same as nothing granted
+        return [s for s in SCOPES if s not in have]
+
     # ---- who we are, and where to push --------------------------------
 
     def channel(self) -> dict:
@@ -380,6 +402,15 @@ class Kick:
                 "Kick has not been connected yet, and Kick hands over the "
                 "stream key through the API -- so there is nothing to stream "
                 "with until you connect it on the Settings page.")
+        gone = self.missing_scopes()
+        if gone:
+            return False, (
+                "Kick is signed in, but did not grant "
+                + ", ".join(gone)
+                + ". Without it AutoStream cannot read the channel or its "
+                  "stream key, and a session would fail the moment it "
+                  "started. Check those permissions on the Kick app, then "
+                  "press Connect again.")
         return True, ""
 
     def start(self, title: str, description: str = "", *,

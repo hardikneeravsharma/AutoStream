@@ -295,3 +295,65 @@ def test_a_stale_sign_in_code_says_to_press_connect_again(creds, monkeypatch):
     said = str(e.value)
     assert "try again" in said
     assert "401" not in said, "a bare status code is not an instruction"
+
+
+# ------------------------------------ a sign-in that granted less than asked
+
+def test_a_scope_that_was_not_granted_is_noticed_before_the_session(creds):
+    """FROM A REAL SIGN-IN. The connect looked entirely successful -- an
+    access token, a refresh token, two hours of life -- and came back with
+    three of the four scopes. `channel:read` was missing, so `GET /channels`
+    answered 401, and `start()` asks for the channel before anything else.
+
+    Everything up to the first second of the stream said it was ready."""
+    kk.TOKEN_FILE.write_text(json.dumps({
+        "access_token": "a", "expires_in": 7200, "obtained_at": time.time(),
+        "scope": "user:read channel:write streamkey:read"}), encoding="utf-8")
+
+    k = kk.Kick()
+    assert k.connected() is True, "it really is signed in; that is the trap"
+    assert k.missing_scopes() == ["channel:read"]
+
+    ok, why = k.ready()
+    assert ok is False
+    assert "channel:read" in why
+    assert "Connect again" in why
+
+
+def test_a_full_grant_is_not_complained_about(creds):
+    kk.TOKEN_FILE.write_text(json.dumps({
+        "access_token": "a", "expires_in": 7200, "obtained_at": time.time(),
+        "scope": " ".join(kk.SCOPES)}), encoding="utf-8")
+    k = kk.Kick()
+    assert k.missing_scopes() == []
+    assert k.ready() == (True, "")
+
+
+def test_a_scope_list_is_read_as_well_as_a_string(creds):
+    """Kick returns a space-separated string; the refresh path has been seen
+    to return a list. Either is the same answer."""
+    kk.TOKEN_FILE.write_text(json.dumps({
+        "access_token": "a", "expires_in": 7200, "obtained_at": time.time(),
+        "scope": list(kk.SCOPES)}), encoding="utf-8")
+    assert kk.Kick().missing_scopes() == []
+
+
+def test_a_token_that_says_nothing_about_scopes_is_not_called_incomplete(creds):
+    """Silence is not a refusal. Inventing a missing scope here would refuse
+    to start a session that would have worked."""
+    kk.TOKEN_FILE.write_text(json.dumps({
+        "access_token": "a", "expires_in": 7200,
+        "obtained_at": time.time()}), encoding="utf-8")
+    k = kk.Kick()
+    assert k.missing_scopes() == []
+    assert k.ready()[0] is True
+
+
+def test_preflight_refuses_a_partial_grant_too(creds):
+    """So the engine does not start a session that cannot read its channel."""
+    kk.TOKEN_FILE.write_text(json.dumps({
+        "access_token": "a", "expires_in": 7200, "obtained_at": time.time(),
+        "scope": "user:read"}), encoding="utf-8")
+    with pytest.raises(NotConfigured) as e:
+        kk.Kick().preflight()
+    assert "channel:read" in str(e.value)
