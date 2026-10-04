@@ -2167,6 +2167,11 @@ ol.steps-list li{margin-block:var(--space-4)}
   cursor:pointer;
 }
 .clip-list>.clip-row:first-child{border-top:0}
+/* Sits under the list inside the same panel, so it reads as part of the list
+   rather than a control floating beneath it. */
+.clip-pager{display:flex;align-items:center;justify-content:center;gap:12px;
+  padding:10px 12px;border-top:1px solid var(--border-subtle)}
+.clip-pager .muted{min-width:9ch;text-align:center;font-variant-numeric:tabular-nums}
 .clip-row:hover{background:var(--surface-hover)}
 .clip-row.is-active{background:var(--surface-active)}
 /* The selected row gets a rail, not an accent fill: the accent budget is spent
@@ -2191,6 +2196,21 @@ ol.steps-list li{margin-block:var(--space-4)}
 }
 .clip-grid .seg{width:100%}
 .clip-grid .seg-btn{flex:1 1 0}
+/* THE PRESET, LIFTED OUT OF THE ROW OF EQUALS. It sets every dial below it,
+   so presenting it as one of six identical fields is what made this page read
+   as a form to fill in rather than a choice to make. */
+.clip-style-field{
+  padding:var(--space-5);border-radius:var(--radius-lg);
+  background:var(--surface-active);
+  border:var(--border-hair) solid var(--border-subtle);
+}
+.clip-style-field .field-label{font-size:14px;font-weight:600;
+  color:var(--text-primary)}
+.clip-style-field .seg-btn{padding-block:10px}
+.clip-grid-note{
+  margin:calc(var(--space-5) * -1) 0 0;font-size:12.5px;
+  color:var(--text-tertiary);
+}
 /* The style control owns the other three timings, so it reads across the top
    of the grid rather than sitting as a peer of the settings it drives. */
 .clip-span2{grid-column:1 / -1}
@@ -2441,6 +2461,61 @@ ol.steps-list li{margin-block:var(--space-4)}
 }
 .clip-step.is-done{color:var(--ok)}
 .clip-step.is-now{color:var(--accent)}
+
+/* ================================================== while a run is working
+   The screen a user looks at longest, and it was the smallest thing on the
+   page: a title, four grey words, a hairline bar, and the rest of the window
+   empty beneath it. A forty-minute job deserves the room it has.
+
+   The number is sized to be read from across a room, which is where people
+   are while this runs. */
+.clip-run{padding:var(--space-6)}
+.clip-run-head{
+  display:flex;justify-content:space-between;align-items:flex-start;
+  gap:var(--space-4);margin-bottom:var(--space-6);
+}
+.clip-run-body{
+  display:grid;grid-template-columns:minmax(260px,1fr) minmax(220px,340px);
+  gap:var(--space-7);align-items:start;
+}
+.clip-run-pct{
+  font:700 clamp(44px,9vw,92px)/1 inherit;
+  color:var(--text-primary);font-variant-numeric:tabular-nums;
+  letter-spacing:-.02em;
+}
+.clip-run-pct span{font-size:.4em;color:var(--text-tertiary);margin-inline-start:.1em}
+.clip-run-left{
+  margin-top:var(--space-2);font-size:15px;color:var(--accent);font-weight:600;
+}
+.clip-run-dial .meter{margin-top:var(--space-4)}
+.clip-run-elapsed{margin-top:var(--space-2);font-size:12px}
+
+/* A COLUMN. Four stages of very different lengths read better stacked than as
+   equal chips in a row, and the current one can then be plainly current. */
+.clip-run-steps{list-style:none;margin:0;padding:0;display:flex;
+  flex-direction:column;gap:var(--space-2)}
+.clip-run-steps .clip-step{
+  display:flex;align-items:center;gap:var(--space-3);
+  padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);
+  font:500 13px/1.2 inherit;letter-spacing:normal;text-transform:none;
+  color:var(--text-tertiary);background:transparent;
+}
+.clip-run-steps .clip-step::before{content:none}
+.clip-run-steps .clip-step-dot{
+  display:inline-grid;place-items:center;flex:0 0 22px;height:22px;
+  border-radius:50%;background:var(--surface-active);
+  color:var(--text-tertiary);font-size:11px;font-weight:700;
+}
+.clip-run-steps .clip-step.is-done{color:var(--text-secondary)}
+.clip-run-steps .clip-step.is-done .clip-step-dot{background:var(--ok);color:#fff}
+.clip-run-steps .clip-step.is-now{
+  background:var(--surface-active);color:var(--text-primary);font-weight:600;
+}
+.clip-run-steps .clip-step.is-now .clip-step-dot{background:var(--accent);color:#fff}
+.clip-review-mont{margin-top:var(--space-4)}
+@media (max-width:760px){
+  .clip-run-body{grid-template-columns:1fr;gap:var(--space-5)}
+}
 
 .clip-results{display:flex;flex-direction:column}
 .clip-res{
@@ -2847,10 +2922,14 @@ ol.steps-list li{margin-block:var(--space-4)}
 
 CLIPS_FLOW_CSS = """
 /* ---------------------------------------------------------------- clips rail
-   Orientation, not navigation. The clips page shows one column of cards, most
-   hidden until they apply -- correct, because the choices interact, and also
-   disorienting the first time. The rail says where you are and scrolls to a
-   step; it never hides one. */
+   NAVIGATION, and it did not start that way. The page was one column with
+   every stage's cards on it, and the rail only scrolled you around that
+   column -- which meant a first-time user met a part picker, three ways to
+   read a match, a sheet of style options and a review table all at once.
+
+   Now the rail opens a stage and the others go away. Nothing is gated: a
+   stage you have not reached, and one you finished ten minutes ago, are both
+   one click from here. */
 .clip-rail{
   display:flex;flex-wrap:wrap;gap:var(--space-2);
   list-style:none;margin:0 0 var(--space-6);padding:0;
@@ -2871,6 +2950,39 @@ CLIPS_FLOW_CSS = """
 .clip-rail-step.is-done .clip-rail-dot{background:var(--accent);color:#fff}
 .clip-rail-step.is-now button{
   border-color:var(--accent);color:var(--text-primary);
+}
+/* WHERE YOU ARE, now that the rail moves you rather than scrolling you. A tick
+   means finished and the filled pill means open, so a step can be both -- you
+   came back to it -- and the two have to be told apart at a glance. */
+.clip-rail-step.is-here button{
+  border-color:var(--accent);background:var(--surface-active);
+  color:var(--text-primary);font-weight:600;
+  box-shadow:0 0 0 1px var(--accent) inset;
+}
+/* A stage with nothing in it yet. Shown rather than removed, so the number of
+   stages does not change under the user as a run progresses -- but plainly
+   not somewhere to go. */
+.clip-rail-step.is-locked button{
+  opacity:.45;cursor:not-allowed;
+}
+.clip-rail-step.is-locked button:hover{background:var(--surface)}
+.clip-rail{position:sticky;top:0;z-index:5;background:var(--bg);
+  padding-top:var(--space-2)}
+
+/* One stage at a time. `.hide` is each card's own reason to be out of sight;
+   this is the stage gate, and either one wins. */
+.clip-offstep{display:none !important}
+
+/* Always in the same place, whatever the stage is made of. */
+.clip-stepnav{
+  display:flex;justify-content:space-between;gap:var(--space-3);
+  margin-top:var(--space-6);padding-top:var(--space-4);
+  border-top:var(--border-hair) solid var(--border-subtle);
+}
+.clip-stepnav button:disabled{opacity:.4;cursor:default}
+@media (max-width:620px){
+  .clip-rail{gap:4px}
+  .clip-rail-step button{font-size:11px;padding:5px 9px 5px 5px}
 }
 
 /* ------------------------------------------------------- how to read a match
@@ -3748,3 +3860,61 @@ FACECAM_CSS = r"""
 """
 
 CSS = CSS + FACECAM_CSS
+
+CSS += r"""
+/* ==================================================== the style page, folded
+   Level one is the preset; level two is every dial it already set. The fold
+   carries a summary of what is inside it, because a control labelled only
+   "Advanced" makes people open it to find out whether it matters -- and the
+   aim is that most finish without opening anything. */
+.clip-adv{margin-top:calc(var(--space-5) * -1)}
+.clip-adv-toggle{
+  display:flex;align-items:center;gap:var(--space-3);width:100%;
+  padding:var(--space-4);border-radius:var(--radius-md);
+  border:var(--border-hair) dashed var(--border-subtle);
+  background:transparent;color:var(--text-secondary);
+  font:600 13px/1 inherit;cursor:pointer;text-align:left;
+}
+.clip-adv-toggle:hover{background:var(--surface-hover);color:var(--text-primary)}
+.clip-adv-caret{transition:transform .15s ease;font-size:11px}
+.clip-adv-toggle[aria-expanded="true"] .clip-adv-caret{transform:rotate(90deg)}
+.clip-adv-sum{margin-inline-start:auto;font-weight:400;font-size:12.5px}
+.clip-adv-body{margin-top:var(--space-5)}
+.clip-adv-body .clip-grid{
+  padding:var(--space-5);border-radius:var(--radius-lg);
+  background:var(--surface-active);
+}
+
+/* ============================================= choosing a part of a recording
+   THE WHOLE RECORDING IS NOT PLAYABLE HERE and cannot be made so: AutoStream
+   records fragmented mp4 with no seek index, so a browser asked to jump an
+   hour into one reads from the start of a file that can be 47 GB. The
+   filmstrip is how you move around the whole thing; the player holds a small
+   seekable copy of whichever part is being asked about. */
+.clip-part{display:flex;flex-direction:column;gap:var(--space-5)}
+.clip-part-view{
+  position:relative;width:100%;aspect-ratio:16/9;max-height:52vh;
+  border-radius:var(--radius-lg);overflow:hidden;background:#000;
+  border:var(--border-hair) solid var(--border-subtle);
+}
+.clip-part-video{width:100%;height:100%;object-fit:contain;display:block;background:#000}
+.clip-part-empty{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:var(--space-2);
+  text-align:center;padding:var(--space-6);color:var(--text-secondary);
+}
+.clip-part-empty p{margin:0}
+.clip-part-bar{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:var(--space-4);flex-wrap:wrap;
+}
+.clip-part-times{display:flex;gap:var(--space-6)}
+.clip-part-time{display:flex;flex-direction:column;gap:2px;line-height:1.1}
+.clip-part-time b{font-size:19px;font-variant-numeric:tabular-nums}
+.clip-part-time .muted{font-size:11px;text-transform:uppercase;letter-spacing:.07em}
+@media (max-width:620px){
+  .clip-part-view{max-height:34vh}
+  .clip-part-times{gap:var(--space-4)}
+  .clip-part-time b{font-size:16px}
+}
+"""

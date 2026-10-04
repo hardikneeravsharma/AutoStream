@@ -247,7 +247,8 @@ def test_a_clip_plays_in_the_page(ui, app, tmp_path):
     made = clips / "sample.mp4"
     subprocess.run([ff, "-y", "-v", "error", "-f", "lavfi", "-i",
                     "testsrc=size=320x180:rate=15:duration=2", str(made)],
-                   check=True, timeout=180)
+                   check=True, timeout=180,
+                   creationflags=appd.NO_WINDOW)
     ui.page.click('.rail-btn[data-page="clips"]')
     ui.page.wait_for_selector("#view-clips.is-active")
     state = ui.page.evaluate("""async (path) => {
@@ -281,7 +282,8 @@ def _studio_run(app, name: str, count: int, seconds: float = 4.0) -> None:
         subprocess.run([ff, "-y", "-v", "error", "-f", "lavfi", "-i",
                         f"testsrc2=size=320x180:rate=30:duration={seconds}",
                         "-f", "lavfi", "-i", f"sine=frequency={300 + 100 * i}:duration={seconds}",
-                        "-shortest", "-pix_fmt", "yuv420p", str(clip)], check=True, timeout=180)
+                        "-shortest", "-pix_fmt", "yuv420p", str(clip)], check=True, timeout=180,
+                   creationflags=appd.NO_WINDOW)
         rows.append({"rank": i + 1, "start": 10.0 * (i + 1), "end": 10.0 * (i + 1) + seconds,
                      "duration": seconds, "kills": 1, "name": clip.stem, "master": str(clip),
                      "vertical": "", "caption": "", "tags": [], "at": ""})

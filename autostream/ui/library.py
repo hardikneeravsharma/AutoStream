@@ -143,11 +143,18 @@ function lib_row(a) {
     + '<div class="app-name" title="' + name + '">' + name + '</div>'
     + '<div class="app-source">' + source + '</div>'
     + '<div class="app-actions">'
-    /* Only on things that can actually be streamed. The list is mostly Start
-       Menu shortcuts -- Command Prompt, Character Map, dfrgui -- and a
-       thumbnail button on those is noise attached to something that will never
-       have a broadcast. Same condition as "Open + stream". */
-    + (a.stream
+    /* Only on things that will actually have a broadcast. The list is mostly
+       Start Menu shortcuts -- Command Prompt, Character Map, dfrgui -- and a
+       thumbnail button on those is noise.
+
+       NOT the same condition as "Open + stream", which is what this was. A
+       game started through a launcher carries stream=false, because the
+       launcher exits while the game runs and keying the launch intent on it
+       would take nothing live -- true of Valorant and League. Those still go
+       live, by being noticed once they are running, and they still want a
+       thumbnail. Valorant had seventeen streams in the journal and no way to
+       set one. */
+    + (a.game || a.stream
         ? '<button class="btn btn-ghost btn-sm" type="button" data-thumb="'
           + lib_esc(a.game_key || a.key) + '" data-app="' + key
           + '" title="' + (a.thumbnail ? 'Thumbnail: ' + lib_esc(a.thumbnail)

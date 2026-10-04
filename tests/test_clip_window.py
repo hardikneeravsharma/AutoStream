@@ -488,13 +488,19 @@ def test_a_game_with_no_second_reader_is_left_alone(tmp_path):
 
 def test_the_fast_reader_says_what_it_gives_up(tmp_path):
     """A run that quietly produced no CLUTCH labels would read as the round
-    detection having broken."""
+    detection having broken.
+
+    Asserted on the MEANING, not the wording. This used to require the phrase
+    "kill tally", which names the technique rather than the consequence -- and
+    the consequence is the whole point of the note. What has to survive a
+    rewrite is that the user is told which labels they lose, and what to pick
+    if they want them."""
     job = _job_for(tmp_path)
     from autostream.clips import profiles
 
     job._as_asked(profiles.for_game("cs2.exe"), {"fallback_mode": "cards"})
-    assert "kill tally" in job.demo_note
-    assert "CLUTCH" in job.demo_note
+    assert "CLUTCH" in job.demo_note, "does not say which labels are lost"
+    assert "round names" in job.demo_note, "does not point at the other reader"
 
 
 def test_a_recording_with_no_kills_is_a_finished_run(tmp_path, monkeypatch):

@@ -66,13 +66,13 @@ CLIPS_HTML: str = (
      not gate. -->
 <ol class="clip-rail hide" id="clip-rail" aria-label="Where you are"></ol>
 
-<div class="card" id="clip-local">
+<div class="card" id="clip-local" data-cstep="pick">
   <div class="card-head">
     <div>
       <h2 class="card-title">Clip a video file</h2>
-      <p class="card-sub">Any recording you already have - AutoStream does not have
-         to have made it. Pick the file, say which game it is, and the highlights
-         come out the same way they do for a stream.</p>
+      <p class="card-sub">Got a recording from somewhere else? Pick the file and
+         the game, and you get the same highlights as a stream AutoStream
+         recorded itself.</p>
     </div>
   </div>
   <div class="card-body">
@@ -97,7 +97,7 @@ CLIPS_HTML: str = (
   </div>
 </div>
 
-<div class="searchbar">
+<div class="searchbar" data-cstep="pick">
   <span class="overline">Streams</span>
   <select class="select" id="clip-game" aria-label="Filter by game">
     <option value="">All games</option>
@@ -108,28 +108,35 @@ CLIPS_HTML: str = (
   <span class="muted" id="clip-count"></span>
 </div>
 
-<p class="field-help clip-gone hide" id="clip-gone">
+<p class="field-help clip-gone hide" id="clip-gone" data-cstep="pick">
   <span id="clip-gone-text"></span>
   <button class="btn btn-sm btn-ghost" type="button" id="clip-gone-clear">
     Remove them from the list</button>
 </p>
 
-<div class="panel" id="clip-listwrap">
+<div class="panel" id="clip-listwrap" data-cstep="pick">
   <div class="clip-list" id="clip-list"></div>
+  <!-- Only ever shown when there is more than one page, so somebody with four
+       streams never sees paging furniture for a list that fits on screen. -->
+  <div class="clip-pager hide" id="clip-pager">
+    <button class="btn btn-ghost btn-sm" type="button" id="clip-page-prev">Newer</button>
+    <span class="muted" id="clip-page-at"></span>
+    <button class="btn btn-ghost btn-sm" type="button" id="clip-page-next">Older</button>
+  </div>
 </div>
 
 <!-- Two different people see this. Somebody who streams has an empty list
      because they have not streamed yet; somebody running the clipper on its
      own has one because they never will, and telling them to go and stream is
      advice for an app they did not install. -->
-<div class="empty hide" id="clip-empty">"""
+<div class="empty hide" id="clip-empty" data-cstep="pick">"""
     + _svg("film", 20)
     + """<p id="clip-empty-head">No finished streams yet.</p>
   <p class="muted" id="clip-empty-sub">Turn on <strong>Record while streaming</strong>
      in Settings, then stream once. When it ends, the recording shows up here.</p>
 </div>
 
-<div class="card hide" id="clip-made-card">
+<div class="card hide" id="clip-made-card" data-cstep="pick">
   <div class="card-head">
     <div>
       <h2 class="card-title" id="clip-made-title">This stream already has clips</h2>
@@ -147,7 +154,7 @@ CLIPS_HTML: str = (
   </div>
 </div>
 
-<div class="card hide" id="clip-player-card">
+<div class="card hide" id="clip-player-card" data-cstep="done">
   <div class="card-head">
     <div>
       <h2 class="card-title" id="clip-play-title">&nbsp;</h2>
@@ -327,12 +334,13 @@ CLIPS_HTML: str = (
   </div>
 </div>
 
-<div class="card hide" id="clip-review-card">
+<div class="card hide" id="clip-review-card" data-cstep="review">
   <div class="card-head">
     <div>
       <h2 class="card-title">Review the clips before cutting</h2>
-      <p class="card-sub" id="clip-review-sub">Nothing has been encoded yet. Each
-         clip below can have its own caption and its own spoken line, or neither.</p>
+      <p class="card-sub" id="clip-review-sub">Nothing has been made yet, so
+         change anything you like. Each clip can have its own caption and
+         voiceover, or neither.</p>
     </div>
     <div class="field-inline">
       <button class="btn btn-sm btn-ghost" type="button" id="clip-review-close">
@@ -349,7 +357,24 @@ CLIPS_HTML: str = (
         <label class="field-label" for="clip-review-voice-all">Voice for every clip</label>
         <select class="select" id="clip-review-voice-all" style="max-width:16rem"></select>
         <button class="btn btn-sm" type="button" id="clip-review-play-all">Hear it</button>
+        <!-- THE WAY TO GET THEM. `voice.download` existed for a year with
+             nothing in the app calling it, so a user who read "no voices
+             installed" had no action available anywhere -- the only route was
+             to find two URLs in the source and place the files by hand. -->
+        <button class="btn btn-sm btn-primary hide" type="button"
+                id="clip-voice-get" data-act="voice-get">Download the voices</button>
         <span class="muted" id="clip-review-voicewhy"></span>
+      </div>
+      <!-- ASKED AGAIN HERE, and that is the point. The montage was chosen on
+           the Style page before anybody had seen a single clip; this is the
+           first screen where the clips exist and can be counted, which is
+           when somebody can actually tell whether joining them is wanted. -->
+      <div class="field-inline clip-review-mont">
+        <button class="switch" type="button" role="switch" id="clip-review-montage"
+                data-act="review-montage" aria-checked="true"><span
+                class="switch-track"></span><span class="switch-thumb"></span></button>
+        <label class="field-label" for="clip-review-montage">Also join them into one video</label>
+        <span class="muted" id="clip-review-montwhy"></span>
       </div>
     </div>
     <div class="clip-review-list" id="clip-review-list"></div>
@@ -364,7 +389,7 @@ CLIPS_HTML: str = (
      of video, or to trim it in a video editor first.
      The frames are the point: a timeline of numbers cannot tell you where one
      game ends, and a filmstrip can be read at a glance. -->
-<div class="card hide" id="clip-strip-card">
+<div class="card hide" id="clip-strip-card" data-cstep="part">
   <div class="card-head">
     <div>
       <h2 class="card-title">Choose the part to clip</h2>
@@ -375,7 +400,25 @@ CLIPS_HTML: str = (
         <span>Whole video</span></button>
     </div>
   </div>
-  <div class="card-body">
+  <div class="card-body clip-part">
+    <!-- WATCHING IT. There is no <video src="the recording"> here on purpose:
+         AutoStream's recordings are fragmented mp4 with no seek index, so a
+         browser asked to jump an hour into one reads from the beginning of a
+         file that can be 47 GB. What plays is a small seekable copy of the
+         part being asked about, built on demand. -->
+    <div class="clip-part-view">
+      <!-- METADATA, not none. With preload="none" the browser fetches nothing
+           until play is pressed, so duration is NaN and the scrubber is dead:
+           "Start here" had no playhead to read and the bar could not be
+           dragged. Metadata is a few hundred KB off the ends of the file. -->
+      <video class="clip-part-video" id="clip-part-video" controls playsinline
+             preload="metadata" data-knobs="off"></video>
+      <div class="clip-part-empty" id="clip-part-empty">
+        <p id="clip-part-emptytext">Loading the recording&hellip;</p>
+        <p class="muted" id="clip-part-emptysub">Clicking a frame below moves the start there.</p>
+      </div>
+    </div>
+
     <div class="clip-strip" id="clip-strip"></div>
     <div class="clip-range" id="clip-range">
       <input class="clip-range-in" type="range" id="clip-from" min="0" max="1000"
@@ -383,6 +426,31 @@ CLIPS_HTML: str = (
       <input class="clip-range-in" type="range" id="clip-to" min="0" max="1000"
              value="1000" step="1" aria-label="End of the part to clip">
     </div>
+
+    <div class="clip-part-bar">
+      <div class="clip-part-times">
+        <span class="clip-part-time"><b id="clip-part-from">0:00</b>
+          <span class="muted">start</span></span>
+        <span class="clip-part-time"><b id="clip-part-to">0:00</b>
+          <span class="muted">end</span></span>
+        <span class="clip-part-time"><b id="clip-part-len">0:00</b>
+          <span class="muted">long</span></span>
+      </div>
+      <div class="field-inline">
+        <!-- SET FROM WHERE YOU ARE WATCHING. Dragging a handle on an
+             eighteen-minute strip is about four seconds per pixel; watching
+             until the round starts and pressing a button is exact. -->
+        <button class="btn btn-sm btn-ghost hide" type="button" data-act="part-mark"
+                data-edge="from" id="clip-part-markin">Start here</button>
+        <button class="btn btn-sm btn-ghost hide" type="button" data-act="part-mark"
+                data-edge="to" id="clip-part-markout">End here</button>
+        <button class="btn btn-sm" type="button" data-act="part-play"
+                id="clip-part-play">Play this part</button>
+        <button class="btn btn-sm btn-ghost" type="button" data-act="part-save"
+                id="clip-part-save">Save this part as a file&hellip;</button>
+      </div>
+    </div>
+    <p class="muted" id="clip-part-msg"></p>
     <p class="muted" id="clip-strip-msg"></p>
     <!-- Matches an earlier reading already found in this recording: one
          press picks exactly that match, and nothing has to be read again. -->
@@ -396,12 +464,12 @@ CLIPS_HTML: str = (
      time and quality, so this is the most consequential choice on the page --
      and until now it was made FOR the user, silently, and only surfaced as a
      dialog once a scan had already stopped twelve minutes in. -->
-<div class="card hide" id="clip-read-card">
+<div class="card hide" id="clip-read-card" data-cstep="read">
   <div class="card-head">
     <div>
-      <h2 class="card-title">How should this match be read?</h2>
-      <p class="card-sub" id="clip-read-sub">Counter-Strike can be read three
-         ways. They are not equal, and the fastest is not the worst.</p>
+      <h2 class="card-title">How should we find your kills?</h2>
+      <p class="card-sub" id="clip-read-sub">Three ways, and the first one is
+         usually the right answer.</p>
     </div>
   </div>
   <div class="card-body">
@@ -425,13 +493,13 @@ CLIPS_HTML: str = (
      too -- point the crop at the wrong pixels and the scan reports almost
      nothing, which looks exactly like a quiet session. One real user got 2
      kills out of 17 and nothing on the page said why. -->
-<div class="card hide" id="clip-cal-card">
+<div class="card hide" id="clip-cal-card" data-cstep="read">
   <div class="card-head">
     <div>
-      <h2 class="card-title">Where is your kill tally?</h2>
-      <p class="card-sub" id="clip-cal-sub">These frames are from your own
-         recording, picked because a tally is probably showing. Drag the box
-         onto the fan of cards above your rank badge.</p>
+      <h2 class="card-title">Show us your kill counter</h2>
+      <p class="card-sub" id="clip-cal-sub">These are frames from your own
+         stream. Drag the box over the little stack of cards above your rank
+         badge &mdash; that is what gets counted.</p>
     </div>
     <div class="field-inline">
       <button class="btn btn-sm btn-ghost" type="button" data-act="cal-reset">
@@ -454,7 +522,7 @@ CLIPS_HTML: str = (
   </div>
 </div>
 
-<div class="card hide" id="clip-options">
+<div class="card hide" id="clip-options" data-cstep="style">
   <div class="card-head">
     <div>
       <h2 class="card-title" id="clip-chosen">&nbsp;</h2>
@@ -515,14 +583,34 @@ One per line - a long session often covers several matches."></textarea>
   </div>
 
   <div class="clip-grid" id="clip-grid">
-    <div class="field clip-span2">
-      <span class="field-label">Style</span>
+    <!-- PROGRESSIVE DISCLOSURE, and the research is unambiguous about why:
+         the aim is that most people finish the job without opening a second
+         layer at all. This page asked six questions of equal weight, five of
+         which the first one had already answered -- so everybody read all six
+         and most changed none.
+
+         Level one is the preset. Level two is every dial it sets, folded away
+         behind one control and opened only by somebody who wants to disagree.
+         One level deep, which is where it stays legible. -->
+    <div class="field clip-span2 clip-style-field">
+      <span class="field-label">What kind of clips do you want?</span>
       <div class="seg" id="clip-style" role="group" aria-label="Clip style"></div>
       <p class="field-help" id="clip-style-help"></p>
     </div>
 
+    <div class="clip-span2 clip-adv">
+      <button class="clip-adv-toggle" type="button" data-act="adv"
+              id="clip-adv-btn" aria-expanded="false" aria-controls="clip-adv-body">
+        <span class="clip-adv-caret" aria-hidden="true">&#9656;</span>
+        <span id="clip-adv-label">Change the details</span>
+        <span class="muted" id="clip-adv-sum"></span>
+      </button>
+    </div>
+
+    <div class="clip-span2 clip-adv-body hide" id="clip-adv-body">
+     <div class="clip-grid">
     <div class="field hide" id="clip-rounds-field">
-      <span class="field-label">What to clip</span>
+      <span class="field-label">Clip whole rounds?</span>
       <div class="field-inline">
         <button class="switch is-on" type="button" role="switch" id="clip-rounds"
                 aria-checked="true"><span class="switch-track"><span class="switch-thumb"></span></span></button>
@@ -542,27 +630,28 @@ One per line - a long session often covers several matches."></textarea>
     </div>
 
     <div class="field" id="clip-min-field">
-      <span class="field-label" id="clip-min-label">Minimum kills in a clip</span>
+      <span class="field-label" id="clip-min-label">How good does a moment have to be?</span>
       <div class="seg" id="clip-min" role="group" aria-label="Minimum kills"></div>
-      <p class="field-help" id="clip-min-help">A clip is only kept if this many kills land inside it,
-         not just inside the fight it came from.</p>
+      <p class="field-help" id="clip-min-help">Fewer kills means more clips, and more of them
+         ordinary. More kills means fewer clips, and every one worth watching.</p>
     </div>
 
     <div class="field">
-      <span class="field-label">Clip length</span>
+      <span class="field-label">How long should each clip be?</span>
       <div class="seg" id="clip-len" role="group" aria-label="Clip length"></div>
-      <p class="field-help">A fixed length centres on the busiest seconds of each
-         fight. Whole moment follows the fight however long it runs.</p>
+      <p class="field-help">A set length keeps every clip the same and centres it on the
+         action. <b>Whole moment</b> follows the fight however long it takes.</p>
     </div>
 
     <div class="field">
-      <span class="field-label">Vertical copies</span>
+      <span class="field-label">Make phone-shaped copies?</span>
       <div class="seg" id="clip-vert" role="group" aria-label="Vertical copies"></div>
-      <p class="field-help">A 9:16 export for Shorts and Reels, made from each clip.</p>
+      <p class="field-help">A tall 9:16 version of every clip, ready to post straight to
+         TikTok, Reels or Shorts.</p>
     </div>
 
     <div class="field">
-      <span class="field-label">Montage</span>
+      <span class="field-label">Also join them into one video?</span>
       <div class="field-inline">
         <button class="switch" type="button" role="switch" id="clip-montage"
                 aria-checked="true" data-act="montage"><span class="switch-track">
@@ -575,7 +664,10 @@ One per line - a long session often covers several matches."></textarea>
           <option value="1200">1.2s</option>
         </select>
       </div>
-      <p class="field-help" id="clip-trans-help">All the clips joined into one video.</p>
+      <p class="field-help" id="clip-trans-help">One longer video with every clip in it,
+         as well as the clips on their own.</p>
+    </div>
+     </div>
     </div>
   </div>
 
@@ -604,22 +696,43 @@ One per line - a long session often covers several matches."></textarea>
   </div>
 </div>
 
-<div class="card hide" id="clip-progress">
-  <div class="card-head">
-    <h2 class="card-title" id="clip-prog-title">Working</h2>
+<!-- WHILE IT WORKS. A clip run is minutes, sometimes forty of them, and this
+     was a thin card near the top of a long page: a title, four step names, a
+     bar and a line of text, with the rest of the screen empty underneath. The
+     one screen the user spends the most time looking at was the smallest
+     thing on the page.
+
+     Now it takes the room it has. The percentage is the thing you glance at
+     from across the room, so it is set in a size you can read from there; the
+     steps are a column with one clearly current; and the time left sits
+     beside the number rather than buried in a sentence. -->
+<div class="card clip-run hide" id="clip-progress">
+  <div class="clip-run-head">
+    <div>
+      <h2 class="card-title" id="clip-prog-title">Working</h2>
+      <p class="muted" id="clip-prog-msg"></p>
+    </div>
     <button class="btn btn-danger btn-sm" type="button" data-act="cancel">Cancel</button>
   </div>
-  <div class="clip-steps" id="clip-steps"></div>
-  <div class="meter" id="clip-meter" role="progressbar" aria-valuemin="0"
-       aria-valuemax="100" aria-valuenow="0"><span class="meter-fill" id="clip-fill"></span></div>
-  <p class="muted" id="clip-prog-msg"></p>
+
+  <div class="clip-run-body">
+    <div class="clip-run-dial">
+      <div class="clip-run-pct" id="clip-run-pct">0<span>%</span></div>
+      <div class="clip-run-left" id="clip-run-left">starting&hellip;</div>
+      <div class="meter" id="clip-meter" role="progressbar" aria-valuemin="0"
+           aria-valuemax="100" aria-valuenow="0"><span class="meter-fill" id="clip-fill"></span></div>
+      <div class="clip-run-elapsed muted" id="clip-run-elapsed"></div>
+    </div>
+    <ol class="clip-run-steps" id="clip-steps"></ol>
+  </div>
+
   <!-- Why this run took the path it did: whether a replay matched, and if not,
        what would make one match next time. Separate from the message above,
        which is overwritten on every poll. -->
   <p class="muted clip-prog-demo hide" id="clip-prog-demo"></p>
 </div>
 
-<div class="card hide" id="clip-results">
+<div class="card hide" id="clip-results" data-cstep="done">
   <div class="card-head">
     <div>
       <h2 class="card-title" id="clip-res-title">Done</h2>
@@ -698,6 +811,14 @@ One per line - a long session often covers several matches."></textarea>
   </div>
 </div>
 
+<!-- MOVING BETWEEN STAGES. Outside every card and outside the step gating, so
+     it is in the same place on every page -- a control that moved with the
+     content would be somewhere different each time the stage changed. -->
+<div class="clip-stepnav hide" id="clip-stepnav">
+  <button class="btn btn-ghost" type="button" id="clip-step-back">&#8592; Back</button>
+  <button class="btn" type="button" id="clip-step-next">Next &#8594;</button>
+</div>
+
 <div class="scrim hide" id="clip-cal-scrim">
   <div class="modal clip-modal" role="dialog" aria-modal="true"
        aria-labelledby="clip-cal-title">
@@ -763,6 +884,9 @@ var clip_state = {
   loaded: false, wired: false, busy: false,
   sessions: [], profiles: [], status: null, defaults: {},
   outputDir: '', games: [], game: '',
+  page: 0,                    /* which page of the stream list is shown */
+  adv: false,                 /* is the second layer of style options open */
+  step: 'pick',               /* which stage is open; see clip_steps */
   pick: null,                 /* the selected session row */
   style: 'shortform',
   min: '2', len: '15', vert: 'crop', montage: true,
@@ -825,8 +949,12 @@ var CLIP_TRANS = [['fade', 'Fade'], ['fadeblack', 'Dip to black'],
                   ['zoomin', 'Zoom'], ['slideleft', 'Slide'],
                   ['pixelize', 'Pixelize'], ['wipeleft', 'Wipe'],
                   ['cut', 'Hard cut'], ['mixed', 'Mixed']];
-var CLIP_STEPS = [['scan', 'Find kills'], ['cut', 'Cut clips'],
-                  ['vertical', 'Vertical'], ['montage', 'Montage']];
+/* Said as what is HAPPENING, because this is read while waiting for it.
+   "Vertical" and "Montage" are nouns for features; these are the words a
+   person would use for the same four things. */
+var CLIP_STEPS = [['scan', 'Finding your kills'], ['cut', 'Cutting the clips'],
+                  ['vertical', 'Making the vertical versions'],
+                  ['montage', 'Joining them into one video']];
 
 function clip_el(id) { return document.getElementById(id); }
 function clip_show(id, on) {
@@ -958,6 +1086,21 @@ async function clip_goneClear() {
   if (btn) btn.disabled = false;
 }
 
+/* Streams per page. A season of streaming is hundreds of rows, and rendering
+   all of them put a scrollbar on the page that had nothing to do with the job
+   -- the options for the stream you picked were below it, so choosing one
+   meant scrolling past every stream you did not pick. */
+var CLIP_PER_PAGE = 12;
+
+/* The list is the top of the page, so a page change scrolls back to it --
+   otherwise paging from halfway down lands you on rows you cannot see. */
+function clip_page(d) {
+  clip_state.page = Math.max(0, (clip_state.page || 0) + d);
+  clip_renderList();
+  var w = clip_el('clip-listwrap');
+  if (w && w.scrollIntoView) w.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+}
+
 function clip_renderList() {
   var host = clip_el('clip-list');
   if (!host) return;
@@ -965,8 +1108,28 @@ function clip_renderList() {
   if (clip_state.game) {
     rows = rows.filter(function (r) { return r.game === clip_state.game; });
   }
+  /* `shown` stays the WHOLE filtered list and the row keeps its index in it,
+     because picking a row looks the stream up by that index. Slicing without
+     this picks the wrong stream on page two -- silently, since every row looks
+     plausible. */
   clip_state.shown = rows;
-  host.innerHTML = rows.map(clip_row).join('');
+  var pages = Math.max(1, Math.ceil(rows.length / CLIP_PER_PAGE));
+  var page = Math.min(Math.max(0, clip_state.page || 0), pages - 1);
+  clip_state.page = page;
+  var from = page * CLIP_PER_PAGE;
+  host.innerHTML = rows.slice(from, from + CLIP_PER_PAGE).map(function (s, k) {
+    return clip_row(s, from + k);
+  }).join('');
+
+  clip_show('clip-pager', pages > 1);
+  var at = clip_el('clip-page-at');
+  if (at) {
+    at.textContent = (from + 1) + '-' + Math.min(rows.length, from + CLIP_PER_PAGE) +
+                     ' of ' + rows.length;
+  }
+  var prev = clip_el('clip-page-prev'), next = clip_el('clip-page-next');
+  if (prev) prev.disabled = page === 0;
+  if (next) next.disabled = page >= pages - 1;
 
   /* Streams whose footage has been deleted can never be cut again. They are
      still shown, because knowing a stream happened is worth something, but
@@ -1009,6 +1172,29 @@ function clip_renderList() {
   if (c) {
     c.textContent = none ? '' :
       rows.length + (rows.length === 1 ? ' stream' : ' streams');
+  }
+}
+
+/* THE SECOND LAYER, and a one-line summary of what is inside it.
+   A fold that says only "Advanced" makes somebody open it to find out whether
+   anything in there matters. Saying what it currently holds means most people
+   can read it and leave it shut, which is the whole point. */
+function clip_renderAdv() {
+  var open = !!clip_state.adv;
+  clip_show('clip-adv-body', open);
+  var btn = clip_el('clip-adv-btn');
+  if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  var lab = clip_el('clip-adv-label');
+  if (lab) lab.textContent = open ? 'Hide the details' : 'Change the details';
+  var sum = clip_el('clip-adv-sum');
+  if (sum) {
+    var bits = [];
+    var min = clip_state.min, len = clip_state.len;
+    bits.push(min === '1' ? 'any moment' : min + '+ kills');
+    bits.push(len === 'full' ? 'whole moments' : len + 's clips');
+    bits.push(clip_state.vert === 'none' ? 'no vertical' : 'vertical too');
+    if (clip_state.montage) bits.push('joined into one');
+    sum.textContent = open ? '' : bits.join(' · ');
   }
 }
 
@@ -1072,59 +1258,175 @@ function clip_renderTypes() {
    hiding the others. A page whose cards appear and disappear as they apply
    is right, and is also disorienting the first time -- this is the missing
    half of that, not a replacement for it. */
+/* THE STEPS, as one list both the rail and the pages read.
+
+   This page was a single scrolling column with a progress rail over it, and
+   the column was deliberate: the choices interact, so hiding them behind a
+   wizard means guessing at the result. What it cost was legibility. Every
+   card for every stage sat on screen at once -- a part picker, three ways to
+   read a match, a sheet of style options, a review table -- so a first-time
+   user met all of it before cutting anything.
+
+   One stage on screen now, every stage one click away. The rail is navigation
+   rather than a report, and going back shows exactly what it showed before,
+   so the interactions are still inspectable -- just not all at once. Nothing
+   is gated: any step can be opened at any time.
+
+   The name is the step's id; `data-cstep` in the HTML says which cards travel
+   with it. */
+function clip_steps() {
+  var s = clip_state.pick;
+  var j = clip_state.lastJob;
+  var win = clip_stripWindow();
+  /* The fourth field is whether the stage can be OPENED, which is not the same
+     as finished. Review and Clips have nothing of their own to show until a
+     run has made something: before that, Review is an empty panel with a
+     heading and Clips is a blank page, and both were reachable from the rail
+     the moment a video was picked. A stage with nothing on it is worse than a
+     locked one -- it reads as a feature that is broken rather than one that
+     has not happened yet.
+
+     Everything up to and including Style stays open from the start, because
+     those are choices and a user is allowed to wander among them. */
+  var done = !!(j && j.state === 'done');
+  var running = !!(j && (j.state === 'running' || j.state === 'queued'));
+  if (clip_isMV(s)) {
+    var mvDone = !!(j && j.state === 'done' && j.scan_mode === 'summary');
+    return [
+      ['pick', 'Pick a video', !!s, true],
+      ['part', 'Choose the part', !!(s && win), !!s],
+      ['style', 'What to make', !!s, !!s],
+      ['done', 'Your videos', mvDone, mvDone || running]
+    ];
+  }
+  return [
+    ['pick', 'Pick a video', !!s, true],
+    ['part', 'Choose the part', !!(s && win), !!s],
+    ['read', 'How to read it', !!(s && s.demos && clip_state.way), !!s],
+    ['style', 'Style', !!s, !!s],
+    ['review', 'Review', !!(clip_state.review), !!clip_state.review],
+    ['done', 'Clips', done, done || running]
+  ].filter(function (st) {
+    /* The reading choice is Counter-Strike's alone; a step that can never
+       light up would be a page with nothing on it. */
+    return st[0] !== 'read' || !!(s && s.demos);
+  });
+}
+
+/* The stages a user may actually open, in order. */
+function clip_openSteps() {
+  return clip_steps().filter(function (st) { return st[3]; });
+}
+
+/* Which stage is open. Held by NAME, never an index: the list changes shape --
+   a Counter-Strike stream has a reading stage and a Valorant one does not --
+   so the same index is a different page depending on what is picked. */
+function clip_goStep(name) {
+  clip_state.step = name;
+  clip_renderRail();            /* which renders the stage too */
+  var r = clip_el('clip-rail');
+  if (r && r.scrollIntoView) r.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+}
+
+/* Show the open stage and hide the rest.
+
+   BY CLASS, not by moving anything. Every card already decides for itself
+   whether it applies -- clip_show('clip-read-card', ...) and a dozen more --
+   and a second mechanism setting `display` would fight them. This adds one
+   more reason for a card to be hidden and leaves every existing reason
+   alone. */
+function clip_renderStep() {
+  var steps = clip_openSteps();
+  var names = steps.map(function (st) { return st[0]; });
+  var at = clip_state.step;
+  if (names.indexOf(at) < 0) {
+    /* The stage went away or locked itself -- the picked stream changed
+       shape, or a review was discarded. Fall back to the last FINISHED stage
+       that can still be opened, which is where the user actually got to. */
+    at = names[0];
+    steps.forEach(function (st) { if (st[2]) at = st[0]; });
+    clip_state.step = at;
+  }
+  var all = document.querySelectorAll('[data-cstep]');
+  for (var i = 0; i < all.length; i++) {
+    var owns = (all[i].getAttribute('data-cstep') || '').split(/\s+/);
+    all[i].classList.toggle('clip-offstep', owns.indexOf(at) < 0);
+  }
+  var idx = names.indexOf(at);
+  /* Hidden until a stream is picked: on the first page there is nowhere back
+     to go, and nothing yet to go forward with. */
+  clip_show('clip-stepnav', !!clip_state.pick && steps.length > 1);
+  var back = clip_el('clip-step-back'), next = clip_el('clip-step-next');
+  if (back) {
+    back.disabled = idx <= 0;
+    back.textContent = idx > 0 ? '←  ' + steps[idx - 1][1] : '←  Back';
+  }
+  if (next) {
+    next.disabled = idx >= steps.length - 1;
+    next.textContent = idx < steps.length - 1
+      ? steps[idx + 1][1] + '  →' : 'Finished';
+  }
+}
+
+function clip_stepHop(d) {
+  var open = clip_openSteps();
+  var names = open.map(function (st) { return st[0]; });
+  var i = names.indexOf(clip_state.step);
+  if (i < 0) i = 0;
+  clip_goStep(names[Math.max(0, Math.min(open.length - 1, i + d))]);
+}
+
 function clip_renderRail() {
   var host = clip_el('clip-rail');
   if (!host) return;
   var s = clip_state.pick;
   var j = clip_state.lastJob;
-  var win = clip_stripWindow();
   var running = !!(j && (j.state === 'running' || j.state === 'queued'));
-  var steps = clip_isMV(s) ? [
-    /* Match videos have no style to choose and no plan to review. */
-    ['clip-local', 'Pick a video', !!s],
-    ['clip-strip-card', 'Choose the part', !!(s && win)],
-    ['clip-options', 'What to make', !!s],
-    ['clip-results', 'Your videos', !!(j && j.state === 'done' && j.scan_mode === 'summary')]
-  ] : [
-    ['clip-local', 'Pick a video', !!s],
-    ['clip-strip-card', 'Choose the part', !!(s && win)],
-    ['clip-read-card', 'How to read it', !!(s && s.demos && clip_state.way)],
-    ['clip-options', 'Style', !!s],
-    ['clip-review-card', 'Review', !!(clip_state.review)],
-    ['clip-results', 'Clips', !!(j && j.state === 'done')]
-  ].filter(function (st) {
-    /* The reading choice is Counter-Strike's alone; showing a step that can
-       never light up would be a permanent unfinished tick. */
-    return st[0] !== 'clip-read-card' || !!(s && s.demos);
-  });
-  var at = -1;
-  steps.forEach(function (st, i) { if (st[2]) at = i; });
+  var steps = clip_steps();
+  var here = clip_state.step;
   host.innerHTML = steps.map(function (st, i) {
-    var cls = st[2] ? 'is-done' : (i === at + 1 ? 'is-now' : '');
-    if (running && st[0] === 'clip-options') cls = 'is-now';
+    var cls = st[2] ? 'is-done' : '';
+    if (running && st[0] === 'style') cls = 'is-done';
+    if (st[0] === here) cls += ' is-here';
+    if (!st[3]) cls += ' is-locked';
+    /* A locked stage stays VISIBLE and disabled rather than being dropped, so
+       the list of stages does not change length as a run progresses -- the
+       shape of the journey is part of knowing where you are. */
     return '<li class="clip-rail-step ' + cls + '">'
-      + '<button type="button" data-act="rail" data-val="' + esc(st[0]) + '">'
+      + '<button type="button" data-act="rail" data-val="' + esc(st[0]) + '"'
+      + (st[3] ? '' : ' disabled')
+      + (st[0] === here ? ' aria-current="step"' : '')
+      + ' title="' + esc(st[3] ? st[1]
+          : st[1] + ' opens once you have made clips') + '">'
       + '<span class="clip-rail-dot">' + (st[2] ? '&#10003;' : (i + 1)) + '</span>'
       + esc(st[1]) + '</button></li>';
   }).join('');
   clip_show('clip-rail', !!s || !!j);
+  clip_renderStep();
 }
 
-/* THE THREE WAYS COUNTER-STRIKE CAN BE READ, with what each one costs.
-   The numbers are measured scan rates from clips/jobs.py, turned into a real
-   duration against the stretch actually selected -- a choice between "fast"
-   and "slow" is not a choice anybody can make, and "about 40 minutes" is. */
+/* THE THREE WAYS COUNTER-STRIKE CAN BE READ, named by WHAT YOU GET.
+
+   These used to be named and described by HOW THEY WORK -- "reads the fan of
+   cards above your rank badge", "reads the kill feed and the scoreboard" --
+   which asks somebody to understand three detection techniques before they
+   can cut a clip. Nobody chooses a technique. They choose between fast, and
+   getting clips called ACE.
+
+   The cost line keeps the measured duration, because that is the one number
+   the choice actually turns on and "slow" is not a number. */
 var CLIP_WAYS = [
-  ['demo', 'From the replay', 'exact',
-   'Valve’s own record of the match: every kill to the tick, real rounds, '
-   + 'and clutches and wallbangs no camera can see. Needs the .dem on disk, '
-   + 'or its sharing code.'],
-  ['cards', 'Kill tally only', 'cards',
-   'Reads the fan of cards above your rank badge. Your kills and nothing '
-   + 'else, so assists cannot leak in. No round labels.'],
-  ['rounds', 'Read the whole HUD', 'rounds',
-   'Reads the kill feed and the scoreboard, which is where CLUTCH and PISTOL '
-   + 'ROUND come from. Much the slowest, and needs your in-game name.']
+  ['demo', 'From Steam’s replay', 'exact',
+   'The best one — use it if you can. Steam already saved a perfect record of '
+   + 'the match, so there is nothing to watch: your kills come out exact and '
+   + 'the rounds get named.'],
+  ['cards', 'Kills only', 'cards',
+   'Fast, and gets your kills right. It cannot tell one round from another, '
+   + 'so you get no ACE or CLUTCH clips out of it.'],
+  ['rounds', 'Kills and round names', 'rounds',
+   'Everything the replay gives, worked out from the video instead. Use it '
+   + 'when there is no replay — it has to watch the whole recording, so it is '
+   + 'far slower than the other two.']
 ];
 
 function clip_wayCost(id) {
@@ -1166,12 +1468,11 @@ function clip_renderWays() {
   var why = clip_el('clip-read-why');
   if (why) {
     why.textContent = chosen === 'demo'
-      ? 'If no replay matches this recording you will be asked for its sharing '
-        + 'code before anything is read, rather than after.'
+      ? 'If Steam has no replay for this stream, you will be asked for its '
+        + 'sharing code up front — not halfway through.'
       : chosen === 'cards'
-      ? 'A card box pointed at the wrong pixels finds almost nothing, so '
-        + 'check it once on this PC. It reads about a minute of the recording '
-        + 'to find frames with a tally in them.'
+      ? 'Takes a minute to find your kill counter on screen. Do this once and '
+        + 'it remembers.'
       : '';
   }
   /* THE BUTTON IS ALWAYS THERE WHILE THE TALLY IS CHOSEN, whether or not the
@@ -1431,6 +1732,14 @@ function clip_renderOptions() {
        enabled for a recording no longer on disk. */
     ['clip-strip-card', 'clip-read-card', 'clip-cal-card',
      'clip-rail'].forEach(function (id) { clip_show(id, false); });
+    /* BACK TO THE FIRST STAGE, and gate the cards even with the rail hidden.
+       This branch returns before clip_renderRail, so without these two lines
+       a page opened with nothing picked never applies the stage gate at all,
+       and the cards that show themselves on their own -- the player, the
+       "already has clips" card -- would sit under the stream list belonging
+       to no stage. */
+    clip_state.step = 'pick';
+    clip_renderStep();
     return;
   }
 
@@ -1478,6 +1787,7 @@ function clip_renderOptions() {
   clip_segs('clip-min', CLIP_MINS, clip_state.min, 'min');
   clip_segs('clip-len', CLIP_LENS, clip_state.len, 'len');
   clip_segs('clip-vert', CLIP_VERTS, clip_state.vert, 'vert');
+  clip_renderAdv();
   clip_options('clip-trans', CLIP_TRANS, clip_state.trans);
   var ms = clip_el('clip-transms');
   if (ms) ms.value = String(clip_state.transMs);
@@ -1706,7 +2016,20 @@ function clip_renderJob(j) {
     var eta = (j.eta != null && j.eta > 0)
       ? ' - about ' + clip_fmtTime(j.eta) + ' left'
       : (j.eta === 0 ? ' - nearly done' : '');
-    if (msg) msg.textContent = (j.message || '') + '  (' + run + eta + ')';
+    /* The message is the message, and nothing else. Time used to be glued on
+       the end of it in brackets, which put the one number people wait on at
+       the end of a sentence that changes every two seconds. */
+    if (msg) msg.textContent = j.message || '';
+    var pct = clip_el('clip-run-pct');
+    if (pct) pct.innerHTML = String(Math.round(j.percent || 0)) + '<span>%</span>';
+    var left = clip_el('clip-run-left');
+    if (left) {
+      left.textContent = (j.eta != null && j.eta > 0)
+        ? 'about ' + clip_fmtTime(j.eta) + ' left'
+        : (j.eta === 0 ? 'nearly done' : 'working out how long…');
+    }
+    var el = clip_el('clip-run-elapsed');
+    if (el) el.textContent = run;
     /* WHY THIS RUN IS ON THE PATH IT IS ON. A probe that reads twelve minutes
        and finds no replay is the difference between a three-minute run and a
        thirty-minute one, and it used to be visible only in the log -- so a
@@ -1725,10 +2048,15 @@ function clip_renderJob(j) {
     if (j.scan_mode === 'summary') {
       clip_mvRenderSteps(j);
     } else {
+      /* A COLUMN, not a row of equal chips. Four stages that each take a
+         different number of minutes read better stacked, with the one
+         happening now plainly the one happening now. */
       var h = '';
       for (var i = 0; i < CLIP_STEPS.length; i++) {
-        var cls = i < j.step_index ? ' is-done' : (i === j.step_index ? ' is-now' : '');
-        h += '<span class="clip-step' + cls + '">' + esc(CLIP_STEPS[i][1]) + '</span>';
+        var cls = i < j.step_index ? 'is-done' : (i === j.step_index ? 'is-now' : '');
+        h += '<li class="clip-step ' + cls + '">'
+          + '<span class="clip-step-dot">' + (i < j.step_index ? '✓' : (i + 1)) + '</span>'
+          + '<span class="clip-step-name">' + esc(CLIP_STEPS[i][1]) + '</span></li>';
       }
       var st = clip_el('clip-steps');
       if (st) st.innerHTML = h;
@@ -1746,6 +2074,13 @@ function clip_renderJob(j) {
   }
   clip_show('clip-results', done);
   if (!done) return;
+  /* ONCE, on the edge. Every poll runs through here, so re-opening the stage
+     each time would drag the user back whenever they looked at anything else
+     while a finished job sat on screen. */
+  if (clip_state.sawDone !== j.folder) {
+    clip_state.sawDone = j.folder || 'done';
+    clip_goStep('done');
+  }
 
   /* STOPPED FOR A REPLAY IS NOT A FAILURE. Nothing went wrong; the run needs
      something only the user can supply, and the alternative it declined to
@@ -2553,8 +2888,13 @@ function clip_playerForm() {
   if (seg) {
     var btns = seg.querySelectorAll('[data-vert]');
     for (var i = 0; i < btns.length; i++) {
-      btns[i].classList.toggle('is-on',
-        btns[i].getAttribute('data-vert') === mode);
+      /* is-ACTIVE, the class .seg-btn is actually styled for. This said
+         is-on, which nothing styles, so the choice was recorded in the DOM
+         and drawn nowhere: both buttons looked identical whichever was
+         picked, and clicking appeared to do nothing. */
+      var hit = btns[i].getAttribute('data-vert') === mode;
+      btns[i].classList.toggle('is-active', hit);
+      btns[i].setAttribute('aria-pressed', hit ? 'true' : 'false');
     }
   }
 }
@@ -3987,6 +4327,18 @@ function clip_openReview(j) {
   };
   clip_show('clip-review-card', true);
   clip_show('clip-results', false);
+  /* Starts wherever the Style page left it, so the toggle is an amendment
+     rather than a question asked twice from scratch. */
+  clip_switch('clip-review-montage', clip_state.montage !== false);
+  var mw = clip_el('clip-review-montwhy');
+  if (mw) {
+    mw.textContent = rows.length > 1
+      ? 'One video of all ' + rows.length + ', on top of the clips themselves.'
+      : 'Only one clip here, so there is nothing to join.';
+  }
+  /* The plan is the whole point of a review run, so land on it rather than
+     leaving it a stage away with nothing saying it arrived. */
+  clip_goStep('review');
   clip_loadVoices();
   clip_renderReview();
   var card = clip_el('clip-review-card');
@@ -4085,14 +4437,53 @@ function clip_voiceOptions(chosen) {
 function clip_fillVoiceSelects() {
   var rv = clip_state.review;
   var all = clip_el('clip-review-voice-all');
-  if (all && !all.getAttribute('data-filled')) {
-    all.innerHTML = clip_voiceOptions('');
+  /* FILLED MEANS FILLED WITH VOICES, not "ran once". This marked itself done
+     the first time it ran, which is routinely BEFORE the voices fetch comes
+     back -- so the list latched on to "no voices installed" and never looked
+     again, while the per-clip selects under it refilled unconditionally and
+     listed all 28. That is exactly the screen reported: one dropdown saying
+     none are installed, directly above dropdowns naming them.
+
+     Whatever was chosen is carried across, so refilling cannot silently
+     change somebody's pick. */
+  var ready = !!(clip_state.voices && clip_state.voices.available);
+  if (all && (!all.getAttribute('data-filled')
+              || (ready && !all.getAttribute('data-voices')))) {
+    var was = all.value;
+    all.innerHTML = clip_voiceOptions(was);
+    if (was) all.value = was;
     all.setAttribute('data-filled', '1');
+    if (ready) all.setAttribute('data-voices', '1');
   }
+  var v = clip_state.voices || null;
+  var job = v && v.job;
+  var busy = !!(job && job.state === 'running');
   var why = clip_el('clip-review-voicewhy');
   if (why) {
-    why.textContent = (clip_state.voices && !clip_state.voices.available)
-      ? (clip_state.voices.why || '') : '';
+    /* Said as what it is and what it costs, not as the names of two files
+       that are missing. The old text named kokoro-v1.0.fp16.onnx. */
+    if (busy) {
+      why.textContent = 'Downloading the voices - ' + (job.percent || 0) + '% of '
+        + (job.total_mb || 206) + ' MB. You can carry on; this finishes on its own.';
+    } else if (job && job.state === 'failed') {
+      why.textContent = job.error || 'The download did not finish.';
+    } else if (v && !v.available) {
+      why.textContent = v.can_install
+        ? 'Spoken lines need a voice pack - a one-off ' + (v.size_mb || 206)
+          + ' MB download, kept for every reel after this.'
+        : (v.why || '');
+    } else {
+      why.textContent = '';
+    }
+  }
+  var get = clip_el('clip-voice-get');
+  if (get) {
+    clip_show('clip-voice-get', !!(v && !v.available && v.can_install));
+    get.disabled = busy;
+    get.textContent = busy
+      ? 'Downloading ' + (job.percent || 0) + '%'
+      : (job && job.state === 'failed' ? 'Try the download again'
+                                       : 'Download the voices');
   }
   /* The player's own chooser. Filling the voices is a fetch, so the panel is
      built before they arrive -- and this is what comes back to fill it in.
@@ -4112,12 +4503,42 @@ function clip_fillVoiceSelects() {
   }
 }
 
-async function clip_loadVoices() {
-  if (clip_state.voices) { clip_fillVoiceSelects(); return; }
+async function clip_loadVoices(force) {
+  if (clip_state.voices && !force) { clip_fillVoiceSelects(); return; }
   try {
     var r = await API.get('/api/clips/voices');
     if (r && !r.error) { clip_state.voices = r; clip_fillVoiceSelects(); }
   } catch (e) { /* the selects just say so */ }
+}
+
+/* 206 MB, so it is asked for and then watched rather than waited on. The POST
+   returns as soon as the thread starts; this polls the same endpoint the page
+   already uses until the job stops, which also means a reload mid-download
+   picks the progress back up instead of looking idle. */
+async function clip_voiceInstall() {
+  var btn = clip_el('clip-voice-get');
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting...'; }
+  try {
+    var r = await API.post('/api/clips/voices/install', {});
+    if (r && r.error) { toast(r.error, 'error'); await clip_loadVoices(true); return; }
+    clip_state.voices = r;
+    clip_fillVoiceSelects();
+    toast('Downloading the voices. It carries on in the background.', 'ok');
+  } catch (e) {
+    toast('Could not start the download.', 'error');
+    await clip_loadVoices(true);
+    return;
+  }
+  if (clip_state.voicePoll) return;
+  clip_state.voicePoll = setInterval(async function () {
+    await clip_loadVoices(true);
+    var j = clip_state.voices && clip_state.voices.job;
+    if (!j || j.state === 'running') return;
+    clearInterval(clip_state.voicePoll);
+    clip_state.voicePoll = null;
+    if (j.state === 'done') toast('The voices are ready.', 'ok');
+    else if (j.state === 'failed') toast(j.error || 'The download failed.', 'error');
+  }, 2000);
 }
 
 function clip_playVoice(name, line) {
@@ -4189,6 +4610,12 @@ async function clip_reviewCut() {
      then decide which clips actually get one. */
   body.voice = rv.rows.some(function (r) { return r.voice_on; });
   body.captions = rv.rows.some(function (r) { return r.caption_on; });
+  /* The montage, decided HERE and not on the Style page. This is the first
+     screen where the clips exist to be counted, so it is the first point at
+     which "join them into one video" is a question anybody can answer. It
+     overrides whatever was set earlier. */
+  var mont = clip_el('clip-review-montage');
+  if (mont) body.montage = mont.getAttribute('aria-checked') === 'true';
   try {
     var r = await API.post('/api/clips/run', body);
     if (r && r.error) { toast(r.error, 'error'); if (b) b.disabled = false; return; }
@@ -4419,6 +4846,10 @@ function clip_stripOpen() {
   if (!s || !s.has_recording || dur < 120) {
     card.classList.add('hide');
     clip_state.strip = {path: '', dur: 0, from: 0, to: 0, frames: [], drawn: ''};
+    clip_state.partFor = '';
+    clip_state.partWhole = false;
+    var v0 = clip_el('clip-part-video');
+    if (v0) { v0.pause(); v0.removeAttribute('src'); v0.load(); }
     return;
   }
   card.classList.remove('hide');
@@ -4430,6 +4861,7 @@ function clip_stripOpen() {
   clip_stripFrames();
   clip_stripSync();
   clip_stripRender();
+  clip_partSource();
 }
 
 /* The frames themselves, evenly spread. Each is one request to the same
@@ -4539,6 +4971,206 @@ function clip_stripRender() {
       : ('Reading ' + clip_fmtTime(st.from) + ' to ' + clip_fmtTime(end) +
          ' - ' + clip_dur(end - st.from) + ' of ' + clip_dur(st.dur) +
          '. Nothing outside that is scanned or cut.');
+  }
+  clip_partTimes();
+}
+
+/* The three numbers over the buttons, kept with the handles. */
+function clip_partTimes() {
+  var st = clip_state.strip;
+  var end = st.to || st.dur;
+  var set = function (id, v) { var e = clip_el(id); if (e) e.textContent = v; };
+  set('clip-part-from', clip_fmtTime(st.from || 0));
+  set('clip-part-to', clip_fmtTime(end || 0));
+  set('clip-part-len', clip_dur(Math.max(0, end - (st.from || 0))));
+  var sv = clip_el('clip-part-save');
+  if (sv) sv.disabled = !(end - (st.from || 0) > 0.5) || !!clip_state.partSaving;
+}
+
+/* THE WHOLE RECORDING, WHERE IT CAN BE PLAYED.
+   
+   This page first shipped building a small copy of the chosen part, on the
+   strength of a comment in cutter.preview saying a recording cannot be
+   scrubbed in a browser. That is true of FRAGMENTED mp4, which OBS can be
+   told to write -- and false of every recording actually on this machine,
+   which are ordinary progressive files, one of them faststart. A 5 GB file
+   with a moov seeks instantly over Range, which this server already speaks.
+   
+   So the file is asked rather than assumed. One that can be played is played
+   whole, and only one that cannot falls back to building a part. */
+async function clip_partSource() {
+  var s = clip_state.pick;
+  var v = clip_el('clip-part-video');
+  var txt = clip_el('clip-part-emptytext');
+  var sub = clip_el('clip-part-emptysub');
+  if (!s || !v) { clip_state.partWhole = false; return; }
+  /* AFTER the guard, not before it. clip_stripOpen runs on every render, so
+     a second call while the first one's fetch was still in flight used to
+     clear the answer it was about to get -- the player had the recording
+     loaded and the page still believed it could not play one. */
+  if (clip_state.partFor === s.recording_path) return;   /* already pointed at it */
+  clip_state.partFor = s.recording_path;
+  clip_state.partWhole = false;
+  v.removeAttribute('src');
+  v.load();
+  clip_show('clip-part-empty', true);
+  if (txt) txt.textContent = 'Loading the recording…';
+  try {
+    var r = await API.get('/api/clips/source-info?path=' +
+                          encodeURIComponent(s.recording_path));
+    /* ONE RETRY. A file the user picked is registered the moment the dialog
+       closes, but one reached another way can still be a beat behind -- and
+       the cost of being wrong here is silently falling back to a three-minute
+       preview of a file that would have played whole. */
+    if (r && !r.ok) {
+      await new Promise(function (ok) { setTimeout(ok, 1200); });
+      r = await API.get('/api/clips/source-info?path=' +
+                        encodeURIComponent(s.recording_path));
+    }
+    if (clip_state.partFor !== s.recording_path) return;  /* moved on */
+    if (r && r.ok && r.seekable) {
+      clip_state.partWhole = true;
+      v.src = '/api/clips/source?k=' + encodeURIComponent(SHELL_K) +
+              '&path=' + encodeURIComponent(s.recording_path);
+      clip_show('clip-part-empty', false);
+      clip_show('clip-part-markin', true);
+      clip_show('clip-part-markout', true);
+      var pl = clip_el('clip-part-play');
+      if (pl) pl.textContent = 'Play this part';
+    } else {
+      if (txt) {
+        txt.textContent = (r && r.why)
+          ? r.why
+          : 'This recording cannot be played straight through here.';
+      }
+      if (sub) sub.textContent = 'Choose a part and press Play this part.';
+      clip_show('clip-part-markin', false);
+      clip_show('clip-part-markout', false);
+    }
+  } catch (e) {
+    if (txt) txt.textContent = 'Choose a part and press Play this part.';
+  }
+}
+
+/* Set an edge from where the video is paused, which is exact -- a handle on
+   an eighteen-minute strip is about four seconds per pixel. */
+function clip_partMark(edge) {
+  var v = clip_el('clip-part-video'), st = clip_state.strip;
+  if (!v || !st.dur) return;
+  var t = Math.max(0, Math.min(st.dur, v.currentTime || 0));
+  if (edge === 'from') st.from = Math.min(t, (st.to || st.dur) - 1);
+  else st.to = Math.max(t, (st.from || 0) + 1);
+  clip_stripSync();
+  clip_stripRender();
+  clip_renderOptions();
+}
+
+async function clip_partPlay() {
+  /* WHOLE FILE: nothing to build, just go there. */
+  if (clip_state.partWhole) {
+    var vv = clip_el('clip-part-video'), stt = clip_state.strip;
+    if (vv && stt.dur) {
+      var a = stt.from || 0, b = stt.to || stt.dur;
+      vv.currentTime = a;
+      clip_state.partStop = b;
+      vv.play().catch(function () { /* the controls still work */ });
+    }
+    return;
+  }
+  return clip_partBuild();
+}
+
+/* The fallback: a recording a browser will not play, so a small copy of the
+   part is built on a worker thread. Asks, polls, then plays. */
+async function clip_partBuild() {
+  var st = clip_state.strip, s = clip_state.pick;
+  if (!s || !st.dur) return;
+  var from = st.from || 0, to = st.to || st.dur;
+  if (to - from < 0.5) { toast('Choose a longer part first.', 'warn'); return; }
+  var btn = clip_el('clip-part-play'), msg = clip_el('clip-part-msg');
+  if (btn) { btn.disabled = true; btn.textContent = 'Getting it ready...'; }
+  if (msg) msg.textContent = '';
+  try {
+    var r = await API.post('/api/clips/part/preview',
+                           {path: s.recording_path, start: from, end: to});
+    if (!r || r.error) {
+      toast((r && r.error) || 'That part could not be played.', 'error');
+      return;
+    }
+    if (r.capped && msg) {
+      msg.textContent = 'Playing the first ' +
+        clip_dur(r.end - r.start) + ' of it. The whole part is still what gets read.';
+    }
+    if (r.building) {
+      /* Polling the same readiness route the clip-window preview uses. */
+      for (var i = 0; i < 150; i++) {
+        await new Promise(function (ok) { setTimeout(ok, 1000); });
+        var q = await API.get('/api/clips/window-ready?path=' +
+                              encodeURIComponent(r.path));
+        if (q && q.ready) break;
+        if (q && q.error) { toast(q.error, 'error'); return; }
+      }
+    }
+    var v = clip_el('clip-part-video');
+    if (v) {
+      v.src = '/api/clips/video?k=' + encodeURIComponent(SHELL_K) +
+              '&path=' + encodeURIComponent(r.path);
+      clip_show('clip-part-empty', false);
+      v.classList.remove('hide');
+      v.play().catch(function () { /* the controls still work */ });
+    }
+  } catch (e) {
+    toast('That part could not be played.', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Play this part'; }
+  }
+}
+
+/* Stop where the part ends, so "Play this part" plays the PART rather than
+   running on into the rest of the recording. */
+function clip_partTick() {
+  var v = clip_el('clip-part-video');
+  if (!v || !clip_state.partWhole || !clip_state.partStop) return;
+  if (v.currentTime >= clip_state.partStop) {
+    v.pause();
+    clip_state.partStop = 0;
+  }
+}
+
+/* KEEP THE PART. A stream copy, so an hour off a 20 GB recording is seconds
+   rather than the tens of minutes a re-encode would take. */
+async function clip_partSave() {
+  var st = clip_state.strip, s = clip_state.pick;
+  if (!s || !st.dur) return;
+  var from = st.from || 0, to = st.to || st.dur;
+  var btn = clip_el('clip-part-save'), msg = clip_el('clip-part-msg');
+  clip_state.partSaving = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+  try {
+    var r = await API.post('/api/clips/part/save',
+                           {path: s.recording_path, start: from, end: to});
+    if (!r || r.error) {
+      toast((r && r.error) || 'That part could not be saved.', 'error');
+      return;
+    }
+    for (var i = 0; i < 600; i++) {
+      await new Promise(function (ok) { setTimeout(ok, 1000); });
+      var q = await API.get('/api/clips/part/status');
+      if (!q || q.state === 'running') continue;
+      if (q.state === 'done') {
+        if (msg) msg.textContent = 'Saved as ' + q.name + ' in your clips folder.';
+        toast('Saved ' + q.name, 'ok');
+      } else if (q.state === 'failed') {
+        toast(q.error || 'That part could not be saved.', 'error');
+      }
+      break;
+    }
+  } catch (e) {
+    toast('That part could not be saved.', 'error');
+  } finally {
+    clip_state.partSaving = false;
+    if (btn) { btn.textContent = 'Save this part as a file…'; }
+    clip_partTimes();
   }
 }
 
@@ -4737,8 +5369,11 @@ function clip_useLocal() {
   clip_probeLocal();
   clip_stripOpen();
   clip_mvLoadKnown(clip_state.pick);
-  var card = clip_el('clip-options');
-  if (card && card.scrollIntoView) card.scrollIntoView({behavior: 'smooth', block: 'start'});
+  /* Choosing a file IS finishing this stage, exactly as picking a stream from
+     the list is -- so it moves on. It used to scroll to the options card,
+     which was the right idea when the whole page was one column; now that the
+     stages are pages, scrolling lands on a card that is not on this one. */
+  clip_goStep('part');
 }
 
 async function clip_upload() {
@@ -5239,8 +5874,21 @@ function clip_wire() {
 
   var g = clip_el('clip-game');
   if (g) g.addEventListener('change', function () {
-    clip_state.game = g.value; clip_renderList();
+    /* Back to the first page: filtering to a game with four streams while
+       sitting on page five would otherwise show an empty list. */
+    clip_state.game = g.value; clip_state.page = 0; clip_renderList();
   });
+
+  var pp = clip_el('clip-page-prev'), pn = clip_el('clip-page-next');
+  if (pp) pp.addEventListener('click', function () { clip_page(-1); });
+  if (pn) pn.addEventListener('click', function () { clip_page(1); });
+
+  var pv = clip_el('clip-part-video');
+  if (pv) pv.addEventListener('timeupdate', clip_partTick);
+
+  var sb = clip_el('clip-step-back'), sn = clip_el('clip-step-next');
+  if (sb) sb.addEventListener('click', function () { clip_stepHop(-1); });
+  if (sn) sn.addEventListener('click', function () { clip_stepHop(1); });
   /* Delegated: the results list is rebuilt on every finished run. */
   document.addEventListener('change', function (ev) {
     var t = ev.target;
@@ -5305,7 +5953,10 @@ function clip_wire() {
       var seg = clip_el('clip-play-vert');
       if (seg) {
         var all = seg.querySelectorAll('[data-vert]');
-        for (var i = 0; i < all.length; i++) all[i].classList.toggle('is-on', all[i] === el);
+        for (var i = 0; i < all.length; i++) {
+          all[i].classList.toggle('is-active', all[i] === el);
+          all[i].setAttribute('aria-pressed', all[i] === el ? 'true' : 'false');
+        }
       }
       return;
     }
@@ -5653,6 +6304,10 @@ function clip_wire() {
     } else if (act === 'pick') {
       clip_state.pick = clip_state.shown[Number(b.getAttribute('data-i'))] || null;
       clip_renderList(); clip_renderOptions(); clip_stripOpen();
+      /* Picking IS finishing this stage, so it carries straight on. Leaving
+         the user on a list they have just chosen from gives them nothing to
+         do and no sign that anything happened. */
+      if (clip_state.pick) clip_goStep('part');
       /* The "already has clips" card belongs to the stream it describes. It
          was only loaded with the page, so it kept describing the first
          stream -- and "Play them" played that stream's clips under another. */
@@ -5666,6 +6321,22 @@ function clip_wire() {
       clip_state.vert = b.getAttribute('data-val'); clip_renderOptions();
     } else if (act === 'montage') {
       clip_state.montage = !clip_state.montage; clip_renderOptions();
+    } else if (act === 'adv') {
+      clip_state.adv = !clip_state.adv;
+      clip_renderAdv();
+    } else if (act === 'part-mark') {
+      clip_partMark(b.getAttribute('data-edge'));
+    } else if (act === 'part-play') {
+      clip_partPlay();
+    } else if (act === 'part-save') {
+      clip_partSave();
+    } else if (act === 'voice-get') {
+      clip_voiceInstall();
+    } else if (act === 'review-montage') {
+      /* Writes back to the same state the Style page holds, so the answer is
+         one answer whichever screen it was given on. */
+      clip_state.montage = !clip_switchOn('clip-review-montage');
+      clip_switch('clip-review-montage', clip_state.montage);
     } else if (act === 'cancel') {
       /* The poll is two seconds away and the job takes longer than that to
          wind down, so the button answers for itself immediately. Pressing it
@@ -5719,8 +6390,10 @@ function clip_wire() {
       clip_state.calBox = null;
       clip_cardsOpen();
     } else if (act === 'rail') {
-      var target = clip_el(b.getAttribute('data-val'));
-      if (target) target.scrollIntoView({behavior: 'smooth', block: 'start'});
+      /* Every stage is reachable, finished or not. Gating the rail would make
+         it a progress bar again, and the reason to go back is usually to
+         check something rather than to change it. */
+      clip_goStep(b.getAttribute('data-val'));
     } else if (act === 'reel-open') {
       /* The reel cuts the moments the review just found, so it opens from
          here with those rows rather than detecting anything again. */

@@ -14,6 +14,7 @@ import math
 import os
 import struct
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -92,11 +93,28 @@ def click_track(path: Path, seconds: float = 20.0, bpm: float = 120.0,
     return path
 
 
+# NO CONSOLE WINDOW. Every subprocess a test starts -- the app, and the ffmpeg
+# runs that seed it with footage -- pops a console on Windows unless it is told
+# not to. A verify run makes dozens of them, so they flash over whatever the
+# person at the keyboard is doing. The app suppresses its own the same way;
+# see clips/killfeed.py _NO_WINDOW.
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 def start(home: Path, port: int, video_home: Path | None = None):
     """-> (base url, process). Raises RuntimeError if it never answers."""
     env = dict(os.environ)
     env["AUTOSTREAM_HOME"] = str(home)
     env["AUTOSTREAM_VIDEO_HOME"] = str(video_home or (home / "video"))
+    # NO NATIVE DIALOGS, EVER, under test. Eight controls across four pages
+    # reach the OS file picker, and an automated run presses controls it was
+    # not told about -- so a list of ones to avoid fails open the day a ninth
+    # is added. A picker also has no parent window here, so it opens over
+    # whatever the person at the keyboard is doing AND blocks the thread
+    # serving the page, which hangs the run rather than failing it.
+    #
+    # The app refuses to open one when this is set; see webui.clips_pick.
+    env["AUTOSTREAM_NO_DIALOGS"] = "1"
     # Output goes to a FILE, not a pipe. A pipe nobody drains fills at 64KB and
     # then blocks the app mid-write: it stops answering, Quit included, and the
     # symptom is a test reporting that the app ignored Quit when the test was
@@ -105,7 +123,8 @@ def start(home: Path, port: int, video_home: Path | None = None):
     boot.parent.mkdir(parents=True, exist_ok=True)
     out = boot.open("wb")
     proc = subprocess.Popen([str(BUILT), "run"], env=env, cwd=str(BUILT.parent),
-                            stdout=out, stderr=subprocess.STDOUT)
+                            stdout=out, stderr=subprocess.STDOUT,
+                            creationflags=NO_WINDOW)
     base = f"http://127.0.0.1:{port}"
     deadline = time.monotonic() + BOOT_TIMEOUT
     last = ""
@@ -126,6 +145,23 @@ def start(home: Path, port: int, video_home: Path | None = None):
                        f"{BOOT_TIMEOUT:.0f}s (last: {last})")
 
 
+def answering(base: str, timeout: float = 4.0) -> bool:
+    """Is the app still serving? -> True/False, never raises.
+
+    THE SYMPTOM OF A WINDOW. A modal dialog opened by the request thread --
+    a file picker is the one that has done this -- blocks that thread, so the
+    app stops answering while the window sits on the user's screen waiting to
+    be clicked. The run then waits on a page that will never load, which looks
+    like a slow test rather than something covering their desktop.
+    """
+    try:
+        with urllib.request.urlopen(f"{base}/api/status?k={TOKEN}",
+                                    timeout=timeout) as r:
+            return r.status == 200
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
 def stop(base: str, proc) -> None:
     """Its own Quit -- what the tray and the rail button use. Killed only if it will not go."""
     try:
@@ -139,3 +175,24 @@ def stop(base: str, proc) -> None:
         proc.wait(timeout=30)
     except subprocess.TimeoutExpired:
         proc.kill()
+    # NOTHING LEFT ON SCREEN. A process blocked on a modal window ignores
+    # Quit, and killing the parent leaves the window orphaned -- so the tree
+    # goes, not just the process. This is the last thing standing between a
+    # failed run and a dialog nobody can close.
+    _kill_tree(proc)
+
+
+def _kill_tree(proc) -> None:
+    if proc.poll() is None or sys.platform != "win32":
+        try:
+            proc.kill()
+        except Exception:                                    # noqa: BLE001
+            pass
+    if sys.platform != "win32":
+        return
+    try:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                       capture_output=True, timeout=20,
+                       creationflags=NO_WINDOW)
+    except Exception:                                        # noqa: BLE001
+        pass

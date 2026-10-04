@@ -57,6 +57,8 @@ from __future__ import annotations
 import logging
 import re
 import tempfile
+import threading
+import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -383,6 +385,126 @@ def download(progress=None) -> list[Path]:
         part.replace(target)
         got.append(target)
     return got
+
+
+# ===================================================================
+# Fetching it, at the user's asking
+# ===================================================================
+#
+# `download` existed for a year and NOTHING EVER CALLED IT. The model is an
+# optional 205 MB, the Clips page said "no voices installed" next to a voice
+# picker, and there was no button anywhere in the app that would install them
+# -- so the only way to get spoken hooks was to find this file, read the URL
+# out of it, and put two files in a directory by hand. An optional feature
+# with no way to opt in is not optional, it is missing.
+#
+# NOT BUNDLED INTO THE INSTALLER, which was the other way to fix it. The
+# installer is 133 MB and these two files are 205 MB more: everybody would pay
+# the download, including the many who never use a spoken line, and a clipper
+# that is mostly about cutting video would ship at well over a third of a
+# gigabyte to carry a text-to-speech model most runs never load.
+
+
+class Fetch:
+    """Downloads the model on a worker thread and publishes progress.
+
+    NOT ON THE REQUEST THREAD, for the reason deps.Installer gives: this is
+    minutes of work, the server speaks keep-alive HTTP/1.1, and pinning a
+    connection open for that long is indistinguishable from a hang. The POST
+    starts this and returns; the page reads progress off the status poll it
+    already makes, so it survives a reload too.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self.state = "idle"          # idle|running|done|failed
+        self.message = ""
+        self.error = ""
+        self.done_bytes = 0
+        self.total_bytes = sum(FILES.values())
+        self.started_at = 0.0
+
+    @property
+    def running(self) -> bool:
+        t = self._thread
+        return bool(t and t.is_alive())
+
+    def status(self) -> dict | None:
+        """None while it has never run, so the status poll stays empty."""
+        with self._lock:
+            if self.state == "idle":
+                return None
+            total = self.total_bytes or 1
+            return {
+                "state": self.state,
+                "message": self.message,
+                "error": self.error,
+                "percent": min(100, int(self.done_bytes * 100 / total)),
+                "done_mb": round(self.done_bytes / 1e6),
+                "total_mb": round(total / 1e6),
+                "elapsed": int(time.time() - self.started_at)
+                if self.started_at else 0,
+            }
+
+    def _set(self, **kw) -> None:
+        with self._lock:
+            for k, v in kw.items():
+                setattr(self, k, v)
+
+    def start(self) -> tuple[bool, str]:
+        """Begin fetching. -> (started, why not)."""
+        if self.running:
+            return False, "The voices are already downloading."
+        if available():
+            return False, "The voices are already installed."
+        self._set(state="running", message="Starting the download", error="",
+                  done_bytes=0, started_at=time.time())
+        self._thread = threading.Thread(target=self._run,
+                                        name="autostream-voices", daemon=True)
+        self._thread.start()
+        return True, ""
+
+    def _run(self) -> None:
+        # Bytes already on disk from a FINISHED file, so a resumed run after
+        # one of the two completed does not report starting from zero.
+        base = {n: (MODEL_DIR / n).stat().st_size
+                for n in FILES
+                if (MODEL_DIR / n).is_file()
+                and (MODEL_DIR / n).stat().st_size == FILES[n]}
+
+        def progress(name: str, done: int, size: int) -> None:
+            self._set(done_bytes=sum(base.values()) + done,
+                      message=f"Downloading {name}")
+
+        try:
+            download(progress=progress)
+        except Exception as e:                       # noqa: BLE001
+            log.warning("voice download failed: %s", e)
+            self._set(state="failed",
+                      error=f"The download did not finish: {e}",
+                      message="")
+            return
+        # WHETHER THE FILES ARE THERE NOW, not whether the loop ended without
+        # raising. A truncated response that still closes cleanly leaves a
+        # file of the wrong size, and `missing` is what every caller asks.
+        if available():
+            self._set(state="done", done_bytes=self.total_bytes,
+                      message="The voices are ready.")
+        else:
+            self._set(state="failed", message="",
+                      error="The download finished but the files are not "
+                            "complete. Try again.")
+
+
+_FETCH: Fetch | None = None
+
+
+def fetcher() -> Fetch:
+    global _FETCH
+    if _FETCH is None:
+        _FETCH = Fetch()
+    return _FETCH
 
 
 def model():
