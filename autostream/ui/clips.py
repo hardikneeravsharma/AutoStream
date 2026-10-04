@@ -1384,8 +1384,15 @@ function clip_renderRail() {
   var running = !!(j && (j.state === 'running' || j.state === 'queued'));
   var steps = clip_steps();
   var here = clip_state.step;
+  /* A TICK MEANS BEHIND YOU, not "this card has something in it".
+     st[2] answers the second question -- Style's is `a video is picked` --
+     so on step 2 the rail ticked Style while 4 and 5 were still numbered,
+     and a stage nobody had opened read as finished. Reported as defect 3 in
+     the 2026-10-04 UI review; it arrived with the stage rail in v1.40.0. */
+  var at = steps.map(function (st) { return st[0]; }).indexOf(here);
   host.innerHTML = steps.map(function (st, i) {
-    var cls = st[2] ? 'is-done' : '';
+    var behind = at >= 0 && i < at;
+    var cls = (st[2] && behind) ? 'is-done' : '';
     if (running && st[0] === 'style') cls = 'is-done';
     if (st[0] === here) cls += ' is-here';
     if (!st[3]) cls += ' is-locked';
@@ -1398,7 +1405,8 @@ function clip_renderRail() {
       + (st[0] === here ? ' aria-current="step"' : '')
       + ' title="' + esc(st[3] ? st[1]
           : st[1] + ' opens once you have made clips') + '">'
-      + '<span class="clip-rail-dot">' + (st[2] ? '&#10003;' : (i + 1)) + '</span>'
+      + '<span class="clip-rail-dot">'
+      + ((st[2] && behind) ? '&#10003;' : (i + 1)) + '</span>'
       + esc(st[1]) + '</button></li>';
   }).join('');
   clip_show('clip-rail', !!s || !!j);

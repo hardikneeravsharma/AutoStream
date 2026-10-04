@@ -133,22 +133,89 @@ Do not add these back without a reason that is written down here.
 
 ## State of the tree, 2026-10-04
 
-**Read this before assuming the repo is clean.**
+- `__version__` is **1.40.0**, merged to `main` as `76d8d43` and published:
+  <https://github.com/hardikneeravsharma/AutoStream/releases/tag/v1.40.0>
+- The working tree is clean, on a detached HEAD at `76d8d43`.
+- Tests at that release: **2253 offline**, **154 in a browser**, and tier 4
+  (clip detectors against real-footage baselines) green in 1908s.
 
-- `__version__` is **1.39.3**, which is published on GitHub.
-- The working tree is on a **detached HEAD at `ff81925`** with a large
-  **uncommitted** batch: the CS2 HUD-colour fix, the Clips page split into six
-  stages, the whole-recording player and trim/save, the voice-pack download,
-  the file-picker guard, and the browser test tiers
-  (`test_ui_sweep.py`, `test_ui_journey.py`, `test_ui_clip_stages.py`,
-  `test_voice_fetch.py`, `test_clip_source_route.py`,
-  `test_no_dialogs_under_test.py`).
-- That batch is a **feature release, not a patch** — cut it as v1.40.0.
-- Tests at the time of writing: **2253 offline**, **154 browser**.
+Nothing in Phase A has been started. Credentials for A1 are in place.
 
-Nothing in Phase A has been started.
+## UI work, carried alongside
 
----
+From **AutoStream UI review — handoff for feature work** (2026-10-04):
+`https://claude.ai/code/artifact/4beefc06-b3d9-4576-821b-354bfea246a3`
+
+**Not a phase of its own.** Fifteen fixes shipped together would be a release
+nobody can review and a month with no features in it. They are paired to the
+feature that already has that file open, which is what the review itself
+recommends: *"if your feature work already has that file open, take the
+adjacent fix with it."*
+
+The rule: **every feature ships with the UI items for the files it touched.**
+If a feature touches a file with no paired item, it ships none. If it touches
+`css.py`, it takes the contrast fixes.
+
+| With | UI items | Why these |
+|---|---|---|
+| **A1** Twitch + Kick | **#6** Settings nav below 900px · **#8** Settings search across ~90 keys | A1 adds the platform picker to `settings.py`; the nav is already clipped mid-word there with no affordance, and A1 makes the page longer |
+| **A2+B1** clips-only install | **#13** Setup step 2 as a checklist · **ARIA on `setup.py`** | A2 rewrites the first run. `ui/setup.py` has **zero** ARIA attributes today — studio has 83, clips 70 — and it is the first screen a new user meets |
+| **A3** instant-replay hotkey | **#1** `--text-on-accent` on accent fills · **#7** Dashboard metric strip | Both are `css.py`, 45 minutes together, and the hotkey needs a dashboard readout anyway |
+| **A4** generic highlights | **#3** the Clips stepper tick | Both in `clips.py`. See below — this one is ours |
+| **C1** auto-publish | **#2** `--on-media` token pair | Publishing shows badges over video frames, which is the exact thing defect 2 breaks |
+| **C4** vertical live output | **#10** shared player component | A second encode wants one player, not a third `<video>` |
+| **C6** clip ranking | **#12** build summary replacing the combinatorial counter | Both are about what the Studio says is worth making |
+| **Any new pane** | **#2**, **#10**, **#14** | The review names these three as the ones whose absence costs rework later |
+
+### Standalone, when nothing is adjacent
+
+**#15** lazy-render the Studio panes. **5,348 of the document's 6,325 DOM
+nodes** are inside `#view-studio` on every page, including all four panes,
+whether Studio is open or not. Worth doing on its own.
+
+**#14** the breakpoint scale — 20 ad-hoc media queries with off-by-one pairs
+(719/720, 759/760, 899/900, 1119/1120). Do it *before* adding more, not after.
+
+### One of these defects is ours
+
+**Defect 3 — the Clips stepper marks a future step complete.** On step 2,
+step 3 "Style" shows a tick while 4 and 5 are numbered. That is the stage rail
+shipped in v1.40.0: `clip_steps()` sets each step's done flag from whether its
+*card* has content, not from whether it is before the current one. A stage you
+have not opened reads as finished.
+
+It is paired with A4 above because both are `clips.py`, but it is a bug we
+introduced and should not wait if A4 slips.
+
+### The contract, which is binding
+
+`autostream/theme.py` holds the token system and it measurably works — a
+contrast pass found **zero failures on 10 of 12 page/theme combinations**. New
+markup must not break it:
+
+- **No literal colours outside `theme.py`.** No `#fff`, `#000` or `rgba()` in
+  `css.py` or a page module.
+- **Tokens name a role, not a hue.** `--accent`, not `--blue-500`.
+- **The accent budget is four uses.** The rail marker and the settings nav
+  marker are two of them.
+- **Colour is never the only channel** — a status is never only a coloured dot.
+- **Spacing on the 4px grid**, `--space-1 … --space-12`. No `padding: 13px`.
+- **Focus rings on `:focus-visible` only**, never `:focus`.
+- **One top-level JS scope, prefixed names.** A bare `const` in a page module
+  takes the whole page down if it collides.
+
+### Re-running the review
+
+Every page rendered offline with real CSS and JS against a mocked API; the
+daemon was never started. `webui.page("midnight")` and `webui.page("daylight")`
+return the whole document with no server. Two traps the review records: the
+Studio sub-tabs are `disabled` until a project exists, so enable them in JS
+before clicking; and an `<option>` inside a closed `<select>` reports 1:1 and
+is not a real failure.
+
+The harness is not in the repo yet. It belongs under `tests/` or `scripts/`
+next to the browser tiers, and would be a sensible thing to take with whichever
+feature next touches `css.py`.
 
 ## Progress
 
@@ -158,7 +225,7 @@ plan**, because a roadmap that never moves was never being followed.
 
 | Date | Item | What landed | What it changed |
 |---|---|---|---|
-| — | — | *Nothing from this roadmap yet.* | — |
+| 2026-10-04 | *(pre-roadmap)* **v1.40.0** | The Clips page split into six stages; the whole recording plays and a part can be trimmed and saved; the voice pack is installable; the browser test tiers (sweep + journey). Tier 4 green. | Cleared the tree so A1 starts from a clean, released base. Also set the precedent the roadmap assumes: a UI change is not finished until a browser has pressed the button — three bugs in this release passed 2200 unit tests and were caught the moment one did. |
 
 ### How to add a row
 

@@ -368,3 +368,36 @@ def test_the_stream_list_pages_rather_than_running_off_the_screen(ui, app):
     assert got["first_index"] == "12", \
         f"a row on page two indexes into the page rather than the list: {got}"
     ui.clean("paging the stream list")
+
+
+def test_only_stages_behind_you_show_a_tick(ui, app):
+    """FROM THE UI REVIEW, defect 3: on step 2 the rail ticked step 3 "Style"
+    while 4 and 5 were still numbered, so a stage nobody had opened read as
+    finished.
+
+    The done flag answers "has this card got something in it" -- Style's is
+    `a video is picked` -- which is not the same question as "is this behind
+    me". A tick means behind you."""
+    _at_part(ui, app)
+    got = ui.page.evaluate("""() => {
+        const out = [];
+        document.querySelectorAll('#clip-rail .clip-rail-step').forEach(li => {
+            const b = li.querySelector('button');
+            out.push({name: b.getAttribute('data-val'),
+                      tick: li.querySelector('.clip-rail-dot').textContent.trim(),
+                      done: li.classList.contains('is-done'),
+                      here: li.classList.contains('is-here')});
+        });
+        return out;
+    }""")
+    names = [r["name"] for r in got]
+    at = next(i for i, r in enumerate(got) if r["here"])
+    assert names[at] == "part", got
+
+    for i, row in enumerate(got):
+        ticked = row["tick"] == "✓" or row["done"]
+        if i < at:
+            continue                      # behind: a tick is correct
+        assert not ticked, (
+            f"{row['name']!r} is at or ahead of the open stage and shows a "
+            f"tick: {got}")
