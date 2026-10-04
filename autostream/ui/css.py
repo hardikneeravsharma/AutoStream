@@ -1563,6 +1563,64 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
   scrollbar-width:none;
 }
 .settings-nav::-webkit-scrollbar{display:none}
+
+/* THE NAV SCROLLS AND NOTHING SAID SO. Below 1000px the fifteen sections lie
+   in one horizontal strip with the scrollbar hidden, so the last visible one
+   was cut mid-word and there was nothing to suggest the rest existed -- the
+   page simply looked as though it had eight sections and a rendering fault.
+
+   A fade at whichever edge still has content is the affordance: it reads as
+   "this continues", it costs no space, and it cannot be mistaken for a
+   control. The classes are set from JS because CSS cannot ask whether a box
+   overflows. Neither is set in the >=1000px column layout, where there is no
+   overflow to describe. */
+.settings-nav.set-more-end{
+  -webkit-mask-image:linear-gradient(to right,#000 calc(100% - 40px),transparent);
+          mask-image:linear-gradient(to right,#000 calc(100% - 40px),transparent);
+}
+.settings-nav.set-more-start{
+  -webkit-mask-image:linear-gradient(to right,transparent,#000 40px);
+          mask-image:linear-gradient(to right,transparent,#000 40px);
+}
+.settings-nav.set-more-start.set-more-end{
+  -webkit-mask-image:linear-gradient(to right,transparent,#000 40px,
+                                     #000 calc(100% - 40px),transparent);
+          mask-image:linear-gradient(to right,transparent,#000 40px,
+                                     #000 calc(100% - 40px),transparent);
+}
+.settings-nav{scroll-behavior:smooth}
+
+/* ------------------------------------------------------- settings search */
+.settings-search{
+  position:relative;
+  display:flex;
+  align-items:center;
+  gap:var(--space-3);
+  margin-bottom:var(--gap-section);
+}
+.settings-search .input{flex:1 1 auto;min-width:0}
+.settings-search-count{
+  flex:0 0 auto;
+  color:var(--text-secondary);
+  font-size:13px;
+  white-space:nowrap;
+}
+/* A search that matched nothing has to say so. An empty page reads as a
+   page that failed to load. */
+.settings-noresult{
+  padding:var(--space-8);
+  color:var(--text-secondary);
+  text-align:center;
+}
+.settings-noresult b{color:var(--text-primary)}
+/* While searching, the section headings are what group the results, so they
+   carry their own weight rather than reading as one long list. */
+.settings-section.is-hit .settings-section-head{
+  position:sticky;
+  top:0;
+  z-index:1;
+  background:var(--surface);
+}
 .settings-nav-item{
   position:relative;
   display:flex;
