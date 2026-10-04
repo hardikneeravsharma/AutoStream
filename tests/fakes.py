@@ -170,6 +170,15 @@ def engine(phase: str = IDLE, paused: bool = False,
     eng._screen_until = None
     eng._ending_until = None
     eng.obs = FakeObs()
+    # WHERE THIS BROADCASTS. Engine.__new__ skips __init__, so the platform
+    # has to be built here too -- and built against `eng.yt` lazily, because
+    # most of these helpers replace that attribute AFTER this returns. A
+    # platform holding the real client would answer from an object the test
+    # is not watching, and fail by doing nothing wrong with the wrong one.
+    from autostream.platforms.youtube_platform import YouTubePlatform
+
+    eng.platform = YouTubePlatform(eng.cfg, lambda: eng.yt)
+    eng.session = None
     # The plain attributes __init__ sets and the tick path reads. Listed here
     # rather than per test so a new test does not fail on bookkeeping.
     eng.streaming = True

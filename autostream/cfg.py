@@ -20,6 +20,12 @@ DEFAULTS: dict[str, Any] = {
         # records it and still cuts clips, and never touches the YouTube API.
         # Nothing below this line is read while it is off.
         "enabled": True,
+        # WHERE A BROADCAST GOES. Under `youtube` rather than a section of its
+        # own because every config file in the field already has this block,
+        # and a new top-level key would be absent from all of them -- the
+        # default has to live where existing installs will read it. Defaults
+        # to youtube so nothing migrates silently.
+        "platform": "youtube",
         "privacy": "unlisted",
         "latency": "low",
         "category_id": "20",

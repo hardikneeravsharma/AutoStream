@@ -130,6 +130,21 @@ CONFIG_SCHEMA: list[Section] = [
                 "toggle",
             ),
             _field(
+                "youtube.platform",
+                "Where to go live",
+                "Twitch and Kick are live the moment the stream reaches them, so "
+                "there is no countdown and no kill-switch grace period -- the "
+                "moment you start, you are on. YouTube holds the broadcast in a "
+                "private preview first, which is what the grace period is for. "
+                "Each one needs its own sign-in on this page.",
+                "select",
+                options=_opts(
+                    ("youtube", "YouTube"),
+                    ("twitch", "Twitch"),
+                    ("kick", "Kick"),
+                ),
+            ),
+            _field(
                 "youtube.privacy",
                 "Who can see your streams",
                 "Unlisted is the safe setting while you still half expect a mistake: "

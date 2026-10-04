@@ -48,8 +48,20 @@ class YouTubePlatform:
     )
 
     def __init__(self, config, yt) -> None:
+        """`yt` may be the client or a callable returning it.
+
+        A CALLABLE, because capturing the client at construction makes this
+        object stale the moment it is replaced -- and it is replaced: by
+        re-authorisation, and by every test that swaps in a fake. A platform
+        that answers from a client nobody is using any more fails in the way
+        that is hardest to see, by doing nothing wrong with the wrong object.
+        """
         self.cfg = config
-        self.yt = yt
+        self._yt = yt
+
+    @property
+    def yt(self):
+        return self._yt() if callable(self._yt) else self._yt
 
     def configured(self) -> bool:
         from .. import paths
