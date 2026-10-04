@@ -204,6 +204,48 @@ class Twitch:
         except OSError as e:
             raise PlatformError(f"Twitch could not be reached: {e}") from e
 
+    # ---- connecting it, once -------------------------------------------
+
+    def authorize_url(self, state: str, redirect_uri: str = "") -> str:
+        """Where to send the browser. `state` comes back and must match.
+
+        STATE IS THE ONLY THING AUTHENTICATING THE CALLBACK. Twitch redirects
+        the browser to a local URL that carries no app token, so the server
+        cannot tell that request from any other page on the machine asking.
+        A state it did not issue is refused.
+        """
+        c = self.creds()
+        return f"{AUTH}/authorize?" + urllib.parse.urlencode({
+            "client_id": c["client_id"],
+            "redirect_uri": redirect_uri or c.get("redirect_uri", ""),
+            "response_type": "code",
+            "scope": " ".join(SCOPES),
+            "state": state,
+            # So a second connect re-prompts rather than silently reusing a
+            # grant with the old scopes -- which is what happens when the
+            # scope list grows and nobody notices the token is short of one.
+            "force_verify": "true",
+        })
+
+    def exchange(self, code: str, redirect_uri: str = "") -> None:
+        """Turn the callback's code into a token and keep it."""
+        c = self.creds()
+        got = _post_form(f"{AUTH}/token", {
+            "client_id": c["client_id"],
+            "client_secret": c["client_secret"],
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri or c.get("redirect_uri", ""),
+        })
+        if not got.get("access_token"):
+            raise PlatformError("Twitch returned no access token.")
+        self._save_token(got)
+        log.info("Twitch connected")
+
+    def connected(self) -> bool:
+        tok = self._stored_token()
+        return bool(tok and (tok.get("access_token") or tok.get("refresh_token")))
+
     # ---- who we are ---------------------------------------------------
 
     def channel_id(self) -> str:
@@ -259,10 +301,20 @@ class Twitch:
     # ---- the Platform protocol -----------------------------------------
 
     def preflight(self, cost: int = 0) -> None:
+        """The key is required. The token is not.
+
+        LIVE WITH A STALE TITLE BEATS NOT LIVE. The stream key is what makes
+        the broadcast happen; the token only sets the title and category. So a
+        missing or expired authorisation is a warning on a session that still
+        goes out, not a refusal -- refusing would mean an expired token three
+        weeks from now costs a stream rather than a title.
+        """
         if not self.configured():
             raise NotConfigured(
                 "Twitch needs a client id, a client secret and a stream key.")
-        self.token()               # raises NotConfigured if never authorised
+        if not self.connected():
+            log.warning("Twitch is not connected, so the title and category "
+                        "will not be set. Connect it on the Settings page.")
 
     def start(self, title: str, description: str = "", *,
               privacy: str = "public", category: str = "") -> Session:
@@ -272,9 +324,14 @@ class Twitch:
         pushing, which the engine does next -- so this runs first, and the
         title is already right at the moment anyone can see it.
         """
-        cid = self.channel_id()
-        self._patch_channel(cid, title, category)
         key = str(self.creds().get("stream_key") or "")
+        try:
+            cid = self.channel_id()
+            self._patch_channel(cid, title, category)
+        except (NotConfigured, PlatformError) as e:
+            # The same reasoning as preflight: the key is enough to go live.
+            log.warning("could not set the Twitch title: %s", e)
+            cid = str(self.creds().get("broadcaster_id") or "")
         return Session(handle=cid,
                        watch_url=f"https://twitch.tv/{self.login()}",
                        ingest_server=INGEST, stream_key=key,

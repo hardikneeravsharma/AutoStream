@@ -170,6 +170,14 @@ _CONTENT_TYPES = {
 _PUBLIC_FILES = {"/favicon.ico"}
 
 
+# Connects started and not yet finished: state -> what it was for. In memory
+# on purpose, so a state does not survive a restart and cannot be replayed
+# later. Each is spent on first use.
+_PENDING: dict = {}
+# A connect nobody finishes should not sit here for the life of the process.
+_PENDING_TTL = 600.0
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = "AutoStream"
     protocol_version = "HTTP/1.1"
@@ -296,6 +304,63 @@ class _Handler(BaseHTTPRequestHandler):
         from .clips import intros
 
         self._media(path, intros.folder(), (".mp4",), "intro")
+
+    def _oauth_callback(self, u) -> None:
+        """Finish a connect. The browser lands here, not the app."""
+        import time as _t
+
+        q = parse_qs(u.query)
+        want = u.path.rsplit("/", 1)[-1].lower()
+        state = (q.get("state") or [""])[0]
+        code = (q.get("code") or [""])[0]
+        err = (q.get("error_description") or q.get("error") or [""])[0]
+
+        for k, v in list(_PENDING.items()):
+            if _t.monotonic() - v["at"] > _PENDING_TTL:
+                _PENDING.pop(k, None)
+
+        pending = _PENDING.pop(state, None) if state else None
+        if err:
+            self._oauth_page(f"{want.title()} refused: {err}", ok=False)
+            return
+        if not pending or pending["platform"] != want:
+            # A state we did not issue, already spent, or for another
+            # platform. All three are the same answer.
+            self._oauth_page(
+                "That sign-in did not match a connection this app started. "
+                "Press Connect again.", ok=False)
+            return
+        if not code:
+            self._oauth_page(f"{want.title()} sent no code back.", ok=False)
+            return
+        try:
+            self.app.platform_exchange(want, code, pending)
+        except Exception as e:  # noqa: BLE001
+            log.warning("%s connect failed: %s", want, e)
+            self._oauth_page(f"Could not finish: {e}", ok=False)
+            return
+        self._oauth_page(f"{want.title()} is connected. You can close this tab.",
+                         ok=True)
+
+    def _oauth_page(self, message: str, *, ok: bool) -> None:
+        """A plain page, because this tab is not the app.
+
+        No stylesheet and no script: it is opened by the platform's redirect,
+        lives for about three seconds, and loading the app's CSS here would
+        mean a token check this request cannot pass.
+        """
+        import html as _h
+
+        body = (
+            "<!doctype html><meta charset='utf-8'>"
+            "<title>AutoStream</title>"
+            "<body style=\"font:16px/1.5 system-ui;background:#0f1216;"
+            "color:#e6e9ee;display:grid;place-items:center;height:100vh;"
+            "margin:0;text-align:center\">"
+            f"<div><p style='font-size:40px;margin:0'>{'&#10003;' if ok else '&#10007;'}</p>"
+            f"<p>{_h.escape(message)}</p></div>"
+        ).encode("utf-8")
+        self._send(200 if ok else 400, body, "text/html; charset=utf-8")
 
     def _favicon(self) -> None:
         ico = Path(__file__).resolve().parent / "ui" / "assets" / "autostream.ico"
@@ -455,6 +520,14 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path)
+        if u.path.startswith("/oauth/"):
+            # NOT AUTHED BY THE APP TOKEN, because the browser arrives here
+            # redirected by Twitch or Kick and carries none. What authenticates
+            # it is the `state` this server issued a moment ago, which is the
+            # standard protection and the only one available: a callback the
+            # server cannot match to a connect it started is refused.
+            self._oauth_callback(u)
+            return
         if u.path in _PUBLIC_FILES:
             # Every browser asks for this on its own, never with the token, and
             # a 403 for it was the one error on an otherwise clean console. The
@@ -533,6 +606,8 @@ class _Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/clips/video":
             q = parse_qs(u.query)
             self._video((q.get("path") or [""])[0])
+        elif u.path == "/api/platform/status":
+            self._json(self.app.platform_status())
         elif u.path == "/api/clips/part/status":
             self._json(self.app.clips_part_status())
         elif u.path == "/api/clips/source-info":
@@ -934,6 +1009,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.clips_install(b))
             elif p == "/api/clips/voices/install":
                 self._json(self.app.clips_voices_install())
+            elif p == "/api/platform/connect":
+                self._json(self.app.platform_connect(b))
             elif p == "/api/clips/part/preview":
                 self._json(self.app.clips_part_preview(b))
             elif p == "/api/clips/part/save":
@@ -2730,6 +2807,81 @@ class Server:
         return {"ok": True, "available": True, "why": "", "groups": groups,
                 "default": v.VOICE, "sample_line": v.SAMPLE_LINE,
                 "can_install": False, "job": job}
+
+    # ---- connecting Twitch or Kick -------------------------------------
+
+    def _platform_obj(self, name: str):
+        name = (name or "").lower()
+        if name == "twitch":
+            from .platforms.twitch import Twitch
+
+            return Twitch(cfg.load())
+        if name == "kick":
+            from .platforms.kick import Kick
+
+            return Kick(cfg.load())
+        return None
+
+    def platform_status(self) -> dict:
+        """Which platforms are set up, and which are connected.
+
+        Two different states and the Settings page needs both: credentials in
+        secrets/ mean the app CAN ask, and a token means the user has said
+        yes. Reporting one number would make "paste the client id" and "press
+        Connect" look like the same step.
+        """
+        out = {}
+        for name in ("twitch", "kick"):
+            p = self._platform_obj(name)
+            try:
+                out[name] = {"configured": bool(p and p.configured()),
+                             "connected": bool(p and p.connected())}
+            except Exception:                            # noqa: BLE001
+                out[name] = {"configured": False, "connected": False}
+        return {"ok": True, "platforms": out}
+
+    def platform_connect(self, body: dict) -> dict:
+        """Start a connect. -> the URL for the browser to open."""
+        import secrets as _s
+        import time as _t
+
+        name = str(body.get("platform") or "").lower()
+        p = self._platform_obj(name)
+        if p is None:
+            return {"error": "Not a platform this app connects to."}
+        if not p.configured():
+            return {"error": f"{p.label} needs its client id and secret in "
+                             f"secrets/{name}.json first."}
+        port = int(getattr(cfg.load().rules, "web_port", 8787) or 8787)
+        redirect = f"http://localhost:{port}/oauth/{name}"
+        state = _s.token_urlsafe(24)
+        try:
+            if name == "kick":
+                from .platforms.kick import pkce_pair
+
+                verifier, challenge = pkce_pair()
+                url = p.authorize_url(state, challenge, redirect)
+                _PENDING[state] = {"platform": name, "verifier": verifier,
+                                   "redirect": redirect, "at": _t.monotonic()}
+            else:
+                url = p.authorize_url(state, redirect)
+                _PENDING[state] = {"platform": name, "verifier": "",
+                                   "redirect": redirect, "at": _t.monotonic()}
+        except Exception as e:                           # noqa: BLE001
+            return {"error": str(e)}
+        log.info("connecting %s: waiting for the browser", name)
+        return {"ok": True, "url": url, "redirect": redirect}
+
+    def platform_exchange(self, name: str, code: str, pending: dict) -> None:
+        """Finish a connect. Raises on anything that went wrong."""
+        p = self._platform_obj(name)
+        if p is None:
+            raise RuntimeError("Not a platform this app connects to.")
+        if name == "kick":
+            p.exchange(code, pending.get("verifier", ""),
+                       pending.get("redirect", ""))
+        else:
+            p.exchange(code, pending.get("redirect", ""))
 
     def clips_voices_install(self) -> dict:
         """Download the voice model, at the user's asking.

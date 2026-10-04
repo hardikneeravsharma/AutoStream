@@ -305,6 +305,10 @@ CONTROLS: list[Control] = [
     Control("/api/clips/voices/install", "POST", STATIC,
             "Download the voices", "clips",
             why="starts a 206 MB download over the user's connection"),
+    Control("/api/platform/status", "GET", STATIC, "", "settings",
+            why="says which platforms are set up and which are connected"),
+    Control("/api/platform/connect", "POST", STATIC, "Connect", "settings",
+            why="starts an OAuth sign-in and opens a browser"),
     Control("/api/clips/part/preview", "POST", STATIC, "Play this part", "clips",
             why="re-encodes a stretch of the recording on a worker thread"),
     Control("/api/clips/part/save", "POST", STATIC,
@@ -699,6 +703,9 @@ NOT_A_FLOW: dict[str, str] = {
     "log-filters": "client-side level filter over rows already fetched",
     # --- Clips run options, collected and sent later as part of the run body
     "montage": "toggles montage for the next /api/clips/run",
+    "connect": "opens the platform's OAuth page in a browser; the token "
+               "lands on this server's own /oauth/<platform> callback, not "
+               "in the page",
     "adv": "folds the second layer of style options open or shut; never "
            "leaves the browser",
     "part-mark": "sets the start or end of the part from the video playhead",

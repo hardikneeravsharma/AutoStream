@@ -97,7 +97,8 @@ SETTINGS_JS = r"""
 var set_state = {
   loaded: false, loading: false, wired: false, guarded: false,
   sections: [], fields: {}, values: {}, tags: {},
-  themes: [], theme: '', active: '', saving: false
+  themes: [], theme: '', active: '', saving: false,
+  platforms: {}          /* twitch/kick: configured + connected */
 };
 
 var set_timeRe = /^([01]?[0-9]|2[0-3]):([0-5][0-9])$/;
@@ -455,6 +456,71 @@ function set_wireBuildScreens(){
   });
 }
 
+/* CONNECTING TWITCH OR KICK. A sign-in, not a setting -- it opens a browser
+   and comes back with a token -- so it is a panel at the top of the Stream
+   section rather than a field in the list. It also says the two states apart:
+   credentials in secrets/ mean the app CAN ask, and a token means the user
+   has said yes. One line for both would make "paste the client id" and
+   "press Connect" look like the same step. */
+function set_connectHtml(){
+  var st = set_state.platforms || {};
+  var rows = [['twitch', 'Twitch'], ['kick', 'Kick']].map(function(p){
+    var k = p[0], label = p[1];
+    var s = st[k] || {};
+    var where = s.connected ? 'Connected'
+              : s.configured ? 'Not connected yet'
+              : 'No client id or secret in secrets/' + k + '.json';
+    return '<div class="field-inline" style="justify-content:space-between">' +
+      '<span><b>' + label + '</b> <span class="muted">' + set_esc(where) + '</span></span>' +
+      '<button class="btn btn-sm" type="button" data-act="connect" data-platform="' +
+        k + '"' + (s.configured ? '' : ' disabled') + '>' +
+        (s.connected ? 'Reconnect' : 'Connect') + '</button></div>';
+  }).join('');
+  return '<div class="panel">' +
+    '<p class="field-label">Sign in to a platform</p>' + rows +
+    '<p class="field-help">Twitch goes live on the stream key alone; signing ' +
+    'in is what lets AutoStream set the title and category. Kick hands over ' +
+    'its stream key through the API, so it needs the sign-in to stream at ' +
+    'all.</p></div>';
+}
+
+function set_esc(v){
+  return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+
+/* OPENS A BROWSER AND WAITS. The token lands on this server's own callback,
+   not in this tab, so there is nothing to await -- the status is polled until
+   it flips, and gives up rather than polling forever if the user closes the
+   tab without finishing. */
+async function set_connect(name){
+  if (!name) return;
+  var r;
+  try { r = await API.post('/api/platform/connect', {platform: name}); }
+  catch (e) { toast('Could not start the sign-in.', 'error'); return; }
+  if (!r || r.error || !r.url){ toast((r && r.error) || 'Could not start the sign-in.', 'error'); return; }
+  window.open(r.url, '_blank', 'noopener');
+  toast('Finish the sign-in in your browser.', 'ok');
+  for (var i = 0; i < 60; i++){
+    await new Promise(function(ok){ setTimeout(ok, 2000); });
+    await set_loadPlatforms();
+    var st = (set_state.platforms || {})[name] || {};
+    if (st.connected){
+      toast(name.charAt(0).toUpperCase() + name.slice(1) + ' is connected.', 'ok');
+      set_render();
+      return;
+    }
+  }
+}
+
+async function set_loadPlatforms(){
+  try {
+    var r = await API.get('/api/platform/status');
+    if (r && r.platforms) set_state.platforms = r.platforms;
+  } catch (e) { /* the panel says "not connected", which is true */ }
+}
+
 function set_sectionHtml(sec){
   var plain = [], adv = [];
   (sec.fields || []).forEach(function(f){
@@ -467,7 +533,7 @@ function set_sectionHtml(sec){
       '<span class="field-label">Show these settings</span>' +
       '</summary><div>' + plain.join('') + adv.join('') + '</div></details>';
   } else {
-    body = plain.join('');
+    body = (sec.id === 'stream' ? set_connectHtml() : '') + plain.join('');
     if (adv.length){
       body += '<details class="panel"><summary>' +
         '<span class="field-label">Advanced</span>' +
@@ -683,6 +749,8 @@ function set_wire(){
       list.splice(parseInt(btn.getAttribute('data-i'), 10), 1);
       set_tagRender(path);
       set_touch(path);
+    } else if (act === 'connect'){
+      set_connect(t.getAttribute('data-platform'));
     } else if (act === 'theme'){
       set_theme(btn.getAttribute('data-theme'));
     }
@@ -1028,6 +1096,11 @@ window.PAGE_SETTINGS = {
   onShow: function(){
     set_guardNav();
     set_wireUpdates();
+    // Asked every time the page opens: a connect finishes in another tab, so
+    // the only way this one learns about it is by looking again.
+    set_loadPlatforms().then(function(){
+      if (set_state.loaded) set_render();
+    });
     if (!set_state.loaded){ set_load(); return; }
     if (!set_dirtyPaths().length) set_refresh().catch(function(){});
   },

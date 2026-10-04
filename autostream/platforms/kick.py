@@ -206,6 +206,43 @@ class Kick:
         except OSError as e:
             raise PlatformError(f"Kick could not be reached: {e}") from e
 
+    # ---- connecting it, once -------------------------------------------
+
+    def authorize_url(self, state: str, challenge: str,
+                      redirect_uri: str = "") -> str:
+        """Where to send the browser. PKCE is mandatory on OAuth 2.1."""
+        c = self.creds()
+        return f"{AUTH}/authorize?" + urllib.parse.urlencode({
+            "client_id": c["client_id"],
+            "redirect_uri": redirect_uri or c.get("redirect_uri", ""),
+            "response_type": "code",
+            "scope": " ".join(SCOPES),
+            "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+        })
+
+    def exchange(self, code: str, verifier: str,
+                 redirect_uri: str = "") -> None:
+        """Code plus the verifier whose challenge started this. Kept."""
+        c = self.creds()
+        got = self._form(f"{AUTH}/token", {
+            "client_id": c["client_id"],
+            "client_secret": c["client_secret"],
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri or c.get("redirect_uri", ""),
+            "code_verifier": verifier,
+        })
+        if not got.get("access_token"):
+            raise PlatformError("Kick returned no access token.")
+        self._save_token(got)
+        log.info("Kick connected")
+
+    def connected(self) -> bool:
+        tok = self._stored_token()
+        return bool(tok and (tok.get("access_token") or tok.get("refresh_token")))
+
     # ---- who we are, and where to push --------------------------------
 
     def channel(self) -> dict:
@@ -255,9 +292,19 @@ class Kick:
     # ---- the Platform protocol -----------------------------------------
 
     def preflight(self, cost: int = 0) -> None:
+        """Kick needs the token to go live at all, unlike Twitch.
+
+        The key comes FROM the API, so there is no going live without an
+        authorisation -- there is nothing to push with. A user who pasted a
+        key into kick.json is the one exception, and is allowed through.
+        """
         if not self.configured():
             raise NotConfigured("Kick needs a client id and a client secret.")
-        self.token()
+        if not self.connected() and not self.creds().get("stream_key"):
+            raise NotConfigured(
+                "Kick has not been connected yet, and Kick hands over the "
+                "stream key through the API -- so there is nothing to stream "
+                "with until you connect it on the Settings page.")
 
     def start(self, title: str, description: str = "", *,
               privacy: str = "public", category: str = "") -> Session:
