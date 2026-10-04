@@ -401,3 +401,85 @@ def test_only_stages_behind_you_show_a_tick(ui, app):
         assert not ticked, (
             f"{row['name']!r} is at or ahead of the open stage and shows a "
             f"tick: {got}")
+
+
+# ------------------------------------- the results stage, and the race to it
+
+_DONE_JOB = {
+    "state": "done", "step": "done", "percent": 100, "game": "VALORANT",
+    "message": "No kills found in this recording.", "error": None,
+    "folder": "C:/nowhere/2026-09-21_1943_VALORANT_shortform",
+    "clips": 0, "montage": None, "summary": {"kills": 0, "clips": 0},
+    "preview": [], "scan_mode": "feedbar", "needs_demo": False,
+}
+
+
+def _land_on_done(ui, previous):
+    """Deliver a finished job with `previous` as the job before it.
+
+    `clip_renderJob` is what the status poll calls, and it is called BEFORE
+    `clip_state.lastJob` is updated -- which is the whole point of this test.
+    """
+    return ui.page.evaluate(
+        """([prev, job]) => {
+            clip_state.pick = clip_state.pick || {file: 'x.mp4', game: 'VALORANT'};
+            clip_state.lastJob = prev;
+            clip_state.sawDone = null;
+            clip_state.step = 'style';
+            clip_renderJob(job);          /* poll 1: lastJob is still `prev` */
+            const after1 = clip_state.step;
+            clip_state.lastJob = job;     /* what the poll does next */
+            clip_renderJob(job);          /* poll 2 */
+            return [after1, clip_state.step];
+        }""", [previous, _DONE_JOB])
+
+
+def test_a_run_that_was_running_opens_the_results_straight_away(ui):
+    """The ordinary path: the page watched the job run, so the Clips stage is
+    already open and the hop lands on the first poll."""
+    first, second = _land_on_done(ui, {"state": "running", "percent": 40,
+                                       "folder": None})
+    assert first == "done"
+    assert second == "done"
+    ui.clean("landing on the results stage")
+
+
+def test_a_run_that_finished_between_two_polls_still_opens_the_results(ui):
+    """FROM A REAL FAILURE, and a race that had been there all along.
+
+    When the page goes straight from no job to a finished one -- a short run
+    that completes between two two-second polls -- `clip_renderJob` asks
+    `clip_goStep('done')` while `clip_state.lastJob` is still null. The rail
+    is built from that, so the Clips stage is neither done nor running, is not
+    openable, and `clip_renderStep` falls back to the last finished stage:
+    the hop is undone the instant it is made.
+
+    `sawDone` had already been spent, so it was never retried. The run had
+    finished, the results were rendered, and the page sat on Style with no
+    sign that anything had happened.
+
+    The first poll may still fail to land -- that is the race, and fixing the
+    ordering of two lines elsewhere is a bigger change than this is worth.
+    What must not happen is giving up: by the second poll `lastJob` is the
+    finished job and the stage is reachable."""
+    first, second = _land_on_done(ui, None)
+    assert second == "done", (
+        "the results stage never opened; the page is stuck on " + str(second))
+    ui.clean("a job that finished between polls")
+
+
+def test_the_user_is_not_dragged_back_once_they_have_moved_on(ui):
+    """The reason the hop is a one-shot in the first place: a finished job
+    sits on screen for as long as the page is open, and re-opening its stage
+    on every poll would snatch the page back from anyone looking at anything
+    else."""
+    _land_on_done(ui, None)
+    moved = ui.page.evaluate(
+        """(job) => {
+            clip_goStep('style');
+            clip_renderJob(job);      /* three more polls, same finished job */
+            clip_renderJob(job);
+            clip_renderJob(job);
+            return clip_state.step;
+        }""", _DONE_JOB)
+    assert moved == "style", "the finished job pulled the page back"

@@ -2084,10 +2084,25 @@ function clip_renderJob(j) {
   if (!done) return;
   /* ONCE, on the edge. Every poll runs through here, so re-opening the stage
      each time would drag the user back whenever they looked at anything else
-     while a finished job sat on screen. */
+     while a finished job sat on screen.
+
+     ONCE IT HAS ACTUALLY TAKEN, though -- not once it has been attempted.
+     This runs from clip_renderJob, which is called BEFORE
+     `clip_state.lastJob = j`, so the rail clip_goStep rebuilds is still
+     computed from the PREVIOUS job. While that previous job was running the
+     Clips stage is open and the hop lands. When there was no previous job --
+     a run that finishes between two polls, so the page goes straight from
+     nothing to done -- the stage is neither done nor running, clip_renderStep
+     falls back to the last finished stage, and the hop is undone the instant
+     it is made. `sawDone` had already been spent, so it was never retried:
+     the run finished, the results were on the page, and the page sat on
+     Style with no sign anything had happened.
+
+     Recording it only when the step held means the next poll -- by which
+     time lastJob is the finished job -- tries again and succeeds. */
   if (clip_state.sawDone !== j.folder) {
-    clip_state.sawDone = j.folder || 'done';
     clip_goStep('done');
+    if (clip_state.step === 'done') clip_state.sawDone = j.folder || 'done';
   }
 
   /* STOPPED FOR A REPLAY IS NOT A FAILURE. Nothing went wrong; the run needs
