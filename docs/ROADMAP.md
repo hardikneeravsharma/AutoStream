@@ -167,6 +167,48 @@ If a feature touches a file with no paired item, it ships none. If it touches
 | **C6** clip ranking | **#12** build summary replacing the combinatorial counter | Both are about what the Studio says is worth making |
 | **Any new pane** | **#2**, **#10**, **#14** | The review names these three as the ones whose absence costs rework later |
 
+### Studio import, asked for 2026-10-04
+
+Two gaps in "Add your own clip", both confirmed in the source rather than
+guessed. Small, and they pair with each other -- the same dialog, the same
+afternoon.
+
+**S1 · Adding clips, plural.** `studio_impAdd` takes one file and stops:
+`/api/clips/pick` returns a single `path`, because `clips_pick` calls Tk's
+`askopenfilename`. Somebody with a folder of twenty clips does the whole dance
+twenty times. The change is `askopenfilenames` behind a `multi` flag, a
+response that carries `paths`, and a loop in `studio_impAdd` -- then the
+marker opens on the first and moves to the next on Save, so a batch is one
+pass rather than twenty.
+
+Keep the single-file answer working: `clips_pick` serves intros, outros and
+songs as well, and none of those wants a multi-select.
+
+**S2 · The kill marker should reopen for any clip.** It is gated on
+`c.imported` ([studio.py:954](../autostream/ui/studio.py#L954)), and that flag
+is set only for clips that came in through import
+([clips/studio.py:276](../autostream/clips/studio.py#L276)). So a clip
+AutoStream cut for itself has no way back into the marker at all: if the
+detector put a kill half a second late, or a clip deserves a better title,
+there is nothing to press.
+
+The marker already works on any path -- `studio_impOpen(path)` does not care
+where the clip came from. What is missing is the way in. Show Edit on every
+clip, and let a detected clip's marks be corrected the same way an imported
+one's are.
+
+> There is a decision inside S2 worth making deliberately: a detected clip's
+> kills come from the detector, so editing them means the run's own record and
+> the clip's record can disagree. Either the edit writes back to the run, or
+> the clip carries an override that wins. The second is smaller and does not
+> rewrite history; the first keeps one source of truth. Pick one before
+> building, not during.
+
+**Where these ship:** with **C3** (four to six more titles) or **A4** (generic
+highlight detection) -- both bring in clips the detector is less sure about,
+which is exactly when being able to correct a mark starts to matter. If
+neither is close, S1 stands alone at about half a day.
+
 ### Standalone, when nothing is adjacent
 
 **#15** lazy-render the Studio panes. **5,348 of the document's 6,325 DOM
