@@ -624,6 +624,14 @@ svg{flex:0 0 auto;display:block}
   transition:background-color var(--dur-instant),color var(--dur-instant);
 }
 .seg-btn:hover{color:var(--text-primary)}
+.seg-btn:disabled{opacity:.55;cursor:default}
+.seg-btn:disabled:hover{color:var(--text-secondary)}
+/* The dashboard's platform chooser is the width of its card, not of its
+   labels: three services of very different name lengths should not give
+   YouTube a wider target than Kick. */
+#dash-where .seg{display:flex;width:100%}
+#dash-where .seg-btn{flex:1 1 0}
+#dash-where .field-help{margin-top:var(--space-2)}
 /* ACCENT BUDGET 4/4 (a): selected segmented cell. */
 .seg-btn.is-active{background:var(--accent);color:var(--text-on-accent)}
 

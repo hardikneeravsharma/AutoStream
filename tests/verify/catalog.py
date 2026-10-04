@@ -128,8 +128,10 @@ CONTROLS: list[Control] = [
     Control("/api/settings/save", "POST", CALL, "Save changes", "settings",
             body={"values": {"clips.min_kills": 2}}, expect=_ok,
             reject={"values": {"no.such.setting": 1}}, reject_soft=True,
-            acts=("set-save",),
-            why="all-or-nothing; a rejected field is 200 with ok:false"),
+            acts=("set-save", "dash-where-platform"),
+            why="all-or-nothing; a rejected field is 200 with ok:false. The "
+                "dashboard's platform chooser posts here too rather than "
+                "owning an endpoint, so there is one validator for the key"),
     Control("/api/diagnostics", "POST", CALL, "Build a report", "settings",
             body={}, expect=_has("ok", "text"), acts=("set-diag-get",),
             why="must never carry the OBS password or the web token"),
@@ -686,7 +688,7 @@ NOT_A_FLOW: dict[str, str] = {
     "back": "steps the setup wizard backwards; no state leaves the browser",
     "pick": "selects a session row in the Clips list",
     # --- plain links and the clipboard
-    "dash-btn-open": "a plain <a href> to the YouTube watch URL",
+    "dash-btn-open": "a plain <a href> to the watch URL the platform gave",
     "set-diag-copy": "clipboard only",
     "copy": "copies the diagnostics text to the clipboard",
     # --- graph controls

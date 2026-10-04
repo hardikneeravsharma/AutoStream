@@ -353,7 +353,10 @@ function set_fieldHtml(f){
     help += '<p class="field-help"><b>Written by setup.</b> Changing this by hand ' +
             'breaks the next session without warning.</p>';
   }
-  return '<div class="field" data-path="' + set_attr(f.path) + '" id="set-w-' + slug + '">' +
+  var only = (f.only_for && f.only_for.length)
+    ? ' data-only="' + set_attr(f.only_for.join(' ')) + '"' : '';
+  return '<div class="field" data-path="' + set_attr(f.path) + '"' + only +
+    ' id="set-w-' + slug + '">' +
     '<div class="field-row">' +
       '<div>' +
         '<label class="field-label" id="set-l-' + slug + '" for="' + target + '">' +
@@ -534,6 +537,10 @@ function set_sectionHtml(sec){
       '</summary><div>' + plain.join('') + adv.join('') + '</div></details>';
   } else {
     body = (sec.id === 'stream' ? set_connectHtml() : '') + plain.join('');
+    if ((sec.fields || []).some(function(f){ return f.only_for; })){
+      body += '<p class="field-help settings-only-note hide" data-sec="' +
+        set_attr(sec.id) + '"></p>';
+    }
     if (adv.length){
       body += '<details class="panel"><summary>' +
         '<span class="field-label">Advanced</span>' +
@@ -561,6 +568,66 @@ function set_sectionHtml(sec){
   '</section>';
 }
 
+/* ---------------------------------------------- settings that are not yours
+
+   Most of the `youtube.*` block belongs to YouTube alone. Twitch has no
+   privacy setting, no latency choice, no "made for kids" flag and no
+   broadcast object to start a second of; Kick has none of them either. A page
+   that offers those controls while Twitch is selected is describing something
+   it will not do, and the first time that matters is when somebody sets a
+   stream to Unlisted, goes live on Twitch, and finds it public.
+
+   Hidden rather than disabled. A greyed-out row still has to be read before
+   it can be dismissed, and there are five of them. What is left in its place
+   is one line saying which platform is selected and that the rest did not
+   apply -- so the gap is explained where the gap is.
+
+   NOTHING IS WRITTEN. The values stay exactly as they were, and switching
+   back to YouTube brings the same settings back untouched. Hiding a control
+   is not the same as changing it. */
+
+function set_platformNow(){
+  var f = set_state.fields['youtube.platform'];
+  /* Read the control, not the saved value: the rows have to follow the
+     dropdown while the change is still unsaved. */
+  return (f ? String(set_read(f) || '') : '') || 'youtube';
+}
+
+function set_applyPlatform(){
+  var now = set_platformNow();
+  var panels = set_el('set-panels');
+  if (!panels) return;
+  var rows = panels.querySelectorAll('.field[data-only]');
+  var hidden = {};
+  for (var i = 0; i < rows.length; i++){
+    var list = (rows[i].getAttribute('data-only') || '').split(' ');
+    var keep = list.indexOf(now) >= 0;
+    rows[i].classList.toggle('hide', !keep);
+    if (!keep){
+      var sec = rows[i].closest ? rows[i].closest('.settings-section') : null;
+      if (sec) hidden[sec.getAttribute('data-sec')] = true;
+    }
+  }
+  var label = set_platformLabel(now);
+  var notes = panels.querySelectorAll('.settings-only-note');
+  for (var j = 0; j < notes.length; j++){
+    var id = notes[j].getAttribute('data-sec');
+    notes[j].classList.toggle('hide', !hidden[id]);
+    notes[j].textContent = 'Some settings are hidden because they are ' +
+      'YouTube’s own and ' + label + ' has no equivalent. They are not ' +
+      'changed, and come back if you switch to YouTube.';
+  }
+}
+
+function set_platformLabel(id){
+  var f = set_state.fields['youtube.platform'];
+  var opts = (f && f.options) || [];
+  for (var i = 0; i < opts.length; i++){
+    if (opts[i].value === id) return opts[i].label;
+  }
+  return id;
+}
+
 function set_navHtml(){
   return set_state.sections.map(function(sec){
     return '<button class="settings-nav-item' + (sec.id === set_state.active ? ' is-active' : '') +
@@ -574,6 +641,7 @@ function set_render(){
   set_el('set-panels').innerHTML = set_state.sections.map(set_sectionHtml).join('');
   set_wireBuildScreens();
   set_wireStreamElements();
+  set_applyPlatform();
   set_growVisible();
   set_updateActions();
 }
@@ -665,6 +733,7 @@ function set_touch(path){
   if (!f) return;
   if (set_isDirty(f)) set_error(path, set_validate(f, set_read(f)));
   else set_error(path, '');
+  if (path === 'youtube.platform') set_applyPlatform();
   set_updateActions();
 }
 

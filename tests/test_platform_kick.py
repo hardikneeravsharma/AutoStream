@@ -211,3 +211,87 @@ def test_transitions_do_nothing_and_raise_nothing(creds, calls):
     k.stop(s)
     seen, _ = calls
     assert not [c for c in seen if c["method"] != "GET"]
+
+
+# ------------------------------------------------- Cloudflare, not Kick
+
+def test_every_kick_request_carries_a_browser_user_agent(creds, monkeypatch):
+    """FROM A REAL FAILURE. Kick sits behind Cloudflare, which bans on browser
+    signature. urllib's default `Python-urllib/3.x` never reached Kick at all:
+    the token endpoint answered 403 with the body `error code: 1010`, which is
+    Cloudflare's "banned by signature" and reads exactly like Kick refusing
+    the credentials. An hour went into the credentials, which were fine.
+
+    Measured both ways against the live endpoint with the same client id,
+    secret and a deliberately invalid code: 403/1010 with no User-Agent,
+    401 with one. Nothing else differed."""
+    sent = {}
+
+    class Fake:
+        status = 200
+        def read(self): return b'{"access_token":"a","expires_in":7200}'
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def spy(req, timeout=None):
+        sent["ua"] = req.get_header("User-agent") or ""
+        return Fake()
+
+    monkeypatch.setattr(kk.urllib.request, "urlopen", spy)
+    kk.Kick().exchange("code", "verifier", "http://localhost:1/oauth/kick")
+
+    assert sent["ua"], "no User-Agent: Cloudflare answers 403/1010"
+    assert "Python-urllib" not in sent["ua"]
+    assert kk.UA == sent["ua"]
+
+
+def test_the_authorised_calls_carry_it_too(creds, monkeypatch):
+    """The token endpoint is not the only thing behind Cloudflare -- a fetch
+    of the stream key at go-live goes through the same front door."""
+    sent = {}
+
+    class Fake:
+        def read(self): return b'{"data":[]}'
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def spy(req, timeout=None):
+        sent["ua"] = req.get_header("User-agent") or ""
+        return Fake()
+
+    monkeypatch.setattr(kk.Kick, "token", lambda self: "tok")
+    monkeypatch.setattr(kk.urllib.request, "urlopen", spy)
+    kk.Kick()._call("GET", "/channels")
+    assert sent["ua"] == kk.UA
+
+
+def test_a_cloudflare_block_is_not_reported_as_a_credential_problem(creds,
+                                                                    monkeypatch):
+    """If it ever comes back, the message must not send somebody to the Kick
+    developer console to re-copy a client secret that was never wrong."""
+    def blocked(req, timeout=None):
+        raise kk.urllib.error.HTTPError(
+            req.full_url, 403, "Forbidden", {},
+            __import__("io").BytesIO(b"error code: 1010 "))
+
+    monkeypatch.setattr(kk.urllib.request, "urlopen", blocked)
+    with pytest.raises(PlatformError) as e:
+        kk.Kick().exchange("c", "v", "http://localhost:1/oauth/kick")
+    said = str(e.value)
+    assert "Cloudflare" in said
+    assert "not in your account" in said
+
+
+def test_a_stale_sign_in_code_says_to_press_connect_again(creds, monkeypatch):
+    """Kick answers a spent or invented code with a bare 401 and no body.
+    Passed through unchanged that is `Kick refused (401):` and nothing else."""
+    def refuse(req, timeout=None):
+        raise kk.urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {},
+                                        __import__("io").BytesIO(b""))
+
+    monkeypatch.setattr(kk.urllib.request, "urlopen", refuse)
+    with pytest.raises(PlatformError) as e:
+        kk.Kick().exchange("c", "v", "http://localhost:1/oauth/kick")
+    said = str(e.value)
+    assert "try again" in said
+    assert "401" not in said, "a bare status code is not an instruction"

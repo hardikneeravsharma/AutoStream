@@ -19,6 +19,14 @@ Callers should surface "restart AutoStream" when any saved key sets this.
 `danger` marks keys that are derived or destructive: values written by `setup`
 that pair with state held elsewhere (OBS, YouTube), where a plausible-looking
 edit breaks streaming in a way that only shows up at the next session.
+
+`only_for` names the platforms a key actually does anything on. Most of the
+`youtube.*` block is YouTube's alone -- Twitch has no privacy setting, no
+latency choice, no "made for kids" and no broadcast object to start a second
+of -- and a settings page that offers them while Twitch is selected is lying
+about what it will do. The page hides them rather than disabling them: a
+control that cannot matter is noise, and the reason it vanished is written
+where it vanished from. Absent means the key applies everywhere.
 """
 from __future__ import annotations
 
@@ -122,11 +130,11 @@ CONFIG_SCHEMA: list[Section] = [
         "fields": [
             _field(
                 "youtube.enabled",
-                "Go live on YouTube",
+                "Go live",
                 "Off turns AutoStream into a clipper and nothing else: it still "
                 "spots the game, still records it and still cuts clips, and never "
-                "touches YouTube. Nothing else on this page is read while it is "
-                "off, and no Google sign-in is needed.",
+                "starts a stream. Nothing else on this page is read while it is "
+                "off, and no sign-in is needed.",
                 "toggle",
             ),
             _field(
@@ -156,6 +164,7 @@ CONFIG_SCHEMA: list[Section] = [
                     ("unlisted", "Unlisted - only people with the link"),
                     ("private", "Private - only you"),
                 ),
+            only_for=["youtube"],
             ),
             _field(
                 "youtube.latency",
@@ -170,6 +179,7 @@ CONFIG_SCHEMA: list[Section] = [
                     ("low", "Low - a few seconds behind, chat still works"),
                     ("ultraLow", "Ultra low - closest to real time, least buffer"),
                 ),
+            only_for=["youtube"],
             ),
             _field(
                 "youtube.category_id",
@@ -178,6 +188,7 @@ CONFIG_SCHEMA: list[Section] = [
                 "Applied once the broadcast goes live.",
                 "select",
                 options=_CATEGORIES,
+            only_for=["youtube"],
             ),
             _field(
                 "youtube.made_for_kids",
@@ -186,6 +197,7 @@ CONFIG_SCHEMA: list[Section] = [
                 "Turning it on disables live chat and strips personalised features "
                 "for every viewer, on every stream.",
                 "toggle",
+            only_for=["youtube"],
             ),
             _field(
                 "youtube.switch_policy",
@@ -199,6 +211,7 @@ CONFIG_SCHEMA: list[Section] = [
                     ("rolling", "Rename the stream in place - one VOD per session"),
                     ("new_broadcast", "Start a new stream - one VOD per game"),
                 ),
+            only_for=["youtube"],
             ),
         ],
     },
@@ -349,6 +362,7 @@ CONFIG_SCHEMA: list[Section] = [
                 step=5,
                 unit="seconds",
                 integer=True,
+                only_for=["youtube"],
             ),
             _field(
                 "timing.switch_delay",

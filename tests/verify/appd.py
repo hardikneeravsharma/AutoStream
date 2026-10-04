@@ -37,14 +37,41 @@ def running() -> list[str]:
     return [ln for ln in out.splitlines() if "AutoStream.exe" in ln]
 
 
+def _argv() -> list[str]:
+    """How to start the app: the built exe, or this checkout.
+
+    THE BUILT EXE IS THE DEFAULT and is what a release is signed off against
+    -- a browser tier that only ever ran against source would miss everything
+    PyInstaller changes about paths and bundled assets.
+
+    AUTOSTREAM_VERIFY_SOURCE=1 runs the checkout instead, for the two cases
+    where the exe is not available to test with: a change made since the last
+    build, and the user's own AutoStream being open, which locks the files a
+    build would write. Neither is a reason to leave a UI change unexercised,
+    and both used to mean exactly that.
+    """
+    if from_source():
+        return [sys.executable, "-m", "autostream", "run"]
+    return [str(BUILT), "run"]
+
+
+def from_source() -> bool:
+    return bool(os.environ.get("AUTOSTREAM_VERIFY_SOURCE"))
+
+
 def why_not() -> str:
-    """Empty when the built app can be started here, else what is in the way."""
+    """Empty when the app can be started here, else what is in the way."""
+    if from_source():
+        # A checkout runs as its own process, against its own home and its own
+        # port, so the user's app being open is not in the way of it.
+        return ""
     if not BUILT.is_file():
         return f"no build at {BUILT} - run scripts\build.ps1 first"
     if running():
         return ("AutoStream is already running; quit it first "
                 '(POST /api/cmd {"command":"quit"}). It is not killed here '
-                "because it may be live or cutting clips.")
+                "because it may be live or cutting clips. Or set "
+                "AUTOSTREAM_VERIFY_SOURCE=1 to run this checkout instead.")
     return ""
 
 
@@ -115,6 +142,12 @@ def start(home: Path, port: int, video_home: Path | None = None):
     #
     # The app refuses to open one when this is set; see webui.clips_pick.
     env["AUTOSTREAM_NO_DIALOGS"] = "1"
+    # A LOCK OF ITS OWN. One AutoStream at a time is held by a named Windows
+    # mutex, and the name was fixed -- so a test copy, against a throwaway
+    # home and a free port, was refused whenever the user's own app happened
+    # to be open. The tier it blocked is the one that exists to catch UI
+    # defects before they reach that app.
+    env["AUTOSTREAM_INSTANCE"] = f"verify-{port}"
     # Output goes to a FILE, not a pipe. A pipe nobody drains fills at 64KB and
     # then blocks the app mid-write: it stops answering, Quit included, and the
     # symptom is a test reporting that the app ignored Quit when the test was
@@ -122,7 +155,8 @@ def start(home: Path, port: int, video_home: Path | None = None):
     boot = home / "logs" / "boot.log"
     boot.parent.mkdir(parents=True, exist_ok=True)
     out = boot.open("wb")
-    proc = subprocess.Popen([str(BUILT), "run"], env=env, cwd=str(BUILT.parent),
+    where = str(REPO) if from_source() else str(BUILT.parent)
+    proc = subprocess.Popen(_argv(), env=env, cwd=where,
                             stdout=out, stderr=subprocess.STDOUT,
                             creationflags=NO_WINDOW)
     base = f"http://127.0.0.1:{port}"
@@ -130,9 +164,14 @@ def start(home: Path, port: int, video_home: Path | None = None):
     last = ""
     while time.monotonic() < deadline:
         if proc.poll() is not None:
+            # `out` is the open handle, not the text. This read `out[-3000:]`
+            # and raised TypeError from inside the error path, so the one
+            # thing it existed to show -- why the app would not start -- was
+            # replaced by a traceback about subscripting a BufferedWriter.
+            out.flush()
             said = boot.read_text(encoding="utf-8", errors="replace")
-            raise RuntimeError(f"the built app exited with {proc.returncode} "
-                               f"before it served anything:\n{out[-3000:]}")
+            raise RuntimeError(f"the app exited with {proc.returncode} "
+                               f"before it served anything:\n{said[-3000:]}")
         try:
             with urllib.request.urlopen(f"{base}/api/status?k={TOKEN}", timeout=3) as r:
                 if r.status == 200:

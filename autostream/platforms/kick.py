@@ -54,6 +54,15 @@ INGEST = "rtmps://fa723fc1b171.global-contribute.live-video.net"
 
 TIMEOUT = 10.0
 
+# CLOUDFLARE SITS IN FRONT OF KICK, and it bans on browser signature. A
+# request with urllib's default `Python-urllib/3.x` never reaches Kick at all:
+# it comes back 403 with the body `error code: 1010`, which is Cloudflare's
+# "banned by signature" and reads exactly like an OAuth refusal. The same
+# request with the header below reaches Kick and gets a real answer. Measured
+# both ways against the live token endpoint -- identical credentials,
+# identical code, 403/1010 without it and 401 with it.
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AutoStream"
+
 # How long before expiry a token is renewed. Larger than Twitch's margin
 # because the whole life is two hours: a token refreshed at the last second
 # would be renewed on almost every call during a long stream.
@@ -97,6 +106,29 @@ def _clean(value: str, field: str, label: str) -> str:
             f"{v[:len(head) + 12]!r}... That looks like a label pasted with "
             f"the value. It should be {len(head)} characters with no spaces.")
     return v
+
+
+def _why(code: int, detail: str) -> str:
+    """Kick's sign-in failures in words the person reading them can act on.
+
+    THE BODIES ARE NOT HELPFUL. A wrong code is a bare 401 with no body at
+    all, and a Cloudflare block is a 403 whose body is `error code: 1010` --
+    which looks like it came from Kick and did not. Passing either through
+    unchanged sends somebody to re-copy credentials that were always right.
+    """
+    if "1010" in detail:
+        return ("Cloudflare blocked the request before it reached Kick "
+                "(error 1010). This is a bug in AutoStream, not in your "
+                "account -- please report it.")
+    if code == 401:
+        return ("the sign-in code was not accepted. It may have already been "
+                "used or timed out -- press Connect and try again."
+                + (f" ({detail})" if detail else ""))
+    if code == 403:
+        return (f"access was refused ({code}). Check the Kick app's redirect "
+                f"URL matches this one exactly."
+                + (f" {detail}" if detail else ""))
+    return f"HTTP {code}{(': ' + detail) if detail else ''}"
 
 
 class Kick:
@@ -199,13 +231,16 @@ class Kick:
     @staticmethod
     def _form(url: str, data: dict) -> dict:
         body = urllib.parse.urlencode(data).encode()
-        req = urllib.request.Request(url, data=body, method="POST")
+        req = urllib.request.Request(
+            url, data=body, method="POST",
+            headers={"User-Agent": UA,
+                     "Content-Type": "application/x-www-form-urlencoded"})
         try:
             with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
                 return json.loads(r.read() or b"{}")
         except urllib.error.HTTPError as e:
-            detail = (e.read() or b"").decode("utf-8", "replace")[:300]
-            raise PlatformError(f"Kick refused ({e.code}): {detail}") from e
+            detail = (e.read() or b"").decode("utf-8", "replace")[:300].strip()
+            raise PlatformError(f"Kick refused: {_why(e.code, detail)}") from e
         except OSError as e:
             raise PlatformError(f"Kick could not be reached: {e}") from e
 
@@ -215,7 +250,8 @@ class Kick:
         if params:
             url += "?" + urllib.parse.urlencode(params)
         data = json.dumps(body).encode() if body is not None else None
-        headers = {"Authorization": f"Bearer {self.token()}"}
+        headers = {"Authorization": f"Bearer {self.token()}",
+                   "User-Agent": UA}
         if data is not None:
             headers["Content-Type"] = "application/json"
         req = urllib.request.Request(url, data=data, headers=headers,

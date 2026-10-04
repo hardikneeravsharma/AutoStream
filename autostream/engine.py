@@ -105,7 +105,7 @@ class Engine:
         # A CALLABLE, not the client: self.yt is replaced by
         # re-authorisation and by every test that swaps in a fake, and a
         # platform holding the old one fails silently.
-        self.platform = _build_platform(config, lambda: self.yt)
+        self._platform = _build_platform(config, lambda: self.yt)
         self.session: PlatformSession | None = None
         self.obs = Obs(config)
         # CLIPS-ONLY MODE. The state machine is the same shape either way --
@@ -669,6 +669,40 @@ class Engine:
             log.exception("session start failed: %s", e)
             self._abandon_start()
 
+    @property
+    def platform(self):
+        """Where this install broadcasts to, following the live config.
+
+        BUILT ONCE WAS NOT ENOUGH. The config object is refreshed in place
+        whenever settings are saved, so every other key takes effect on the
+        next tick -- but this one had already been read, and the platform
+        object outlived it. Switching from the dashboard changed the config,
+        the stored value, and what the page displayed, and the engine went on
+        streaming to the platform it had been started with. Nothing reported
+        a problem, because nothing had failed.
+
+        NEVER MID-SESSION. A swap while a stream is up would leave OBS pushing
+        to one service and the engine retitling and ending a session on
+        another, so a session in flight keeps the platform it began on and the
+        change lands when that session ends.
+        """
+        want = str(getattr(self.cfg.youtube, "platform", "") or "youtube").lower()
+        if want != getattr(self._platform, "name", "youtube"):
+            live = bool(self.state.broadcast_id) or bool(
+                self.session is not None and self.session.handle)
+            if live:
+                log.info("platform is now %s; applying it after this session",
+                         want)
+            else:
+                log.info("platform changed to %s", want)
+                self._platform = _build_platform(self.cfg, lambda: self.yt)
+        return self._platform
+
+    @platform.setter
+    def platform(self, value) -> None:
+        """So a test can still swap one in."""
+        self._platform = value
+
     def _session(self) -> PlatformSession:
         """The live session, rebuilt from state if this process restarted.
 
@@ -679,8 +713,17 @@ class Engine:
         """
         if self.session is not None:
             return self.session
-        self.session = PlatformSession(handle=self.state.broadcast_id or "")
-        return self.session
+        rebuilt = PlatformSession(handle=self.state.broadcast_id or "")
+        # ONLY KEPT IF IT NAMES SOMETHING. With no broadcast id there is no
+        # session to rebuild, and storing the empty placeholder meant the
+        # first caller to ask -- the two-second status poll, which asks for
+        # the watch url -- left `self.session` permanently non-None. Anything
+        # testing that field for "is a session in flight" then answered yes
+        # forever, including the platform switch, which refused to apply
+        # because it believed a stream was up.
+        if rebuilt.handle:
+            self.session = rebuilt
+        return rebuilt
 
     def _watch_url(self) -> str:
         """Where to watch, asked of the session rather than built from an id.

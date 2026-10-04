@@ -49,10 +49,20 @@ def is_configured() -> bool:
     and nothing to bind. Sending a clips-only user through a Google OAuth flow
     to reach a page that cuts video files locally is the kind of thing that
     makes people close the app.
+
+    ...or unless the platform is not YouTube. Both of those conditions are
+    YouTube's: `stream_id` is a YouTube permanent stream and `TOKEN_FILE` is a
+    Google credential, and neither exists for a Twitch or Kick user, who has
+    no reason to own either. Unqualified, this held somebody who picked Twitch
+    in the setup wizard asking them to sign in to Google -- for a service they
+    were not going to use -- with no way past it. Their sign-in is on
+    Settings -> Stream, which the wizard was standing in front of.
     """
     try:
         c = cfg.load()
         if not getattr(c.youtube, "enabled", True):
+            return True
+        if str(getattr(c.youtube, "platform", "") or "youtube").lower() != "youtube":
             return True
         return bool(c.youtube.stream_id) and paths.TOKEN_FILE.exists()
     except Exception:  # noqa: BLE001
@@ -1284,6 +1294,35 @@ class Server:
 
         return Obs(cfg.load())
 
+    def _watch_url(self) -> str:
+        """Where this session can be watched, or None if nothing is live."""
+        e = self.engine
+        try:
+            url = e._watch_url() if e is not None else ""
+        except Exception:                             # noqa: BLE001
+            url = ""
+        if url:
+            return url
+        bid = e.state.broadcast_id if e is not None else ""
+        return f"https://www.youtube.com/watch?v={bid}" if bid else None
+
+    def _platform_bits(self) -> dict:
+        """Which platform, its name, and what it can do.
+
+        Read from the live platform object rather than from the config string
+        so that the capability flags come from the one place that defines
+        them. A clips-only install has no platform at all, and answers
+        YouTube's shape, which is what the rest of the page already assumes.
+        """
+        pl = getattr(self.engine, "platform", None)
+        caps = getattr(pl, "caps", None)
+        return {
+            "platform": getattr(pl, "name", "") or "youtube",
+            "platform_label": getattr(pl, "label", "") or "YouTube",
+            "has_quota": bool(getattr(caps, "has_quota", True)),
+            "has_chat": bool(getattr(caps, "has_chat", True)),
+        }
+
     def status(self) -> dict:
         e = self.engine
         s = e.state
@@ -1306,8 +1345,15 @@ class Server:
             "chat": list(getattr(e, "chat", []))[-60:],
             "apps": self.apps_payload(),
             "elapsed": (int(time.time() - s.session_start) if s.session_start else None),
-            "url": (f"https://www.youtube.com/watch?v={s.broadcast_id}"
-                    if s.broadcast_id else None),
+            # ASKED OF THE PLATFORM, not built from the id. This was
+            # f"youtube.com/watch?v={id}" inline, which is true of exactly one
+            # of the three -- a Twitch session's url is the channel, and the
+            # button under it says "Open on YouTube".
+            "url": self._watch_url(),
+            # Which platform this install goes live on, and what to call it.
+            # The dashboard uses these to name its own buttons and to drop the
+            # cards that describe something the platform does not have.
+            **self._platform_bits(),
             "recording": bool(getattr(s, "recording", False)),
             # So the button can say Record or Stop recording, and disable
             # itself when recording is switched off entirely rather than
