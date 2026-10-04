@@ -466,6 +466,17 @@ CONFIG_SCHEMA: list[Section] = [
                 integer=False,
             ),
             _field(
+                "rules.replay_hotkey",
+                "Instant replay hotkey",
+                "Pressed anywhere, including inside a game. Leave it blank to turn "
+                "the hotkey off and use the button on the dashboard instead. Avoid "
+                "anything a game might want: this takes the key away from whatever "
+                "is in front of you.",
+                "text",
+                max_chars=60,
+                restart=True,
+            ),
+            _field(
                 "rules.kill_switch_hotkey",
                 "Kill switch hotkey",
                 "Works from inside a fullscreen game: pauses AutoStream and ends "
@@ -821,6 +832,30 @@ CONFIG_SCHEMA: list[Section] = [
                 "background so the Clips page already has them ready when you open "
                 "it.",
                 "toggle",
+            ),
+            _field(
+                "record.replay_enabled",
+                "Instant replay",
+                "Keeps the last few seconds of your screen in memory the whole "
+                "session. Press the hotkey and that moment is written out as its "
+                "own clip -- there is nothing to detect and nothing to wait for, "
+                "so it works in any game, including ones AutoStream cannot read. "
+                "OBS does the keeping: turn on Replay Buffer under Settings and "
+                "then Output in OBS, or this has nothing to switch on.",
+                "toggle",
+            ),
+            _field(
+                "record.replay_seconds",
+                "How far back instant replay goes",
+                "The whole of this is held in memory for the whole session, so a "
+                "long buffer at a high bitrate is a real amount of RAM. Thirty "
+                "seconds covers a play; two minutes covers a round.",
+                "number",
+                min=5,
+                max=300,
+                step=5,
+                unit="seconds",
+                integer=True,
             ),
         ],
     },

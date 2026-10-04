@@ -480,6 +480,27 @@ def cmd_run(args) -> int:
             except Exception as e:  # noqa: BLE001
                 log.info("hotkey unavailable (%s) - use the tray icon", e)
 
+        # INSTANT REPLAY. Registered separately, and deliberately not inside
+        # the block above: a kill switch somebody could not register is a
+        # reason to tell them to use the tray icon, and has nothing to do with
+        # whether a replay key can be bound.
+        #
+        # ALWAYS BOUND, even with instant replay switched off, so that turning
+        # it on in Settings works without a restart -- the engine checks the
+        # setting when the key fires and says so if it is off. A key that does
+        # nothing until you restart is indistinguishable from one that does
+        # not work.
+        replay_key = getattr(c.rules, "replay_hotkey", "")
+        if replay_key:
+            try:
+                import keyboard
+
+                keyboard.add_hotkey(replay_key, lambda: eng.submit("replay"))
+                log.info("instant replay hotkey: %s", replay_key)
+            except Exception as e:  # noqa: BLE001
+                log.info("replay hotkey unavailable (%s) - use the dashboard "
+                         "button", e)
+
         eng.startup()
         interval = max(1, int(c.timing.poll_interval))
         loop = threading.Thread(target=_engine_loop,

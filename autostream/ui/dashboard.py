@@ -105,6 +105,33 @@ DASH_HTML: str = """
     </button>
   </div>
 
+  <!-- INSTANT REPLAY. The frames are already in memory, so this is the one
+       thing on the page that produces a clip with no scan and no wait -- and
+       it works in a game AutoStream cannot read a word of.
+
+       Beside the graph strip rather than in it: the three above are series
+       the graph can draw and this is not one, so putting it in the same
+       tablist would offer a tab that draws nothing. -->
+  <section class="card replay-card hide" id="dash-replay">
+    <div class="card-head">
+      <div>
+        <div class="card-title">Instant replay</div>
+        <div class="card-sub" id="dash-replay-sub">The last few seconds, kept</div>
+      </div>
+      <span class="pill pill-idle" id="dash-replay-pill"><i></i><span
+            id="dash-replay-state">OFF</span></span>
+    </div>
+    <div class="card-body">
+      <div class="replay-row">
+        <button type="button" class="btn btn-primary" id="dash-btn-replay"
+                data-act="dash-save-replay">
+          <span>Save the last 30 seconds</span>
+        </button>
+        <span class="status-meta" id="dash-replay-note"></span>
+      </div>
+    </div>
+  </section>
+
   <section class="card spark-card" id="dash-spark-card">
     <div class="card-head">
       <div>
@@ -827,6 +854,88 @@ function dash_renderSession(s) {
   }
 }
 
+/* ----------------------------- instant replay --------------------------
+
+   The frames are already in OBS's memory, so pressing this is a request and
+   a filename back -- no scan, no wait, and no detector, which is why it is
+   the one clip feature that works in every game.
+
+   WHAT THE PILL IS FOR. "On" in the config and not actually running in OBS is
+   the whole failure mode here: OBS refuses to hold a buffer unless it is
+   switched on in its own Output settings, and without this readout the only
+   sign was a hotkey that did nothing. So the pill reports what OBS is doing,
+   not what the config says. */
+
+let dash_replayState = null;
+let dash_replayBusy = false;
+
+function dash_renderReplay(s) {
+  const card = dash_el('dash-replay');
+  if (!card) return;
+  const on = !!s.replay_enabled;
+  card.classList.toggle('hide', !on);
+  if (!on) { dash_replayState = null; return; }
+
+  const armed = !!s.replay_armed;
+  const saved = dash_int(s.replay_saved) || 0;
+  const secs = dash_int(s.replay_seconds) || 30;
+
+  const btn = dash_el('dash-btn-replay');
+  if (btn) btn.disabled = dash_replayBusy || !armed;
+
+  const key = armed + '|' + saved + '|' + secs + '|' + (s.replay_last || '') +
+              '|' + dash_replayBusy;
+  if (dash_replayState === key) return;
+  dash_replayState = key;
+
+  dash_pill('dash-replay-pill', 'dash-replay-state',
+            armed ? 'live' : 'warn', armed ? 'READY' : 'NOT RUNNING');
+
+  const label = btn ? btn.querySelector('span') : null;
+  if (label) label.textContent = 'Save the last ' + secs + ' seconds';
+
+  const sub = dash_el('dash-replay-sub');
+  if (sub) sub.textContent = armed
+    ? 'The last ' + secs + ' seconds, kept in memory'
+    : 'Waiting for OBS to start the buffer';
+
+  const note = dash_el('dash-replay-note');
+  if (note) {
+    if (!armed) {
+      /* NAMES THE SETTING, because this is almost always one switch in OBS
+         rather than anything wrong. */
+      note.textContent = 'OBS is not holding a buffer. Turn on Replay Buffer ' +
+        'under Settings → Output in OBS, then start a session.';
+    } else if (!saved) {
+      note.textContent = 'Nothing saved yet this session.';
+    } else {
+      note.textContent = (saved === 1 ? '1 replay' : saved + ' replays') +
+        ' saved' + (s.replay_last ? ' — last: ' + s.replay_last : '');
+    }
+  }
+}
+
+async function dash_saveReplay() {
+  if (dash_replayBusy) return;
+  dash_replayBusy = true;
+  dash_replayState = null;
+  dash_renderReplay(dash_last || {});
+  try {
+    const r = await API.post('/api/cmd', { command: 'replay' });
+    if (r && r.error) throw new Error(r.error);
+    toast('Saving that moment...', 'ok');
+  } catch (e) {
+    toast('Could not save a replay.', 'error');
+  }
+  /* The engine saves on its own thread and OBS takes a moment to mux, so the
+     count arrives on a later poll rather than from this response. */
+  window.setTimeout(function () {
+    dash_replayBusy = false;
+    dash_replayState = null;
+    dash_renderReplay(dash_last || {});
+  }, 1500);
+}
+
 /* ----------------------------- where you go live -----------------------
 
    The same key the Settings page edits (`youtube.platform`), saved through
@@ -1346,6 +1455,9 @@ function dash_wire() {
     });
   }
 
+  const rb = dash_el('dash-btn-replay');
+  if (rb) rb.addEventListener('click', dash_saveReplay);
+
   /* The platform chooser. Delegated from the group so the three buttons do
      not each need a listener. */
   const seg = dash_el('dash-where-seg');
@@ -1392,6 +1504,7 @@ function dash_onTick(status) {
   dash_renderRing(s);
   dash_renderSpark(s);
   dash_applyActions(s);
+  dash_renderReplay(s);
   dash_renderWhere(s);
   dash_renderChat(s);
   dash_audioLoad(false);

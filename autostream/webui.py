@@ -786,7 +786,7 @@ class _Handler(BaseHTTPRequestHandler):
             elif p == "/api/cmd":
                 c = str(b.get("command", ""))
                 if c not in ("stop", "pause", "resume", "toggle_pause",
-                             "record", "quit"):
+                             "record", "replay", "quit"):
                     self._json({"error": "unknown command"}, 400)
                     return
                 if c == "quit":
@@ -1358,6 +1358,28 @@ class Server:
         bid = e.state.broadcast_id if e is not None else ""
         return f"https://www.youtube.com/watch?v={bid}" if bid else None
 
+    def _replay_bits(self) -> dict:
+        e = self.engine
+        c = cfg.load()
+        on = bool(getattr(c.record, "replay_enabled", False))
+        saved = list(getattr(e, "replays", []) or []) if e is not None else []
+        # Asked of OBS only while it is meant to be running: a websocket round
+        # trip on every two-second poll, for an answer that is always False,
+        # is a connection attempt a minute for nothing.
+        armed = False
+        if on and e is not None:
+            try:
+                armed = bool(e.obs.replay_active())
+            except Exception:                            # noqa: BLE001
+                armed = False
+        return {
+            "replay_enabled": on,
+            "replay_armed": armed,
+            "replay_seconds": int(getattr(c.record, "replay_seconds", 30) or 30),
+            "replay_saved": len(saved),
+            "replay_last": (Path(saved[-1]).name if saved else None),
+        }
+
     def _platform_bits(self) -> dict:
         """Which platform, its name, and what it can do.
 
@@ -1426,6 +1448,13 @@ class Server:
             # itself when recording is switched off entirely rather than
             # offering something that would do nothing.
             "record_enabled": bool(cfg.load().record.enabled),
+            # INSTANT REPLAY, for the strip on the dashboard: whether it is
+            # switched on at all, whether OBS is actually holding a buffer
+            # right now, and what has been saved this session. The middle one
+            # is the answer that matters -- "on" in the config and not running
+            # in OBS is the whole failure mode, and without it the only sign
+            # was a hotkey that did nothing.
+            **self._replay_bits(),
             # So the UI can stop saying LIVE about a session that is only
             # recording, and hide the things a broadcast would have.
             "streaming": bool(getattr(e, "streaming", True)),

@@ -56,6 +56,10 @@ TOKENS: tuple[str, ...] = (
     "text-secondary",
     "text-tertiary",
     "text-on-accent",
+    # Legible ON the ok fill, which is a light green in every dark theme. Four
+    # places wrote #fff on it and measured 1.96-2.14:1 -- the same mistake as
+    # #fff on accent, one token along.
+    "text-on-ok",
     # --- accent (see the accent budget in css.py) -----------------------------
     "accent",
     "accent-hover",
@@ -117,6 +121,7 @@ THEMES: dict[str, dict] = {
             "text-secondary": "#AAB8C9",
             "text-tertiary": "#909EB0",
             "text-on-accent": "#04121F",
+            "text-on-ok": "#04121F",
             "accent": "#4D9FFF",
             "accent-hover": "#6FB2FF",
             "accent-text": "#7CB8FF",
@@ -181,6 +186,7 @@ THEMES: dict[str, dict] = {
             "text-secondary": "#B0A9A0",
             "text-tertiary": "#9A9188",
             "text-on-accent": "#0C0B0A",
+            "text-on-ok": "#0C0B0A",
             "accent": "#EDE7DD",
             "accent-hover": "#FFFBF4",
             "accent-text": "#EDE7DD",
@@ -244,6 +250,7 @@ THEMES: dict[str, dict] = {
             "text-secondary": "#C0AC9C",
             "text-tertiary": "#AC9583",
             "text-on-accent": "#1A0B04",
+            "text-on-ok": "#1A0B04",
             "accent": "#FF8A4C",
             "accent-hover": "#FF9D68",
             "accent-text": "#FF9D68",
@@ -303,6 +310,7 @@ THEMES: dict[str, dict] = {
             "text-secondary": "#A6B4AA",
             "text-tertiary": "#8DA096",
             "text-on-accent": "#0E1405",
+            "text-on-ok": "#0E1405",
             "accent": "#AFC85C",
             "accent-hover": "#C2DA70",
             "accent-text": "#B9D067",
@@ -365,6 +373,7 @@ THEMES: dict[str, dict] = {
             "text-secondary": "#48525D",
             "text-tertiary": "#5A646F",
             "text-on-accent": "#FFFFFF",
+            "text-on-ok": "#FFFFFF",
             "accent": "#0F6E85",
             "accent-hover": "#0B5A6D",
             "accent-text": "#0B6070",

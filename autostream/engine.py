@@ -107,6 +107,10 @@ class Engine:
         # platform holding the old one fails silently.
         self._platform = _build_platform(config, lambda: self.yt)
         self.session: PlatformSession | None = None
+        # Files written by instant replay this session, newest last. Held
+        # here rather than in state.json: it is a fact about the session that
+        # is running, and a restart has no buffer to have saved from.
+        self.replays: list[str] = []
         self.obs = Obs(config)
         # CLIPS-ONLY MODE. The state machine is the same shape either way --
         # spot the game, hold it through arm_delay, run a session, cool down --
@@ -441,6 +445,8 @@ class Engine:
                     self.toggle_pause()
                 elif cmd == "record":
                     self.toggle_recording("record button")
+                elif cmd == "replay":
+                    self.save_replay()
                 elif cmd == "kill":
                     self.kill()
                 elif cmd == "quit":
@@ -800,6 +806,7 @@ class Engine:
             # output that only LOOKED active gets OBS restarted there, and the
             # file is then a fresh one after all.
             already = bool(self.obs.start_recording())
+            self._start_replay_buffer()
             self.state.recording = True
             self.state.recording_adopted = already
             self.state.save()
@@ -814,8 +821,58 @@ class Engine:
     def _stop_recording(self) -> str | None:
         if not self.state.recording:
             return None
+        # THE BUFFER IS MEMORY, and a session that has ended has no use for
+        # it. Stopped first, because stopping the recording can take a moment
+        # and the buffer is holding RAM the whole time.
+        self._stop_replay_buffer()
         path = self.obs.stop_recording()          # already swallows its errors
         self.state.recording = False
+        return path
+
+    # ---------------- instant replay ----------------
+
+    def _start_replay_buffer(self) -> None:
+        """Begin keeping the last few seconds, if that was asked for.
+
+        NEVER FATAL. OBS refuses to run a replay buffer unless it is switched
+        on in its own settings, which is a thing to say rather than a reason
+        to abandon a session -- the recording and the stream are what the
+        session is for.
+        """
+        if not getattr(self.cfg.record, "replay_enabled", False):
+            return
+        try:
+            secs = int(getattr(self.cfg.record, "replay_seconds", 30) or 30)
+            self.obs.set_replay_seconds(secs)
+            self.obs.start_replay_buffer()
+            self.replays = []
+        except Exception as e:  # noqa: BLE001
+            log.warning("instant replay is off for this session: %s", e)
+
+    def _stop_replay_buffer(self) -> None:
+        try:
+            self.obs.stop_replay_buffer()
+        except Exception as e:  # noqa: BLE001
+            log.debug("could not stop the replay buffer: %s", e)
+
+    def save_replay(self) -> str | None:
+        """Write out what is in the buffer right now. -> the file, or None.
+
+        THE HOTKEY'S JOB, and the dashboard button's. Everything that makes it
+        work has already happened: the frames are in memory, so this is a
+        request to OBS and a filename back, with no scan and no wait.
+        """
+        if not getattr(self.cfg.record, "replay_enabled", False):
+            notify.toast("AutoStream",
+                         "Instant replay is switched off. Settings -> "
+                         "Recording.")
+            return None
+        path = self.obs.save_replay()
+        if not path:
+            notify.toast("AutoStream", "Could not save that replay. Check OBS.")
+            return None
+        self.replays = [*getattr(self, "replays", []), path]
+        notify.toast("Replay saved", Path(path).name if path else "")
         return path
 
     def _set_aside(self, path: str | None) -> None:

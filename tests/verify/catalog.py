@@ -90,7 +90,7 @@ CONTROLS: list[Control] = [
             "shell", body={"command": "pause"}, expect=_ok,
             reject={"command": "definitely-not-a-command"},
             acts=("top-toggle", "rail-quit", "dash-btn-stop", "dash-btn-pause",
-                  "dash-btn-record", "dash-btn-abort"),
+                  "dash-btn-record", "dash-btn-abort", "dash-save-replay"),
             why="the whitelist is the only thing between a POST and the engine"),
     Control("/api/theme", "POST", CALL, "theme swatch", "settings",
             body={"theme": "midnight"}, expect=_ok,

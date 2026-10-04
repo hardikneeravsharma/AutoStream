@@ -318,6 +318,15 @@ svg{flex:0 0 auto;display:block}
 }
 .rail-btn:hover{background:var(--surface-hover);color:var(--text-primary)}
 .rail-btn.is-active{background:var(--accent-muted);color:var(--accent-text)}
+/* WHITE IS NOT A CONTRAST GUARANTEE. Four places filled a shape with
+   var(--accent) and then wrote #fff on it, which holds for the dark themes
+   that shipped first and fails the moment an accent is light -- and the
+   accent is a user setting with a dozen palettes behind it. --text-on-accent
+   is the token that already exists for exactly this and is defined per theme;
+   the four were simply missed. Measured, not assumed: the same marks are
+   already on .btn-primary and .seg-btn.is-active, which is why those were
+   never reported. */
+
 /* ACCENT BUDGET 2/4: the 2px marker exists here and in .settings-nav-item, nowhere else. */
 .rail-btn.is-active::before{
   content:"";
@@ -632,6 +641,9 @@ svg{flex:0 0 auto;display:block}
 #dash-where .seg{display:flex;width:100%}
 #dash-where .seg-btn{flex:1 1 0}
 #dash-where .field-help{margin-top:var(--space-2)}
+/* Instant replay: one button and the line that says whether it will work. */
+.replay-row{display:flex;align-items:center;gap:var(--space-5);flex-wrap:wrap}
+.replay-row .status-meta{flex:1 1 220px;min-width:0}
 /* ACCENT BUDGET 4/4 (a): selected segmented cell. */
 .seg-btn.is-active{background:var(--accent);color:var(--text-on-accent)}
 
@@ -656,8 +668,8 @@ svg{flex:0 0 auto;display:block}
    choosing WHICH kinds of round get cut, and needs to see the whole selection
    at a glance. */
 .clip-types{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-.chip.is-on{background:var(--accent);border-color:var(--accent);color:#fff}
-.chip.is-on:hover{background:var(--accent);color:#fff;filter:brightness(1.08)}
+.chip.is-on{background:var(--accent);border-color:var(--accent);color:var(--text-on-accent)}
+.chip.is-on:hover{background:var(--accent);color:var(--text-on-accent);filter:brightness(1.08)}
 .chip.is-active{background:var(--surface-active);color:var(--text-primary)}
 .chip[aria-pressed="false"]{opacity:var(--opacity-ghost)}
 
@@ -941,9 +953,18 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
    not one border declaration on a cell, and the cluster reads as one instrument. */
 .stat-grid{
   display:grid;
-  /* Column count follows the cells the dashboard actually emits (3). A fixed
-     repeat(4) left a dead quarter on the strip. */
-  grid-template-columns:repeat(3,minmax(0,1fr));
+  /* COLUMN COUNT FOLLOWS THE CELLS, and now it really does. This was
+     repeat(3) -- written when there were three, with a comment explaining
+     that a fixed repeat(4) had left a dead quarter on the strip. Both are
+     the same mistake with a different number: the strip gained a fourth cell
+     the day instant replay landed, and a hard three dropped it onto a second
+     row of its own, full width, under three narrow ones.
+
+     auto-fit with a floor means the strip lays out whatever it is given, and
+     wraps instead of crushing when the window is too narrow for them all --
+     the numbers are 24px tabular figures and have a width they cannot go
+     under. */
+  grid-template-columns:repeat(auto-fit,minmax(132px,1fr));
   gap:var(--border-hair);
   background:var(--border-subtle);
   border:var(--border-hair) solid var(--border-subtle);
@@ -2612,11 +2633,11 @@ ol.steps-list li{margin-block:var(--space-4)}
   color:var(--text-tertiary);font-size:11px;font-weight:700;
 }
 .clip-run-steps .clip-step.is-done{color:var(--text-secondary)}
-.clip-run-steps .clip-step.is-done .clip-step-dot{background:var(--ok);color:#fff}
+.clip-run-steps .clip-step.is-done .clip-step-dot{background:var(--ok);color:var(--text-on-ok)}
 .clip-run-steps .clip-step.is-now{
   background:var(--surface-active);color:var(--text-primary);font-weight:600;
 }
-.clip-run-steps .clip-step.is-now .clip-step-dot{background:var(--accent);color:#fff}
+.clip-run-steps .clip-step.is-now .clip-step-dot{background:var(--accent);color:var(--text-on-accent)}
 .clip-review-mont{margin-top:var(--space-4)}
 @media (max-width:760px){
   .clip-run-body{grid-template-columns:1fr;gap:var(--space-5)}
@@ -3052,7 +3073,7 @@ CLIPS_FLOW_CSS = """
   color:var(--text-secondary);font-size:11px;font-weight:600;
 }
 .clip-rail-step.is-done button{color:var(--text-primary)}
-.clip-rail-step.is-done .clip-rail-dot{background:var(--accent);color:#fff}
+.clip-rail-step.is-done .clip-rail-dot{background:var(--accent);color:var(--text-on-accent)}
 .clip-rail-step.is-now button{
   border-color:var(--accent);color:var(--text-primary);
 }

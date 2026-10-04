@@ -60,6 +60,10 @@ DEFAULTS: dict[str, Any] = {
         "require_ac_power": True,
         "min_free_disk_gb": 25,
         "kill_switch_hotkey": "ctrl+alt+shift+k",
+        # Deliberately NOT a bare function key. This is a global hotkey: it
+        # fires while a game has the keyboard, so anything a game might bind
+        # would be taken away from it.
+        "replay_hotkey": "ctrl+alt+shift+r",
         "paused_flag_file": "NOSTREAM",
         "quota_reserve": 500,
         # Enforced INDEPENDENTLY of the quota arithmetic. videos.insert has
@@ -100,6 +104,13 @@ DEFAULTS: dict[str, Any] = {
         "min_free_gb": 50,
         "warn_free_gb": 100,
         "auto_scan": True,            # find kills as soon as a session ends
+        # INSTANT REPLAY. OBS keeps the last N seconds in memory and writes
+        # them out when asked, so the clip already exists at the moment the
+        # key is pressed -- nothing to detect, nothing to scan, no wait. It
+        # is the one feature that covers every game, including the ones there
+        # is no detector for.
+        "replay_enabled": False,
+        "replay_seconds": 30,
     },
     "clips": {
         # Publishing is public, attributed and awkward to undo, so it never
