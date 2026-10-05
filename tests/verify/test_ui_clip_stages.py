@@ -483,3 +483,65 @@ def test_the_user_is_not_dragged_back_once_they_have_moved_on(ui):
             return clip_state.step;
         }""", _DONE_JOB)
     assert moved == "style", "the finished job pulled the page back"
+
+
+# -------------------------------------- C6: which of forty is worth watching
+
+def test_the_build_summary_says_what_you_get_not_which_switches_are_set(ui, app):
+    """IT READ "2+ kills - 30s clips - vertical too - joined into one": four
+    settings in form order, which is a list of the choices rather than a
+    description of the result. Somebody reading it to decide whether to open
+    the fold has to translate every term back into an outcome first."""
+    _at_part(ui, app)
+    ui.page.evaluate("() => clip_goStep('style')")
+    ui.page.wait_for_timeout(400)
+
+    said = ui.page.evaluate("() => clip_buildSummary()")
+    assert said, "the fold says nothing about what it holds"
+    assert "+ kills" not in said, said
+    assert "vertical too" not in said, said
+    # Said as the thing produced.
+    assert "each" in said, said
+    ui.clean("the build summary")
+
+
+def test_it_leads_with_a_count_when_the_recording_has_been_read(ui, app):
+    """The one number anybody wants, and it was not in the line at all."""
+    _at_part(ui, app)
+    ui.page.evaluate("() => { clip_state.pick.kills_known = 12; }")
+    got = ui.page.evaluate("() => clip_buildSummary()")
+    assert got.startswith("about "), got
+    assert "clip" in got
+
+
+def test_it_does_not_guess_when_nothing_has_been_read(ui, app):
+    """A picked file has no earlier reading behind it. A count there would be
+    a number invented to fill a sentence."""
+    _at_part(ui, app)
+    ui.page.evaluate("() => { clip_state.pick.kills_known = null; }")
+    got = ui.page.evaluate("() => clip_buildSummary()")
+    assert not got.startswith("about "), got
+    assert got, "it went silent instead of describing the output"
+
+
+def test_the_shortlist_is_marked_in_the_results(ui, app):
+    """A folder of forty in rank order is still forty things to open."""
+    _at_part(ui, app)
+    marked = ui.page.evaluate(
+        """() => {
+             const rows = [];
+             for (let i = 1; i <= 9; i++) {
+               rows.push({rank: i, kills: 2, at: '00:0' + i, duration: 20,
+                          top: i <= 5, name: 'c' + i});
+             }
+             clip_renderResults(rows, '');
+             return {
+               best: document.querySelectorAll('#clip-res-list .is-best').length,
+               rows: document.querySelectorAll('#clip-res-list .clip-res').length,
+               tags: document.querySelectorAll('#clip-res-list .clip-res-best').length
+             };
+           }""")
+    assert marked["rows"] == 9, "a flag became a filter; clips went missing"
+    assert marked["best"] == 5
+    assert marked["tags"] == 5
+    ui.clean("the results list")

@@ -2094,6 +2094,16 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 
 /* A results row that can be ticked for upload. The tick sits where the rank
    number was, so the row does not reflow when a run becomes publishable. */
+/* The handful worth watching first. A border rather than a fill: the row is
+   still a row, and the accent budget is spent elsewhere on this page. */
+.clip-res.is-best{box-shadow:inset 2px 0 0 var(--accent)}
+.clip-res-best{
+  margin-inline-start:8px;padding:1px 6px;border-radius:999px;
+  border:1px solid var(--accent);color:var(--accent-text);
+  font-size:.68rem;font-weight:650;letter-spacing:.02em;text-transform:uppercase;
+  vertical-align:middle;white-space:nowrap;
+}
+
 .clip-res-tick{
   width:16px;height:16px;margin:0;accent-color:var(--accent);cursor:pointer;
   justify-self:center;

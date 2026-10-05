@@ -1207,15 +1207,51 @@ function clip_renderAdv() {
   var lab = clip_el('clip-adv-label');
   if (lab) lab.textContent = open ? 'Hide the details' : 'Change the details';
   var sum = clip_el('clip-adv-sum');
-  if (sum) {
-    var bits = [];
-    var min = clip_state.min, len = clip_state.len;
-    bits.push(min === '1' ? 'any moment' : min + '+ kills');
-    bits.push(len === 'full' ? 'whole moments' : len + 's clips');
-    bits.push(clip_state.vert === 'none' ? 'no vertical' : 'vertical too');
-    if (clip_state.montage) bits.push('joined into one');
-    sum.textContent = open ? '' : bits.join(' · ');
+  if (sum) sum.textContent = open ? '' : clip_buildSummary();
+}
+
+/* WHAT THE RUN WILL GIVE YOU, not which switches are set.
+
+   This line read "2+ kills · 30s clips · vertical too · joined into one" --
+   four settings in the order they appear in the form, which is a list of the
+   choices rather than a description of the result. Somebody reading it to
+   decide whether to open the fold has to translate every term back into an
+   outcome first, and the one number they actually want -- how many clips --
+   was not in it at all.
+
+   Said as the thing produced, and led with the count whenever the recording
+   has already been read. "About 6 clips" is the sentence; the rest is detail
+   behind it. */
+function clip_buildSummary() {
+  var s = clip_state.pick || {};
+  var min = Number(clip_state.min) || 1;
+  var len = clip_state.len;
+  var bits = [];
+
+  /* ONLY WHERE IT IS KNOWN. A previous reading of this recording gives a kill
+     count; without one there is nothing to count and a guess would be worse
+     than silence. */
+  var known = Number(s.kills_known);
+  if (known > 0) {
+    /* Deliberately rough, and said so. The real number depends on how the
+       kills cluster, which is the thing the scan works out -- so this is a
+       ceiling that gets closer the higher the minimum is. */
+    var est = Math.max(1, Math.floor(known / Math.max(1, min)));
+    /* CLIPS, not kills. `clip_found` names what the READER found, which is
+       the wrong noun here -- it made the line read "about 6 kills · each 15
+       seconds", which is nonsense twice over. */
+    bits.push('about ' + est + (est === 1 ? ' clip' : ' clips'));
   }
+
+  bits.push(len === 'full'
+    ? 'each as long as the moment lasts'
+    : 'each ' + len + ' seconds');
+  if (min > 1) {
+    bits.push('only where ' + min + ' land together');
+  }
+  if (clip_state.vert !== 'none') bits.push('a vertical copy of each');
+  if (clip_state.montage) bits.push('all of them joined into one video');
+  return bits.join(' · ');
 }
 
 function clip_renderGames() {
@@ -2658,13 +2694,21 @@ function clip_renderResults(list, montagePath) {
     var done = !!c.video_id;
     var on = clip_upWanted(c);
     var label = c.caption ? esc(c.caption)
-                          : (esc(String(c.kills)) + (c.kills === 1 ? ' kill' : ' kills'));
-    h += '<div class="clip-res' + (done ? ' is-up' : '') + '">' +
+                          : (esc(String(c.kills)) + ' ' +
+                             clip_found(c.kills, clip_state.pick));
+    /* SOMEWHERE TO START. A folder of forty in rank order is still forty
+       things to open; the mark says which handful to watch first, and the
+       order already put them at the top. A flag, not a filter -- nothing is
+       hidden and the rest are still numbered. */
+    var best = !!c.top && !done;
+    h += '<div class="clip-res' + (done ? ' is-up' : '') +
+         (best ? ' is-best' : '') + '">' +
       (can && !done
         ? '<input class="clip-res-tick" type="checkbox" data-up="' + i + '"' +
           (on ? ' checked' : '') + ' aria-label="Upload ' + esc(label) + '">'
         : '<span class="clip-res-rank mono">' + esc(String(c.rank)) + '</span>') +
-      '<span class="clip-res-name">' + label + '</span>' +
+      '<span class="clip-res-name">' + label +
+        (best ? '<span class="clip-res-best">Best</span>' : '') + '</span>' +
       '<span class="clip-res-meta muted">at ' + esc(c.at) + '  ·  ' +
         Math.round(c.duration) + 's' +
         (done ? '  ·  on YouTube' : (can ? '' : '  ·  no vertical')) + '</span>' +
@@ -5456,7 +5500,15 @@ function clip_useLocal() {
     scan_rate: g.scan_rate, cards_rate: g.cards_rate,
     demos: g.demos, cards_ready: g.cards_ready, needs_ocr: g.needs_ocr,
     counts_assists: g.counts_assists, blocked: g.blocked, player: g.player,
-    started: f.started || null, display_started: null, local: true
+    started: f.started || null, display_started: null, local: true,
+    /* NULL, AND PRESENT. A file somebody has just handed us has no earlier
+       reading behind it, so there is no kill count -- and the build summary
+       correctly says nothing about how many clips to expect. Carried as an
+       explicit null rather than left off, because this is a field a picked
+       file CAN have once it has been read once, and the audit in
+       test_local_clip exists to catch exactly the "the page reads it, this
+       object forgot it" shape. */
+    kills_known: null
   };
   clip_renderList();
   clip_renderOptions();
