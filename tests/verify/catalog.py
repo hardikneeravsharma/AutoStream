@@ -703,6 +703,9 @@ NOT_A_FLOW: dict[str, str] = {
     "copy-chapters": "copies a summary's YouTube chapters to the clipboard",
     "back": "steps the setup wizard backwards; no state leaves the browser",
     "pick": "selects a session row in the Clips list",
+    "anygame": "retargets this run at the audio reader; client-side, the same "
+               "path as picking another game, and it does not rewrite the "
+               "journal",
     # --- plain links and the clipboard
     "dash-btn-open": "a plain <a href> to the watch URL the platform gave",
     "set-diag-copy": "clipboard only",

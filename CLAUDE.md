@@ -209,6 +209,14 @@ Never assume the developer's own in-game name, HUD colour or HUD scale.
 - Best of all is needing nothing: the Valorant `feedbar` detector finds the player by
   the colour the game draws around their own row, so it needs no configuration at all.
   Aim for that.
+- **And when nothing has been taught about the game, there is now a reader anyway.**
+  The `loudness` mode (`clips/loudness.py`, built-in profile `any-game`) reads the audio
+  against a rolling median baseline and returns the loud moments. It needs no template,
+  no name and no HUD measurement, decodes no video, and runs at roughly 3,200x real
+  time. It cannot tell a kill from a death, so **the page must not call what it finds
+  kills** — `clip_found()` in `ui/clips.py` decides the word, and anything new that
+  describes a result goes through it. A dead end where a game has no profile is no
+  longer the honest answer; offer this instead.
 
 Optional extras (the Kokoro voice, `demoparser2`, Tesseract) may already be installed on
 a given machine even though the docs present them as downloads. Check first — e.g.

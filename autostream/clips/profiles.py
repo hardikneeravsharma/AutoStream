@@ -58,6 +58,15 @@ class Profile:
     #   "cardcount" read the round kill tally, no OCR        (CS2)
     #   "summary"   no kills at all: the whole match, dead time cut out
     #               (Marvel Rivals -- see clips/rivals.py)
+    #   "loudness"  the loud moments, from the audio alone  (any game)
+    #
+    # "loudness" is the one mode that is not about a particular game. Every
+    # other entry here is days of calibration against real footage and is
+    # worth nothing for the next title; four are supported and there are
+    # thousands. Audio needs no calibration: a kill, an explosion and a round
+    # win are all a sharp rise above whatever that game normally sounds like.
+    # It cannot tell a kill from a death and never will -- see
+    # clips/loudness.py for why that is the trade, not an oversight.
     #
     # Not every game draws a fixed marker. CS2 has no centre-screen kill
     # confirmation at all -- no hitmarker, no banner -- and announces kills only
@@ -68,6 +77,9 @@ class Profile:
     # the threshold that caught kills also caught scenery. Reading the feed is
     # slower but it is the only signal that actually distinguishes them.
     mode: str = "template"
+    # loudness mode: how many dB above the local baseline a moment must reach.
+    # Lower finds more and is wronger; see clips/loudness.py.
+    rise_db: float = 9.0
     colour: tuple[int, int, int] = (255, 60, 60)   # colour mode: target RGB
     tolerance: int = 60                            # per-channel slack
     min_pixels: int = 40                           # pixels needed to count
@@ -217,7 +229,8 @@ class Profile:
         by the colour the game draws around them, so there is no name to get
         wrong and no template to cut.
         """
-        if self.mode in ("colour", "feedbar", "cardcount", "summary"):
+        if self.mode in ("colour", "feedbar", "cardcount", "summary",
+                         "loudness"):
             return not self.missing()
         if self.mode == "killfeed":
             return not self.missing()
@@ -274,6 +287,12 @@ class Profile:
             # Nothing else to carry: no template, no name, no threshold. The
             # band is the whole configuration.
             out["mode"] = self.mode
+        elif self.mode == "loudness":
+            out["mode"] = self.mode
+            # The two numbers worth reaching for by hand. How far above its
+            # surroundings a moment has to be, and how far apart two of them
+            # have to be to count as two.
+            out["rise_db"] = round(float(self.rise_db), 1)
         elif self.mode == "killfeed":
             out.update({"mode": self.mode, "match_ratio": self.match_ratio})
             if self.rounds:
@@ -324,7 +343,30 @@ class Profile:
 #     well away from any kill: kills ran 0.78-0.91 (median 0.88), everything
 #     else 0.25-0.74 (median 0.55). 0.75 sits in the gap and caught 100% of
 #     kills with no false positives; 0.80 clipped 12% of real kills for nothing.
+# THE KEY THAT IS NOT AN EXECUTABLE. Every other entry here is keyed on the
+# exe that produced the footage, because that is what the watcher reports. This
+# one is keyed on a name nothing will ever report, because it is not for a
+# game: it is the fallback a person chooses by hand for a game nobody has
+# calibrated, and it reads the audio rather than the screen.
+#
+# `band` is required by the file format and means nothing in this mode -- there
+# is nothing to crop. The whole frame is written rather than zeros so that
+# anything which does reach for it gets something sane.
+ANY_GAME = "any-game"
+
 BUILTIN: dict[str, dict[str, Any]] = {
+    ANY_GAME: {
+        "label": "Any game (loud moments)",
+        "mode": "loudness",
+        "band": [0.0, 0.0, 1.0, 1.0],
+        "rise_db": 9.0,
+        "merge_gap": 6.0,
+        "notes": "Reads the audio, not the screen, so it needs no calibration "
+                 "and works in a game nothing has been taught. It finds loud "
+                 "moments -- a kill, a death, an explosion and somebody "
+                 "shouting all look the same to it -- so the list is a "
+                 "shortlist to choose from rather than a list of your kills.",
+    },
     "deltaforceclient.exe": {
         "label": "Delta Force",
         "band": [0.42, 0.650, 0.58, 0.712],
@@ -534,7 +576,7 @@ def _build(key: str, raw: dict) -> Profile | None:
             raise KeyError("template")
         mode = str(raw.get("mode", "template")).lower()
         if mode not in ("template", "colour", "killfeed", "feedbar",
-                        "cardcount", "summary"):
+                        "cardcount", "summary", "loudness"):
             raise ValueError(f"unknown mode {mode!r}")
         colour = tuple(int(v) for v in raw.get("colour", (255, 60, 60)))
         if len(colour) != 3:
@@ -551,6 +593,7 @@ def _build(key: str, raw: dict) -> Profile | None:
             merge_gap=float(raw.get("merge_gap", 3.0)),
             notes=str(raw.get("notes", "")),
             mode=mode,
+            rise_db=float(raw.get("rise_db", 9.0)),
             colour=colour,                                # type: ignore[arg-type]
             tolerance=int(raw.get("tolerance", 60)),
             min_pixels=int(raw.get("min_pixels", 40)),

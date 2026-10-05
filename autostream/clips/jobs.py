@@ -60,8 +60,14 @@ log = logging.getLogger("autostream.clips.jobs")
 # to press the button. The page advertised a 43-minute selection as "about 4m
 # of scanning" against a real 40.
 #   summary   (Marvel Rivals) 38 min in 118s -> 19x; 16 quoted for margin
+# "loudness" DECODES NO VIDEO AT ALL -- it reads the audio track at 8 kHz
+# mono and nothing else -- so it is two orders of magnitude faster than any
+# reader that looks at frames. Measured on 600s of 720p30 h264 with AAC
+# audio: 0.17-0.19s, which is about 3,200x real time. Quoted at 1,500 so the
+# page's estimate stays honest on a slow disk and over a network share.
 SCAN_RATE = {"feedbar": 14.0, "killfeed": 4.5, "cardcount": 10.0,
-             "template": 14.0, "colour": 14.0, "summary": 16.0}
+             "template": 14.0, "colour": 14.0, "summary": 16.0,
+             "loudness": 1500.0}
 # Keyed separately rather than overwriting "killfeed": the same profile scans
 # at either rate depending on whether rounds are switched on for the run.
 ROUND_SCAN_RATE = {"killfeed": 1.2}
@@ -578,6 +584,15 @@ class ClipJob:
         if not kills:
             self._set(summary={"kills": 0, "clips": 0, "covered": 0,
                                "coverage": 0, "runtime": 0})
+            # SAYS WHAT THIS READER WAS LOOKING FOR. The loudness reader does
+            # not look for kills and cannot find one, so "no kills found" from
+            # it is a sentence about something nobody asked it to do -- and it
+            # hides the thing worth knowing, which is that there was nothing
+            # loud enough to be worth a clip.
+            if prof is not None and prof.mode == "loudness":
+                raise NoKills("Nothing in this recording was loud enough to "
+                              "stand out. Lower the threshold on the reading "
+                              "step to find quieter moments.")
             raise NoKills("No kills found in this recording.")
 
         # ---- 1a2. the match record, if the game keeps one ----------------

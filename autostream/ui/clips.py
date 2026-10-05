@@ -552,6 +552,24 @@ One per line - a long session often covers several matches."></textarea>
     </div>
   </div>
 
+  <!-- THE WAY OUT OF A GAME NOBODY HAS CALIBRATED. Until the audio reader
+       existed this screen was a dead end: "no kill marker is calibrated for
+       this game yet", a Calibrate button that is half an hour of work on real
+       footage, and nothing else. There is a reader now that needs none of
+       that, so the end of the road is a choice rather than a wall. -->
+  <div class="panel hide" id="clip-anygame" data-cstep="style">
+    <p class="muted">Nothing has been taught about this game yet. AutoStream
+       can still read the <b>audio</b> and find the loud moments &mdash; a
+       kill, a death, an explosion and somebody shouting all look the same to
+       it, so what you get is a shortlist to choose from rather than a list of
+       your kills. It needs no setting up and reads an hour in about a
+       second.</p>
+    <div class="field-inline">
+      <button class="btn btn-primary btn-sm" type="button" data-act="anygame"
+              id="clip-anygame-go">Find the loud moments instead</button>
+    </div>
+  </div>
+
   <div class="panel clip-warn hide" id="clip-wrongwrap">
     <p class="muted" id="clip-wrongtext"></p>
     <div class="field-inline">
@@ -952,7 +970,7 @@ var CLIP_TRANS = [['fade', 'Fade'], ['fadeblack', 'Dip to black'],
 /* Said as what is HAPPENING, because this is read while waiting for it.
    "Vertical" and "Montage" are nouns for features; these are the words a
    person would use for the same four things. */
-var CLIP_STEPS = [['scan', 'Finding your kills'], ['cut', 'Cutting the clips'],
+var CLIP_STEPS = [['scan', 'Reading the recording'], ['cut', 'Cutting the clips'],
                   ['vertical', 'Making the vertical versions'],
                   ['montage', 'Joining them into one video']];
 
@@ -1023,7 +1041,9 @@ function clip_row(s, i) {
   var sub = [];
   if (s.duration) sub.push(clip_dur(s.duration));
   if (s.recording_bytes) sub.push(clip_bytes(s.recording_bytes));
-  if (s.kills_known) sub.push(s.kills_known + ' kills found');
+  if (s.kills_known) {
+    sub.push(s.kills_known + ' ' + clip_found(s.kills_known, s) + ' found');
+  }
   /* OBS was already recording when the session started, so most of this file
      is footage AutoStream never saw - possibly a different game entirely. */
   if (s.game_uncertain) sub.push(clip_dur(s.pre_session_seconds) + ' before this session');
@@ -1784,13 +1804,28 @@ function clip_renderOptions() {
      with this many of the player's kills as well as the labelled ones, so
      Counter-Strike was being cut to a minimum nobody could see or change. */
   clip_show('clip-min-field', true);
+  var loud = clip_isLoud(s);
   var minLab = clip_el('clip-min-label'), minHelp = clip_el('clip-min-help');
-  if (minLab) minLab.textContent = roundMode ? 'Minimum kills in a round' : 'Minimum kills in a clip';
-  if (minHelp) minHelp.textContent = roundMode
-    ? 'Every round you got this many kills in becomes a clip, alongside the '
-      + 'rounds that earned a highlight type below.'
-    : 'A clip is only kept if this many kills land inside it, not just inside '
-      + 'the fight it came from.';
+  if (minLab) {
+    minLab.textContent = loud ? 'Minimum moments in a clip'
+      : (roundMode ? 'Minimum kills in a round' : 'Minimum kills in a clip');
+  }
+  if (minHelp) minHelp.textContent = loud
+    /* THE AUDIO READER HAS ALREADY DONE THIS JOB. Anything within six
+       seconds is merged into one moment before the page ever sees it, so
+       asking for "two or more together" is asking for two SEPARATE loud
+       moments inside one clip length -- which almost never happens, and the
+       default of 2 meant a run that found three moments cut nothing at all
+       and said so in a sentence nobody had any reason to go looking for. */
+    ? 'Leave this at 1. The audio reader has already joined anything within '
+      + 'a few seconds into one moment, so a higher number asks for two '
+      + 'separate loud moments close together -- which is rare, and usually '
+      + 'means no clips at all.'
+    : (roundMode
+      ? 'Every round you got this many kills in becomes a clip, alongside the '
+        + 'rounds that earned a highlight type below.'
+      : 'A clip is only kept if this many kills land inside it, not just inside '
+        + 'the fight it came from.');
   if (supports) clip_renderTypes();
   clip_segs('clip-min', CLIP_MINS, clip_state.min, 'min');
   clip_segs('clip-len', CLIP_LENS, clip_state.len, 'len');
@@ -1893,6 +1928,15 @@ function clip_renderOptions() {
     why = s.blocked || ('No kill marker is calibrated for ' +
           (s.game || 'this game') + ' yet. Use Calibrate a game first.');
   } else if (clip_state.busy) why = 'A clip job is already running.';
+
+  /* A WAY FORWARD WHERE THERE USED TO BE A WALL. Until the audio reader
+     existed, a game nobody had calibrated ended here: a message, a Calibrate
+     button that is half an hour of work on real footage, and nothing else.
+     Reading the audio needs none of that. Offered rather than taken -- it
+     finds loud moments and not kills, which is the user's trade to make. */
+  clip_show('clip-anygame',
+            !s.can_scan && !byCards && s.has_recording &&
+            s.scan_mode !== 'loudness');
 
   /* A note is not a reason to disable anything, so it is kept separate from
      `why`. Reading a kill feed runs about 10 frames a second where a template
@@ -2157,8 +2201,9 @@ function clip_renderJob(j) {
        failure even when the kills were found and swept into the promo reel,
        and the run already knows exactly why -- see summary.why in jobs.py. */
     sub = j.clips + (j.clips === 1 ? ' clip' : ' clips') +
-          (sum.kills ? '  ·  ' + sum.covered + ' of ' + sum.kills +
-                       ' kills (' + sum.coverage + '%)' : '') +
+          (sum.kills ? '  ·  ' + sum.covered + ' of ' + sum.kills + ' ' +
+                       clip_found(sum.kills, {scan_mode: j.scan_mode}) +
+                       ' (' + sum.coverage + '%)' : '') +
           '  ·  ' + (j.folder || '');
     if (!j.clips && sum.why) sub = sum.why + '  ·  ' + (j.folder || '');
   } else {
@@ -2198,6 +2243,32 @@ var CLIP_MV_MAKE = [
 /* Seconds of work per second of video (clips/summary.py), and what the
    reading costs per second of recording (clips/jobs.py SCAN_RATE). */
 var CLIP_MV_SPEED = {read: 16, summary: 4.4, highlight: 2.4, fixed: 8};
+
+/* WHAT THIS READER ACTUALLY FOUND.
+
+   Every reader but one finds kills, and the page says so everywhere. The
+   loudness reader does not: it reads the audio, so what it found is "a loud
+   moment", which covers a kill, a death, an explosion and a teammate
+   shouting equally. Calling those kills would be the page claiming something
+   it cannot know, and the first time somebody opened a clip of their own
+   death they would stop trusting the rest of it.
+
+   One helper rather than a second set of strings, so a page that gains a
+   sentence about kills does not quietly gain a lie. */
+/* The built-in profile that reads audio rather than the screen. Keyed on a
+   name no game will ever report, because it is not a game -- see
+   clips/profiles.py ANY_GAME. */
+var CLIP_ANY_GAME = 'any-game';
+
+function clip_isLoud(s) {
+  s = s || clip_state.pick;
+  return !!(s && s.scan_mode === 'loudness');
+}
+
+function clip_found(n, s) {
+  if (!clip_isLoud(s)) return n === 1 ? 'kill' : 'kills';
+  return n === 1 ? 'loud moment' : 'loud moments';
+}
 
 function clip_isMV(s) {
   s = s || clip_state.pick;
@@ -5631,6 +5702,12 @@ function clip_useGameLocally(key, label) {
   var prof = clip_profileFor(key);
   s.game_key = key;
   s.game = label || (prof && prof.label) || key;
+  /* THE MINIMUM IS PART OF WHAT DESCRIBES THE READER. Switching to the audio
+     reader with the default of 2 still in place is a run that finds its
+     moments, cuts nothing, and explains why in a line nobody has a reason to
+     go looking for -- which is how this was found. Moved with everything
+     else that is retargeted here. */
+  if (prof && prof.mode === 'loudness') clip_state.min = '1';
   if (prof) {
     /* EVERY FIELD THAT DESCRIBES THE GAME, not the handful this started with.
        Retargeting used to refresh five of them and leave the rest describing
@@ -6457,6 +6534,14 @@ function clip_wire() {
       API.post('/api/clips/upload/cancel', {});
     } else if (act === 'setgame') {
       clip_setGame();
+    } else if (act === 'anygame') {
+      /* The same path "pick another game" takes, not a second one. It
+         retargets every field that describes the reader -- the scan rate, the
+         demo answer, the OCR answer -- and deliberately does NOT rewrite the
+         journal: this is a choice about what to cut now, not a claim that the
+         session was a different game. */
+      clip_useGameLocally(CLIP_ANY_GAME, 'Any game (loud moments)');
+      toast('Reading the audio for loud moments.', 'ok');
     } else if (act === 'calibrate') {
       clip_calOpen();
     } else if (act === 'cal-close') {
