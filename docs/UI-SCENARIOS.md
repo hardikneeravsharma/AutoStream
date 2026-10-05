@@ -231,8 +231,8 @@ run. Measurements, not estimates -- and what `REACHED_FLOOR` is set from.
 
 | | count |
 |---|---|
-| Controls the source declares | 190 |
-| Reached by the sweep | **117** |
+| Controls the source declares | 195 |
+| Reached by the sweep | **122** |
 | Excused, with a reason each | 23 |
 | Still unreached | 73 |
 
@@ -244,7 +244,14 @@ It got there in stages, and the stages say what actually unlocks a UI:
 | + every dialog opened | 86 |
 | + a song on disk | 99 |
 | + a reel project on disk | 111 |
-| + a shot selected on the timeline | **117** |
+| + a shot selected on the timeline | 117 |
+| + the kill marker open on a clip | **122** |
+
+That last row is not a sweep change. The marker was gated on `imported` until
+S2 (2026-10-05), so for a seeded run the dialog could not be opened at all and
+its controls were outside the sweep however the states were written. Five
+controls were unreachable because of a product gap, not a test one -- which is
+the sort of thing a coverage number is for.
 
 ## The 73 still out of reach
 
