@@ -131,18 +131,41 @@ Do not add these back without a reason that is written down here.
 
 ---
 
-## State of the tree, 2026-10-04
+## State of the tree, 2026-10-05
 
-- `__version__` is **1.40.0**, merged to `main` as `76d8d43` and published:
-  <https://github.com/hardikneeravsharma/AutoStream/releases/tag/v1.40.0>
-- The working tree is clean, on a detached HEAD at `76d8d43`.
-- Tests at that release: **2253 offline**, **154 in a browser**, and tier 4
-  (clip detectors against real-footage baselines) green in 1908s.
+- `__version__` is **1.40.1**, published:
+  <https://github.com/hardikneeravsharma/AutoStream/releases/tag/v1.40.1>
+  The NVIDIA checks (`has_cuda`, `has_nvenc`) now prove the card works rather
+  than trusting ffmpeg's build list. Without it every clip job on an AMD or
+  Intel GPU failed -- the first outside user, on a Radeon RX 9070 XT, got
+  "0 samples" from the CS2 tally and a job blaming his HUD colour.
+- Shipping v1.40.1 also surfaced a test that passed only on the author's
+  machine: it read the gitignored `config/config.yaml` for `record.enabled`.
+  The release build is the only thing that ever runs the suite from a clean
+  checkout, so nothing else could have caught it (#130).
 
-A1 is part-built: the platform seam, Twitch, Kick, the OAuth sign-in and the
-UI that follows the choice are in and tested. What is NOT proven is a real
-go-live on either — no stream has actually been pushed to Twitch or Kick.
-That is the next thing to establish, and it needs the user at the keyboard.
+### What is on `feat-twitch-kick-platforms`
+
+Everything in Phase A, Phase B bar B2, C2/C5/C6, S1/S2 and eight of the
+fifteen UI-review items. Each landed with its own tests; the Progress table
+below has a row per item and what it changed.
+
+Not finished, and written down rather than left looking done:
+
+- **A1 has never gone live.** The seam, both platforms, the OAuth sign-in and
+  the UI that follows the choice are in and tested against the live APIs --
+  Twitch resolves its channel id and categories. But no stream has been
+  pushed to either, and Kick's sign-in came back with three of its four
+  scopes, so `channel:read` has to be granted before a Kick session can
+  start. That one needs the user at the keyboard.
+- **C2 is Counter-Strike only.** Valorant has the match API for it and has
+  not been done.
+- **C5 is the montage's chapters only.** Chapters in the live VOD's
+  description need recording-offset to VOD-offset arithmetic that cannot be
+  verified without a real stream; see the Progress row.
+- **B2** needs a purchased certificate. Blocked, not pending.
+- **C1, C3, C4** need credentials or real footage that is not on this
+  machine.
 
 ## UI work, carried alongside
 

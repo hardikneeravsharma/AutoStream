@@ -143,13 +143,42 @@ def media_info(path: str | Path) -> dict:
     }
 
 
+# BUILT WITH IS NOT RUNS ON. The usual Windows ffmpeg builds (Gyan, BtbN) list
+# `cuda` among their hwaccels and `h264_nvenc` among their encoders on every
+# machine, NVIDIA card or not -- they only load the driver when asked. On an
+# AMD or Intel card, asking makes ffmpeg exit 255 before reading a frame, and
+# every caller here discards stderr: a friend's Radeon got "0 samples" from
+# the CS2 tally, an empty calibrator and a failed job, with nothing in the log
+# naming the GPU. So each check below lists the capability AND then uses it
+# once on a synthetic frame, and only a run that succeeds counts.
+_GPU_PROBE_TIMEOUT = 20.0
+
+
+def _gpu_probe(args: list[str]) -> bool:
+    """Whether ffmpeg runs `args` on a tiny generated input. Never raises."""
+    try:
+        p = subprocess.run(
+            [binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
+             *args],
+            capture_output=True, timeout=_GPU_PROBE_TIMEOUT,
+            creationflags=_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError, FfmpegMissing):
+        return False
+    return p.returncode == 0
+
+
 @functools.lru_cache(maxsize=1)
 def has_nvenc() -> bool:
     try:
         p = run([binary("ffmpeg"), "-hide_banner", "-encoders"])
     except Exception:  # noqa: BLE001
         return False
-    return "h264_nvenc" in p.stdout
+    if "h264_nvenc" not in p.stdout:
+        return False
+    # 256x256: NVENC refuses frames below its minimum size, which would read
+    # as "no card" on a machine that has one.
+    return _gpu_probe(["-f", "lavfi", "-i", "color=black:s=256x256:d=0.1",
+                       "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"])
 
 
 @functools.lru_cache(maxsize=1)
@@ -184,7 +213,12 @@ def has_cuda() -> bool:
         p = run([binary("ffmpeg"), "-hide_banner", "-hwaccels"])
     except Exception:  # noqa: BLE001
         return False
-    return "cuda" in p.stdout
+    if "cuda" not in p.stdout:
+        return False
+    # Opening the device is the step that fails without a card; see above.
+    return _gpu_probe(["-init_hw_device", "cuda=gpu", "-f", "lavfi",
+                       "-i", "nullsrc=s=64x64:d=0.1", "-frames:v", "1",
+                       "-f", "null", "-"])
 
 
 def video_codec_args(encoder: str = "auto", *, cq: int = 20) -> list[str]:
