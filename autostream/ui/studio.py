@@ -681,7 +681,20 @@ STUDIO_HTML = r"""
        Marked the way a song is marked: play it, press K on each kill. -->
   <div class="scrim hide" id="studio-imp-scrim">
   <div class="modal studio-imp" id="studio-imp" role="dialog" aria-modal="true" aria-labelledby="studio-imp-title">
-    <h2 class="modal-title" id="studio-imp-title">Your clip</h2>
+    <div class="studio-imp-head">
+      <h2 class="modal-title" id="studio-imp-title">Your clip</h2>
+      <!-- WHICH ONE OF HOW MANY. Adding twenty clips and being shown one with
+           no way back meant the only way to revisit the third was to close,
+           find it in the library and open it again. -->
+      <div class="studio-imp-nav hide" id="studio-imp-nav">
+        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-imp-prev"
+                id="studio-imp-prev" aria-label="Previous clip">&#8592;</button>
+        <span class="mono studio-imp-count" id="studio-imp-count"
+              role="status" aria-live="polite">1 of 1</span>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-imp-next"
+                id="studio-imp-next" aria-label="Next clip">&#8594;</button>
+      </div>
+    </div>
     <div class="modal-body studio-imp-body">
       <div class="studio-imp-player">
         <video id="studio-imp-video" playsinline preload="metadata"></video>
@@ -694,6 +707,22 @@ STUDIO_HTML = r"""
           <button type="button" class="btn btn-ghost btn-sm" data-act="studio-imp-step" data-d="1">+1 s</button>
           <span class="mono studio-clock" id="studio-imp-clock">0:00.00</span>
           <span class="media-knobs" data-for="studio-imp-video"></span>
+        </div>
+        <!-- CUTTING A BIT OUT, said as removing rather than as keeping. What
+             somebody watching a clip wants is "this bit at the front is dead,
+             take it off" -- phrasing it as a keep-range makes them work out
+             the complement of the thing they can actually see. -->
+        <div class="studio-tl-bar studio-imp-trim">
+          <span class="field-label studio-small">Remove a piece</span>
+          <button type="button" class="btn btn-ghost btn-sm"
+                  data-act="studio-imp-cutfrom">From here</button>
+          <button type="button" class="btn btn-ghost btn-sm"
+                  data-act="studio-imp-cutto">To here</button>
+          <span class="mono studio-small" id="studio-imp-cutspan">nothing chosen</span>
+          <button type="button" class="btn btn-sm" data-act="studio-imp-cut"
+                  id="studio-imp-cut" disabled>Remove it</button>
+          <button type="button" class="btn btn-ghost btn-sm"
+                  data-act="studio-imp-cutclear">Clear</button>
         </div>
       </div>
       <div class="studio-imp-side">
@@ -709,6 +738,8 @@ STUDIO_HTML = r"""
         <div class="field-inline">
           <button type="button" class="btn btn-primary btn-sm" data-act="studio-imp-mark">Kill here (K)</button>
           <button type="button" class="btn btn-sm" data-act="studio-imp-detect" id="studio-imp-detect">Find the kills</button>
+          <button type="button" class="btn btn-sm hide" data-act="studio-imp-detectall"
+                  id="studio-imp-detectall">Find them in all</button>
           <button type="button" class="btn btn-ghost btn-sm" data-act="studio-imp-clear">Clear</button>
         </div>
         <p class="muted studio-small" id="studio-imp-detnote" role="status" aria-live="polite"></p>
@@ -791,8 +822,14 @@ const studio = {
   fc: {inset: null, links: {}, clips: [], clipI: null, t: 0, drag: null, key: '', clip: '', start: 0, offset: 0},
   /* A clip the player added, open in its dialog. */
   imp: {path: '', seconds: 0, kills: [], sel: -1, dirty: false, games: null,
-        /* What is left of a batch picked in one go. See studio_impAdd. */
-        queue: []}
+        /* A BATCH YOU CAN WALK BOTH WAYS, not a queue that is eaten. It was a
+           queue: Save shifted the next path off it and there was no way back,
+           so revisiting the third of twenty meant closing the dialog, finding
+           it in the library and opening it again. `batch` is every path
+           picked in one go; `at` is where you are in it. */
+        batch: [], at: 0,
+        /* The piece being removed, in clip seconds. See studio_impCut. */
+        cutFrom: null, cutTo: null}
 };
 
 const studio_el = (id) => document.getElementById(id);
@@ -4275,7 +4312,8 @@ async function studio_impAdd() {
     toast('Added ' + added.length + ' clips. Mark each one and press Save to ' +
           'move to the next.', 'ok');
   }
-  studio.imp.queue = added.slice(1);
+  studio.imp.batch = added.slice();
+  studio.imp.at = 0;
   await studio_impOpen(added[0], true);
 }
 
@@ -4311,12 +4349,168 @@ async function studio_impOpen(path, fresh) {
   studio_el('studio-imp-presets').innerHTML = (info.presets || []).map(t =>
     '<button type="button" class="reel-chip" data-act="studio-imp-preset" data-t="' + esc(t) + '">' + esc(t) + '</button>').join('');
   studio_el('studio-imp-title').textContent = fresh ? 'Added · mark its kills' : 'Your clip';
+  imp.cutFrom = imp.cutTo = null;
+  studio_impNav();
+  studio_impCutLabel();
   studio_el('studio-imp-detnote').textContent = '';
   studio_el('studio-imp-msg').textContent = '';
   const v = studio_el('studio-imp-video');
   v.src = studio_media('/api/clips/video', path);
   studio_show('studio-imp-scrim', true);
   studio_impDraw();
+}
+
+/* WHICH CLIP OF HOW MANY, and the two buttons that move between them.
+   Hidden for a single clip: a "1 of 1" with two dead arrows is three controls
+   that cannot do anything. */
+function studio_impNav() {
+  const imp = studio.imp, n = (imp.batch || []).length;
+  studio_show('studio-imp-nav', n > 1);
+  studio_show('studio-imp-detectall', n > 1);
+  if (n <= 1) return;
+  const at = Math.max(0, Math.min(n - 1, imp.at | 0));
+  studio_el('studio-imp-count').textContent = (at + 1) + ' of ' + n;
+  studio_el('studio-imp-prev').disabled = at <= 0;
+  studio_el('studio-imp-next').disabled = at >= n - 1;
+  const all = studio_el('studio-imp-detectall');
+  if (all) all.textContent = 'Find them in all ' + n;
+}
+
+/* Moving off a clip SAVES IT FIRST when anything was marked. Losing marks to
+   an arrow press would be the worst possible behaviour for a control whose
+   whole purpose is to let you wander back and forth. */
+async function studio_impGo(delta) {
+  const imp = studio.imp, n = (imp.batch || []).length;
+  if (n < 2) return;
+  const want = Math.max(0, Math.min(n - 1, (imp.at | 0) + delta));
+  if (want === (imp.at | 0)) return;
+  if (imp.dirty && !(await studio_impSave(false))) return;
+  imp.at = want;
+  await studio_impOpen(imp.batch[want], false);
+}
+
+/* ---- removing a piece ---- */
+
+function studio_impCutMark(which) {
+  const v = studio_el('studio-imp-video'), imp = studio.imp;
+  if (!v) return;
+  const t = Math.round(v.currentTime * 1000) / 1000;
+  if (which === 'from') imp.cutFrom = t; else imp.cutTo = t;
+  /* Marked in either order, because somebody who scrubs to the end of the
+     bit they dislike and presses "To here" first is not making a mistake. */
+  if (imp.cutFrom !== null && imp.cutTo !== null && imp.cutTo < imp.cutFrom) {
+    const a = imp.cutFrom; imp.cutFrom = imp.cutTo; imp.cutTo = a;
+  }
+  studio_impCutLabel();
+  studio_impDraw();
+}
+
+function studio_impCutClear() {
+  studio.imp.cutFrom = studio.imp.cutTo = null;
+  studio_impCutLabel();
+  studio_impDraw();
+}
+
+function studio_impCutLabel() {
+  const imp = studio.imp, el = studio_el('studio-imp-cutspan');
+  const btn = studio_el('studio-imp-cut');
+  const both = imp.cutFrom !== null && imp.cutTo !== null;
+  if (el) {
+    el.textContent = both
+      ? studio_secs(imp.cutFrom) + ' to ' + studio_secs(imp.cutTo) +
+        '  (' + (imp.cutTo - imp.cutFrom).toFixed(2) + 's)'
+      : (imp.cutFrom !== null ? 'from ' + studio_secs(imp.cutFrom)
+         : (imp.cutTo !== null ? 'to ' + studio_secs(imp.cutTo)
+            : 'nothing chosen'));
+  }
+  if (btn) btn.disabled = !both || (imp.cutTo - imp.cutFrom) < 0.05;
+}
+
+async function studio_impCut() {
+  const imp = studio.imp;
+  if (imp.cutFrom === null || imp.cutTo === null) return;
+  const len = (imp.cutTo - imp.cutFrom).toFixed(2);
+  if (!confirm('Remove ' + len + ' seconds from this clip? The original is kept beside it.')) return;
+  const btn = studio_el('studio-imp-cut');
+  if (btn) btn.disabled = true;
+  studio_el('studio-imp-msg').textContent = 'Removing ' + len + 's...';
+  const got = await API.post('/api/studio/import/trim',
+                             {path: imp.path, start: imp.cutFrom, end: imp.cutTo});
+  if (!got || !got.ok) {
+    studio_el('studio-imp-msg').textContent = (got && got.error) || 'Could not cut that out.';
+    studio_impCutLabel();
+    return;
+  }
+  /* THE MARKS CAME BACK MOVED. A kill after the piece that went is earlier
+     now by exactly its length, and one inside it is gone -- the server did
+     that arithmetic, and taking its answer is what keeps the two in step. */
+  imp.kills = (got.kills || []).slice();
+  imp.seconds = Number(got.seconds) || imp.seconds;
+  imp.cutFrom = imp.cutTo = null;
+  imp.dirty = false;
+  const v = studio_el('studio-imp-video');
+  if (v) {
+    /* Re-fetched rather than re-seeked: the file behind this URL has been
+       replaced, and a cached one would play the old length. */
+    v.src = studio_media('/api/clips/video', imp.path) + '&v=' + Date.now();
+    v.load();
+  }
+  studio_el('studio-imp-msg').textContent = '';
+  studio_impCutLabel();
+  studio_impDraw();
+  studio_load(true);
+  toast('Removed ' + len + 's. ' + studio_secs(imp.seconds) + ' left.', 'ok');
+}
+
+/* ---- the kills, across the whole batch ---- */
+
+async function studio_impDetectAll() {
+  const imp = studio.imp, paths = (imp.batch || []).slice();
+  if (paths.length < 2) return;
+  const gsel = studio_el('studio-imp-game'), opt = gsel.selectedOptions[0];
+  const note = studio_el('studio-imp-detnote');
+  if (!gsel.value) {
+    note.textContent = 'AutoStream has no kill detector for another game. Mark them by hand while it plays.';
+    return;
+  }
+  /* SAVED FIRST. This walks away from the clip on screen and comes back to
+     it, and anything marked by hand in between would otherwise be lost to a
+     button that says nothing about saving. */
+  if (imp.dirty && !(await studio_impSave(false))) return;
+
+  const all = studio_el('studio-imp-detectall');
+  if (all) all.disabled = true;
+  const game = opt ? opt.getAttribute('data-name') : '';
+  let found = 0, failed = 0;
+  for (let i = 0; i < paths.length; i++) {
+    note.textContent = 'Reading clip ' + (i + 1) + ' of ' + paths.length + '...';
+    let st = await API.post('/api/studio/import/detect',
+                            {path: paths[i], game_key: gsel.value, game: game});
+    while (st && st.state === 'running') {
+      await new Promise(r => setTimeout(r, 700));
+      st = await API.get('/api/studio/import/detect/status');
+    }
+    if (!st || st.state !== 'done') { failed++; continue; }
+    const kills = (st.kills || []).slice();
+    if (!kills.length) continue;
+    found++;
+    /* WRITTEN AS IT GOES, not collected and saved at the end: a run over
+       twenty clips that is cancelled halfway should leave the first ten
+       marked rather than nothing. */
+    if (paths[i] === imp.path) {
+      kills.forEach(k => {
+        if (!imp.kills.some(h => Math.abs(h - k) < 0.3)) imp.kills.push(k);
+      });
+      await studio_impSave(false);
+      studio_impDraw();
+    } else {
+      await API.post('/api/studio/import/save', {path: paths[i], kills: kills});
+    }
+  }
+  if (all) all.disabled = false;
+  note.textContent = 'Found kills in ' + found + ' of ' + paths.length + ' clips'
+    + (failed ? ', ' + failed + ' could not be read' : '') + '.';
+  studio_load(true);
 }
 
 function studio_impDraw() {
@@ -4340,6 +4534,19 @@ function studio_impDraw() {
     ctx.save(); ctx.translate(X(k), H / 2); ctx.rotate(Math.PI / 4); ctx.fillRect(-6, -6, 12, 12); ctx.restore();
     ctx.fillStyle = '#fff'; ctx.font = 'bold 11px sans-serif'; ctx.fillText(String(i + 1), X(k) + 9, 14);
   });
+  /* THE PIECE THAT WILL GO, drawn where it was chosen. A from/to pair
+     shown only as two timestamps is a cut somebody has to picture; the band
+     is the only way to see that it covers the wrong thing before pressing
+     Remove. */
+  if (imp.cutFrom !== null || imp.cutTo !== null) {
+    const a = imp.cutFrom === null ? 0 : imp.cutFrom;
+    const b = imp.cutTo === null ? dur : imp.cutTo;
+    ctx.fillStyle = 'rgba(248,81,73,.28)';
+    ctx.fillRect(X(a), 0, Math.max(2, X(b) - X(a)), H);
+    ctx.fillStyle = studio_tok('--danger') || '#f85149';
+    ctx.fillRect(X(a) - 1, 0, 2, H);
+    ctx.fillRect(X(b) - 1, 0, 2, H);
+  }
   ctx.fillStyle = '#ff5c5c'; ctx.fillRect(X(t) - 1, 0, 2, H);
 }
 
@@ -4387,13 +4594,18 @@ async function studio_impSave(close) {
   else toast('Saved ' + got.kills.length + (got.kills.length === 1 ? ' kill.' : ' kills.'), 'ok');
   /* STRAIGHT ON TO THE NEXT. Saving one of a batch and being put back on the
      Studio page, to press Add again for a file already imported, is the
-     twenty-times dance with extra steps. */
-  const next = (studio.imp.queue || []).shift();
-  if (close && next) {
+     twenty-times dance with extra steps.
+
+     STEPPED THROUGH, NOT CONSUMED. This used to shift the next path off a
+     queue, which meant the batch shrank as you went and there was no way
+     back to one you had already saved. */
+  const n = (imp.batch || []).length;
+  if (close && n > 1 && (imp.at | 0) < n - 1) {
+    imp.at = (imp.at | 0) + 1;
     studio_load(true);
-    await studio_impOpen(next, true);
-    const left = (studio.imp.queue || []).length;
-    toast(left ? (left + 1) + ' left in this batch.' : 'Last one.', 'ok');
+    await studio_impOpen(imp.batch[imp.at], true);
+    const left = n - 1 - imp.at;
+    toast(left ? left + ' more in this batch.' : 'Last one.', 'ok');
     return true;
   }
   if (close) studio_impClose(true);
@@ -4404,10 +4616,11 @@ async function studio_impSave(close) {
 function studio_impClose(force) {
   const imp = studio.imp;
   if (!force && imp.dirty && !confirm('Close without saving the kills you marked?')) return;
-  /* A QUEUE THAT SURVIVED BEING DISMISSED would reopen a dialog the user had
+  /* A BATCH THAT SURVIVED BEING DISMISSED would reopen a dialog the user had
      just shut, which is the one thing a Close button must never do. The
      clips are imported either way; only the walk through them stops. */
-  imp.queue = [];
+  imp.batch = []; imp.at = 0;
+  imp.cutFrom = imp.cutTo = null;
   const v = studio_el('studio-imp-video');
   if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
   /* A detection this dialog started has nothing left to report to. */
@@ -4634,7 +4847,14 @@ function studio_wire() {
     else if (act === 'studio-fc-nudge') studio_fcNudge(Number(b.getAttribute('data-d')));
     else if (act === 'studio-fc-sync') studio_fcSync();
     else if (act === 'studio-imp-add') studio_impAdd();
-    else if (act === 'studio-imp-edit') studio_impOpen(b.getAttribute('data-path'), false);
+    else if (act === 'studio-imp-edit') {
+      /* One clip opened from the library is a batch of one, so the arrows
+         and "find them in all" stay hidden rather than describing a batch
+         that is not there. */
+      studio.imp.batch = [b.getAttribute('data-path')];
+      studio.imp.at = 0;
+      studio_impOpen(b.getAttribute('data-path'), false);
+    }
     else if (act === 'studio-imp-play') { const v = studio_el('studio-imp-video'); if (v.paused) v.play().catch(() => {}); else v.pause(); }
     else if (act === 'studio-imp-step') { const v = studio_el('studio-imp-video'); v.pause(); v.currentTime = Math.max(0, v.currentTime + Number(b.getAttribute('data-d'))); }
     else if (act === 'studio-imp-mark') studio_impMark();
@@ -4644,6 +4864,13 @@ function studio_wire() {
     else if (act === 'studio-imp-preset') { studio_el('studio-imp-name').value = b.getAttribute('data-t'); studio.imp.dirty = true; }
     else if (act === 'studio-imp-detect') studio_impDetect();
     else if (act === 'studio-imp-save') studio_impSave(true);
+    else if (act === 'studio-imp-prev') studio_impGo(-1);
+    else if (act === 'studio-imp-next') studio_impGo(1);
+    else if (act === 'studio-imp-cutfrom') studio_impCutMark('from');
+    else if (act === 'studio-imp-cutto') studio_impCutMark('to');
+    else if (act === 'studio-imp-cut') studio_impCut();
+    else if (act === 'studio-imp-cutclear') studio_impCutClear();
+    else if (act === 'studio-imp-detectall') studio_impDetectAll();
     else if (act === 'studio-imp-close') studio_impClose(false);
     else if (act === 'studio-restyle' && p) studio_restyle();
     else if (act === 'studio-mix' && p) studio_mix(b.getAttribute('data-what'), true);

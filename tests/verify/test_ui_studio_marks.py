@@ -266,7 +266,10 @@ def test_one_bad_file_does_not_stop_the_batch(pg):
     assert got == 2, got
 
 
-def test_the_rest_of_the_batch_is_queued(pg):
+def test_the_whole_batch_is_kept_not_just_the_rest(pg):
+    """It used to be a queue that Save ate, so by the third clip the batch
+    was two long and there was no way back to the first. It is a list with a
+    position now -- see test_ui_studio_batch for the walking."""
     queued = pg.evaluate(
         """async () => {
              const real = API.post;
@@ -280,9 +283,11 @@ def test_the_rest_of_the_batch_is_queued(pg):
                return {ok: true, kills: [], seconds: 10, presets: []};
              };
              try { await studio_impAdd(); } finally { API.post = real; }
-             return (studio.imp.queue || []).slice();
+             return {batch: (studio.imp.batch || []).slice(),
+                     at: studio.imp.at | 0};
            }""")
-    assert queued == ["C:/b.mp4", "C:/c.mp4"], queued
+    assert queued["batch"] == ["C:/a.mp4", "C:/b.mp4", "C:/c.mp4"], queued
+    assert queued["at"] == 0, "it did not start on the first clip"
 
 
 def test_closing_the_marker_drops_the_rest_of_the_batch(pg):
@@ -290,10 +295,11 @@ def test_closing_the_marker_drops_the_rest_of_the_batch(pg):
     had just shut, which is the one thing a Close button must never do."""
     left = pg.evaluate(
         """() => {
-             studio.imp.queue = ['C:/b.mp4', 'C:/c.mp4'];
+             studio.imp.batch = ['C:/a.mp4', 'C:/b.mp4', 'C:/c.mp4'];
+             studio.imp.at = 1;
              studio.imp.dirty = false;
              studio_impClose(true);
-             return (studio.imp.queue || []).length;
+             return (studio.imp.batch || []).length;
            }""")
     assert left == 0
 

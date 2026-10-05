@@ -495,8 +495,16 @@ CONTROLS: list[Control] = [
             body={"path": "", "kills": []}, expect=_has("ok"), acts=("studio-imp-save",),
             why="only an added clip's own manifest is written, with its kills "
                 "clamped to the clip"),
+    Control("/api/studio/import/trim", "POST", CALL, "Remove it", "studio",
+            body={"path": "", "start": 0, "end": 1}, expect=_has("ok"),
+            reject={"path": "", "start": "x", "end": 1}, reject_soft=True,
+            acts=("studio-imp-cut",),
+            why="REPLACES THE CLIP ON DISK with a shorter one and moves its "
+                "kill marks to match. The original is kept beside it once, so "
+                "a cut somebody regrets is a rename rather than a re-import"),
     Control("/api/studio/import/detect", "POST", CALL, "find the kills in an added clip", "studio",
-            body={"path": ""}, expect=_has("state"), acts=("studio-imp-detect",),
+            body={"path": ""}, expect=_has("state"),
+            acts=("studio-imp-detect", "studio-imp-detectall"),
             why="runs the chosen game's detector on its own thread; a path that "
                 "is not an added clip fails at once"),
     Control("/api/studio/import/detect/status", "GET", CALL, "how the detection is going", "studio",
@@ -710,6 +718,14 @@ NOT_A_FLOW: dict[str, str] = {
                              "clipboard; nothing leaves the browser",
     "back": "steps the setup wizard backwards; no state leaves the browser",
     "pick": "selects a session row in the Clips list",
+    "studio-imp-prev": "shows the previous clip of a batch; saves first if "
+                       "anything was marked",
+    "studio-imp-next": "shows the next clip of a batch; saves first if "
+                       "anything was marked",
+    "studio-imp-cutfrom": "marks the start of the piece to remove; client-side "
+                          "until Remove is pressed",
+    "studio-imp-cutto": "marks the end of it; client-side until Remove",
+    "studio-imp-cutclear": "forgets the piece; nothing leaves the browser",
     "anygame": "retargets this run at the audio reader; client-side, the same "
                "path as picking another game, and it does not rewrite the "
                "journal",

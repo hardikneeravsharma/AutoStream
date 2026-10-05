@@ -910,6 +910,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_import_info(b))
             elif p == "/api/studio/import/save":
                 self._json(self.app.studio_import_save(b))
+            elif p == "/api/studio/import/trim":
+                self._json(self.app.studio_import_trim(b))
             elif p == "/api/studio/import/detect":
                 self._json(self.app.studio_import_detect(b))
             elif p == "/api/studio/import/detect/cancel":
@@ -3738,6 +3740,18 @@ class Server:
                             body.get("kills") or [],
                             title=None if title is None else str(title),
                             game=str(body.get("game") or "") or None)
+
+    def studio_import_trim(self, body: dict) -> dict:
+        """Take a piece out of an imported clip and keep the rest."""
+        from .clips import uploads
+
+        try:
+            start = float(body.get("start"))
+            end = float(body.get("end"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "No piece was chosen."}
+        return uploads.trim(self._clips_dir(cfg.load()),
+                            str(body.get("path") or ""), start, end)
 
     def studio_import_detect(self, body: dict) -> dict:
         from . import clips as clips_mod
