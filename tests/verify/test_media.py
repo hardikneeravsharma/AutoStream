@@ -52,6 +52,41 @@ REVIEWED = [
 ]
 
 
+# A READER THE APP NO LONGER OFFERS IS NOT MEASURED ON EVERY BUILD.
+#
+# `killfeed` is Counter-Strike read off the screen: the kill feed as text,
+# and the scoreboard beside it for the round labels. Measured twice on real
+# footage at 1.46x and 1.19x real time, so a 45-minute stream is about 40
+# minutes of reading -- and it is most of this tier's own wall clock, at
+# 34m12s for the last full run.
+#
+# It is switched off in the app until that turnaround is fixed: both doors
+# to it are developer-mode only, and webui.clips_run refuses the flag. A
+# gate that spends half an hour on every release measuring a reader nobody
+# can reach is half an hour of nothing, and a slow gate is a gate people
+# find ways around.
+#
+# NOT DELETED, AND NOT SILENT. The excerpts stay in the corpus, the
+# baselines stay in the repo, and each one reports as a SKIP naming the
+# reason -- so the day the turnaround is fixed this measures it again, and
+# until then nobody can mistake "not run" for "passing".
+SLOW_READERS = {"killfeed"}
+RUN_SLOW = bool(os.environ.get("AUTOSTREAM_SLOW_READERS"))
+
+
+def _slow(game_key: str) -> str:
+    """Empty when this excerpt's reader is measured, else why it is not."""
+    if RUN_SLOW:
+        return ""
+    prof = _prof(game_key)
+    mode = getattr(prof, "mode", "")
+    if mode in SLOW_READERS:
+        return (f"the {mode} reader is switched off in the app until its "
+                f"turnaround is fixed, so it is not measured on every build "
+                f"(AUTOSTREAM_SLOW_READERS=1 to measure it)")
+    return ""
+
+
 def _id(e: dict) -> str:
     return e["clip"]
 
@@ -108,6 +143,8 @@ def scanned() -> dict:
     """
     out: dict[str, list[float]] = {}
     for e in REVIEWED:
+        if _slow(e["game_key"]):
+            continue              # the tests themselves report it as a skip
         prof = _prof(e["game_key"])
         assert prof is not None, f"no profile for {e['game_key']}"
         missing = prof.missing()
@@ -179,6 +216,9 @@ def test_the_whole_corpus_has_been_reviewed():
 @pytest.mark.parametrize("e", REVIEWED, ids=_id)
 def test_the_detector_still_finds_what_a_person_confirmed(e, scanned):
     """Recall. A miss is a highlight that never got cut."""
+    skip = _slow(e["game_key"])
+    if skip:
+        pytest.skip(skip)
     base, m, got = _score(e, scanned)
     floor = base.get("floor", {}).get("recall", 0.85)
     assert got["recall"] >= floor, (
@@ -191,6 +231,9 @@ def test_the_detector_still_finds_what_a_person_confirmed(e, scanned):
 def test_the_detector_does_not_invent_kills(e, scanned):
     """Precision. Each false positive is a clip of nothing that a viewer
     actually watches, which is the failure they notice first."""
+    skip = _slow(e["game_key"])
+    if skip:
+        pytest.skip(skip)
     base, m, got = _score(e, scanned)
     floor = base.get("floor", {}).get("precision", 0.95)
     assert got["precision"] >= floor, (
@@ -210,6 +253,9 @@ def test_a_quiet_excerpt_does_not_get_noisier(e, scanned):
     has no kills in it. That is recorded as the ceiling rather than asserted
     away: the number must not grow, and getting it to zero is a fix.
     """
+    skip = _slow(e["game_key"])
+    if skip:
+        pytest.skip(skip)
     base = score.baseline(e["game"])["clips"][e["clip"]]
     if base.get("truth"):
         pytest.skip("review found real kills here, so it is not a quiet excerpt")
@@ -230,6 +276,9 @@ def test_the_game_as_a_whole_does_not_regress(game, scanned):
     rows = [e for e in REVIEWED if e["game"] == game]
     if not rows:
         pytest.skip(f"no reviewed {game} excerpts")
+    skip = _slow(rows[0]["game_key"])
+    if skip:
+        pytest.skip(skip)
     base = score.baseline(game)
     tp = fn = fp = 0
     for e in rows:

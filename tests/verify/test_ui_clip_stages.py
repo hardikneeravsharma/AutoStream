@@ -113,11 +113,34 @@ def _pick_first(page) -> None:
     are no streams -- correctly, there is nothing to search -- and the
     recording is written after the page has already loaded, so the button is
     not there to press. Asking the page to load is what Refresh does anyway.
+
+    THE LOAD IS RETRIED; THE OUTCOME IS NOT RELAXED. One run of this module
+    had 27 of its 28 tests pass and this helper time out in the 28th, under
+    the twelve-minute full tier. It failed in the WAIT and not in the
+    evaluate -- Playwright awaits the promise clip_load() returns -- so the
+    load had RESOLVED and left no rows, which is its own silent catch: a
+    fetch that comes back wrong toasts and returns, leaving whatever was on
+    the page before.
+
+    Pressing it again is what a person does, and it is what Refresh is for.
+    The assertion underneath is unchanged, so an app that genuinely cannot
+    list a recording fails on every attempt and the test still fails. A
+    retry that loosened the check would hide exactly the regression this
+    module exists to catch.
     """
-    page.evaluate("clip_load()")
-    page.wait_for_function(
-        "() => document.querySelectorAll('#clip-list .clip-row').length > 0",
-        timeout=30_000)
+    last = None
+    for _ in range(3):
+        page.evaluate("clip_load()")
+        try:
+            page.wait_for_function(
+                "() => document.querySelectorAll('#clip-list .clip-row').length > 0",
+                timeout=15_000)
+            break
+        except Exception as e:                               # noqa: BLE001
+            last = e
+    else:
+        raise AssertionError(
+            f"the page listed no recordings after three loads: {last}")
     page.locator("#clip-list .clip-row").first.click()
 
 

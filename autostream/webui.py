@@ -2561,6 +2561,27 @@ class Server:
             # which is what produces the round labels.
             if str(body.get("fallback_mode") or "") == "cards":
                 opt["fallback_mode"] = "cards"
+            elif not getattr(c.ui, "developer_mode", False):
+                # THE FULL READ IS SWITCHED OFF. Measured twice on real
+                # Counter-Strike at 1.46x and 1.19x real time, so a
+                # 45-minute stream is about 40 minutes of reading. That is
+                # not a slow option, it is a different order of magnitude,
+                # and the people who said yes to it were the ones who did
+                # not read the number printed beside the button.
+                #
+                # REFUSED HERE, not only hidden on the page. The page drops
+                # both doors to it -- the reading choice on the style page
+                # and this panel's "Full rounds" button -- but hiding a
+                # control stops the button, not the request.
+                #
+                # SAID, NOT SUBSTITUTED. Quietly reading the tally instead
+                # would hand back clips named "3 kills" to somebody who
+                # asked for ACE and CLUTCH, with nothing to say why.
+                return {"error": "Reading the kill feed and the scoreboard "
+                                 "is switched off: it reads slower than the "
+                                 "recording plays. Use the replay, or "
+                                 "'Kills only', which is about eight times "
+                                 "faster. Developer mode turns it back on."}
         # Round mode, for games whose profile reads the scoreboard. Absent for
         # every other game, so nothing changes for them.
         if body.get("rounds") is not None:

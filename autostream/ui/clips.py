@@ -791,12 +791,10 @@ One per line - a long session often covers several matches."></textarea>
        then run this again - the twelve minutes already read are kept, so the
        second run goes straight to matching. Or paste its sharing code here and
        AutoStream will ask the game to fetch it.</p>
-    <p class="muted">Without a replay it has to be read off the screen, and
-       there are two ways. <strong>Kills only</strong> reads the kill tally
-       under the crosshair - fast, and clips are named by their kill count.
-       <strong>Full rounds</strong> reads the scoreboard as well, which is what
-       CLUTCH, PISTOL ROUND and the rest are worked out from, and it is about
-       eight times slower.</p>
+    <!-- WRITTEN BY clip_renderJob, because what it says depends on how
+         many ways are on offer. "there are two ways" above a single button
+         is the page describing a screen the reader is not looking at. -->
+    <p class="muted" id="clip-needsdemo-how"></p>
     <textarea class="textarea mono" id="clip-needsdemo-codes" rows="2"
               spellcheck="false"
               placeholder="Paste the match sharing code, or the whole steam:// link."></textarea>
@@ -1528,8 +1526,26 @@ var CLIP_WAYS = [
   ['rounds', 'Kills and round names', 'rounds',
    'Everything the replay gives, worked out from the video instead. Use it '
    + 'when there is no replay — it has to watch the whole recording, so it is '
-   + 'far slower than the other two.']
+   + 'far slower than the other two.', true]
 ];
+
+/* THE FOURTH FIELD MEANS "DEVELOPER MODE ONLY", AND ONE WAY CARRIES IT.
+
+   "Kills and round names" reads the kill feed AND the scoreboard, one decode
+   pass with two crops OCR'd per sampled frame. Measured twice on real
+   Counter-Strike: 1.46x and 1.19x real time. That is not a slow option, it
+   is a different order of magnitude -- a 45-minute stream is around 40
+   minutes of reading, against 5 for the kill tally and seconds for a replay.
+
+   Offering it put a number on the screen that nobody should say yes to, and
+   the ones who did say yes were the ones who did not read it. So it is off
+   until the turnaround is fixed, and visible meanwhile to whoever is fixing
+   it. The two readers that remain cover the same ground: a replay is exact
+   and instant, and the kill tally is eight times faster than this and gets
+   the kills right -- it only loses the round NAMES. */
+function clip_waysOffered() {
+  return CLIP_WAYS.filter(function (w) { return !w[4] || clip_state.dev; });
+}
 
 function clip_wayCost(id) {
   var s = clip_state.pick;
@@ -1551,8 +1567,15 @@ function clip_renderWays() {
   if (!on) return;
   var host = clip_el('clip-ways');
   if (!host) return;
+  var ways = clip_waysOffered();
   var chosen = clip_state.way || 'demo';
-  host.innerHTML = CLIP_WAYS.map(function (w) {
+  /* A WAY THAT IS NO LONGER OFFERED CANNOT STAY CHOSEN. Developer mode
+     switched off with 'rounds' already selected would leave the run pointed
+     at the reader this hides, with nothing on screen saying so. */
+  if (!ways.some(function (w) { return w[0] === chosen; })) {
+    chosen = clip_state.way = 'demo';
+  }
+  host.innerHTML = ways.map(function (w) {
     var is = w[0] === chosen;
     return '<button class="clip-way' + (is ? ' is-on' : '') + '" type="button"'
       + ' data-act="way" data-val="' + esc(w[0]) + '"'
@@ -2262,6 +2285,25 @@ function clip_renderJob(j) {
     lbl('clip-needsdemo-anyway', 'Full rounds', slow);
     /* Only Counter-Strike has a second reader. */
     clip_show('clip-needsdemo-cards', !!(s && s.demos));
+    /* AND THE SLOW ONE IS THE SAME READER THE STYLE PAGE NOW HIDES. This is
+       the other door to it: a run that stopped for want of a replay offered
+       "Full rounds, slower" right here, and somebody who has just been told
+       their run cannot continue is exactly who presses it. Developer mode
+       only, like the choice above. */
+    clip_show('clip-needsdemo-anyway', !!clip_state.dev);
+    var how = clip_el('clip-needsdemo-how');
+    if (how) {
+      how.textContent = clip_state.dev
+        ? 'Without a replay it has to be read off the screen, and there are '
+          + 'two ways. Kills only reads the kill tally under the crosshair - '
+          + 'fast, and clips are named by their kill count. Full rounds reads '
+          + 'the scoreboard as well, which is what CLUTCH, PISTOL ROUND and '
+          + 'the rest are worked out from, and it is about eight times slower.'
+        : 'Without a replay it has to be read off the screen. Kills only '
+          + 'reads the kill tally under the crosshair: it gets your kills '
+          + 'right and names each clip by how many are in it. Round names '
+          + 'like CLUTCH and PISTOL ROUND need the replay.';
+    }
   }
 
   var mvRun = j.scan_mode === 'summary';
