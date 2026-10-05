@@ -2678,11 +2678,27 @@ function clip_renderResults(list, montagePath) {
   }
   var h = '';
   if (montagePath) {
+    /* THE ONE OUTPUT WITH NO WAY INTO THE MIDDLE OF IT. Forty clips joined
+       into eight minutes, and the good one is somewhere in there -- so the
+       chapters are offered where the montage is, rather than left in a .txt
+       beside it for somebody to find. */
+    var chap = (clip_state.lastJob || {}).montage_chapters || '';
     h += '<div class="clip-res is-montage">' +
          '<span class="clip-res-rank">' + icon('film') + '</span>' +
          '<span class="clip-res-name">Montage</span>' +
-         '<span class="clip-res-meta muted">every clip, joined</span>' +
+         '<span class="clip-res-meta muted">every clip, joined' +
+           /* Counted with a regex rather than by splitting on a newline
+              literal: this file is Python holding JavaScript, and a `\n`
+              inside a quoted string here is one escaping decision away from
+              being a real line break in the bundle -- which is exactly what
+              it was, and the JS no longer parsed. */
+           (chap ? '  ·  ' + (chap.match(/\S[^\r\n]*/g) || []).length +
+                   ' chapters' : '') + '</span>' +
          '<span class="clip-res-acts">' +
+         (chap
+           ? '<button class="btn btn-ghost btn-sm" type="button" ' +
+             'data-act="copy-montage-chapters">Copy chapters</button>'
+           : '') +
          '<button class="btn btn-ghost btn-sm" type="button" data-act="reveal"' +
          ' data-path="' + esc(montagePath) + '">Show</button></span></div>';
   }
@@ -6575,6 +6591,8 @@ function clip_wire() {
     } else if (act === 'known-match') {
       clip_mvPickKnown(Number(b.getAttribute('data-i')));
       clip_mvRenderKnown();
+    } else if (act === 'copy-montage-chapters') {
+      clip_mvCopyChapters((clip_state.lastJob || {}).montage_chapters || '');
     } else if (act === 'copy-chapters') {
       var cc2 = (clip_state.results || [])[Number(b.getAttribute('data-i'))];
       clip_mvCopyChapters(cc2 && cc2.chapters_text);

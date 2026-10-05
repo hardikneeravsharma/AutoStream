@@ -314,6 +314,7 @@ def test_a_stopped_run_is_distinguishable_from_a_failed_one(tmp_path):
     job.game, job.folder = "Counter-Strike 2", Path("x")
     job.results, job.preview, job.summary = [], [], {}
     job.montage_path = job.reel_path = job.promo_path = None
+    job.montage_chapters = ""
     job.started_at = job.step_started = _t.time()
     job.source = Path("rec.mp4")
     job.source_seconds = job.scan_seconds = 2640.0
@@ -352,6 +353,7 @@ def test_an_ordinary_failure_does_not_ask_for_a_replay(tmp_path):
     job.game, job.folder = "Counter-Strike 2", Path("x")
     job.results, job.preview, job.summary = [], [], {}
     job.montage_path = job.reel_path = job.promo_path = None
+    job.montage_chapters = ""
     job.started_at = job.step_started = _t.time()
     job.source = Path("rec.mp4")
     job.source_seconds = job.scan_seconds = 10.0

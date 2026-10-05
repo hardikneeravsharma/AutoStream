@@ -545,3 +545,53 @@ def test_the_shortlist_is_marked_in_the_results(ui, app):
     assert marked["best"] == 5
     assert marked["tags"] == 5
     ui.clean("the results list")
+
+
+def test_the_montage_offers_its_chapters(ui, app):
+    """A montage is the one output with no way into the middle of it: forty
+    clips joined into eight minutes, and the good one is somewhere in there.
+    The chapters are offered where the montage is rather than left in a .txt
+    beside it for somebody to find."""
+    _at_part(ui, app)
+    shown = ui.page.evaluate(
+        """() => {
+             /* Joined rather than written with escapes: this JS lives
+                inside a Python string, where a backslash-n becomes a real
+                line break before Playwright ever sees it -- a SyntaxError
+                inside a single-quoted JS string, which is what happened. */
+             clip_state.lastJob = {montage_chapters: [
+               '0:00 3 kills', '0:30 4 kills', '1:10 2 kills', ''
+             ].join(String.fromCharCode(10))};
+             clip_renderResults(
+               [{rank: 1, kills: 3, at: '00:01', duration: 20, name: 'a'}],
+               'C:/vid/montage.mp4');
+             const row = document.querySelector('#clip-res-list .is-montage');
+             return {
+               meta: row.querySelector('.clip-res-meta').textContent,
+               copy: !!row.querySelector('[data-act="copy-montage-chapters"]')
+             };
+           }""")
+    assert "3 chapters" in shown["meta"], shown["meta"]
+    assert shown["copy"] is True
+    ui.clean("the montage row")
+
+
+def test_a_montage_with_no_chapters_offers_nothing(ui, app):
+    """Too few clips, or clips too short for YouTube to show any. A Copy
+    button that copies an empty string is a button that does nothing."""
+    _at_part(ui, app)
+    shown = ui.page.evaluate(
+        """() => {
+             clip_state.lastJob = {montage_chapters: ''};
+             clip_renderResults(
+               [{rank: 1, kills: 3, at: '00:01', duration: 20, name: 'a'}],
+               'C:/vid/montage.mp4');
+             const row = document.querySelector('#clip-res-list .is-montage');
+             return {
+               meta: row.querySelector('.clip-res-meta').textContent,
+               copy: !!row.querySelector('[data-act="copy-montage-chapters"]')
+             };
+           }""")
+    assert "chapters" not in shown["meta"]
+    assert shown["copy"] is False
+    ui.clean("a montage with no chapters")

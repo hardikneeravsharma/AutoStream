@@ -705,6 +705,8 @@ NOT_A_FLOW: dict[str, str] = {
     "rail": "switches the Clips page sub-tab",
     "mv-make": "ticks the match summary or the highlight; sent with Make match videos",
     "copy-chapters": "copies a summary's YouTube chapters to the clipboard",
+    "copy-montage-chapters": "copies the montage's YouTube chapters to the "
+                             "clipboard; nothing leaves the browser",
     "back": "steps the setup wizard backwards; no state leaves the browser",
     "pick": "selects a session row in the Clips list",
     "anygame": "retargets this run at the audio reader; client-side, the same "

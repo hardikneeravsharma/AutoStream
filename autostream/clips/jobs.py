@@ -208,6 +208,8 @@ class ClipJob:
         self.error: str | None = None
         self.results: list[dict] = []
         self.montage_path: str | None = None
+        # YouTube chapters for the montage, ready to paste into a description.
+        self.montage_chapters: str = ""
         self.reel_path: str | None = None
         self.promo_path: str | None = None
         # Every spoken hook used so far, so no two clips in one session open
@@ -334,6 +336,7 @@ class ClipJob:
                 "folder": str(self.folder),
                 "clips": len(self.results),
                 "montage": self.montage_path,
+                "montage_chapters": self.montage_chapters,
                 "reel": self.reel_path,
                 "promo": self.promo_path,
                 "summary": dict(self.summary),
@@ -375,6 +378,53 @@ class ClipJob:
     @property
     def cancelled(self) -> bool:
         return self._cancel.is_set()
+
+    def _write_chapters(self, out, plans, masters, opt) -> None:
+        """Write the montage's YouTube chapters beside it. Never raises.
+
+        A montage without chapters is the feature minus a convenience; a run
+        that FAILED because a text file could not be written would be the
+        convenience costing the feature.
+        """
+        try:
+            ordered = sorted(zip(plans, masters), key=lambda pm: pm[0].start)
+            durations = [media_info(m)["duration"] for _p, m in ordered]
+            d = montage.clamp_transition(
+                durations, int(opt.get("transition_ms", 500)) / 1000)
+            labels = [self._chapter_label(p) for p, _m in ordered]
+            marks = montage.chapter_marks(durations, d, labels)
+            if not marks:
+                log.info("no chapters for this montage: too few clips, or too "
+                         "short for YouTube to show any")
+                return
+            from .summary import chapter_text
+
+            text = chapter_text(marks)
+            Path(out).with_suffix(".chapters.txt").write_text(
+                text, encoding="utf-8")
+            self.montage_chapters = text
+            log.info("montage chapters: %d", len(marks))
+        except Exception as e:  # noqa: BLE001
+            log.info("could not write the montage chapters: %s", e)
+
+    @staticmethod
+    def _chapter_label(p) -> str:
+        """What one clip is called in the chapter list.
+
+        SAID AS THE MOMENT, not as the file. The filename carries a rank and a
+        timestamp because it has to sort on disk; a chapter is read while
+        watching, where the only useful thing is what happens next.
+        """
+        if getattr(p, "labels", None):
+            # Counter-Strike's round types: ACE, CLUTCH, PISTOL ROUND.
+            what = ", ".join(str(x).replace("_", " ").title() for x in p.labels)
+            if getattr(p, "round_number", None):
+                return f"Round {p.round_number} - {what}"
+            return what
+        n = int(getattr(p, "kills", 0) or 0)
+        if n <= 0:
+            return "Moment"
+        return f"{n} kill" + ("s" if n != 1 else "")
 
     def _check(self) -> None:
         if self._cancel.is_set():
@@ -1009,6 +1059,12 @@ class ClipJob:
                 transition_ms=int(opt.get("transition_ms", 500)),
                 encoder=enc)
             self.montage_path = str(out)
+            # CHAPTERS, BECAUSE A MONTAGE IS THE ONE OUTPUT WITH NO WAY INTO
+            # THE MIDDLE OF IT. Forty clips joined into eight minutes, and the
+            # good one is somewhere in there. The offsets are the same
+            # arithmetic that placed the crossfades, so each chapter lands on
+            # the frame its clip starts on.
+            self._write_chapters(out, plans, masters, opt)
             n += 1
             self._set(done=n)
 
@@ -1891,6 +1947,7 @@ class ClipJob:
                 "error": self.error,
                 "summary": self.summary,
                 "montage": self.montage_path,
+                "montage_chapters": self.montage_chapters,
                 "reel": self.reel_path,
                 "promo": self.promo_path,
                 "clips": self.results,

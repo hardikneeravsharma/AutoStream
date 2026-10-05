@@ -207,6 +207,7 @@ def _stub_job():
     j.game, j.folder = "Delta Force", Path("x")
     j.results, j.preview, j.summary = [], [], {}
     j.montage_path = j.reel_path = j.promo_path = None
+    j.montage_chapters = ""
     j.started_at = _t.time() - 90
     j.step_started = j.started_at
     j.source = Path("rec.mp4")

@@ -75,6 +75,56 @@ def expected_duration(durations: list[float], d: float) -> float:
     return sum(durations) - d * (len(durations) - 1)
 
 
+# YOUTUBE'S RULES FOR CHAPTERS, which are not advice: break one and it shows
+# none of them at all, with no error anywhere.
+#
+#   the first must be at 0:00
+#   there must be at least three
+#   each must run for at least ten seconds
+#
+# All three are enforced here rather than hoped for, because the failure is
+# silent: a description full of timestamps and a video with no chapter bar,
+# which looks like YouTube being slow rather than like a rule being broken.
+CHAPTER_MIN = 10.0
+CHAPTER_LEAST = 3
+
+
+def chapter_marks(durations: list[float], d: float,
+                  labels: list[str]) -> list[tuple[float, str]]:
+    """-> [(seconds into the montage, label)], or [] if there cannot be any.
+
+    EXACT, NOT ESTIMATED. The offsets are the same arithmetic `_plan_offsets`
+    gives ffmpeg to place the crossfades with, so a chapter lands on the frame
+    the clip starts on rather than near it. A montage is otherwise the one
+    output of this app with no way into the middle of it: forty clips joined
+    into eight minutes, and the good one is somewhere in there.
+    """
+    if len(durations) < 2 or len(durations) != len(labels):
+        return []
+    # Clip 0 starts at 0; each one after it starts where the crossfade into it
+    # does. Same recurrence as _plan_offsets, kept beside it on purpose.
+    marks: list[tuple[float, str]] = [(0.0, labels[0])]
+    acc = durations[0]
+    for i in range(1, len(durations)):
+        marks.append((max(0.0, acc - d), labels[i]))
+        acc += durations[i] - d
+
+    # TEN SECONDS APART, by dropping rather than by moving: a chapter moved to
+    # satisfy the rule points at the wrong moment, which is worse than one
+    # chapter fewer. The last is checked against the montage's end for the
+    # same reason -- a final chapter three seconds from the end is one YouTube
+    # will not show.
+    total = expected_duration(durations, d)
+    out: list[tuple[float, str]] = []
+    for t, name in marks:
+        if out and t - out[-1][0] < CHAPTER_MIN:
+            continue
+        if total - t < CHAPTER_MIN:
+            continue
+        out.append((t, name))
+    return out if len(out) >= CHAPTER_LEAST else []
+
+
 def clamp_transition(durations: list[float], seconds: float) -> float:
     if len(durations) < 2:
         return 0.0
