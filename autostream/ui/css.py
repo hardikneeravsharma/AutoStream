@@ -50,6 +50,27 @@ CSS: str = """
    These are the values that do not change with the theme.
    ========================================================================== */
 :root{
+  /* ---- text drawn ON a video frame -------------------------------------
+     NOT A THEME TOKEN, and deliberately not in theme.py: a frame of
+     gameplay is not a surface this app controls, and the themes have no say
+     over what colour it is. White on a dark scrim is the only pair that
+     works over every frame, in every theme.
+
+     THE SCRIM IS THE CONTRAST, and the number is measured rather than
+     chosen. Taking the worst case -- a white video frame -- white text on a
+     black scrim scores:
+
+         .28 -> 1.98    .35 -> 2.43    .50 -> 3.95
+         .55 -> 4.74    .62 -> 6.19    .70 -> 8.45
+
+     so .54 is the floor for normal text at AA and .42 for large. Eight
+     different alphas were in use for this one job, and the lightest of them
+     was behind 13px white text on the editor's frame handle: 2.43:1, which
+     is unreadable over anything bright and was simply never measured. */
+  --on-media:#fff;
+  --on-media-scrim:rgba(0,0,0,.62);        /* 6.19:1 -- normal text */
+  --on-media-scrim-soft:rgba(0,0,0,.55);   /* 4.74:1 -- bold, 14px and up */
+
   /* space -- 4px grid. 2px and 6px exist only for optical alignment inside controls. */
   --space-1:2px; --space-2:4px; --space-3:6px; --space-4:8px; --space-5:12px;
   --space-6:16px; --space-7:20px; --space-8:24px; --space-9:32px; --space-10:40px;
@@ -2382,7 +2403,9 @@ ol.steps-list li{margin-block:var(--space-4)}
   font-weight:900;
   letter-spacing:.01em;
   line-height:1.1;
-  color:#fff;
+  /* Over a video frame, with a black outline doing the contrast rather than
+     a scrim -- which is what a thumbnail caption has always looked like. */
+  color:var(--on-media);
   text-shadow:
     -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000,
     0 3px 6px rgba(0,0,0,.6);
@@ -2401,7 +2424,7 @@ ol.steps-list li{margin-block:var(--space-4)}
   position:absolute;top:var(--space-5);left:50%;transform:translateX(-50%);
   padding:var(--space-3) var(--space-5);
   font-size:11px;font-weight:700;letter-spacing:.12em;
-  color:#fff;background:rgba(0,0,0,.62);
+  color:var(--on-media);background:var(--on-media-scrim);
   border-radius:999px;
 }
 #clip-video{transition:transform .05s linear;transform-origin:center center}
@@ -2471,7 +2494,7 @@ ol.steps-list li{margin-block:var(--space-4)}
 }
 .clip-fx-aim.is-on{
   background:var(--accent);
-  color:#fff;
+  color:var(--text-on-accent);
 }
 .clip-fx-bar.is-captions{background:var(--accent);top:2px;height:13px}
 .clip-fx-bar.is-zooms{background:var(--ok, #2ea043);top:16px;height:13px}
@@ -2959,8 +2982,8 @@ ol.steps-list li{margin-block:var(--space-4)}
   font-size:.7rem;
   line-height:1.4;
   font-variant-numeric:tabular-nums;
-  color:#fff;
-  background:rgba(0,0,0,.55);
+  color:var(--on-media);
+  background:var(--on-media-scrim);
 }
 .clip-frame.is-out{opacity:.28}
 .clip-frame.is-out .clip-frame-t{opacity:.7}
@@ -3260,7 +3283,7 @@ CLIPS_FLOW_CSS = """
 .clip-mv-outro-play{
   position:absolute;inset:auto auto 6px 6px;width:26px;height:26px;border-radius:50%;
   display:flex;align-items:center;justify-content:center;font-size:11px;
-  background:rgba(0,0,0,.6);color:#fff;
+  background:var(--on-media-scrim);color:var(--on-media);
 }
 .clip-mv-outro-thumb:hover .clip-mv-outro-play{background:var(--accent)}
 .clip-mv-outro-text{display:flex;flex-direction:column;gap:2px;flex:1 1 180px;min-width:0}
@@ -3607,10 +3630,10 @@ STUDIO_CSS = r"""
 .studio-clip-hit img{display:block;width:100%;height:100%;object-fit:cover}
 .studio-clip-n{position:absolute;top:8px;left:8px;min-width:24px;height:24px;padding:0 6px;border-radius:12px;
   display:flex;align-items:center;justify-content:center;font:600 12px/1 var(--font-mono);
-  background:rgba(0,0,0,.55);color:#fff;border:2px solid rgba(255,255,255,.75)}
+  background:var(--on-media-scrim-soft);color:var(--on-media);border:2px solid rgba(255,255,255,.75)}
 .studio-clip.is-on .studio-clip-n{background:var(--accent);border-color:var(--accent);color:var(--text-on-accent)}
 .studio-clip-dur,.studio-clip-kills{position:absolute;bottom:6px;padding:2px 6px;border-radius:4px;
-  background:rgba(0,0,0,.62);color:#fff;font-size:11px}
+  background:var(--on-media-scrim);color:var(--on-media);font-size:11px}
 .studio-clip-dur{right:6px}
 .studio-clip-kills{left:6px;font-weight:600}
 .studio-clip-foot{display:flex;align-items:center;gap:6px;padding:4px 4px 4px 10px;font-size:12.5px;
@@ -3767,7 +3790,7 @@ STUDIO_CSS = r"""
 .st-shot.is-edited::after{content:"";position:absolute;top:0;right:0;width:0;height:0;
   border-top:12px solid var(--warn);border-left:12px solid transparent;pointer-events:none}
 .st-shot-name{position:absolute;left:4px;top:3px;right:12px;padding:1px 5px;border-radius:3px;
-  font:600 11px/1.3 var(--font-text);color:#fff;background:rgba(0,0,0,.55);white-space:nowrap;
+  font:600 11px/1.3 var(--font-text);color:var(--on-media);background:var(--on-media-scrim);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;max-width:max-content}
 .st-kill{position:absolute;bottom:6px;width:12px;height:12px;margin-left:-6px;transform:rotate(45deg);
   background:#fff;border:2px solid var(--accent);cursor:ew-resize}
@@ -3838,7 +3861,7 @@ STUDIO_CSS = r"""
   background:repeating-linear-gradient(135deg,rgba(0,0,0,.55) 0 8px,rgba(0,0,0,.28) 8px 16px)}
 .st-introclip:hover{background:repeating-linear-gradient(135deg,rgba(0,0,0,.62) 0 8px,rgba(0,0,0,.34) 8px 16px)}
 .st-introclip-tag{position:absolute;left:5px;bottom:4px;padding:1px 6px;border-radius:3px;
-  font:600 10px/1.4 var(--font-text);color:#fff;background:rgba(0,0,0,.7);white-space:nowrap}
+  font:600 10px/1.4 var(--font-text);color:var(--on-media);background:var(--on-media-scrim);white-space:nowrap}
 
 /* The inspector's one line about the intro; the editing is in the dialog. */
 .studio-introrow{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3);
@@ -3960,7 +3983,7 @@ EDITOR_CSS = r"""
 .ed-frame{position:absolute;inset:0;pointer-events:none}
 .ed-frame.hide{display:none}
 .ed-handle{position:absolute;pointer-events:auto;cursor:grab;padding:2px 8px;border-radius:4px;
-  font:600 13px/1.4 var(--font-text);color:#fff;background:rgba(0,0,0,.35);
+  font:600 13px/1.4 var(--font-text);color:var(--on-media);background:var(--on-media-scrim);
   outline:1px dashed rgba(255,255,255,.8);white-space:nowrap;user-select:none;touch-action:none}
 .ed-handle:active{cursor:grabbing}
 .ed-cambox{position:absolute;border:2px dashed var(--warn);background:rgba(255,200,60,.12);pointer-events:none}

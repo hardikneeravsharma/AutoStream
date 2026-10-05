@@ -207,7 +207,19 @@ def test_no_accent_fill_is_painted_with_hard_white(on):
     fails the moment an accent is light -- and the accent is a user setting
     with five palettes behind it. On `carbon` the accent is #EDE7DD and white
     on it measures 1.23:1, which is not a contrast ratio so much as an
-    absence of one."""
+    absence of one.
+
+    THIS TEST WAS WRONG AND GREEN. It compared the colour against the string
+    `#fff`, and CSSOM normalises that to `rgb(255, 255, 255)` -- so it could
+    never match anything, and a fifth rule (`.clip-fx-aim.is-on`) shipped
+    underneath it and was found by eye. The guard it carried against being
+    vacuous was about whether the stylesheet was being READ, which it was;
+    the comparison was the broken part.
+
+    The real guard for this now lives in tests/test_css_contrast.py, which
+    scans the stylesheet's own text where `#fff` is `#fff` and nothing can
+    normalise it away. This stays as the browser's confirmation that what is
+    in the text is also what the page ends up with."""
     got = on.evaluate(
         """() => {
              const bad = [], seen = [];
@@ -220,8 +232,13 @@ def test_no_accent_fill_is_painted_with_hard_white(on):
                             r.style.getPropertyValue('background-color');
                  if (bg.indexOf('var(--accent)') < 0) continue;
                  seen.push(r.selectorText);
-                 const fg = r.style.getPropertyValue('color').trim().toLowerCase();
-                 if (fg === '#fff' || fg === '#ffffff' || fg === 'white') {
+                 /* NORMALISED, not as written. CSSOM turns `#fff` into
+                    `rgb(255, 255, 255)`, which is why the first version of
+                    this could not fail. */
+                 const fg = r.style.getPropertyValue('color')
+                             .trim().toLowerCase().split(' ').join('');
+                 if (fg === '#fff' || fg === '#ffffff' || fg === 'white' ||
+                     fg === 'rgb(255,255,255)') {
                    bad.push(r.selectorText);
                  }
                }
