@@ -308,10 +308,30 @@ def test_a_rescan_does_not_promise_a_quick_recut_it_will_not_do():
 
 # ------------------------------------------------ the engine, off the tick
 
-def _engine(phase=IDLE):
+def _engine(phase=IDLE, *, recording_enabled=True):
+    """An engine off the tick, with recording switched on by default.
+
+    RECORDING IS SET HERE, NOT INHERITED. `fakes.engine()` builds its config
+    from `cfg.load()`, which under the suite reads AUTOSTREAM_HOME -- the repo
+    -- and therefore the developer's own `config/config.yaml`. That file is
+    gitignored, so on the machine where these tests were written recording was
+    on and `toggle_recording` started one; on a fresh clone there is no config
+    at all, `record.enabled` falls back to its default of False, and the test
+    failed on a line about the journal while the real cause was a setting it
+    never meant to depend on.
+
+    It took the release build refusing to ship to surface that, because the
+    build runs the suite from a clean checkout and nobody else ever does.
+
+    Copied before it is written to: cfg.load() merges over cfg.DEFAULTS, and
+    mutating a section in place can reach the module-level defaults and leak
+    into every later test in the run.
+    """
     from fakes import engine
 
     eng = engine(phase=phase)
+    eng.cfg["record"] = dict(eng.cfg["record"])
+    eng.cfg["record"]["enabled"] = recording_enabled
     eng._marks = []
     eng._mark_seen = {}
     eng.yt = types.SimpleNamespace(watch_url=lambda b: f"https://youtu.be/{b}")
@@ -332,6 +352,16 @@ def test_a_recording_made_outside_a_session_reaches_the_journal(monkeypatch):
     assert eng.toggle_recording("test") is True
     assert eng.toggle_recording("test") is False
     assert [r["recording_path"] for r in rows] == ["C:/v/2026-09-25 06-12-55.mp4"]
+
+
+def test_record_does_nothing_while_recording_is_switched_off(monkeypatch):
+    """The other half of the setting this test used to read by accident: with
+    Recording off, the button says so rather than silently starting one."""
+    monkeypatch.setattr(engine_mod.notify, "toast", lambda *a, **k: None)
+    eng = _engine(IDLE, recording_enabled=False)
+    eng._start_recording = lambda: setattr(eng.state, "recording", True)
+    assert eng.toggle_recording("test") is False
+    assert eng.state.recording is False
 
 
 def test_every_file_of_a_session_gets_its_own_row(monkeypatch):
