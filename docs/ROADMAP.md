@@ -131,20 +131,17 @@ Do not add these back without a reason that is written down here.
 
 ---
 
-## State of the tree, 2026-10-04
+## State of the tree, 2026-10-05
 
 **Read this before assuming the repo is clean.**
 
-- `__version__` is **1.39.3**, which is published on GitHub.
-- The working tree is on a **detached HEAD at `ff81925`** with a large
-  **uncommitted** batch: the CS2 HUD-colour fix, the Clips page split into six
-  stages, the whole-recording player and trim/save, the voice-pack download,
-  the file-picker guard, and the browser test tiers
-  (`test_ui_sweep.py`, `test_ui_journey.py`, `test_ui_clip_stages.py`,
-  `test_voice_fetch.py`, `test_clip_source_route.py`,
-  `test_no_dialogs_under_test.py`).
-- That batch is a **feature release, not a patch** — cut it as v1.40.0.
-- Tests at the time of writing: **2253 offline**, **154 browser**.
+- v1.40.0 (the Clips stages batch) is merged and published; the detached-HEAD
+  batch described here before is gone.
+- **v1.40.1** is the open PR: the NVIDIA checks (`has_cuda`, `has_nvenc`) now
+  prove the card works instead of trusting ffmpeg's build list. Without it
+  every clip job on an AMD or Intel GPU fails -- the first outside user, on a
+  Radeon RX 9070 XT, got "0 samples" from the CS2 tally.
+- Tests at the time of writing: **2260 offline**, **154 browser**.
 
 Nothing in Phase A has been started.
 
