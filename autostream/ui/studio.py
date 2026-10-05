@@ -790,7 +790,9 @@ const studio = {
      clip a frame is taken from, and the pair being lined up. */
   fc: {inset: null, links: {}, clips: [], clipI: null, t: 0, drag: null, key: '', clip: '', start: 0, offset: 0},
   /* A clip the player added, open in its dialog. */
-  imp: {path: '', seconds: 0, kills: [], sel: -1, dirty: false, games: null}
+  imp: {path: '', seconds: 0, kills: [], sel: -1, dirty: false, games: null,
+        /* What is left of a batch picked in one go. See studio_impAdd. */
+        queue: []}
 };
 
 const studio_el = (id) => document.getElementById(id);
@@ -951,8 +953,22 @@ function studio_tile(c, n) {
       esc(c.id) + '" title="' + (c.fav ? 'A favourite. Click to unstar.' : 'Mark as a favourite') +
       '" aria-pressed="' + (c.fav ? 'true' : 'false') + '" aria-label="Favourite">' +
       (c.fav ? '\u2605' : '\u2606') + '</button>' +
-    (c.imported ? '<button type="button" class="btn btn-ghost btn-sm' + (c.unmarked ? ' is-warn' : '') + '" data-act="studio-imp-edit" data-path="' +
-      esc(c.path) + '" title="Mark its kills and give it a title">' + (c.unmarked ? 'Mark kills' : 'Edit') + '</button>' : '') +
+    /* EDIT ON EVERY CLIP, not only on imported ones.
+
+       This was gated on `c.imported`, and that flag is set only for clips
+       that came in through Add your own clip -- so a clip AutoStream cut for
+       itself had no way back into the marker at all. If the detector put a
+       kill half a second late, or a clip deserved a better title, there was
+       nothing to press.
+
+       The marker never cared where a clip came from: studio_impOpen(path)
+       takes a path. What was missing was the way in. */
+    '<button type="button" class="btn btn-ghost btn-sm' +
+      (c.unmarked ? ' is-warn' : '') + '" data-act="studio-imp-edit" ' +
+      'data-path="' + esc(c.path) + '" title="' +
+      (c.imported ? 'Mark its kills and give it a title'
+                  : 'Correct its kills or change the title') + '">' +
+      (c.unmarked ? 'Mark kills' : 'Edit') + '</button>' +
     '<button type="button" class="btn btn-ghost btn-icon btn-sm" data-act="studio-preview" data-clip="' +
     esc(c.id) + '" aria-label="Play ' + esc(c.name) + '">' + icon('play') + '</button></div></div>';
 }
@@ -4222,13 +4238,55 @@ function studio_camInput(e) {
 
 /* ------------------------------------------------------------ your own clips */
 
+/* ADDING CLIPS, PLURAL.
+
+   This took one file and stopped, so somebody with a folder of twenty did
+   the whole dance twenty times: open the dialog, choose one, wait, mark the
+   kills, save, press Add again. The picker has always been able to offer
+   more than one -- Tk has askopenfilenames beside askopenfilename -- and
+   nothing here ever asked it to.
+
+   The marker opens on the first and moves to the next on Save, so a batch is
+   one pass rather than twenty. */
 async function studio_impAdd() {
-  const r = await API.post('/api/clips/pick', {kind: 'video'});
-  if (!r || !r.path) return;
-  toast('Adding ' + r.path.split(/[\\/]/).pop() + '…');
-  const got = await API.post('/api/studio/import', {path: r.path});
-  if (!got || !got.ok) { toast((got && got.error) || 'Could not add that clip.', 'warn'); return; }
-  await studio_impOpen(got.clip.path, true);
+  const r = await API.post('/api/clips/pick', {kind: 'video', multi: true});
+  const chosen = (r && r.paths && r.paths.length)
+    ? r.paths : ((r && r.path) ? [r.path] : []);
+  if (!chosen.length) return;
+  if (r && r.missing && r.missing.length) {
+    toast(r.missing.length + ' of those files are no longer there.', 'warn');
+  }
+  toast(chosen.length === 1
+    ? 'Adding ' + studio_baseName(chosen[0])
+    : 'Adding ' + chosen.length + ' clips');
+
+  const added = [];
+  for (let i = 0; i < chosen.length; i++) {
+    const got = await API.post('/api/studio/import', {path: chosen[i]});
+    /* ONE BAD FILE DOES NOT STOP THE BATCH. Nineteen imported and the
+       twentieth refused is a far better outcome than nothing imported and
+       one error about a file nobody can see any more. */
+    if (got && got.ok) added.push(got.clip.path);
+    else toast((got && got.error) ||
+               ('Could not add ' + studio_baseName(chosen[i])), 'warn');
+  }
+  if (!added.length) return;
+  if (added.length > 1) {
+    toast('Added ' + added.length + ' clips. Mark each one and press Save to ' +
+          'move to the next.', 'ok');
+  }
+  studio.imp.queue = added.slice(1);
+  await studio_impOpen(added[0], true);
+}
+
+/* The file's own name, without a regex. A character class holding a
+   backslash has to survive being written inside a Python string, and the
+   first attempt came out as /[/\]/ -- where the backslash escapes the
+   bracket and the regex never closes. The JS then did not parse at all. */
+function studio_baseName(path) {
+  const s = String(path || '');
+  const cut = Math.max(s.lastIndexOf('/'), s.lastIndexOf(String.fromCharCode(92)));
+  return cut >= 0 ? s.slice(cut + 1) : s;
 }
 
 async function studio_impGames() {
@@ -4327,6 +4385,17 @@ async function studio_impSave(close) {
   imp.dirty = false;
   if (!got.kills.length) toast('Saved without kills: mark at least one, or the reel has nothing to cut to.', 'warn');
   else toast('Saved ' + got.kills.length + (got.kills.length === 1 ? ' kill.' : ' kills.'), 'ok');
+  /* STRAIGHT ON TO THE NEXT. Saving one of a batch and being put back on the
+     Studio page, to press Add again for a file already imported, is the
+     twenty-times dance with extra steps. */
+  const next = (studio.imp.queue || []).shift();
+  if (close && next) {
+    studio_load(true);
+    await studio_impOpen(next, true);
+    const left = (studio.imp.queue || []).length;
+    toast(left ? (left + 1) + ' left in this batch.' : 'Last one.', 'ok');
+    return true;
+  }
   if (close) studio_impClose(true);
   studio_load(true);
   return true;
@@ -4335,6 +4404,10 @@ async function studio_impSave(close) {
 function studio_impClose(force) {
   const imp = studio.imp;
   if (!force && imp.dirty && !confirm('Close without saving the kills you marked?')) return;
+  /* A QUEUE THAT SURVIVED BEING DISMISSED would reopen a dialog the user had
+     just shut, which is the one thing a Close button must never do. The
+     clips are imported either way; only the walk through them stops. */
+  imp.queue = [];
   const v = studio_el('studio-imp-video');
   if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
   /* A detection this dialog started has nothing left to report to. */

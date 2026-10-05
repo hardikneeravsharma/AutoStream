@@ -1060,7 +1060,8 @@ class _Handler(BaseHTTPRequestHandler):
             elif p == "/api/diagnostics":
                 self._json(self.app.diagnostics())
             elif p == "/api/clips/pick":
-                self._json(self.app.clips_pick(str(b.get("kind") or "video")))
+                self._json(self.app.clips_pick(str(b.get("kind") or "video"),
+                                               multi=bool(b.get("multi"))))
             elif p == "/api/clips/outro-set":
                 self._json(self.app.clips_outro_set(b))
             elif p == "/api/clips/probe":
@@ -4160,8 +4161,14 @@ class Server:
         return re.sub(r"([?&]k=)[^\s&\"']+",
                       lambda m: m.group(1) + "(removed)", text)
 
-    def clips_pick(self, kind: str = "video") -> dict:
-        """Ask the OS for a file. -> {ok, path} or {error}.
+    def clips_pick(self, kind: str = "video", multi: bool = False) -> dict:
+        """Ask the OS for a file. -> {ok, path, paths} or {error}.
+
+        `multi` offers more than one, for the Studio's "Add your own clip" --
+        somebody with a folder of twenty did the whole dance twenty times.
+        `path` is still the first of them, because every other caller of this
+        reads that key and none of them wants a list: a reel takes one song,
+        an intro one GIF, a run one recording.
 
         `kind` only changes the filter and the title: a reel needs a song,
         an intro needs a GIF, and everything else about choosing one is
@@ -4221,25 +4228,44 @@ class Server:
                 title = "Choose a video to clip"
                 types = [("Video", "*.mp4 *.mkv *.mov *.flv *.avi *.ts *.webm"),
                          ("All files", "*.*")]
-            chosen = filedialog.askopenfilename(parent=root, title=title, filetypes=types)
+            if multi:
+                picked = list(filedialog.askopenfilenames(
+                    parent=root, title=title, filetypes=types) or ())
+            else:
+                one = filedialog.askopenfilename(parent=root, title=title,
+                                                 filetypes=types)
+                picked = [one] if one else []
             root.destroy()
         except Exception as e:  # noqa: BLE001
             return {"error": f"Could not open the file picker: {str(e)[:160]}"}
-        if not chosen:
-            return {"ok": True, "path": ""}          # cancelled, not an error
-        path = Path(chosen)
-        if not path.is_file():
+        if not picked:
+            return {"ok": True, "path": "", "paths": []}   # cancelled
+        # EVERY ONE IS REGISTERED, not just the first. `_picked` is what lets a
+        # file be streamed back to the page, and a second clip that could not
+        # be played would look like a broken import rather than a missed line.
+        gone = [p for p in picked if not Path(p).is_file()]
+        picked = [p for p in picked if Path(p).is_file()]
+        if not picked:
             return {"error": "That file is not there any more."}
+        for one in picked:
+            self._picked.add(str(Path(one)).lower())
+        path = Path(picked[0])
         # REMEMBERED THE MOMENT THE DIALOG RETURNS. This path came out of a
         # picker the user drove, so it is unambiguously one they pointed the
         # app at -- which is what lets it be streamed back to the page. It
         # used to be learned from the probe instead, and the probe is fired
         # without being waited for, so the part stage asked whether it could
         # play the file before anything had registered it and was told no.
-        self._picked.add(str(path).lower())
         out = {"ok": True, "path": str(path), "name": path.name,
+               "paths": [str(Path(one)) for one in picked],
                "bytes": path.stat().st_size,
                "size_mb": round(path.stat().st_size / (1024 * 1024))}
+        if gone:
+            # Said rather than silently dropped: a folder picked from a
+            # network share can lose files between the dialog and the answer,
+            # and "I chose twenty and got nineteen" with no explanation is
+            # the kind of thing nobody reports and everybody notices.
+            out["missing"] = [Path(g).name for g in gone]
         # An intro is measured by intros.add() a moment later, and clips_probe
         # also goes looking for a matching replay -- work with no answer to
         # give about a GIF.

@@ -176,7 +176,7 @@ Two gaps in "Add your own clip", both confirmed in the source rather than
 guessed. Small, and they pair with each other -- the same dialog, the same
 afternoon.
 
-**S1 · Adding clips, plural.** `studio_impAdd` takes one file and stops:
+**S1 · Adding clips, plural.** ✅ **done 2026-10-05.** `studio_impAdd` takes one file and stops:
 `/api/clips/pick` returns a single `path`, because `clips_pick` calls Tk's
 `askopenfilename`. Somebody with a folder of twenty clips does the whole dance
 twenty times. The change is `askopenfilenames` behind a `multi` flag, a
@@ -187,7 +187,7 @@ pass rather than twenty.
 Keep the single-file answer working: `clips_pick` serves intros, outros and
 songs as well, and none of those wants a multi-select.
 
-**S2 · The kill marker should reopen for any clip.** It is gated on
+**S2 · The kill marker should reopen for any clip.** ✅ **done 2026-10-05.** It is gated on
 `c.imported` ([studio.py:954](../autostream/ui/studio.py#L954)), and that flag
 is set only for clips that came in through import
 ([clips/studio.py:276](../autostream/clips/studio.py#L276)). So a clip

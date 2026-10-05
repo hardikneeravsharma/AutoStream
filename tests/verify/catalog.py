@@ -301,7 +301,8 @@ CONTROLS: list[Control] = [
             acts=("pick-local", "use-local", "reel-quick-song", "studio-song",
                   "studio-sg-pick", "studio-intro-add", "studio-imp-add", "studio-fc-attach"),
             why="opens a native Tk dialog ON THE SERVER and blocks the "
-                "request thread until a human dismisses it"),
+                "request thread until a human dismisses it. `multi` offers "
+                "more than one, for the Studio's Add your own clip"),
     Control("/api/clips/install", "POST", STATIC, "Install them", "clips",
             why="runs winget and raises a UAC prompt"),
     Control("/api/clips/voices/install", "POST", STATIC,
