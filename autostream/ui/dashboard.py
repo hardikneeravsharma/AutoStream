@@ -74,6 +74,8 @@ DASH_HTML: str = """
     <div class="status-timer mono" id="dash-timer" aria-label="Session elapsed">--:--:--</div>
   </section>
 
+  <p class="field-warn hide" id="dash-disk" role="status" aria-live="polite"></p>
+
   <!-- Cancel bar: appears only while a countdown is running, so the abort
        window is a button rather than a hotkey you have to remember. -->
   <div class="abort-bar hide" id="dash-abort">

@@ -145,6 +145,10 @@ class Engine:
         self._blank_strikes = 0
         # Recording-drive watchdog; see _check_disk.
         self._disk_checked = 0.0
+        # Free space where the recording is written, and whether the warning
+        # has already been given for this crossing. Both for the dashboard.
+        self.disk_free_gb: float | None = None
+        self._disk_warned = False
         # Silent-output watchdog; see _check_audio. One flag, not strikes:
         # the metering thread is already smoothing over individual samples.
         self._silent_said = False
@@ -162,10 +166,19 @@ class Engine:
         # and sleeping in it stops the OBS watchdog and chat with it.
         self._screen_until: float | None = None
         self._ending_until: float | None = None
-        # Set when a session ends with a recording and record.auto_scan is on.
-        # The Clips job runner picks it up; the engine never scans anything
-        # itself, because a multi-minute ffmpeg pass on this thread would
-        # freeze every phase transition behind it.
+        # The session that has just ended, waiting to be read for kills.
+        #
+        # THIS WAS A DEAD SETTING. `record.auto_scan` is on by default and
+        # promises "scan its recording for kill markers in the background so
+        # the Clips page already has them ready" -- and the whole feature was
+        # this assignment. Nothing anywhere read it. A setting that is on by
+        # default and does nothing is worse than one that is missing: the
+        # Clips page looked slow for a reason that was never true, and anyone
+        # who turned it off to save CPU saved nothing.
+        #
+        # Handed to clips/prescan on a thread of its own, because a
+        # multi-minute ffmpeg pass on THIS thread would freeze every phase
+        # transition behind it.
         self.pending_scan: dict | None = None
 
         # UI runs on another thread; it never touches YouTube/OBS directly.
@@ -396,10 +409,17 @@ class Engine:
 
     def _vars(self, hit: GameHit) -> dict:
         start = datetime.fromtimestamp(self.state.session_start or time.time())
+        # THE SETTING THAT STOOD IN FOR NOTHING. `title.fallback_game` is on
+        # the Settings page and reads "stands in for {game} when AutoStream
+        # can tell something is running but has no name for it" -- and nothing
+        # read it, so a game the index could not name went out as a title with
+        # the executable in it, or with an empty {game}.
+        name = (hit.name or "").strip() or str(
+            getattr(self.cfg.title, "fallback_game", "") or "").strip() or "a game"
         return titles.build_vars(
-            game=hit.name,
+            game=name,
             hook=self.state.hook or titles.pick_hook(self.cfg),
-            session_games=self.state.session_games or [hit.name],
+            session_games=self.state.session_games or [name],
             session_start=start,
             session_number=self.state.session_number,
             blurb=hit.blurb,
@@ -1058,7 +1078,31 @@ class Engine:
             return
         self._disk_checked = now
         free = self._free_gb()
-        if free is None or free >= self.cfg.record.min_free_gb:
+        if free is None:
+            self.disk_free_gb = None
+            return
+        # WHAT THE DASHBOARD SHOWS. `record.warn_free_gb` is on the Settings
+        # page and reads "show a warning on the dashboard once free space
+        # drops under this. Nothing is deleted; this is only a heads-up" --
+        # and nothing anywhere read it, so the only disk signal in the product
+        # was the floor at which the recording is ALREADY being stopped. By
+        # then a session is half saved, which is exactly what a heads-up is
+        # for avoiding.
+        self.disk_free_gb = round(free, 1)
+        warn_at = float(getattr(self.cfg.record, "warn_free_gb", 0) or 0)
+        low = bool(warn_at and free < warn_at)
+        if low and not self._disk_warned:
+            log.warning("%.0f GB free on the recording drive, under the %.0f GB "
+                        "you asked to be warned at", free, warn_at)
+            notify.toast("AutoStream: running low on space",
+                         f"{free:.0f} GB left where the recording is being "
+                         f"written. Nothing has been deleted.")
+        # SAID ONCE PER CROSSING, not once a minute. A notification every
+        # sixty seconds for an hour is a notification nobody reads, and the
+        # dashboard carries the number continuously anyway.
+        self._disk_warned = low
+
+        if free >= self.cfg.record.min_free_gb:
             return
         log.warning("only %.0f GB free on the recording drive (floor %s GB) "
                     "- stopping the recording; the stream carries on",
@@ -1206,10 +1250,32 @@ class Engine:
             )
             if entry and self.cfg.record.auto_scan and recording_path:
                 self.pending_scan = entry
+                self._read_kills(entry)
             if entry and recording_path:
                 self._remind_about_demo(entry)
         except Exception as e:  # noqa: BLE001
             log.warning("could not journal session: %s", e)
+
+    def _read_kills(self, entry: dict) -> None:
+        """Start reading the finished recording for kills, in the background.
+
+        READS AND STOPS. It does not cut: cutting takes the GPU for minutes,
+        writes files nobody asked for, and makes choices -- style, length,
+        minimum kills -- that belong to the person rather than to the end of a
+        stream. What it leaves is the kill list, so opening the Clips page
+        after a stream shows what is in the recording instead of an unread
+        file and an eight-minute wait.
+
+        Never fatal. A session that has just ended correctly must not be able
+        to report a failure because an optional background read did not
+        start.
+        """
+        try:
+            from .clips import prescan, runner as clips_runner
+
+            prescan.start(entry, self.cfg, clips_runner())
+        except Exception as e:  # noqa: BLE001
+            log.info("could not start the background read: %s", e)
 
     def _remind_about_demo(self, entry: dict) -> None:
         """Say so when a match that could have a replay has not got one.

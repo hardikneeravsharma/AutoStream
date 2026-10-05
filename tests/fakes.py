@@ -196,6 +196,8 @@ def engine(phase: str = IDLE, paused: bool = False,
     eng._blank_checked = 0.0
     eng._blank_strikes = 0
     eng._disk_checked = 0.0
+    eng.disk_free_gb = None
+    eng._disk_warned = False
     # tick() drains the command queue before it does anything else, so an
     # engine built this way could not be ticked at all without these two.
     eng._commands = queue.Queue()

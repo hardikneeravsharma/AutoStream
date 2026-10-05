@@ -1464,6 +1464,12 @@ class Server:
             # itself when recording is switched off entirely rather than
             # offering something that would do nothing.
             "record_enabled": bool(cfg.load().record.enabled),
+            # Free space where the recording is being written, and the level
+            # the user asked to hear about. Both, because a number with no
+            # threshold beside it cannot be read as good or bad.
+            "disk_free_gb": getattr(e, "disk_free_gb", None),
+            "disk_warn_gb": float(getattr(cfg.load().record,
+                                          "warn_free_gb", 0) or 0),
             # INSTANT REPLAY, for the strip on the dashboard: whether it is
             # switched on at all, whether OBS is actually holding a buffer
             # right now, and what has been saved this session. The middle one
