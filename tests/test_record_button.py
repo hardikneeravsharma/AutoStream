@@ -108,6 +108,8 @@ def test_the_api_accepts_the_record_command():
 def a_live_engine_with(free_gb, recording=True):
     eng = an_engine(recording=recording)
     eng._disk_checked = 0.0
+    eng.disk_free_gb = None
+    eng._disk_warned = False
     eng._free_gb = lambda: free_gb
     return eng
 

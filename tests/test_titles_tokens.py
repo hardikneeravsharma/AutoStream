@@ -112,6 +112,13 @@ def a_switching_engine():
     eng.state.session_games = ["Counter-Strike 2"]
     eng.state.save = lambda: None            # type: ignore[method-assign]
     eng.streaming = True
+    # Engine.__new__ skips __init__, so the platform the retitle goes through
+    # has to be built here. Bound to eng.yt lazily, because the fake client is
+    # attached after this helper returns.
+    from autostream.platforms.youtube_platform import YouTubePlatform
+
+    eng.platform = YouTubePlatform(eng.cfg, lambda: eng.yt)
+    eng.session = None
     eng._switch_candidate = None
     eng.thumbs = []
     eng._set_thumbnail = lambda: eng.thumbs.append(eng.state.current_game)

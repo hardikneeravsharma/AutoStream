@@ -49,14 +49,68 @@ def is_configured() -> bool:
     and nothing to bind. Sending a clips-only user through a Google OAuth flow
     to reach a page that cuts video files locally is the kind of thing that
     makes people close the app.
+
+    ...and otherwise, DID THE WIZARD EVER FINISH. That is the question this
+    is actually asking, and it took three tries to say so:
+
+      1. A YouTube permanent stream and a Google credential. True of every
+         install that existed when it was written, and of no Twitch user --
+         who owns neither and has no reason to. It held somebody who picked
+         Twitch in a wizard asking them to sign in to Google.
+
+      2. "Yes, always" for anything that was not YouTube. That skipped not
+         the Google steps but the WIZARD: a fresh Twitch install opened on a
+         dashboard with no OBS configured, no apps listed and no stream key.
+
+      3. Ask the platform whether it can stream. Right for a first run and
+         wrong afterwards -- it made the answer a property of the platform in
+         use right now, so switching platform on the dashboard threw a
+         working install back into first-run setup because the new one was
+         not signed in yet.
+
+    A flag the wizard writes once is none of those things. Whether the
+    CURRENT platform can go live is a different question, asked separately
+    and answered on the dashboard, where it belongs.
     """
     try:
         c = cfg.load()
+        if bool(getattr(c.rules, "setup_done", False)):
+            return True
         if not getattr(c.youtube, "enabled", True):
             return True
+        # INSTALLS THAT PREDATE THE FLAG. Everyone set up before it existed
+        # was on YouTube, and these two are what the wizard wrote for them.
+        # SCOPED TO YOUTUBE, because a stream id left over from a YouTube
+        # setup says nothing about a Twitch one -- and without the guard,
+        # turning the flag off to re-run the wizard on a converted install
+        # did nothing at all.
+        if str(getattr(c.youtube, "platform", "") or "youtube").lower() != "youtube":
+            return False
         return bool(c.youtube.stream_id) and paths.TOKEN_FILE.exists()
     except Exception:  # noqa: BLE001
         return False
+
+
+def platform_for(config):
+    """The Platform this config goes live on, built without an engine.
+
+    `is_configured` runs before anything is started -- it is what decides
+    whether the first-run wizard appears at all -- so it cannot ask the
+    engine, which does not exist yet.
+    """
+    name = str(getattr(config.youtube, "platform", "") or "youtube").lower()
+    if name == "twitch":
+        from .platforms.twitch import Twitch
+
+        return Twitch(config)
+    if name == "kick":
+        from .platforms.kick import Kick
+
+        return Kick(config)
+    from .platforms.youtube_platform import YouTubePlatform
+    from .youtube import YouTube
+
+    return YouTubePlatform(config, lambda: YouTube(config, None))
 
 
 def _not_an_image(path: str) -> str | None:
@@ -168,6 +222,14 @@ _CONTENT_TYPES = {
 # Answered WITHOUT the token, before anything else. Only files that are
 # public anyway -- the app's own icon, which every browser asks for unbidden.
 _PUBLIC_FILES = {"/favicon.ico"}
+
+
+# Connects started and not yet finished: state -> what it was for. In memory
+# on purpose, so a state does not survive a restart and cannot be replayed
+# later. Each is spent on first use.
+_PENDING: dict = {}
+# A connect nobody finishes should not sit here for the life of the process.
+_PENDING_TTL = 600.0
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -296,6 +358,63 @@ class _Handler(BaseHTTPRequestHandler):
         from .clips import intros
 
         self._media(path, intros.folder(), (".mp4",), "intro")
+
+    def _oauth_callback(self, u) -> None:
+        """Finish a connect. The browser lands here, not the app."""
+        import time as _t
+
+        q = parse_qs(u.query)
+        want = u.path.rsplit("/", 1)[-1].lower()
+        state = (q.get("state") or [""])[0]
+        code = (q.get("code") or [""])[0]
+        err = (q.get("error_description") or q.get("error") or [""])[0]
+
+        for k, v in list(_PENDING.items()):
+            if _t.monotonic() - v["at"] > _PENDING_TTL:
+                _PENDING.pop(k, None)
+
+        pending = _PENDING.pop(state, None) if state else None
+        if err:
+            self._oauth_page(f"{want.title()} refused: {err}", ok=False)
+            return
+        if not pending or pending["platform"] != want:
+            # A state we did not issue, already spent, or for another
+            # platform. All three are the same answer.
+            self._oauth_page(
+                "That sign-in did not match a connection this app started. "
+                "Press Connect again.", ok=False)
+            return
+        if not code:
+            self._oauth_page(f"{want.title()} sent no code back.", ok=False)
+            return
+        try:
+            self.app.platform_exchange(want, code, pending)
+        except Exception as e:  # noqa: BLE001
+            log.warning("%s connect failed: %s", want, e)
+            self._oauth_page(f"Could not finish: {e}", ok=False)
+            return
+        self._oauth_page(f"{want.title()} is connected. You can close this tab.",
+                         ok=True)
+
+    def _oauth_page(self, message: str, *, ok: bool) -> None:
+        """A plain page, because this tab is not the app.
+
+        No stylesheet and no script: it is opened by the platform's redirect,
+        lives for about three seconds, and loading the app's CSS here would
+        mean a token check this request cannot pass.
+        """
+        import html as _h
+
+        body = (
+            "<!doctype html><meta charset='utf-8'>"
+            "<title>AutoStream</title>"
+            "<body style=\"font:16px/1.5 system-ui;background:#0f1216;"
+            "color:#e6e9ee;display:grid;place-items:center;height:100vh;"
+            "margin:0;text-align:center\">"
+            f"<div><p style='font-size:40px;margin:0'>{'&#10003;' if ok else '&#10007;'}</p>"
+            f"<p>{_h.escape(message)}</p></div>"
+        ).encode("utf-8")
+        self._send(200 if ok else 400, body, "text/html; charset=utf-8")
 
     def _favicon(self) -> None:
         ico = Path(__file__).resolve().parent / "ui" / "assets" / "autostream.ico"
@@ -455,6 +574,14 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         u = urlparse(self.path)
+        if u.path.startswith("/oauth/"):
+            # NOT AUTHED BY THE APP TOKEN, because the browser arrives here
+            # redirected by Twitch or Kick and carries none. What authenticates
+            # it is the `state` this server issued a moment ago, which is the
+            # standard protection and the only one available: a callback the
+            # server cannot match to a connect it started is refused.
+            self._oauth_callback(u)
+            return
         if u.path in _PUBLIC_FILES:
             # Every browser asks for this on its own, never with the token, and
             # a 403 for it was the one error on an otherwise clean console. The
@@ -533,6 +660,8 @@ class _Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/clips/video":
             q = parse_qs(u.query)
             self._video((q.get("path") or [""])[0])
+        elif u.path == "/api/platform/status":
+            self._json(self.app.platform_status())
         elif u.path == "/api/clips/part/status":
             self._json(self.app.clips_part_status())
         elif u.path == "/api/clips/source-info":
@@ -657,7 +786,7 @@ class _Handler(BaseHTTPRequestHandler):
             elif p == "/api/cmd":
                 c = str(b.get("command", ""))
                 if c not in ("stop", "pause", "resume", "toggle_pause",
-                             "record", "quit"):
+                             "record", "replay", "quit"):
                     self._json({"error": "unknown command"}, 400)
                     return
                 if c == "quit":
@@ -895,6 +1024,16 @@ class _Handler(BaseHTTPRequestHandler):
                     missing_only=bool(b.get("missing_only"))))
 
             # ---------- setup ----------
+            elif p == "/api/setup/obs_enable":
+                self._json(self.app.setup.enable_obs_websocket())
+            elif p == "/api/setup/snapshot_only":
+                self._json(self.app.setup.snapshot_only())
+            elif p == "/api/setup/stream_key":
+                self._json(self.app.setup.save_stream_key(
+                    str(b.get("platform", "")), str(b.get("key", ""))))
+            elif p == "/api/setup/platform":
+                self._json(self.app.setup.choose_platform(
+                    str(b.get("platform", ""))))
             elif p == "/api/setup/client_secret":
                 self._json(self.app.setup.save_client_secret(str(b.get("json", ""))))
             elif p == "/api/setup/auth":
@@ -921,7 +1060,8 @@ class _Handler(BaseHTTPRequestHandler):
             elif p == "/api/diagnostics":
                 self._json(self.app.diagnostics())
             elif p == "/api/clips/pick":
-                self._json(self.app.clips_pick(str(b.get("kind") or "video")))
+                self._json(self.app.clips_pick(str(b.get("kind") or "video"),
+                                               multi=bool(b.get("multi"))))
             elif p == "/api/clips/outro-set":
                 self._json(self.app.clips_outro_set(b))
             elif p == "/api/clips/probe":
@@ -934,6 +1074,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.clips_install(b))
             elif p == "/api/clips/voices/install":
                 self._json(self.app.clips_voices_install())
+            elif p == "/api/platform/connect":
+                self._json(self.app.platform_connect(b))
             elif p == "/api/clips/part/preview":
                 self._json(self.app.clips_part_preview(b))
             elif p == "/api/clips/part/save":
@@ -1207,6 +1349,86 @@ class Server:
 
         return Obs(cfg.load())
 
+    def _watch_url(self) -> str:
+        """Where this session can be watched, or None if nothing is live."""
+        e = self.engine
+        try:
+            url = e._watch_url() if e is not None else ""
+        except Exception:                             # noqa: BLE001
+            url = ""
+        if url:
+            return url
+        bid = e.state.broadcast_id if e is not None else ""
+        return f"https://www.youtube.com/watch?v={bid}" if bid else None
+
+    def _replay_bits(self) -> dict:
+        e = self.engine
+        c = cfg.load()
+        on = bool(getattr(c.record, "replay_enabled", False))
+        saved = list(getattr(e, "replays", []) or []) if e is not None else []
+        # Asked of OBS only while it is meant to be running: a websocket round
+        # trip on every two-second poll, for an answer that is always False,
+        # is a connection attempt a minute for nothing.
+        armed = False
+        if on and e is not None:
+            try:
+                armed = bool(e.obs.replay_active())
+            except Exception:                            # noqa: BLE001
+                armed = False
+        return {
+            "replay_enabled": on,
+            "replay_armed": armed,
+            "replay_seconds": int(getattr(c.record, "replay_seconds", 30) or 30),
+            "replay_saved": len(saved),
+            "replay_last": (Path(saved[-1]).name if saved else None),
+        }
+
+    def _platform_bits(self) -> dict:
+        """Which platform, its name, and what it can do.
+
+        Read from the live platform object rather than from the config string
+        so that the capability flags come from the one place that defines
+        them. A clips-only install has no platform at all, and answers
+        YouTube's shape, which is what the rest of the page already assumes.
+        """
+        pl = getattr(self.engine, "platform", None)
+        caps = getattr(pl, "caps", None)
+        # CAN IT ACTUALLY GO LIVE. Worth knowing before a game starts rather
+        # than from a toast after one does: picking Kick and not signing in
+        # is one press away from a session that aborts on the first thing it
+        # tries. `ready` and not `preflight` -- preflight is asked once, at
+        # the top of a session, and may log or spend quota; this is asked on
+        # every two-second poll. Calling preflight here put Twitch's "not
+        # connected" warning in the log thirty times a minute.
+        ready, why = True, ""
+        try:
+            if pl is not None:
+                ready, why = pl.ready()
+        except Exception as e:                           # noqa: BLE001
+            ready, why = False, str(e)
+        # THE SIGN-IN THAT IS ABOUT TO STOP WORKING. Only YouTube has this
+        # failure, and only while the Google app is unpublished -- see
+        # youtube.sign_in_health for why that cannot simply be asked. Said
+        # while the fix is still a button rather than a sign-in.
+        signin = {"warn": False, "why": ""}
+        if getattr(pl, "name", "") == "youtube":
+            try:
+                from .youtube import sign_in_health
+
+                signin = sign_in_health()
+            except Exception:                            # noqa: BLE001
+                pass
+        return {
+            "platform": getattr(pl, "name", "") or "youtube",
+            "platform_label": getattr(pl, "label", "") or "YouTube",
+            "platform_ready": ready,
+            "platform_why": why,
+            "signin_warn": bool(signin.get("warn")),
+            "signin_why": str(signin.get("why") or ""),
+            "has_quota": bool(getattr(caps, "has_quota", True)),
+            "has_chat": bool(getattr(caps, "has_chat", True)),
+        }
+
     def status(self) -> dict:
         e = self.engine
         s = e.state
@@ -1229,13 +1451,33 @@ class Server:
             "chat": list(getattr(e, "chat", []))[-60:],
             "apps": self.apps_payload(),
             "elapsed": (int(time.time() - s.session_start) if s.session_start else None),
-            "url": (f"https://www.youtube.com/watch?v={s.broadcast_id}"
-                    if s.broadcast_id else None),
+            # ASKED OF THE PLATFORM, not built from the id. This was
+            # f"youtube.com/watch?v={id}" inline, which is true of exactly one
+            # of the three -- a Twitch session's url is the channel, and the
+            # button under it says "Open on YouTube".
+            "url": self._watch_url(),
+            # Which platform this install goes live on, and what to call it.
+            # The dashboard uses these to name its own buttons and to drop the
+            # cards that describe something the platform does not have.
+            **self._platform_bits(),
             "recording": bool(getattr(s, "recording", False)),
             # So the button can say Record or Stop recording, and disable
             # itself when recording is switched off entirely rather than
             # offering something that would do nothing.
             "record_enabled": bool(cfg.load().record.enabled),
+            # Free space where the recording is being written, and the level
+            # the user asked to hear about. Both, because a number with no
+            # threshold beside it cannot be read as good or bad.
+            "disk_free_gb": getattr(e, "disk_free_gb", None),
+            "disk_warn_gb": float(getattr(cfg.load().record,
+                                          "warn_free_gb", 0) or 0),
+            # INSTANT REPLAY, for the strip on the dashboard: whether it is
+            # switched on at all, whether OBS is actually holding a buffer
+            # right now, and what has been saved this session. The middle one
+            # is the answer that matters -- "on" in the config and not running
+            # in OBS is the whole failure mode, and without it the only sign
+            # was a hotkey that did nothing.
+            **self._replay_bits(),
             # So the UI can stop saying LIVE about a session that is only
             # recording, and hide the things a broadcast would have.
             "streaming": bool(getattr(e, "streaming", True)),
@@ -2731,6 +2973,81 @@ class Server:
                 "default": v.VOICE, "sample_line": v.SAMPLE_LINE,
                 "can_install": False, "job": job}
 
+    # ---- connecting Twitch or Kick -------------------------------------
+
+    def _platform_obj(self, name: str):
+        name = (name or "").lower()
+        if name == "twitch":
+            from .platforms.twitch import Twitch
+
+            return Twitch(cfg.load())
+        if name == "kick":
+            from .platforms.kick import Kick
+
+            return Kick(cfg.load())
+        return None
+
+    def platform_status(self) -> dict:
+        """Which platforms are set up, and which are connected.
+
+        Two different states and the Settings page needs both: credentials in
+        secrets/ mean the app CAN ask, and a token means the user has said
+        yes. Reporting one number would make "paste the client id" and "press
+        Connect" look like the same step.
+        """
+        out = {}
+        for name in ("twitch", "kick"):
+            p = self._platform_obj(name)
+            try:
+                out[name] = {"configured": bool(p and p.configured()),
+                             "connected": bool(p and p.connected())}
+            except Exception:                            # noqa: BLE001
+                out[name] = {"configured": False, "connected": False}
+        return {"ok": True, "platforms": out}
+
+    def platform_connect(self, body: dict) -> dict:
+        """Start a connect. -> the URL for the browser to open."""
+        import secrets as _s
+        import time as _t
+
+        name = str(body.get("platform") or "").lower()
+        p = self._platform_obj(name)
+        if p is None:
+            return {"error": "Not a platform this app connects to."}
+        if not p.configured():
+            return {"error": f"{p.label} needs its client id and secret in "
+                             f"secrets/{name}.json first."}
+        port = int(getattr(cfg.load().rules, "web_port", 8787) or 8787)
+        redirect = f"http://localhost:{port}/oauth/{name}"
+        state = _s.token_urlsafe(24)
+        try:
+            if name == "kick":
+                from .platforms.kick import pkce_pair
+
+                verifier, challenge = pkce_pair()
+                url = p.authorize_url(state, challenge, redirect)
+                _PENDING[state] = {"platform": name, "verifier": verifier,
+                                   "redirect": redirect, "at": _t.monotonic()}
+            else:
+                url = p.authorize_url(state, redirect)
+                _PENDING[state] = {"platform": name, "verifier": "",
+                                   "redirect": redirect, "at": _t.monotonic()}
+        except Exception as e:                           # noqa: BLE001
+            return {"error": str(e)}
+        log.info("connecting %s: waiting for the browser", name)
+        return {"ok": True, "url": url, "redirect": redirect}
+
+    def platform_exchange(self, name: str, code: str, pending: dict) -> None:
+        """Finish a connect. Raises on anything that went wrong."""
+        p = self._platform_obj(name)
+        if p is None:
+            raise RuntimeError("Not a platform this app connects to.")
+        if name == "kick":
+            p.exchange(code, pending.get("verifier", ""),
+                       pending.get("redirect", ""))
+        else:
+            p.exchange(code, pending.get("redirect", ""))
+
     def clips_voices_install(self) -> dict:
         """Download the voice model, at the user's asking.
 
@@ -3844,8 +4161,14 @@ class Server:
         return re.sub(r"([?&]k=)[^\s&\"']+",
                       lambda m: m.group(1) + "(removed)", text)
 
-    def clips_pick(self, kind: str = "video") -> dict:
-        """Ask the OS for a file. -> {ok, path} or {error}.
+    def clips_pick(self, kind: str = "video", multi: bool = False) -> dict:
+        """Ask the OS for a file. -> {ok, path, paths} or {error}.
+
+        `multi` offers more than one, for the Studio's "Add your own clip" --
+        somebody with a folder of twenty did the whole dance twenty times.
+        `path` is still the first of them, because every other caller of this
+        reads that key and none of them wants a list: a reel takes one song,
+        an intro one GIF, a run one recording.
 
         `kind` only changes the filter and the title: a reel needs a song,
         an intro needs a GIF, and everything else about choosing one is
@@ -3905,25 +4228,44 @@ class Server:
                 title = "Choose a video to clip"
                 types = [("Video", "*.mp4 *.mkv *.mov *.flv *.avi *.ts *.webm"),
                          ("All files", "*.*")]
-            chosen = filedialog.askopenfilename(parent=root, title=title, filetypes=types)
+            if multi:
+                picked = list(filedialog.askopenfilenames(
+                    parent=root, title=title, filetypes=types) or ())
+            else:
+                one = filedialog.askopenfilename(parent=root, title=title,
+                                                 filetypes=types)
+                picked = [one] if one else []
             root.destroy()
         except Exception as e:  # noqa: BLE001
             return {"error": f"Could not open the file picker: {str(e)[:160]}"}
-        if not chosen:
-            return {"ok": True, "path": ""}          # cancelled, not an error
-        path = Path(chosen)
-        if not path.is_file():
+        if not picked:
+            return {"ok": True, "path": "", "paths": []}   # cancelled
+        # EVERY ONE IS REGISTERED, not just the first. `_picked` is what lets a
+        # file be streamed back to the page, and a second clip that could not
+        # be played would look like a broken import rather than a missed line.
+        gone = [p for p in picked if not Path(p).is_file()]
+        picked = [p for p in picked if Path(p).is_file()]
+        if not picked:
             return {"error": "That file is not there any more."}
+        for one in picked:
+            self._picked.add(str(Path(one)).lower())
+        path = Path(picked[0])
         # REMEMBERED THE MOMENT THE DIALOG RETURNS. This path came out of a
         # picker the user drove, so it is unambiguously one they pointed the
         # app at -- which is what lets it be streamed back to the page. It
         # used to be learned from the probe instead, and the probe is fired
         # without being waited for, so the part stage asked whether it could
         # play the file before anything had registered it and was told no.
-        self._picked.add(str(path).lower())
         out = {"ok": True, "path": str(path), "name": path.name,
+               "paths": [str(Path(one)) for one in picked],
                "bytes": path.stat().st_size,
                "size_mb": round(path.stat().st_size / (1024 * 1024))}
+        if gone:
+            # Said rather than silently dropped: a folder picked from a
+            # network share can lose files between the dialog and the answer,
+            # and "I chose twenty and got nineteen" with no explanation is
+            # the kind of thing nobody reports and everybody notices.
+            out["missing"] = [Path(g).name for g in gone]
         # An intro is measured by intros.add() a moment later, and clips_probe
         # also goes looking for a matching replay -- work with no answer to
         # give about a GIF.

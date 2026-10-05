@@ -74,6 +74,8 @@ DASH_HTML: str = """
     <div class="status-timer mono" id="dash-timer" aria-label="Session elapsed">--:--:--</div>
   </section>
 
+  <p class="field-warn hide" id="dash-disk" role="status" aria-live="polite"></p>
+
   <!-- Cancel bar: appears only while a countdown is running, so the abort
        window is a button rather than a hotkey you have to remember. -->
   <div class="abort-bar hide" id="dash-abort">
@@ -104,6 +106,33 @@ DASH_HTML: str = """
       <div class="stat-delta" id="dash-delta-views"></div>
     </button>
   </div>
+
+  <!-- INSTANT REPLAY. The frames are already in memory, so this is the one
+       thing on the page that produces a clip with no scan and no wait -- and
+       it works in a game AutoStream cannot read a word of.
+
+       Beside the graph strip rather than in it: the three above are series
+       the graph can draw and this is not one, so putting it in the same
+       tablist would offer a tab that draws nothing. -->
+  <section class="card replay-card hide" id="dash-replay">
+    <div class="card-head">
+      <div>
+        <div class="card-title">Instant replay</div>
+        <div class="card-sub" id="dash-replay-sub">The last few seconds, kept</div>
+      </div>
+      <span class="pill pill-idle" id="dash-replay-pill"><i></i><span
+            id="dash-replay-state">OFF</span></span>
+    </div>
+    <div class="card-body">
+      <div class="replay-row">
+        <button type="button" class="btn btn-primary" id="dash-btn-replay"
+                data-act="dash-save-replay">
+          <span>Save the last 30 seconds</span>
+        </button>
+        <span class="status-meta" id="dash-replay-note"></span>
+      </div>
+    </div>
+  </section>
 
   <section class="card spark-card" id="dash-spark-card">
     <div class="card-head">
@@ -166,11 +195,45 @@ DASH_HTML: str = """
     </div>
   </section>
 
+  <!-- WHERE YOU GO LIVE. This lived only in Settings, three clicks and a
+       scroll away, which made the one thing you want to check before pressing
+       go the hardest thing on the page to find. It is a setting, but it is
+       the setting you change most often and the one whose value you most want
+       to see without changing anything -- so it reads as a row you can
+       confirm at a glance and change in one click.
+
+       Locked while a session is running: switching platform mid-broadcast
+       would leave the stream going on one service and the engine talking to
+       another. -->
+  <section class="card" id="dash-where">
+    <div class="card-head">
+      <div>
+        <div class="card-title">Where you go live</div>
+        <div class="card-sub" id="dash-where-sub">Pick a platform before you start</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="seg" id="dash-where-seg" role="radiogroup"
+           aria-label="Streaming platform">
+        <button type="button" class="seg-btn" role="radio" aria-checked="false"
+                data-act="dash-where-platform"
+                data-platform="youtube"><span>YouTube</span></button>
+        <button type="button" class="seg-btn" role="radio" aria-checked="false"
+                data-act="dash-where-platform"
+                data-platform="twitch"><span>Twitch</span></button>
+        <button type="button" class="seg-btn" role="radio" aria-checked="false"
+                data-act="dash-where-platform"
+                data-platform="kick"><span>Kick</span></button>
+      </div>
+      <p class="field-help" id="dash-where-note"></p>
+    </div>
+  </section>
+
   <section class="card" id="dash-session">
     <div class="card-head">
       <div>
         <div class="card-title">Session</div>
-        <div class="card-sub">Today's YouTube API budget</div>
+        <div class="card-sub" id="dash-session-sub">Today's YouTube API budget</div>
       </div>
     </div>
     <div class="card-body">
@@ -195,7 +258,7 @@ DASH_HTML: str = """
     </button>
     <a class="btn btn-ghost hide" id="dash-btn-open"
        href="#" target="_blank" rel="noreferrer noopener">
-      <span>Open on YouTube</span>
+      <span>Open stream</span>
     </a>
   </div>
 
@@ -793,6 +856,198 @@ function dash_renderSession(s) {
   }
 }
 
+/* ----------------------------- instant replay --------------------------
+
+   The frames are already in OBS's memory, so pressing this is a request and
+   a filename back -- no scan, no wait, and no detector, which is why it is
+   the one clip feature that works in every game.
+
+   WHAT THE PILL IS FOR. "On" in the config and not actually running in OBS is
+   the whole failure mode here: OBS refuses to hold a buffer unless it is
+   switched on in its own Output settings, and without this readout the only
+   sign was a hotkey that did nothing. So the pill reports what OBS is doing,
+   not what the config says. */
+
+let dash_replayState = null;
+let dash_replayBusy = false;
+
+function dash_renderReplay(s) {
+  const card = dash_el('dash-replay');
+  if (!card) return;
+  const on = !!s.replay_enabled;
+  card.classList.toggle('hide', !on);
+  if (!on) { dash_replayState = null; return; }
+
+  const armed = !!s.replay_armed;
+  const saved = dash_int(s.replay_saved) || 0;
+  const secs = dash_int(s.replay_seconds) || 30;
+
+  const btn = dash_el('dash-btn-replay');
+  if (btn) btn.disabled = dash_replayBusy || !armed;
+
+  const key = armed + '|' + saved + '|' + secs + '|' + (s.replay_last || '') +
+              '|' + dash_replayBusy;
+  if (dash_replayState === key) return;
+  dash_replayState = key;
+
+  dash_pill('dash-replay-pill', 'dash-replay-state',
+            armed ? 'live' : 'warn', armed ? 'READY' : 'NOT RUNNING');
+
+  const label = btn ? btn.querySelector('span') : null;
+  if (label) label.textContent = 'Save the last ' + secs + ' seconds';
+
+  const sub = dash_el('dash-replay-sub');
+  if (sub) sub.textContent = armed
+    ? 'The last ' + secs + ' seconds, kept in memory'
+    : 'Waiting for OBS to start the buffer';
+
+  const note = dash_el('dash-replay-note');
+  if (note) {
+    if (!armed) {
+      /* NAMES THE SETTING, because this is almost always one switch in OBS
+         rather than anything wrong. */
+      note.textContent = 'OBS is not holding a buffer. Turn on Replay Buffer ' +
+        'under Settings → Output in OBS, then start a session.';
+    } else if (!saved) {
+      note.textContent = 'Nothing saved yet this session.';
+    } else {
+      note.textContent = (saved === 1 ? '1 replay' : saved + ' replays') +
+        ' saved' + (s.replay_last ? ' — last: ' + s.replay_last : '');
+    }
+  }
+}
+
+async function dash_saveReplay() {
+  if (dash_replayBusy) return;
+  dash_replayBusy = true;
+  dash_replayState = null;
+  dash_renderReplay(dash_last || {});
+  try {
+    const r = await API.post('/api/cmd', { command: 'replay' });
+    if (r && r.error) throw new Error(r.error);
+    toast('Saving that moment...', 'ok');
+  } catch (e) {
+    toast('Could not save a replay.', 'error');
+  }
+  /* The engine saves on its own thread and OBS takes a moment to mux, so the
+     count arrives on a later poll rather than from this response. */
+  window.setTimeout(function () {
+    dash_replayBusy = false;
+    dash_replayState = null;
+    dash_renderReplay(dash_last || {});
+  }, 1500);
+}
+
+/* ----------------------------- where you go live -----------------------
+
+   The same key the Settings page edits (`youtube.platform`), saved through
+   the same endpoint, so there is one validator and no second way for this
+   value to become something the engine cannot read.
+
+   LOCKED WHILE LIVE. Switching platform during a session would leave OBS
+   pushing to one service while the engine retitled a broadcast on another,
+   and the symptom -- a stream that is up but that AutoStream has stopped
+   describing -- is hard to connect back to a button press. */
+
+let dash_platform = null;       /* what the page is showing right now */
+let dash_platformBusy = false;
+
+function dash_renderWhere(s) {
+  const now = s.platform || 'youtube';
+  const live = dash_ACTIVE.indexOf(s.phase || 'IDLE') >= 0;
+
+  const seg = dash_el('dash-where-seg');
+  if (seg) {
+    const btns = seg.querySelectorAll('.seg-btn');
+    for (let i = 0; i < btns.length; i++) {
+      const mine = btns[i].getAttribute('data-platform') === now;
+      btns[i].classList.toggle('is-active', mine);
+      btns[i].setAttribute('aria-checked', mine ? 'true' : 'false');
+      btns[i].disabled = dash_platformBusy || live;
+    }
+  }
+
+  /* Rewritten only when something changed: this runs on every two-second
+     poll and the note is read, not watched. */
+  const key = now + '|' + live + '|' + !!s.streaming + '|' +
+              (s.platform_ready === false) + '|' + (s.platform_why || '') +
+              '|' + (s.signin_why || '');
+  if (dash_platform === key) return;
+  dash_platform = key;
+
+  const note = dash_el('dash-where-note');
+  if (note) {
+    /* WHAT WOULD STOP IT, FIRST. A platform that cannot go live is worth
+       saying before a game starts; the alternative is finding out from a
+       toast after one does, with the session already abandoned. */
+    if (s.streaming === false) {
+      note.textContent = 'Going live is switched off, so this install only ' +
+        'records and cuts clips. Turn it on under Settings → Stream.';
+    } else if (live) {
+      note.textContent = 'Locked while a session is running. End the stream ' +
+        'to switch platform.';
+    } else if (s.platform_ready === false) {
+      note.textContent = s.platform_why ||
+        ((s.platform_label || now) + ' is not set up yet.');
+    } else if (s.signin_warn) {
+      /* IT CAN GO LIVE TODAY AND MAY NOT TOMORROW. A Google app left in
+         Testing issues sign-ins that die at about seven days, and the symptom
+         is streaming that silently stops working days after a setup that went
+         perfectly. Said while the fix is still one button. */
+      note.textContent = s.signin_why;
+    } else if (now === 'youtube') {
+      note.textContent = 'YouTube holds the broadcast in a private preview ' +
+        'first, so there is a countdown you can still cancel in.';
+    } else {
+      note.textContent = (s.platform_label || now) + ' is live the moment ' +
+        'the stream reaches it — there is no countdown and nothing to ' +
+        'cancel.' + (s.platform_why ? ' ' + s.platform_why : '');
+    }
+    note.classList.toggle('field-error', s.platform_ready === false);
+    note.classList.toggle('field-warn',
+      s.platform_ready !== false && !!s.signin_warn);
+  }
+
+  const sub = dash_el('dash-where-sub');
+  if (sub) {
+    sub.textContent = live
+      ? 'Streaming to ' + (s.platform_label || now)
+      : 'Pick a platform before you start';
+  }
+}
+
+async function dash_setPlatform(name) {
+  if (!name || dash_platformBusy) return;
+  if (dash_last && (dash_last.platform || 'youtube') === name) return;
+  dash_platformBusy = true;
+  dash_platform = null;                  /* force the note to be rewritten */
+  dash_renderWhere(dash_last || {});
+  try {
+    const body = {};
+    body['youtube.platform'] = name;
+    const r = await API.post('/api/settings/save', { values: body });
+    if (r && r.errors && r.errors['youtube.platform']) {
+      throw new Error(r.errors['youtube.platform']);
+    }
+    if (r && r.error) throw new Error(r.error);
+    /* Paint it now rather than waiting up to two seconds for the next poll:
+       a segmented control that does not move when pressed reads as broken. */
+    if (dash_last) {
+      dash_last.platform = name;
+      const seg = dash_el('dash-where-seg');
+      const btn = seg ? seg.querySelector('[data-platform="' + name + '"]') : null;
+      dash_last.platform_label = btn ? btn.textContent.trim() : name;
+    }
+    toast('Going live on ' + ((dash_last && dash_last.platform_label) || name) +
+          ' from the next session.', 'ok');
+  } catch (e) {
+    toast('Could not switch platform. ' + (e.message || ''), 'error');
+  }
+  dash_platformBusy = false;
+  dash_platform = null;
+  dash_renderWhere(dash_last || {});
+}
+
 /* null so the first paint always writes a label, whichever mode it is in. */
 let dash_stopClipsOnly = null;
 let dash_recState = null;
@@ -824,11 +1079,18 @@ function dash_applyActions(s) {
      exist in clips-only mode. The STOP BUTTON STAYS -- a recording still has
      to be stoppable -- but it cannot go on calling itself "End stream". */
   const clipsOnly = s.streaming === false;
-  /* The API budget too: with YouTube off nothing spends it. */
-  ['dash-stats', 'dash-chat', 'dash-session'].forEach(function (id) {
+  ['dash-stats', 'dash-chat'].forEach(function (id) {
     const el = dash_el(id);
     if (el) el.classList.toggle('hide', clipsOnly);
   });
+  /* The API budget belongs to YouTube. With YouTube off nothing spends it,
+     and on Twitch or Kick there is no budget to spend -- a meter reading
+     "0 / 10,000 units" on a Twitch stream is describing another service. */
+  const quota = dash_el('dash-session');
+  if (quota) quota.classList.toggle('hide', clipsOnly || s.has_quota === false);
+  /* Chat is read through the platform, and only YouTube is wired for it. */
+  const chat = dash_el('dash-chat');
+  if (chat && !clipsOnly) chat.classList.toggle('hide', s.has_chat === false);
 
   /* The recording is a separate thing from the broadcast: it is the master the
      clips are cut from, and it used to begin and end with the session with no
@@ -866,6 +1128,10 @@ function dash_applyActions(s) {
     const url = s.url || '';
     open.classList.toggle('hide', !url);
     if (url && open.getAttribute('href') !== url) open.setAttribute('href', url);
+    /* It used to say "Open on YouTube" whatever it opened. */
+    const want = 'Open on ' + (s.platform_label || 'YouTube');
+    const span = open.querySelector('span');
+    if (span && span.textContent !== want) span.textContent = want;
   }
 }
 
@@ -1200,6 +1466,19 @@ function dash_wire() {
     });
   }
 
+  const rb = dash_el('dash-btn-replay');
+  if (rb) rb.addEventListener('click', dash_saveReplay);
+
+  /* The platform chooser. Delegated from the group so the three buttons do
+     not each need a listener. */
+  const seg = dash_el('dash-where-seg');
+  if (seg) {
+    seg.addEventListener('click', function (ev) {
+      const b = ev.target.closest ? ev.target.closest('.seg-btn') : null;
+      if (b && !b.disabled) dash_setPlatform(b.getAttribute('data-platform'));
+    });
+  }
+
   /* Canvas has no intrinsic reflow: it must be told to redraw. */
   let rs = 0;
   window.addEventListener('resize', function () {
@@ -1236,6 +1515,8 @@ function dash_onTick(status) {
   dash_renderRing(s);
   dash_renderSpark(s);
   dash_applyActions(s);
+  dash_renderReplay(s);
+  dash_renderWhere(s);
   dash_renderChat(s);
   dash_audioLoad(false);
   dash_last = s;

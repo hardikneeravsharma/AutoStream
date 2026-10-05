@@ -63,6 +63,15 @@ def explain_auth_error(err: Exception) -> str:
     return raw[:300]
 
 
+def _obs_running() -> bool:
+    from .obs import _obs_process_alive
+
+    try:
+        return _obs_process_alive()
+    except Exception:                                    # noqa: BLE001
+        return False
+
+
 def _check(fields: dict) -> str | None:
     """The Settings page's validation, for a wizard step. -> the first
     problem, named, or None."""
@@ -84,6 +93,8 @@ class SetupFlow:
         self._apps: list = []
         self._auth_lock = threading.Lock()
         self._auth_url = ""
+        # Why this channel cannot go live, if the sign-in found a reason.
+        self._live_why = ""
 
     # ---------------- state shown to the UI ----------------
 
@@ -116,7 +127,85 @@ class SetupFlow:
             "headline": c.thumbnail.headline,
             "subtitle": c.thumbnail.subtitle,
             "usernames": self._usernames(),
+            # WHICH SERVICE THIS INSTALL IS BEING SET UP FOR. The wizard was
+            # YouTube end to end -- a Google Cloud project, an OAuth round
+            # trip and a permanent ingestion stream -- none of which a Twitch
+            # user has any use for. The step list is built from this.
+            "platform": str(getattr(c.youtube, "platform", "") or "youtube"),
+            "platform_ready": self._platform_ready(),
+            # Empty unless the sign-in found that this channel cannot go live.
+            # Carried in the snapshot so it survives stepping back and forth
+            # rather than living only in one response.
+            "live_why": getattr(self, "_live_why", ""),
         }
+
+    @staticmethod
+    def _platform_ready() -> dict:
+        """Whether the chosen platform could go live, and what is missing."""
+        try:
+            from .webui import platform_for
+
+            p = platform_for(cfg.load())
+            ok, why = p.ready()
+            return {"name": p.name, "label": p.label, "ok": bool(ok), "why": why}
+        except Exception as e:                           # noqa: BLE001
+            return {"name": "", "label": "", "ok": False, "why": str(e)[:200]}
+
+    def snapshot_only(self) -> dict:
+        """The current state and nothing else.
+
+        The sign-in step polls this while the user is away in their browser:
+        the callback lands on this same server, so the page has no other way
+        to find out that it happened.
+        """
+        return {"ok": True, "setup": self.snapshot()}
+
+    def save_stream_key(self, platform: str, key: str) -> dict:
+        """Write a pasted stream key into the platform's own credentials.
+
+        TWITCH ONLY, in practice. Kick's key comes from its API under
+        `streamkey:read`, so there is nothing to paste; Twitch has no endpoint
+        for it and never will, which is why `fetches_stream_key` is a
+        capability rather than an assumption.
+        """
+        want = str(platform or "").lower()
+        if want not in ("twitch", "kick"):
+            return {"ok": False, "error": "That platform has no key to paste."}
+        key = str(key or "").strip()
+        if not key:
+            return {"ok": False, "error": "No key given."}
+        if any(c.isspace() for c in key):
+            return {"ok": False,
+                    "error": "That key has a space in it. It looks like a "
+                             "label was copied with the value."}
+        from . import paths
+
+        f = paths.SECRETS_DIR / f"{want}.json"
+        try:
+            data = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+        data["stream_key"] = key
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except OSError as e:
+            return {"ok": False, "error": f"Could not write {f.name}: {e}"}
+        log.info("setup: %s stream key saved", want)
+        return {"ok": True, "setup": self.snapshot()}
+
+    def choose_platform(self, name: str) -> dict:
+        """Record which service this install goes live on, and turn going
+        live on -- somebody who got here chose "Stream and clip"."""
+        want = str(name or "").lower()
+        if want not in ("youtube", "twitch", "kick"):
+            return {"ok": False, "error": "Not a platform this app streams to."}
+        cfg.save_field("youtube", "platform", want)
+        cfg.save_field("youtube", "enabled", True)
+        log.info("setup: going live on %s", want)
+        return {"ok": True, "setup": self.snapshot()}
 
     @staticmethod
     def _usernames() -> dict:
@@ -146,7 +235,8 @@ class SetupFlow:
         re-arms the full wizard on the next start.
         """
         cfg.save_field("youtube", "enabled", False)
-        log.info("setup: clips-only mode - YouTube is off, no sign-in needed")
+        cfg.save_field("rules", "setup_done", True)
+        log.info("setup: clips-only mode - no sign-in needed")
         return {"ok": True, "setup": self.snapshot()}
 
     # ---------------- step 1: client secret ----------------
@@ -254,7 +344,17 @@ class SetupFlow:
                          on_url=lambda u: setattr(self, "_auth_url", u))
             self._channel = yt.channel_title()
             log.info("authorised as %s", self._channel)
-            return {"ok": True, "setup": self.snapshot()}
+            # ASKED NOW, NOT AT GO-LIVE. Live streaming is off by default on a
+            # new channel and can take 24 hours to come through once switched
+            # on. Discovered at the first session that is an evening wasted;
+            # discovered here it is a sentence, and the wait runs while the
+            # rest of setup is being done anyway. One quota unit.
+            live_ok, live_why = yt.live_enabled()
+            self._live_why = "" if live_ok else live_why
+            if not live_ok:
+                log.warning("live streaming is not available: %s", live_why)
+            return {"ok": True, "setup": self.snapshot(),
+                    "live_ok": live_ok, "live_why": live_why}
         except Exception as e:  # noqa: BLE001
             if type(e).__name__ == "WSGITimeoutError":
                 log.warning("setup auth: nothing came back from the browser "
@@ -302,6 +402,30 @@ class SetupFlow:
 
     # ---------------- step 3: OBS ----------------
 
+    def enable_obs_websocket(self) -> dict:
+        """Switch OBS's WebSocket server on, and put the result in the form.
+
+        THE STEP PEOPLE STOP AT. Six instructions about a dialog in another
+        application, and the last of them is copying a generated password by
+        hand -- which fails silently, because a wrong character looks exactly
+        like OBS not running.
+        """
+        from .obs import enable_websocket, find_obs_exe
+
+        c = cfg.load()
+        exe = (c.obs.path if c.obs.path and os.path.exists(c.obs.path)
+               else find_obs_exe())
+        got = enable_websocket(exe)
+        if not got["ok"]:
+            return {"ok": False, "error": got["why"]}
+        # Into the form, not into the config: the same reasoning as detect_obs.
+        # The person in front of it can see whether it looks right, and Test
+        # connection is what proves it.
+        return {"ok": True, "port": got["port"], "password": got["password"],
+                "path": got["path"], "exe": exe,
+                "hint": ("Switched on. Start OBS, then press Test connection -- "
+                         "OBS reads these when it opens.")}
+
     def detect_obs(self) -> dict:
         """Read OBS's own WebSocket settings rather than asking for them.
 
@@ -322,12 +446,26 @@ class SetupFlow:
         exe = c.obs.path if c.obs.path and os.path.exists(c.obs.path) else find_obs_exe()
         found = discover_websocket(exe)
         out = {"ok": True, "exe": exe, **found}
+        # CAN IT BE DONE FOR THEM. Every one of those instructions writes a
+        # single JSON file, and AutoStream can write it -- but only while OBS
+        # is shut, because OBS rewrites it from memory when it closes. The
+        # page needs to know which of the two situations it is in before it
+        # offers a button that would silently do nothing.
+        out["can_fix"] = not _obs_running()
         if not found["found"]:
-            out["hint"] = ("OBS has not been given WebSocket settings yet. In OBS: "
-                           "Tools > WebSocket Server Settings, tick Enable, then Apply.")
+            out["hint"] = ("OBS has not been given WebSocket settings yet. "
+                           + ("AutoStream can switch them on for you."
+                              if out["can_fix"] else
+                              "Close OBS and AutoStream can switch them on for "
+                              "you, or do it in OBS: Tools > WebSocket Server "
+                              "Settings, tick Enable, then Apply."))
         elif not found["enabled"]:
-            out["hint"] = ("Found the settings, but the server is switched off. Tick "
-                           "Enable WebSocket server in OBS and click Apply.")
+            out["hint"] = ("Found the settings, but the server is switched off. "
+                           + ("AutoStream can switch it on for you."
+                              if out["can_fix"] else
+                              "Close OBS and AutoStream can switch it on, or "
+                              "tick Enable WebSocket server in OBS and click "
+                              "Apply."))
         elif not found["auth_required"]:
             out["hint"] = "Found it. This server has authentication off, so no password."
         else:
@@ -486,6 +624,9 @@ class SetupFlow:
 
         c = cfg.load()
         state = State.load()
+        want = str(getattr(c.youtube, "platform", "") or "youtube").lower()
+        if want != "youtube":
+            return self._finish_rtmp(want)
         try:
             yt = YouTube(c, state)
             yt.authorise(interactive=False)
@@ -536,6 +677,54 @@ class SetupFlow:
         except Exception:  # noqa: BLE001
             pass
 
+        cfg.save_field("rules", "setup_done", True)
         state.save()
         log.info("setup complete")
+        return {"ok": True}
+
+    def _finish_rtmp(self, want: str) -> dict:
+        """Finish for a platform that pushes to a persistent key.
+
+        NOTHING IS CREATED. There is no broadcast object to make, no quota to
+        spend and no stream to bind -- the channel is live the moment OBS
+        pushes, so the whole of finishing is writing the key into OBS once.
+        Running YouTube's path here would have created a YouTube broadcast for
+        somebody who is not streaming to YouTube.
+        """
+        from .obs import Obs
+        from .state import State
+        from .webui import platform_for
+
+        try:
+            p = platform_for(cfg.load())
+            ok, why = p.ready()
+            if not ok:
+                return {"ok": False, "error": why}
+            server, key = p.ingest()
+        except Exception as e:                           # noqa: BLE001
+            return {"ok": False,
+                    "error": f"Could not read the {want} stream key: {str(e)[:200]}"}
+        if not (server and key):
+            return {"ok": False,
+                    "error": f"No {want} stream key to give OBS. Sign in again "
+                             f"on the Settings page."}
+        try:
+            obs = Obs(cfg.load())
+            obs.configure_stream(server, key)
+            scenes = obs.scene_names()
+            obs.close()
+        except Exception as e:                           # noqa: BLE001
+            return {"ok": False, "error": f"OBS refused the key: {str(e)[:200]}"}
+
+        if scenes and not cfg.load().obs.default_scene:
+            cfg.save_field("obs", "default_scene", scenes[0])
+        try:
+            from .gameindex import GameIndex
+
+            GameIndex(cfg.load()).refresh(force=True)
+        except Exception:                                # noqa: BLE001
+            pass
+        cfg.save_field("rules", "setup_done", True)
+        State.load().save()
+        log.info("setup complete (%s)", want)
         return {"ok": True}

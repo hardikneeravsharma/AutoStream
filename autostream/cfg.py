@@ -20,6 +20,12 @@ DEFAULTS: dict[str, Any] = {
         # records it and still cuts clips, and never touches the YouTube API.
         # Nothing below this line is read while it is off.
         "enabled": True,
+        # WHERE A BROADCAST GOES. Under `youtube` rather than a section of its
+        # own because every config file in the field already has this block,
+        # and a new top-level key would be absent from all of them -- the
+        # default has to live where existing installs will read it. Defaults
+        # to youtube so nothing migrates silently.
+        "platform": "youtube",
         "privacy": "unlisted",
         "latency": "low",
         "category_id": "20",
@@ -54,6 +60,10 @@ DEFAULTS: dict[str, Any] = {
         "require_ac_power": True,
         "min_free_disk_gb": 25,
         "kill_switch_hotkey": "ctrl+alt+shift+k",
+        # Deliberately NOT a bare function key. This is a global hotkey: it
+        # fires while a game has the keyboard, so anything a game might bind
+        # would be taken away from it.
+        "replay_hotkey": "ctrl+alt+shift+r",
         "paused_flag_file": "NOSTREAM",
         "quota_reserve": 500,
         # Enforced INDEPENDENTLY of the quota arithmetic. videos.insert has
@@ -64,6 +74,14 @@ DEFAULTS: dict[str, Any] = {
         "web_lan": True,
         "web_port": 8787,
         "web_token": "",
+        # HAS THE FIRST-RUN WIZARD EVER FINISHED. Written once, by the wizard
+        # itself. Everything else that could stand in for it is a property of
+        # the platform in use RIGHT NOW -- and the moment that became the
+        # test, changing platform on the dashboard threw a working install
+        # back into first-run setup, because the new one was not signed in
+        # yet. Installs made before this flag existed fall back to the old
+        # test; see webui.is_configured.
+        "setup_done": False,
     },
     "title": {
         "template": "{game} — live",
@@ -86,6 +104,13 @@ DEFAULTS: dict[str, Any] = {
         "min_free_gb": 50,
         "warn_free_gb": 100,
         "auto_scan": True,            # find kills as soon as a session ends
+        # INSTANT REPLAY. OBS keeps the last N seconds in memory and writes
+        # them out when asked, so the clip already exists at the moment the
+        # key is pressed -- nothing to detect, nothing to scan, no wait. It
+        # is the one feature that covers every game, including the ones there
+        # is no detector for.
+        "replay_enabled": False,
+        "replay_seconds": 30,
     },
     "clips": {
         # Publishing is public, attributed and awkward to undo, so it never

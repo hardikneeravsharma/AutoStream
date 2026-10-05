@@ -34,7 +34,7 @@ from typing import Any
 from . import (cutter, detect, killfeed, montage, overlay, plan, profiles,
                promo, voice)
 from .. import atomic
-from .tools import FfmpegMissing, media_info
+from .tools import FfmpegMissing, duration_label, media_info
 
 log = logging.getLogger("autostream.clips.jobs")
 
@@ -60,8 +60,14 @@ log = logging.getLogger("autostream.clips.jobs")
 # to press the button. The page advertised a 43-minute selection as "about 4m
 # of scanning" against a real 40.
 #   summary   (Marvel Rivals) 38 min in 118s -> 19x; 16 quoted for margin
+# "loudness" DECODES NO VIDEO AT ALL -- it reads the audio track at 8 kHz
+# mono and nothing else -- so it is two orders of magnitude faster than any
+# reader that looks at frames. Measured on 600s of 720p30 h264 with AAC
+# audio: 0.17-0.19s, which is about 3,200x real time. Quoted at 1,500 so the
+# page's estimate stays honest on a slow disk and over a network share.
 SCAN_RATE = {"feedbar": 14.0, "killfeed": 4.5, "cardcount": 10.0,
-             "template": 14.0, "colour": 14.0, "summary": 16.0}
+             "template": 14.0, "colour": 14.0, "summary": 16.0,
+             "loudness": 1500.0}
 # Keyed separately rather than overwriting "killfeed": the same profile scans
 # at either rate depending on whether rounds are switched on for the run.
 ROUND_SCAN_RATE = {"killfeed": 1.2}
@@ -202,6 +208,11 @@ class ClipJob:
         self.error: str | None = None
         self.results: list[dict] = []
         self.montage_path: str | None = None
+        # YouTube chapters for the montage, ready to paste into a description.
+        self.montage_chapters: str = ""
+        # The whole match with the dead time out, where it was asked for.
+        self.summary_path: str | None = None
+        self.summary_chapters: str = ""
         self.reel_path: str | None = None
         self.promo_path: str | None = None
         # Every spoken hook used so far, so no two clips in one session open
@@ -328,6 +339,9 @@ class ClipJob:
                 "folder": str(self.folder),
                 "clips": len(self.results),
                 "montage": self.montage_path,
+                "montage_chapters": self.montage_chapters,
+                "match_video": self.summary_path,
+                "match_chapters": self.summary_chapters,
                 "reel": self.reel_path,
                 "promo": self.promo_path,
                 "summary": dict(self.summary),
@@ -369,6 +383,97 @@ class ClipJob:
     @property
     def cancelled(self) -> bool:
         return self._cancel.is_set()
+
+    def _cut_match(self, round_list, info, enc) -> str | None:
+        """The whole match, dead time out, with chapters. -> the file.
+
+        THE CUT ITSELF IS `master_segments`, which the Marvel Rivals summary
+        already uses and which is proved against real files there. What is
+        decided here is which seconds to keep, and that lives in
+        clips/match_summary.py where it can be tested without footage.
+        """
+        from . import match_summary as msum
+
+        spans = msum.spans(round_list, source_duration=info["duration"])
+        if len(spans) < 2:
+            log.info("not cutting a match summary: %d span(s) is not a match",
+                     len(spans))
+            return None
+
+        when = datetime.fromtimestamp(
+            self.session.get("started") or self.started_at).strftime("%Y-%m-%d")
+        about = msum.describe(round_list, spans)
+        name = (f"{plan.slug(self.game)}_{when}_match_"
+                f"{about['won']}-{about['lost']}_"
+                f"{duration_label(about['duration'])}")
+        out = cutter.master_segments(
+            self.source, spans, name, self.folder / "match", encoder=enc)
+
+        marks = msum.chapters(round_list, spans)
+        if marks:
+            from .summary import chapter_text
+
+            text = chapter_text(marks)
+            Path(out).with_suffix(".chapters.txt").write_text(
+                text, encoding="utf-8")
+            self.summary_chapters = text
+        # Through atomic, like every other manifest here: a half-written one
+        # is indistinguishable from a complete one to whatever reads it next.
+        atomic.write_json(Path(out).with_suffix(".json"), {
+            "title": msum.title(self.game, round_list, when),
+            "source": str(self.source), **about,
+            "chapters": [[round(t, 2), n] for t, n in marks],
+        })
+        log.info("match summary: %s (%d rounds, %d chapters)",
+                 Path(out).name, about["rounds"], len(marks))
+        return str(out)
+
+    def _write_chapters(self, out, plans, masters, opt) -> None:
+        """Write the montage's YouTube chapters beside it. Never raises.
+
+        A montage without chapters is the feature minus a convenience; a run
+        that FAILED because a text file could not be written would be the
+        convenience costing the feature.
+        """
+        try:
+            ordered = sorted(zip(plans, masters), key=lambda pm: pm[0].start)
+            durations = [media_info(m)["duration"] for _p, m in ordered]
+            d = montage.clamp_transition(
+                durations, int(opt.get("transition_ms", 500)) / 1000)
+            labels = [self._chapter_label(p) for p, _m in ordered]
+            marks = montage.chapter_marks(durations, d, labels)
+            if not marks:
+                log.info("no chapters for this montage: too few clips, or too "
+                         "short for YouTube to show any")
+                return
+            from .summary import chapter_text
+
+            text = chapter_text(marks)
+            Path(out).with_suffix(".chapters.txt").write_text(
+                text, encoding="utf-8")
+            self.montage_chapters = text
+            log.info("montage chapters: %d", len(marks))
+        except Exception as e:  # noqa: BLE001
+            log.info("could not write the montage chapters: %s", e)
+
+    @staticmethod
+    def _chapter_label(p) -> str:
+        """What one clip is called in the chapter list.
+
+        SAID AS THE MOMENT, not as the file. The filename carries a rank and a
+        timestamp because it has to sort on disk; a chapter is read while
+        watching, where the only useful thing is what happens next.
+        """
+        if getattr(p, "labels", None):
+            # Counter-Strike's round types: ACE, CLUTCH, PISTOL ROUND.
+            what = ", ".join(str(x).replace("_", " ").title() for x in p.labels)
+            if getattr(p, "round_number", None):
+                return f"Round {p.round_number} - {what}"
+            return what
+        n = int(getattr(p, "kills", 0) or 0)
+        if n <= 0:
+            return "Moment"
+        return f"{n} kill" + ("s" if n != 1 else "")
 
     def _check(self) -> None:
         if self._cancel.is_set():
@@ -578,6 +683,15 @@ class ClipJob:
         if not kills:
             self._set(summary={"kills": 0, "clips": 0, "covered": 0,
                                "coverage": 0, "runtime": 0})
+            # SAYS WHAT THIS READER WAS LOOKING FOR. The loudness reader does
+            # not look for kills and cannot find one, so "no kills found" from
+            # it is a sentence about something nobody asked it to do -- and it
+            # hides the thing worth knowing, which is that there was nothing
+            # loud enough to be worth a clip.
+            if prof is not None and prof.mode == "loudness":
+                raise NoKills("Nothing in this recording was loud enough to "
+                              "stand out. Lower the threshold on the reading "
+                              "step to find quieter moments.")
             raise NoKills("No kills found in this recording.")
 
         # ---- 1a2. the match record, if the game keeps one ----------------
@@ -994,8 +1108,34 @@ class ClipJob:
                 transition_ms=int(opt.get("transition_ms", 500)),
                 encoder=enc)
             self.montage_path = str(out)
+            # CHAPTERS, BECAUSE A MONTAGE IS THE ONE OUTPUT WITH NO WAY INTO
+            # THE MIDDLE OF IT. Forty clips joined into eight minutes, and the
+            # good one is somewhere in there. The offsets are the same
+            # arithmetic that placed the crossfades, so each chapter lands on
+            # the frame its clip starts on.
+            self._write_chapters(out, plans, masters, opt)
             n += 1
             self._set(done=n)
+
+        # ---- 5a. the match summary ---------------------------------------
+        # OPT-IN, AND ONLY WHERE THE ROUNDS ARE KNOWN. A clip is thirty
+        # seconds around a fight; this is the other thing people upload --
+        # the whole match in order with the buy time, the walking and the
+        # twenty seconds of nothing between rounds taken out.
+        #
+        # Counter-Strike has the best source material for it in the app: a
+        # demo gives exact round starts, ends, scores and labels, so the
+        # spans are arithmetic over known numbers rather than a guess at
+        # where a round began.
+        if opt.get("match_summary") and round_list:
+            self._check()
+            self._set(step="montage",
+                      message=f"Cutting the match: {len(round_list)} rounds")
+            try:
+                self.summary_path = self._cut_match(round_list, info, enc)
+            except Exception as e:  # noqa: BLE001
+                # Never fatal. The clips are the job; this is beside them.
+                log.warning("could not cut the match summary: %s", e)
 
         # ---- 5b. the promo -----------------------------------------------
         if want_promo and spare:
@@ -1876,6 +2016,9 @@ class ClipJob:
                 "error": self.error,
                 "summary": self.summary,
                 "montage": self.montage_path,
+                "montage_chapters": self.montage_chapters,
+                "match_video": self.summary_path,
+                "match_chapters": self.summary_chapters,
                 "reel": self.reel_path,
                 "promo": self.promo_path,
                 "clips": self.results,

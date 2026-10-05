@@ -128,28 +128,116 @@ def add(root: Path, src: str, game: str = "", title: str = "") -> dict:
                                  "game": game or "Other", "kills": [], "title": title}}
 
 
+def any_run(root: Path, clip: Path) -> Path | None:
+    """The run folder a clip lives in, imported or cut by AutoStream.
+
+    `run_of` answers only for imports, because that is all the marker could
+    open. The marker works on any path -- `studio_impOpen(path)` never cared
+    where a clip came from -- and what was missing was the way in: a clip
+    AutoStream cut for itself had no Edit button at all, so a kill the
+    detector put half a second late could not be corrected and a clip could
+    not be retitled.
+    """
+    try:
+        clip = Path(clip).resolve()
+        run = clip.parent.parent
+        if clip.parent.name != "clips":
+            return None
+        if not run.is_relative_to(Path(root).resolve()):
+            return None
+        if not (run / "clips.json").is_file():
+            return None
+    except OSError:
+        return None
+    return run
+
+
+def _row_for(man: dict, clip: Path) -> tuple[dict | None, int]:
+    """The manifest row for one clip. -> (row, index).
+
+    AN IMPORT HAS ONE ROW AND A RUN HAS FORTY, so the first row is the right
+    answer for exactly one of the two. Matched on the file name, which is what
+    the manifest records and what the page hands back.
+    """
+    rows = man.get("clips") or []
+    want = Path(clip).name.lower()
+    for i, r in enumerate(rows):
+        if not isinstance(r, dict):
+            continue
+        master = Path(str(r.get("master") or "")).name.lower()
+        if master == want:
+            return r, i
+    return (rows[0], 0) if rows and isinstance(rows[0], dict) else (None, -1)
+
+
+def _clip_kills(sess: dict, row: dict) -> list[float]:
+    """This clip's kills, in CLIP seconds.
+
+    THE TWO HALVES STORE THEM DIFFERENTLY, which is the whole reason this
+    exists. An imported clip's `session.json` holds one clip and its kills are
+    already clip-relative. A run's holds the kills of the whole RECORDING, so
+    a clip that starts 42 minutes in has its first kill at 2520 seconds. The
+    same arithmetic the Studio page already does to draw the kill pips.
+
+    A correction written by the marker wins over both: it is the only one a
+    person typed.
+    """
+    marks = row.get("marks")
+    if isinstance(marks, list):
+        out = []
+        for m in marks:
+            try:
+                out.append(float(m))
+            except (TypeError, ValueError):
+                continue
+        return sorted(out)
+
+    raw = [float(k["time"]) for k in sess.get("kills") or []
+           if isinstance(k, dict) and k.get("time") is not None]
+    try:
+        start = float(row.get("start") or 0.0)
+        end = float(row.get("end") or 0.0)
+        dur = float(row.get("duration") or max(0.0, end - start))
+    except (TypeError, ValueError):
+        return sorted(raw)
+    # An import records start 0 and holds only its own kills, so this is the
+    # identity for one and the mapping for the other.
+    if end <= 0 and start <= 0:
+        return sorted(raw)
+    out = [round(k - start, 3) for k in raw if start - 0.05 <= k <= end + 0.05]
+    return sorted(min(max(0.0, o), dur) for o in out)
+
+
 def info(root: Path, clip: str) -> dict:
-    run = run_of(root, Path(clip))
+    run = any_run(root, Path(clip))
     if not run:
-        return {"ok": False, "error": "That is not a clip you added."}
+        return {"ok": False, "error": "That clip is not in the clips folder."}
     man, sess = _read(run / "clips.json"), _read(run / "session.json")
-    row = (man.get("clips") or [{}])[0]
+    row, _i = _row_for(man, Path(clip))
+    if row is None:
+        return {"ok": False, "error": "That clip is not in its run's manifest."}
     return {"ok": True, "path": str(clip), "name": row.get("name") or "",
             "title": row.get("title") or "", "seconds": row.get("duration") or 0.0,
             "game": man.get("game") or "Other",
-            "kills": [float(k["time"]) for k in sess.get("kills") or []
-                      if isinstance(k, dict) and k.get("time") is not None],
+            "kills": _clip_kills(sess, row),
+            # So the marker can say what it is editing. An AutoStream clip's
+            # marks are a correction to what a detector found; an import's are
+            # the only ones there have ever been.
+            "imported": bool(run.name.startswith(PREFIX)),
             "presets": list(TITLE_PRESETS)}
 
 
 def save(root: Path, clip: str, kills, title: str | None = None, game: str | None = None) -> dict:
     """Store the kills (clip seconds) and the title the player settled on."""
-    run = run_of(root, Path(clip))
+    run = any_run(root, Path(clip))
     if not run:
-        return {"ok": False, "error": "That is not a clip you added."}
+        return {"ok": False, "error": "That clip is not in the clips folder."}
     man, sess = _read(run / "clips.json"), _read(run / "session.json")
     rows = man.get("clips") or [{}]
-    row = rows[0]
+    row, _i = _row_for(man, Path(clip))
+    if row is None:
+        row = rows[0]
+    imported = run.name.startswith(PREFIX)
     dur = float(row.get("duration") or 0.0)
     ks = []
     for k in kills or []:
@@ -160,7 +248,18 @@ def save(root: Path, clip: str, kills, title: str | None = None, game: str | Non
         if 0.0 <= t <= dur + 0.05:
             ks.append(round(min(t, dur), 3))
     ks = sorted(set(ks))[:MAX_KILLS]
-    sess["kills"] = [{"time": t, "end": t, "score": 1.0, "count": 1, "record": True} for t in ks]
+    # WRITTEN WHERE IT CANNOT HARM THE OTHER FORTY. An import's session.json
+    # describes that one clip, so its kills ARE the session's. A run's
+    # describes the whole recording and forty clips read from it -- so a
+    # correction to one clip goes on that clip's row, in clip seconds, and the
+    # recording's kill list is left exactly as the detector found it.
+    #
+    # Overwriting the session there would have moved every other clip's pips
+    # and broken the next re-cut, from a dialog that said "Save".
+    if imported:
+        sess["kills"] = [{"time": t, "end": t, "score": 1.0, "count": 1,
+                          "record": True} for t in ks]
+    row["marks"] = ks
     row["kills"] = len(ks)
     if title is not None:
         t = re.sub(r"[\r\n]", " ", str(title)).strip()[:80]
@@ -171,7 +270,8 @@ def save(root: Path, clip: str, kills, title: str | None = None, game: str | Non
         man["game"] = sess["game"] = str(game)[:60]
     man["clips"] = rows
     _write(run / "clips.json", man)
-    _write(run / "session.json", sess)
+    if imported:
+        _write(run / "session.json", sess)
     return {"ok": True, "kills": ks, "name": row["name"]}
 
 

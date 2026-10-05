@@ -95,6 +95,88 @@ def discover_websocket(obs_exe: str = "") -> dict:
     return out
 
 
+def enable_websocket(obs_exe: str = "", port: int = 0,
+                     password: str = "") -> dict:
+    """Switch OBS's WebSocket server on by writing its own config file.
+
+    -> {ok, port, password, path, why}. Never raises.
+
+    WHY THIS IS WORTH DOING AT ALL. The OBS step of setup is six instructions
+    about a dialog in another application -- Tools, WebSocket Server Settings,
+    tick the box, Apply, Show Connect Info, copy the password -- and it is the
+    step people stop at. Every one of those clicks writes this one file, and
+    AutoStream can write it instead.
+
+    ONLY WHILE OBS IS CLOSED, and this is the whole reason the function is
+    shaped this way. OBS reads this file at startup and WRITES IT BACK at
+    shutdown from what it holds in memory, so a change made underneath a
+    running OBS is thrown away the moment it quits -- silently, minutes later,
+    after setup has said it worked. Refusing is the only honest answer while
+    it is open.
+
+    AUTH STAYS ON. A WebSocket server with authentication off accepts anything
+    that reaches the port, and this one can start and stop recordings. Setting
+    it up for somebody is not a licence to make their machine less safe than
+    they left it, so a password is generated if there is not one already.
+    """
+    import secrets as _secrets
+
+    out = {"ok": False, "port": int(port or 4455), "password": "",
+           "path": "", "why": ""}
+    if _obs_process_alive():
+        out["why"] = ("OBS is open. It rewrites this file from memory when it "
+                      "closes, so anything set now would be thrown away. "
+                      "Close OBS and press this again.")
+        return out
+
+    paths_ = _ws_config_paths(obs_exe)
+    if not paths_:
+        out["why"] = "Could not work out where OBS keeps its settings."
+        return out
+
+    # The one OBS is actually using, if it has ever written one; otherwise the
+    # first candidate, created from nothing.
+    target = next((p for p in paths_ if p.is_file()), paths_[0])
+    data: dict = {}
+    if target.is_file():
+        try:
+            parsed = json.loads(target.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                data = parsed
+        except (OSError, ValueError) as e:
+            out["why"] = f"Could not read {target.name}: {e}"
+            return out
+
+    keep = str(data.get("server_password") or "")
+    want_pw = password or keep or _secrets.token_urlsafe(12)
+    want_port = int(port or data.get("server_port") or 4455)
+
+    data["server_enabled"] = True
+    data["auth_required"] = True
+    data["server_password"] = want_pw
+    data["server_port"] = want_port
+    data.setdefault("alerts_enabled", False)
+    data.setdefault("first_load", False)
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # A COPY BEFORE THE FIRST CHANGE, and only the first: this is somebody
+        # else's application's settings, and the cost of being wrong is their
+        # OBS not starting. Not overwritten afterwards, or the backup becomes
+        # a copy of our own last write rather than of what they had.
+        backup = target.with_suffix(".json.autostream-bak")
+        if target.is_file() and not backup.is_file():
+            backup.write_bytes(target.read_bytes())
+        target.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    except OSError as e:
+        out["why"] = f"Could not write {target}: {e}"
+        return out
+
+    log.info("OBS websocket enabled in %s (port %d)", target, want_port)
+    out.update(ok=True, port=want_port, password=want_pw, path=str(target))
+    return out
+
+
 def find_obs_exe() -> str:
     """The OBS executable: from the registry where it is recorded, else a guess."""
     try:
@@ -1097,6 +1179,126 @@ class Obs:
         self.ws.start_record()
         log.info("OBS StartRecord issued")
         return False
+
+    # ---------------- the replay buffer ----------------
+    #
+    # WHAT IT IS. OBS keeps the last N seconds of output in memory and writes
+    # them out on demand. That is the whole of "instant replay": the clip
+    # already exists when you press the key, so there is nothing to detect,
+    # nothing to scan and no wait. It is the most-used feature in every
+    # competitor, and it covers every game at once -- including the ones
+    # AutoStream has no detector for.
+    #
+    # SEPARATE FROM THE RECORDING. The buffer is its own OBS output: it can
+    # run while nothing is being recorded, and stopping the recording does not
+    # stop it. Both are left to the engine to start and stop together, because
+    # a buffer running after a session has ended is memory held for nothing.
+
+    def replay_active(self) -> bool:
+        try:
+            self.connect()
+            return bool(self.ws.get_replay_buffer_status().output_active)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def start_replay_buffer(self) -> bool:
+        """-> True when a buffer that was ALREADY running was adopted.
+
+        Never raises. A replay buffer that will not start is a reason to say
+        so and carry on, not a reason to refuse the session: the recording and
+        the stream are what the session is for.
+        """
+        try:
+            self.connect(wait=True)
+            if self.replay_active():
+                log.info("OBS replay buffer already running - reusing it")
+                return True
+            self.ws.start_replay_buffer()
+            log.info("OBS replay buffer started")
+            return False
+        except Exception as e:  # noqa: BLE001
+            # THE COMMON CAUSE IS NOT A FAULT. OBS refuses to start the buffer
+            # unless the recording format supports it and "Enable Replay
+            # Buffer" is on in Settings -> Output, so this is usually a
+            # setting rather than a failure, and the message says which.
+            log.warning("could not start the replay buffer (%s). In OBS: "
+                        "Settings -> Output -> Replay Buffer.", e)
+            return False
+
+    def stop_replay_buffer(self) -> None:
+        try:
+            self.connect()
+            if self.replay_active():
+                self.ws.stop_replay_buffer()
+                log.info("OBS replay buffer stopped")
+        except Exception as e:  # noqa: BLE001
+            log.debug("could not stop the replay buffer: %s", e)
+
+    def save_replay(self, timeout: float = 10.0) -> str | None:
+        """Write out what is in the buffer. -> the file, or None.
+
+        THE PATH IS ASKED FOR AFTERWARDS, and not immediately. OBS answers the
+        save request before it has finished muxing, so the filename is not
+        available at that moment -- and `get_last_replay_buffer_replay` would
+        return the PREVIOUS one, which is the worst possible answer: a real
+        path, to the wrong clip. So this polls until the name changes.
+        """
+        try:
+            self.connect()
+            if not self.replay_active():
+                log.info("no replay buffer running - nothing to save")
+                return None
+            before = self._last_replay()
+            self.ws.save_replay_buffer()
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not save the replay: %s", e)
+            return None
+
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            time.sleep(0.25)
+            now = self._last_replay()
+            if now and now != before:
+                log.info("replay saved: %s", now)
+                return now
+        # Saved, almost certainly, but we cannot say where. Better than
+        # claiming the previous clip is this one.
+        log.warning("the replay was saved but OBS did not name the file in "
+                    "%.0fs", timeout)
+        return None
+
+    def set_replay_seconds(self, seconds: int) -> None:
+        """How far back the buffer reaches.
+
+        A PROFILE PARAMETER, not a websocket setting -- OBS keeps it in the
+        profile's basic.ini under `SimpleOutput/RecRBTime`, and there is no
+        typed request for it. Pushed every session for the same reason the
+        record directory is: the config is the source of truth and OBS is
+        not, and a buffer silently left at OBS's 20-second default would make
+        "two minutes" mean twenty seconds with nothing to say so.
+
+        Never raises: a buffer of the wrong length still saves replays.
+        """
+        want = max(5, min(300, int(seconds or 30)))
+        try:
+            self.connect()
+            for section, key in (("SimpleOutput", "RecRBTime"),
+                                 ("AdvOut", "RecRBTime")):
+                try:
+                    self.ws.set_profile_parameter(section, key, str(want))
+                except Exception:  # noqa: BLE001
+                    # Only one of the two output modes is in use; the other
+                    # refuses, which is not a problem worth a line in the log.
+                    continue
+        except Exception as e:  # noqa: BLE001
+            log.debug("could not set the replay buffer length: %s", e)
+
+    def _last_replay(self) -> str | None:
+        try:
+            r = self.ws.get_last_replay_buffer_replay()
+            return str(getattr(r, "saved_replay_path", "") or "") or None
+        except Exception:  # noqa: BLE001
+            return None
 
     def record_offset(self) -> float | None:
         """Seconds into the file OBS is writing. -> None when not recording.

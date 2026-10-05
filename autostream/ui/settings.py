@@ -28,8 +28,25 @@ SETTINGS_HTML = r"""
 <div class="settings-layout">
   <nav class="settings-nav" id="set-nav" aria-label="Settings sections"></nav>
   <div class="settings-body">
+    <!-- NINETY KEYS ACROSS FIFTEEN SECTIONS. Finding one meant knowing which
+         section somebody had filed it under, and the names are not always the
+         guess a person makes -- the clip length lives under Clips, the clip
+         UPLOAD privacy under Clips too, and the stream privacy under Stream.
+         Searching asks nothing of that. -->
+    <div class="settings-search">
+      <input class="input" id="set-search" type="search" autocomplete="off"
+             spellcheck="false" aria-label="Search every setting"
+             placeholder="Search settings (name, help text, or key)">
+      <span class="settings-search-count" id="set-search-count"
+            role="status" aria-live="polite"></span>
+    </div>
     <div id="set-panels">
       <div class="empty"><span class="spin"></span> Loading settings...</div>
+    </div>
+    <div class="card settings-noresult hide" id="set-noresult">
+      <p>Nothing here matches <b id="set-noresult-q"></b>.</p>
+      <p class="muted">Try a shorter word, or part of the key -- searching
+         looks through the names, the explanations and the keys themselves.</p>
     </div>
     <div class="card set-about" id="set-about">
       <div class="card-head">
@@ -97,7 +114,8 @@ SETTINGS_JS = r"""
 var set_state = {
   loaded: false, loading: false, wired: false, guarded: false,
   sections: [], fields: {}, values: {}, tags: {},
-  themes: [], theme: '', active: '', saving: false
+  themes: [], theme: '', active: '', saving: false,
+  platforms: {}          /* twitch/kick: configured + connected */
 };
 
 var set_timeRe = /^([01]?[0-9]|2[0-3]):([0-5][0-9])$/;
@@ -113,6 +131,10 @@ function set_attr(v){
 }
 
 function set_el(id){ return document.getElementById(id); }
+/* What is typed in the search box. Held here rather than read from the DOM
+   so a re-render cannot silently drop the filter. */
+var set_query = '';
+
 function set_show(id, on){
   var el = set_el(id);
   if (el) el.classList.toggle('hide', !on);
@@ -352,7 +374,17 @@ function set_fieldHtml(f){
     help += '<p class="field-help"><b>Written by setup.</b> Changing this by hand ' +
             'breaks the next session without warning.</p>';
   }
-  return '<div class="field" data-path="' + set_attr(f.path) + '" id="set-w-' + slug + '">' +
+  var only = (f.only_for && f.only_for.length)
+    ? ' data-only="' + set_attr(f.only_for.join(' ')) + '"' : '';
+  /* WHAT A SEARCH LOOKS THROUGH, built once at render rather than read off
+     the DOM on every keystroke. The key is in here because people paste keys
+     out of the docs and the log, and the help text because the word somebody
+     remembers is usually in the explanation rather than in the label --
+     "quota" appears in no label on this page. */
+  var find = ' data-find="' + set_attr(
+    ((f.label || '') + ' ' + f.path + ' ' + (f.help || '')).toLowerCase()) + '"';
+  return '<div class="field" data-path="' + set_attr(f.path) + '"' + only + find +
+    ' id="set-w-' + slug + '">' +
     '<div class="field-row">' +
       '<div>' +
         '<label class="field-label" id="set-l-' + slug + '" for="' + target + '">' +
@@ -455,6 +487,71 @@ function set_wireBuildScreens(){
   });
 }
 
+/* CONNECTING TWITCH OR KICK. A sign-in, not a setting -- it opens a browser
+   and comes back with a token -- so it is a panel at the top of the Stream
+   section rather than a field in the list. It also says the two states apart:
+   credentials in secrets/ mean the app CAN ask, and a token means the user
+   has said yes. One line for both would make "paste the client id" and
+   "press Connect" look like the same step. */
+function set_connectHtml(){
+  var st = set_state.platforms || {};
+  var rows = [['twitch', 'Twitch'], ['kick', 'Kick']].map(function(p){
+    var k = p[0], label = p[1];
+    var s = st[k] || {};
+    var where = s.connected ? 'Connected'
+              : s.configured ? 'Not connected yet'
+              : 'No client id or secret in secrets/' + k + '.json';
+    return '<div class="field-inline" style="justify-content:space-between">' +
+      '<span><b>' + label + '</b> <span class="muted">' + set_esc(where) + '</span></span>' +
+      '<button class="btn btn-sm" type="button" data-act="connect" data-platform="' +
+        k + '"' + (s.configured ? '' : ' disabled') + '>' +
+        (s.connected ? 'Reconnect' : 'Connect') + '</button></div>';
+  }).join('');
+  return '<div class="panel">' +
+    '<p class="field-label">Sign in to a platform</p>' + rows +
+    '<p class="field-help">Twitch goes live on the stream key alone; signing ' +
+    'in is what lets AutoStream set the title and category. Kick hands over ' +
+    'its stream key through the API, so it needs the sign-in to stream at ' +
+    'all.</p></div>';
+}
+
+function set_esc(v){
+  return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+
+/* OPENS A BROWSER AND WAITS. The token lands on this server's own callback,
+   not in this tab, so there is nothing to await -- the status is polled until
+   it flips, and gives up rather than polling forever if the user closes the
+   tab without finishing. */
+async function set_connect(name){
+  if (!name) return;
+  var r;
+  try { r = await API.post('/api/platform/connect', {platform: name}); }
+  catch (e) { toast('Could not start the sign-in.', 'error'); return; }
+  if (!r || r.error || !r.url){ toast((r && r.error) || 'Could not start the sign-in.', 'error'); return; }
+  window.open(r.url, '_blank', 'noopener');
+  toast('Finish the sign-in in your browser.', 'ok');
+  for (var i = 0; i < 60; i++){
+    await new Promise(function(ok){ setTimeout(ok, 2000); });
+    await set_loadPlatforms();
+    var st = (set_state.platforms || {})[name] || {};
+    if (st.connected){
+      toast(name.charAt(0).toUpperCase() + name.slice(1) + ' is connected.', 'ok');
+      set_render();
+      return;
+    }
+  }
+}
+
+async function set_loadPlatforms(){
+  try {
+    var r = await API.get('/api/platform/status');
+    if (r && r.platforms) set_state.platforms = r.platforms;
+  } catch (e) { /* the panel says "not connected", which is true */ }
+}
+
 function set_sectionHtml(sec){
   var plain = [], adv = [];
   (sec.fields || []).forEach(function(f){
@@ -467,7 +564,11 @@ function set_sectionHtml(sec){
       '<span class="field-label">Show these settings</span>' +
       '</summary><div>' + plain.join('') + adv.join('') + '</div></details>';
   } else {
-    body = plain.join('');
+    body = (sec.id === 'stream' ? set_connectHtml() : '') + plain.join('');
+    if ((sec.fields || []).some(function(f){ return f.only_for; })){
+      body += '<p class="field-help settings-only-note hide" data-sec="' +
+        set_attr(sec.id) + '"></p>';
+    }
     if (adv.length){
       body += '<details class="panel"><summary>' +
         '<span class="field-label">Advanced</span>' +
@@ -495,6 +596,156 @@ function set_sectionHtml(sec){
   '</section>';
 }
 
+/* ---------------------------------------------- settings that are not yours
+
+   Most of the `youtube.*` block belongs to YouTube alone. Twitch has no
+   privacy setting, no latency choice, no "made for kids" flag and no
+   broadcast object to start a second of; Kick has none of them either. A page
+   that offers those controls while Twitch is selected is describing something
+   it will not do, and the first time that matters is when somebody sets a
+   stream to Unlisted, goes live on Twitch, and finds it public.
+
+   Hidden rather than disabled. A greyed-out row still has to be read before
+   it can be dismissed, and there are five of them. What is left in its place
+   is one line saying which platform is selected and that the rest did not
+   apply -- so the gap is explained where the gap is.
+
+   NOTHING IS WRITTEN. The values stay exactly as they were, and switching
+   back to YouTube brings the same settings back untouched. Hiding a control
+   is not the same as changing it. */
+
+function set_platformNow(){
+  var f = set_state.fields['youtube.platform'];
+  /* Read the control, not the saved value: the rows have to follow the
+     dropdown while the change is still unsaved. */
+  return (f ? String(set_read(f) || '') : '') || 'youtube';
+}
+
+/* ONE PASS, TWO REASONS. A row can be hidden because the platform does not
+   have that setting, or because it does not match what is being searched
+   for. Two functions each toggling `hide` would undo one another depending
+   on which ran last, which is a bug that only shows up when a user searches
+   with Twitch selected -- so both reasons are decided here, together. */
+function set_applyFilters(){
+  var panels = set_el('set-panels');
+  if (!panels) return;
+
+  var now = set_platformNow();
+  var terms = set_query.toLowerCase().split(/\s+/).filter(Boolean);
+  var searching = terms.length > 0;
+
+  var rows = panels.querySelectorAll('.field[data-path]');
+  var dropped = {};         /* sections with a row the platform does not have */
+  var hits = {};            /* sections with a row matching the search */
+  var found = 0;
+
+  for (var i = 0; i < rows.length; i++){
+    var row = rows[i];
+    var sec = row.closest ? row.closest('.settings-section') : null;
+    var id = sec ? sec.getAttribute('data-sec') : '';
+
+    var only = row.getAttribute('data-only');
+    var mine = !only || only.split(' ').indexOf(now) >= 0;
+    if (!mine && id) dropped[id] = true;
+
+    var hay = row.getAttribute('data-find') || '';
+    var matched = true;
+    for (var t = 0; t < terms.length; t++){
+      if (hay.indexOf(terms[t]) < 0) { matched = false; break; }
+    }
+
+    var show = mine && (!searching || matched);
+    row.classList.toggle('hide', !show);
+    if (show && searching){ found++; if (id) hits[id] = true; }
+  }
+
+  /* The note explaining the platform gap is about the whole section, so it
+     has no place in a result list that is showing three rows out of forty. */
+  var label = set_platformLabel(now);
+  var notes = panels.querySelectorAll('.settings-only-note');
+  for (var j = 0; j < notes.length; j++){
+    var nid = notes[j].getAttribute('data-sec');
+    notes[j].classList.toggle('hide', searching || !dropped[nid]);
+    notes[j].textContent = 'Some settings are hidden because they are ' +
+      'YouTube’s own and ' + label + ' has no equivalent. They are not ' +
+      'changed, and come back if you switch to YouTube.';
+  }
+
+  set_applySections(searching, hits, found);
+}
+
+/* Which sections are on screen: one at a time normally, every section with a
+   hit while searching. */
+function set_applySections(searching, hits, found){
+  var panels = set_el('set-panels');
+  var secs = panels.querySelectorAll('.settings-section');
+  for (var i = 0; i < secs.length; i++){
+    var sec = secs[i];
+    var id = sec.getAttribute('data-sec');
+    sec.classList.toggle('is-hit', !!(searching && hits[id]));
+    sec.classList.toggle('hide',
+      searching ? !hits[id] : id !== set_state.active);
+    /* A match folded inside Advanced is a match nobody can see, so a search
+       opens the folds -- and puts them back exactly as it found them when it
+       clears. Without the remembering, searching once left every Advanced
+       section on the page hanging open, which is a different page from the
+       one the user had. */
+    var folds = sec.querySelectorAll('details.panel');
+    for (var d = 0; d < folds.length; d++){
+      var fold = folds[d];
+      if (searching){
+        if (fold.getAttribute('data-washut') === null){
+          fold.setAttribute('data-washut', fold.hasAttribute('open') ? '0' : '1');
+        }
+        if (hits[id]) fold.setAttribute('open', 'open');
+      } else if (fold.getAttribute('data-washut') !== null){
+        if (fold.getAttribute('data-washut') === '1') fold.removeAttribute('open');
+        else fold.setAttribute('open', 'open');
+        fold.removeAttribute('data-washut');
+      }
+    }
+  }
+
+  /* Everything that is not a settings section belongs to the page rather
+     than to a search: the version card, the diagnostics card. */
+  ['set-about', 'set-trouble'].forEach(function(id){
+    var el = set_el(id);
+    if (el) el.classList.toggle('hide', !!searching);
+  });
+
+  /* THE NAV STAYS. Hiding it during a search took away the way out of one:
+     the only remaining exit was clearing the box, and a page that removes
+     its own navigation when you type in it reads as having gone somewhere
+     else. Pressing a section clears the search and goes there. */
+
+  var count = set_el('set-search-count');
+  if (count){
+    count.textContent = !searching ? ''
+      : (found === 1 ? '1 setting' : found + ' settings');
+  }
+
+  var none = set_el('set-noresult');
+  if (none) none.classList.toggle('hide', !(searching && found === 0));
+  set_growVisible();
+}
+
+/* Kept as the name the rest of the page calls after a platform change. */
+function set_applyPlatform(){ set_applyFilters(); }
+
+function set_search(value){
+  set_query = String(value == null ? '' : value).trim();
+  set_applyFilters();
+}
+
+function set_platformLabel(id){
+  var f = set_state.fields['youtube.platform'];
+  var opts = (f && f.options) || [];
+  for (var i = 0; i < opts.length; i++){
+    if (opts[i].value === id) return opts[i].label;
+  }
+  return id;
+}
+
 function set_navHtml(){
   return set_state.sections.map(function(sec){
     return '<button class="settings-nav-item' + (sec.id === set_state.active ? ' is-active' : '') +
@@ -508,6 +759,8 @@ function set_render(){
   set_el('set-panels').innerHTML = set_state.sections.map(set_sectionHtml).join('');
   set_wireBuildScreens();
   set_wireStreamElements();
+  set_applyFilters();
+  set_navEdges();
   set_growVisible();
   set_updateActions();
 }
@@ -519,12 +772,44 @@ function set_growVisible(){
   for (var i = 0; i < boxes.length; i++) set_grow(boxes[i]);
 }
 
+function set_navMark(id){
+  var nav = set_el('set-nav');
+  if (!nav) return;
+  var items = nav.querySelectorAll('.settings-nav-item');
+  var here = null;
+  for (var i = 0; i < items.length; i++){
+    var mine = items[i].getAttribute('data-sec') === id;
+    items[i].classList.toggle('is-active', mine);
+    if (mine) here = items[i];
+  }
+  /* THE STRIP SCROLLS, so the section you just chose can be off the end of
+     it -- which is how a nav item reads as not having been pressed. */
+  if (here && here.scrollIntoView && nav.scrollWidth > nav.clientWidth){
+    here.scrollIntoView({block: 'nearest', inline: 'nearest'});
+  }
+  set_navEdges();
+}
+
+/* Which edges still have sections past them. CSS cannot ask this, so the
+   fade that says "there is more" is driven from here -- on render, on
+   scroll, and on resize, because a window drag changes the answer. */
+function set_navEdges(){
+  var nav = set_el('set-nav');
+  if (!nav) return;
+  var over = nav.scrollWidth - nav.clientWidth;
+  /* A couple of pixels of rounding is not more content. */
+  var room = over > 2;
+  nav.classList.toggle('set-more-start', room && nav.scrollLeft > 2);
+  nav.classList.toggle('set-more-end', room && nav.scrollLeft < over - 2);
+}
+
 function set_showSection(id){
   set_state.active = id;
-  var items = set_el('set-nav').querySelectorAll('.settings-nav-item');
-  for (var i = 0; i < items.length; i++){
-    items[i].classList.toggle('is-active', items[i].getAttribute('data-sec') === id);
-  }
+  /* A search is showing every section that matched; moving one of them in
+     front of the others would be meaningless, and hiding the rest would
+     throw away the results. */
+  if (set_query){ set_navMark(id); return; }
+  set_navMark(id);
   var secs = set_el('set-panels').querySelectorAll('.settings-section');
   for (var j = 0; j < secs.length; j++){
     secs[j].classList.toggle('hide', secs[j].getAttribute('data-sec') !== id);
@@ -599,6 +884,7 @@ function set_touch(path){
   if (!f) return;
   if (set_isDirty(f)) set_error(path, set_validate(f, set_read(f)));
   else set_error(path, '');
+  if (path === 'youtube.platform') set_applyFilters();
   set_updateActions();
 }
 
@@ -615,10 +901,50 @@ function set_wire(){
   set_state.wired = true;
   var panels = set_el('set-panels');
 
-  set_el('set-nav').addEventListener('click', function(ev){
+  var nav = set_el('set-nav');
+  nav.addEventListener('click', function(ev){
     var b = ev.target.closest ? ev.target.closest('.settings-nav-item') : null;
-    if (b) set_showSection(b.getAttribute('data-sec'));
+    if (!b) return;
+    /* Pressing a section while a search is open means "show me that
+       section", which it cannot do while the results are on screen. */
+    if (set_query){
+      var box = set_el('set-search');
+      if (box) box.value = '';
+      set_search('');
+    }
+    set_showSection(b.getAttribute('data-sec'));
   });
+  nav.addEventListener('scroll', set_navEdges, {passive: true});
+  /* A horizontal strip and a wheel that only scrolls vertically: on a laptop
+     with no trackpad gesture there is otherwise no way to reach the last
+     sections except by dragging a scrollbar that is deliberately hidden. */
+  nav.addEventListener('wheel', function(ev){
+    if (nav.scrollWidth <= nav.clientWidth) return;
+    if (Math.abs(ev.deltaY) <= Math.abs(ev.deltaX)) return;
+    nav.scrollLeft += ev.deltaY;
+    ev.preventDefault();
+  }, {passive: false});
+
+  var search = set_el('set-search');
+  if (search){
+    search.addEventListener('input', function(){
+      set_search(search.value);
+      var q = set_el('set-noresult-q');
+      if (q) q.textContent = search.value.trim();
+    });
+    search.addEventListener('keydown', function(ev){
+      /* Escape clears rather than closing anything, because there is nothing
+         open -- and a search box that swallows Escape with no effect is the
+         reason people reach for the mouse. */
+      if (ev.key === 'Escape' && search.value){
+        search.value = '';
+        set_search('');
+        ev.stopPropagation();
+      }
+    });
+  }
+
+  window.addEventListener('resize', set_navEdges);
 
   panels.addEventListener('input', function(ev){
     var wrap = ev.target.closest ? ev.target.closest('.field') : null;
@@ -683,6 +1009,10 @@ function set_wire(){
       list.splice(parseInt(btn.getAttribute('data-i'), 10), 1);
       set_tagRender(path);
       set_touch(path);
+    } else if (act === 'connect'){
+      /* `btn`, which is what this handler resolved. `t` is not in scope here
+         and threw on every press -- the button did nothing at all. */
+      set_connect(btn.getAttribute('data-platform'));
     } else if (act === 'theme'){
       set_theme(btn.getAttribute('data-theme'));
     }
@@ -1028,6 +1358,11 @@ window.PAGE_SETTINGS = {
   onShow: function(){
     set_guardNav();
     set_wireUpdates();
+    // Asked every time the page opens: a connect finishes in another tab, so
+    // the only way this one learns about it is by looking again.
+    set_loadPlatforms().then(function(){
+      if (set_state.loaded) set_render();
+    });
     if (!set_state.loaded){ set_load(); return; }
     if (!set_dirtyPaths().length) set_refresh().catch(function(){});
   },

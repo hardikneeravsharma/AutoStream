@@ -61,8 +61,24 @@ def setup_logging(level: str = "INFO", console: bool = True) -> None:
 
     fmt = logging.Formatter("%(asctime)s %(levelname)-7s %(name)-18s %(message)s",
                             "%Y-%m-%d %H:%M:%S")
+    # KEPT FOR AS LONG AS THE SETTING SAYS. `logging.keep_days` is on the
+    # Settings page and reads "the log rotates at midnight; older files past
+    # this many days are deleted" -- and this said 7, hard-coded, whatever the
+    # setting was. Someone who set thirty days to catch a fault that happens
+    # once a fortnight got seven, and the log that would have shown it had
+    # been deleted a week before they went looking.
+    #
+    # Read defensively: this runs before anything else and must not be the
+    # thing that stops the app starting.
+    keep = 7
+    try:
+        from . import cfg as _cfg
+
+        keep = max(1, min(365, int(_cfg.load().logging.keep_days or 7)))
+    except Exception:  # noqa: BLE001
+        pass
     fh = logging.handlers.TimedRotatingFileHandler(
-        paths.LOG_FILE, when="midnight", backupCount=7, encoding="utf-8")
+        paths.LOG_FILE, when="midnight", backupCount=keep, encoding="utf-8")
     fh.setFormatter(fmt)
     fh.addFilter(RedactSecrets())
     root.addHandler(fh)
@@ -480,6 +496,27 @@ def cmd_run(args) -> int:
             except Exception as e:  # noqa: BLE001
                 log.info("hotkey unavailable (%s) - use the tray icon", e)
 
+        # INSTANT REPLAY. Registered separately, and deliberately not inside
+        # the block above: a kill switch somebody could not register is a
+        # reason to tell them to use the tray icon, and has nothing to do with
+        # whether a replay key can be bound.
+        #
+        # ALWAYS BOUND, even with instant replay switched off, so that turning
+        # it on in Settings works without a restart -- the engine checks the
+        # setting when the key fires and says so if it is off. A key that does
+        # nothing until you restart is indistinguishable from one that does
+        # not work.
+        replay_key = getattr(c.rules, "replay_hotkey", "")
+        if replay_key:
+            try:
+                import keyboard
+
+                keyboard.add_hotkey(replay_key, lambda: eng.submit("replay"))
+                log.info("instant replay hotkey: %s", replay_key)
+            except Exception as e:  # noqa: BLE001
+                log.info("replay hotkey unavailable (%s) - use the dashboard "
+                         "button", e)
+
         eng.startup()
         interval = max(1, int(c.timing.poll_interval))
         loop = threading.Thread(target=_engine_loop,
@@ -523,7 +560,24 @@ def cmd_run(args) -> int:
                          daemon=True).start()
 
     # blocks until the window is destroyed (or returns at once without pywebview)
-    win.run()
+    #
+    # THE SETTING THAT OPENED NOTHING. `ui.open_window` is on the Settings
+    # page and reads "off means AutoStream starts quietly in the notification
+    # area and you open this window from the tray icon when you want it" --
+    # and nothing passed it anywhere. MainWindow.run() has taken a `hidden`
+    # argument the whole time; it was simply never given one. Somebody who
+    # turned this off to stop a window appearing at every login got a window
+    # at every login.
+    #
+    # NEVER DURING FIRST RUN, whatever it says: the wizard is the only part of
+    # this app a person cannot skip, and starting it in the tray would hide
+    # the one screen they have to see.
+    quiet = (not first_run
+             and not bool(getattr(config.ui, "open_window", True)))
+    if quiet:
+        log.info("starting in the notification area (Settings: open the "
+                 "window at startup is off)")
+    win.run(hidden=quiet)
 
     # No native window to block on (no pywebview, or no WebView2 runtime), so
     # THIS loop is what keeps the daemon -- and the server the browser was

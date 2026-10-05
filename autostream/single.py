@@ -38,6 +38,23 @@ _handle = None
 _lockfile = None
 
 
+def _name() -> str:
+    """The mutex to hold. One name, unless a run says otherwise.
+
+    AUTOSTREAM_INSTANCE suffixes it. The lock is global on purpose -- the
+    thing two copies fight over is the one OBS on the machine, not a config
+    directory -- so this is not a way to run two real copies side by side.
+
+    It is how the test tiers start a copy at all. They run against a throwaway
+    home and a free port and touch nothing of the user's, but they were still
+    refused whenever the user's own AutoStream was open, which meant the
+    browser tier could not be run on the machine it was written on without
+    first closing the app under discussion.
+    """
+    extra = os.environ.get("AUTOSTREAM_INSTANCE", "").strip()
+    return f"{NAME}-{extra}" if extra else NAME
+
+
 def acquire() -> bool:
     """-> True if this process may run. False means another one already is."""
     global _handle, _lockfile
@@ -49,7 +66,7 @@ def acquire() -> bool:
 
             kernel32 = ctypes.windll.kernel32
             kernel32.CreateMutexW.restype = wintypes.HANDLE
-            handle = kernel32.CreateMutexW(None, True, NAME)
+            handle = kernel32.CreateMutexW(None, True, _name())
             if not handle:
                 return True                    # cannot tell; do not block
             if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS

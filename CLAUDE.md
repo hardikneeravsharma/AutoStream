@@ -142,6 +142,14 @@ because a re-render cleared the flag an in-flight fetch was about to set, and a
 none of them and says nothing. They drive `dist\AutoStream\AutoStream.exe`, so
 **rebuild before testing an edit** or you are testing the last build.
 
+**Or set `AUTOSTREAM_VERIFY_SOURCE=1`** and they run this checkout instead, with no
+build at all. Use it while iterating on a UI change, and for the case that used to
+stop the tier dead: the user's own AutoStream being open. One AutoStream at a time is
+a named mutex, and it was one fixed name -- so a test copy, against a throwaway home
+and a free port, was refused whenever the app was running. `appd` now passes
+`AUTOSTREAM_INSTANCE`, which suffixes the mutex. Run the built exe before shipping;
+run the checkout while working, so there is no excuse for an unexercised UI edit.
+
 [docs/UI-SCENARIOS.md](docs/UI-SCENARIOS.md) is the catalogue every browser test is
 written from: 62 scenarios across all eight pages, each marked covered, sweep-only
 or a gap. Add to it before adding a test, so the gaps stay countable.
@@ -201,6 +209,14 @@ Never assume the developer's own in-game name, HUD colour or HUD scale.
 - Best of all is needing nothing: the Valorant `feedbar` detector finds the player by
   the colour the game draws around their own row, so it needs no configuration at all.
   Aim for that.
+- **And when nothing has been taught about the game, there is now a reader anyway.**
+  The `loudness` mode (`clips/loudness.py`, built-in profile `any-game`) reads the audio
+  against a rolling median baseline and returns the loud moments. It needs no template,
+  no name and no HUD measurement, decodes no video, and runs at roughly 3,200x real
+  time. It cannot tell a kill from a death, so **the page must not call what it finds
+  kills** — `clip_found()` in `ui/clips.py` decides the word, and anything new that
+  describes a result goes through it. A dead end where a game has no profile is no
+  longer the honest answer; offer this instead.
 
 Optional extras (the Kokoro voice, `demoparser2`, Tesseract) may already be installed on
 a given machine even though the docs present them as downloads. Check first — e.g.

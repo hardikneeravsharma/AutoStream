@@ -552,6 +552,24 @@ One per line - a long session often covers several matches."></textarea>
     </div>
   </div>
 
+  <!-- THE WAY OUT OF A GAME NOBODY HAS CALIBRATED. Until the audio reader
+       existed this screen was a dead end: "no kill marker is calibrated for
+       this game yet", a Calibrate button that is half an hour of work on real
+       footage, and nothing else. There is a reader now that needs none of
+       that, so the end of the road is a choice rather than a wall. -->
+  <div class="panel hide" id="clip-anygame" data-cstep="style">
+    <p class="muted">Nothing has been taught about this game yet. AutoStream
+       can still read the <b>audio</b> and find the loud moments &mdash; a
+       kill, a death, an explosion and somebody shouting all look the same to
+       it, so what you get is a shortlist to choose from rather than a list of
+       your kills. It needs no setting up and reads an hour in about a
+       second.</p>
+    <div class="field-inline">
+      <button class="btn btn-primary btn-sm" type="button" data-act="anygame"
+              id="clip-anygame-go">Find the loud moments instead</button>
+    </div>
+  </div>
+
   <div class="panel clip-warn hide" id="clip-wrongwrap">
     <p class="muted" id="clip-wrongtext"></p>
     <div class="field-inline">
@@ -627,6 +645,20 @@ One per line - a long session often covers several matches."></textarea>
       </div>
       <p class="field-help">A round runs 30 to 115 seconds. Off trims to the
          finish instead, which is what fits a Short.</p>
+      <!-- THE OTHER THING PEOPLE UPLOAD. A clip is thirty seconds around a
+           fight; this is the whole match in order with the buy time, the
+           walking and the twenty seconds of nothing between rounds taken
+           out. Only offered where the rounds are known, because the spans
+           come from them. -->
+      <div class="field-inline" style="margin-top:8px">
+        <button class="switch" type="button" role="switch" id="clip-matchvid"
+                aria-checked="false"><span class="switch-track"><span
+                class="switch-thumb"></span></span></button>
+        <label for="clip-matchvid">Also make the whole match as one video</label>
+      </div>
+      <p class="field-help">The match in order with the dead time cut out, and
+         YouTube chapters for every round. Made beside the clips, not instead
+         of them.</p>
     </div>
 
     <div class="field" id="clip-min-field">
@@ -952,7 +984,7 @@ var CLIP_TRANS = [['fade', 'Fade'], ['fadeblack', 'Dip to black'],
 /* Said as what is HAPPENING, because this is read while waiting for it.
    "Vertical" and "Montage" are nouns for features; these are the words a
    person would use for the same four things. */
-var CLIP_STEPS = [['scan', 'Finding your kills'], ['cut', 'Cutting the clips'],
+var CLIP_STEPS = [['scan', 'Reading the recording'], ['cut', 'Cutting the clips'],
                   ['vertical', 'Making the vertical versions'],
                   ['montage', 'Joining them into one video']];
 
@@ -1023,7 +1055,9 @@ function clip_row(s, i) {
   var sub = [];
   if (s.duration) sub.push(clip_dur(s.duration));
   if (s.recording_bytes) sub.push(clip_bytes(s.recording_bytes));
-  if (s.kills_known) sub.push(s.kills_known + ' kills found');
+  if (s.kills_known) {
+    sub.push(s.kills_known + ' ' + clip_found(s.kills_known, s) + ' found');
+  }
   /* OBS was already recording when the session started, so most of this file
      is footage AutoStream never saw - possibly a different game entirely. */
   if (s.game_uncertain) sub.push(clip_dur(s.pre_session_seconds) + ' before this session');
@@ -1187,15 +1221,51 @@ function clip_renderAdv() {
   var lab = clip_el('clip-adv-label');
   if (lab) lab.textContent = open ? 'Hide the details' : 'Change the details';
   var sum = clip_el('clip-adv-sum');
-  if (sum) {
-    var bits = [];
-    var min = clip_state.min, len = clip_state.len;
-    bits.push(min === '1' ? 'any moment' : min + '+ kills');
-    bits.push(len === 'full' ? 'whole moments' : len + 's clips');
-    bits.push(clip_state.vert === 'none' ? 'no vertical' : 'vertical too');
-    if (clip_state.montage) bits.push('joined into one');
-    sum.textContent = open ? '' : bits.join(' · ');
+  if (sum) sum.textContent = open ? '' : clip_buildSummary();
+}
+
+/* WHAT THE RUN WILL GIVE YOU, not which switches are set.
+
+   This line read "2+ kills · 30s clips · vertical too · joined into one" --
+   four settings in the order they appear in the form, which is a list of the
+   choices rather than a description of the result. Somebody reading it to
+   decide whether to open the fold has to translate every term back into an
+   outcome first, and the one number they actually want -- how many clips --
+   was not in it at all.
+
+   Said as the thing produced, and led with the count whenever the recording
+   has already been read. "About 6 clips" is the sentence; the rest is detail
+   behind it. */
+function clip_buildSummary() {
+  var s = clip_state.pick || {};
+  var min = Number(clip_state.min) || 1;
+  var len = clip_state.len;
+  var bits = [];
+
+  /* ONLY WHERE IT IS KNOWN. A previous reading of this recording gives a kill
+     count; without one there is nothing to count and a guess would be worse
+     than silence. */
+  var known = Number(s.kills_known);
+  if (known > 0) {
+    /* Deliberately rough, and said so. The real number depends on how the
+       kills cluster, which is the thing the scan works out -- so this is a
+       ceiling that gets closer the higher the minimum is. */
+    var est = Math.max(1, Math.floor(known / Math.max(1, min)));
+    /* CLIPS, not kills. `clip_found` names what the READER found, which is
+       the wrong noun here -- it made the line read "about 6 kills · each 15
+       seconds", which is nonsense twice over. */
+    bits.push('about ' + est + (est === 1 ? ' clip' : ' clips'));
   }
+
+  bits.push(len === 'full'
+    ? 'each as long as the moment lasts'
+    : 'each ' + len + ' seconds');
+  if (min > 1) {
+    bits.push('only where ' + min + ' land together');
+  }
+  if (clip_state.vert !== 'none') bits.push('a vertical copy of each');
+  if (clip_state.montage) bits.push('all of them joined into one video');
+  return bits.join(' · ');
 }
 
 function clip_renderGames() {
@@ -1384,8 +1454,15 @@ function clip_renderRail() {
   var running = !!(j && (j.state === 'running' || j.state === 'queued'));
   var steps = clip_steps();
   var here = clip_state.step;
+  /* A TICK MEANS BEHIND YOU, not "this card has something in it".
+     st[2] answers the second question -- Style's is `a video is picked` --
+     so on step 2 the rail ticked Style while 4 and 5 were still numbered,
+     and a stage nobody had opened read as finished. Reported as defect 3 in
+     the 2026-10-04 UI review; it arrived with the stage rail in v1.40.0. */
+  var at = steps.map(function (st) { return st[0]; }).indexOf(here);
   host.innerHTML = steps.map(function (st, i) {
-    var cls = st[2] ? 'is-done' : '';
+    var behind = at >= 0 && i < at;
+    var cls = (st[2] && behind) ? 'is-done' : '';
     if (running && st[0] === 'style') cls = 'is-done';
     if (st[0] === here) cls += ' is-here';
     if (!st[3]) cls += ' is-locked';
@@ -1398,7 +1475,8 @@ function clip_renderRail() {
       + (st[0] === here ? ' aria-current="step"' : '')
       + ' title="' + esc(st[3] ? st[1]
           : st[1] + ' opens once you have made clips') + '">'
-      + '<span class="clip-rail-dot">' + (st[2] ? '&#10003;' : (i + 1)) + '</span>'
+      + '<span class="clip-rail-dot">'
+      + ((st[2] && behind) ? '&#10003;' : (i + 1)) + '</span>'
       + esc(st[1]) + '</button></li>';
   }).join('');
   clip_show('clip-rail', !!s || !!j);
@@ -1776,13 +1854,28 @@ function clip_renderOptions() {
      with this many of the player's kills as well as the labelled ones, so
      Counter-Strike was being cut to a minimum nobody could see or change. */
   clip_show('clip-min-field', true);
+  var loud = clip_isLoud(s);
   var minLab = clip_el('clip-min-label'), minHelp = clip_el('clip-min-help');
-  if (minLab) minLab.textContent = roundMode ? 'Minimum kills in a round' : 'Minimum kills in a clip';
-  if (minHelp) minHelp.textContent = roundMode
-    ? 'Every round you got this many kills in becomes a clip, alongside the '
-      + 'rounds that earned a highlight type below.'
-    : 'A clip is only kept if this many kills land inside it, not just inside '
-      + 'the fight it came from.';
+  if (minLab) {
+    minLab.textContent = loud ? 'Minimum moments in a clip'
+      : (roundMode ? 'Minimum kills in a round' : 'Minimum kills in a clip');
+  }
+  if (minHelp) minHelp.textContent = loud
+    /* THE AUDIO READER HAS ALREADY DONE THIS JOB. Anything within six
+       seconds is merged into one moment before the page ever sees it, so
+       asking for "two or more together" is asking for two SEPARATE loud
+       moments inside one clip length -- which almost never happens, and the
+       default of 2 meant a run that found three moments cut nothing at all
+       and said so in a sentence nobody had any reason to go looking for. */
+    ? 'Leave this at 1. The audio reader has already joined anything within '
+      + 'a few seconds into one moment, so a higher number asks for two '
+      + 'separate loud moments close together -- which is rare, and usually '
+      + 'means no clips at all.'
+    : (roundMode
+      ? 'Every round you got this many kills in becomes a clip, alongside the '
+        + 'rounds that earned a highlight type below.'
+      : 'A clip is only kept if this many kills land inside it, not just inside '
+        + 'the fight it came from.');
   if (supports) clip_renderTypes();
   clip_segs('clip-min', CLIP_MINS, clip_state.min, 'min');
   clip_segs('clip-len', CLIP_LENS, clip_state.len, 'len');
@@ -1795,7 +1888,8 @@ function clip_renderOptions() {
   var sw = clip_el('clip-montage');
   if (sw) sw.setAttribute('aria-checked', clip_state.montage ? 'true' : 'false');
   [['clip-rounds', clip_state.rounds !== false],
-   ['clip-whole', clip_state.whole !== false]].forEach(function (pair) {
+   ['clip-whole', clip_state.whole !== false],
+   ['clip-matchvid', !!clip_state.matchVid]].forEach(function (pair) {
     var el = clip_el(pair[0]);
     if (!el) return;
     el.setAttribute('aria-checked', pair[1] ? 'true' : 'false');
@@ -1885,6 +1979,15 @@ function clip_renderOptions() {
     why = s.blocked || ('No kill marker is calibrated for ' +
           (s.game || 'this game') + ' yet. Use Calibrate a game first.');
   } else if (clip_state.busy) why = 'A clip job is already running.';
+
+  /* A WAY FORWARD WHERE THERE USED TO BE A WALL. Until the audio reader
+     existed, a game nobody had calibrated ended here: a message, a Calibrate
+     button that is half an hour of work on real footage, and nothing else.
+     Reading the audio needs none of that. Offered rather than taken -- it
+     finds loud moments and not kills, which is the user's trade to make. */
+  clip_show('clip-anygame',
+            !s.can_scan && !byCards && s.has_recording &&
+            s.scan_mode !== 'loudness');
 
   /* A note is not a reason to disable anything, so it is kept separate from
      `why`. Reading a kill feed runs about 10 frames a second where a template
@@ -2076,10 +2179,25 @@ function clip_renderJob(j) {
   if (!done) return;
   /* ONCE, on the edge. Every poll runs through here, so re-opening the stage
      each time would drag the user back whenever they looked at anything else
-     while a finished job sat on screen. */
+     while a finished job sat on screen.
+
+     ONCE IT HAS ACTUALLY TAKEN, though -- not once it has been attempted.
+     This runs from clip_renderJob, which is called BEFORE
+     `clip_state.lastJob = j`, so the rail clip_goStep rebuilds is still
+     computed from the PREVIOUS job. While that previous job was running the
+     Clips stage is open and the hop lands. When there was no previous job --
+     a run that finishes between two polls, so the page goes straight from
+     nothing to done -- the stage is neither done nor running, clip_renderStep
+     falls back to the last finished stage, and the hop is undone the instant
+     it is made. `sawDone` had already been spent, so it was never retried:
+     the run finished, the results were on the page, and the page sat on
+     Style with no sign anything had happened.
+
+     Recording it only when the step held means the next poll -- by which
+     time lastJob is the finished job -- tries again and succeeds. */
   if (clip_state.sawDone !== j.folder) {
-    clip_state.sawDone = j.folder || 'done';
     clip_goStep('done');
+    if (clip_state.step === 'done') clip_state.sawDone = j.folder || 'done';
   }
 
   /* STOPPED FOR A REPLAY IS NOT A FAILURE. Nothing went wrong; the run needs
@@ -2134,8 +2252,9 @@ function clip_renderJob(j) {
        failure even when the kills were found and swept into the promo reel,
        and the run already knows exactly why -- see summary.why in jobs.py. */
     sub = j.clips + (j.clips === 1 ? ' clip' : ' clips') +
-          (sum.kills ? '  ·  ' + sum.covered + ' of ' + sum.kills +
-                       ' kills (' + sum.coverage + '%)' : '') +
+          (sum.kills ? '  ·  ' + sum.covered + ' of ' + sum.kills + ' ' +
+                       clip_found(sum.kills, {scan_mode: j.scan_mode}) +
+                       ' (' + sum.coverage + '%)' : '') +
           '  ·  ' + (j.folder || '');
     if (!j.clips && sum.why) sub = sum.why + '  ·  ' + (j.folder || '');
   } else {
@@ -2175,6 +2294,32 @@ var CLIP_MV_MAKE = [
 /* Seconds of work per second of video (clips/summary.py), and what the
    reading costs per second of recording (clips/jobs.py SCAN_RATE). */
 var CLIP_MV_SPEED = {read: 16, summary: 4.4, highlight: 2.4, fixed: 8};
+
+/* WHAT THIS READER ACTUALLY FOUND.
+
+   Every reader but one finds kills, and the page says so everywhere. The
+   loudness reader does not: it reads the audio, so what it found is "a loud
+   moment", which covers a kill, a death, an explosion and a teammate
+   shouting equally. Calling those kills would be the page claiming something
+   it cannot know, and the first time somebody opened a clip of their own
+   death they would stop trusting the rest of it.
+
+   One helper rather than a second set of strings, so a page that gains a
+   sentence about kills does not quietly gain a lie. */
+/* The built-in profile that reads audio rather than the screen. Keyed on a
+   name no game will ever report, because it is not a game -- see
+   clips/profiles.py ANY_GAME. */
+var CLIP_ANY_GAME = 'any-game';
+
+function clip_isLoud(s) {
+  s = s || clip_state.pick;
+  return !!(s && s.scan_mode === 'loudness');
+}
+
+function clip_found(n, s) {
+  if (!clip_isLoud(s)) return n === 1 ? 'kill' : 'kills';
+  return n === 1 ? 'loud moment' : 'loud moments';
+}
 
 function clip_isMV(s) {
   s = s || clip_state.pick;
@@ -2548,11 +2693,27 @@ function clip_renderResults(list, montagePath) {
   }
   var h = '';
   if (montagePath) {
+    /* THE ONE OUTPUT WITH NO WAY INTO THE MIDDLE OF IT. Forty clips joined
+       into eight minutes, and the good one is somewhere in there -- so the
+       chapters are offered where the montage is, rather than left in a .txt
+       beside it for somebody to find. */
+    var chap = (clip_state.lastJob || {}).montage_chapters || '';
     h += '<div class="clip-res is-montage">' +
          '<span class="clip-res-rank">' + icon('film') + '</span>' +
          '<span class="clip-res-name">Montage</span>' +
-         '<span class="clip-res-meta muted">every clip, joined</span>' +
+         '<span class="clip-res-meta muted">every clip, joined' +
+           /* Counted with a regex rather than by splitting on a newline
+              literal: this file is Python holding JavaScript, and a `\n`
+              inside a quoted string here is one escaping decision away from
+              being a real line break in the bundle -- which is exactly what
+              it was, and the JS no longer parsed. */
+           (chap ? '  ·  ' + (chap.match(/\S[^\r\n]*/g) || []).length +
+                   ' chapters' : '') + '</span>' +
          '<span class="clip-res-acts">' +
+         (chap
+           ? '<button class="btn btn-ghost btn-sm" type="button" ' +
+             'data-act="copy-montage-chapters">Copy chapters</button>'
+           : '') +
          '<button class="btn btn-ghost btn-sm" type="button" data-act="reveal"' +
          ' data-path="' + esc(montagePath) + '">Show</button></span></div>';
   }
@@ -2564,13 +2725,21 @@ function clip_renderResults(list, montagePath) {
     var done = !!c.video_id;
     var on = clip_upWanted(c);
     var label = c.caption ? esc(c.caption)
-                          : (esc(String(c.kills)) + (c.kills === 1 ? ' kill' : ' kills'));
-    h += '<div class="clip-res' + (done ? ' is-up' : '') + '">' +
+                          : (esc(String(c.kills)) + ' ' +
+                             clip_found(c.kills, clip_state.pick));
+    /* SOMEWHERE TO START. A folder of forty in rank order is still forty
+       things to open; the mark says which handful to watch first, and the
+       order already put them at the top. A flag, not a filter -- nothing is
+       hidden and the rest are still numbered. */
+    var best = !!c.top && !done;
+    h += '<div class="clip-res' + (done ? ' is-up' : '') +
+         (best ? ' is-best' : '') + '">' +
       (can && !done
         ? '<input class="clip-res-tick" type="checkbox" data-up="' + i + '"' +
           (on ? ' checked' : '') + ' aria-label="Upload ' + esc(label) + '">'
         : '<span class="clip-res-rank mono">' + esc(String(c.rank)) + '</span>') +
-      '<span class="clip-res-name">' + label + '</span>' +
+      '<span class="clip-res-name">' + label +
+        (best ? '<span class="clip-res-best">Best</span>' : '') + '</span>' +
       '<span class="clip-res-meta muted">at ' + esc(c.at) + '  ·  ' +
         Math.round(c.duration) + 's' +
         (done ? '  ·  on YouTube' : (can ? '' : '  ·  no vertical')) + '</span>' +
@@ -4657,6 +4826,7 @@ function clip_runBody(s) {
     rounds: clip_state.rounds !== false,
     whole_round: clip_state.whole !== false,
     round_types: clip_state.types || null,
+    match_summary: !!clip_state.matchVid,
     summaries: !!clip_mvMake().summaries,
     highlights: !!clip_mvMake().highlights
   });
@@ -5362,7 +5532,15 @@ function clip_useLocal() {
     scan_rate: g.scan_rate, cards_rate: g.cards_rate,
     demos: g.demos, cards_ready: g.cards_ready, needs_ocr: g.needs_ocr,
     counts_assists: g.counts_assists, blocked: g.blocked, player: g.player,
-    started: f.started || null, display_started: null, local: true
+    started: f.started || null, display_started: null, local: true,
+    /* NULL, AND PRESENT. A file somebody has just handed us has no earlier
+       reading behind it, so there is no kill count -- and the build summary
+       correctly says nothing about how many clips to expect. Carried as an
+       explicit null rather than left off, because this is a field a picked
+       file CAN have once it has been read once, and the audit in
+       test_local_clip exists to catch exactly the "the page reads it, this
+       object forgot it" shape. */
+    kills_known: null
   };
   clip_renderList();
   clip_renderOptions();
@@ -5608,6 +5786,12 @@ function clip_useGameLocally(key, label) {
   var prof = clip_profileFor(key);
   s.game_key = key;
   s.game = label || (prof && prof.label) || key;
+  /* THE MINIMUM IS PART OF WHAT DESCRIBES THE READER. Switching to the audio
+     reader with the default of 2 still in place is a run that finds its
+     moments, cuts nothing, and explains why in a line nobody has a reason to
+     go looking for -- which is how this was found. Moved with everything
+     else that is retargeted here. */
+  if (prof && prof.mode === 'loudness') clip_state.min = '1';
   if (prof) {
     /* EVERY FIELD THAT DESCRIBES THE GAME, not the handful this started with.
        Retargeting used to refresh five of them and leave the rest describing
@@ -6255,6 +6439,14 @@ function clip_wire() {
     clip_state.whole = clip_state.whole === false;
     clip_renderOptions();
   });
+  /* OFF BY DEFAULT, unlike the two above. The clips are what the page is
+     for; the whole match is a second output that costs another pass over
+     the recording, so it is asked for rather than assumed. */
+  var mvw = clip_el('clip-matchvid');
+  if (mvw) mvw.addEventListener('click', function () {
+    clip_state.matchVid = !clip_state.matchVid;
+    clip_renderOptions();
+  });
   var types = clip_el('clip-types');
   if (types) types.addEventListener('click', function (ev) {
     var b = ev.target.closest('[data-type]');
@@ -6423,6 +6615,8 @@ function clip_wire() {
     } else if (act === 'known-match') {
       clip_mvPickKnown(Number(b.getAttribute('data-i')));
       clip_mvRenderKnown();
+    } else if (act === 'copy-montage-chapters') {
+      clip_mvCopyChapters((clip_state.lastJob || {}).montage_chapters || '');
     } else if (act === 'copy-chapters') {
       var cc2 = (clip_state.results || [])[Number(b.getAttribute('data-i'))];
       clip_mvCopyChapters(cc2 && cc2.chapters_text);
@@ -6434,6 +6628,14 @@ function clip_wire() {
       API.post('/api/clips/upload/cancel', {});
     } else if (act === 'setgame') {
       clip_setGame();
+    } else if (act === 'anygame') {
+      /* The same path "pick another game" takes, not a second one. It
+         retargets every field that describes the reader -- the scan rate, the
+         demo answer, the OCR answer -- and deliberately does NOT rewrite the
+         journal: this is a choice about what to cut now, not a claim that the
+         session was a different game. */
+      clip_useGameLocally(CLIP_ANY_GAME, 'Any game (loud moments)');
+      toast('Reading the audio for loud moments.', 'ok');
     } else if (act === 'calibrate') {
       clip_calOpen();
     } else if (act === 'cal-close') {

@@ -41,6 +41,18 @@ from .icons import LOGO_LOCKUP
 # inherit a gutter from, and css.py's class vocabulary has no container class for it.
 # clamp() keeps the gutters on the design grid at both ends of the range (16px at the
 # 420px floor, 24px from ~1090px up) without needing a media query in an attribute.
+# WHY THERE ARE ARIA ATTRIBUTES HERE AT ALL
+# There were none. Not one, in the whole wizard -- while the Studio page had
+# 83 and Clips 70. This is the first screen a new user meets and the only part
+# of the app nobody can skip, so it was the worst place in the product to have
+# nothing: a screen reader was never told which step of how many, never found
+# a heading to jump to, and never heard a word of the status messages that are
+# the only sign the thing it was asked to do worked.
+#
+# The step bar is a progressbar rather than a list because that is what it is:
+# a dozen identical empty divs conveying one number. The card is a live region
+# and takes focus on each step, because every step replaces it wholesale and
+# focus would otherwise fall back to the top of the document each time.
 SETUP_HTML: str = (
     '<div id="setup-page" style="max-width:720px;margin:0 auto;'
     'padding:clamp(24px,4vw,40px) clamp(16px,2.2vw,24px) 56px">\n'
@@ -54,8 +66,11 @@ SETUP_HTML: str = (
     '    <span class="muted" id="setup-stepname"></span>\n'
     '    <span class="muted mono" id="setup-stepcount" style="margin-left:auto"></span>\n'
     '  </div>\n'
-    '  <div class="steps" id="setup-stepbar"></div>\n'
-    '  <div class="card" id="setup-stepcard"></div>\n'
+    '  <div class="steps" id="setup-stepbar" role="progressbar"\n'
+    '       aria-label="Setup progress" aria-valuemin="1" aria-valuenow="1"\n'
+    '       aria-valuemax="1" aria-valuetext="Loading"></div>\n'
+    '  <main class="card" id="setup-stepcard" tabindex="-1"\n'
+    '        aria-live="polite" aria-busy="false"></main>\n'
     '</div>\n'
 )
 
@@ -69,7 +84,51 @@ SETUP_JS: str = r"""
 /* Step order, request bodies and copy are a verbatim port of the pre-rewrite
    wizard. See autostream/ui/setup.py for why. */
 
-const setup_STEPS = ['Welcome','Google Cloud','YouTube','OBS','Stream','Timing','Apps','Branding','Finish'];
+/* STEPS BY NAME, NOT BY NUMBER. This was a fixed list of nine and a draw
+   function that compared `setup_step` against 0..8, which is exactly as long
+   as every install needs the same nine. It does not: a Twitch user has no use
+   for a Google Cloud project, an OAuth round trip to Google, a YouTube
+   permanent stream, or a privacy setting Twitch does not have -- four of the
+   nine. Sending them through anyway is what made a second platform feel like
+   a different product to set up rather than the same one.
+
+   So the list is built from the platform, and each step draws itself under
+   its own name. Inserting or dropping one is now a line in `setup_plan`
+   rather than a renumbering of everything after it. */
+const setup_LABELS = {
+  welcome:  'Welcome',
+  platform: 'Where',
+  google:   'Google Cloud',
+  ytauth:   'YouTube',
+  connect:  'Sign in',
+  obs:      'OBS',
+  stream:   'Stream',
+  timing:   'Timing',
+  apps:     'Apps',
+  branding: 'Branding',
+  finish:   'Finish'
+};
+
+function setup_plan(){
+  var who = (setup_state.platform || 'youtube').toLowerCase();
+  if (who === 'twitch' || who === 'kick'){
+    /* No Google Cloud and no YouTube sign-in, because neither is involved.
+       No Stream step either: everything on it -- who can see the stream,
+       latency, whether a game switch starts a second broadcast -- is a
+       property of a YouTube broadcast object, and there is no broadcast
+       object here. The title template moves onto the Timing step so it is
+       not lost with the rest. */
+    return ['welcome', 'platform', 'connect', 'obs', 'timing', 'apps',
+            'branding', 'finish'];
+  }
+  return ['welcome', 'platform', 'google', 'ytauth', 'obs', 'stream',
+          'timing', 'apps', 'branding', 'finish'];
+}
+
+function setup_at(){
+  var plan = setup_plan();
+  return plan[Math.max(0, Math.min(plan.length - 1, setup_step))] || 'welcome';
+}
 
 let setup_step = 0;
 let setup_state = {};      /* SetupFlow.snapshot() payload, refreshed by every ok:true */
@@ -117,6 +176,14 @@ function setup_say(id, kind, html){
   const el = setup_$(id);
   if (!el) return;
   el.className = kind ? ('note ' + kind) : 'muted';
+  /* THE ONLY SIGN THE THING WORKED. These slots carry every result the
+     wizard reports -- "Connected as ...", "OBS refused the key", the spinner
+     while a sign-in is in flight -- and without a live region none of it was
+     announced, so a screen reader user pressed a button and heard nothing at
+     all. 'assertive' for a failure, which is not something to find out about
+     after the next three things have been read. */
+  el.setAttribute('role', 'status');
+  el.setAttribute('aria-live', kind === 'bad' ? 'assertive' : 'polite');
   el.innerHTML = html || '';
 }
 const setup_spin = t => '<span class="spin"></span> ' + t;
@@ -124,14 +191,28 @@ const setup_spin = t => '<span class="spin"></span> ' + t;
 /* ---------------- chrome ---------------- */
 
 function setup_bar(){
+  const plan = setup_plan();
+  const here = setup_LABELS[setup_at()] || '';
+  const said = 'Step ' + (setup_step + 1) + ' of ' + plan.length +
+               (here ? ': ' + here : '');
   const b = setup_$('setup-stepbar');
-  if (b) b.innerHTML = setup_STEPS.map((_, i) =>
-    '<div class="stp' + (i < setup_step ? ' done' : (i === setup_step ? ' on' : '')) +
-    '"></div>').join('');
+  if (b){
+    /* aria-hidden on the pips: they are a dozen identical empty divs, and
+       read out one by one they are noise. The progressbar around them says
+       the same thing in one sentence. */
+    b.innerHTML = plan.map((name, i) =>
+      '<div class="stp' + (i < setup_step ? ' done' : (i === setup_step ? ' on' : '')) +
+      '" aria-hidden="true" title="' + setup_attr(setup_LABELS[name] || name) +
+      '"></div>').join('');
+    b.setAttribute('aria-valuemin', '1');
+    b.setAttribute('aria-valuemax', String(plan.length));
+    b.setAttribute('aria-valuenow', String(setup_step + 1));
+    b.setAttribute('aria-valuetext', said);
+  }
   const n = setup_$('setup-stepname');
-  if (n) n.textContent = setup_STEPS[setup_step] || '';
+  if (n) n.textContent = here;
   const c = setup_$('setup-stepcount');
-  if (c) c.textContent = 'Step ' + (setup_step + 1) + ' of ' + setup_STEPS.length;
+  if (c) c.textContent = 'Step ' + (setup_step + 1) + ' of ' + plan.length;
 }
 
 /* back=false drops the Back button; next=false disables Continue; next as a string
@@ -148,9 +229,83 @@ function setup_nav(back, next, nextLabel){
 }
 
 function setup_card(title, sub, body){
-  return '<div class="card-head"><div class="card-title">' + title + '</div>' +
+  /* An <h1>, not a styled div. It is the only heading on the screen and the
+     thing a screen reader jumps to; as a div there was nothing to jump to.
+     The class keeps the type exactly as it was. */
+  return '<div class="card-head"><h1 class="card-title" id="setup-title">' +
+    title + '</h1>' +
     (sub ? '<div class="card-sub">' + sub + '</div>' : '') +
     '</div><div class="card-body">' + body + '</div>';
+}
+
+function setup_platName(){
+  return String(setup_state.platform || 'youtube').toLowerCase();
+}
+
+function setup_platLabel(){
+  const r = setup_state.platform_ready || {};
+  return r.label || {youtube: 'YouTube', twitch: 'Twitch', kick: 'Kick'}[
+    setup_platName()] || 'your platform';
+}
+
+function setup_platReady(){
+  const r = setup_state.platform_ready || {};
+  return !!r.ok;
+}
+
+function setup_platformPick(id, title, sub, meta){
+  const on = setup_platName() === id;
+  return '<button type="button" class="pick' + (on ? ' is-active' : '') +
+    '" role="radio" aria-checked="' + (on ? 'true' : 'false') +
+    '" data-act="pickPlatform" data-platform="' + setup_attr(id) + '">' +
+    '<span class="pick-title">' + title + '</span>' +
+    '<span class="pick-sub">' + sub + '</span>' +
+    '<span class="pick-meta">' + meta + '</span></button>';
+}
+
+/* A list the reader ticks off themselves. `key` namespaces the saved marks
+   so a second checklist cannot overwrite this one's. */
+function setup_checklist(key, items){
+  var done = setup_ticks(key);
+  return '<ul class="checklist" id="setup-ck-' + setup_attr(key) + '">' +
+    items.map(function(html, i){
+      var on = done.indexOf(i) >= 0;
+      return '<li class="checkitem' + (on ? ' is-done' : '') + '">' +
+        '<label class="checkitem-box">' +
+        '<input type="checkbox" data-ck="' + setup_attr(key) + '" ' +
+        'data-i="' + i + '"' + (on ? ' checked' : '') + '>' +
+        '<span class="checkitem-text">' + html + '</span></label></li>';
+    }).join('') + '</ul>' +
+    '<p class="muted" id="setup-ck-' + setup_attr(key) + '-count" ' +
+    'role="status" aria-live="polite">' +
+    setup_ckCount(done.length, items.length) + '</p>';
+}
+
+function setup_ckCount(done, total){
+  if (!done) return 'Tick these off as you go - nothing here is sent anywhere.';
+  if (done >= total) return 'All ' + total + ' done.';
+  return done + ' of ' + total + ' done.';
+}
+
+/* Kept in the browser, not in config: these are a reader's place in a list of
+   instructions, not a setting, and they are meaningless to anything else.
+   Wrapped because storage throws in a private window and the wizard must
+   still draw. */
+function setup_ticks(key){
+  try {
+    var raw = window.localStorage.getItem('autostream.setup.' + key);
+    var v = raw ? JSON.parse(raw) : [];
+    return Array.isArray(v) ? v : [];
+  } catch (e) { return []; }
+}
+
+function setup_tick(key, i, on){
+  var now = setup_ticks(key).filter(function(x){ return x !== i; });
+  if (on) now.push(i);
+  try {
+    window.localStorage.setItem('autostream.setup.' + key, JSON.stringify(now));
+  } catch (e) { /* the tick still shows; it just will not survive a reload */ }
+  return now;
 }
 
 function setup_opt(v, l, cur){
@@ -159,9 +314,27 @@ function setup_opt(v, l, cur){
 }
 
 function setup_go(i){
-  setup_step = Math.max(0, Math.min(setup_STEPS.length - 1, i));
+  const was = setup_step;
+  setup_step = Math.max(0, Math.min(setup_plan().length - 1, i));
   setup_bar();
   setup_draw();
+  /* MOVE FOCUS WITH THE STEP. The card is replaced wholesale, so whatever was
+     focused is gone and focus falls back to the top of the document -- which
+     means tabbing from the bottom of a long step starts again at the logo, and
+     a screen reader is left where it was rather than on the new step. Only on
+     an actual change, so a redraw in place does not steal focus from a field
+     somebody is typing in. */
+  if (was !== setup_step){
+    const card = setup_$('setup-stepcard');
+    if (card && card.focus) card.focus({preventScroll: true});
+  }
+}
+
+/* Jump to a step by name, so a caller does not have to know what number it
+   is on this install -- which is the whole point of the plan. */
+function setup_goName(name){
+  var i = setup_plan().indexOf(name);
+  if (i >= 0) setup_go(i);
 }
 
 /* ---------------- steps ---------------- */
@@ -169,8 +342,9 @@ function setup_go(i){
 function setup_draw(){
   const c = setup_$('setup-stepcard');
   if (!c) return;
+  const at = setup_at();
 
-  if (setup_step === 0) c.innerHTML = setup_card(
+  if (at === 'welcome') c.innerHTML = setup_card(
     'What do you want AutoStream to do?',
     'Both halves are the same app. Pick the one you want now - the other can be ' +
     'turned on later in Settings without setting up again.',
@@ -178,44 +352,116 @@ function setup_draw(){
     '<div class="note hide" id="setup-wv2"><span id="setup-wv2-text"></span> ' +
     '<button type="button" class="btn btn-sm" data-act="getWebview2" ' +
     'id="setup-wv2-btn" style="margin-top:8px">Get the app window</button>' +
-    '<p class="muted" id="setup-wv2-msg"></p></div>' +
+    '<p class="muted" id="setup-wv2-msg" role="status" aria-live="polite"></p></div>' +
     '<div class="pickrow">' +
-      '<button type="button" class="pick" data-act="wantClips">' +
-        '<span class="pick-title">Just make clips</span>' +
+      /* CLIPS FIRST, AND MARKED AS THE ONE TO TAKE. Two choices presented
+         as equals made the ten-minute one look as ordinary as the
+         five-second one, and most people arriving here want the clipper --
+         it is the thing that works on a video they already have, with no
+         account anywhere. Streaming is still one press away; it is just no
+         longer the implied price of opening the app. */
+      '<button type="button" class="pick is-primary" data-act="wantClips">' +
+        '<span class="pick-title">Just make clips' +
+        '<span class="pick-tag">Recommended</span></span>' +
         '<span class="pick-sub">Point it at a video you already have, pick the ' +
-        'game, get the highlights. Nothing else to set up - no Google account, ' +
-        'no OBS.</span>' +
+        'game, get the highlights. Nothing else to set up - no account ' +
+        'anywhere, no OBS.</span>' +
         '<span class="pick-meta">Ready in seconds</span>' +
       '</button>' +
       '<button type="button" class="pick" data-act="wantStream">' +
         '<span class="pick-title">Stream and clip</span>' +
-        '<span class="pick-sub">Go live on YouTube by itself when you launch a ' +
-        'game, record it, and cut the clips afterwards.</span>' +
-        '<span class="pick-meta">About ten minutes, most of it waiting on Google</span>' +
+        '<span class="pick-sub">Go live on Twitch, Kick or YouTube by itself ' +
+        'when you launch a game, record it, and cut the clips afterwards.</span>' +
+        '<span class="pick-meta">A minute on Twitch or Kick, longer on YouTube</span>' +
       '</button>' +
     '</div>' +
-    '<div class="note"><b>Streaming needs:</b> a YouTube channel with live ' +
-    'streaming already enabled, and OBS Studio installed. Enabling live ' +
-    'streaming on a new channel can take up to 24 hours - do that first at ' +
-    'youtube.com if you have not already.</div>' +
-    '<p class="muted" id="setup-pickmsg"></p>');
+    '<div class="note"><b>Streaming needs</b> OBS Studio installed, and an ' +
+    'account on whichever service you pick. On YouTube that account also ' +
+    'needs live streaming already enabled, which can take 24 hours on a new ' +
+    'channel - do that first at youtube.com.</div>' +
+    '<p class="muted" id="setup-pickmsg" role="status" aria-live="polite"></p>');
 
-  else if (setup_step === 1) c.innerHTML = setup_card(
+  else if (at === 'platform') c.innerHTML = setup_card(
+    'Where do you want to go live?',
+    'This decides the rest of the setup. Twitch and Kick need a stream key ' +
+    'and nothing else; YouTube needs a Google Cloud project of your own, ' +
+    'which is the long part.',
+    '<div class="pickrow" role="radiogroup" aria-label="Streaming platform">' +
+      setup_platformPick('twitch', 'Twitch',
+        'Paste a stream key, or sign in so AutoStream can set the title and ' +
+        'category for you.', 'A minute') +
+      setup_platformPick('kick', 'Kick',
+        'Sign in once. Kick hands over the stream key itself, so there is ' +
+        'nothing to copy.', 'A minute') +
+      setup_platformPick('youtube', 'YouTube',
+        'Your own Google Cloud project, so the daily API allowance is yours ' +
+        'alone. Six console pages and an OAuth sign-in.', 'About ten minutes') +
+    '</div>' +
+    '<p class="muted" id="setup-platmsg" role="status" aria-live="polite"></p>' +
+    '<div class="note">You can add the others later in ' +
+    '<b>Settings &rarr; Stream</b> without setting up again.</div>' +
+    setup_nav(true, false));
+
+  else if (at === 'connect') c.innerHTML = setup_card(
+    'Sign in to ' + esc(setup_platLabel()),
+    setup_platName() === 'kick'
+      ? 'Kick hands over the stream key through its API, so this sign-in is ' +
+        'what makes streaming possible at all.'
+      : 'The stream key is what makes the broadcast happen. Signing in is ' +
+        'what lets AutoStream set the title and category as well.',
+    '<div class="note" id="setup-connstate"></div>' +
+    '<button type="button" class="btn btn-primary btn-block" ' +
+    'data-act="connectPlatform">Open ' + esc(setup_platLabel()) +
+    ' and sign in</button>' +
+    '<p class="muted" id="setup-connmsg" role="status" aria-live="polite"></p>' +
+    (setup_platName() === 'twitch'
+      ? '<div class="field">' +
+        '<label class="field-label" for="setup-twkey">Or paste your stream ' +
+        'key</label>' +
+        '<input class="input mono" id="setup-twkey" type="password" ' +
+        'autocomplete="off" spellcheck="false" placeholder="live_...">' +
+        '<div class="field-help">Twitch &rarr; Creator Dashboard &rarr; ' +
+        'Settings &rarr; Stream. A key alone is enough to go live; without ' +
+        'the sign-in the title is not set.</div></div>' +
+        '<button type="button" class="btn btn-block" data-act="saveTwitchKey">' +
+        'Save the key</button>'
+      : '') +
+    /* Enabled the moment the platform can actually stream -- a key for
+       Twitch, a sign-in for Kick. Hard-coded `false` left somebody who had
+       just pasted a valid key staring at a disabled Continue. */
+    setup_nav(true, setup_platReady() ? null : false));
+
+  else if (at === 'google') c.innerHTML = setup_card(
     'Google Cloud credentials',
     'AutoStream talks to YouTube through your own Google Cloud project, so your ' +
     'daily API allowance is yours alone.',
-    '<ol class="steps-list">' +
-    '<li>Go to <a href="https://console.cloud.google.com/projectcreate" target="_blank" ' +
-    'rel="noopener">console.cloud.google.com</a> and create a project.</li>' +
-    '<li>APIs &amp; Services &rarr; Library &rarr; enable <b>YouTube Data API v3</b>.</li>' +
-    '<li>Google Auth Platform &rarr; <b>Branding</b>: set an app name and your email.</li>' +
-    '<li>Google Auth Platform &rarr; <b>Audience</b>: User type <b>External</b>, then ' +
-    '<b>Publish App</b>. <em>Skip verification.</em></li>' +
-    '<li>Google Auth Platform &rarr; <b>Data Access</b>: add scopes ' +
-    '<code class="mono">.../auth/youtube</code> and ' +
-    '<code class="mono">.../auth/youtube.force-ssl</code>.</li>' +
-    '<li>Google Auth Platform &rarr; <b>Clients</b> &rarr; Create client &rarr; ' +
-    '<b>Desktop app</b> &rarr; Download JSON.</li></ol>' +
+    /* A CHECKLIST, NOT A PARAGRAPH OF SIX. This is six separate journeys
+       through a console that looks nothing like this page, and the reader
+       does them one at a time with the browser in front of the app. As a
+       plain <ol> there was no way to mark where you had got to, so coming
+       back meant re-reading all six to find your place -- and the one that
+       is skipped most often, publishing the app, is the one whose cost
+       arrives a week later as a login that silently stops working.
+
+       Ticks are the reader's own note to self. Nothing is sent and nothing
+       is checked: the app cannot see a Google console, and pretending to
+       verify would be worse than not claiming to. */
+    setup_checklist('gcloud', [
+      'Go to <a href="https://console.cloud.google.com/projectcreate" ' +
+        'target="_blank" rel="noopener">console.cloud.google.com</a> and ' +
+        'create a project.',
+      'APIs &amp; Services &rarr; Library &rarr; enable ' +
+        '<b>YouTube Data API v3</b>.',
+      'Google Auth Platform &rarr; <b>Branding</b>: set an app name and ' +
+        'your email.',
+      'Google Auth Platform &rarr; <b>Audience</b>: User type ' +
+        '<b>External</b>, then <b>Publish App</b>. <em>Skip verification.</em>',
+      'Google Auth Platform &rarr; <b>Data Access</b>: add scopes ' +
+        '<code class="mono">.../auth/youtube</code> and ' +
+        '<code class="mono">.../auth/youtube.force-ssl</code>.',
+      'Google Auth Platform &rarr; <b>Clients</b> &rarr; Create client ' +
+        '&rarr; <b>Desktop app</b> &rarr; Download JSON.'
+    ]) +
     '<div class="note warn"><b>Do not skip step 4.</b> While the app is in ' +
     'Testing mode Google blocks sign-in for anyone not on the test-user list, ' +
     'and even for you the login expires after about 7 days and streaming ' +
@@ -234,32 +480,51 @@ function setup_draw(){
         'placeholder=\'{"installed":{"client_id":"..."}}\'></textarea></div>' +
         '<button type="button" class="btn btn-block" data-act="saveSecret">' +
         'Save credentials</button>' +
-        '<p class="muted" id="setup-csmsg"></p>') +
+        '<p class="muted" id="setup-csmsg" role="status" aria-live="polite"></p>') +
     setup_nav(true, setup_state.client_secret ? null : false));
 
-  else if (setup_step === 2) c.innerHTML = setup_card(
+  else if (at === 'ytauth') c.innerHTML = setup_card(
     'Connect your channel',
     'Your browser will open so you can grant AutoStream access to your own channel.',
     '<div class="note warn">You <b>will</b> see &ldquo;Google hasn&rsquo;t verified this ' +
     'app&rdquo;. That is expected for a personal app &mdash; click <b>Advanced</b>, then ' +
     '<b>Go to &hellip; (unsafe)</b>.</div>' +
     (setup_state.channel
-      ? '<div class="note ok">Connected as <b>' + esc(setup_state.channel) + '</b></div>'
+      ? '<div class="note ok">Connected as <b>' + esc(setup_state.channel) +
+        '</b></div>' +
+        /* FOUND HERE RATHER THAN AT THE FIRST SESSION. Live streaming is off
+           by default on a new channel and takes up to 24 hours to come
+           through once switched on -- so this is a warning, not a refusal:
+           the rest of setup is worth doing while the wait runs. */
+        (setup_state.live_why
+          ? '<div class="note warn"><b>This channel cannot go live yet.</b> ' +
+            esc(setup_state.live_why) + '</div>'
+          : '')
       : '<button type="button" class="btn btn-primary btn-block" id="setup-authb" ' +
         'data-act="doAuth">Authorise with YouTube</button>' +
-        '<p class="muted" id="setup-authmsg"></p>' +
+        '<p class="muted" id="setup-authmsg" role="status" aria-live="polite"></p>' +
         '<div class="field" id="setup-authlink"></div>') +
     setup_nav(true, setup_state.channel ? null : false));
 
-  else if (setup_step === 3) c.innerHTML = setup_card(
+  else if (at === 'obs') c.innerHTML = setup_card(
     'OBS Studio',
     'In OBS: <b>Tools &rarr; WebSocket Server Settings</b>. Tick <b>Enable WebSocket ' +
     'server</b>, click <b>Apply</b>, then let AutoStream read the settings back.',
     '<div class="note">The Apply step matters &mdash; OBS does not write the settings ' +
     'or open the port until the dialog is committed.</div>' +
+    /* OR DO NONE OF THAT. Every instruction above writes one JSON file, and
+       AutoStream can write it -- while OBS is shut, because OBS rewrites the
+       file from memory when it closes. Offered first, because it is the
+       answer for almost everybody; the instructions stay for the machine
+       where the file cannot be written. */
+    '<button type="button" class="btn btn-primary btn-block" ' +
+    'data-act="enableObs">Set it up for me</button>' +
+    '<p class="muted" id="setup-obsauto" role="status" aria-live="polite">' +
+    'OBS has to be closed for this: it rewrites its own settings when it ' +
+    'quits, so a change made underneath it would be thrown away.</p>' +
     '<button type="button" class="btn btn-block" data-act="detectObs">' +
     'Read the settings from OBS</button>' +
-    '<p class="muted" id="setup-obsdetect"></p>' +
+    '<p class="muted" id="setup-obsdetect" role="status" aria-live="polite"></p>' +
     '<div class="field-row">' +
     '<div class="field"><label class="field-label" for="setup-obspw">Password</label>' +
     '<input class="input" id="setup-obspw" type="password" autocomplete="off" ' +
@@ -275,10 +540,10 @@ function setup_draw(){
     'autocomplete="off" value="' + setup_attr(setup_state.obs_path || '') + '"></div>' +
     '<button type="button" class="btn btn-block" data-act="testObs">' +
     'Test connection</button>' +
-    '<p class="muted" id="setup-obsmsg"></p>' +
+    '<p class="muted" id="setup-obsmsg" role="status" aria-live="polite"></p>' +
     setup_nav(true, 'saveObs'));
 
-  else if (setup_step === 4) c.innerHTML = setup_card(
+  else if (at === 'stream') c.innerHTML = setup_card(
     'Stream settings', '',
     '<div class="field">' +
     '<label class="field-label" for="setup-privacy">Who can see your streams</label>' +
@@ -311,7 +576,7 @@ function setup_draw(){
     '{session_games}</div></div>' +
     setup_nav(true, 'saveStream'));
 
-  else if (setup_step === 5) c.innerHTML = setup_card(
+  else if (at === 'timing') c.innerHTML = setup_card(
     'Timing and safety', '',
     '<div class="field-row">' +
     '<div class="field"><label class="field-label" for="setup-arm">' +
@@ -347,20 +612,20 @@ function setup_draw(){
     '</div>' +
     setup_nav(true, 'saveTiming'));
 
-  else if (setup_step === 6) {
+  else if (at === 'apps') {
     c.innerHTML = setup_card(
       'Games and apps',
       'Pick what shows up on your dashboard. Ticked items also offer ' +
       '<b>Open + stream</b>.',
       '<button type="button" class="btn btn-block" data-act="scanApps">' +
       'Scan my computer</button>' +
-      '<p class="muted" id="setup-scanmsg"></p>' +
+      '<p class="muted" id="setup-scanmsg" role="status" aria-live="polite"></p>' +
       '<div class="scroll" id="setup-applist"></div>' +
       setup_nav(true, 'saveApps'));
     setup_renderApps();
   }
 
-  else if (setup_step === 7) {
+  else if (at === 'branding') {
     c.innerHTML = setup_card(
       'Your channel',
       'Used to build a thumbnail from the live picture each time you go live, ' +
@@ -396,14 +661,19 @@ function setup_draw(){
     setup_renderUsernames();
   }
 
-  else if (setup_step === 8) c.innerHTML = setup_card(
+  else if (at === 'finish') c.innerHTML = setup_card(
     'Nearly there',
     'This creates your permanent YouTube ingestion stream and writes the key into ' +
     'OBS. It only happens once.',
     /* No nav() on the last step: there is deliberately no Back from here. */
     '<button type="button" class="btn btn-primary btn-block" id="setup-finb" ' +
     'data-act="finish">Finish setup</button>' +
-    '<p class="muted" id="setup-finmsg"></p>');
+    '<p class="muted" id="setup-finmsg" role="status" aria-live="polite"></p>');
+
+  /* Steps with something to say the moment they open say it here. Done
+     after the innerHTML, because the element it writes into does not exist
+     until then. */
+  if (at === 'connect') setup_connState();
 
   setup_bar();
 }
@@ -652,8 +922,9 @@ async function setup_wantClips(){
     'Pick the video, pick the game, and it cuts the highlights.</div>' +
     '<div class="nav"><button type="button" class="btn btn-primary" ' +
     'data-act="openApp">Open AutoStream</button></div>' +
-    '<div class="note">Want it to go live on YouTube later? Settings &rarr; ' +
-    'YouTube &rarr; <b>Go live on YouTube</b>, and this wizard comes back.</div>');
+    '<div class="note">Want it to go live later? Settings &rarr; Stream ' +
+    '&rarr; <b>Go live</b>, and this wizard comes back to ask which ' +
+    'service.</div>');
   const bar = setup_$('setup-stepbar');
   if (bar) bar.innerHTML = '';
   const n = setup_$('setup-stepname');
@@ -715,7 +986,7 @@ async function setup_checkTools(){
             (gaps.length === 1 ? 'it' : 'them') + ' by hand:</p>' +
             '<pre class="mono">' + gaps.map(t =>
               'winget install --id ' + esc(t.winget)).join('\n') + '</pre>')) +
-    '<p class="muted" id="setup-toolmsg">' +
+    '<p class="muted" id="setup-toolmsg" role="status" aria-live="polite">' +
       esc((job && job.state === 'failed' && job.error) || '') + '</p>' +
     '</div>';
 
@@ -772,18 +1043,126 @@ async function setup_getWebview2(){
   }
 }
 
+async function setup_enableObs(){
+  setup_say('setup-obsauto', '', setup_spin('Writing the OBS settings...'));
+  const r = await setup_post('/api/setup/obs_enable', {});
+  if (!r.ok){
+    setup_say('setup-obsauto', 'warn', esc(r.error || 'Could not do that.'));
+    return;
+  }
+  /* Straight into the form, which is what Test connection reads -- the same
+     place `Read the settings from OBS` puts them, so there is one path to
+     check rather than two. */
+  const pw = setup_$('setup-obspw'), port = setup_$('setup-obsport');
+  if (pw) pw.value = r.password || '';
+  if (port) port.value = String(r.port || 4455);
+  setup_say('setup-obsauto', 'ok', esc(r.hint || 'Done.'));
+}
+
+/* ---------------- platform ---------------- */
+
+async function setup_pickPlatform(el){
+  const want = el && el.getAttribute('data-platform');
+  if (!want) return;
+  setup_say('setup-platmsg', '', setup_spin('Saving...'));
+  const r = await setup_post('/api/setup/platform', {platform: want});
+  if (!r.ok){
+    setup_say('setup-platmsg', 'bad', esc(r.error || 'Could not save that.'));
+    return;
+  }
+  setup_state = r.setup || setup_state;
+  /* The plan changes under us -- choosing Twitch drops four steps -- so the
+     bar is redrawn before the move, and the move is by NAME rather than by
+     `setup_step + 1`, which would land somewhere different on each path. */
+  setup_say('setup-platmsg', '', '');
+  setup_go(setup_step);
+  setup_goName(setup_plan()[setup_plan().indexOf('platform') + 1]);
+}
+
+/* Opens the platform's own sign-in in a browser and waits for the callback to
+   land on this server. The same route the Settings page uses. */
+async function setup_connectPlatform(){
+  const who = setup_platName();
+  setup_say('setup-connmsg', '', setup_spin('Opening your browser...'));
+  const r = await setup_post('/api/platform/connect', {platform: who});
+  if (!r || r.error){
+    setup_say('setup-connmsg', 'bad',
+      esc((r && r.error) || 'Could not start the sign-in.'));
+    return;
+  }
+  setup_say('setup-connmsg', '',
+    'Finish signing in in your browser. This page notices when you are done.');
+  setup_pollConnect(0);
+}
+
+function setup_pollConnect(n){
+  if (n > 150) {                                   /* five minutes is plenty */
+    setup_say('setup-connmsg', 'warn',
+      'Still waiting. Press the button again if the browser never opened.');
+    return;
+  }
+  window.setTimeout(async function(){
+    const r = await setup_post('/api/setup/snapshot_only', {});
+    if (r && r.ok && r.setup){
+      setup_state = r.setup;
+      const ready = setup_state.platform_ready || {};
+      if (ready.ok){
+        setup_say('setup-connmsg', 'ok', 'Signed in. Carry on.');
+        setup_draw();
+        return;
+      }
+      setup_connState();
+    }
+    setup_pollConnect(n + 1);
+  }, 2000);
+}
+
+/* The one line on this step that says whether it can be left. */
+function setup_connState(){
+  const ready = setup_state.platform_ready || {};
+  const el = setup_$('setup-connstate');
+  if (!el) return;
+  el.className = ready.ok ? 'note ok' : 'note';
+  el.textContent = ready.ok
+    ? setup_platLabel() + ' is ready. Continue when you are.'
+    : (ready.why || 'Not signed in yet.');
+  const nx = setup_$('setup-nextb');
+  if (nx) nx.disabled = !ready.ok;
+}
+
+async function setup_saveTwitchKey(){
+  const key = setup_val('setup-twkey').trim();
+  if (!key){
+    setup_say('setup-connmsg', 'bad', 'Paste the key first.');
+    return;
+  }
+  setup_say('setup-connmsg', '', setup_spin('Saving...'));
+  const r = await setup_post('/api/setup/stream_key', {platform: 'twitch', key: key});
+  if (!r.ok){
+    setup_say('setup-connmsg', 'bad', esc(r.error || 'Could not save that.'));
+    return;
+  }
+  setup_state = r.setup || setup_state;
+  setup_say('setup-connmsg', 'ok', 'Saved.');
+  setup_draw();
+}
+
 /* ---------------- wiring ---------------- */
 
 const setup_ACTIONS = {
   getWebview2: setup_getWebview2,
   back:       () => setup_go(setup_step - 1),
   next:       () => setup_go(setup_step + 1),
-  wantStream: () => setup_go(1),
+  wantStream: () => setup_goName('platform'),
   wantClips:  setup_wantClips,
+  pickPlatform: setup_pickPlatform,
+  connectPlatform: setup_connectPlatform,
+  saveTwitchKey: setup_saveTwitchKey,
   installTools: setup_installTools,
   saveSecret: setup_saveSecret,
   doAuth:     setup_doAuth,
   detectObs:  setup_detectObs,
+  enableObs:  setup_enableObs,
   testObs:    setup_testObs,
   saveObs:    setup_saveObs,
   saveStream: setup_saveStream,
@@ -799,13 +1178,35 @@ function setup_wire(){
   if (setup_wired) return;
   const root = setup_$('setup-root');
   if (!root) return;
+  /* The checklist is the one thing here that is not a data-act button: it
+     is a set of checkboxes whose only job is to remember where the reader
+     got to. */
+  root.addEventListener('change', function(ev){
+    const box = ev.target;
+    if (!box || box.type !== 'checkbox' || !box.getAttribute) return;
+    const key = box.getAttribute('data-ck');
+    if (!key) return;
+    const now = setup_tick(key, Number(box.getAttribute('data-i')), box.checked);
+    const item = box.closest ? box.closest('.checkitem') : null;
+    if (item) item.classList.toggle('is-done', box.checked);
+    const list = setup_$('setup-ck-' + key);
+    const note = setup_$('setup-ck-' + key + '-count');
+    if (list && note){
+      note.textContent = setup_ckCount(
+        now.length, list.querySelectorAll('.checkitem').length);
+    }
+  });
+
   root.addEventListener('click', function(ev){
     const t = ev.target && ev.target.closest ? ev.target.closest('[data-act]') : null;
     if (!t || t.disabled) return;
     const fn = setup_ACTIONS[t.getAttribute('data-act')];
     if (!fn) return;
     ev.preventDefault();
-    fn();
+    /* The element is passed because some controls carry what they mean on
+       themselves -- the platform picks are three buttons running one
+       handler, and without this each would need its own. */
+    fn(t);
   });
   setup_wired = true;
 }

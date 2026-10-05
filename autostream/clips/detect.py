@@ -259,6 +259,8 @@ def scan(video: Path, profile: Profile, *,
     if profile.mode == "cardcount":
         return scan_cardcount(video, profile, total, info["height"], progress,
                               cancelled, start)
+    if profile.mode == "loudness":
+        return scan_loudness(video, profile, total, progress, cancelled, start)
 
     if info["height"] < profile.ref_height:
         # Not fatal: upscaling a smaller frame still matches, just with less to
@@ -321,6 +323,44 @@ def scan(video: Path, profile: Profile, *,
         merged.append(k)
     log.info("found %d kill(s) in %s", len(merged), video.name)
     return merged
+
+
+def scan_loudness(video: Path, profile: Profile, total: float,
+                  progress: Callable[[int, int], None] | None = None,
+                  cancelled: Callable[[], bool] | None = None,
+                  start: float = 0.0) -> list[Kill]:
+    """The loud moments, for a game nothing has been calibrated for.
+
+    NOT KILLS, AND IT DOES NOT CLAIM TO BE. Every other mode reads something
+    the game draws and can say "that was a kill". This reads the audio, so
+    what it finds is "something happened here" -- which covers a kill, a
+    death, an explosion and a teammate shouting equally. The whole of the rest
+    of the pipeline takes Kill objects, so that is what it returns; the
+    difference is in what the Clips page calls them.
+
+    `count` carries 1 and `score` the dB above the local baseline, which is a
+    real ranking: the five loudest minutes of a recording is a useful thing to
+    be handed when the alternative is the whole file.
+
+    NO FRAME DECODING AT ALL, which is why this is the fastest mode in the
+    package by a wide margin -- audio at 8 kHz mono, read once.
+    """
+    from . import loudness
+
+    if cancelled and cancelled():
+        return []
+    if progress:
+        progress(0, 1)
+    found = loudness.find(video, start=start, duration=total,
+                          rise_db=float(getattr(profile, "rise_db", 9.0) or 9.0),
+                          merge_gap=float(profile.merge_gap or
+                                          loudness.MERGE_GAP))
+    if progress:
+        progress(1, 1)
+    if cancelled and cancelled():
+        return []
+    return [Kill(time=t, score=round(s, 2), count=1, end=e)
+            for t, s, e in found]
 
 
 def scan_killfeed(video: Path, profile: Profile, total: float,

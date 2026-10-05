@@ -90,7 +90,7 @@ CONTROLS: list[Control] = [
             "shell", body={"command": "pause"}, expect=_ok,
             reject={"command": "definitely-not-a-command"},
             acts=("top-toggle", "rail-quit", "dash-btn-stop", "dash-btn-pause",
-                  "dash-btn-record", "dash-btn-abort"),
+                  "dash-btn-record", "dash-btn-abort", "dash-save-replay"),
             why="the whitelist is the only thing between a POST and the engine"),
     Control("/api/theme", "POST", CALL, "theme swatch", "settings",
             body={"theme": "midnight"}, expect=_ok,
@@ -128,8 +128,10 @@ CONTROLS: list[Control] = [
     Control("/api/settings/save", "POST", CALL, "Save changes", "settings",
             body={"values": {"clips.min_kills": 2}}, expect=_ok,
             reject={"values": {"no.such.setting": 1}}, reject_soft=True,
-            acts=("set-save",),
-            why="all-or-nothing; a rejected field is 200 with ok:false"),
+            acts=("set-save", "dash-where-platform"),
+            why="all-or-nothing; a rejected field is 200 with ok:false. The "
+                "dashboard's platform chooser posts here too rather than "
+                "owning an endpoint, so there is one validator for the key"),
     Control("/api/diagnostics", "POST", CALL, "Build a report", "settings",
             body={}, expect=_has("ok", "text"), acts=("set-diag-get",),
             why="must never carry the OBS password or the web token"),
@@ -299,12 +301,17 @@ CONTROLS: list[Control] = [
             acts=("pick-local", "use-local", "reel-quick-song", "studio-song",
                   "studio-sg-pick", "studio-intro-add", "studio-imp-add", "studio-fc-attach"),
             why="opens a native Tk dialog ON THE SERVER and blocks the "
-                "request thread until a human dismisses it"),
+                "request thread until a human dismisses it. `multi` offers "
+                "more than one, for the Studio's Add your own clip"),
     Control("/api/clips/install", "POST", STATIC, "Install them", "clips",
             why="runs winget and raises a UAC prompt"),
     Control("/api/clips/voices/install", "POST", STATIC,
             "Download the voices", "clips",
             why="starts a 206 MB download over the user's connection"),
+    Control("/api/platform/status", "GET", STATIC, "", "settings",
+            why="says which platforms are set up and which are connected"),
+    Control("/api/platform/connect", "POST", STATIC, "Connect", "settings",
+            why="starts an OAuth sign-in and opens a browser"),
     Control("/api/clips/part/preview", "POST", STATIC, "Play this part", "clips",
             why="re-encodes a stretch of the recording on a worker thread"),
     Control("/api/clips/part/save", "POST", STATIC,
@@ -388,6 +395,26 @@ CONTROLS: list[Control] = [
     Control("/api/setup/clips_only", "POST", CALL, "Just clips", "setup",
             body={}, expect=_dict,
             why="the supported route into youtube.enabled=false"),
+    Control("/api/setup/platform", "POST", CALL, "Where to go live", "setup",
+            body={"platform": "twitch"}, expect=_dict,
+            reject={"platform": "myspace"}, reject_soft=True,
+            acts=("pickPlatform",),
+            why="decides which steps the wizard has; an unknown name must not "
+                "write a platform the engine cannot build"),
+    Control("/api/setup/obs_enable", "POST", STATIC, "Set it up for me",
+            "setup", acts=("enableObs",),
+            why="writes into the user's OBS config file, which is another "
+                "application's settings -- not something a sweep should do"),
+    Control("/api/setup/snapshot_only", "POST", CALL, "wizard state", "setup",
+            body={}, expect=_has("ok", "setup"),
+            why="the sign-in step polls this while the user is in a browser; "
+                "it must change nothing"),
+    Control("/api/setup/stream_key", "POST", CALL, "Save the key", "setup",
+            body={"platform": "twitch", "key": "verify_not_a_real_key"},
+            expect=_dict, reject={"platform": "youtube", "key": "x"},
+            reject_soft=True, acts=("saveTwitchKey",),
+            why="writes into secrets/<platform>.json; a key with whitespace "
+                "in it is a label pasted with the value"),
     Control("/api/setup/webview2", "POST", CALL, "check WebView2", "setup",
             body={}, expect=_dict, why="registry read; no install"),
     Control("/api/setup/webview2/install", "POST", STATIC,
@@ -679,10 +706,15 @@ NOT_A_FLOW: dict[str, str] = {
     "rail": "switches the Clips page sub-tab",
     "mv-make": "ticks the match summary or the highlight; sent with Make match videos",
     "copy-chapters": "copies a summary's YouTube chapters to the clipboard",
+    "copy-montage-chapters": "copies the montage's YouTube chapters to the "
+                             "clipboard; nothing leaves the browser",
     "back": "steps the setup wizard backwards; no state leaves the browser",
     "pick": "selects a session row in the Clips list",
+    "anygame": "retargets this run at the audio reader; client-side, the same "
+               "path as picking another game, and it does not rewrite the "
+               "journal",
     # --- plain links and the clipboard
-    "dash-btn-open": "a plain <a href> to the YouTube watch URL",
+    "dash-btn-open": "a plain <a href> to the watch URL the platform gave",
     "set-diag-copy": "clipboard only",
     "copy": "copies the diagnostics text to the clipboard",
     # --- graph controls
@@ -699,6 +731,9 @@ NOT_A_FLOW: dict[str, str] = {
     "log-filters": "client-side level filter over rows already fetched",
     # --- Clips run options, collected and sent later as part of the run body
     "montage": "toggles montage for the next /api/clips/run",
+    "connect": "opens the platform's OAuth page in a browser; the token "
+               "lands on this server's own /oauth/<platform> callback, not "
+               "in the page",
     "adv": "folds the second layer of style options open or shut; never "
            "leaves the browser",
     "part-mark": "sets the start or end of the part from the video playhead",

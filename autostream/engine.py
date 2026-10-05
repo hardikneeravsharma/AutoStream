@@ -18,11 +18,37 @@ from . import history, notify, paths, state as st, titles
 from .gameindex import GameHit, GameIndex
 from .obs import Obs, ObsUnavailable
 from .watcher import Watcher
+from .platforms import NotConfigured as PlatformNotConfigured
+from .platforms import PlatformError
+from .platforms import Session as PlatformSession
 from .youtube import DAILY_QUOTA, NotAuthorised, QuotaExhausted, YouTube
 
 log = logging.getLogger("autostream.engine")
 
 SESSION_COST = 250   # insert + bind + 2 transitions + complete
+
+
+def _build_platform(config, yt):
+    """Where this install broadcasts to. -> a platforms.Platform.
+
+    YouTube unless `youtube.platform` says otherwise, because that is what
+    every existing install is configured for and a default that changed under
+    them would be a silent migration. The setting lives under `youtube` rather
+    than somewhere new for the same reason: the key is already there, already
+    written out, and moving it would orphan every config file in the field.
+    """
+    want = str(getattr(config.youtube, "platform", "") or "youtube").lower()
+    if want == "twitch":
+        from .platforms.twitch import Twitch
+
+        return Twitch(config)
+    if want == "kick":
+        from .platforms.kick import Kick
+
+        return Kick(config)
+    from .platforms.youtube_platform import YouTubePlatform
+
+    return YouTubePlatform(config, yt)
 
 
 class Engine:
@@ -70,6 +96,21 @@ class Engine:
         self.index = GameIndex(config)
         self.watcher = Watcher(config, self.index)
         self.yt = YouTube(config, self.state)
+        # WHERE THIS BROADCASTS, behind the seam in platforms/. `self.yt`
+        # stays because chat, thumbnails, quota and the orphan sweep are
+        # YouTube's alone and are reached directly; everything a SESSION does
+        # goes through `self.platform`, which is what lets a second platform
+        # exist at all. See platforms/__init__.py for why the two lifecycles
+        # could not share a base class.
+        # A CALLABLE, not the client: self.yt is replaced by
+        # re-authorisation and by every test that swaps in a fake, and a
+        # platform holding the old one fails silently.
+        self._platform = _build_platform(config, lambda: self.yt)
+        self.session: PlatformSession | None = None
+        # Files written by instant replay this session, newest last. Held
+        # here rather than in state.json: it is a fact about the session that
+        # is running, and a restart has no buffer to have saved from.
+        self.replays: list[str] = []
         self.obs = Obs(config)
         # CLIPS-ONLY MODE. The state machine is the same shape either way --
         # spot the game, hold it through arm_delay, run a session, cool down --
@@ -104,6 +145,10 @@ class Engine:
         self._blank_strikes = 0
         # Recording-drive watchdog; see _check_disk.
         self._disk_checked = 0.0
+        # Free space where the recording is written, and whether the warning
+        # has already been given for this crossing. Both for the dashboard.
+        self.disk_free_gb: float | None = None
+        self._disk_warned = False
         # Silent-output watchdog; see _check_audio. One flag, not strikes:
         # the metering thread is already smoothing over individual samples.
         self._silent_said = False
@@ -121,10 +166,19 @@ class Engine:
         # and sleeping in it stops the OBS watchdog and chat with it.
         self._screen_until: float | None = None
         self._ending_until: float | None = None
-        # Set when a session ends with a recording and record.auto_scan is on.
-        # The Clips job runner picks it up; the engine never scans anything
-        # itself, because a multi-minute ffmpeg pass on this thread would
-        # freeze every phase transition behind it.
+        # The session that has just ended, waiting to be read for kills.
+        #
+        # THIS WAS A DEAD SETTING. `record.auto_scan` is on by default and
+        # promises "scan its recording for kill markers in the background so
+        # the Clips page already has them ready" -- and the whole feature was
+        # this assignment. Nothing anywhere read it. A setting that is on by
+        # default and does nothing is worse than one that is missing: the
+        # Clips page looked slow for a reason that was never true, and anyone
+        # who turned it off to save CPU saved nothing.
+        #
+        # Handed to clips/prescan on a thread of its own, because a
+        # multi-minute ffmpeg pass on THIS thread would freeze every phase
+        # transition behind it.
         self.pending_scan: dict | None = None
 
         # UI runs on another thread; it never touches YouTube/OBS directly.
@@ -355,10 +409,17 @@ class Engine:
 
     def _vars(self, hit: GameHit) -> dict:
         start = datetime.fromtimestamp(self.state.session_start or time.time())
+        # THE SETTING THAT STOOD IN FOR NOTHING. `title.fallback_game` is on
+        # the Settings page and reads "stands in for {game} when AutoStream
+        # can tell something is running but has no name for it" -- and nothing
+        # read it, so a game the index could not name went out as a title with
+        # the executable in it, or with an empty {game}.
+        name = (hit.name or "").strip() or str(
+            getattr(self.cfg.title, "fallback_game", "") or "").strip() or "a game"
         return titles.build_vars(
-            game=hit.name,
+            game=name,
             hook=self.state.hook or titles.pick_hook(self.cfg),
-            session_games=self.state.session_games or [hit.name],
+            session_games=self.state.session_games or [name],
             session_start=start,
             session_number=self.state.session_number,
             blurb=hit.blurb,
@@ -404,6 +465,8 @@ class Engine:
                     self.toggle_pause()
                 elif cmd == "record":
                     self.toggle_recording("record button")
+                elif cmd == "replay":
+                    self.save_replay()
                 elif cmd == "kill":
                     self.kill()
                 elif cmd == "quit":
@@ -591,11 +654,19 @@ class Engine:
             # three before finding out -- about 450 units and three real
             # broadcasts per failed cycle. Reaching OBS is free.
             self.obs.connect(wait=True)
-            self.yt.check_budget(SESSION_COST)
-            bid = self.yt.create_broadcast(title, desc, privacy=hit.privacy)
+            self.platform.preflight(SESSION_COST)
+            self.session = self.platform.start(
+                title, desc, privacy=self._privacy, category=hit.name)
+            bid = self.session.handle
             self.state.broadcast_id = bid
             self.state.save()
-            self.yt.bind(bid, self.cfg.youtube.stream_id)
+            # WHERE OBS PUSHES, when the platform says. YouTube binds an
+            # ingest object and leaves this empty because OBS is already
+            # configured for the service; Twitch and Kick hand back a server
+            # and a key, and pushing to them IS going live.
+            if self.session.stream_key:
+                self.obs.configure_stream(self.session.ingest_server,
+                                          self.session.stream_key)
             # Open ON the starting card where there is one. Starting on the
             # game scene and switching a moment later shows the game for a
             # frame or two at the top of every stream -- which is the one
@@ -607,7 +678,12 @@ class Engine:
             self._start_recording()
             self._starting_deadline = time.monotonic() + self.cfg.timing.ingestion_timeout
             log.info("session #%d started: %s", self.state.session_number, title)
-        except (QuotaExhausted, NotAuthorised) as e:
+        except (QuotaExhausted, NotAuthorised, PlatformError,
+                PlatformNotConfigured) as e:
+            # A PLATFORM SAYING NO IS NOT A CRASH. Out of quota, never
+            # authorised, a key that has been reset -- each is a thing the
+            # user must fix, and each used to surface as a traceback because
+            # only YouTube's two exceptions were caught here.
             log.error("cannot start session: %s", e)
             notify.toast("AutoStream blocked", str(e))
             self._abandon_start()
@@ -618,6 +694,73 @@ class Engine:
         except Exception as e:  # noqa: BLE001
             log.exception("session start failed: %s", e)
             self._abandon_start()
+
+    @property
+    def platform(self):
+        """Where this install broadcasts to, following the live config.
+
+        BUILT ONCE WAS NOT ENOUGH. The config object is refreshed in place
+        whenever settings are saved, so every other key takes effect on the
+        next tick -- but this one had already been read, and the platform
+        object outlived it. Switching from the dashboard changed the config,
+        the stored value, and what the page displayed, and the engine went on
+        streaming to the platform it had been started with. Nothing reported
+        a problem, because nothing had failed.
+
+        NEVER MID-SESSION. A swap while a stream is up would leave OBS pushing
+        to one service and the engine retitling and ending a session on
+        another, so a session in flight keeps the platform it began on and the
+        change lands when that session ends.
+        """
+        want = str(getattr(self.cfg.youtube, "platform", "") or "youtube").lower()
+        if want != getattr(self._platform, "name", "youtube"):
+            live = bool(self.state.broadcast_id) or bool(
+                self.session is not None and self.session.handle)
+            if live:
+                log.info("platform is now %s; applying it after this session",
+                         want)
+            else:
+                log.info("platform changed to %s", want)
+                self._platform = _build_platform(self.cfg, lambda: self.yt)
+        return self._platform
+
+    @platform.setter
+    def platform(self, value) -> None:
+        """So a test can still swap one in."""
+        self._platform = value
+
+    def _session(self) -> PlatformSession:
+        """The live session, rebuilt from state if this process restarted.
+
+        The engine survives a restart mid-broadcast -- `state.broadcast_id` is
+        on disk for exactly that -- so a Session object held only in memory
+        would be gone when it matters most. A handle is all any platform needs
+        to address a session again, and that is what was saved.
+        """
+        if self.session is not None:
+            return self.session
+        rebuilt = PlatformSession(handle=self.state.broadcast_id or "")
+        # ONLY KEPT IF IT NAMES SOMETHING. With no broadcast id there is no
+        # session to rebuild, and storing the empty placeholder meant the
+        # first caller to ask -- the two-second status poll, which asks for
+        # the watch url -- left `self.session` permanently non-None. Anything
+        # testing that field for "is a session in flight" then answered yes
+        # forever, including the platform switch, which refused to apply
+        # because it believed a stream was up.
+        if rebuilt.handle:
+            self.session = rebuilt
+        return rebuilt
+
+    def _watch_url(self) -> str:
+        """Where to watch, asked of the session rather than built from an id.
+
+        It used to be f"youtube.com/watch?v={id}" inline. That is true of one
+        platform; a Twitch url is the channel, not the session.
+        """
+        s = self._session()
+        if s.watch_url:
+            return s.watch_url
+        return self.yt.watch_url(s.handle) if s.handle else ""
 
     def _begin_recording_only(self, hit: GameHit) -> None:
         """A session with no broadcast: start recording and go straight to LIVE.
@@ -683,6 +826,7 @@ class Engine:
             # output that only LOOKED active gets OBS restarted there, and the
             # file is then a fresh one after all.
             already = bool(self.obs.start_recording())
+            self._start_replay_buffer()
             self.state.recording = True
             self.state.recording_adopted = already
             self.state.save()
@@ -697,8 +841,58 @@ class Engine:
     def _stop_recording(self) -> str | None:
         if not self.state.recording:
             return None
+        # THE BUFFER IS MEMORY, and a session that has ended has no use for
+        # it. Stopped first, because stopping the recording can take a moment
+        # and the buffer is holding RAM the whole time.
+        self._stop_replay_buffer()
         path = self.obs.stop_recording()          # already swallows its errors
         self.state.recording = False
+        return path
+
+    # ---------------- instant replay ----------------
+
+    def _start_replay_buffer(self) -> None:
+        """Begin keeping the last few seconds, if that was asked for.
+
+        NEVER FATAL. OBS refuses to run a replay buffer unless it is switched
+        on in its own settings, which is a thing to say rather than a reason
+        to abandon a session -- the recording and the stream are what the
+        session is for.
+        """
+        if not getattr(self.cfg.record, "replay_enabled", False):
+            return
+        try:
+            secs = int(getattr(self.cfg.record, "replay_seconds", 30) or 30)
+            self.obs.set_replay_seconds(secs)
+            self.obs.start_replay_buffer()
+            self.replays = []
+        except Exception as e:  # noqa: BLE001
+            log.warning("instant replay is off for this session: %s", e)
+
+    def _stop_replay_buffer(self) -> None:
+        try:
+            self.obs.stop_replay_buffer()
+        except Exception as e:  # noqa: BLE001
+            log.debug("could not stop the replay buffer: %s", e)
+
+    def save_replay(self) -> str | None:
+        """Write out what is in the buffer right now. -> the file, or None.
+
+        THE HOTKEY'S JOB, and the dashboard button's. Everything that makes it
+        work has already happened: the frames are in memory, so this is a
+        request to OBS and a filename back, with no scan and no wait.
+        """
+        if not getattr(self.cfg.record, "replay_enabled", False):
+            notify.toast("AutoStream",
+                         "Instant replay is switched off. Settings -> "
+                         "Recording.")
+            return None
+        path = self.obs.save_replay()
+        if not path:
+            notify.toast("AutoStream", "Could not save that replay. Check OBS.")
+            return None
+        self.replays = [*getattr(self, "replays", []), path]
+        notify.toast("Replay saved", Path(path).name if path else "")
         return path
 
     def _set_aside(self, path: str | None) -> None:
@@ -884,7 +1078,31 @@ class Engine:
             return
         self._disk_checked = now
         free = self._free_gb()
-        if free is None or free >= self.cfg.record.min_free_gb:
+        if free is None:
+            self.disk_free_gb = None
+            return
+        # WHAT THE DASHBOARD SHOWS. `record.warn_free_gb` is on the Settings
+        # page and reads "show a warning on the dashboard once free space
+        # drops under this. Nothing is deleted; this is only a heads-up" --
+        # and nothing anywhere read it, so the only disk signal in the product
+        # was the floor at which the recording is ALREADY being stopped. By
+        # then a session is half saved, which is exactly what a heads-up is
+        # for avoiding.
+        self.disk_free_gb = round(free, 1)
+        warn_at = float(getattr(self.cfg.record, "warn_free_gb", 0) or 0)
+        low = bool(warn_at and free < warn_at)
+        if low and not self._disk_warned:
+            log.warning("%.0f GB free on the recording drive, under the %.0f GB "
+                        "you asked to be warned at", free, warn_at)
+            notify.toast("AutoStream: running low on space",
+                         f"{free:.0f} GB left where the recording is being "
+                         f"written. Nothing has been deleted.")
+        # SAID ONCE PER CROSSING, not once a minute. A notification every
+        # sixty seconds for an hour is a notification nobody reads, and the
+        # dashboard carries the number continuously anyway.
+        self._disk_warned = low
+
+        if free >= self.cfg.record.min_free_gb:
             return
         log.warning("only %.0f GB free on the recording drive (floor %s GB) "
                     "- stopping the recording; the stream carries on",
@@ -1032,10 +1250,32 @@ class Engine:
             )
             if entry and self.cfg.record.auto_scan and recording_path:
                 self.pending_scan = entry
+                self._read_kills(entry)
             if entry and recording_path:
                 self._remind_about_demo(entry)
         except Exception as e:  # noqa: BLE001
             log.warning("could not journal session: %s", e)
+
+    def _read_kills(self, entry: dict) -> None:
+        """Start reading the finished recording for kills, in the background.
+
+        READS AND STOPS. It does not cut: cutting takes the GPU for minutes,
+        writes files nobody asked for, and makes choices -- style, length,
+        minimum kills -- that belong to the person rather than to the end of a
+        stream. What it leaves is the kill list, so opening the Clips page
+        after a stream shows what is in the recording instead of an unread
+        file and an eight-minute wait.
+
+        Never fatal. A session that has just ended correctly must not be able
+        to report a failure because an optional background read did not
+        start.
+        """
+        try:
+            from .clips import prescan, runner as clips_runner
+
+            prescan.start(entry, self.cfg, clips_runner())
+        except Exception as e:  # noqa: BLE001
+            log.info("could not start the background read: %s", e)
 
     def _remind_about_demo(self, entry: dict) -> None:
         """Say so when a match that could have a replay has not got one.
@@ -1137,26 +1377,41 @@ class Engine:
     # ---- STARTING ---------------------------------------------------
 
     def _tick_starting(self) -> None:
+        where = self.platform.label
+
+        # WAITING IS YOUTUBE'S. A YouTube broadcast is a real object that has
+        # to receive frames before it can be transitioned, so STARTING polls
+        # until it has. Twitch and Kick have nothing to transition: the
+        # channel is live the moment RTMP arrives, and asking their API
+        # whether it has noticed yet only adds the lag of their own stream
+        # listing -- which on Twitch runs to a minute and is not a promise.
+        #
+        # Polled anyway, this phase could outlast `ingestion_timeout` and
+        # abandon a session that was already on air, with "never saw our
+        # ingestion" as the reason. The capability flag said not to; the
+        # engine was not reading it.
+        if not self.platform.caps.waits_for_ingest:
+            self._start_failures = 0
+            self._go_live()
+            return
+
         if self._starting_deadline and time.monotonic() > self._starting_deadline:
-            log.error("YouTube never saw our ingestion — aborting session")
-            notify.toast("AutoStream", "Stream never reached YouTube. Aborted.")
+            log.error("%s never saw our ingestion — aborting session", where)
+            notify.toast("AutoStream",
+                         f"Stream never reached {where}. Aborted.")
             self._abandon_start()
             return
         try:
-            status, health = self.yt.stream_status(self.cfg.youtube.stream_id)
+            if not self.platform.ingest_live(self._session()):
+                return
         except Exception as e:  # noqa: BLE001
             log.warning("stream status check failed: %s", e)
             return
-        log.debug("ingestion status=%s health=%s", status, health)
-        if status != "active":
-            return
-        if health not in ("good", "ok", "noData"):
-            log.warning("ingestion health is %s — continuing anyway", health)
 
         self._start_failures = 0
-        if self.cfg.timing.abort_grace > 0:
+        if self.cfg.timing.abort_grace > 0 and self.platform.caps.has_preview:
             try:
-                self.yt.transition(self.state.broadcast_id, "testing")
+                self.platform.go_preview(self._session())
                 self._goto(st.TESTING)
                 # Said as what it will be: "public" on an unlisted or private
                 # broadcast told the user something alarming and untrue.
@@ -1166,7 +1421,7 @@ class Engine:
                     "AutoStream going live",
                     f"{self.state.current_game} — {seen_as} in "
                     f"{self.cfg.timing.abort_grace}s. Kill switch to cancel.",
-                    self.yt.watch_url(self.state.broadcast_id),
+                    self._watch_url(),
                 )
                 return
             except Exception as e:  # noqa: BLE001
@@ -1185,7 +1440,7 @@ class Engine:
             self._goto(st.LIVE)
             return
         try:
-            self.yt.transition(self.state.broadcast_id, "live")
+            self.platform.go_live(self._session())
         except Exception as e:  # noqa: BLE001
             log.exception("could not transition to live: %s", e)
             self._abandon_start()
@@ -1194,7 +1449,7 @@ class Engine:
         self._unseen = False
         self._show_starting()
         self.obs.audio_watch_start()
-        url = self.yt.watch_url(self.state.broadcast_id)
+        url = self._watch_url()
         log.info("LIVE: %s", url)
         notify.toast("AutoStream is live", self.state.current_game or "", url)
         self._set_thumbnail()
@@ -1444,7 +1699,7 @@ class Engine:
         v = self._vars(hit)
         title = titles.render_title(self.cfg, v)
         try:
-            self.yt.retitle(self.state.broadcast_id, title,
+            self.platform.retitle(self._session(), title,
                             titles.render_description(self.cfg, v))
             # The journal carries the title the VOD ends up with, not the one
             # it started with.
@@ -1474,11 +1729,11 @@ class Engine:
         id and VOD link were lost. The recording is split at the same moment,
         so each row's file holds the game its row names.
         """
-        old = self.state.broadcast_id
         try:
-            self.yt.transition(old, "complete")
+            self.platform.stop(self._session())
         except Exception as e:  # noqa: BLE001
             log.warning("could not complete old broadcast: %s", e)
+        self.session = None
         was_recording = bool(self.state.recording)
         rec_path = self._stop_recording()
         self._journal(rec_path)
@@ -1506,12 +1761,15 @@ class Engine:
         v = self._vars(hit)
         self._last_title = titles.render_title(self.cfg, v)
         try:
-            bid = self.yt.create_broadcast(self._last_title,
-                                           titles.render_description(self.cfg, v),
-                                           privacy=hit.privacy)
-            self.yt.bind(bid, self.cfg.youtube.stream_id)
+            self.session = self.platform.start(
+                self._last_title, titles.render_description(self.cfg, v),
+                privacy=self._privacy, category=hit.name)
+            bid = self.session.handle
             self.state.broadcast_id = bid
             self.state.save()
+            if self.session.stream_key:
+                self.obs.configure_stream(self.session.ingest_server,
+                                          self.session.stream_key)
             if was_recording:
                 self._start_recording()
             self._starting_deadline = time.monotonic() + self.cfg.timing.ingestion_timeout
@@ -1573,13 +1831,18 @@ class Engine:
                 log.warning("OBS stop failed: %s", e)
         if bid:
             try:
-                self.yt.transition(bid, "complete")
-                log.info("session complete: %s", self.yt.watch_url(bid))
+                url = self._watch_url()
+                self.platform.stop(self._session())
+                log.info("session complete: %s", url)
                 notify.toast("AutoStream stopped",
                              f"VOD: {', '.join(self.state.session_games)}",
-                             self.yt.watch_url(bid))
+                             url)
             except Exception as e:  # noqa: BLE001
                 log.warning("complete transition failed: %s", e)
+            finally:
+                # Dropped whatever happened. A session object outliving its
+                # session is how the next one inherits a dead handle.
+                self.session = None
         # The journal has to be written here. reset_session() below is the last
         # instant broadcast_id, session_games, current_game and session_start
         # all still exist, and the Clips page needs every one of them.

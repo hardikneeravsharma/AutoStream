@@ -276,6 +276,21 @@ def swept(browser, app):
     # and the sweep stalls on whichever page came after. A sweep that cannot
     # leave a page is not a sweep.
     page.on("dialog", lambda d: d.accept())
+    # ONE PLACE THAT KNOWS THE LIBRARY'S SHAPE. It is games[].folders[].clips[]
+    # -- read out of webui.studio_library rather than guessed at, because a
+    # guess here is a state that silently opens nothing and takes every control
+    # inside it out of the sweep without saying so.
+    page.add_init_script("""
+        window.__sweepFirstClip = function (lib) {
+          const games = (lib && lib.games) || [];
+          for (const g of games) {
+            for (const f of (g.folders || [])) {
+              for (const c of (f.clips || [])) { if (c && c.path) return c; }
+            }
+          }
+          return null;
+        };
+    """)
     page.goto(f"{app['base']}/?k={app['token']}", wait_until="domcontentloaded")
     page.wait_for_selector("#view-dash", state="attached", timeout=30_000)
     page.wait_for_function("typeof API !== 'undefined'", timeout=30_000)
@@ -373,6 +388,43 @@ def swept(browser, app):
                   if (reels.length && window.studio_open)
                       await studio_open(reels[0].path || reels[0].output);
                   studio_tab && studio_tab('timeline');
+                })();"""),
+            # THE KILL MARKER, ON A CLIP THE APP CUT ITSELF. Reachable only
+            # since S2: it used to be gated on `imported`, so none of these
+            # controls rendered for a seeded run and the whole dialog was
+            # outside the sweep.
+            ("the kill marker, on a clip", """
+                (async () => {
+                  const r = await API.get('/api/studio/library');
+                  /* games[].folders[].clips[] -- the shape the server
+                     actually sends, read out of webui.studio_library rather
+                     than guessed at. A guess here is a state that silently
+                     opens nothing and takes its controls with it. */
+                  const first = window.__sweepFirstClip(r);
+                  if (first && window.studio_impOpen)
+                      await studio_impOpen(first.path, false);
+                })();"""),
+            ("the kill marker, a kill marked", """
+                (async () => {
+                  const r = await API.get('/api/studio/library');
+                  const first = window.__sweepFirstClip(r);
+                  if (first && window.studio_impOpen) {
+                      await studio_impOpen(first.path, false);
+                      studio.imp.kills = [1.0];
+                      studio.imp.sel = 0;
+                      if (window.studio_impDraw) studio_impDraw();
+                  }
+                })();"""),
+            # THE FACECAM, WHICH NEEDS A REEL OPEN. studio_fcOpen reads
+            # studio.project.shots, so the tab on its own draws nothing.
+            ("facecam tab, a reel open", """
+                (async () => {
+                  const r = await API.get('/api/studio/library');
+                  const reels = (r && r.reels) || [];
+                  if (reels.length && window.studio_open)
+                      await studio_open(reels[0].path || reels[0].output);
+                  studio_tab && studio_tab('facecam');
+                  if (window.studio_fcOpen) await studio_fcOpen();
                 })();"""),
             ("the intro dialog, a reel open", """
                 if (studio.project && window.studio_introOpen) studio_introOpen();"""),
@@ -558,13 +610,18 @@ def _sweep_state(page, page_id, state_name, noise, results, base) -> None:
 # MEASURED, not chosen: 117 of the 190 controls the source declares, on an
 # install seeded with a recording, a finished run, a song, an intro and a reel.
 # It got there in stages -- 43 with nothing seeded, 86 once the dialogs were
-# opened, 99 with a song, 111 with a reel project, 117 with a shot selected --
-# and the honest account of the 73 still out of reach is in
-# docs/UI-SCENARIOS.md rather than hidden behind a comfortable number here.
+# opened, 99 with a song, 111 with a reel project, 117 with a shot selected,
+# and 122 once the kill marker could be opened on a clip the app had cut
+# itself. That last one was not a sweep change: the marker was gated on
+# `imported` until S2, so the whole dialog was unreachable for a seeded run
+# and its controls could not have been swept however the states were written.
+#
+# The honest account of the 73 still out of reach is in docs/UI-SCENARIOS.md
+# rather than hidden behind a comfortable number here.
 #
 # A FLOOR, not a target. It exists so that a change which quietly stops a page
 # rendering fails here rather than passing with less and less under test.
-REACHED_FLOOR = 117
+REACHED_FLOOR = 122
 
 
 def _reached(swept) -> set:

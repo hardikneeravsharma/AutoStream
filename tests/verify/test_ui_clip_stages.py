@@ -368,3 +368,270 @@ def test_the_stream_list_pages_rather_than_running_off_the_screen(ui, app):
     assert got["first_index"] == "12", \
         f"a row on page two indexes into the page rather than the list: {got}"
     ui.clean("paging the stream list")
+
+
+def test_only_stages_behind_you_show_a_tick(ui, app):
+    """FROM THE UI REVIEW, defect 3: on step 2 the rail ticked step 3 "Style"
+    while 4 and 5 were still numbered, so a stage nobody had opened read as
+    finished.
+
+    The done flag answers "has this card got something in it" -- Style's is
+    `a video is picked` -- which is not the same question as "is this behind
+    me". A tick means behind you."""
+    _at_part(ui, app)
+    got = ui.page.evaluate("""() => {
+        const out = [];
+        document.querySelectorAll('#clip-rail .clip-rail-step').forEach(li => {
+            const b = li.querySelector('button');
+            out.push({name: b.getAttribute('data-val'),
+                      tick: li.querySelector('.clip-rail-dot').textContent.trim(),
+                      done: li.classList.contains('is-done'),
+                      here: li.classList.contains('is-here')});
+        });
+        return out;
+    }""")
+    names = [r["name"] for r in got]
+    at = next(i for i, r in enumerate(got) if r["here"])
+    assert names[at] == "part", got
+
+    for i, row in enumerate(got):
+        ticked = row["tick"] == "✓" or row["done"]
+        if i < at:
+            continue                      # behind: a tick is correct
+        assert not ticked, (
+            f"{row['name']!r} is at or ahead of the open stage and shows a "
+            f"tick: {got}")
+
+
+# ------------------------------------- the results stage, and the race to it
+
+_DONE_JOB = {
+    "state": "done", "step": "done", "percent": 100, "game": "VALORANT",
+    "message": "No kills found in this recording.", "error": None,
+    "folder": "C:/nowhere/2026-09-21_1943_VALORANT_shortform",
+    "clips": 0, "montage": None, "summary": {"kills": 0, "clips": 0},
+    "preview": [], "scan_mode": "feedbar", "needs_demo": False,
+}
+
+
+def _land_on_done(ui, previous):
+    """Deliver a finished job with `previous` as the job before it.
+
+    `clip_renderJob` is what the status poll calls, and it is called BEFORE
+    `clip_state.lastJob` is updated -- which is the whole point of this test.
+    """
+    return ui.page.evaluate(
+        """([prev, job]) => {
+            clip_state.pick = clip_state.pick || {file: 'x.mp4', game: 'VALORANT'};
+            clip_state.lastJob = prev;
+            clip_state.sawDone = null;
+            clip_state.step = 'style';
+            clip_renderJob(job);          /* poll 1: lastJob is still `prev` */
+            const after1 = clip_state.step;
+            clip_state.lastJob = job;     /* what the poll does next */
+            clip_renderJob(job);          /* poll 2 */
+            return [after1, clip_state.step];
+        }""", [previous, _DONE_JOB])
+
+
+def test_a_run_that_was_running_opens_the_results_straight_away(ui):
+    """The ordinary path: the page watched the job run, so the Clips stage is
+    already open and the hop lands on the first poll."""
+    first, second = _land_on_done(ui, {"state": "running", "percent": 40,
+                                       "folder": None})
+    assert first == "done"
+    assert second == "done"
+    ui.clean("landing on the results stage")
+
+
+def test_a_run_that_finished_between_two_polls_still_opens_the_results(ui):
+    """FROM A REAL FAILURE, and a race that had been there all along.
+
+    When the page goes straight from no job to a finished one -- a short run
+    that completes between two two-second polls -- `clip_renderJob` asks
+    `clip_goStep('done')` while `clip_state.lastJob` is still null. The rail
+    is built from that, so the Clips stage is neither done nor running, is not
+    openable, and `clip_renderStep` falls back to the last finished stage:
+    the hop is undone the instant it is made.
+
+    `sawDone` had already been spent, so it was never retried. The run had
+    finished, the results were rendered, and the page sat on Style with no
+    sign that anything had happened.
+
+    The first poll may still fail to land -- that is the race, and fixing the
+    ordering of two lines elsewhere is a bigger change than this is worth.
+    What must not happen is giving up: by the second poll `lastJob` is the
+    finished job and the stage is reachable."""
+    first, second = _land_on_done(ui, None)
+    assert second == "done", (
+        "the results stage never opened; the page is stuck on " + str(second))
+    ui.clean("a job that finished between polls")
+
+
+def test_the_user_is_not_dragged_back_once_they_have_moved_on(ui):
+    """The reason the hop is a one-shot in the first place: a finished job
+    sits on screen for as long as the page is open, and re-opening its stage
+    on every poll would snatch the page back from anyone looking at anything
+    else."""
+    _land_on_done(ui, None)
+    moved = ui.page.evaluate(
+        """(job) => {
+            clip_goStep('style');
+            clip_renderJob(job);      /* three more polls, same finished job */
+            clip_renderJob(job);
+            clip_renderJob(job);
+            return clip_state.step;
+        }""", _DONE_JOB)
+    assert moved == "style", "the finished job pulled the page back"
+
+
+# -------------------------------------- C6: which of forty is worth watching
+
+def test_the_build_summary_says_what_you_get_not_which_switches_are_set(ui, app):
+    """IT READ "2+ kills - 30s clips - vertical too - joined into one": four
+    settings in form order, which is a list of the choices rather than a
+    description of the result. Somebody reading it to decide whether to open
+    the fold has to translate every term back into an outcome first."""
+    _at_part(ui, app)
+    ui.page.evaluate("() => clip_goStep('style')")
+    ui.page.wait_for_timeout(400)
+
+    said = ui.page.evaluate("() => clip_buildSummary()")
+    assert said, "the fold says nothing about what it holds"
+    assert "+ kills" not in said, said
+    assert "vertical too" not in said, said
+    # Said as the thing produced.
+    assert "each" in said, said
+    ui.clean("the build summary")
+
+
+def test_it_leads_with_a_count_when_the_recording_has_been_read(ui, app):
+    """The one number anybody wants, and it was not in the line at all."""
+    _at_part(ui, app)
+    ui.page.evaluate("() => { clip_state.pick.kills_known = 12; }")
+    got = ui.page.evaluate("() => clip_buildSummary()")
+    assert got.startswith("about "), got
+    assert "clip" in got
+
+
+def test_it_does_not_guess_when_nothing_has_been_read(ui, app):
+    """A picked file has no earlier reading behind it. A count there would be
+    a number invented to fill a sentence."""
+    _at_part(ui, app)
+    ui.page.evaluate("() => { clip_state.pick.kills_known = null; }")
+    got = ui.page.evaluate("() => clip_buildSummary()")
+    assert not got.startswith("about "), got
+    assert got, "it went silent instead of describing the output"
+
+
+def test_the_shortlist_is_marked_in_the_results(ui, app):
+    """A folder of forty in rank order is still forty things to open."""
+    _at_part(ui, app)
+    marked = ui.page.evaluate(
+        """() => {
+             const rows = [];
+             for (let i = 1; i <= 9; i++) {
+               rows.push({rank: i, kills: 2, at: '00:0' + i, duration: 20,
+                          top: i <= 5, name: 'c' + i});
+             }
+             clip_renderResults(rows, '');
+             return {
+               best: document.querySelectorAll('#clip-res-list .is-best').length,
+               rows: document.querySelectorAll('#clip-res-list .clip-res').length,
+               tags: document.querySelectorAll('#clip-res-list .clip-res-best').length
+             };
+           }""")
+    assert marked["rows"] == 9, "a flag became a filter; clips went missing"
+    assert marked["best"] == 5
+    assert marked["tags"] == 5
+    ui.clean("the results list")
+
+
+def test_the_montage_offers_its_chapters(ui, app):
+    """A montage is the one output with no way into the middle of it: forty
+    clips joined into eight minutes, and the good one is somewhere in there.
+    The chapters are offered where the montage is rather than left in a .txt
+    beside it for somebody to find."""
+    _at_part(ui, app)
+    shown = ui.page.evaluate(
+        """() => {
+             /* Joined rather than written with escapes: this JS lives
+                inside a Python string, where a backslash-n becomes a real
+                line break before Playwright ever sees it -- a SyntaxError
+                inside a single-quoted JS string, which is what happened. */
+             clip_state.lastJob = {montage_chapters: [
+               '0:00 3 kills', '0:30 4 kills', '1:10 2 kills', ''
+             ].join(String.fromCharCode(10))};
+             clip_renderResults(
+               [{rank: 1, kills: 3, at: '00:01', duration: 20, name: 'a'}],
+               'C:/vid/montage.mp4');
+             const row = document.querySelector('#clip-res-list .is-montage');
+             return {
+               meta: row.querySelector('.clip-res-meta').textContent,
+               copy: !!row.querySelector('[data-act="copy-montage-chapters"]')
+             };
+           }""")
+    assert "3 chapters" in shown["meta"], shown["meta"]
+    assert shown["copy"] is True
+    ui.clean("the montage row")
+
+
+def test_a_montage_with_no_chapters_offers_nothing(ui, app):
+    """Too few clips, or clips too short for YouTube to show any. A Copy
+    button that copies an empty string is a button that does nothing."""
+    _at_part(ui, app)
+    shown = ui.page.evaluate(
+        """() => {
+             clip_state.lastJob = {montage_chapters: ''};
+             clip_renderResults(
+               [{rank: 1, kills: 3, at: '00:01', duration: 20, name: 'a'}],
+               'C:/vid/montage.mp4');
+             const row = document.querySelector('#clip-res-list .is-montage');
+             return {
+               meta: row.querySelector('.clip-res-meta').textContent,
+               copy: !!row.querySelector('[data-act="copy-montage-chapters"]')
+             };
+           }""")
+    assert "chapters" not in shown["meta"]
+    assert shown["copy"] is False
+    ui.clean("a montage with no chapters")
+
+
+# ----------------------------------- C2: the whole match as one video
+
+def test_the_match_video_is_offered_only_where_rounds_are_known(ui, app):
+    """The spans come from the rounds, so there is nothing to cut without
+    them. It lives inside the rounds field, which is itself shown only for a
+    game scored by the round."""
+    _at_part(ui, app)
+    ui.page.evaluate("() => clip_goStep('style')")
+    ui.page.wait_for_timeout(400)
+    where = ui.page.evaluate(
+        """() => {
+             const sw = document.getElementById('clip-matchvid');
+             return sw ? !!sw.closest('#clip-rounds-field') : null;
+           }""")
+    assert where is True, "the match video is not inside the rounds field"
+
+
+def test_it_is_off_until_it_is_asked_for(ui, app):
+    """The clips are what the page is for; the whole match is a second output
+    that costs another pass over the recording."""
+    _at_part(ui, app)
+    ui.page.evaluate("() => clip_goStep('style')")
+    ui.page.wait_for_timeout(400)
+    assert ui.page.evaluate(
+        "() => clip_runBody(clip_state.pick).match_summary") is False
+    assert ui.page.get_attribute("#clip-matchvid", "aria-checked") == "false"
+
+
+def test_asking_for_it_reaches_the_run(ui, app):
+    _at_part(ui, app)
+    ui.page.evaluate("() => clip_goStep('style')")
+    ui.page.wait_for_timeout(400)
+    ui.page.evaluate("() => { clip_state.matchVid = true; clip_renderOptions(); }")
+    ui.page.wait_for_timeout(200)
+    assert ui.page.evaluate(
+        "() => clip_runBody(clip_state.pick).match_summary") is True
+    assert ui.page.get_attribute("#clip-matchvid", "aria-checked") == "true"
+    ui.clean("the match video switch")

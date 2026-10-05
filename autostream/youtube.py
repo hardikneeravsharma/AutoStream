@@ -84,6 +84,101 @@ def _now_rfc3339() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+# ---------------------------------------------------------------- sign-in age
+#
+# WHY THIS IS INFERRED AND NOT ASKED
+#     An OAuth consent screen left in Testing issues refresh tokens that die
+#     after about seven days. The symptom is streaming that silently stops
+#     working days after a setup that went perfectly, and the cause is one
+#     button in a console nobody has open any more. It is the single most
+#     expensive avoidable failure in this product.
+#
+#     Google does not tell the client whether the app is published. There is
+#     no field, no endpoint and no scope for it -- so "refuse to finish setup
+#     while it is in Testing" cannot be built, however much one would want it.
+#
+#     What CAN be known is the thing that actually matters. A published app's
+#     refresh token does not expire. So a token that is still being refreshed
+#     nine days after it was granted PROVES the app is published, and the
+#     question is settled by evidence rather than by asking somebody to
+#     confirm something they may have misremembered.
+#
+#     Until that proof exists, the days between 5 and 7 are worth a word --
+#     while the fix is still a button rather than a sign-in.
+GRANT_FILE_NAME = "token_granted.json"
+TESTING_TOKEN_DAYS = 7.0
+WARN_AFTER_DAYS = 5.0
+PROVEN_AFTER_DAYS = 9.0
+
+
+def _grant_file():
+    return paths.TOKEN_FILE.with_name(GRANT_FILE_NAME)
+
+
+def _note_grant(*, fresh: bool) -> None:
+    """Record when this sign-in was granted, and whether it has outlived a
+    Testing-mode token. Never raises: this is a note, not a credential."""
+    import json as _json
+    import time as _time
+
+    f = _grant_file()
+    try:
+        data = _json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    now = _time.time()
+    if fresh or not data.get("granted_at"):
+        data = {"granted_at": now, "long_lived": False}
+    elif not data.get("long_lived"):
+        # A REFRESH THAT WORKED THIS LATE IS THE PROOF. A Testing-mode token
+        # would have been rejected days ago.
+        age = (now - float(data.get("granted_at") or now)) / 86400.0
+        if age >= PROVEN_AFTER_DAYS:
+            data["long_lived"] = True
+            log.info("the Google sign-in has outlived a Testing-mode token; "
+                     "this app is published")
+    try:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(_json.dumps(data), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def sign_in_health() -> dict:
+    """-> {days, long_lived, warn, why}. Never raises, never asks Google."""
+    import json as _json
+    import time as _time
+
+    out = {"days": 0.0, "long_lived": False, "warn": False, "why": ""}
+    f = _grant_file()
+    if not paths.TOKEN_FILE.exists() or not f.is_file():
+        return out
+    try:
+        data = _json.loads(f.read_text(encoding="utf-8"))
+        at = float(data.get("granted_at") or 0)
+    except (OSError, ValueError, TypeError):
+        return out
+    if not at:
+        return out
+    out["days"] = round(max(0.0, (_time.time() - at) / 86400.0), 1)
+    out["long_lived"] = bool(data.get("long_lived"))
+    if out["long_lived"] or out["days"] < WARN_AFTER_DAYS:
+        return out
+    left = max(0.0, TESTING_TOKEN_DAYS - out["days"])
+    out["warn"] = True
+    out["why"] = (
+        f"Your Google sign-in is {out['days']:.0f} days old. If the OAuth "
+        f"consent screen is still in Testing it expires at about seven days "
+        f"{'(roughly %.0f left)' % left if left else '(any time now)'} and "
+        f"streaming stops with no warning. Google Cloud Console -> Google "
+        f"Auth Platform -> Audience -> Publish app. If it is already "
+        f"published this notice goes away by itself once the sign-in has "
+        f"outlived a Testing token.")
+    return out
+
+
 class YouTube:
     def __init__(self, config, state=None):
         self.cfg = config
@@ -98,6 +193,7 @@ class YouTube:
         sign-in link as soon as it exists, so a page can show it on a machine
         whose default browser never opened."""
         creds = None
+        fresh_consent = False
         if paths.TOKEN_FILE.exists():
             try:
                 creds = Credentials.from_authorized_user_file(str(paths.TOKEN_FILE), SCOPES)
@@ -128,6 +224,7 @@ class YouTube:
                 raise NotAuthorised("No valid credentials. Run: python -m autostream auth")
             if not paths.CLIENT_SECRET.exists():
                 raise NotAuthorised(f"Missing {paths.CLIENT_SECRET}")
+            fresh_consent = True
             flow = InstalledAppFlow.from_client_secrets_file(str(paths.CLIENT_SECRET), SCOPES)
             creds = flow.run_local_server(
                 port=0,
@@ -142,6 +239,7 @@ class YouTube:
             )
 
         paths.ensure_dirs()
+        _note_grant(fresh=fresh_consent)
         paths.TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
         try:
             paths.TOKEN_FILE.chmod(0o600)
@@ -261,6 +359,45 @@ class YouTube:
         self._spend(COST_LIST)
         items = r.get("items") or []
         return items[0]["snippet"]["title"] if items else "(unknown)"
+
+    def live_enabled(self) -> tuple[bool, str]:
+        """Can this channel go live at all? -> (yes, why not).
+
+        ASKED AT SETUP, NOT AT GO-LIVE. Live streaming is off by default on a
+        new YouTube channel and turning it on takes up to 24 hours to come
+        through. Found out at the first session, that is an evening wasted and
+        an error that says nothing about what to do -- found out during setup,
+        it is a sentence and a wait that runs while everything else is being
+        set up anyway.
+
+        ONE UNIT. `liveBroadcasts.list` is the cheapest call that goes through
+        the live-streaming permission check, so this costs 1 of 10,000 against
+        the 50 a broadcast costs to discover the same thing the hard way.
+        """
+        try:
+            self.svc.liveBroadcasts().list(
+                part="id", mine=True, maxResults=1).execute()
+            self._spend(COST_LIST)
+            return True, ""
+        except Exception as e:                           # noqa: BLE001
+            low = str(e).lower()
+            self._spend(COST_LIST)
+            if "livestreamingnotenabled" in low or "not enabled for live" in low:
+                return False, (
+                    "Live streaming is not switched on for this channel. Go to "
+                    "youtube.com/features, enable it, and verify your phone "
+                    "number if it asks -- then it can take up to 24 hours to "
+                    "come through. Everything else here can be set up while "
+                    "you wait.")
+            if "livepermissionblocked" in low or "blocked" in low:
+                return False, (
+                    "YouTube has blocked live streaming on this channel, "
+                    "usually for a recent Community Guidelines strike. Check "
+                    "youtube.com/features -- it says there when it lifts.")
+            # Anything else is not an answer to this question, and refusing to
+            # finish setup over a network blip would be worse than not asking.
+            log.info("could not check live streaming: %s", str(e)[:200])
+            return True, ""
 
     # ---------------- the permanent reusable stream ----------------
 

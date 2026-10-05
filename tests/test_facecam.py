@@ -186,10 +186,57 @@ def test_only_a_video_can_be_added(root, tmp_path, probe10):
     assert not uploads.add(root, str(bad))["ok"]
 
 
-def test_marks_can_only_be_saved_on_an_imported_clip(root):
-    clip = _run(root, "2026-09-01_VALORANT")
-    assert not uploads.save(root, str(clip), [1.0])["ok"]
-    assert not uploads.save(root, str(root.parent / "import-x" / "clips" / "a.mp4"), [1.0])["ok"]
+def test_marks_can_be_saved_on_any_clip_in_the_clips_folder(root):
+    """THIS USED TO REFUSE. The marker was gated on `imported`, so a clip
+    AutoStream cut for itself had no way back into it at all: a kill the
+    detector put half a second late could not be corrected and a clip could
+    not be retitled. The marker itself never cared where a clip came from --
+    what was missing was the way in."""
+    clip = _run(root, "2026-09-01_VALORANT", start=100.0)
+    got = uploads.save(root, str(clip), [1.0, 4.5])
+    assert got["ok"], got
+    assert got["kills"] == [1.0, 4.5]
+
+
+def test_a_correction_does_not_move_the_other_clips_in_the_run(root):
+    """A run's session.json describes the whole RECORDING and every clip cut
+    from it reads its kill pips out of it. Writing one clip's correction
+    there would move all forty and break the next re-cut -- from a dialog
+    that said Save."""
+    clip = _run(root, "2026-09-01_VALORANT", start=100.0)
+    before = json.loads((root / "2026-09-01_VALORANT" / "session.json")
+                        .read_text(encoding="utf-8"))
+    uploads.save(root, str(clip), [2.0])
+    after = json.loads((root / "2026-09-01_VALORANT" / "session.json")
+                       .read_text(encoding="utf-8"))
+    assert after["kills"] == before["kills"], (
+        "a correction to one clip rewrote the recording's kill list")
+
+
+def test_the_correction_is_what_comes_back(root):
+    clip = _run(root, "2026-09-01_VALORANT", start=100.0)
+    # The recording has a kill at 104s, which is 4s into this clip.
+    assert uploads.info(root, str(clip))["kills"] == [4.0]
+    uploads.save(root, str(clip), [6.25])
+    assert uploads.info(root, str(clip))["kills"] == [6.25]
+
+
+def test_a_detected_clips_kills_are_offered_in_clip_seconds(root):
+    """The two halves store them differently: an import's are already
+    clip-relative, a run's are recording-relative. A clip starting 42 minutes
+    in would otherwise open with its first mark at 2520 seconds, off the end
+    of a thirty-second clip."""
+    clip = _run(root, "2026-09-01_VALORANT", start=2500.0)
+    assert uploads.info(root, str(clip))["kills"] == [4.0]
+
+
+def test_a_path_outside_the_clips_folder_is_still_refused(root):
+    """The guard that has to survive: this writes JSON next to whatever it is
+    given, and the page is not the only thing that can call it."""
+    assert not uploads.save(
+        root, str(root.parent / "import-x" / "clips" / "a.mp4"), [1.0])["ok"]
+    assert not uploads.info(
+        root, str(root.parent / "elsewhere" / "clips" / "a.mp4"))["ok"]
 
 
 # ------------------------------------------------------------------ lining up
@@ -221,3 +268,40 @@ def test_noise_that_lines_up_nowhere_is_refused(monkeypatch):
                         lambda path, start, seconds, rate=100: rng.standard_normal(int(seconds * rate)))
     got = facecam.sync(Path("game"), 10.0, Path("cam"), window=30, search=20)
     assert not got["ok"] and "by ear" in got["error"]
+
+
+# ---------------------------------------- S1: a folder of clips, in one go
+
+def test_a_batch_is_imported_one_after_another(root, tmp_path, probe10,
+                                                monkeypatch):
+    """Somebody with a folder of twenty did the whole dance twenty times:
+    open the dialog, choose one, wait, mark, save, press Add again."""
+    srcs = []
+    for i in range(3):
+        f = tmp_path / f"clip{i}.mp4"
+        f.write_bytes(b"x" * 10)
+        srcs.append(f)
+
+    got = [uploads.add(root, str(f)) for f in srcs]
+    assert all(g["ok"] for g in got), got
+    paths = [g["clip"]["path"] for g in got]
+    assert len(set(paths)) == 3, "two imports landed on the same path"
+    for p in paths:
+        assert uploads.info(root, p)["ok"]
+
+
+def test_each_imported_clip_keeps_its_own_marks(root, tmp_path, probe10):
+    """The reason a batch needs its own walk: twenty clips each want their
+    own kills, and one set shared between them is worse than none."""
+    a = tmp_path / "a.mp4"
+    b = tmp_path / "b.mp4"
+    a.write_bytes(b"x" * 10)
+    b.write_bytes(b"y" * 10)
+    pa = uploads.add(root, str(a))["clip"]["path"]
+    pb = uploads.add(root, str(b))["clip"]["path"]
+
+    uploads.save(root, pa, [1.0, 2.0])
+    uploads.save(root, pb, [5.0])
+
+    assert uploads.info(root, pa)["kills"] == [1.0, 2.0]
+    assert uploads.info(root, pb)["kills"] == [5.0]

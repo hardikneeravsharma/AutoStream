@@ -145,10 +145,26 @@ class ClipPlan:
     labels: list[str] = field(default_factory=list)
     round_number: int | None = None
     won: bool | None = None
+    # One of the handful worth watching first. See SHORTLIST.
+    top: bool = False
 
     @property
     def duration(self) -> float:
         return self.end - self.start
+
+    @property
+    def density(self) -> float:
+        """Kills per second of clip. The tie-break that was missing.
+
+        A FOLDER OF FORTY IS NOT A SHORTLIST. Clips were ranked by kills and
+        then by when they happened, so every three-kill clip tied and the
+        order within a tie was the order of the recording -- which is not an
+        order of quality at all. Three kills in five seconds and three kills
+        spread over twenty-five are the same number and very different clips,
+        and the first is the one somebody wants to watch.
+        """
+        d = self.duration
+        return (self.kills / d) if d > 0 else 0.0
 
     def describe(self) -> str:
         extra = "" if self.kills == self.burst_kills else f" of {self.burst_kills}"
@@ -162,6 +178,10 @@ class ClipPlan:
             "kills": self.kills, "burst_kills": self.burst_kills,
             "score": round(self.peak_score, 3), "name": self.name,
             "at": stamp(self.start),
+            # What made it rank where it did, so the page can say so rather
+            # than presenting an order the reader has to take on trust.
+            "density": round(self.density, 3),
+            "top": bool(self.top),
             **({"labels": list(self.labels)} if self.labels else {}),
             **({"round": self.round_number} if self.round_number else {}),
             **({"won": self.won} if self.won is not None else {}),
@@ -320,9 +340,20 @@ def build(kills, *, game: str, min_kills: int = 2,
             continue
         scored.append((b, start, end, n))
 
-    # Rank by what is in the clip, then by how long the fight was, then by
-    # when it happened -- so the order is stable across reruns.
-    scored.sort(key=lambda r: (-r[3], -r[0].kills, r[1]))
+    # KILLS FIRST, AND THEN HOW TIGHT IT IS. The kill count stays the
+    # dominant term because that is what people expect and check -- a
+    # four-kill clip should never rank under a three. What changed is the
+    # tie-break: it was "when it happened", so every three-kill clip tied and
+    # the order inside a tie was the order of the recording, which is not an
+    # order of quality at all.
+    #
+    # Density is kills per second of the clip as cut. Three kills in five
+    # seconds beats three kills spread over twenty-five, which is the whole
+    # difference between a clip worth posting and a clip with dead air in it.
+    # The detector's own confidence breaks a tie after that, and the start
+    # time last so the order is still stable across reruns.
+    scored.sort(key=lambda r: (-r[3], -(r[3] / max(r[2] - r[1], 0.001)),
+                               -getattr(r[0], "peak", 0.0), r[1]))
 
     plans: list[ClipPlan] = []
     for i, (b, start, end, n) in enumerate(scored, 1):
@@ -331,6 +362,24 @@ def build(kills, *, game: str, min_kills: int = 2,
         plans.append(ClipPlan(
             rank=i, start=start, end=end, kills=n, burst_kills=b.kills,
             peak_score=getattr(b, "peak", 0.0), name=name))
+    return shortlist(plans)
+
+
+# HOW MANY ARE WORTH WATCHING FIRST. Five, because the thing this replaces is
+# a folder of forty in filename order and the ask was for a shortlist -- and
+# because a "best" list long enough to need scrolling is just the list again.
+SHORTLIST = 5
+
+
+def shortlist(plans: list[ClipPlan], n: int = SHORTLIST) -> list[ClipPlan]:
+    """Mark the first `n` as the ones to watch first. Order is unchanged.
+
+    A FLAG AND NOT A FILTER. Nothing is hidden: the other thirty-five are
+    still cut, still numbered and still there. What this adds is somewhere to
+    start, which is the thing a folder in filename order never had.
+    """
+    for i, p in enumerate(plans):
+        p.top = i < max(0, int(n))
     return plans
 
 
@@ -405,7 +454,7 @@ def build_rounds(highlights, *, game: str, pre_roll: float = 3.0,
                   f"_r{rd.number}_{stamp(start)}"
                   f"_{duration_label(end - start)}"),
             labels=list(rd.labels), round_number=rd.number, won=rd.won))
-    return plans
+    return shortlist(plans)
 
 
 # ---------------------------------------------------------------- chat marks
@@ -499,7 +548,9 @@ def build_marks(marks, *, game: str, clip_seconds: str | int = "30",
         plans.append(ClipPlan(
             rank=i, start=start, end=end, kills=0, burst_kills=0,
             peak_score=float(m.votes), name=name, labels=["CHAT"]))
-    return plans
+    # Marked here too: a run with nothing but chat clips in it still needs
+    # somewhere to start, and `merge_marks` re-marks the combined list.
+    return shortlist(plans)
 
 
 def combine(rounds: list[ClipPlan], bursts: list[ClipPlan], game: str) -> list[ClipPlan]:
@@ -520,7 +571,10 @@ def combine(rounds: list[ClipPlan], bursts: list[ClipPlan], game: str) -> list[C
             p.name = f"{tag}_{i:02d}_" + p.name[len(old):]
         p.rank = i
         out.append(p)
-    return out
+    # RE-MARKED AFTER COMBINING, because each list arrived with its own top
+    # five and the result would otherwise carry ten -- a shortlist twice as
+    # long as it says it is, with half of it outranked by clips not on it.
+    return shortlist(out)
 
 
 def merge_marks(plans: list[ClipPlan], marked: list[ClipPlan],
@@ -546,7 +600,9 @@ def merge_marks(plans: list[ClipPlan], marked: list[ClipPlan],
     out = list(plans) + kept
     for i, p in enumerate(out, 1):
         p.rank = i
-    return out
+    # Same reasoning as combine(): two lists arrive each carrying their own
+    # five, and a shortlist of ten is not a shortlist.
+    return shortlist(out)
 
 
 def montage_name(game: str, plans: list[ClipPlan], when: str,

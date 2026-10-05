@@ -19,6 +19,14 @@ Callers should surface "restart AutoStream" when any saved key sets this.
 `danger` marks keys that are derived or destructive: values written by `setup`
 that pair with state held elsewhere (OBS, YouTube), where a plausible-looking
 edit breaks streaming in a way that only shows up at the next session.
+
+`only_for` names the platforms a key actually does anything on. Most of the
+`youtube.*` block is YouTube's alone -- Twitch has no privacy setting, no
+latency choice, no "made for kids" and no broadcast object to start a second
+of -- and a settings page that offers them while Twitch is selected is lying
+about what it will do. The page hides them rather than disabling them: a
+control that cannot matter is noise, and the reason it vanished is written
+where it vanished from. Absent means the key applies everywhere.
 """
 from __future__ import annotations
 
@@ -122,12 +130,27 @@ CONFIG_SCHEMA: list[Section] = [
         "fields": [
             _field(
                 "youtube.enabled",
-                "Go live on YouTube",
+                "Go live",
                 "Off turns AutoStream into a clipper and nothing else: it still "
                 "spots the game, still records it and still cuts clips, and never "
-                "touches YouTube. Nothing else on this page is read while it is "
-                "off, and no Google sign-in is needed.",
+                "starts a stream. Nothing else on this page is read while it is "
+                "off, and no sign-in is needed.",
                 "toggle",
+            ),
+            _field(
+                "youtube.platform",
+                "Where to go live",
+                "Twitch and Kick are live the moment the stream reaches them, so "
+                "there is no countdown and no kill-switch grace period -- the "
+                "moment you start, you are on. YouTube holds the broadcast in a "
+                "private preview first, which is what the grace period is for. "
+                "Each one needs its own sign-in on this page.",
+                "select",
+                options=_opts(
+                    ("youtube", "YouTube"),
+                    ("twitch", "Twitch"),
+                    ("kick", "Kick"),
+                ),
             ),
             _field(
                 "youtube.privacy",
@@ -141,6 +164,7 @@ CONFIG_SCHEMA: list[Section] = [
                     ("unlisted", "Unlisted - only people with the link"),
                     ("private", "Private - only you"),
                 ),
+            only_for=["youtube"],
             ),
             _field(
                 "youtube.latency",
@@ -155,6 +179,7 @@ CONFIG_SCHEMA: list[Section] = [
                     ("low", "Low - a few seconds behind, chat still works"),
                     ("ultraLow", "Ultra low - closest to real time, least buffer"),
                 ),
+            only_for=["youtube"],
             ),
             _field(
                 "youtube.category_id",
@@ -163,6 +188,7 @@ CONFIG_SCHEMA: list[Section] = [
                 "Applied once the broadcast goes live.",
                 "select",
                 options=_CATEGORIES,
+            only_for=["youtube"],
             ),
             _field(
                 "youtube.made_for_kids",
@@ -171,6 +197,7 @@ CONFIG_SCHEMA: list[Section] = [
                 "Turning it on disables live chat and strips personalised features "
                 "for every viewer, on every stream.",
                 "toggle",
+            only_for=["youtube"],
             ),
             _field(
                 "youtube.switch_policy",
@@ -184,6 +211,7 @@ CONFIG_SCHEMA: list[Section] = [
                     ("rolling", "Rename the stream in place - one VOD per session"),
                     ("new_broadcast", "Start a new stream - one VOD per game"),
                 ),
+            only_for=["youtube"],
             ),
         ],
     },
@@ -334,6 +362,7 @@ CONFIG_SCHEMA: list[Section] = [
                 step=5,
                 unit="seconds",
                 integer=True,
+                only_for=["youtube"],
             ),
             _field(
                 "timing.switch_delay",
@@ -435,6 +464,17 @@ CONFIG_SCHEMA: list[Section] = [
                 step=5,
                 unit="GB",
                 integer=False,
+            ),
+            _field(
+                "rules.replay_hotkey",
+                "Instant replay hotkey",
+                "Pressed anywhere, including inside a game. Leave it blank to turn "
+                "the hotkey off and use the button on the dashboard instead. Avoid "
+                "anything a game might want: this takes the key away from whatever "
+                "is in front of you.",
+                "text",
+                max_chars=60,
+                restart=True,
             ),
             _field(
                 "rules.kill_switch_hotkey",
@@ -792,6 +832,30 @@ CONFIG_SCHEMA: list[Section] = [
                 "background so the Clips page already has them ready when you open "
                 "it.",
                 "toggle",
+            ),
+            _field(
+                "record.replay_enabled",
+                "Instant replay",
+                "Keeps the last few seconds of your screen in memory the whole "
+                "session. Press the hotkey and that moment is written out as its "
+                "own clip -- there is nothing to detect and nothing to wait for, "
+                "so it works in any game, including ones AutoStream cannot read. "
+                "OBS does the keeping: turn on Replay Buffer under Settings and "
+                "then Output in OBS, or this has nothing to switch on.",
+                "toggle",
+            ),
+            _field(
+                "record.replay_seconds",
+                "How far back instant replay goes",
+                "The whole of this is held in memory for the whole session, so a "
+                "long buffer at a high bitrate is a real amount of RAM. Thirty "
+                "seconds covers a play; two minutes covers a round.",
+                "number",
+                min=5,
+                max=300,
+                step=5,
+                unit="seconds",
+                integer=True,
             ),
         ],
     },
@@ -1157,6 +1221,17 @@ CONFIG_SCHEMA: list[Section] = [
                  "know exactly why.",
         "advanced": True,
         "fields": [
+            _field(
+                "rules.setup_done",
+                "First-run setup has finished",
+                "Written once by the setup wizard. While it is off, AutoStream "
+                "opens on the wizard instead of the dashboard. Turning it off "
+                "by hand is how you run first-run setup again -- which is "
+                "sometimes exactly what you want, and is why it is here.",
+                "toggle",
+                danger=True,
+                restart=True,
+            ),
             _field(
                 "youtube.stream_id",
                 "Reusable stream id",

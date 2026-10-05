@@ -50,6 +50,27 @@ CSS: str = """
    These are the values that do not change with the theme.
    ========================================================================== */
 :root{
+  /* ---- text drawn ON a video frame -------------------------------------
+     NOT A THEME TOKEN, and deliberately not in theme.py: a frame of
+     gameplay is not a surface this app controls, and the themes have no say
+     over what colour it is. White on a dark scrim is the only pair that
+     works over every frame, in every theme.
+
+     THE SCRIM IS THE CONTRAST, and the number is measured rather than
+     chosen. Taking the worst case -- a white video frame -- white text on a
+     black scrim scores:
+
+         .28 -> 1.98    .35 -> 2.43    .50 -> 3.95
+         .55 -> 4.74    .62 -> 6.19    .70 -> 8.45
+
+     so .54 is the floor for normal text at AA and .42 for large. Eight
+     different alphas were in use for this one job, and the lightest of them
+     was behind 13px white text on the editor's frame handle: 2.43:1, which
+     is unreadable over anything bright and was simply never measured. */
+  --on-media:#fff;
+  --on-media-scrim:rgba(0,0,0,.62);        /* 6.19:1 -- normal text */
+  --on-media-scrim-soft:rgba(0,0,0,.55);   /* 4.74:1 -- bold, 14px and up */
+
   /* space -- 4px grid. 2px and 6px exist only for optical alignment inside controls. */
   --space-1:2px; --space-2:4px; --space-3:6px; --space-4:8px; --space-5:12px;
   --space-6:16px; --space-7:20px; --space-8:24px; --space-9:32px; --space-10:40px;
@@ -318,6 +339,15 @@ svg{flex:0 0 auto;display:block}
 }
 .rail-btn:hover{background:var(--surface-hover);color:var(--text-primary)}
 .rail-btn.is-active{background:var(--accent-muted);color:var(--accent-text)}
+/* WHITE IS NOT A CONTRAST GUARANTEE. Four places filled a shape with
+   var(--accent) and then wrote #fff on it, which holds for the dark themes
+   that shipped first and fails the moment an accent is light -- and the
+   accent is a user setting with a dozen palettes behind it. --text-on-accent
+   is the token that already exists for exactly this and is defined per theme;
+   the four were simply missed. Measured, not assumed: the same marks are
+   already on .btn-primary and .seg-btn.is-active, which is why those were
+   never reported. */
+
 /* ACCENT BUDGET 2/4: the 2px marker exists here and in .settings-nav-item, nowhere else. */
 .rail-btn.is-active::before{
   content:"";
@@ -624,6 +654,17 @@ svg{flex:0 0 auto;display:block}
   transition:background-color var(--dur-instant),color var(--dur-instant);
 }
 .seg-btn:hover{color:var(--text-primary)}
+.seg-btn:disabled{opacity:.55;cursor:default}
+.seg-btn:disabled:hover{color:var(--text-secondary)}
+/* The dashboard's platform chooser is the width of its card, not of its
+   labels: three services of very different name lengths should not give
+   YouTube a wider target than Kick. */
+#dash-where .seg{display:flex;width:100%}
+#dash-where .seg-btn{flex:1 1 0}
+#dash-where .field-help{margin-top:var(--space-2)}
+/* Instant replay: one button and the line that says whether it will work. */
+.replay-row{display:flex;align-items:center;gap:var(--space-5);flex-wrap:wrap}
+.replay-row .status-meta{flex:1 1 220px;min-width:0}
 /* ACCENT BUDGET 4/4 (a): selected segmented cell. */
 .seg-btn.is-active{background:var(--accent);color:var(--text-on-accent)}
 
@@ -648,8 +689,8 @@ svg{flex:0 0 auto;display:block}
    choosing WHICH kinds of round get cut, and needs to see the whole selection
    at a glance. */
 .clip-types{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-.chip.is-on{background:var(--accent);border-color:var(--accent);color:#fff}
-.chip.is-on:hover{background:var(--accent);color:#fff;filter:brightness(1.08)}
+.chip.is-on{background:var(--accent);border-color:var(--accent);color:var(--text-on-accent)}
+.chip.is-on:hover{background:var(--accent);color:var(--text-on-accent);filter:brightness(1.08)}
 .chip.is-active{background:var(--surface-active);color:var(--text-primary)}
 .chip[aria-pressed="false"]{opacity:var(--opacity-ghost)}
 
@@ -685,6 +726,15 @@ svg{flex:0 0 auto;display:block}
   color:var(--danger);
 }
 .field-error svg{width:var(--size-icon-sm);height:var(--size-icon-sm);margin-top:2px}
+/* Not an error: it works today and may not next week. Same shape as
+   .field-error so a line can move between the two without reflowing. */
+.field-warn{
+  display:flex;
+  align-items:flex-start;
+  gap:var(--space-3);
+  font-size:13px;line-height:1.5;
+  color:var(--warn);
+}
 .field-row{
   display:grid;
   grid-template-columns:minmax(0,220px) minmax(0,1fr);
@@ -933,9 +983,18 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
    not one border declaration on a cell, and the cluster reads as one instrument. */
 .stat-grid{
   display:grid;
-  /* Column count follows the cells the dashboard actually emits (3). A fixed
-     repeat(4) left a dead quarter on the strip. */
-  grid-template-columns:repeat(3,minmax(0,1fr));
+  /* COLUMN COUNT FOLLOWS THE CELLS, and now it really does. This was
+     repeat(3) -- written when there were three, with a comment explaining
+     that a fixed repeat(4) had left a dead quarter on the strip. Both are
+     the same mistake with a different number: the strip gained a fourth cell
+     the day instant replay landed, and a hard three dropped it onto a second
+     row of its own, full width, under three narrow ones.
+
+     auto-fit with a floor means the strip lays out whatever it is given, and
+     wraps instead of crushing when the window is too narrow for them all --
+     the numbers are 24px tabular figures and have a width they cannot go
+     under. */
+  grid-template-columns:repeat(auto-fit,minmax(132px,1fr));
   gap:var(--border-hair);
   background:var(--border-subtle);
   border:var(--border-hair) solid var(--border-subtle);
@@ -1555,6 +1614,64 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
   scrollbar-width:none;
 }
 .settings-nav::-webkit-scrollbar{display:none}
+
+/* THE NAV SCROLLS AND NOTHING SAID SO. Below 1000px the fifteen sections lie
+   in one horizontal strip with the scrollbar hidden, so the last visible one
+   was cut mid-word and there was nothing to suggest the rest existed -- the
+   page simply looked as though it had eight sections and a rendering fault.
+
+   A fade at whichever edge still has content is the affordance: it reads as
+   "this continues", it costs no space, and it cannot be mistaken for a
+   control. The classes are set from JS because CSS cannot ask whether a box
+   overflows. Neither is set in the >=1000px column layout, where there is no
+   overflow to describe. */
+.settings-nav.set-more-end{
+  -webkit-mask-image:linear-gradient(to right,#000 calc(100% - 40px),transparent);
+          mask-image:linear-gradient(to right,#000 calc(100% - 40px),transparent);
+}
+.settings-nav.set-more-start{
+  -webkit-mask-image:linear-gradient(to right,transparent,#000 40px);
+          mask-image:linear-gradient(to right,transparent,#000 40px);
+}
+.settings-nav.set-more-start.set-more-end{
+  -webkit-mask-image:linear-gradient(to right,transparent,#000 40px,
+                                     #000 calc(100% - 40px),transparent);
+          mask-image:linear-gradient(to right,transparent,#000 40px,
+                                     #000 calc(100% - 40px),transparent);
+}
+.settings-nav{scroll-behavior:smooth}
+
+/* ------------------------------------------------------- settings search */
+.settings-search{
+  position:relative;
+  display:flex;
+  align-items:center;
+  gap:var(--space-3);
+  margin-bottom:var(--gap-section);
+}
+.settings-search .input{flex:1 1 auto;min-width:0}
+.settings-search-count{
+  flex:0 0 auto;
+  color:var(--text-secondary);
+  font-size:13px;
+  white-space:nowrap;
+}
+/* A search that matched nothing has to say so. An empty page reads as a
+   page that failed to load. */
+.settings-noresult{
+  padding:var(--space-8);
+  color:var(--text-secondary);
+  text-align:center;
+}
+.settings-noresult b{color:var(--text-primary)}
+/* While searching, the section headings are what group the results, so they
+   carry their own weight rather than reading as one long list. */
+.settings-section.is-hit .settings-section-head{
+  position:sticky;
+  top:0;
+  z-index:1;
+  background:var(--surface);
+}
 .settings-nav-item{
   position:relative;
   display:flex;
@@ -1957,8 +2074,57 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 }
 #setup-root button.pick:hover{border-color:var(--accent);background:var(--surface-hover)}
 
+/* The Google Cloud step: six separate journeys through a console that looks
+   nothing like this page, done one at a time with the browser in front of the
+   app. Ticks are the reader's own note of where they got to. */
+.checklist{display:flex;flex-direction:column;gap:2px;margin:4px 0 10px;padding:0;list-style:none}
+.checkitem{margin:0}
+.checkitem-box{
+  display:flex;align-items:flex-start;gap:10px;cursor:pointer;
+  padding:8px 10px;border-radius:var(--radius-sm);
+  transition:background-color var(--dur-instant);
+}
+.checkitem-box:hover{background:var(--surface-hover)}
+.checkitem-box input{
+  flex:0 0 auto;width:16px;height:16px;margin:2px 0 0;
+  accent-color:var(--accent);cursor:pointer;
+}
+.checkitem-text{flex:1 1 auto;line-height:1.5}
+/* Dimmed, never struck through: the text still has to be re-readable when
+   somebody comes back to check what they did. */
+.checkitem.is-done .checkitem-text{color:var(--text-tertiary)}
+.checkitem.is-done .checkitem-text b,
+.checkitem.is-done .checkitem-text code{color:inherit}
+
+/* THE ONE TO TAKE. Two choices drawn as equals made the ten-minute path look
+   as ordinary as the five-second one. The border carries it rather than a
+   fill, so the card still reads as a choice and not as a button that has
+   already been pressed -- and so the accent budget is untouched. */
+#setup-root button.pick.is-primary,
+.pick.is-primary{border-color:var(--accent);background:var(--surface-hover)}
+.pick-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pick-tag{
+  padding:1px 7px;border-radius:999px;
+  border:1px solid var(--accent);color:var(--accent-text);
+  font-size:.7rem;font-weight:650;letter-spacing:.02em;text-transform:uppercase;
+}
+/* A chosen platform on the second step. Same vocabulary as the segmented
+   control elsewhere, so "this is the one" looks the same everywhere. */
+#setup-root button.pick.is-active,
+.pick.is-active{border-color:var(--accent);background:var(--surface-hover)}
+
 /* A results row that can be ticked for upload. The tick sits where the rank
    number was, so the row does not reflow when a run becomes publishable. */
+/* The handful worth watching first. A border rather than a fill: the row is
+   still a row, and the accent budget is spent elsewhere on this page. */
+.clip-res.is-best{box-shadow:inset 2px 0 0 var(--accent)}
+.clip-res-best{
+  margin-inline-start:8px;padding:1px 6px;border-radius:999px;
+  border:1px solid var(--accent);color:var(--accent-text);
+  font-size:.68rem;font-weight:650;letter-spacing:.02em;text-transform:uppercase;
+  vertical-align:middle;white-space:nowrap;
+}
+
 .clip-res-tick{
   width:16px;height:16px;margin:0;accent-color:var(--accent);cursor:pointer;
   justify-self:center;
@@ -2237,7 +2403,9 @@ ol.steps-list li{margin-block:var(--space-4)}
   font-weight:900;
   letter-spacing:.01em;
   line-height:1.1;
-  color:#fff;
+  /* Over a video frame, with a black outline doing the contrast rather than
+     a scrim -- which is what a thumbnail caption has always looked like. */
+  color:var(--on-media);
   text-shadow:
     -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000,
     0 3px 6px rgba(0,0,0,.6);
@@ -2256,7 +2424,7 @@ ol.steps-list li{margin-block:var(--space-4)}
   position:absolute;top:var(--space-5);left:50%;transform:translateX(-50%);
   padding:var(--space-3) var(--space-5);
   font-size:11px;font-weight:700;letter-spacing:.12em;
-  color:#fff;background:rgba(0,0,0,.62);
+  color:var(--on-media);background:var(--on-media-scrim);
   border-radius:999px;
 }
 #clip-video{transition:transform .05s linear;transform-origin:center center}
@@ -2326,7 +2494,7 @@ ol.steps-list li{margin-block:var(--space-4)}
 }
 .clip-fx-aim.is-on{
   background:var(--accent);
-  color:#fff;
+  color:var(--text-on-accent);
 }
 .clip-fx-bar.is-captions{background:var(--accent);top:2px;height:13px}
 .clip-fx-bar.is-zooms{background:var(--ok, #2ea043);top:16px;height:13px}
@@ -2507,11 +2675,11 @@ ol.steps-list li{margin-block:var(--space-4)}
   color:var(--text-tertiary);font-size:11px;font-weight:700;
 }
 .clip-run-steps .clip-step.is-done{color:var(--text-secondary)}
-.clip-run-steps .clip-step.is-done .clip-step-dot{background:var(--ok);color:#fff}
+.clip-run-steps .clip-step.is-done .clip-step-dot{background:var(--ok);color:var(--text-on-ok)}
 .clip-run-steps .clip-step.is-now{
   background:var(--surface-active);color:var(--text-primary);font-weight:600;
 }
-.clip-run-steps .clip-step.is-now .clip-step-dot{background:var(--accent);color:#fff}
+.clip-run-steps .clip-step.is-now .clip-step-dot{background:var(--accent);color:var(--text-on-accent)}
 .clip-review-mont{margin-top:var(--space-4)}
 @media (max-width:760px){
   .clip-run-body{grid-template-columns:1fr;gap:var(--space-5)}
@@ -2814,8 +2982,8 @@ ol.steps-list li{margin-block:var(--space-4)}
   font-size:.7rem;
   line-height:1.4;
   font-variant-numeric:tabular-nums;
-  color:#fff;
-  background:rgba(0,0,0,.55);
+  color:var(--on-media);
+  background:var(--on-media-scrim);
 }
 .clip-frame.is-out{opacity:.28}
 .clip-frame.is-out .clip-frame-t{opacity:.7}
@@ -2947,7 +3115,7 @@ CLIPS_FLOW_CSS = """
   color:var(--text-secondary);font-size:11px;font-weight:600;
 }
 .clip-rail-step.is-done button{color:var(--text-primary)}
-.clip-rail-step.is-done .clip-rail-dot{background:var(--accent);color:#fff}
+.clip-rail-step.is-done .clip-rail-dot{background:var(--accent);color:var(--text-on-accent)}
 .clip-rail-step.is-now button{
   border-color:var(--accent);color:var(--text-primary);
 }
@@ -3115,7 +3283,7 @@ CLIPS_FLOW_CSS = """
 .clip-mv-outro-play{
   position:absolute;inset:auto auto 6px 6px;width:26px;height:26px;border-radius:50%;
   display:flex;align-items:center;justify-content:center;font-size:11px;
-  background:rgba(0,0,0,.6);color:#fff;
+  background:var(--on-media-scrim);color:var(--on-media);
 }
 .clip-mv-outro-thumb:hover .clip-mv-outro-play{background:var(--accent)}
 .clip-mv-outro-text{display:flex;flex-direction:column;gap:2px;flex:1 1 180px;min-width:0}
@@ -3462,10 +3630,10 @@ STUDIO_CSS = r"""
 .studio-clip-hit img{display:block;width:100%;height:100%;object-fit:cover}
 .studio-clip-n{position:absolute;top:8px;left:8px;min-width:24px;height:24px;padding:0 6px;border-radius:12px;
   display:flex;align-items:center;justify-content:center;font:600 12px/1 var(--font-mono);
-  background:rgba(0,0,0,.55);color:#fff;border:2px solid rgba(255,255,255,.75)}
+  background:var(--on-media-scrim-soft);color:var(--on-media);border:2px solid rgba(255,255,255,.75)}
 .studio-clip.is-on .studio-clip-n{background:var(--accent);border-color:var(--accent);color:var(--text-on-accent)}
 .studio-clip-dur,.studio-clip-kills{position:absolute;bottom:6px;padding:2px 6px;border-radius:4px;
-  background:rgba(0,0,0,.62);color:#fff;font-size:11px}
+  background:var(--on-media-scrim);color:var(--on-media);font-size:11px}
 .studio-clip-dur{right:6px}
 .studio-clip-kills{left:6px;font-weight:600}
 .studio-clip-foot{display:flex;align-items:center;gap:6px;padding:4px 4px 4px 10px;font-size:12.5px;
@@ -3622,7 +3790,7 @@ STUDIO_CSS = r"""
 .st-shot.is-edited::after{content:"";position:absolute;top:0;right:0;width:0;height:0;
   border-top:12px solid var(--warn);border-left:12px solid transparent;pointer-events:none}
 .st-shot-name{position:absolute;left:4px;top:3px;right:12px;padding:1px 5px;border-radius:3px;
-  font:600 11px/1.3 var(--font-text);color:#fff;background:rgba(0,0,0,.55);white-space:nowrap;
+  font:600 11px/1.3 var(--font-text);color:var(--on-media);background:var(--on-media-scrim);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;max-width:max-content}
 .st-kill{position:absolute;bottom:6px;width:12px;height:12px;margin-left:-6px;transform:rotate(45deg);
   background:#fff;border:2px solid var(--accent);cursor:ew-resize}
@@ -3693,7 +3861,7 @@ STUDIO_CSS = r"""
   background:repeating-linear-gradient(135deg,rgba(0,0,0,.55) 0 8px,rgba(0,0,0,.28) 8px 16px)}
 .st-introclip:hover{background:repeating-linear-gradient(135deg,rgba(0,0,0,.62) 0 8px,rgba(0,0,0,.34) 8px 16px)}
 .st-introclip-tag{position:absolute;left:5px;bottom:4px;padding:1px 6px;border-radius:3px;
-  font:600 10px/1.4 var(--font-text);color:#fff;background:rgba(0,0,0,.7);white-space:nowrap}
+  font:600 10px/1.4 var(--font-text);color:var(--on-media);background:var(--on-media-scrim);white-space:nowrap}
 
 /* The inspector's one line about the intro; the editing is in the dialog. */
 .studio-introrow{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3);
@@ -3815,7 +3983,7 @@ EDITOR_CSS = r"""
 .ed-frame{position:absolute;inset:0;pointer-events:none}
 .ed-frame.hide{display:none}
 .ed-handle{position:absolute;pointer-events:auto;cursor:grab;padding:2px 8px;border-radius:4px;
-  font:600 13px/1.4 var(--font-text);color:#fff;background:rgba(0,0,0,.35);
+  font:600 13px/1.4 var(--font-text);color:var(--on-media);background:var(--on-media-scrim);
   outline:1px dashed rgba(255,255,255,.8);white-space:nowrap;user-select:none;touch-action:none}
 .ed-handle:active{cursor:grabbing}
 .ed-cambox{position:absolute;border:2px dashed var(--warn);background:rgba(255,200,60,.12);pointer-events:none}
