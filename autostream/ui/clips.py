@@ -718,6 +718,14 @@ One per line - a long session often covers several matches."></textarea>
               id="clip-ocr-go" data-act="install-tools">"""
     + _svg("save")
     + """<span>Install Tesseract</span></button>
+      <!-- DEVELOPER MODE ONLY, and hidden outright otherwise rather than
+           disabled: a greyed-out button on a page everybody sees is a
+           question everybody has to ask. It runs the same cut as the button
+           beside it and writes one report file about it. -->
+      <button class="btn btn-ghost hide" type="button" id="clip-diag"
+              title="Cut exactly as normal, and write a report about every stage">"""
+    + _svg("logs")
+    + """<span>Run diagnostic</span></button>
       <button class="btn btn-ghost" type="button" id="clip-review">"""
     + _svg("wand")
     + """<span>Review clips first</span></button>
@@ -800,6 +808,20 @@ One per line - a long session often covers several matches."></textarea>
       <button class="btn btn-ghost" type="button" id="clip-needsdemo-anyway"
               data-act="demo-anyway"><span>Full rounds, slower</span></button>
       <span class="muted" id="clip-needsdemo-msg"></span>
+    </div>
+  </div>
+
+  <!-- WHERE THE REPORT WENT. Shown for a diagnostic run whatever became of
+       it -- done, failed or cancelled -- because the failed one is the whole
+       reason the button exists, and a path printed in a toast that has since
+       gone is a path nobody can find again. -->
+  <div class="panel hide" id="clip-diagdone">
+    <p class="muted" id="clip-diagdone-why"></p>
+    <div class="field-inline" style="margin-top:8px">
+      <button class="btn btn-sm" type="button" data-act="reveal-diag">"""
+    + _svg("folder")
+    + """<span>Show the report</span></button>
+      <code class="mono" id="clip-diagdone-path"></code>
     </div>
   </div>
 
@@ -940,6 +962,8 @@ var clip_state = {
   fxAim: null,               /* the zoom waiting for a click on the video */
   fxDrag: null,              /* an effect bar being dragged on the timeline */
   tools: null,               /* ffmpeg and Tesseract: what is on this PC */
+  dev: false,                /* ui.developer_mode: is Run diagnostic offered */
+  diagBusy: false,           /* a diagnostic run is on its way */
   toolsBusy: false,          /* an install is running */
   localFile: null,           /* the file the picker handed back */
   /* The part of the recording to read. `to` of 0 means "to the end", which is
@@ -2072,6 +2096,15 @@ function clip_renderOptions() {
   var rev = clip_el('clip-review');
   /* A summary has no clips to review: the whole match is the one output. */
   if (rev) rev.disabled = !!why || s.scan_mode === 'summary';
+  /* AND ON THE DIAGNOSTIC BUTTON, for the same reason. It starts the same
+     run through the same route, so anything that stops Make clips stops it
+     -- and a diagnostic of a run that was refused before it began would
+     record nothing except the refusal. */
+  var dg = clip_el('clip-diag');
+  if (dg) {
+    clip_show('clip-diag', !!clip_state.dev);
+    dg.disabled = !!why || clip_state.busy;
+  }
   /* The fix for THIS reason, beside this reason. Only when OCR is what is in
      the way -- a missing in-game name is typed in, not installed, and offering
      an install there would send someone to the wrong place. */
@@ -2266,6 +2299,26 @@ function clip_renderJob(j) {
   }
   clip_el('clip-res-sub').textContent = sub;
   clip_show('clip-res-list', j.state === 'done');
+
+  /* THE DIAGNOSTIC, ON EVERY ENDING. `diagnostic_run` says one was asked
+     for; `diagnostic` is the file, which is empty only if writing it failed
+     -- and a diagnostic run whose report could not be written is itself
+     worth saying out loud rather than leaving the panel off. */
+  clip_show('clip-diagdone', !!j.diagnostic_run);
+  if (j.diagnostic_run) {
+    clip_state.diagBusy = false;
+    clip_el('clip-diagdone-path').textContent = j.diagnostic || '';
+    clip_el('clip-diagdone-why').textContent = j.diagnostic
+      ? 'A diagnostic report for this run was written. It holds every stage ' +
+        'and how long it took, every ffmpeg call and its exit code, any error ' +
+        'with its traceback, and what this PC is. No passwords, keys or ' +
+        'tokens are in it, and your user folder is written as %USERPROFILE%.'
+      : 'This was a diagnostic run, but the report could not be written. ' +
+        'The log says why.';
+    var rb = clip_el('clip-diagdone')
+      ? clip_el('clip-diagdone').querySelector('[data-act="reveal-diag"]') : null;
+    if (rb) rb.disabled = !j.diagnostic;
+  }
 
   /* Only where it can actually work: the reel needs kills on a recording, and
      the beat-synced edit is a Valorant thing today because that is the feed
@@ -2831,6 +2884,7 @@ async function clip_load() {
     clip_state.outputDir = (r && r.output_dir) || '';
     clip_state.canUpload = !!(r && r.can_upload);
     clip_state.streaming = r ? r.streaming !== false : true;
+    clip_state.dev = !!(r && r.developer);
     clip_state.upDailyMax = (r && r.upload_daily_max) || 0;
     clip_state.upPrivacy = (r && r.upload_privacy) || 'unlisted';
     clip_state.upTitle = (r && r.upload_title) || '';
@@ -4860,6 +4914,41 @@ async function clip_runAnyway(mode) {
   }
 }
 
+/* THE SAME RUN, WITH A WITNESS. Developer mode only.
+
+   It deliberately does NOT take a shortcut -- no sample, no shortened scan,
+   no stub encoder. A diagnostic of something other than the real pipeline
+   measures something other than the problem, and the one failure this was
+   built for (ffmpeg exiting 255 on a Radeon before it read a frame) only
+   happens on the real path. So this is clip_run with one extra key, and the
+   whole difference is that the job carries a recorder. */
+async function clip_runDiag() {
+  var s = clip_state.pick;
+  if (!s || clip_state.diagBusy) return;
+  var b = clip_el('clip-diag');
+  if (b) b.disabled = true;
+  clip_state.diagBusy = true;
+  var body = clip_runBody(s);
+  body.diagnostic = true;
+  try {
+    var r = await API.post('/api/clips/run', body);
+    if (r && r.error) {
+      toast(r.error, 'error');
+      clip_state.diagBusy = false;
+      if (b) b.disabled = false;
+      return;
+    }
+    clip_state.busy = true;
+    clip_show('clip-results', false);
+    toast('Diagnostic run started. It cuts exactly as normal and writes a ' +
+          'report when it finishes - however it finishes.', 'ok');
+  } catch (e) {
+    toast('Could not start.', 'error');
+    clip_state.diagBusy = false;
+    if (b) b.disabled = false;
+  }
+}
+
 async function clip_run() {
   var s = clip_state.pick;
   if (!s) return;
@@ -6117,6 +6206,8 @@ function clip_wire() {
   if (rf) rf.addEventListener('click', clip_load);
   var go = clip_el('clip-go');
   if (go) go.addEventListener('click', clip_run);
+  var dg = clip_el('clip-diag');
+  if (dg) dg.addEventListener('click', clip_runDiag);
   /* ---- the player. One delegated handler, because the panel is rebuilt
      whenever a clip is loaded and per-button listeners would need rebinding. */
   var pcard = clip_el('clip-player-card');
@@ -6545,6 +6636,10 @@ function clip_wire() {
     } else if (act === 'reveal-out') {
       clip_reveal((clip_state.lastJob && clip_state.lastJob.folder) ||
                   clip_state.outputDir);
+    } else if (act === 'reveal-diag') {
+      /* The file, not its folder: Explorer selects it, so the one that was
+         just written is the one highlighted among however many are there. */
+      clip_reveal(clip_state.lastJob && clip_state.lastJob.diagnostic);
     } else if (act === 'pick-local') {
       clip_pickLocal();
     } else if (act === 'use-local') {

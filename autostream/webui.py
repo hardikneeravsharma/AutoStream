@@ -1841,6 +1841,12 @@ class Server:
             "status": clips.status(),
             "defaults": {k: v for k, v in schema.flatten(cfg_now).items()
                          if k.startswith("clips.")},
+            # Developer mode, read here rather than polled: the Clips page
+            # re-reads this whole payload whenever it is opened, so turning
+            # the setting on and coming back is enough. Sent as a plain
+            # boolean because the page only ever has to decide whether to
+            # draw one button.
+            "developer": bool(getattr(cfg_now.ui, "developer_mode", False)),
             "output_dir": str(self._clips_dir(cfg_now)),
             "games": sorted({r["game"] for r in rows if r.get("game")}),
             "known": len(table),
@@ -2578,6 +2584,17 @@ class Server:
         if isinstance(per, dict):
             opt["per_clip"] = {str(k): v for k, v in list(per.items())[:200]
                                if isinstance(v, dict)}
+        # A DIAGNOSTIC RUN IS AN ORDINARY RUN THAT WRITES A REPORT. Not a
+        # mode, not a dry run, not a second code path -- the whole point is
+        # that what it measures is what a real run does, so the only thing
+        # this flag changes is that jobs.ClipJob carries a live recorder
+        # instead of the no-op one. See clips/diag.py.
+        #
+        # GATED SERVER-SIDE. Hiding the button when the setting is off is a
+        # courtesy to the user; refusing the flag is what makes the setting
+        # mean something.
+        if body.get("diagnostic") and getattr(c.ui, "developer_mode", False):
+            opt["diagnostic"] = True
         if body.get("plan_only"):
             # Plan and stop, so the clips can be reviewed before any encoding
             # happens. Everything else about the run is identical, which is

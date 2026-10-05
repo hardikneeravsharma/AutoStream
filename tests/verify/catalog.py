@@ -295,7 +295,8 @@ CONTROLS: list[Control] = [
     # test; opening a window is the thing to avoid while testing it.
     Control("/api/clips/open", "POST", CALL, "Reveal in Explorer", "clips",
             body={"path": r"C:\verify\no\such\folder\clip.mp4"},
-            expect=_has("error"), acts=("reveal-src", "reveal-out", "studio-show"),
+            expect=_has("error"),
+            acts=("reveal-src", "reveal-out", "reveal-diag", "studio-show"),
             why="a path that is not there is refused before Explorer is spawned"),
     Control("/api/clips/pick", "POST", STATIC, "Pick a local file", "clips",
             acts=("pick-local", "use-local", "reel-quick-song", "studio-song",
