@@ -645,6 +645,20 @@ One per line - a long session often covers several matches."></textarea>
       </div>
       <p class="field-help">A round runs 30 to 115 seconds. Off trims to the
          finish instead, which is what fits a Short.</p>
+      <!-- THE OTHER THING PEOPLE UPLOAD. A clip is thirty seconds around a
+           fight; this is the whole match in order with the buy time, the
+           walking and the twenty seconds of nothing between rounds taken
+           out. Only offered where the rounds are known, because the spans
+           come from them. -->
+      <div class="field-inline" style="margin-top:8px">
+        <button class="switch" type="button" role="switch" id="clip-matchvid"
+                aria-checked="false"><span class="switch-track"><span
+                class="switch-thumb"></span></span></button>
+        <label for="clip-matchvid">Also make the whole match as one video</label>
+      </div>
+      <p class="field-help">The match in order with the dead time cut out, and
+         YouTube chapters for every round. Made beside the clips, not instead
+         of them.</p>
     </div>
 
     <div class="field" id="clip-min-field">
@@ -1874,7 +1888,8 @@ function clip_renderOptions() {
   var sw = clip_el('clip-montage');
   if (sw) sw.setAttribute('aria-checked', clip_state.montage ? 'true' : 'false');
   [['clip-rounds', clip_state.rounds !== false],
-   ['clip-whole', clip_state.whole !== false]].forEach(function (pair) {
+   ['clip-whole', clip_state.whole !== false],
+   ['clip-matchvid', !!clip_state.matchVid]].forEach(function (pair) {
     var el = clip_el(pair[0]);
     if (!el) return;
     el.setAttribute('aria-checked', pair[1] ? 'true' : 'false');
@@ -4811,6 +4826,7 @@ function clip_runBody(s) {
     rounds: clip_state.rounds !== false,
     whole_round: clip_state.whole !== false,
     round_types: clip_state.types || null,
+    match_summary: !!clip_state.matchVid,
     summaries: !!clip_mvMake().summaries,
     highlights: !!clip_mvMake().highlights
   });
@@ -6421,6 +6437,14 @@ function clip_wire() {
   var wsw = clip_el('clip-whole');
   if (wsw) wsw.addEventListener('click', function () {
     clip_state.whole = clip_state.whole === false;
+    clip_renderOptions();
+  });
+  /* OFF BY DEFAULT, unlike the two above. The clips are what the page is
+     for; the whole match is a second output that costs another pass over
+     the recording, so it is asked for rather than assumed. */
+  var mvw = clip_el('clip-matchvid');
+  if (mvw) mvw.addEventListener('click', function () {
+    clip_state.matchVid = !clip_state.matchVid;
     clip_renderOptions();
   });
   var types = clip_el('clip-types');

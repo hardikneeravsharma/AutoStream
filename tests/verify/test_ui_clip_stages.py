@@ -595,3 +595,43 @@ def test_a_montage_with_no_chapters_offers_nothing(ui, app):
     assert "chapters" not in shown["meta"]
     assert shown["copy"] is False
     ui.clean("a montage with no chapters")
+
+
+# ----------------------------------- C2: the whole match as one video
+
+def test_the_match_video_is_offered_only_where_rounds_are_known(ui, app):
+    """The spans come from the rounds, so there is nothing to cut without
+    them. It lives inside the rounds field, which is itself shown only for a
+    game scored by the round."""
+    _at_part(ui, app)
+    ui.page.evaluate("() => clip_goStep('style')")
+    ui.page.wait_for_timeout(400)
+    where = ui.page.evaluate(
+        """() => {
+             const sw = document.getElementById('clip-matchvid');
+             return sw ? !!sw.closest('#clip-rounds-field') : null;
+           }""")
+    assert where is True, "the match video is not inside the rounds field"
+
+
+def test_it_is_off_until_it_is_asked_for(ui, app):
+    """The clips are what the page is for; the whole match is a second output
+    that costs another pass over the recording."""
+    _at_part(ui, app)
+    ui.page.evaluate("() => clip_goStep('style')")
+    ui.page.wait_for_timeout(400)
+    assert ui.page.evaluate(
+        "() => clip_runBody(clip_state.pick).match_summary") is False
+    assert ui.page.get_attribute("#clip-matchvid", "aria-checked") == "false"
+
+
+def test_asking_for_it_reaches_the_run(ui, app):
+    _at_part(ui, app)
+    ui.page.evaluate("() => clip_goStep('style')")
+    ui.page.wait_for_timeout(400)
+    ui.page.evaluate("() => { clip_state.matchVid = true; clip_renderOptions(); }")
+    ui.page.wait_for_timeout(200)
+    assert ui.page.evaluate(
+        "() => clip_runBody(clip_state.pick).match_summary") is True
+    assert ui.page.get_attribute("#clip-matchvid", "aria-checked") == "true"
+    ui.clean("the match video switch")

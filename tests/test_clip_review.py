@@ -208,6 +208,8 @@ def _stub_job():
     j.results, j.preview, j.summary = [], [], {}
     j.montage_path = j.reel_path = j.promo_path = None
     j.montage_chapters = ""
+    j.summary_path = None
+    j.summary_chapters = ""
     j.started_at = _t.time() - 90
     j.step_started = j.started_at
     j.source = Path("rec.mp4")

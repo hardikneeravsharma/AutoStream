@@ -34,7 +34,7 @@ from typing import Any
 from . import (cutter, detect, killfeed, montage, overlay, plan, profiles,
                promo, voice)
 from .. import atomic
-from .tools import FfmpegMissing, media_info
+from .tools import FfmpegMissing, duration_label, media_info
 
 log = logging.getLogger("autostream.clips.jobs")
 
@@ -210,6 +210,9 @@ class ClipJob:
         self.montage_path: str | None = None
         # YouTube chapters for the montage, ready to paste into a description.
         self.montage_chapters: str = ""
+        # The whole match with the dead time out, where it was asked for.
+        self.summary_path: str | None = None
+        self.summary_chapters: str = ""
         self.reel_path: str | None = None
         self.promo_path: str | None = None
         # Every spoken hook used so far, so no two clips in one session open
@@ -337,6 +340,8 @@ class ClipJob:
                 "clips": len(self.results),
                 "montage": self.montage_path,
                 "montage_chapters": self.montage_chapters,
+                "match_video": self.summary_path,
+                "match_chapters": self.summary_chapters,
                 "reel": self.reel_path,
                 "promo": self.promo_path,
                 "summary": dict(self.summary),
@@ -378,6 +383,50 @@ class ClipJob:
     @property
     def cancelled(self) -> bool:
         return self._cancel.is_set()
+
+    def _cut_match(self, round_list, info, enc) -> str | None:
+        """The whole match, dead time out, with chapters. -> the file.
+
+        THE CUT ITSELF IS `master_segments`, which the Marvel Rivals summary
+        already uses and which is proved against real files there. What is
+        decided here is which seconds to keep, and that lives in
+        clips/match_summary.py where it can be tested without footage.
+        """
+        from . import match_summary as msum
+
+        spans = msum.spans(round_list, source_duration=info["duration"])
+        if len(spans) < 2:
+            log.info("not cutting a match summary: %d span(s) is not a match",
+                     len(spans))
+            return None
+
+        when = datetime.fromtimestamp(
+            self.session.get("started") or self.started_at).strftime("%Y-%m-%d")
+        about = msum.describe(round_list, spans)
+        name = (f"{plan.slug(self.game)}_{when}_match_"
+                f"{about['won']}-{about['lost']}_"
+                f"{duration_label(about['duration'])}")
+        out = cutter.master_segments(
+            self.source, spans, name, self.folder / "match", encoder=enc)
+
+        marks = msum.chapters(round_list, spans)
+        if marks:
+            from .summary import chapter_text
+
+            text = chapter_text(marks)
+            Path(out).with_suffix(".chapters.txt").write_text(
+                text, encoding="utf-8")
+            self.summary_chapters = text
+        # Through atomic, like every other manifest here: a half-written one
+        # is indistinguishable from a complete one to whatever reads it next.
+        atomic.write_json(Path(out).with_suffix(".json"), {
+            "title": msum.title(self.game, round_list, when),
+            "source": str(self.source), **about,
+            "chapters": [[round(t, 2), n] for t, n in marks],
+        })
+        log.info("match summary: %s (%d rounds, %d chapters)",
+                 Path(out).name, about["rounds"], len(marks))
+        return str(out)
 
     def _write_chapters(self, out, plans, masters, opt) -> None:
         """Write the montage's YouTube chapters beside it. Never raises.
@@ -1067,6 +1116,26 @@ class ClipJob:
             self._write_chapters(out, plans, masters, opt)
             n += 1
             self._set(done=n)
+
+        # ---- 5a. the match summary ---------------------------------------
+        # OPT-IN, AND ONLY WHERE THE ROUNDS ARE KNOWN. A clip is thirty
+        # seconds around a fight; this is the other thing people upload --
+        # the whole match in order with the buy time, the walking and the
+        # twenty seconds of nothing between rounds taken out.
+        #
+        # Counter-Strike has the best source material for it in the app: a
+        # demo gives exact round starts, ends, scores and labels, so the
+        # spans are arithmetic over known numbers rather than a guess at
+        # where a round began.
+        if opt.get("match_summary") and round_list:
+            self._check()
+            self._set(step="montage",
+                      message=f"Cutting the match: {len(round_list)} rounds")
+            try:
+                self.summary_path = self._cut_match(round_list, info, enc)
+            except Exception as e:  # noqa: BLE001
+                # Never fatal. The clips are the job; this is beside them.
+                log.warning("could not cut the match summary: %s", e)
 
         # ---- 5b. the promo -----------------------------------------------
         if want_promo and spare:
@@ -1948,6 +2017,8 @@ class ClipJob:
                 "summary": self.summary,
                 "montage": self.montage_path,
                 "montage_chapters": self.montage_chapters,
+                "match_video": self.summary_path,
+                "match_chapters": self.summary_chapters,
                 "reel": self.reel_path,
                 "promo": self.promo_path,
                 "clips": self.results,
