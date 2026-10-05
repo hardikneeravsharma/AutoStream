@@ -705,6 +705,15 @@ svg{flex:0 0 auto;display:block}
   color:var(--danger);
 }
 .field-error svg{width:var(--size-icon-sm);height:var(--size-icon-sm);margin-top:2px}
+/* Not an error: it works today and may not next week. Same shape as
+   .field-error so a line can move between the two without reflowing. */
+.field-warn{
+  display:flex;
+  align-items:flex-start;
+  gap:var(--space-3);
+  font-size:13px;line-height:1.5;
+  color:var(--warn);
+}
 .field-row{
   display:grid;
   grid-template-columns:minmax(0,220px) minmax(0,1fr);

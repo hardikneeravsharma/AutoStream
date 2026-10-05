@@ -400,6 +400,10 @@ CONTROLS: list[Control] = [
             acts=("pickPlatform",),
             why="decides which steps the wizard has; an unknown name must not "
                 "write a platform the engine cannot build"),
+    Control("/api/setup/obs_enable", "POST", STATIC, "Set it up for me",
+            "setup", acts=("enableObs",),
+            why="writes into the user's OBS config file, which is another "
+                "application's settings -- not something a sweep should do"),
     Control("/api/setup/snapshot_only", "POST", CALL, "wizard state", "setup",
             body={}, expect=_has("ok", "setup"),
             why="the sign-in step polls this while the user is in a browser; "

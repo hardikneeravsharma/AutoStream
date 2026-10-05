@@ -63,6 +63,15 @@ def explain_auth_error(err: Exception) -> str:
     return raw[:300]
 
 
+def _obs_running() -> bool:
+    from .obs import _obs_process_alive
+
+    try:
+        return _obs_process_alive()
+    except Exception:                                    # noqa: BLE001
+        return False
+
+
 def _check(fields: dict) -> str | None:
     """The Settings page's validation, for a wizard step. -> the first
     problem, named, or None."""
@@ -84,6 +93,8 @@ class SetupFlow:
         self._apps: list = []
         self._auth_lock = threading.Lock()
         self._auth_url = ""
+        # Why this channel cannot go live, if the sign-in found a reason.
+        self._live_why = ""
 
     # ---------------- state shown to the UI ----------------
 
@@ -122,6 +133,10 @@ class SetupFlow:
             # user has any use for. The step list is built from this.
             "platform": str(getattr(c.youtube, "platform", "") or "youtube"),
             "platform_ready": self._platform_ready(),
+            # Empty unless the sign-in found that this channel cannot go live.
+            # Carried in the snapshot so it survives stepping back and forth
+            # rather than living only in one response.
+            "live_why": getattr(self, "_live_why", ""),
         }
 
     @staticmethod
@@ -329,7 +344,17 @@ class SetupFlow:
                          on_url=lambda u: setattr(self, "_auth_url", u))
             self._channel = yt.channel_title()
             log.info("authorised as %s", self._channel)
-            return {"ok": True, "setup": self.snapshot()}
+            # ASKED NOW, NOT AT GO-LIVE. Live streaming is off by default on a
+            # new channel and can take 24 hours to come through once switched
+            # on. Discovered at the first session that is an evening wasted;
+            # discovered here it is a sentence, and the wait runs while the
+            # rest of setup is being done anyway. One quota unit.
+            live_ok, live_why = yt.live_enabled()
+            self._live_why = "" if live_ok else live_why
+            if not live_ok:
+                log.warning("live streaming is not available: %s", live_why)
+            return {"ok": True, "setup": self.snapshot(),
+                    "live_ok": live_ok, "live_why": live_why}
         except Exception as e:  # noqa: BLE001
             if type(e).__name__ == "WSGITimeoutError":
                 log.warning("setup auth: nothing came back from the browser "
@@ -377,6 +402,30 @@ class SetupFlow:
 
     # ---------------- step 3: OBS ----------------
 
+    def enable_obs_websocket(self) -> dict:
+        """Switch OBS's WebSocket server on, and put the result in the form.
+
+        THE STEP PEOPLE STOP AT. Six instructions about a dialog in another
+        application, and the last of them is copying a generated password by
+        hand -- which fails silently, because a wrong character looks exactly
+        like OBS not running.
+        """
+        from .obs import enable_websocket, find_obs_exe
+
+        c = cfg.load()
+        exe = (c.obs.path if c.obs.path and os.path.exists(c.obs.path)
+               else find_obs_exe())
+        got = enable_websocket(exe)
+        if not got["ok"]:
+            return {"ok": False, "error": got["why"]}
+        # Into the form, not into the config: the same reasoning as detect_obs.
+        # The person in front of it can see whether it looks right, and Test
+        # connection is what proves it.
+        return {"ok": True, "port": got["port"], "password": got["password"],
+                "path": got["path"], "exe": exe,
+                "hint": ("Switched on. Start OBS, then press Test connection -- "
+                         "OBS reads these when it opens.")}
+
     def detect_obs(self) -> dict:
         """Read OBS's own WebSocket settings rather than asking for them.
 
@@ -397,12 +446,26 @@ class SetupFlow:
         exe = c.obs.path if c.obs.path and os.path.exists(c.obs.path) else find_obs_exe()
         found = discover_websocket(exe)
         out = {"ok": True, "exe": exe, **found}
+        # CAN IT BE DONE FOR THEM. Every one of those instructions writes a
+        # single JSON file, and AutoStream can write it -- but only while OBS
+        # is shut, because OBS rewrites it from memory when it closes. The
+        # page needs to know which of the two situations it is in before it
+        # offers a button that would silently do nothing.
+        out["can_fix"] = not _obs_running()
         if not found["found"]:
-            out["hint"] = ("OBS has not been given WebSocket settings yet. In OBS: "
-                           "Tools > WebSocket Server Settings, tick Enable, then Apply.")
+            out["hint"] = ("OBS has not been given WebSocket settings yet. "
+                           + ("AutoStream can switch them on for you."
+                              if out["can_fix"] else
+                              "Close OBS and AutoStream can switch them on for "
+                              "you, or do it in OBS: Tools > WebSocket Server "
+                              "Settings, tick Enable, then Apply."))
         elif not found["enabled"]:
-            out["hint"] = ("Found the settings, but the server is switched off. Tick "
-                           "Enable WebSocket server in OBS and click Apply.")
+            out["hint"] = ("Found the settings, but the server is switched off. "
+                           + ("AutoStream can switch it on for you."
+                              if out["can_fix"] else
+                              "Close OBS and AutoStream can switch it on, or "
+                              "tick Enable WebSocket server in OBS and click "
+                              "Apply."))
         elif not found["auth_required"]:
             out["hint"] = "Found it. This server has authentication off, so no password."
         else:

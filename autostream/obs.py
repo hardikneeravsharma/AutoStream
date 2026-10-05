@@ -95,6 +95,88 @@ def discover_websocket(obs_exe: str = "") -> dict:
     return out
 
 
+def enable_websocket(obs_exe: str = "", port: int = 0,
+                     password: str = "") -> dict:
+    """Switch OBS's WebSocket server on by writing its own config file.
+
+    -> {ok, port, password, path, why}. Never raises.
+
+    WHY THIS IS WORTH DOING AT ALL. The OBS step of setup is six instructions
+    about a dialog in another application -- Tools, WebSocket Server Settings,
+    tick the box, Apply, Show Connect Info, copy the password -- and it is the
+    step people stop at. Every one of those clicks writes this one file, and
+    AutoStream can write it instead.
+
+    ONLY WHILE OBS IS CLOSED, and this is the whole reason the function is
+    shaped this way. OBS reads this file at startup and WRITES IT BACK at
+    shutdown from what it holds in memory, so a change made underneath a
+    running OBS is thrown away the moment it quits -- silently, minutes later,
+    after setup has said it worked. Refusing is the only honest answer while
+    it is open.
+
+    AUTH STAYS ON. A WebSocket server with authentication off accepts anything
+    that reaches the port, and this one can start and stop recordings. Setting
+    it up for somebody is not a licence to make their machine less safe than
+    they left it, so a password is generated if there is not one already.
+    """
+    import secrets as _secrets
+
+    out = {"ok": False, "port": int(port or 4455), "password": "",
+           "path": "", "why": ""}
+    if _obs_process_alive():
+        out["why"] = ("OBS is open. It rewrites this file from memory when it "
+                      "closes, so anything set now would be thrown away. "
+                      "Close OBS and press this again.")
+        return out
+
+    paths_ = _ws_config_paths(obs_exe)
+    if not paths_:
+        out["why"] = "Could not work out where OBS keeps its settings."
+        return out
+
+    # The one OBS is actually using, if it has ever written one; otherwise the
+    # first candidate, created from nothing.
+    target = next((p for p in paths_ if p.is_file()), paths_[0])
+    data: dict = {}
+    if target.is_file():
+        try:
+            parsed = json.loads(target.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                data = parsed
+        except (OSError, ValueError) as e:
+            out["why"] = f"Could not read {target.name}: {e}"
+            return out
+
+    keep = str(data.get("server_password") or "")
+    want_pw = password or keep or _secrets.token_urlsafe(12)
+    want_port = int(port or data.get("server_port") or 4455)
+
+    data["server_enabled"] = True
+    data["auth_required"] = True
+    data["server_password"] = want_pw
+    data["server_port"] = want_port
+    data.setdefault("alerts_enabled", False)
+    data.setdefault("first_load", False)
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # A COPY BEFORE THE FIRST CHANGE, and only the first: this is somebody
+        # else's application's settings, and the cost of being wrong is their
+        # OBS not starting. Not overwritten afterwards, or the backup becomes
+        # a copy of our own last write rather than of what they had.
+        backup = target.with_suffix(".json.autostream-bak")
+        if target.is_file() and not backup.is_file():
+            backup.write_bytes(target.read_bytes())
+        target.write_text(json.dumps(data, indent=4), encoding="utf-8")
+    except OSError as e:
+        out["why"] = f"Could not write {target}: {e}"
+        return out
+
+    log.info("OBS websocket enabled in %s (port %d)", target, want_port)
+    out.update(ok=True, port=want_port, password=want_pw, path=str(target))
+    return out
+
+
 def find_obs_exe() -> str:
     """The OBS executable: from the registry where it is recorded, else a guess."""
     try:

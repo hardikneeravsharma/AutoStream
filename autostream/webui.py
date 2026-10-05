@@ -1024,6 +1024,8 @@ class _Handler(BaseHTTPRequestHandler):
                     missing_only=bool(b.get("missing_only"))))
 
             # ---------- setup ----------
+            elif p == "/api/setup/obs_enable":
+                self._json(self.app.setup.enable_obs_websocket())
             elif p == "/api/setup/snapshot_only":
                 self._json(self.app.setup.snapshot_only())
             elif p == "/api/setup/stream_key":
@@ -1403,11 +1405,25 @@ class Server:
                 ready, why = pl.ready()
         except Exception as e:                           # noqa: BLE001
             ready, why = False, str(e)
+        # THE SIGN-IN THAT IS ABOUT TO STOP WORKING. Only YouTube has this
+        # failure, and only while the Google app is unpublished -- see
+        # youtube.sign_in_health for why that cannot simply be asked. Said
+        # while the fix is still a button rather than a sign-in.
+        signin = {"warn": False, "why": ""}
+        if getattr(pl, "name", "") == "youtube":
+            try:
+                from .youtube import sign_in_health
+
+                signin = sign_in_health()
+            except Exception:                            # noqa: BLE001
+                pass
         return {
             "platform": getattr(pl, "name", "") or "youtube",
             "platform_label": getattr(pl, "label", "") or "YouTube",
             "platform_ready": ready,
             "platform_why": why,
+            "signin_warn": bool(signin.get("warn")),
+            "signin_why": str(signin.get("why") or ""),
             "has_quota": bool(getattr(caps, "has_quota", True)),
             "has_chat": bool(getattr(caps, "has_chat", True)),
         }

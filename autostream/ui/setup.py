@@ -490,7 +490,16 @@ function setup_draw(){
     'app&rdquo;. That is expected for a personal app &mdash; click <b>Advanced</b>, then ' +
     '<b>Go to &hellip; (unsafe)</b>.</div>' +
     (setup_state.channel
-      ? '<div class="note ok">Connected as <b>' + esc(setup_state.channel) + '</b></div>'
+      ? '<div class="note ok">Connected as <b>' + esc(setup_state.channel) +
+        '</b></div>' +
+        /* FOUND HERE RATHER THAN AT THE FIRST SESSION. Live streaming is off
+           by default on a new channel and takes up to 24 hours to come
+           through once switched on -- so this is a warning, not a refusal:
+           the rest of setup is worth doing while the wait runs. */
+        (setup_state.live_why
+          ? '<div class="note warn"><b>This channel cannot go live yet.</b> ' +
+            esc(setup_state.live_why) + '</div>'
+          : '')
       : '<button type="button" class="btn btn-primary btn-block" id="setup-authb" ' +
         'data-act="doAuth">Authorise with YouTube</button>' +
         '<p class="muted" id="setup-authmsg" role="status" aria-live="polite"></p>' +
@@ -503,6 +512,16 @@ function setup_draw(){
     'server</b>, click <b>Apply</b>, then let AutoStream read the settings back.',
     '<div class="note">The Apply step matters &mdash; OBS does not write the settings ' +
     'or open the port until the dialog is committed.</div>' +
+    /* OR DO NONE OF THAT. Every instruction above writes one JSON file, and
+       AutoStream can write it -- while OBS is shut, because OBS rewrites the
+       file from memory when it closes. Offered first, because it is the
+       answer for almost everybody; the instructions stay for the machine
+       where the file cannot be written. */
+    '<button type="button" class="btn btn-primary btn-block" ' +
+    'data-act="enableObs">Set it up for me</button>' +
+    '<p class="muted" id="setup-obsauto" role="status" aria-live="polite">' +
+    'OBS has to be closed for this: it rewrites its own settings when it ' +
+    'quits, so a change made underneath it would be thrown away.</p>' +
     '<button type="button" class="btn btn-block" data-act="detectObs">' +
     'Read the settings from OBS</button>' +
     '<p class="muted" id="setup-obsdetect" role="status" aria-live="polite"></p>' +
@@ -1024,6 +1043,22 @@ async function setup_getWebview2(){
   }
 }
 
+async function setup_enableObs(){
+  setup_say('setup-obsauto', '', setup_spin('Writing the OBS settings...'));
+  const r = await setup_post('/api/setup/obs_enable', {});
+  if (!r.ok){
+    setup_say('setup-obsauto', 'warn', esc(r.error || 'Could not do that.'));
+    return;
+  }
+  /* Straight into the form, which is what Test connection reads -- the same
+     place `Read the settings from OBS` puts them, so there is one path to
+     check rather than two. */
+  const pw = setup_$('setup-obspw'), port = setup_$('setup-obsport');
+  if (pw) pw.value = r.password || '';
+  if (port) port.value = String(r.port || 4455);
+  setup_say('setup-obsauto', 'ok', esc(r.hint || 'Done.'));
+}
+
 /* ---------------- platform ---------------- */
 
 async function setup_pickPlatform(el){
@@ -1127,6 +1162,7 @@ const setup_ACTIONS = {
   saveSecret: setup_saveSecret,
   doAuth:     setup_doAuth,
   detectObs:  setup_detectObs,
+  enableObs:  setup_enableObs,
   testObs:    setup_testObs,
   saveObs:    setup_saveObs,
   saveStream: setup_saveStream,

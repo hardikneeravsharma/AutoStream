@@ -968,7 +968,8 @@ function dash_renderWhere(s) {
   /* Rewritten only when something changed: this runs on every two-second
      poll and the note is read, not watched. */
   const key = now + '|' + live + '|' + !!s.streaming + '|' +
-              (s.platform_ready === false) + '|' + (s.platform_why || '');
+              (s.platform_ready === false) + '|' + (s.platform_why || '') +
+              '|' + (s.signin_why || '');
   if (dash_platform === key) return;
   dash_platform = key;
 
@@ -986,6 +987,12 @@ function dash_renderWhere(s) {
     } else if (s.platform_ready === false) {
       note.textContent = s.platform_why ||
         ((s.platform_label || now) + ' is not set up yet.');
+    } else if (s.signin_warn) {
+      /* IT CAN GO LIVE TODAY AND MAY NOT TOMORROW. A Google app left in
+         Testing issues sign-ins that die at about seven days, and the symptom
+         is streaming that silently stops working days after a setup that went
+         perfectly. Said while the fix is still one button. */
+      note.textContent = s.signin_why;
     } else if (now === 'youtube') {
       note.textContent = 'YouTube holds the broadcast in a private preview ' +
         'first, so there is a countdown you can still cancel in.';
@@ -995,6 +1002,8 @@ function dash_renderWhere(s) {
         'cancel.' + (s.platform_why ? ' ' + s.platform_why : '');
     }
     note.classList.toggle('field-error', s.platform_ready === false);
+    note.classList.toggle('field-warn',
+      s.platform_ready !== false && !!s.signin_warn);
   }
 
   const sub = dash_el('dash-where-sub');
