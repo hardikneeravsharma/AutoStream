@@ -64,7 +64,11 @@ def app(tmp_path_factory):
     args = [ff, "-y", "-v", "error", "-nostdin",
             "-f", "lavfi", "-i",
             f"testsrc2=size=640x360:rate=15:duration={seconds}",
-            "-f", "lavfi", "-i", f"anoisesrc=d={seconds}:c=pink:a=0.02"]
+            # SEEDED. anoisesrc takes its seed from the clock otherwise,
+            # so every run reads a different recording -- see make_audio
+            # in tests/test_loudness.py for the run where that mattered.
+            "-f", "lavfi", "-i",
+            f"anoisesrc=d={seconds}:c=pink:a=0.02:seed=20261006"]
     for b in bursts:
         args += b
     mix = "".join(f"[{i}:a]" for i in range(1, 2 + len(bursts)))

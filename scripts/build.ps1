@@ -9,12 +9,17 @@
     Your existing config\ and secrets\ are copied into the build so the exe
     works immediately. Rebuilding never overwrites them.
 
+    -Dist runs the full gate before it builds. Most of that gate's wall
+    clock is tier 4, which decodes real footage, and tier 4 now runs only
+    when something it measures has changed -- see verify.ps1. -Media and
+    -NoMedia force it on or off and are passed straight through.
+
     NOTE: this script deliberately does NOT use $ErrorActionPreference='Stop'.
     Native commands that write to stderr (pip, PyInstaller, and a failing
     `import` probe) would otherwise raise NativeCommandError and abort the
     build. Exit codes are checked explicitly instead.
 #>
-param([switch]$Clean, [switch]$Dist)
+param([switch]$Clean, [switch]$Dist, [switch]$Media, [switch]$NoMedia)
 
 $ErrorActionPreference = "Continue"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -98,8 +103,12 @@ if (Test-Path $verify) {
     $vargs = @("-ExecutionPolicy", "Bypass", "-File", $verify)
     # A plain build runs the offline tiers only: they are 25 seconds and
     # nobody will wait ten minutes to test a one-line change. -Dist is the
-    # one that leaves this machine, so it gets the detectors measured too.
+    # one that leaves this machine, so it gets the detectors measured too
+    # -- but only when the diff says they could have moved. verify.ps1
+    # decides and prints which files bought the half hour.
     if (-not $Dist) { $vargs += "-Quick" }
+    if ($Media)   { $vargs += "-Media" }
+    if ($NoMedia) { $vargs += "-NoMedia" }
     & powershell @vargs
     if ($LASTEXITCODE -ne 0) {
         Write-Bad "verify failed - not building. Fix it, or run:"

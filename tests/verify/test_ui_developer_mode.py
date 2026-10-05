@@ -44,7 +44,11 @@ def _recording(home: Path, ff: str) -> Path:
     args = [ff, "-y", "-v", "error", "-nostdin",
             "-f", "lavfi", "-i",
             f"testsrc2=size=640x360:rate=15:duration={SECONDS}",
-            "-f", "lavfi", "-i", f"anoisesrc=d={SECONDS}:c=pink:a=0.02"]
+            # SEEDED. anoisesrc takes its seed from the clock otherwise,
+            # so every run reads a different recording -- see make_audio
+            # in tests/test_loudness.py for the run where that mattered.
+            "-f", "lavfi", "-i",
+            f"anoisesrc=d={SECONDS}:c=pink:a=0.02:seed=20261006"]
     bursts = (15.0, 32.0, 48.0)
     for at in bursts:
         args += ["-f", "lavfi", "-i",
