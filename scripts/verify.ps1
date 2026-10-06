@@ -1,4 +1,4 @@
-<#
+﻿<#
     AutoStream - prove the build works before it goes out.
 
         powershell -ExecutionPolicy Bypass -File scripts\verify.ps1 -Quick
@@ -12,6 +12,22 @@
     -Release  tiers 1-7. Adds the built binary, the browser, and (with -Live)
               a real private broadcast. This is what build.ps1 -Dist runs.
 
+    TIER 4 IS ASKED FOR, NOT ASSUMED. It decodes real footage and runs real
+    encodes, and it is most of the wall-clock time of a release build -- so
+    it runs when something it measures has changed and is skipped, with the
+    reason printed, when nothing has. The line is autostream\clips\ plus
+    tier 4's own files: that is the pipeline it exists to measure, and a
+    change to the dashboard, the settings schema, OBS or the platform seam
+    cannot alter where a kill is found or where a shot lands.
+
+    IT ERRS TOWARDS RUNNING. No git, no tag, a detached head, a git command
+    that fails -- any question it cannot answer is answered by running it.
+    The cost of a needless half hour is a slow build; the cost of skipping
+    it when it mattered is shipping a detector nobody measured.
+
+    -Media    run tier 4 whatever the diff says.
+    -NoMedia  skip tier 4 whatever the diff says.
+
     Tiers 5 and 6 touch things outside this process, so each one says what it
     is about to do before it does it, and is skipped rather than failed when
     its prerequisite is absent. A tier that cannot run is not a tier that
@@ -24,6 +40,10 @@
 param(
     [switch]$Quick,
     [switch]$Release,
+    # Tier 4, forced on or off. Neither given means "decide from the diff";
+    # see Test-MediaNeeded.
+    [switch]$Media,
+    [switch]$NoMedia,
     # Tier 6 creates and deletes a real broadcast on the configured channel.
     # It never runs without this, not even under -Release, unless -Live is
     # given too. Costs quota; needs OBS running.
@@ -94,6 +114,86 @@ function Skip-Tier {
     $script:results += [pscustomobject]@{ Tier = $Name; State = "skipped"; Seconds = 0 }
 }
 
+# ---- has tier 4 anything to measure? ---------------------------------
+#
+# Tier 4 is most of the wall clock of a release build: it decodes real
+# footage and runs real encodes. Spending half an hour of it to prove that
+# a change to the settings page did not move a detector is half an hour
+# spent proving something nobody touched.
+#
+# WHAT IT MEASURES is the clip pipeline -- where a kill is found, and where
+# a shot lands in a rendered reel. So the question is whether anything under
+# autostream\clips\ has changed, plus tier 4's own files. Nothing else in
+# the app can move those numbers: the dashboard, the settings schema, OBS,
+# the platform seam and the installer all sit on the other side of it.
+#
+# SINCE THE LAST RELEASE TAG, not since the last commit. The question is
+# "has the pipeline changed since the last build that was measured", and on
+# a branch with six commits the last commit is the wrong baseline -- it
+# would skip tier 4 for a branch that rewrote the detector in its first.
+#
+# UNCOMMITTED WORK COUNTS, because the build is made from the working tree
+# and not from HEAD. A detector edited and not yet committed is a detector
+# this build contains.
+$MediaPaths = @("autostream/clips/",
+                "tests/verify/test_media.py",
+                "tests/verify/test_reel_flow.py",
+                "tests/verify/test_studio_render.py",
+                "tests/verify/corpus.py")
+
+function Test-MediaNeeded {
+    <#
+      -> @{ Needed = $bool; Why = "<one line>"; Files = @(...) }
+
+      EVERY UNCERTAIN ANSWER IS "RUN IT". No git, no tag, a git call that
+      fails: the cost of a needless half hour is a slow build, and the cost
+      of being wrong the other way is shipping a detector nobody measured.
+    #>
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        return @{ Needed = $true; Files = @()
+                  Why = "git is not on PATH, so nothing can say what changed" }
+    }
+    $inRepo = (& git rev-parse --is-inside-work-tree 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $inRepo -ne "true") {
+        return @{ Needed = $true; Files = @()
+                  Why = "not a git checkout, so nothing can say what changed" }
+    }
+
+    $base = (& git describe --tags --abbrev=0 --match "v*" 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $base) {
+        return @{ Needed = $true; Files = @()
+                  Why = "no release tag to compare against" }
+    }
+    $base = $base.Trim()
+
+    $changed = @(& git diff --name-only $base 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        return @{ Needed = $true; Files = @()
+                  Why = "git diff against $base failed" }
+    }
+    # Uncommitted and untracked too. The porcelain line is two status
+    # columns, a space and the path; a rename is "old -> new" and it is the
+    # NEW name that is in the tree being built.
+    $dirty = @(& git status --porcelain 2>$null) | ForEach-Object {
+        $path = $_.Substring(3)
+        if ($path -match ' -> ') { $path = ($path -split ' -> ')[-1] }
+        $path.Trim('"')
+    }
+    $changed = @(@($changed) + @($dirty) | Where-Object { $_ } | Sort-Object -Unique)
+
+    $hits = @($changed | Where-Object {
+        $f = $_.Replace("\", "/")
+        @($MediaPaths | Where-Object { $f.StartsWith($_) }).Count -gt 0
+    })
+
+    if ($hits.Count -gt 0) {
+        return @{ Needed = $true; Files = $hits
+                  Why = "$($hits.Count) file(s) under the clip pipeline changed since $base" }
+    }
+    return @{ Needed = $false; Files = @()
+              Why = "nothing under the clip pipeline changed since $base ($($changed.Count) other file(s) did)" }
+}
+
 # ---- tiers 1-3: offline. Always. -------------------------------------
 #
 # One pytest run, because they share a process and the whole thing is 25
@@ -102,16 +202,36 @@ function Skip-Tier {
 Invoke-Tier -Name "tiers 1-3  offline: units, flows, state machine" -Marker "" | Out-Null
 
 # ---- tier 4: the clip detectors, measured ----------------------------
-if (-not $Quick) {
-    if (Test-Path $MediaDir) {
+if ($Quick) {
+    Skip-Tier -Name "tier 4     clip detectors vs baseline" -Why "-Quick"
+} elseif ($NoMedia -and -not $Media) {
+    Skip-Tier -Name "tier 4     clip detectors vs baseline" -Why "-NoMedia"
+} elseif (-not (Test-Path $MediaDir)) {
+    Skip-Tier -Name "tier 4     clip detectors vs baseline" `
+              -Why "no corpus at $MediaDir (build one: $vpy tests\verify\corpus.py build)"
+} else {
+    # -Media beats the diff AND -NoMedia: an explicit "run it" is somebody
+    # saying they know something a file list cannot.
+    if ($Media) { $ask = @{ Needed = $true; Why = "-Media"; Files = @() } }
+    else        { $ask = Test-MediaNeeded }
+
+    if (-not $ask.Needed) {
+        Skip-Tier -Name "tier 4     clip detectors vs baseline" -Why $ask.Why
+        Write-Skip "           run it anyway with -Media"
+    } else {
+        Write-Step "tier 4: $($ask.Why)"
+        # NAMED, NOT COUNTED. Half an hour is long enough that the reader
+        # deserves to see which file bought it, and a path that surprises
+        # them is how a mis-scoped change gets noticed.
+        foreach ($f in @($ask.Files | Select-Object -First 12)) {
+            Write-Host "         $f" -ForegroundColor DarkGray
+        }
+        if ($ask.Files.Count -gt 12) {
+            Write-Host "         ... and $($ask.Files.Count - 12) more" -ForegroundColor DarkGray
+        }
         Write-Step "tier 4 will scan real footage from $MediaDir - this takes minutes"
         Invoke-Tier -Name "tier 4     clip detectors vs baseline" -Marker "media" | Out-Null
-    } else {
-        Skip-Tier -Name "tier 4     clip detectors vs baseline" `
-                  -Why "no corpus at $MediaDir (build one: $vpy tests\verify\corpus.py build)"
     }
-} else {
-    Skip-Tier -Name "tier 4     clip detectors vs baseline" -Why "-Quick"
 }
 
 # ---- tier 5: the built binary ----------------------------------------

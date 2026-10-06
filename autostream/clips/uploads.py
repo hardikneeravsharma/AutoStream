@@ -275,6 +275,114 @@ def save(root: Path, clip: str, kills, title: str | None = None, game: str | Non
     return {"ok": True, "kills": ks, "name": row["name"]}
 
 
+# -------------------------------------------------------------- cutting a bit out
+
+def trim(root: Path, clip: str, start: float, end: float) -> dict:
+    """Take [start, end] OUT of a clip and keep the rest. -> {ok, seconds, kills}.
+
+    SAID AS "REMOVE", NOT AS "KEEP", because that is what somebody watching a
+    clip wants to do: there is a bit at the front where nothing happens, or a
+    death at the end, and they want it gone. Phrasing it as a keep-range
+    forces them to work out the complement of the thing they can see.
+
+    It therefore handles a middle as naturally as an end. Taking out the
+    middle leaves two spans, and `cutter.master_segments` joins them by
+    stream copy, so removing a bit costs no quality anywhere -- including in
+    the isolated mic and game audio tracks, which a filter-graph join would
+    have flattened.
+
+    THE KILL MARKS MOVE WITH IT. A kill at 12s with seconds 5 to 10 removed is
+    at 7s afterwards, and one INSIDE the removed span is gone. Leaving them
+    where they were would silently point every mark in the clip at the wrong
+    moment, and the only sign would be a reel cutting to nothing.
+
+    The original is kept beside the new file until the next trim, so a cut
+    somebody regrets is one rename away rather than gone.
+    """
+    from . import cutter, tools
+
+    run = any_run(root, Path(clip))
+    if not run:
+        return {"ok": False, "error": "That clip is not in the clips folder."}
+    src = Path(clip)
+    if not src.is_file():
+        return {"ok": False, "error": "That clip is not on disk any more."}
+
+    man, sess = _read(run / "clips.json"), _read(run / "session.json")
+    row, _i = _row_for(man, src)
+    if row is None:
+        return {"ok": False, "error": "That clip is not in its run's manifest."}
+
+    try:
+        total = float(tools.media_info(src)["duration"])
+    except Exception as e:                               # noqa: BLE001
+        return {"ok": False, "error": f"Could not read that clip: {str(e)[:120]}"}
+
+    a, b = max(0.0, float(start)), min(float(total), float(end))
+    if b - a < 0.05:
+        return {"ok": False, "error": "Choose a longer piece to remove."}
+
+    keep = [(x, y) for x, y in ((0.0, a), (b, total)) if y - x > 0.04]
+    if not keep:
+        return {"ok": False,
+                "error": "That would remove the whole clip. Delete it instead."}
+    kept = sum(y - x for x, y in keep)
+    if kept < 0.5:
+        return {"ok": False, "error": "Less than half a second would be left."}
+
+    tmp_name = src.stem + "-trim"
+    try:
+        out = cutter.master_segments(src, keep, tmp_name, src.parent)
+    except Exception as e:                               # noqa: BLE001
+        return {"ok": False, "error": f"Could not cut that out: {str(e)[:160]}"}
+
+    # THE ORIGINAL IS KEPT, once. Overwriting it on every trim would make the
+    # backup a copy of the last cut rather than of what the user brought in.
+    backup = src.with_suffix(src.suffix + ".original")
+    try:
+        if not backup.exists():
+            os.replace(src, backup)
+        else:
+            src.unlink(missing_ok=True)
+        os.replace(out, src)
+    except OSError as e:
+        return {"ok": False, "error": f"Could not replace the clip: {e}"}
+
+    moved = shift_marks(_clip_kills(sess, row), a, b)
+    row["marks"] = moved
+    row["kills"] = len(moved)
+    row["duration"] = round(kept, 3)
+    row["end"] = round(float(row.get("start") or 0.0) + kept, 3)
+    if run.name.startswith(PREFIX):
+        sess["kills"] = [{"time": t, "end": t, "score": 1.0, "count": 1,
+                          "record": True} for t in moved]
+        _write(run / "session.json", sess)
+    man["clips"] = man.get("clips") or [row]
+    _write(run / "clips.json", man)
+    log.info("trimmed %.2f-%.2fs out of %s; %.1fs left, %d mark(s) kept",
+             a, b, src.name, kept, len(moved))
+    return {"ok": True, "seconds": round(kept, 3), "kills": moved,
+            "removed": [round(a, 3), round(b, 3)]}
+
+
+def shift_marks(marks, a: float, b: float) -> list[float]:
+    """Kill marks after [a, b] is removed.
+
+    Inside the cut they are gone -- there is no moment left for them to point
+    at. After it they move back by exactly the length removed.
+    """
+    out = []
+    for m in marks or []:
+        try:
+            t = float(m)
+        except (TypeError, ValueError):
+            continue
+        if a <= t <= b:
+            continue
+        out.append(round(t - (b - a), 3) if t > b else round(t, 3))
+    return sorted(out)
+
+
 # ------------------------------------------------------------------ detection
 
 class _Detector:

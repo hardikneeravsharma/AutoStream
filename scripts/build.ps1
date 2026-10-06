@@ -9,12 +9,17 @@
     Your existing config\ and secrets\ are copied into the build so the exe
     works immediately. Rebuilding never overwrites them.
 
+    -Dist runs the full gate before it builds. Most of that gate's wall
+    clock is tier 4, which decodes real footage, and tier 4 now runs only
+    when something it measures has changed -- see verify.ps1. -Media and
+    -NoMedia force it on or off and are passed straight through.
+
     NOTE: this script deliberately does NOT use $ErrorActionPreference='Stop'.
     Native commands that write to stderr (pip, PyInstaller, and a failing
     `import` probe) would otherwise raise NativeCommandError and abort the
     build. Exit codes are checked explicitly instead.
 #>
-param([switch]$Clean, [switch]$Dist)
+param([switch]$Clean, [switch]$Dist, [switch]$Media, [switch]$NoMedia)
 
 $ErrorActionPreference = "Continue"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -24,6 +29,42 @@ function Write-Step($msg)  { Write-Host "  [--] $msg" }
 function Write-Ok($msg)    { Write-Host "  [ok] $msg" -ForegroundColor Green }
 function Write-Bad($msg)   { Write-Host "  [!!] $msg" -ForegroundColor Red }
 function Write-Warn($msg)  { Write-Host "  [!!] $msg" -ForegroundColor Yellow }
+
+# ---- where the time went ---------------------------------------------
+#
+# A release build is tens of minutes and nobody could say which part. The
+# first guess was wrong by an order of magnitude -- the detectors looked
+# like the cost and turned out to be about a tenth of it -- and a guess is
+# what you get when the only number printed is the total.
+#
+# Mark-Phase closes the phase that was running and names it. One line per
+# boundary, and a table at the end, so the next person optimising this
+# starts from measurements instead of intuition.
+$script:Phases = @()
+$script:PhaseClock = Get-Date
+$script:BuildStarted = Get-Date
+
+function Mark-Phase($name) {
+    $now = Get-Date
+    $script:Phases += [pscustomobject]@{
+        Phase = $name
+        Seconds = [math]::Round(($now - $script:PhaseClock).TotalSeconds, 1)
+    }
+    $script:PhaseClock = $now
+}
+
+function Show-Phases {
+    if (-not $script:Phases) { return }
+    $total = ((Get-Date) - $script:BuildStarted).TotalSeconds
+    Write-Host ""
+    Write-Host "  where the time went" -ForegroundColor Cyan
+    Write-Host "  --------------------------------------------------"
+    foreach ($p in $script:Phases) {
+        $pct = if ($total -gt 0) { 100 * $p.Seconds / $total } else { 0 }
+        Write-Host ("  {0,8:N1}s  {1,4:N0}%  {2}" -f $p.Seconds, $pct, $p.Phase)
+    }
+    Write-Host ("  {0,8:N1}s  {1,4}  TOTAL" -f $total, "")
+}
 
 # Run a native command, echo its output, return its exit code.
 # 2>&1 keeps stderr out of PowerShell's error stream.
@@ -85,6 +126,7 @@ if ((Invoke-Native $vpy @("-c", "import autostream.__main__, autostream.web, aut
     exit 1
 }
 Write-Ok "package imports cleanly"
+Mark-Phase "setup: PyInstaller, version, import probe"
 
 # ---- 2b. verify: does the app still WORK? ----------------------------
 #
@@ -98,8 +140,12 @@ if (Test-Path $verify) {
     $vargs = @("-ExecutionPolicy", "Bypass", "-File", $verify)
     # A plain build runs the offline tiers only: they are 25 seconds and
     # nobody will wait ten minutes to test a one-line change. -Dist is the
-    # one that leaves this machine, so it gets the detectors measured too.
+    # one that leaves this machine, so it gets the detectors measured too
+    # -- but only when the diff says they could have moved. verify.ps1
+    # decides and prints which files bought the half hour.
     if (-not $Dist) { $vargs += "-Quick" }
+    if ($Media)   { $vargs += "-Media" }
+    if ($NoMedia) { $vargs += "-NoMedia" }
     & powershell @vargs
     if ($LASTEXITCODE -ne 0) {
         Write-Bad "verify failed - not building. Fix it, or run:"
@@ -109,6 +155,7 @@ if (Test-Path $verify) {
 } else {
     Write-Warn "scripts\verify.ps1 is missing - building without the gate"
 }
+Mark-Phase "verify: the gate"
 
 # A running copy of the previous build keeps logs\autostream.log open, and
 # PyInstaller clears dist\ before it writes. Without this check that surfaces as
@@ -188,6 +235,7 @@ if (-not (Test-Path $exe)) {
     exit 1
 }
 Write-Ok "built $exe"
+Mark-Phase "PyInstaller: freeze the app"
 
 # ---- 4a. carry over config / secrets (never overwrite) ---------------
 # Runs BEFORE the -Dist block, not after it. PyInstaller clears dist\AutoStream
@@ -247,12 +295,14 @@ function Restore-LocalConfig {
     }
 }
 Restore-LocalConfig
+Mark-Phase "carry the live install across"
 
 # ---- 4b. DIST mode: a clean, shareable package with NO credentials ---
 if ($Dist) {
     $share = Join-Path $Root "dist\AutoStream-share"
     Remove-Item -Recurse -Force $share -ErrorAction SilentlyContinue
     Copy-Item $out $share -Recurse
+    Mark-Phase "copy dist to the share folder"
 
     # Nuke anything personal. Belt and braces: delete the folders, then assert.
     Remove-Item -Recurse -Force (Join-Path $share "secrets") -ErrorAction SilentlyContinue
@@ -324,6 +374,7 @@ if ($Dist) {
     # The format `sha256sum -c` expects, so it can be checked by hand too.
     Set-Content -Path $sums -Value "$hash  $(Split-Path $zip -Leaf)" -Encoding ascii
     Write-Ok "sha256 $hash"
+    Mark-Phase "zip the share package"
 
     # ---- 4c. the Windows installer ------------------------------------
     # Built from the SAME scrubbed folder the zip is made from, so whatever
@@ -356,6 +407,7 @@ if ($Dist) {
         $smb = "{0:N0}" -f ((Get-Item $setup).Length / 1MB)
         Write-Ok "installer $([System.IO.Path]::GetFileName($setup))  ($smb MB)"
         Write-Ok "sha256 $shash"
+        Mark-Phase "build the installer"
     } else {
         Write-Warn "Inno Setup is not installed, so no installer was built."
         Write-Host "       winget install JRSoftware.InnoSetup" -ForegroundColor DarkGray
@@ -368,6 +420,8 @@ if ($Dist) {
     Write-Host "  Your friend unzips it, runs AutoStream.exe, and the setup" -ForegroundColor White
     Write-Host "  wizard opens in a window. They need their own Google Cloud" -ForegroundColor White
     Write-Host "  project - the wizard walks them through it." -ForegroundColor White
+    Write-Host ""
+    Show-Phases
     Write-Host ""
     exit 0
 }
@@ -391,4 +445,6 @@ Write-Host "    powershell -File scripts\register_task.ps1 -Exe"
 Write-Host ""
 Write-Host "  Package for a friend (no credentials):" -ForegroundColor White
 Write-Host "    powershell -File scripts\build.ps1 -Dist"
+Write-Host ""
+Show-Phases
 Write-Host ""

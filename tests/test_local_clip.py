@@ -219,7 +219,11 @@ def test_the_stopped_run_offers_both_ways_forward():
 
 def test_the_slow_read_button_carries_its_cost():
     """The cost is the entire reason the run stopped, so it goes ON the button
-    rather than in prose beside it."""
+    rather than in prose beside it.
+
+    The button is developer-mode only now -- the cost turned out to be one
+    nobody should accept -- but it still has to say what it would cost when
+    it is shown. See tests/test_slow_reader_is_off.py."""
     body = _func("clip_renderJob")
     assert "clip-needsdemo-anyway" in body
     assert "clip_dur(span / rate)" in body, (
@@ -507,17 +511,25 @@ def test_every_control_on_the_page_has_a_handler():
     assert not missing, f"controls with no handler: {sorted(missing)}"
 
 
-def test_the_three_reading_choices_are_all_offered():
+def test_the_reading_choices_are_offered_rather_than_guessed_at():
     """Counter-Strike can be read three ways and they differ by an order of
     magnitude. The choice used to be made silently and only surfaced after a
-    run had already stopped."""
+    run had already stopped.
+
+    TWO OF THE THREE ARE OFFERED NOW. The third reads the kill feed and the
+    scoreboard at about 1.2x real time and is developer-mode only until that
+    is fixed -- see tests/test_slow_reader_is_off.py, which is where that
+    rule is pinned. All three still EXIST, because the switch is a filter
+    and not a deletion."""
     for way in ("demo", "cards", "rounds"):
         assert "'" + way + "'" in clips_ui.CLIPS_JS
     assert 'id="clip-read-card"' in clips_ui.CLIPS_HTML
-    # The three buttons are rendered by clip_renderWays, because each carries
-    # a cost worked out from the stretch actually selected.
+    # Rendered by clip_renderWays rather than written into the markup,
+    # because each carries a cost worked out from the stretch selected --
+    # and because which of them are on offer is now a decision.
     assert 'data-act="way"' in clips_ui.CLIPS_JS
     assert "CLIP_WAYS" in clips_ui.CLIPS_JS
+    assert "clip_waysOffered" in clips_ui.CLIPS_JS
 
 
 def test_the_card_calibration_is_reachable_and_checkable():

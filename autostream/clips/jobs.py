@@ -31,9 +31,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import (cutter, detect, killfeed, montage, overlay, plan, profiles,
-               promo, voice)
-from .. import atomic
+from . import (cutter, detect, diag, killfeed, montage, overlay, plan,
+               profiles, promo, voice)
+from .. import atomic, paths
 from .tools import FfmpegMissing, duration_label, media_info
 
 log = logging.getLogger("autostream.clips.jobs")
@@ -185,6 +185,18 @@ def _free_folder(root: Path, name: str) -> Path:
 class ClipJob:
     """One run. Not reused -- a second run makes a second job."""
 
+    # ON THE CLASS, not only in __init__. Instrumentation that exists on
+    # every job is instrumentation nothing has to check for, and these two
+    # are read from `run`, from `snapshot` and from a dozen places inside
+    # `_run` -- so a job built any other way than through __init__ has to
+    # have them. Several tests build one with __new__ to exercise snapshot
+    # and cancel without a real recording, and the first version of this
+    # turned every one of those into an AttributeError.
+    #
+    # OFF is the recorder whose methods return; see clips/diag.py.
+    diag: "diag.Recorder" = diag.OFF
+    diag_path: str = ""
+
     def __init__(self, source: Path, *, game: str, game_key: str | None,
                  outdir: Path, options: dict, started: float | None = None,
                  session: dict | None = None):
@@ -272,6 +284,15 @@ class ClipJob:
         # be able to say "stopping" rather than leave the last message up
         # looking hung.
         self.cancel_at: float | None = None
+
+        # WHAT THIS RUN DID, FOR WHEN IT GOES WRONG. Left as the class's
+        # OFF unless the run was started from Developer Mode's "Run
+        # diagnostic", in which case this is a real Recorder and the marks
+        # through _run() below fill it in. See clips/diag.py.
+        if options.get("diagnostic"):
+            self.diag = diag.Recorder(job=self.folder.name, source=self.source,
+                                      game=self.game, options=options)
+
         self._cancel = threading.Event()
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
@@ -357,6 +378,10 @@ class ClipJob:
                          if self.scan_mode == "summary" else None),
                 "demo_note": self.demo_note,
                 "needs_demo": self.needs_demo,
+                # Developer Mode only. Empty on every ordinary run, which is
+                # what keeps the results card unchanged for everybody else.
+                "diagnostic": self.diag_path,
+                "diagnostic_run": bool(self.diag.on),
                 "demo_file": self.demo.get("demo", "") if self.demo else "",
                 # Cancelled but not finished yet: ffmpeg has to be waited on
                 # and any chunk already decoding runs to its end.
@@ -482,8 +507,24 @@ class ClipJob:
     # ---------------- the work ----------------
 
     def run(self) -> None:
+        """The single entry and exit of a clip run.
+
+        EVERYTHING THE DIAGNOSTIC NEEDS HAPPENS HERE because this is the only
+        place that sees every terminal state. The recorder is made current for
+        the duration -- that is how tools.run reports ffmpeg exit codes from
+        the scan's worker threads without any of them knowing about it -- and
+        the report is written in the `finally`, which is reached by the happy
+        path, by all five of the handled failures, and by anything unhandled.
+
+        NOTHING HERE MAY FAIL THE JOB. The report is written inside its own
+        try, and diag.Recorder.write never raises in the first place; two
+        layers, because a diagnostic that breaks the thing it is diagnosing
+        is the one outcome that is worse than no diagnostic at all.
+        """
         try:
             self._set(state="running")
+            if self.diag.on:
+                self._begin_diagnostic()
             self._run()
             if self.scan_mode == "summary":
                 n = sum(1 for x in self.results if x.get("master"))
@@ -501,9 +542,11 @@ class ClipJob:
             self._set(state="done", step="done", done=self.total,
                       summary=summary, message=str(e))
             log.info("clip job found nothing to cut: %s", e)
-        except detect.Cancelled:
+            self.diag.error(e)
+        except detect.Cancelled as e:
             self._set(state="cancelled", message="Cancelled")
             log.info("clip job cancelled")
+            self.diag.error(e)
         except NeedsDemo as e:
             # Not "failed - see the log": nothing went wrong, the run needs
             # something only the user can supply. The page shows the
@@ -512,28 +555,106 @@ class ClipJob:
             self._set(state="failed", needs_demo=True, error=str(e),
                       message="Waiting for the replay")
             log.info("stopped for a demo: %s", e)
+            self.diag.error(e)
         except FfmpegMissing as e:
             self._set(state="failed", error=str(e), message="ffmpeg not found")
             log.error("clip job failed: %s", e)
+            self.diag.error(e)
         except Exception as e:  # noqa: BLE001
             self._set(state="failed", error=str(e), message="Failed - see the log")
             log.exception("clip job failed: %s", e)
+            self.diag.error(e)
         finally:
             self._set(finished_at=time.time())
             self._write_manifest()
+            self._finish_diagnostic()
+
+    def _begin_diagnostic(self) -> None:
+        """Make this run's recorder current and describe the machine.
+
+        IN ITS OWN TRY, unlike the marks through _run. Those call methods
+        that each swallow their own exceptions; this runs ffmpeg three or
+        four times -- the encoder list, the hwaccel list and a frame through
+        each -- on a machine whose graphics stack is, quite possibly, the
+        thing being diagnosed. A probe that hangs up the driver must cost
+        the report, not the clips.
+        """
+        try:
+            diag.set_active(self.diag)
+            self.diag.stage("0. starting up")
+            # Asked for ONCE, up front. A report whose system block was
+            # gathered after a forty-minute scan would describe a different
+            # machine state from the one the run actually had.
+            self.diag.note("system", diag.system_info())
+            self.diag.note("disk_out", diag.disk_for(self.folder.parent))
+        except Exception as e:                               # noqa: BLE001
+            log.warning("the diagnostic could not be started: %s", e)
+
+    def _finish_diagnostic(self) -> None:
+        """Close the recorder and write the one report. Never raises.
+
+        Called from run()'s `finally`, so it runs after a success, after each
+        handled failure and after an unhandled one -- which is the point: the
+        run this exists to explain is the run that did not finish.
+        """
+        if not self.diag.on:
+            return
+        try:
+            self.diag.note("state", self.state)
+            self.diag.note("clips_made", len(self.results))
+            self.diag.note("folder", str(self.folder))
+            # AT THE END, because what is wanted is the PEAK. A scan holds
+            # frames for a thread pool and a reel builds its graph in
+            # memory; both are gone by now, and the peak is what answers
+            # "did this machine have enough".
+            self.diag.note("memory", diag.memory_used())
+            self.diag.note("disk_out_after", diag.disk_for(self.folder.parent))
+            for kind, where in (("montage", self.montage_path),
+                                ("match video", self.summary_path),
+                                ("reel", self.reel_path),
+                                ("promo", self.promo_path)):
+                if where:
+                    self.diag.output(kind, where)
+            for row in self.results:
+                for kind in ("master", "vertical"):
+                    if row.get(kind):
+                        self.diag.output(kind, row[kind])
+            ok = self.state == "done"
+            self.diag.end_stages(ok=ok, error="" if ok else (self.error or self.state))
+            self.diag.finish(self.state, self.error or "")
+            self.diag_path = self.diag.write(paths.LOGS_DIR / "diagnostics")
+        except Exception as e:                               # noqa: BLE001
+            log.warning("the diagnostic could not be completed: %s", e)
+        finally:
+            diag.set_active(None)
 
     def _run(self) -> None:
+        self.diag.stage("probe the source")
         if not self.source.exists():
             raise FileNotFoundError(f"recording not found: {self.source}")
+        # BEFORE ANYTHING ELSE, AND SEPARATELY FROM THE PROBE BELOW. A file
+        # that is there but zero bytes, or still being written, reads as a
+        # corrupt-input failure from ffprobe with nothing to say whether the
+        # file was the problem or the tool was.
+        self.diag.note("source_bytes", self.source.stat().st_size)
+        self.diag.note("source_disk", diag.disk_for(self.source.parent))
 
         opt = self.options
         info = cutter.probe_source(self.source)
+        # The codec, resolution and frame rate the whole run is decided by.
+        # A report without these cannot answer "does it only happen on AV1"
+        # or "does it only happen at 1440p", which are the first two
+        # questions anybody asks.
+        self.diag.note("source_info", dict(info))
         handle, logo = overlay.branding(opt)
 
         # ---- 1. find the kills -------------------------------------------
+        self.diag.stage("1. find the kills")
         self._set(step="scan", done=0, total=1, message="Looking for kills...")
         prof = profiles.for_game(self.game_key, self.game)
         prof = self._as_asked(prof, opt)
+        self.diag.note("profile", getattr(prof, "label", None) or "(none)")
+        self.diag.note("scan_mode", getattr(prof, "mode", None) or "(none)")
 
         # BEFORE ANY DECODING. A killfeed profile reads the feed as text, and
         # the OCR binary was previously discovered inside the scan -- which on
@@ -550,6 +671,7 @@ class ClipJob:
 
         kills: list[dict] = []
         # ---- the window -------------------------------------------------
+        self.diag.stage("1. find the kills - choose the window")
         #
         # WHICH PART OF THE FILE TO READ. One recording routinely holds more
         # than one game -- and a menu, a warm-up and the tail of the previous
@@ -607,6 +729,7 @@ class ClipJob:
                      asked_tail, tail)
         opt["pre_roll"], opt["tail_seconds"] = pre_roll, tail
 
+        self.diag.stage("1a. read the kills")
         cached = self._trim_cached(opt.get("kills"))
         if cached is not None:
             opt["kills"] = cached
@@ -616,6 +739,7 @@ class ClipJob:
         # one, round mode has to rescan -- the scoreboard is only read during a
         # scan and there is nothing else to read it from.
         if cached and (not use_rounds or (prof and prof.demos)):
+            self.diag.note("kill_source", "cached from an earlier scan")
             kills = list(cached)
             self._set(message=f"Using {len(kills)} kills found earlier")
         # ---- 1a. the probe ------------------------------------------------
@@ -633,6 +757,7 @@ class ClipJob:
         # recording often opens on a menu, a warm-up, or the tail of the
         # previous match, and those minutes contribute nothing.
         elif (probe := self._probe_for_demo(prof, opt, info)) is not None:
+            self.diag.note("kill_source", "replay matched by probe")
             kills, round_list = probe["kills"], probe["rounds"]
             self.demo = probe["about"]
         elif use_rounds and prof.mode == "killfeed":
@@ -640,6 +765,7 @@ class ClipJob:
             # name to look for finds nothing at all, and "no kills in this
             # recording" after four minutes of scanning is the least useful way
             # possible to say "you have not told me your in-game name".
+            self.diag.note("kill_source", "feed and scoreboard (round mode)")
             if not prof.player:
                 raise RuntimeError(prof.why_not())
             from . import rounds as rounds_mod
@@ -663,6 +789,8 @@ class ClipJob:
             self._set(message=f"{len(round_list)} rounds, "
                               f"{len(worth)} worth cutting")
         elif prof and prof.exists():
+            self.diag.note("kill_source", f"scan ({prof.mode})")
+
             def prog(d, t):
                 self._set(done=d, total=t,
                           message=f"Scanning for kills - {d} of {t} chunks")
@@ -693,8 +821,10 @@ class ClipJob:
                               "stand out. Lower the threshold on the reading "
                               "step to find quieter moments.")
             raise NoKills("No kills found in this recording.")
+        self.diag.note("kills_found", len(kills))
 
         # ---- 1a2. the match record, if the game keeps one ----------------
+        self.diag.stage("1a2. the match record")
         # Before the demo branch: a record that lines up replaces what the
         # detector said INSIDE ITS MATCH, and one that does not costs only the
         # lookup. Valorant is the only game with one today.
@@ -727,6 +857,7 @@ class ClipJob:
                              f"the {len(found)} matches")
 
         # ---- 1b. the demo, if the game writes one ------------------------
+        self.diag.stage("1b. read the replay")
         #
         # Everything found above is superseded when a demo aligns: exact kill
         # times, exact rounds, and the circumstances no detector can see. What
@@ -768,6 +899,7 @@ class ClipJob:
                         "and proper round names."))
 
         # ---- 1c. the game's own kill emblem --------------------------------
+        self.diag.stage("1c. confirm against the kill emblem")
         # Last, so it checks whatever the kills came from: the feed, a match
         # record or a cache. See killmark for what it is and what it fixed.
         if opt.get("emblems", True):
@@ -780,6 +912,7 @@ class ClipJob:
                                    "kill emblem on screen.")
 
         # ---- 2. decide what to cut ---------------------------------------
+        self.diag.stage("2. decide what to cut")
         if use_rounds and not round_list:
             log.info("no round data for this recording; cutting bursts of "
                      "kills instead")
@@ -937,6 +1070,7 @@ class ClipJob:
         })
 
         # ---- 2b. stop here if the plan is all that was asked for ---------
+        self.diag.stage("2b. plan only - stop before cutting")
         if opt.get("plan_only"):
             marks = self._tags(kills, True)
             said: list[str] = []
@@ -983,6 +1117,7 @@ class ClipJob:
             return
 
         # ---- 3. cut ------------------------------------------------------
+        self.diag.stage("3. cut the clips")
         raw_per_clip = opt.get("per_clip") or {}
         per_clip = {str(k): v for k, v in raw_per_clip.items()
                     if isinstance(v, dict)}
@@ -990,12 +1125,20 @@ class ClipJob:
             log.info("%d clip(s) carry their own caption or voice settings",
                      len(per_clip))
         enc = opt.get("encoder", "auto")
+        if self.diag.on:
+            from .tools import video_codec_args
+
+            self.diag.note("encoder_asked", enc)
+            self.diag.note("encoder_used", video_codec_args(enc)[1])
         vmode = opt.get("vertical_mode", "crop")
         want_vertical = vmode not in ("none", "", None)
         want_montage = bool(opt.get("montage", True)) and len(plans) > 1
 
         steps = len(plans) + (len(plans) if want_vertical else 0) + (1 if want_montage else 0)
         self._set(step="cut", done=0, total=steps)
+        self.diag.note("clips_planned", len(plans))
+        self.diag.note("vertical", vmode if want_vertical else "none")
+        self.diag.note("montage", bool(want_montage))
 
         masters: list[Path] = []
         n = 0
@@ -1004,6 +1147,9 @@ class ClipJob:
             self._set(message=f"Cutting clip {p.rank} of {len(plans)} "
                               f"({p.kills} kills)")
             m = cutter.master(self.source, p, self.folder / "clips", encoder=enc)
+            self.diag.event("cut a clip", rank=p.rank, kills=p.kills,
+                            start=round(p.start, 2),
+                            seconds=round(p.end - p.start, 2), file=str(m))
             masters.append(m)
             n += 1
             self._set(done=n)
@@ -1014,6 +1160,7 @@ class ClipJob:
             })
 
         # ---- 4. vertical -------------------------------------------------
+        self.diag.stage("4. vertical copies, captions and voice")
         if want_vertical:
             self._set(step="vertical")
             # Tag detection runs once for the whole session, at the kill
@@ -1083,6 +1230,7 @@ class ClipJob:
                 self._set(done=n)
 
         # ---- 5. montage --------------------------------------------------
+        self.diag.stage("5. montage")
         if want_montage:
             self._check()
             self._set(step="montage",
@@ -1118,6 +1266,7 @@ class ClipJob:
             self._set(done=n)
 
         # ---- 5a. the match summary ---------------------------------------
+        self.diag.stage("5a. the match summary")
         # OPT-IN, AND ONLY WHERE THE ROUNDS ARE KNOWN. A clip is thirty
         # seconds around a fight; this is the other thing people upload --
         # the whole match in order with the buy time, the walking and the
@@ -1138,6 +1287,7 @@ class ClipJob:
                 log.warning("could not cut the match summary: %s", e)
 
         # ---- 5b. the promo -----------------------------------------------
+        self.diag.stage("5b. the promo")
         if want_promo and spare:
             self._check()
             self._set(message=f"Sweeping {len(spare)} leftover kill(s) into a "
@@ -1158,6 +1308,7 @@ class ClipJob:
                 log.warning("could not build the promo: %s", e)
 
         # ---- 6. the beat-synced reel -------------------------------------
+        self.diag.stage("6. the beat-synced reel")
         #
         # Separate from the montage, not a replacement for it: a montage is the
         # session in full with the original audio, and a reel is a short cut to

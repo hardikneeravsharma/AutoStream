@@ -86,6 +86,10 @@ def seed_home(home: Path, port: int, **extra) -> Path:
         "rules": {"web_token": TOKEN, "web_port": port,
                   "tray_icon": False, "kill_switch_hotkey": ""},
         "logging": {"level": "INFO"},
+        # Belt and braces with AUTOSTREAM_NO_WINDOW above: this is the
+        # setting a person would use, and a run that somehow reached the
+        # window code anyway should still find it switched off.
+        "ui": {"open_window": False},
     }
     for section, fields in extra.items():
         values.setdefault(section, {}).update(fields)
@@ -142,6 +146,12 @@ def start(home: Path, port: int, video_home: Path | None = None):
     #
     # The app refuses to open one when this is set; see webui.clips_pick.
     env["AUTOSTREAM_NO_DIALOGS"] = "1"
+    # AND NO WINDOW OF ITS OWN. The third way a test run put something on the
+    # user's screen, after file pickers and console windows -- and the worst,
+    # because it is the app's own window and there is one per test module.
+    # Set here rather than seeded into the config so that a test which builds
+    # its own home and forgets cannot undo it; see window.MainWindow.run.
+    env["AUTOSTREAM_NO_WINDOW"] = "1"
     # A LOCK OF ITS OWN. One AutoStream at a time is held by a named Windows
     # mutex, and the name was fixed -- so a test copy, against a throwaway
     # home and a free port, was refused whenever the user's own app happened

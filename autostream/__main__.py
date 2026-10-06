@@ -15,6 +15,7 @@ import argparse
 import json
 import logging
 import logging.handlers
+import os
 import re
 import signal
 import sys
@@ -572,8 +573,12 @@ def cmd_run(args) -> int:
     # NEVER DURING FIRST RUN, whatever it says: the wizard is the only part of
     # this app a person cannot skip, and starting it in the tray would hide
     # the one screen they have to see.
-    quiet = (not first_run
-             and not bool(getattr(config.ui, "open_window", True)))
+    # The env var wins over everything, first run included: a test seeding an
+    # unconfigured home would otherwise open the setup wizard's window, which
+    # is the one screen this code deliberately never hides.
+    quiet = (bool(os.environ.get("AUTOSTREAM_NO_WINDOW"))
+             or (not first_run
+                 and not bool(getattr(config.ui, "open_window", True))))
     if quiet:
         log.info("starting in the notification area (Settings: open the "
                  "window at startup is off)")

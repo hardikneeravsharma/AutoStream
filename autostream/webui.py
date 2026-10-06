@@ -910,6 +910,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_import_info(b))
             elif p == "/api/studio/import/save":
                 self._json(self.app.studio_import_save(b))
+            elif p == "/api/studio/import/trim":
+                self._json(self.app.studio_import_trim(b))
             elif p == "/api/studio/import/detect":
                 self._json(self.app.studio_import_detect(b))
             elif p == "/api/studio/import/detect/cancel":
@@ -1839,6 +1841,12 @@ class Server:
             "status": clips.status(),
             "defaults": {k: v for k, v in schema.flatten(cfg_now).items()
                          if k.startswith("clips.")},
+            # Developer mode, read here rather than polled: the Clips page
+            # re-reads this whole payload whenever it is opened, so turning
+            # the setting on and coming back is enough. Sent as a plain
+            # boolean because the page only ever has to decide whether to
+            # draw one button.
+            "developer": bool(getattr(cfg_now.ui, "developer_mode", False)),
             "output_dir": str(self._clips_dir(cfg_now)),
             "games": sorted({r["game"] for r in rows if r.get("game")}),
             "known": len(table),
@@ -2553,6 +2561,27 @@ class Server:
             # which is what produces the round labels.
             if str(body.get("fallback_mode") or "") == "cards":
                 opt["fallback_mode"] = "cards"
+            elif not getattr(c.ui, "developer_mode", False):
+                # THE FULL READ IS SWITCHED OFF. Measured twice on real
+                # Counter-Strike at 1.46x and 1.19x real time, so a
+                # 45-minute stream is about 40 minutes of reading. That is
+                # not a slow option, it is a different order of magnitude,
+                # and the people who said yes to it were the ones who did
+                # not read the number printed beside the button.
+                #
+                # REFUSED HERE, not only hidden on the page. The page drops
+                # both doors to it -- the reading choice on the style page
+                # and this panel's "Full rounds" button -- but hiding a
+                # control stops the button, not the request.
+                #
+                # SAID, NOT SUBSTITUTED. Quietly reading the tally instead
+                # would hand back clips named "3 kills" to somebody who
+                # asked for ACE and CLUTCH, with nothing to say why.
+                return {"error": "Reading the kill feed and the scoreboard "
+                                 "is switched off: it reads slower than the "
+                                 "recording plays. Use the replay, or "
+                                 "'Kills only', which is about eight times "
+                                 "faster. Developer mode turns it back on."}
         # Round mode, for games whose profile reads the scoreboard. Absent for
         # every other game, so nothing changes for them.
         if body.get("rounds") is not None:
@@ -2576,6 +2605,17 @@ class Server:
         if isinstance(per, dict):
             opt["per_clip"] = {str(k): v for k, v in list(per.items())[:200]
                                if isinstance(v, dict)}
+        # A DIAGNOSTIC RUN IS AN ORDINARY RUN THAT WRITES A REPORT. Not a
+        # mode, not a dry run, not a second code path -- the whole point is
+        # that what it measures is what a real run does, so the only thing
+        # this flag changes is that jobs.ClipJob carries a live recorder
+        # instead of the no-op one. See clips/diag.py.
+        #
+        # GATED SERVER-SIDE. Hiding the button when the setting is off is a
+        # courtesy to the user; refusing the flag is what makes the setting
+        # mean something.
+        if body.get("diagnostic") and getattr(c.ui, "developer_mode", False):
+            opt["diagnostic"] = True
         if body.get("plan_only"):
             # Plan and stop, so the clips can be reviewed before any encoding
             # happens. Everything else about the run is identical, which is
@@ -3738,6 +3778,18 @@ class Server:
                             body.get("kills") or [],
                             title=None if title is None else str(title),
                             game=str(body.get("game") or "") or None)
+
+    def studio_import_trim(self, body: dict) -> dict:
+        """Take a piece out of an imported clip and keep the rest."""
+        from .clips import uploads
+
+        try:
+            start = float(body.get("start"))
+            end = float(body.get("end"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "No piece was chosen."}
+        return uploads.trim(self._clips_dir(cfg.load()),
+                            str(body.get("path") or ""), start, end)
 
     def studio_import_detect(self, body: dict) -> dict:
         from . import clips as clips_mod

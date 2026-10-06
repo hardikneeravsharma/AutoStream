@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 # Windows only: keeps a console window from flashing up on every ffmpeg call.
@@ -94,9 +95,22 @@ def missing_reason() -> str | None:
 
 
 def run(args: list[str], **kw) -> subprocess.CompletedProcess:
-    """Run and raise with the tail of stderr rather than a bare exit code."""
+    """Run and raise with the tail of stderr rather than a bare exit code.
+
+    THE ONE PLACE EVERY EXTERNAL PROCESS GOES THROUGH, which is why the
+    diagnostic recorder is told about it here rather than at forty call sites.
+    What it keeps is the exit code, the duration and the tail of stderr --
+    the three things that are otherwise thrown away on the way to the
+    six-line RuntimeError below. See clips/diag.py; when no diagnostic is
+    running `note_process` returns immediately.
+    """
+    from . import diag
+
+    began = time.monotonic()
     p = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
                        errors="replace", creationflags=_NO_WINDOW, **kw)
+    diag.note_process(args, p.returncode, p.stderr or "",
+                      time.monotonic() - began)
     if p.returncode != 0:
         tail = "\n".join((p.stderr or "").strip().splitlines()[-6:])
         raise RuntimeError(f"{Path(args[0]).name} failed ({p.returncode}):\n{tail}")
@@ -111,15 +125,35 @@ def ffmpeg(*args: str) -> subprocess.CompletedProcess:
 
 
 def ffmpeg_raw(args: list[str]) -> bytes:
-    """Run ffmpeg and return stdout as bytes, for piped raw video."""
-    p = subprocess.run([binary("ffmpeg"), "-hide_banner", "-loglevel", "error",
-                        "-nostdin", *args],
-                       capture_output=True, creationflags=_NO_WINDOW)
+    """Run ffmpeg and return stdout as bytes, for piped raw video.
+
+    THE QUIET FAILURE. This one does not raise: a non-zero exit comes back as
+    empty stdout, which every caller reads as "no frames" rather than "ffmpeg
+    refused". That is exactly how an AMD machine reported finding no kills,
+    so the recorder is told the exit code and how many bytes came out, which
+    together distinguish the two.
+    """
+    from . import diag
+
+    full = [binary("ffmpeg"), "-hide_banner", "-loglevel", "error",
+            "-nostdin", *args]
+    began = time.monotonic()
+    p = subprocess.run(full, capture_output=True, creationflags=_NO_WINDOW)
+    diag.note_process(full, p.returncode,
+                      (p.stderr or b"").decode("utf-8", "replace"),
+                      time.monotonic() - began, stdout_bytes=len(p.stdout or b""))
     return p.stdout
 
 
 def probe(path: str | Path) -> dict:
-    p = run([binary("ffprobe"), "-v", "quiet", "-print_format", "json",
+    # -v error, NOT -v quiet. `quiet` silences the reason as well as the
+    # noise, so a file ffprobe refuses produced exactly "ffprobe failed (1):"
+    # and then nothing -- in the log, in the toast and in a diagnostic report
+    # whose whole purpose is to say WHY. `error` still prints no banner and
+    # no stream listing; it prints the one line that says what is wrong with
+    # the file, which is the entire question being asked here. stdout is the
+    # JSON either way, so nothing that reads this changes.
+    p = run([binary("ffprobe"), "-v", "error", "-print_format", "json",
              "-show_format", "-show_streams", str(path)])
     return json.loads(p.stdout)
 
@@ -156,14 +190,24 @@ _GPU_PROBE_TIMEOUT = 20.0
 
 def _gpu_probe(args: list[str]) -> bool:
     """Whether ffmpeg runs `args` on a tiny generated input. Never raises."""
+    from . import diag
+
+    full = [binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
+            *args]
+    began = time.monotonic()
     try:
-        p = subprocess.run(
-            [binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
-             *args],
-            capture_output=True, timeout=_GPU_PROBE_TIMEOUT,
-            creationflags=_NO_WINDOW)
-    except (OSError, subprocess.SubprocessError, FfmpegMissing):
+        p = subprocess.run(full, capture_output=True,
+                           timeout=_GPU_PROBE_TIMEOUT, creationflags=_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError, FfmpegMissing) as e:
+        diag.note_process(full, -1, f"{e.__class__.__name__}: {e}",
+                          time.monotonic() - began)
         return False
+    # WHY THE PROBE ITSELF IS RECORDED. "nvenc=False" in a report is a
+    # conclusion; the stderr of the run that reached it is the evidence, and
+    # the difference between "no card" and "driver too old" lives there.
+    diag.note_process(full, p.returncode,
+                      (p.stderr or b"").decode("utf-8", "replace"),
+                      time.monotonic() - began)
     return p.returncode == 0
 
 

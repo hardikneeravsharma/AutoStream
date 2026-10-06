@@ -173,6 +173,42 @@ Three rules worth keeping:
   less under test. Raise it when coverage improves; never lower it without saying
   what stopped being reachable.
 
+## A reader slower than real time is not shipped
+
+**The Counter-Strike screen read (`killfeed`: the kill feed as text, plus the
+scoreboard beside it for the round labels) is switched off.** Measured twice on real
+footage at **1.46x and 1.19x real time** -- a 45-minute stream is about 40 minutes of
+reading. That is not a slow option, it is a different order of magnitude, and the
+people who said yes to it were the ones who did not read the number printed beside
+the button.
+
+Three things follow, and all three are already in place. Do not undo any of them
+without the turnaround being fixed first:
+
+- **It is developer-mode only in the page.** `CLIP_WAYS` in `ui/clips.py` marks it
+  with a fourth field and `clip_waysOffered()` drops it; the needs-demo panel's
+  "Full rounds" button and its prose go the same way. A way that is no longer
+  offered cannot stay *chosen* either -- `clip_renderWays` resets it.
+- **The server refuses the flag.** `webui.clips_run` rejects `demo_fallback` without
+  `fallback_mode: "cards"` unless `ui.developer_mode` is on, and **says so** rather
+  than quietly running the tally instead: clips named "3 kills" handed to somebody
+  who asked for ACE and CLUTCH, with no explanation, is worse than a refusal.
+  Hiding a control stops the button, not the request.
+- **It is not measured on every build.** `SLOW_READERS` in
+  `tests/verify/test_media.py` skips it, which is most of tier 4's own wall clock
+  (34m12s for the last full run). Set `AUTOSTREAM_SLOW_READERS=1` to measure it
+  while working on it. The excerpts and baselines stay in the corpus, and every
+  skipped test **names the reason** -- "not run" must never be mistakable for
+  "passing".
+
+What remains covers the same ground: the replay is exact and instant, and the kill
+tally (`cardcount`, ~10x real time) gets the kills right. Only the round *names* are
+lost without a replay, and the page says so.
+
+**The general rule: a reader that cannot keep up with playback does not go in front
+of users.** Put a measured rate on anything new before offering it, and if it is
+under about 5x real time it is a developer tool until it is faster.
+
 ## Clip bugs are measured, never read
 
 When clips come out wrong, do not read the detector looking for the bug. Build a scoring

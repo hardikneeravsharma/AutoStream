@@ -309,6 +309,26 @@ class MainWindow:
             log.info("quit was requested before the window opened - not opening one")
             return
 
+        # NOTHING A TEST RUNS MAY OPEN A WINDOW ON SOMEBODY'S SCREEN. The rule
+        # already covered file pickers (AUTOSTREAM_NO_DIALOGS) and console
+        # windows; this is the third way one got through, and the worst,
+        # because it is the app's OWN window and there is one per test module.
+        #
+        # BOTH DOORS ARE SHUT HERE, not one. Without pywebview `run` hands the
+        # UI to the real browser instead, so a machine with no WebView2 would
+        # have answered a guard on the native window by opening a browser tab
+        # per module instead -- which is the same interruption wearing a
+        # different hat.
+        #
+        # An environment variable rather than a setting, for the same reason
+        # the dialog guard is one: a test that builds its own home and forgets
+        # `ui.open_window` must still be unable to open a window. A denylist
+        # of callers fails open the day somebody adds one.
+        if os.environ.get("AUTOSTREAM_NO_WINDOW"):
+            log.info("windows are switched off in this run - serving headless")
+            self.fell_back = True      # the caller must hold the process open
+            return
+
         if not _HAS:
             log.info("pywebview not installed - opening the UI in your browser")
             self._to_browser()

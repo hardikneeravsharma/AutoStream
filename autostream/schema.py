@@ -1211,6 +1211,22 @@ CONFIG_SCHEMA: list[Section] = [
                 integer=True,
                 restart=True,
             ),
+            # HERE RATHER THAN UNDER ADVANCED. Advanced is "written by setup
+            # or by the daemon itself, change these only if you know exactly
+            # why" -- things that break the app. This breaks nothing; it adds
+            # a button. It belongs beside the log settings because that is
+            # what it produces: a much better log, of one clip run.
+            _field(
+                "ui.developer_mode",
+                "Developer mode",
+                "Adds a Run diagnostic button to the clip style page. It cuts "
+                "the clips exactly as normal and writes a single report file "
+                "beside the logs saying how long every stage took, what every "
+                "ffmpeg call did, and what this PC is - which is what to send "
+                "when a run fails on a machine nobody else can reach. Off "
+                "costs nothing and changes nothing.",
+                "toggle",
+            ),
         ],
     },
     {

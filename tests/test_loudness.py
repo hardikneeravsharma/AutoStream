@@ -33,15 +33,26 @@ def ff():
 
 def make_audio(ff, out: Path, seconds: float, bursts: list[float], *,
                burst_len: float = 1.2, floor_db: float = -34.0,
-               burst_db: float = -6.0) -> Path:
+               burst_db: float = -6.0, seed: int = 20261006) -> Path:
     """Quiet noise for `seconds`, with a loud tone at each time in `bursts`.
 
     The floor is NOISE rather than silence on purpose. Silence makes a rolling
     median of -120 dB and every burst a 114 dB rise, which would pass a
     detector that does nothing but compare against a constant -- the thing
     this is meant to prove it is not doing.
+
+    AND THE NOISE IS SEEDED. anoisesrc defaults to seed=-1, which takes its
+    seed from the clock, so every run of this file analysed a DIFFERENT
+    recording. Pink noise fluctuates slowly by its nature, so a draw now and
+    then put a dip under the rolling baseline and conjured loud moments out
+    of the floor: test_a_sound_barely_above_its_surroundings_is_not_a_highlight
+    reported four of them in a file with one burst, during a release build,
+    having passed a dozen runs before it. A detector asserted against the
+    edge of its threshold needs a fixture that is the same every time, and a
+    flaky test inside the release gate costs a forty-five minute build.
     """
-    parts = [f"anoisesrc=d={seconds}:c=pink:a={10 ** (floor_db / 20):.5f}"]
+    parts = [f"anoisesrc=d={seconds}:c=pink:a={10 ** (floor_db / 20):.5f}"
+             f":seed={seed}"]
     mixes = ["[0:a]"]
     for i, at in enumerate(bursts, start=1):
         parts.append(
@@ -58,6 +69,30 @@ def make_audio(ff, out: Path, seconds: float, bursts: list[float], *,
     subprocess.run(args, check=True, capture_output=True,
                    creationflags=NO_WINDOW, timeout=300)
     return out
+
+
+def test_the_fixture_is_the_same_recording_every_run(ff, tmp_path):
+    """THE FLAKE THIS FILE SHIPPED WITH. anoisesrc defaults to seed=-1 --
+    "take it from the clock" -- so every run of this file analysed different
+    noise. Pink noise fluctuates slowly by its nature, and a draw now and
+    then put a dip under the rolling baseline and conjured loud moments out
+    of the floor: four of them in a file with one burst, during a release
+    build, after a dozen clean runs.
+
+    Measured both ways while fixing it: unseeded, four builds of the same
+    recipe gave four different files; seeded, they give one. A detector
+    asserted against the edge of its own threshold cannot be tested with a
+    fixture that changes underneath it.
+    """
+    import hashlib
+
+    digests = {
+        hashlib.sha256(
+            make_audio(ff, tmp_path / f"same{i}.m4a", 6.0, [3.0]).read_bytes()
+        ).hexdigest()
+        for i in range(2)
+    }
+    assert len(digests) == 1, "the fixture is not deterministic any more"
 
 
 def near(found: list, want: float, slack: float = 1.5) -> bool:
