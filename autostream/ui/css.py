@@ -2049,7 +2049,7 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
    ten minutes involve a Google Cloud project -- that deserves more than a
    bullet. Stacks on narrow windows; the setup pane is often half a screen. */
 .pickrow{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:4px 0 14px}
-@media (max-width:720px){.pickrow{grid-template-columns:1fr}}
+@media (max-width:719px){.pickrow{grid-template-columns:1fr}}
 .pick{
   display:flex;flex-direction:column;gap:6px;text-align:start;cursor:pointer;
   padding:16px;border-radius:var(--radius-lg,12px);
@@ -2176,6 +2176,30 @@ ol.steps-list li{margin-block:var(--space-4)}
    The rail never becomes a bottom tab bar: a resizable desktop window at 420px is
    still driven with a mouse, and a tab strip would exile the quit confirmation
    into an overflow menu.
+   ========================================================================== */
+
+/* ---------------------------------------------------------- the breakpoints
+   ONE SCALE, AND max-width IS ALWAYS ONE LESS THAN min-width.
+
+       480  560  640  720  760  900  980  1000  1120  1560
+
+   A rule that applies below a point uses `max-width: N-1`; a rule that
+   applies from it uses `min-width: N`. Written the obvious way instead --
+   `max-width: 900px` beside `min-width: 900px` -- BOTH rules apply at
+   exactly 900px, and which one wins is then whichever appears later in the
+   file. Four pairs were written that way (720, 760, 900 twice, 980) and
+   each was a pixel where the page could not say what it meant.
+
+   Three widths are not on the scale yet: 620, 880 and 1100. They are each
+   within twenty pixels of a scale point, so snapping them would move real
+   layout by a sliver on screens nobody here can look at tonight -- and a
+   tidy-up that changes what people see is not a tidy-up. They are listed in
+   tests/test_breakpoints.py as debt, which is a different thing from being
+   forgotten.
+
+   NOTHING ENFORCES A SCALE EXCEPT A TEST. That one fails on a new
+   max-width/min-width pair sharing a pixel, and on a new width that is
+   neither on the scale nor in the list of known strays.
    ========================================================================== */
 
 /* >=980px: the dashboard becomes two columns and the chat panel sticks. */
@@ -2681,7 +2705,7 @@ ol.steps-list li{margin-block:var(--space-4)}
 }
 .clip-run-steps .clip-step.is-now .clip-step-dot{background:var(--accent);color:var(--text-on-accent)}
 .clip-review-mont{margin-top:var(--space-4)}
-@media (max-width:760px){
+@media (max-width:759px){
   .clip-run-body{grid-template-columns:1fr;gap:var(--space-5)}
 }
 
@@ -3531,7 +3555,7 @@ STUDIO_CSS = r"""
   color:var(--accent-text);margin:0}
 .bin-top{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(280px,1fr);gap:var(--space-6);
   align-items:start;padding-bottom:var(--space-5);border-bottom:2px solid var(--border-strong)}
-@media (max-width:900px){.bin-top{grid-template-columns:1fr}}
+@media (max-width:899px){.bin-top{grid-template-columns:1fr}}
 .bin-intro{display:grid;gap:10px}
 .bin-title{font-family:var(--font-condensed);font-weight:700;text-transform:uppercase;
   font-size:clamp(34px,5.2vw,58px);line-height:.95;letter-spacing:.005em;margin:0;color:var(--text-primary)}
@@ -3664,7 +3688,7 @@ STUDIO_CSS = r"""
 .studio-shape{gap:var(--space-4)}
 
 .studio-top{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(260px,1fr);gap:var(--space-5);align-items:start}
-@media (max-width:980px){.studio-top{grid-template-columns:1fr}}
+@media (max-width:979px){.studio-top{grid-template-columns:1fr}}
 .studio-player{position:relative;background:#000;border-radius:var(--radius-md);overflow:hidden;
   aspect-ratio:16/9;display:flex;align-items:center;justify-content:center}
 .studio-player video{width:100%;height:100%;object-fit:contain;background:#000}
@@ -4018,7 +4042,7 @@ FACECAM_CSS = r"""
 
 .studio-imp{width:min(1100px,calc(100vw - 48px))}
 .studio-imp-body{max-width:none;display:grid;grid-template-columns:minmax(0,1.6fr) minmax(260px,1fr);gap:var(--space-5);align-items:start}
-@media (max-width:900px){.studio-imp-body{grid-template-columns:1fr}}
+@media (max-width:899px){.studio-imp-body{grid-template-columns:1fr}}
 .studio-imp-player{display:flex;flex-direction:column;gap:var(--space-3);min-width:0}
 .studio-imp-player video{width:100%;max-height:56vh;background:#000;border-radius:var(--radius-sm)}
 .studio-imp-lane{width:100%;height:46px;border-radius:var(--radius-sm);cursor:pointer;display:block}
