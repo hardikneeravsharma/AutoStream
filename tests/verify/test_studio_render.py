@@ -11,12 +11,15 @@ eye.
 """
 from __future__ import annotations
 
+import concurrent.futures as futures
 import json
+import os
 import subprocess
 from pathlib import Path
 
 import numpy as np
 import pytest
+import sincerelease
 
 from autostream.clips import studio
 from autostream.clips.tools import binary
@@ -46,26 +49,36 @@ def _read(frame: np.ndarray) -> int:
     return v
 
 
-def _clip(path: Path, base: int, seconds: float) -> None:
+def _clip(path: Path, base: int, seconds: float, fps: int = F) -> None:
+    """A clip whose every frame carries its own index as a bar code.
+
+    `fps` IS A PARAMETER because the two tests in this file want different
+    things from the fixture. Reading a kill back frame by frame needs the
+    full rate; proving ffmpeg accepts a filter expression does not care how
+    many frames it was handed, and at 116 renders the frame count is the
+    whole cost -- measured at 19.6s a render at 6s/60fps against 10.0s at
+    3s/30fps, for the same expressions.
+    """
     ff = binary("ffmpeg")
     p = subprocess.Popen([ff, "-hide_banner", "-loglevel", "error", "-y",
-                          "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(F), "-i", "-",
+                          "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(fps), "-i", "-",
                           "-f", "lavfi", "-i", "sine=frequency=330:sample_rate=48000",
                           "-shortest", "-c:v", "libx264", "-preset", "veryfast", "-crf", "14",
                           "-pix_fmt", "yuv420p", "-c:a", "aac", str(path)], stdin=subprocess.PIPE)
-    for n in range(int(seconds * F)):
+    for n in range(int(seconds * fps)):
         p.stdin.write(_frame(base + n))
     p.stdin.close()
     assert p.wait() == 0
 
 
-def _run_folder(root: Path, n: int, seconds: float = 6.0, kill: float = 3.0) -> list[dict]:
+def _run_folder(root: Path, n: int, seconds: float = 6.0, kill: float = 3.0,
+                fps: int = F) -> list[dict]:
     folder = root / "2026-09-14_1200_VALORANT"
     (folder / "clips").mkdir(parents=True)
     rows = []
     for i in range(n):
         path = folder / "clips" / f"coded_{i}.mp4"
-        _clip(path, base=(i + 1) * 2000, seconds=seconds)
+        _clip(path, base=(i + 1) * 2000, seconds=seconds, fps=fps)
         rows.append({"rank": i + 1, "start": 100.0 * (i + 1), "end": 100.0 * (i + 1) + seconds,
                      "duration": seconds, "kills": 1, "name": path.stem, "master": str(path),
                      "vertical": "", "caption": "", "tags": [], "at": ""})
@@ -76,9 +89,10 @@ def _run_folder(root: Path, n: int, seconds: float = 6.0, kill: float = 3.0) -> 
     return [c for g in lib["games"] for f in g["folders"] for c in f["clips"]]
 
 
-def _render(root: Path, project: dict) -> tuple[dict, dict, Path]:
+def _render(root: Path, project: dict, name: str = "check") -> tuple[dict, dict, Path]:
+    """Render one reel. `name` so two renders in one root cannot collide."""
     proj, derived, _ = studio.normalise(project, root)
-    out = root / "reels" / "check.mp4"
+    out = root / "reels" / f"{name}.mp4"
     job = studio.StudioJob(proj, derived, root, out)
     job.run()
     snap = job.snapshot()
@@ -131,27 +145,117 @@ def test_every_kill_lands_on_its_planned_frame(coded):
             f"not the kill frame {want - base}")
 
 
-def test_every_part_renders_without_ffmpeg_refusing_it(coded):
-    """Each id below reaches ffmpeg at least once. An expression it cannot
-    parse fails the whole render, and only a render can show that."""
-    root, clips = coded
+# ------------------------------------------------- the slowest test there is
+#
+# MEASURED: 1709 seconds, of a tier-4 run that took 1833. Ninety-three per
+# cent of the release gate was this one test, and the detectors everybody
+# assumed were the cost came to 63 seconds between them.
+#
+# It is not doing anything wasteful. `grade` has 116 ids and a grade is one
+# per reel, so covering every one of them genuinely needs 116 renders -- and
+# the thing it catches, a filter expression ffmpeg will not parse, can only
+# be caught by handing the expression to ffmpeg.
+#
+# So the cost stays and the FREQUENCY changes, two ways.
+
+# What it actually covers. A change anywhere else in the app -- the
+# dashboard, the detectors, the platform seam, the installer -- cannot alter
+# a filter expression the Studio builds.
+RENDERER = (
+    "autostream/clips/studio.py",        # the graph, the segments, the join
+    "autostream/clips/rulebook.py",      # the constants the graph is sized by
+    "autostream/clips/studio_refs.py",   # the style tables the ids come from
+    "autostream/clips/facecam.py",       # layers that go into the same graph
+    "autostream/clips/intros.py",
+    "autostream/clips/sfx.py",
+    "autostream/clips/beatsync.py",
+    "autostream/clips/story.py",
+    "tests/verify/test_studio_render.py",
+)
+
+# How many reels are rendered at once. ffmpeg uses several cores per encode
+# already, so this is not a free multiplication -- measured on a 12-core
+# machine, 6 is where the wall clock stopped improving and the box was still
+# usable. Override with AUTOSTREAM_RENDER_JOBS.
+RENDER_JOBS = int(os.environ.get("AUTOSTREAM_RENDER_JOBS") or 6)
+
+
+def _round_project(clips: list, r: int) -> dict:
+    """The project for round `r`. Pure, so a worker can build its own.
+
+    THE INDEX IS DERIVED FROM r AND NOTHING ELSE, which is what makes the
+    rounds safe to run in any order or in parallel: round 83 covers exactly
+    the same ids whether it runs first, last or at the same time as 82.
+    """
     kills = studio.ids_of("kill")
     heroes = studio.ids_of("hero")
     cameras = studio.ids_of("camera")
+    speeds = studio.ids_of("speed")
     transitions = [t for t in studio.ids_of("transition") if t != "t01"]
-    grades, intros, outros = studio.ids_of("grade"), studio.ids_of("intro"), studio.ids_of("outro")
+    grades, intros, outros = (studio.ids_of("grade"), studio.ids_of("intro"),
+                              studio.ids_of("outro"))
+
+    proj, _ = studio.plan(clips, "montage")
+    proj.update(grade=grades[r % len(grades)], intro=intros[r % len(intros)],
+                outro=outros[r % len(outros)], vignette=bool(r % 2),
+                overlays=studio.ids_of("overlay") if r == 0 else [],
+                handle="@verify")
+    for i, s in enumerate(proj["shots"]):
+        j = r * len(proj["shots"]) + i
+        s.update(fx=[kills[j % len(kills)], kills[(j + 5) % len(kills)]],
+                 hero=True, hero_fx=[heroes[j % len(heroes)]], caption="ACE",
+                 camera=cameras[j % len(cameras)],
+                 speed=speeds[j % len(speeds)])
+        if i:
+            s.update(transition=transitions[j % len(transitions)], tlen=0.3)
+    return proj
+
+
+def test_every_part_renders_without_ffmpeg_refusing_it(tmp_path_factory):
+    """Each id below reaches ffmpeg at least once. An expression it cannot
+    parse fails the whole render, and only a render can show that.
+
+    A ROOT PER WORKER, not a shared one. StudioJob caches rendered shots
+    under `root/.studio/segments` keyed by a hash, writing `<key>.part.mp4`
+    and renaming it into place -- so two renders of the same shot in one
+    root would write the same temporary file, and `_prune` would be walking
+    a directory another render is writing into. Separate roots make the
+    parallelism a property of the test rather than a claim about the
+    renderer's thread safety.
+    """
+    skip = sincerelease.why_skip("the Studio renderer", RENDERER,
+                                 "AUTOSTREAM_RENDER_ALL")
+    if skip:
+        pytest.skip(skip)
+    try:
+        binary("ffmpeg")
+    except Exception:                                   # noqa: BLE001
+        pytest.skip("ffmpeg is not installed")
+
+    grades, intros, outros = (studio.ids_of("grade"), studio.ids_of("intro"),
+                              studio.ids_of("outro"))
     rounds = max(len(grades), len(intros), len(outros), 3)
-    for r in range(rounds):
-        proj, _ = studio.plan(clips, "montage")
-        proj.update(grade=grades[r % len(grades)], intro=intros[r % len(intros)],
-                    outro=outros[r % len(outros)], vignette=bool(r % 2),
-                    overlays=studio.ids_of("overlay") if r == 0 else [], handle="@verify")
-        for i, s in enumerate(proj["shots"]):
-            j = r * len(proj["shots"]) + i
-            s.update(fx=[kills[j % len(kills)], kills[(j + 5) % len(kills)]],
-                     hero=True, hero_fx=[heroes[j % len(heroes)]], caption="ACE",
-                     camera=cameras[j % len(cameras)],
-                     speed=studio.ids_of("speed")[j % len(studio.ids_of("speed"))])
-            if i:
-                s.update(transition=transitions[j % len(transitions)], tlen=0.3)
-        _render(root, proj)
+    workers = max(1, min(RENDER_JOBS, rounds))
+
+    base = tmp_path_factory.mktemp("render-all")
+    roots = []
+    for w in range(workers):
+        root = base / f"w{w}" / "clips"
+        # SMALLER THAN THE OTHER TEST'S FIXTURE, on purpose. Nothing here
+        # reads a frame back -- the question is only whether ffmpeg accepts
+        # the expression -- and the frame count is the entire cost at 116
+        # renders. Measured over six rounds: 19.6s a render at 6s/60fps,
+        # 10.0s at 3s/30fps, rendering the same graphs.
+        roots.append((root, _run_folder(root, 4, seconds=3.0, kill=1.5, fps=30)))
+
+    def do(w: int) -> None:
+        root, clips = roots[w]
+        for r in range(w, rounds, workers):
+            _render(root, _round_project(clips, r), name=f"r{r}")
+
+    with futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        # Raised rather than collected: the first expression ffmpeg refuses
+        # is the answer, and letting the other hundred renders finish first
+        # only delays it.
+        for f in futures.as_completed([pool.submit(do, w) for w in range(workers)]):
+            f.result()
