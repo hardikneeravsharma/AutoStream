@@ -483,6 +483,23 @@ def test_a_tool_that_is_not_installed_reports_why():
     assert got["found"] is False and got["why"]
 
 
+def test_missing_tesseract_is_not_reported_as_missing_ffmpeg(monkeypatch):
+    """FROM A REAL REPORT: a machine without Tesseract got a "why" telling
+    the reader to `winget install --id Gyan.FFmpeg`. tool_version asked the
+    ffmpeg finder for it, whose error is about ffmpeg."""
+    from autostream.clips import deps
+
+    def missing():
+        raise deps.ToolMissing("Tesseract OCR was not found ... "
+                               "UB-Mannheim.TesseractOCR")
+
+    monkeypatch.setattr(deps, "tesseract", missing)
+    got = diag.tool_version("tesseract")
+    assert got["found"] is False
+    assert "Gyan.FFmpeg" not in got["why"]
+    assert "Tesseract" in got["why"]
+
+
 # ------------------------------------------------- the process choke point
 
 def test_tools_run_reports_to_whoever_is_recording(tmp_path):

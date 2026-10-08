@@ -492,22 +492,34 @@ def scan_cardcount(video: Path, profile: Profile, total: float, height: int,
             f"recording -- no colour on screen reads as a kill tally. If your "
             f"HUD is somewhere unusual, calibrate the card area on the Clips "
             f"page; otherwise try a recording with more gameplay in it.")
-    if hue != saved:
-        from .profiles import remember
-        remember(profile.key, hud_hue=hue)
+    from .profiles import remember
     # The name and the feed band are only for the few flashes the pixels
     # cannot settle -- see cs2_cards.confirm_in_feed. Without a name those few
     # are left out, and everything else still needs nothing set up.
     from .profiles import username_for
 
-    events = cs2_cards.scan(video, duration=total, start=start,
-                            fps=profile.scan_fps,
-                            hue=hue, frame_height=height, band=band,
-                            player=profile.player or username_for(profile.key),
-                            feed_band=tuple(profile.band),
-                            progress=progress, cancelled=cancelled)
+    try:
+        events = cs2_cards.scan(video, duration=total, start=start,
+                                fps=profile.scan_fps,
+                                hue=hue, frame_height=height, band=band,
+                                player=profile.player or username_for(profile.key),
+                                feed_band=tuple(profile.band),
+                                progress=progress, cancelled=cancelled)
+    except cs2_cards.HudUnread:
+        # A colour the whole scan could not read anything in is not kept,
+        # and a saved one that just failed is forgotten -- otherwise it is
+        # offered to the next recording, which keeps it unless it has the
+        # evidence to object.
+        if saved:
+            remember(profile.key, hud_hue=0.0)
+        raise
     if cancelled and cancelled():
         raise Cancelled("scan cancelled")
+    # SAVED ONLY ONCE THE SCAN HAS READ SOMETHING IN IT. It used to be saved
+    # the moment it was measured, before anything had checked the colour
+    # could read a single kill.
+    if hue != saved:
+        remember(profile.key, hud_hue=hue)
 
     # ONE Kill per kill, deliberately not merged: the planner clusters over a
     # 22s window and picks the best sub-window inside it, and merging here

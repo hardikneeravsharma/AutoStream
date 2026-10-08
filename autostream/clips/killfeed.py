@@ -496,15 +496,27 @@ def _extract(video: Path, band, start: float, duration: float,
     # Hardware decode where there is any: measured 8.5s against 10.3s a span,
     # and the cores it stops using are cores the OCR pool can have. Falls back
     # silently, because a machine without it must still be able to scan.
+    import time
+
+    from . import diag
+
     accel = ["-hwaccel", "cuda"] if has_cuda() else []
     tmp = Path(tempfile.mkdtemp(prefix="kf_"))
-    subprocess.run([
+    args = [
         binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
         *accel,
         "-ss", f"{start:.3f}", "-i", str(video),
         "-t", f"{max(0.5, duration):.3f}", "-an", "-sn",
         "-vf", f"fps={fps},{crop}", str(tmp / "f_%05d.png"),
-    ], capture_output=True, check=False, creationflags=_NO_WINDOW)
+    ]
+    began = time.monotonic()
+    p = subprocess.run(args, capture_output=True, check=False,
+                       creationflags=_NO_WINDOW)
+    # Into the clip diagnostic: the CS2 colour samples come through here,
+    # and their failures were invisible to it.
+    diag.note_process(args, p.returncode,
+                      (p.stderr or b"").decode("utf-8", "replace"),
+                      time.monotonic() - began)
     return tmp
 
 

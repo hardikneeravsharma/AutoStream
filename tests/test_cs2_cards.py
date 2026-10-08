@@ -68,6 +68,20 @@ def _strip(kills=2, hue=HUE, junk=True, face=True):
     return a
 
 
+def _look(kills=2, hue=HUE, junk=True, face=True, moving=True):
+    """One sample as `measure_hue` takes it: two strips PAIR_GAP apart. The
+    game goes on behind the tally between them unless `moving` is False -- a
+    menu, a loading screen, a paused stream."""
+    a = _strip(kills, hue, junk, face)
+    b = a.copy()
+    if moving:
+        # darker than VAL_MIN either way, so the scenery never reads as a
+        # colour in its own right; only the difference matters
+        sand = np.all(b == (70, 55, 40), axis=2)
+        b[sand] = (76, 60, 44)
+    return (a, b)
+
+
 def _panel(text_edges: bool):
     """The spectator panel patch: full of name/ADR text, or smooth gameplay."""
     a = np.zeros((20, 100, 3), np.uint8)
@@ -148,7 +162,7 @@ def test_the_hud_colour_is_found_by_reading_the_tally_not_by_stillness():
     Stillness cannot be made to rank a face below a health number: by that
     measure the face IS the steadier thing. So the colour is the one the card
     area can actually be READ in."""
-    frames = [_strip(kills=(i % 3) + 1, hue=300.0) for i in range(12)]
+    frames = [_look(kills=(i % 3) + 1, hue=300.0) for i in range(12)]
     # The hazard, reproduced: the face is both bigger and steadier than the
     # tally, so anything ranking steady things picks it.
     tally_px = 40 * (cc.CARD_W0 + cc.CARD_PITCH * 3)
@@ -159,12 +173,43 @@ def test_the_hud_colour_is_found_by_reading_the_tally_not_by_stillness():
     assert abs((got - 300.0 + 180) % 360 - 180) < cc.HUE_TOL, got
 
 
+def test_a_still_menu_is_not_a_tally_however_steadily_it_reads():
+    """FROM FOOTAGE: over every second of the 2h36m recording this reader was
+    built on, single looks gave red and orange MORE exact readings than the
+    real colour -- from the main menu, where an agent's boots stand still and
+    measure as one steady card for minutes. Agreeing with itself a second
+    later does not separate that from a tally either. Having moved does: a
+    tally holds while the game goes on behind it.
+
+    Here the menu outnumbers the real tally three to one, reads exactly, and
+    reads the same twice. Only the real colour ever sees the scene move."""
+    menu = [_look(kills=1, hue=30.0, face=False, moving=False)
+            for _ in range(18)]
+    play = [_look(kills=(i % 3) + 1, hue=300.0) for i in range(6)]
+    # the hazard, reproduced: one look apiece, the menu wins outright
+    singles = [a for a, _ in menu + play]
+    assert cc.pick_hue(singles)[0] is None,         "one look is never evidence for a colour"
+    got, why = cc.pick_hue(menu + play)
+    assert why == "measured"
+    assert abs((got - 300.0 + 180) % 360 - 180) < cc.HUE_TOL, got
+
+
+def test_a_count_that_changes_between_the_looks_is_not_evidence():
+    """Two looks a second apart that disagree are a flash, a round ending, or
+    scenery -- not a tally holding."""
+    a = _strip(kills=1, hue=300.0)
+    b = _strip(kills=3, hue=300.0)
+    b[np.all(b == (70, 55, 40), axis=2)] = (76, 60, 44)
+    assert cc.score_hue([(a, b)] * 10, 300.0) == (0, 0)
+
+
 def test_a_colour_nothing_can_be_read_in_is_refused_rather_than_guessed():
     """Returning a colour that cannot read the tally is worse than returning
     none: the scan runs to the end and reports scenery as kills, and nothing
     about the run says so until somebody watches the clips."""
     rng = np.random.default_rng(1)
-    frames = [rng.integers(0, 90, (151, 1920, 3), dtype=np.uint8)
+    frames = [(rng.integers(0, 90, (151, 1920, 3), dtype=np.uint8),
+               rng.integers(0, 90, (151, 1920, 3), dtype=np.uint8))
               for _ in range(10)]
     assert cc.pick_hue(frames) == (None, "nothing readable")
 
@@ -361,10 +406,38 @@ def test_the_saved_hud_colour_is_rechecked_against_every_recording(
     assert seen == [None, 341.0]
 
 
+def test_the_measured_colour_and_box_survive_on_the_profile_cs2_really_has(
+        monkeypatch, tmp_path):
+    """FROM AN OUTSIDE USER: every run of his measured the colour from scratch,
+    and on his 54 minutes the fresh guess was blue for a pink HUD -- no kills.
+
+    The test above saves a `cardcount` profile, which nobody's install has.
+    Counter-Strike's built-in is `killfeed`; the tally is a mode the RUN swaps
+    in (jobs.py), so remember() reloads the killfeed one and saves through it.
+    as_dict() wrote hud_hue and card_box only for cardcount, so both were
+    dropped while remember() returned True -- and the card-area check told
+    the user "saved"."""
+    from autostream import paths
+    from autostream.clips import profiles
+
+    monkeypatch.setattr(paths, "CLIP_PROFILES", tmp_path / "profiles.yaml")
+    assert profiles.load_all()["cs2.exe"].mode == "killfeed", \
+        "the premise: CS2 is killfeed on disk"
+
+    assert profiles.remember("cs2.exe", hud_hue=300.0)
+    assert profiles.remember("cs2.exe", card_box=[0.47, 0.878, 0.538, 0.936])
+
+    back = profiles.load_all()["cs2.exe"]
+    assert back.hud_hue == pytest.approx(300.0)
+    assert back.card_box == pytest.approx((0.47, 0.878, 0.538, 0.936))
+    # and saving them did not cost the profile what makes it Counter-Strike
+    assert back.mode == "killfeed" and back.demos and back.rounds
+
+
 def test_a_saved_colour_that_still_reads_is_not_measured_again():
     """Measuring is not free, so a colour the recording agrees with is kept --
     no sweep, no second guess."""
-    frames = [_strip(kills=2, hue=300.0) for _ in range(10)]
+    frames = [_look(kills=2, hue=300.0) for _ in range(10)]
     got, why = cc.pick_hue(frames, cached=300.0)
     assert (got, why) == (300.0, "kept")
 
@@ -373,7 +446,7 @@ def test_a_quiet_recording_does_not_overturn_a_saved_colour():
     """A recording where the tally is almost never up has nothing to say about
     any colour. Silence must not be read as disagreement, or a quiet session
     would throw away a colour measured on a good one."""
-    frames = [_strip(kills=0, hue=300.0, junk=False) for _ in range(10)]
+    frames = [_look(kills=0, hue=300.0, junk=False) for _ in range(10)]
     got, why = cc.pick_hue(frames, cached=300.0)
     assert (got, why) == (300.0, "kept")
 
@@ -741,3 +814,115 @@ def test_samples_carry_the_time_of_the_frame_actually_read(monkeypatch):
     seen = cc.sample_tallies("x.mp4", 420.0, 200.0, tries=10, want=0, size=(1920, 1080))
     assert len(seen) == 10 and len(asked) == 10
     assert sorted(s.time for s in seen) == sorted(a - 1.5 for a in asked)
+
+
+# ---------------------------------------------------- a HUD it could not see
+
+def _blind_scan(monkeypatch, seconds):
+    """cs2_cards.scan over `seconds` of footage in which nothing is the
+    player's own: no emblem confirmed by any flash."""
+    from autostream.clips import killfeed, tools
+
+    monkeypatch.setattr(tools, "media_info",
+                        lambda p: {"width": 1920, "height": 1080,
+                                   "duration": seconds})
+    monkeypatch.setattr(killfeed, "_sweep_stale_temp", lambda: None)
+    empty = np.zeros(0)
+    monkeypatch.setattr(cc, "sweep", lambda *a, **k: cc.Sweep(
+        fps=10.0, t=empty, beam=empty, white_beam=empty, emblem_white=empty,
+        width=empty, dark=empty.astype(bool)))
+    monkeypatch.setattr(cc, "flashes", lambda sw, geo: [])
+    monkeypatch.setattr(cc, "own_emblems", lambda sw: np.zeros((0, 4)))
+    monkeypatch.setattr(cc, "judge", lambda fl, sw, own, a=1.0: own[:0])
+    return lambda: cc.scan(Path("rec.mp4"), hue=202.0, frame_height=1080)
+
+
+def test_a_long_recording_with_no_kill_flash_is_unread_not_empty(monkeypatch):
+    """FROM AN OUTSIDE USER: 54 minutes, 0 own emblems, 5 flashes in the
+    wrong colour -- and the run said "No kills found", which sent him looking
+    at his game instead of at his HUD. A whole match without one kill flash
+    over your own badge is the reader not seeing, and it has to say so."""
+    run = _blind_scan(monkeypatch, 54 * 60.0)
+    with pytest.raises(cc.HudUnread) as e:
+        run()
+    msg = str(e.value)
+    assert "not the same as having no kills" in msg
+    assert "202" in msg, "the colour it read in is the first clue"
+    assert "Set the colour by hand" not in msg, "there is no such control"
+
+
+def test_a_short_quiet_clip_can_still_honestly_have_no_kills(monkeypatch):
+    run = _blind_scan(monkeypatch, cc.HUD_UNREAD_AFTER - 60.0)
+    assert run() == []
+
+
+def test_a_colour_the_scan_could_not_read_is_forgotten_not_kept(
+        monkeypatch, tmp_path):
+    """The colour used to be saved the moment it was measured, before the
+    scan had read a single kill in it -- and a saved colour is offered to
+    every later recording, which keeps it unless it can object. One that
+    just read nothing in a whole match is dropped instead."""
+    from autostream import paths
+    from autostream.clips import cs2_cards, detect, profiles
+
+    monkeypatch.setattr(paths, "CLIP_PROFILES", tmp_path / "profiles.yaml")
+    profiles.remember("cs2.exe", hud_hue=202.0)
+    monkeypatch.setattr(cs2_cards, "measure_hue", lambda v, d, **k: 202.0)
+
+    def blind(v, **k):
+        raise cs2_cards.HudUnread("could not see it")
+
+    monkeypatch.setattr(cs2_cards, "scan", blind)
+    monkeypatch.setattr(detect, "media_info",
+                        lambda p: {"width": 1920, "height": 1080,
+                                   "duration": 3000.0})
+    src = tmp_path / "rec.mp4"
+    src.write_bytes(b"")
+    import dataclasses
+    prof = dataclasses.replace(profiles.load_all()["cs2.exe"],
+                               mode="cardcount", rounds=False, demos=False)
+    with pytest.raises(cs2_cards.HudUnread):
+        detect.scan(src, prof)
+    assert profiles.load_all()["cs2.exe"].hud_hue == 0.0
+
+
+def _spectated(look):
+    """Put the spectator panel -- a team-mate's name and ADR, all vertical
+    text edges -- into both strips of a look."""
+    out = []
+    for f in look:
+        f = f.copy()
+        x0 = int(cc.PANEL[0] * SW)
+        x1 = int(cc.PANEL[2] * SW)
+        y0 = int((cc.PANEL[1] - cc.HUD_STRIP[1])
+                 / (cc.HUD_STRIP[3] - cc.HUD_STRIP[1]) * SH)
+        y1 = int((cc.PANEL[3] - cc.HUD_STRIP[1])
+                 / (cc.HUD_STRIP[3] - cc.HUD_STRIP[1]) * SH)
+        f[y0:y1, x0:x1] = (40, 38, 42)
+        for x in range(x0, x1, 4):
+            f[y0 + 1:y1 - 1, x:x + 2] = (210, 210, 215)
+        out.append(f)
+    return tuple(out)
+
+
+def test_a_team_mates_tally_while_spectating_does_not_choose_the_colour():
+    """FROM AN OUTSIDE USER: 21 deaths in a match spent watching a team-mate
+    who finished on 29, and while you watch, the fan is THEIRS -- in their
+    colour. A real tally, steady, over a moving game: it put yellow ahead of
+    his pale pink in half the alignments tried. The spectator panel says
+    whose it is."""
+    watched = [_spectated(_look(kills=3, hue=60.0)) for _ in range(12)]
+    own = [_look(kills=(i % 2) + 1, hue=300.0) for i in range(5)]
+    got, why = cc.pick_hue(watched + own)
+    assert why == "measured"
+    assert abs((got - 300.0 + 180) % 360 - 180) < cc.HUE_TOL, got
+
+
+def test_a_close_call_is_not_an_answer():
+    """Three readings to a rival's two is what a few dozen samples of a pale
+    HUD looks like, and taking it handed an outside user's run the wrong
+    colour. Not beating everything far away twice over means look harder."""
+    a = [_look(kills=1, hue=300.0) for _ in range(3)]
+    b = [_look(kills=1, hue=120.0, face=False) for _ in range(2)]
+    assert cc.pick_hue(a + b) == (None, "undecided")
+    assert cc.pick_hue(a + a + b)[1] == "measured"
