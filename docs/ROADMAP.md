@@ -38,6 +38,56 @@ That is why the first item is Twitch and Kick.
 
 ## The order
 
+### Now — the CS2 card tally fails for an outside user (2026-10-06)
+
+**Ahead of everything below, because a real user is blocked today.** A
+friend on v1.42.0 (Radeon RX 9070 XT, 1080p60, 54-minute `.mov`) ran
+*Kill tally only* and got `No kills found`. The diagnostic file and his log
+gave: `measured CS2 HUD colour: hue 202 (3 tally reading(s))`, then
+`5 flash(es) ... 32563 samples, 0 own emblem(s)`.
+
+Investigated against his screenshots and a 2m43s screen recording of the same
+stream (3 real kills, at ~9.8s / 37.8s / 46.9s, checked by eye). **Not the
+GPU** -- `cuda: false` was detected correctly and the sweep decoded for 124s.
+**Not the HUD position** -- the shipped `CARDS` / `V_BEAM` / `V_EMBLEM` boxes
+land exactly on his card, beam and emblem, and one card measures 34px. With
+hue 300 forced, `main`'s scanner finds **exactly the 3 kills**. Everything
+went wrong at the colour.
+
+| # | Fix | Evidence | Status |
+|---|---|---|---|
+| T1 | **`hud_hue` and `card_box` are never saved.** `jobs.py` switches the profile to `cardcount` in memory only; `profiles.remember()` reloads it as `killfeed` and `as_dict()` writes those keys only for `cardcount`, so both are dropped while `remember()` returns True. Every run measures from scratch, and the card-area calibration's "saved" is a lie too. Write them in any mode | Reproduced against a throwaway `AUTOSTREAM_HOME`: `remember(hud_hue=300) -> True`, file has no `hud_hue`, reload gives `0.0`. Hand-adding `hud_hue: 300.0` under `cs2.exe` **does** load | **done 2026-10-08** — written in any mode; a test on the profile CS2 really has |
+| T2 | **Hue picking is fragile on long recordings.** 60 seeks across 54 min caught 3 readings, the floor (`HUE_EXACT_MIN`), and blue 202 cleared it; the 180-sample retry never ran. `best_hue()` takes the most readings, not the most reliable arc. His cards are pale lavender, saturation 0.12–0.18 on sandstone vs `SAT_MIN` 0.18, so ~30% of tally frames are unreadable at the right hue | On the sample: 60 frames → 288 ✅, every 3rd → **350 ❌**, every 6th → 290, every 10th → none. Beam saturation is ~0.25–0.40 — a better colour source than the cards | **done 2026-10-08** — two looks a second apart over a moving view, spectating set aside, a clear win or look harder (60→180→360), colour refined from the card's own pixels. See Progress |
+| T3 | **Phantom kill when a pale card fades to "0".** `hidden_kills()` treats a 0 reading as a round reset, so the card coming back as 1 is an unexplained rise | Auto hue 288 on the sample gave 4 kills: the 3 real + one at 11.8s | **not reproduced** on the full-quality match: at hue 285 the reader made 0 false kills in 21. The phantom came from a 720p phone recording of the stream. Left alone until footage shows it again |
+| T4 | **Fail loudly instead of `No kills found`.** A long scan with 0 own emblems means the HUD was not read; say so and point at calibration. Put hue + its evidence, flash count, own-emblem count and sample count in the diagnostic; route `_pipe_view` / `strip_samples` ffmpeg calls through `diag` (about 90 are invisible today). Remove "Set the colour by hand on the Clips page" — no such control exists. Fix the Tesseract hint that says `winget install --id Gyan.FFmpeg` | The diagnostic file alone could not answer this; the log could | **done 2026-10-08** — `HudUnread` with what to do; scanner numbers in the diagnostic; the scan's ffmpeg calls reported; Tesseract no longer gets the ffmpeg hint; a colour is saved only after a scan reads kills in it, and forgotten if one cannot |
+| T5 | **"Pick your kill" fallback.** When measurement is weak, show 6–8 auto-found saturation-jump candidates in the bottom-centre and let the user tap one; take hue from the beam, card position from where it rises, own emblem from the frame before. The scan must then find that kill, or it reports the HUD unread | Prototype: a mark at 38.5s → hue 288, beam centred x=958 vs box 968. A **time-only** mark at 10s latched onto orange scenery (hue 32) — so the user must pick *where*, not only *when* | **not needed for now** — with T2 the measured colour is right on every alignment tried. Revisit if a HUD turns up that measurement cannot read |
+
+Workaround already given to him: quit AutoStream, add `  hud_hue: 300.0`
+under `cs2.exe` in `%LOCALAPPDATA%\AutoStream\config\clip_profiles.yaml`,
+re-run. Passing the card-area check rewrites the profile and drops it (T1).
+
+The sample recording, the three ground-truth kill times and the per-frame
+readings belong in the regression corpus for T2–T3.
+
+### Next — the Timeline effects picker (asked 2026-10-08)
+
+**Straight after T1–T5.** On the Timeline page, the section that lists the
+intros, outros and kill effects is poor UX and UI. Redesign it so that
+clicking to change any effect opens a **dialog on the page** (not a window
+of its own) with:
+
+- **Recently used** effects first
+- **Search** by name and by code
+- A **preview** of each effect before it is chosen
+
+| # | Item | Status |
+|---|---|---|
+| U1 | Timeline effects picker dialog: recent, search by name/code, preview | not started |
+
+Follow the UI contract below (tokens, focus rings, one JS scope) and ship it
+with a browser test — UI #10, the shared player component, pairs naturally
+with the previews.
+
 ### Phase A — Tier 1, the market unlocks
 
 These change **who can use the product**, not what it does. Nothing in Phase B
@@ -45,7 +95,6 @@ matters until these are in.
 
 | # | Feature | Why it is first | Status |
 |---|---|---|---|
-| A1 | **Twitch + Kick auto go-live** | 24% → 89% of gaming watch time, and *cheaper* than the YouTube path already shipped | **code done** — seam, both platforms, sign-in, UI and the two paired UI items. Twitch verified against the live API; Kick needs `channel:read` re-granted. No real stream pushed yet |
 | A2 | **Clips-only install path** | Removes the Google account from first run — the hardest step, for a feature most clipper users never want | **done** — and the wizard is now shaped by the platform, so Twitch and Kick skip the four YouTube-only steps |
 | A3 | **Instant-replay hotkey** | The most-used feature in every competitor. Cheap, and it covers every game at once | **done** — OBS replay buffer, a global hotkey, a dashboard card that says whether OBS is actually holding one |
 | A4 | **Generic highlight detection** | Audio energy, kill-sound onset, input burst, scoreboard delta. Turns "4 games" into "any game" | **done** — audio energy against a rolling baseline, as a profile mode any game can use |
@@ -89,7 +138,6 @@ missing features.
 | # | Change | Status |
 |---|---|---|
 | B1 | Clips-only is the **default** first run; go-live becomes opt-in | **done** — offered first and marked Recommended |
-| B2 | Code-sign the binary (SmartScreen sits between every download and every install) | **blocked** — needs a purchased certificate (OV ~$200/yr, or an EV token). Nothing to build until one exists |
 | B3 | Configure the OBS websocket automatically — read OBS's own config, enable, set port and password | **done** — reads it as before, and now writes it too (only while OBS is shut, because OBS rewrites the file from memory when it quits) |
 | B4 | Refuse to finish setup while the OAuth consent screen is in Testing (it expires in ~7 days and looks like the product breaking) | **done, differently** — publishing status is not exposed to the client, so refusing is impossible. Inferred instead: a token still refreshing at day 9 proves the app is published; before that, days 5–7 get a warning |
 | B5 | Preflight YouTube live enablement before anything else (a new channel takes 24h; finding out at go-live wastes an evening) | **done** — one quota unit, right after sign-in |
@@ -99,9 +147,7 @@ missing features.
 
 | # | Feature | Status |
 |---|---|---|
-| C1 | Auto-publish with scheduling (TikTok, Reels, Shorts) | not started |
 | C2 | Match summaries for CS2 and Valorant — both already have exact ground truth | **Counter-Strike done**; Valorant still to come. The cut rides `master_segments`, already proven by the Rivals summary |
-| C3 | Four to six more titles, each shipping with its regression harness | not started |
 | C4 | Vertical live output | not started |
 | C5 | Auto title, description, chapters and thumbnail from the match result | **chapters done** — exact offsets for the montage. Chapters in the live VOD's description are **deliberately not built**; see Progress |
 | C6 | Clip ranking — a ranked shortlist of 5 beats a folder of 40 in filename order | **done** — density breaks the tie on kill count, and the best five are marked |
@@ -118,6 +164,20 @@ this order: **Quota** (3), **Reliability** (3), **Correctness** (4),
 Live VOD chapters · weekly recap reel · community game profiles · multistream ·
 duo/team POV cutting · mobile review app.
 
+### Phase F — parked, last (reprioritised 2026-10-08)
+
+Moved here by the user on 2026-10-08, below Phase E, so the CS2 card tally
+and the rest of the order come first. Nothing is lost: each row keeps the
+status it had when it was parked. Do not pick these up ahead of Phase E
+without the user saying so.
+
+| # | Feature | Was | Status |
+|---|---|---|---|
+| A1 | **Twitch + Kick auto go-live** | Phase A | **code done** — seam, both platforms, sign-in, UI and the two paired UI items. Twitch verified against the live API; Kick needs `channel:read` re-granted. No real stream pushed yet |
+| B2 | Code-sign the binary (SmartScreen sits between every download and every install) | Phase B | **blocked** — needs a purchased certificate (OV ~$200/yr, or an EV token). Nothing to build until one exists |
+| C1 | Auto-publish with scheduling (TikTok, Reels, Shorts) | Phase C | not started |
+| C3 | Four to six more titles, each shipping with its regression harness | Phase C | not started |
+
 ### Deliberately not on the roadmap
 
 - **AI co-host avatar** — Streamlabs, ai_licia and Questie are ahead and
@@ -131,26 +191,23 @@ Do not add these back without a reason that is written down here.
 
 ---
 
-## State of the tree, 2026-10-05
+## State of the tree, 2026-10-08
 
-- `__version__` is **1.40.1**, published:
-  <https://github.com/hardikneeravsharma/AutoStream/releases/tag/v1.40.1>
-  The NVIDIA checks (`has_cuda`, `has_nvenc`) now prove the card works rather
-  than trusting ffmpeg's build list. Without it every clip job on an AMD or
-  Intel GPU failed -- the first outside user, on a Radeon RX 9070 XT, got
-  "0 samples" from the CS2 tally and a job blaming his HUD colour.
-- Shipping v1.40.1 also surfaced a test that passed only on the author's
-  machine: it read the gitignored `config/config.yaml` for `record.enabled`.
-  The release build is the only thing that ever runs the suite from a clean
-  checkout, so nothing else could have caught it (#130).
+- `__version__` is **1.42.0**, published and on `main` as `6c90157`:
+  <https://github.com/hardikneeravsharma/AutoStream/releases/tag/v1.42.0>
+  Phase A, Phase B bar B2, C2/C5/C6, S1/S2 and the UI items in the Progress
+  table all ship in it (v1.41.0 carried most of them; v1.42.0 added the clip
+  diagnostic and the marker batch).
+- **v1.43.0** carries UI #14 and the CS2 card-tally fixes T1, T2 and T4.
+- The CS2 card tally is **broken for at least one outside user** -- see
+  [Now](#now--the-cs2-card-tally-fails-for-an-outside-user-2026-10-06).
+- Earlier, v1.40.1 made the NVIDIA checks (`has_cuda`, `has_nvenc`) prove the
+  card works. That fix holds: the friend above is on a Radeon and his decode
+  ran in software as intended.
 
-### What is on `feat-twitch-kick-platforms`
+### What is not finished
 
-Everything in Phase A, Phase B bar B2, C2/C5/C6, S1/S2 and eight of the
-fifteen UI-review items. Each landed with its own tests; the Progress table
-below has a row per item and what it changed.
-
-Not finished, and written down rather than left looking done:
+Written down rather than left looking done:
 
 - **A1 has never gone live.** The seam, both platforms, the OAuth sign-in and
   the UI that follows the choice are in and tested against the live APIs --
@@ -237,12 +294,16 @@ neither is close, S1 stands alone at about half a day.
 
 ### Standalone, when nothing is adjacent
 
-**#15** lazy-render the Studio panes. **5,348 of the document's 6,325 DOM
-nodes** are inside `#view-studio` on every page, including all four panes,
-whether Studio is open or not. Worth doing on its own.
+**#15** lazy-render the Studio panes. ⛔ **Not doing — the premise did not
+hold.** The review counted 5,348 of 6,325 DOM nodes inside `#view-studio`.
+Measured 2026-10-06 in a real browser on the v1.42.0 build, after the JS ran:
+**1,614 elements in total, 579 (35.9%) in `view-studio`**; the served HTML has
+2,408 with 497 there. Either an older build or a loaded project was measured.
+579 hidden nodes are not worth the restructuring risk. Reopen only with a new
+measurement that says otherwise.
 
-**#14** the breakpoint scale — 20 ad-hoc media queries with off-by-one pairs
-(719/720, 759/760, 899/900, 1119/1120). Do it *before* adding more, not after.
+**#14** the breakpoint scale. ✅ **done 2026-10-06** (`922288f`, on
+`feat-ui-standalone`, not yet released). See Progress.
 
 ### One of these defects is ours
 
@@ -293,6 +354,9 @@ plan**, because a roadmap that never moves was never being followed.
 
 | Date | Item | What landed | What it changed |
 |---|---|---|---|
+| 2026-10-08 | **CS2 card tally: T1, T2, T4 fixed** | Ground truth built for the outside user's match: **21 kills**, read off the card's printed count by eye and equal to the in-game scoreboard. Old code: blue, **0 of 21** -- his result, reproduced; shifting the start 2s turned its answer from pink to yellow (72). New code, end to end through `detect.scan` on the same 54 minutes: **hue 285, 20 of 21, 0 extra**, colour saved. Developer demos unchanged: **45/45, 0 extra**. Colour pick replayed at 20 phase offsets: developer 20/20, outside user 19/20 within 15 degrees. Harness kept: `scripts/cs2_hue_score.py`. Ships in **v1.43.0** with UI #14. | **The kill reader was never the problem on his HUD -- the colour was.** At the right colour every one of his 21 kills flashed and 20 were counted. Three things the old colour check could not tell from a tally, each found by measurement: the **main menu** (an agent's boots read as one steady card, and gave red more readings than the real colour on the developer's own 2h36m), **a team-mate's tally while spectating** (real, steady, in the team-mate's colour), and **noise from too few samples** on a HUD readable 4% of the time. Also measured and rejected: lowering `SAT_MIN` to 0.12 (no better), and lowering `EMBLEM_RISE` to catch his gold badge's weak whitening (adds 1-4 false kills on the developer demos; the count path already recovers them). |
+| 2026-10-06 | **UI #14** one breakpoint scale | Four media-query pairs (720, 760, 900 ×2, 980) had a `max-width:N` and a `min-width:N` that **both** apply at exactly N, so the page had no answer at its own boundary and file order picked one. All are now `max-width: N-1`; the scale is written beside the rules. 620/880/1100 deliberately left off it (each within 20px of a scale point) and named as debt. `tests/test_breakpoints.py`, 8 tests, proved against a planted regression. On `feat-ui-standalone`, unreleased. | **#15 was measured instead of done, and dropped** — see the Standalone section. A review's numbers are a claim about the build it looked at; measure before restructuring. |
+| 2026-10-06 | **v1.42.0** released | Developer Mode (off by default) and the **clip diagnostic**: one JSON per run with stages and timings, every process through `tools.py` with exit code and stderr tail, errors with tracebacks, system and GPU info, home paths redacted. The marker walks a **batch** of clips with an index, can cut a piece out and save it, and can run kill detection on all of them. The slow CS2 HUD reader (feed + scoreboard, 1.19–1.46x real time) is **developer-mode only**, refused server-side without it, and skipped by the release gate — tier 4 had been 93% that one test, 34 minutes. Window guard so test runs stop popping AutoStream on screen. | The general rule went into CLAUDE.md: **a reader slower than ~5x real time is a developer tool**. The diagnostic's first real use (the CS2 row above) showed its gap: modules that pipe ffmpeg themselves are invisible to it. |
 | 2026-10-05 | **C2** the whole Counter-Strike match as one video | `clips/match_summary.py`: which seconds to keep, where each round lands in the finished video, and what every chapter is called. Rounds that nearly touch become one span — a hard cut per round in a match that ran continuously is twenty-four joins where the footage already was. Off by default on the Clips page, beside the clips rather than instead of them. | **Counter-Strike before Valorant because of ground truth**: `rounds.from_demo()` gives exact starts, ends, scores and labels out of the `.dem`, so every span is arithmetic over known numbers and 28 tests prove it **without a frame of footage**. The cut itself deliberately adds no new way to touch ffmpeg — it is `master_segments`, which the Rivals summary already proves against real files. One finding: a round that starts and ends in the same second is a *misread digit*, not a round, and padding it gave an eleven-second span and a chapter for something that never happened. |
 | 2026-10-05 | **The sweep floor**, 117 → 122 | Three new states put the Studio's kill marker in front of the sweep, and the facecam behind a reel. Declared controls went 190 → 195 as this session added some. | **Five controls were unreachable because of a product gap, not a test one.** The marker was gated on `imported` until S2, so for a seeded run the dialog could not be opened at all and its controls were outside the sweep *however the states were written*. That is what a coverage number is for. Also: the first attempt at those states guessed the library's shape (`games[].clips[]` rather than `games[].folders[].clips[]`) and silently opened nothing — a state that reaches nothing looks exactly like a state that found nothing, so the shape now lives in one injected helper with the reason beside it. |
 | 2026-10-05 | **UI #2**, the `--on-media` token pair — **and a test that was green and wrong** | Eight different black-scrim alphas were in use for one job: text drawn over a video frame. Measured against the worst case (a white frame), white text scores `.35 → 2.43`, `.55 → 4.74`, `.62 → 6.19` — so `.54` is the AA floor for normal text. The lightest in use was behind **13px white text on the editor's frame handle at 2.43:1**. Now `--on-media` + `--on-media-scrim` (6.19:1) + `--on-media-scrim-soft` (4.74:1), with the numbers in the stylesheet beside them. | **The browser test for UI #1 could never have failed.** It compared the colour against the literal string `#fff`, and CSSOM normalises that to `rgb(255, 255, 255)` — so it matched nothing, passed from the day it was written, and a fifth offending rule (`.clip-fx-aim.is-on`) shipped underneath it and was found **by eye**. The anti-vacuity guard it carried asked whether the stylesheet was being *read*, which it was; the comparison was the broken part. The real guard now scans the stylesheet's own text in the unit tier, where `#fff` is `#fff` — and **both of its checks are proved against a planted regression**, which is the only way to know a guard works. |

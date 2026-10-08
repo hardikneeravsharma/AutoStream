@@ -34,6 +34,7 @@ from typing import Any
 from . import (cutter, detect, diag, killfeed, montage, overlay, plan,
                profiles, promo, voice)
 from .. import atomic, paths
+from .cs2_cards import HudUnread
 from .tools import FfmpegMissing, duration_label, media_info
 
 log = logging.getLogger("autostream.clips.jobs")
@@ -555,6 +556,14 @@ class ClipJob:
             self._set(state="failed", needs_demo=True, error=str(e),
                       message="Waiting for the replay")
             log.info("stopped for a demo: %s", e)
+            self.diag.error(e)
+        except HudUnread as e:
+            # Not "see the log": the reason is the whole message, and it says
+            # what to do. Kept apart from NoKills on purpose -- a reader that
+            # could not see the HUD must never read as a match with no kills.
+            self._set(state="failed", error=str(e),
+                      message="Could not see your kill counter")
+            log.info("clip job could not read the HUD: %s", e)
             self.diag.error(e)
         except FfmpegMissing as e:
             self._set(state="failed", error=str(e), message="ffmpeg not found")

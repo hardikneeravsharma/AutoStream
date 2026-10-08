@@ -210,10 +210,15 @@ def tool_version(name: str) -> dict:
     version differ in which encoders they were compiled with, and "which
     ffmpeg is it finding" has been the answer more than once.
     """
-    from . import tools
+    from . import deps, tools
 
     try:
-        where = tools.binary(name)
+        # Tesseract has its own finder. tools.binary searches ffmpeg's
+        # install folders and its error says to install ffmpeg, so a report
+        # from a machine without Tesseract told the reader to run
+        # `winget install --id Gyan.FFmpeg` -- and missed the UB-Mannheim
+        # build, which does not put itself on PATH.
+        where = deps.tesseract() if name == "tesseract" else tools.binary(name)
     except Exception as e:                                   # noqa: BLE001
         return {"found": False, "why": str(e)}
     first = "(could not be asked)"

@@ -278,11 +278,6 @@ class Profile:
                         "tolerance": self.tolerance, "min_pixels": self.min_pixels})
         elif self.mode == "cardcount":
             out["mode"] = self.mode
-            # Cached once measured, so the cost is paid on the first scan only.
-            if self.hud_hue:
-                out["hud_hue"] = round(self.hud_hue, 1)
-            if self.card_box:
-                out["card_box"] = [round(float(v), 4) for v in self.card_box]
         elif self.mode in ("feedbar", "summary"):
             # Nothing else to carry: no template, no name, no threshold. The
             # band is the whole configuration.
@@ -307,6 +302,19 @@ class Profile:
             # `player` is deliberately NOT written: it comes from games.yaml so
             # that a profile stays shareable and there is one place to change
             # the name.
+        # IN ANY MODE, NOT ONLY cardcount. Counter-Strike's profile is
+        # `killfeed` on disk and becomes `cardcount` only inside the run that
+        # chose the tally (jobs.py). remember() reloads it from disk, so the
+        # mode it saves through is killfeed -- and when these lived under the
+        # cardcount branch both were dropped while remember() said True. Every
+        # run measured the colour from scratch, the card-area check's "saved"
+        # kept nothing, and on one outside user's 54 minutes the fresh guess
+        # was blue for a pink HUD: no kills. They are measurements of the
+        # player's screen, which no mode makes less true.
+        if self.hud_hue:
+            out["hud_hue"] = round(self.hud_hue, 1)
+        if self.card_box:
+            out["card_box"] = [round(float(v), 4) for v in self.card_box]
         if self.counts_assists:
             out["counts_assists"] = True
         if self.pre_roll_min:

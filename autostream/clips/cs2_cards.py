@@ -113,11 +113,42 @@ HUE_STEP = 5.0        # degrees per probe: 72 of them cover the wheel
 # every orange and gold probe -- a facecam, the rank emblem, Anubis sandstone
 # -- stayed at or under 0.16 despite finding plenty to look at. 0.5 sits in
 # that gap with room either side.
-HUE_SCORE_MIN = 0.5
+#
+# 0.3 since the samples became pairs over a moving view (PAIR_GAP), which
+# already throws out most of what the share used to: replayed at 20 phase
+# offsets with the escalation, 0.5 left the developer's own recording wrong
+# twice and undecided twice, 0.3 right all twenty, and the outside user's
+# match went from 15 right to 19.
+HUE_SCORE_MIN = 0.3
 HUE_EXACT_MIN = 3
+# The winner must read at least HUE_MARGIN times the steady tallies of any
+# colour more than HUE_RIVAL_AWAY degrees from it. See pick_hue.
+HUE_MARGIN = 2.0
+HUE_RIVAL_AWAY = 45.0
 # Readings a recording must produce before it may overturn a colour already on
 # file. Under this it has not seen enough tally to have an opinion.
 HUE_EVIDENCE = 6
+# EACH SAMPLE IS TWO LOOKS, A SECOND APART, and a colour only earns a reading
+# where both looks give the same count AND the view around the cards moved in
+# between. A real tally holds its count for the rest of the round while the
+# game goes on behind it; what read as tallies in the wrong colour does not.
+#
+# One look was not enough, and it was not only the outside user it failed.
+# Measured over every second of the 2h36m recording the reader was built on
+# (truth: hue ~335), single looks gave RED more exact readings than the real
+# colour -- 1720 to 1183 -- and orange at 30 almost as many, from frames the
+# real colour never read at all. Those were the main menu: an agent's boots
+# standing still, which measure as one steady card for minutes on end. So
+# "agrees with itself a second later" alone cannot separate them (950 stable
+# pairs at hue 30, 953 at 335); "and the scene moved" can: 918 at 335, and
+# nothing from 15 to 55 within 30 of it. Replaying the shipped sampling at 60
+# phase offsets: one look picked the wrong colour 11 times in 60, two looks
+# over a moving view 0 times.
+PAIR_GAP = 1.0
+# Mean absolute difference, 0-255, across the reader's view between the two
+# looks. That recording: 10th percentile 0.0 (menus, loading), median 8.8.
+# Anything from 1 to 8 separated the colours; 3 sits well inside that.
+MOVED_MIN = 3.0
 
 # ------------------------------------------------------------------- geometry
 CARD_W0 = 18          # px at REF_HEIGHT
@@ -212,29 +243,106 @@ def cards_in_strip(frame: np.ndarray, band: tuple = CARDS) -> np.ndarray:
     return frame[max(0, y0):max(0, y1), max(0, x0):max(0, x1)]
 
 
-def score_hue(frames: list[np.ndarray], hue: float, band: tuple = CARDS,
-              frame_height: int = REF_HEIGHT) -> tuple[int, int]:
-    """Can a tally be READ in this colour? -> (exact readings, unreadable)
+def _view_in_strip(frame: np.ndarray, band: tuple,
+                   frame_height: int) -> np.ndarray:
+    """The reader's whole view (see VIEW), cut out of a HUD_STRIP frame."""
+    h, w = frame.shape[:2]
+    k = max(0.25, (frame_height / REF_HEIGHT)
+            * (band[2] - band[0]) / (CARDS[2] - CARDS[0]))
+    bx = band[0] * w
+    by = (band[1] - HUD_STRIP[1]) / (HUD_STRIP[3] - HUD_STRIP[1]) * h
+    x0, x1 = int(round(bx + VIEW[0] * k)), int(round(bx + VIEW[2] * k))
+    y0, y1 = int(round(by + VIEW[1] * k)), int(round(by + VIEW[3] * k))
+    return frame[max(0, y0):max(0, y1), max(0, x0):max(0, x1)]
 
-    The reader already knows what a real tally looks like: a width that lands
-    on 18 + 16 x kills and nowhere else. So point it at the card area in this
-    colour and count how often it lands.
 
-    The player's own colour lands, or sees nothing at all. A wrong one finds
-    speckle -- scenery, a face, the rank emblem -- at widths that mean nothing,
-    which `read_frame` already reports as "flash".
-    """
+def moved(a: np.ndarray, b: np.ndarray, band: tuple = CARDS,
+          frame_height: int = REF_HEIGHT) -> bool:
+    """Did the game go on between two looks? See MOVED_MIN."""
+    va = _view_in_strip(a, band, frame_height).astype(np.int16)
+    vb = _view_in_strip(b, band, frame_height).astype(np.int16)
+    if va.size == 0 or va.shape != vb.shape:
+        return False
+    return float(np.abs(va - vb).mean()) >= MOVED_MIN
+
+
+def _panel_band(band: tuple) -> tuple:
+    """PANEL, carried along with a calibrated card band."""
+    s = (band[2] - band[0]) / (CARDS[2] - CARDS[0])
+    return (band[0] + (PANEL[0] - CARDS[0]) * s,
+            band[1] + (PANEL[1] - CARDS[1]) * s,
+            band[0] + (PANEL[2] - CARDS[0]) * s,
+            band[1] + (PANEL[3] - CARDS[1]) * s)
+
+
+@dataclass
+class _Look:
+    """One sample, cut down to what scoring a colour needs, once."""
+    first: np.ndarray
+    second: np.ndarray | None
+    moved: bool
+    spectating: bool = False
+
+
+def _looks(samples, band: tuple, frame_height: int) -> list[_Look]:
+    """Samples -> looks. A sample is a pair of HUD_STRIP frames PAIR_GAP
+    apart; a lone frame is accepted and can only ever count against a
+    colour, never for it, since one look cannot show a count holding.
+
+    SPECTATING IS SET ASIDE, not scored. While the player is dead the fan
+    shows the WATCHED team-mate's kills, in THAT player's colour: a real
+    tally, read exactly, holding steady over a moving game -- everything the
+    test asks for, in the wrong colour. On an outside user's 54-minute match
+    (21 kills, 21 deaths, watching a team-mate who finished on 29) it put
+    yellow ahead of his own pale pink in half the alignments tried: 43 steady
+    readings at hue 75, every one of them under the spectator panel."""
+    pb = _panel_band(band)
+    out = []
+    for s in samples:
+        a, b = (s, None) if isinstance(s, np.ndarray) else (s[0], s[1])
+        watching = spectating(cards_in_strip(a, pb)) or (
+            b is not None and spectating(cards_in_strip(b, pb)))
+        out.append(_Look(cards_in_strip(a, band),
+                         None if b is None else cards_in_strip(b, band),
+                         b is not None and moved(a, b, band, frame_height),
+                         watching))
+    return out
+
+
+def _score_looks(looks: list[_Look], hue: float,
+                 frame_height: int) -> tuple[int, int]:
     exact = junk = 0
-    for f in frames:
-        r = read_frame(cards_in_strip(f, band), None, hue, 0.0, frame_height)
-        if r.why == "flash":
+    for lk in looks:
+        if lk.spectating:
+            continue
+        ra = read_frame(lk.first, None, hue, 0.0, frame_height)
+        rb = (read_frame(lk.second, None, hue, 0.0, frame_height)
+              if lk.second is not None else None)
+        if ra.why == "flash" or (rb is not None and rb.why == "flash"):
             junk += 1
-        elif r.kills:
+        elif lk.moved and ra.kills and rb is not None and rb.kills == ra.kills:
             exact += 1
     return exact, junk
 
 
-def sweep_hues(frames: list[np.ndarray], band: tuple = CARDS,
+def score_hue(samples: list, hue: float, band: tuple = CARDS,
+              frame_height: int = REF_HEIGHT) -> tuple[int, int]:
+    """Can a tally be READ in this colour? -> (exact readings, unreadable)
+
+    The reader already knows what a real tally looks like: a width that lands
+    on 18 + 16 x kills and nowhere else -- and, being a tally, holds there
+    while the game moves behind it (PAIR_GAP). So point it at the card area
+    in this colour and count how often both looks land on the same count.
+
+    The player's own colour lands, or sees nothing at all. A wrong one finds
+    speckle -- scenery, a face, the rank emblem -- at widths that mean nothing,
+    which `read_frame` already reports as "flash", or a still menu that reads
+    the same twice but never moved.
+    """
+    return _score_looks(_looks(samples, band, frame_height), hue, frame_height)
+
+
+def sweep_hues(samples: list, band: tuple = CARDS,
                frame_height: int = REF_HEIGHT) -> list[tuple]:
     """Every colour on the wheel, scored. -> [(hue, exact, junk, score)]
 
@@ -251,10 +359,11 @@ def sweep_hues(frames: list[np.ndarray], band: tuple = CARDS,
     a face, an emblem or a map has to be anticipated, so a HUD colour nobody
     has seen yet is found exactly like a known one.
     """
+    looks = _looks(samples, band, frame_height)
     out = []
     for i in range(int(round(360.0 / HUE_STEP))):
         h = i * HUE_STEP
-        exact, junk = score_hue(frames, h, band, frame_height)
+        exact, junk = _score_looks(looks, h, frame_height)
         out.append((h, exact, junk, exact / max(1, exact + junk)))
     return out
 
@@ -294,7 +403,44 @@ def best_hue(rows: list[tuple]) -> float | None:
                                        float((w * np.cos(ang)).sum()))) % 360.0)
 
 
-def pick_hue(frames: list[np.ndarray], band: tuple = CARDS,
+def _hue_dist(a: float, b: float) -> float:
+    return abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+def _refine(looks: list[_Look], hue: float, frame_height: int) -> float:
+    """The card's own colour, from the card's own pixels.
+
+    The winning arc's centre is weighted by how many probes read a tally,
+    and with a few readings that lands anywhere in a band as wide as
+    HUE_TOL. On an outside user's match the arc centre came out at 258 as
+    often as at 285 -- and the scan at 258 caught 17 of 21 kills with 6
+    invented, at 285 20 of 21 with none. The pixels of the cards it read
+    know where the colour is to within a degree or two.
+    """
+    angles = []
+    for lk in looks:
+        if lk.spectating or not lk.moved or lk.second is None:
+            continue
+        ra = read_frame(lk.first, None, hue, 0.0, frame_height)
+        rb = read_frame(lk.second, None, hue, 0.0, frame_height)
+        if not ra.kills or rb.kills != ra.kills:
+            continue
+        h, _, _ = _hsv(lk.first)
+        angles.append(h[hud_mask(lk.first, hue)])
+    if not angles:
+        return hue
+    a = np.deg2rad(np.concatenate(angles).astype(np.float64))
+    if not len(a):
+        return hue
+    got = float(np.rad2deg(np.arctan2(np.sin(a).mean(), np.cos(a).mean())) % 360.0)
+    # Only if it reads at least as well: a refinement that loses tallies
+    # has found background, not card.
+    if _score_looks(looks, got, frame_height)[0] < _score_looks(looks, hue, frame_height)[0]:
+        return hue
+    return got
+
+
+def pick_hue(frames: list, band: tuple = CARDS,
              frame_height: int = REF_HEIGHT,
              cached: float | None = None) -> tuple[float | None, str]:
     """The HUD colour these frames can be read in. -> (hue, what happened)
@@ -310,17 +456,39 @@ def pick_hue(frames: list[np.ndarray], band: tuple = CARDS,
     rarely up has nothing to say about any colour, so silence leaves the saved
     one alone -- only evidence overturns it.
     """
+    looks = _looks(frames, band, frame_height)
     if cached is not None:
-        exact, junk = score_hue(frames, cached, band, frame_height)
+        exact, junk = _score_looks(looks, cached, frame_height)
         if exact + junk < HUE_EVIDENCE or exact >= HUE_SCORE_MIN * (exact + junk):
             return cached, "kept"
         log.info("the saved HUD colour (hue %.0f) cannot read this recording: "
                  "%d tally reading(s) against %d unreadable -- measuring again",
                  cached, exact, junk)
-    got = best_hue(sweep_hues(frames, band, frame_height))
+    rows = []
+    for i in range(int(round(360.0 / HUE_STEP))):
+        h = i * HUE_STEP
+        e, j = _score_looks(looks, h, frame_height)
+        rows.append((h, e, j, e / max(1, e + j)))
+    got = best_hue(rows)
     if got is None:
         return None, "nothing readable"
-    exact, junk = score_hue(frames, got, band, frame_height)
+    # A WIN HAS TO BE CLEAR. With the tally readable in 4% of an outside
+    # user's match, a few dozen samples sometimes handed red sandstone or a
+    # stray yellow three readings to the real colour's four -- and best_hue
+    # took the four. Not beating every colour far from it twice over is not
+    # an answer yet: the caller looks harder, and never guesses.
+    near = max(r[1] for r in rows if _hue_dist(r[0], got) <= HUE_TOL)
+    rival = max([r[1] for r in rows if _hue_dist(r[0], got) > HUE_RIVAL_AWAY]
+                or [0])
+    if near < HUE_MARGIN * rival:
+        log.info("no clear HUD colour yet: hue %.0f read %d steady tallies, "
+                 "a colour %.0f degrees away read %d", got, near,
+                 HUE_RIVAL_AWAY, rival)
+        return None, "undecided"
+    got = _refine(looks, got, frame_height)
+    exact, junk = _score_looks(looks, got, frame_height)
+    _diag(hue_measured=round(got, 1), hue_readings=exact, hue_unreadable=junk,
+          hue_samples=len(looks))
     log.info("measured CS2 HUD colour: hue %.0f (%d tally reading(s), %.0f%% "
              "of what it saw was readable)",
              got, exact, 100.0 * exact / max(1, exact + junk))
@@ -515,25 +683,33 @@ def _extract_two(video: Path, start: float, duration: float, fps: float,
 
 
 def strip_samples(video: Path, duration: float, samples: int,
-                  start: float = 0.0) -> list[np.ndarray]:
-    """Frames of the bottom strip, spread across the recording.
+                  start: float = 0.0) -> list[tuple]:
+    """Pairs of bottom-strip frames, PAIR_GAP apart, spread across the
+    recording. -> [(first, second or None)]
 
     `start` keeps the samples inside the part being scanned. On a file holding
     two games, frames from the other one carry a different HUD -- or none --
     and measuring the colour off those is measuring the wrong game.
+
+    One seek per pair: the second look is the same decode run a second
+    further, not a second seek.
     """
     from PIL import Image
 
     from .killfeed import _extract
 
-    step = max(1.0, (duration - 1.0) / (samples + 1))
+    span = 1.0 + PAIR_GAP
+    step = max(1.0, (duration - span) / (samples + 1))
 
     def one(i: int):
-        at = start + min(duration - 1.0, step * i)
-        tmp = _extract(video, HUD_STRIP, at, 0.5, 1.0)
+        at = start + max(0.0, min(duration - span, step * i))
+        tmp = _extract(video, HUD_STRIP, at, PAIR_GAP + 0.5, 1.0 / PAIR_GAP)
         try:
-            got = sorted(tmp.glob("f_*.png"))
-            return np.asarray(Image.open(got[0]).convert("RGB")) if got else None
+            got = sorted(tmp.glob("f_*.png"))[:2]
+            fr = [np.asarray(Image.open(g).convert("RGB")) for g in got]
+            if not fr:
+                return None
+            return (fr[0], fr[1] if len(fr) > 1 else None)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
@@ -547,11 +723,13 @@ def strip_samples(video: Path, duration: float, samples: int,
 # the sweep needs to separate an arc from noise. At 120 the same recording
 # caught 108 across the winning arc and the answer stopped moving.
 #
-# So the cheap count is tried first and the dear one only when it settles
-# nothing. A sample is an ffmpeg seek, six at a time: 60 costs about 6s and 180
-# about 18s, against a scan that runs for minutes.
+# So the cheap count is tried first and the dear ones only when it settles
+# nothing. A sample is an ffmpeg seek for two looks, six at a time: measured
+# on a 1080p60 file, 60 cost about 15s and 180 about 60s, against a scan that
+# runs for minutes. 360 is for the hard case: a pale HUD readable in 4% of
+# the match, where 180 still left it undecided about one time in twenty.
 HUE_SAMPLES = 60
-HUE_SAMPLES_MAX = 180
+HUE_SAMPLES_MORE = (180, 360)
 
 
 def measure_hue(video: Path, duration: float, samples: int = HUE_SAMPLES,
@@ -567,16 +745,19 @@ def measure_hue(video: Path, duration: float, samples: int = HUE_SAMPLES,
     somebody watches the clips.
     """
     band = band or CARDS
-    frames = strip_samples(video, duration, samples, start)
-    hue, why = pick_hue(frames, band, frame_height, cached)
-    if hue is not None or samples >= HUE_SAMPLES_MAX:
-        return hue
-    # Nothing read. Before calling that an answer, look harder -- a recording
-    # with two kills in it can miss the tally entirely at this sample rate.
-    log.info("no colour read the tally in %d samples; looking at %d",
-             len(frames), HUE_SAMPLES_MAX)
-    frames = strip_samples(video, duration, HUE_SAMPLES_MAX, start)
-    hue, why = pick_hue(frames, band, frame_height, cached)
+    hue = None
+    for n in sorted({samples, *HUE_SAMPLES_MORE}):
+        if n < samples:
+            continue
+        frames = strip_samples(video, duration, n, start)
+        hue, why = pick_hue(frames, band, frame_height, cached)
+        if hue is not None:
+            return hue
+        # Nothing read, or nothing read clearly. Before calling that an
+        # answer, look harder -- a recording with two kills in it can miss
+        # the tally entirely at this sample rate.
+        log.info("no clear HUD colour in %d samples (%s); looking harder",
+                 len(frames), why)
     return hue
 
 
@@ -711,9 +892,14 @@ def _pipe_view(video: Path, start: float, duration: float, fps: float,
     from .killfeed import _NO_WINDOW
     from .tools import binary, has_cuda
 
+    import tempfile
+    import time
+
+    from . import diag
+
     x, y, w, h = crop
     frame = w * h * 3
-    proc = subprocess.Popen([
+    args = [
         binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
         *(["-hwaccel", "cuda"] if has_cuda() else []),
         "-ss", f"{start:.3f}",
@@ -722,13 +908,23 @@ def _pipe_view(video: Path, start: float, duration: float, fps: float,
         "-i", str(video), "-an", "-sn",
         "-vf", f"fps={fps},crop={w}:{h}:{x}:{y}",
         "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
-    ], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        creationflags=_NO_WINDOW)
+    ]
+    # STDERR KEPT, AND REPORTED. It went to DEVNULL, so this -- the whole
+    # cost of a CS2 scan, ~30 chunks a run -- never appeared in the clip
+    # diagnostic: a report from an outside user said "3 processes, 0 failed"
+    # over a run that had made about ninety. A file rather than a pipe, so a
+    # failure chatty enough to fill a pipe cannot stall the frames.
+    err = tempfile.TemporaryFile()
+    began = time.monotonic()
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=err,
+                            creationflags=_NO_WINDOW)
+    got = 0
     try:
         while True:
             buf = proc.stdout.read(frame)
             if len(buf) < frame:
                 break
+            got += len(buf)
             yield np.frombuffer(buf, np.uint8).reshape(h, w, 3)
     finally:
         try:
@@ -736,6 +932,14 @@ def _pipe_view(video: Path, start: float, duration: float, fps: float,
         except OSError:
             pass
         proc.wait(timeout=10)
+        try:
+            err.seek(0)
+            text = err.read().decode("utf-8", "replace")
+            err.close()
+            diag.note_process(args, proc.returncode, text,
+                              time.monotonic() - began, got)
+        except Exception:                                   # noqa: BLE001
+            pass
 
 
 def emblem_map(crop: np.ndarray) -> tuple[np.ndarray, float]:
@@ -1154,6 +1358,35 @@ def confirm_in_feed(video: Path, feed_band, player: str,
     return min(hits, key=lambda h: abs(h - around)) if hits else None
 
 
+# A recording this long with NOT ONE kill flash over the player's own emblem
+# was not read, it was missed. An outside user's 54 minutes came back as
+# "No kills found" from exactly this -- 0 own emblems, 5 flashes in the wrong
+# colour -- and the words sent him looking for a game with no kills in it
+# rather than at his HUD. Ten minutes is a few rounds; a short clip of a
+# quiet round can still honestly have none.
+HUD_UNREAD_AFTER = 600.0
+
+
+class HudUnread(RuntimeError):
+    """The scan ran and could not see the tally. Not the same as no kills."""
+
+
+def _diag(**facts) -> None:
+    """The scan's own numbers, into the clip diagnostic if one is recording.
+
+    The 54-minute report above held none of them: the hue, the flashes and
+    the emblem count were only in the app's log, which is not what gets sent
+    back. Never raises -- see diag's rule 1."""
+    try:
+        from . import diag
+        rec = diag.active()
+        if rec is not None:
+            for k, v in facts.items():
+                rec.note(f"cards_{k}", v)
+    except Exception:                                       # noqa: BLE001
+        pass
+
+
 def scan(video: Path, *, duration: float | None = None, start: float = 0.0,
          fps: float = FLASH_FPS, chunk: float = 120.0,
          hue: float | None = None, frame_height: int = REF_HEIGHT,
@@ -1180,9 +1413,9 @@ def scan(video: Path, *, duration: float | None = None, start: float = 0.0,
                           frame_height=size[1])
         if hue is None:
             raise RuntimeError(
-                "No colour in this recording reads as a CS2 kill tally. Set "
-                "the colour by hand on the Clips page, calibrate the card "
-                "area there, or pick a recording with more gameplay in it.")
+                "No colour in this recording reads as a CS2 kill tally. "
+                "Calibrate the card area on the Clips page, or pick a "
+                "recording with more gameplay in it.")
 
     geo = geometry(size, band or CARDS)
     # Never slower than the flash needs. The profile's rate was set for the
@@ -1193,7 +1426,20 @@ def scan(video: Path, *, duration: float | None = None, start: float = 0.0,
         return []
 
     fl = flashes(sw, geo)
-    own = judge(fl, sw, own_emblems(sw), geo.area)
+    candidates = own_emblems(sw)
+    own = judge(fl, sw, candidates, geo.area)
+    _diag(hue=round(float(hue), 1), seconds_read=round(float(total), 1),
+          samples=int(len(sw.t)), flashes=len(fl),
+          emblem_candidates=int(len(candidates)), own_emblems=int(len(own)))
+    if total >= HUD_UNREAD_AFTER and not len(own):
+        raise HudUnread(
+            f"Could not find your Counter-Strike 2 kill counter in this "
+            f"recording, so it was not read -- this is not the same as "
+            f"having no kills. In {total / 60:.0f} minutes nothing flashed "
+            f"over your rank badge the way a kill does (read in HUD colour "
+            f"{hue:.0f}, {len(fl)} flash(es)). Open the Clips page, drag the "
+            f"box onto the little stack of cards above your rank badge, and "
+            f"press Check it works.")
     kills: list[float] = []
     for f in fl:
         kills += [f.time] * f.kills
@@ -1214,6 +1460,8 @@ def scan(video: Path, *, duration: float | None = None, start: float = 0.0,
     events += [Event(time=x, kind="death") for x in deaths(sw, own)]
     events.sort(key=lambda e: e.time)
     t = tally(events)
+    _diag(kills=t["kill"], deaths=t["death"], hidden_kills=len(hidden),
+          doubtful=len(doubtful), doubtful_confirmed=checked)
     log.info("%s: %d kill(s) and %d death(s) from the card tally -- %d flash(es), "
              "%d hidden kill(s) from the count, %d of %d doubtful flash(es) "
              "confirmed in the feed (%d samples, %d own emblem(s))",
