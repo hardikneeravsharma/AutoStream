@@ -207,3 +207,84 @@ def test_the_library_marks_clips_cut_from_the_record(tmp_path):
         {"time": 3468.23, "record": True}, {"time": 3468.7, "record": True}, {"time": 505.0}]}))
     clips = studio.library(tmp_path)["games"][0]["folders"][0]["clips"]
     assert clips[0].get("recorded") is True and not clips[1].get("recorded")
+
+
+# ------------------------------------------- dead, with a facecam over the card
+
+def _report(panel: bool, edges_elsewhere: bool = False, seed: int = 5):
+    """The combat-report crop: a textured world, the report's two borders, or
+    two strong edges somewhere else (scenery: a door frame, a wall)."""
+    rng = np.random.default_rng(seed)
+    # a wall: a gentle gradient with a little grain, as the game draws one --
+    # per-pixel noise as wide as the card test's lights edges everywhere
+    yy, xx = np.mgrid[0:killmark.REPORT_H, 0:killmark.REPORT_W]
+    a = (70 + 0.15 * xx + 0.1 * yy
+         + rng.uniform(-4, 4, (killmark.REPORT_H, killmark.REPORT_W))).astype(np.float32)
+    sp = killmark.spec_for("VALORANT")
+    x0, x1 = sp.report[0], sp.report[1]
+    cols = [int(round((e - x0) / (x1 - x0) * killmark.REPORT_W)) - 3 for e in sp.report_edges]
+    if panel:
+        for c in cols:
+            a[20:240, c] = 20.0             # the panel's dark border, down most of it
+    if edges_elsewhere:
+        a[:, 120] = 235.0
+        a[:, 160] = 235.0
+    return a
+
+
+def test_the_combat_report_is_read_by_its_two_borders_and_not_by_scenery():
+    """FROM AN OUTSIDE USER: his facecam sat over the spectator card, so the
+    card test never fired and all 13 team-mates' emblems he watched were added
+    as his kills. The combat report a dead player is shown sits right of
+    centre. Measured: own kills 0.00-0.09, watched ones 0.14-0.61."""
+    sp = killmark.spec_for("VALORANT")
+    assert killmark.report_score(_report(panel=True), sp) >= killmark.REPORT_ON
+    assert killmark.report_score(_report(panel=False), sp) < killmark.REPORT_ON
+    # scenery has edges too -- just never this pair, at these two columns
+    assert killmark.report_score(_report(panel=False, edges_elsewhere=True), sp) \
+        < killmark.REPORT_ON
+
+
+def test_the_report_is_read_before_the_emblem_as_well_as_after(monkeypatch):
+    """FROM THE DEVELOPER'S OWN RECORDING, against Riot's record: a kill and a
+    death a moment apart. The report was up half a second AFTER his own
+    emblem, because he had just died -- read only after, a real kill would
+    have been thrown away. A team-mate's kill is watched while ALREADY dead."""
+    import subprocess
+
+    sp = killmark.spec_for("VALORANT")
+    up = _report(panel=True).astype(np.uint8).tobytes()
+    down = _report(panel=False).astype(np.uint8).tobytes()
+    seen = []
+
+    def fake(args, **k):
+        at = float(args[args.index("-ss") + 1])
+        seen.append(at)
+        return subprocess.CompletedProcess(args, 0, stdout=state(at))
+
+    monkeypatch.setattr(killmark.subprocess, "run", fake)
+    state = lambda at: up if at >= 100.0 else down          # died at 100.0
+    assert killmark.dead("v.mp4", 100.0, "VALORANT") is False, "a trade is not a death"
+    state = lambda at: up                                     # dead all along
+    assert killmark.dead("v.mp4", 100.0, "VALORANT") is True
+    assert min(seen) < 100.0 < max(seen)
+    assert sp.report is not None
+
+
+def test_agent_selects_lock_in_ring_is_not_a_kill(monkeypatch):
+    """5 of an outside user's "kills" were agent select: the countdown ring
+    reads like an emblem. The red LOCK IN button under it covered 0.31 of the
+    area there, and at most 0.04 at any real kill on two players' footage."""
+    import subprocess
+
+    def frame(red_share):
+        a = np.full((80, 200, 3), 90, np.uint8)
+        n = int(80 * 200 * red_share)
+        a.reshape(-1, 3)[:n] = (230, 40, 60)
+        return a.tobytes()
+
+    for share, want in ((0.31, True), (0.04, False)):
+        monkeypatch.setattr(killmark.subprocess, "run",
+                            lambda args, s=share, **k: subprocess.CompletedProcess(
+                                args, 0, stdout=frame(s)))
+        assert killmark.menu("v.mp4", 50.0, "VALORANT") is want
