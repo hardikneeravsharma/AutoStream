@@ -69,6 +69,20 @@ re-run. Passing the card-area check rewrites the profile and drops it (T1).
 The sample recording, the three ground-truth kill times and the per-frame
 readings belong in the regression corpus for T2–T3.
 
+### Valorant: a team-mate's kills counted as yours (2026-10-08)
+
+The same outside user's 50-minute Valorant stream (TDM, then a full match),
+v1.42.0: the feed read 36 kills, the clips claimed 60. Reproduced on the
+stream itself: 59 kill emblems, 46 added, **0 set aside as spectating**.
+Ground truth by eye: 37 of the 59 were his. 13 were team-mates' kills he
+watched while dead, 5 agent-select countdown rings, 4 TDM deaths/respawns.
+
+| # | Fix | Status |
+|---|---|---|
+| V1 | **Spectating unseen behind a facecam.** `spectating()` read only the card bottom-left -- under his facecam every time. Added `dead()`: the combat report a dead player is shown, right of centre, read **before and after** the emblem (after alone threw away a developer kill-then-death trade) | **done 2026-10-08** -- 13/13 caught; developer recording vs Riot record: 0 of 19 own kills lost |
+| V2 | **Agent select's countdown ring read as an emblem.** `menu()`: the red LOCK IN button under it | **done 2026-10-08** -- 4 of 5; the 5th is after lock-in, button gone |
+| V3 | TDM: emblems while dead/respawning (3 left) | not started |
+
 ### Next — the Timeline effects picker (asked 2026-10-08)
 
 **Straight after T1–T5.** On the Timeline page, the section that lists the
@@ -354,6 +368,7 @@ plan**, because a roadmap that never moves was never being followed.
 
 | Date | Item | What landed | What it changed |
 |---|---|---|---|
+| 2026-10-08 | **Valorant V1 + V2**, v1.43.1 | On the outside user's stream, end to end: before, 59 kills of which 37 real; after, every real kill kept and the 13 watched team-mate kills gone. `killmark.dead()` reads the combat report's two borders at fixed columns (own kills 0.00-0.09, watched 0.14-0.61) before and after the emblem; `menu()` the LOCK IN red. Emblem-stage numbers now go into the clip diagnostic. | **A HUD check that sits where streamers put their camera is not a check.** The card test had been measured on footage with no facecam and was right there; the first stranger with one made it silent. Every pixel test should say where it looks, and the next one should prefer the right half of the screen. Also: the combat report is shown after a trade too, so 'dead' has to be read before the event, not only after. |
 | 2026-10-08 | **CS2 card tally: T1, T2, T4 fixed** | Ground truth built for the outside user's match: **21 kills**, read off the card's printed count by eye and equal to the in-game scoreboard. Old code: blue, **0 of 21** -- his result, reproduced; shifting the start 2s turned its answer from pink to yellow (72). New code, end to end through `detect.scan` on the same 54 minutes: **hue 285, 20 of 21, 0 extra**, colour saved. Developer demos unchanged: **45/45, 0 extra**. Colour pick replayed at 20 phase offsets: developer 20/20, outside user 19/20 within 15 degrees. Harness kept: `scripts/cs2_hue_score.py`. Ships in **v1.43.0** with UI #14. | **The kill reader was never the problem on his HUD -- the colour was.** At the right colour every one of his 21 kills flashed and 20 were counted. Three things the old colour check could not tell from a tally, each found by measurement: the **main menu** (an agent's boots read as one steady card, and gave red more readings than the real colour on the developer's own 2h36m), **a team-mate's tally while spectating** (real, steady, in the team-mate's colour), and **noise from too few samples** on a HUD readable 4% of the time. Also measured and rejected: lowering `SAT_MIN` to 0.12 (no better), and lowering `EMBLEM_RISE` to catch his gold badge's weak whitening (adds 1-4 false kills on the developer demos; the count path already recovers them). |
 | 2026-10-06 | **UI #14** one breakpoint scale | Four media-query pairs (720, 760, 900 ×2, 980) had a `max-width:N` and a `min-width:N` that **both** apply at exactly N, so the page had no answer at its own boundary and file order picked one. All are now `max-width: N-1`; the scale is written beside the rules. 620/880/1100 deliberately left off it (each within 20px of a scale point) and named as debt. `tests/test_breakpoints.py`, 8 tests, proved against a planted regression. On `feat-ui-standalone`, unreleased. | **#15 was measured instead of done, and dropped** — see the Standalone section. A review's numbers are a claim about the build it looked at; measure before restructuring. |
 | 2026-10-06 | **v1.42.0** released | Developer Mode (off by default) and the **clip diagnostic**: one JSON per run with stages and timings, every process through `tools.py` with exit code and stderr tail, errors with tracebacks, system and GPU info, home paths redacted. The marker walks a **batch** of clips with an index, can cut a piece out and save it, and can run kill detection on all of them. The slow CS2 HUD reader (feed + scoreboard, 1.19–1.46x real time) is **developer-mode only**, refused server-side without it, and skipped by the release gate — tier 4 had been 93% that one test, 34 minutes. Window guard so test runs stop popping AutoStream on screen. | The general rule went into CLAUDE.md: **a reader slower than ~5x real time is a developer tool**. The diagnostic's first real use (the CS2 row above) showed its gap: modules that pipe ffmpeg themselves are invisible to it. |

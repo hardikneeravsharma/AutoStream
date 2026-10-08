@@ -1397,7 +1397,8 @@ class ClipJob:
         ordered = sorted(screen, key=lambda k: float(k["time"]))
         got, unclaimed = killmark.match([float(k["time"]) for k in ordered], marks)
         theirs = [j for j in unclaimed
-                  if killmark.spectating(self.source, marks[j], self.game, ff)]
+                  if killmark.menu(self.source, marks[j], self.game, ff)
+                  or killmark.spectating(self.source, marks[j], self.game, ff)]
         out = list(kept)
         for i, j in got.items():
             k = dict(ordered[i])
@@ -1411,11 +1412,18 @@ class ClipJob:
         out.sort(key=lambda k: k["time"])
         log.info("kill emblems: %d on screen, %d of %d kills confirmed and moved onto "
                  "them, %d dropped with no emblem, %d missed kills added, %d left out "
-                 "as a team-mate's seen while spectating", len(marks), len(got),
+                 "as a team-mate's seen while spectating or an agent-select ring", len(marks), len(got),
                  len(screen), len(screen) - len(got), len(added), len(theirs))
         self.emblem_note = {"emblems": len(marks), "confirmed": len(got),
                             "dropped": len(screen) - len(got), "added": len(added),
                             "spectating": len(theirs)}
+        # Into the diagnostic too. An outside user's Valorant report said 36
+        # kills found and then cut clips holding 60 between them, and nothing
+        # in it said where the other 24 came from -- these numbers were only
+        # in the app's log, which is not what gets sent back.
+        self.diag.note("emblem_check", dict(self.emblem_note,
+                                            kills_before=len(kills),
+                                            kills_after=len(out)))
         return out
 
     def _from_matches(self, kills: list[dict], prof) -> list[dict]:

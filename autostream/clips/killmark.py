@@ -65,11 +65,20 @@ class Spec:
     # (x0, x1, y0, y1), and the band just above it where the rule must NOT be.
     card: tuple[float, float, float, float] | None = None
     card_above: tuple[float, float] | None = None
+    # The combat report a dead player is shown, right of centre: the area read
+    # (x0, x1, y0, y1) and the x of its left and right borders -- see dead().
+    report: tuple[float, float, float, float] | None = None
+    report_edges: tuple[float, float] | None = None
+    # Agent select's LOCK IN button, under a countdown ring the emblem reader
+    # takes for an emblem: (x0, x1, y0, y1). See menu().
+    lock_in: tuple[float, float, float, float] | None = None
 
 
 SPECS = {
     "valorant": Spec(x0=0.455, x1=0.545, y0=0.705, y1=0.86,
-                     card=(0.008, 0.026, 0.735, 0.81), card_above=(0.64, 0.71)),
+                     card=(0.008, 0.026, 0.735, 0.81), card_above=(0.64, 0.71),
+                     report=(0.76, 1.0, 0.27, 0.72), report_edges=(0.787, 0.988),
+                     lock_in=(0.40, 0.60, 0.62, 0.75)),
 }
 
 REGION_WIDTH = 160
@@ -202,8 +211,128 @@ def card_rule(frame, spec: Spec) -> tuple[float, float]:
     return float(lit[r0:].mean()), float(lit[a0:a1].mean())
 
 
+# The combat report's borders, read at a fixed size whatever the recording's.
+REPORT_W, REPORT_H = 240, 260
+# Share of the report's rows both borders must light. MEASURED on two players'
+# footage, read before AND after every kill emblem (see dead()): own kills
+# 0.00-0.09, a team-mate's watched while dead 0.14-0.61.
+REPORT_ON = 0.12
+# Either side of an emblem's rise: before it, because a player traded out
+# right after a kill of their own is shown the report too -- but only once
+# they are dead -- and after it, so a moment's clutter is not a report.
+REPORT_AT = (-0.6, -0.2, 0.3, 0.9)
+
+
+def report_score(frame, spec: Spec) -> float:
+    """How much of BOTH of the combat report's borders is lit, for one frame.
+
+    `frame` is the REPORT_W x REPORT_H grey crop of spec.report. A border is a
+    column unlike the pixels three either side of it, down most of the panel,
+    at the same place every time -- scenery has edges too, but never a pair
+    of them at exactly these two columns.
+    """
+    import numpy as np
+
+    a = frame.astype(np.float32)
+    x0, x1 = spec.report[0], spec.report[1]
+    cols = [int(round((e - x0) / (x1 - x0) * REPORT_W)) for e in spec.report_edges]
+    lead = np.abs(a[:, 3:-3] - (a[:, :-6] + a[:, 6:]) / 2)
+    lit = (lead > 18).mean(axis=0)
+    # `lead` is three columns narrower on the left; look a few either side
+    return float(min(lit[max(0, c - 9):max(1, c - 1)].max() for c in cols))
+
+
+def dead(video: Path, at: float, game: str, ff: str = "ffmpeg") -> bool | None:
+    """Whether the combat report -- which only a dead player is shown -- was up
+    on both sides of an emblem rising at `at`. None if unknown.
+
+    WHY A SECOND TEST. spectating() reads the card the game draws bottom-left
+    while you watch a team-mate, and that is exactly where streamers put their
+    facecam. On an outside user's 50 minutes the facecam covered the card for
+    every one of the 13 team-mates' emblems he watched, the card test said
+    "not spectating" each time, and all 13 were added to his kills. The combat
+    report sits right of centre, where nobody puts a camera: it caught all 13
+    there, and on the developer's own recording, scored against Riot's
+    record, it lost none of 19 real kills -- including one where the player
+    killed and was killed a moment later, which is why it is read BEFORE the
+    emblem as well as after.
+    """
+    import numpy as np
+    from .killfeed import _NO_WINDOW
+
+    spec = spec_for(game)
+    if spec is None or spec.report is None:
+        return None
+    x0, x1, y0, y1 = spec.report
+    for d in REPORT_AT:
+        try:
+            raw = subprocess.run(
+                [ff, "-v", "error", "-ss", f"{max(0.0, at + d):.3f}", "-i", str(video),
+                 "-frames:v", "1", "-vf",
+                 f"crop=iw*{x1 - x0:.4f}:ih*{y1 - y0:.4f}:iw*{x0:.4f}:ih*{y0:.4f},"
+                 f"scale={REPORT_W}:{REPORT_H},format=gray", "-f", "rawvideo", "-"],
+                capture_output=True, timeout=60, creationflags=_NO_WINDOW).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if len(raw) < REPORT_W * REPORT_H:
+            return None
+        frame = np.frombuffer(raw[:REPORT_W * REPORT_H], np.uint8).reshape(REPORT_H, REPORT_W)
+        if report_score(frame, spec) < REPORT_ON:
+            return False                    # any look without it: not dead throughout
+    return True
+
+
+# Share of the LOCK IN area that is the button's red. MEASURED at every
+# emblem on two players' recordings: agent select 0.31, play at most 0.04.
+LOCK_IN_ON = 0.15
+
+
+def menu(video: Path, at: float, game: str, ff: str = "ffmpeg") -> bool | None:
+    """Whether an "emblem" at `at` is agent select's countdown ring. None if unknown.
+
+    The ring around the lock-in timer reads exactly like a kill emblem, and an
+    outside user's recording had 5 of them taken for kills -- one per agent
+    select. The red LOCK IN button sits right under it and nothing in play
+    is that red there. (After locking in the button is gone; that one still
+    gets through.)
+    """
+    import numpy as np
+    from .killfeed import _NO_WINDOW
+
+    spec = spec_for(game)
+    if spec is None or spec.lock_in is None:
+        return None
+    x0, x1, y0, y1 = spec.lock_in
+    try:
+        raw = subprocess.run(
+            [ff, "-v", "error", "-ss", f"{max(0.0, at + 0.3):.3f}", "-i", str(video),
+             "-frames:v", "1", "-vf",
+             f"crop=iw*{x1 - x0:.4f}:ih*{y1 - y0:.4f}:iw*{x0:.4f}:ih*{y0:.4f},scale=200:80",
+             "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+            capture_output=True, timeout=60, creationflags=_NO_WINDOW).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if len(raw) < 200 * 80 * 3:
+        return None
+    a = np.frombuffer(raw[:200 * 80 * 3], np.uint8).reshape(80, 200, 3).astype(np.int16)
+    red = (a[..., 0] > 180) & (a[..., 1] < 100) & (a[..., 2] < 110)
+    return float(red.mean()) >= LOCK_IN_ON
+
+
 def spectating(video: Path, at: float, game: str, ff: str = "ffmpeg") -> bool | None:
     """Whether the player was watching a team-mate when an emblem rose at `at`. None if unknown.
+
+    Either test is enough: the card bottom-left (below), or the combat report
+    on both sides of the emblem (see dead()). Each catches what the other
+    cannot -- a facecam over the card, a report hidden with [N].
+    """
+    if dead(video, at, game, ff):
+        return True
+    return _card_up(video, at, game, ff)
+
+
+def _card_up(video: Path, at: float, game: str, ff: str = "ffmpeg") -> bool | None:
+    """The spectator card's rule, bottom-left. None if unknown.
 
     A DEAD PLAYER SEES THEIR TEAM-MATES' EMBLEMS. Once the player dies the game
     shows the round through a team-mate's eyes, emblems included. Measured on a
