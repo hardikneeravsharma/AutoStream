@@ -659,6 +659,42 @@ STUDIO_HTML = r"""
   </div>
   </div>
 
+  <!-- CHOOSING AN EFFECT. A dialog and not a dropdown, because an effect is
+       something you watch: every card plays its two-second example, the one
+       under the pointer plays large beside the list, and a search box takes a
+       name or a code ("freeze", "K04"). A dropdown of "K04 · Freeze" lines, or
+       a wall of forty checkboxes, asked people to pick from names they had
+       never seen move. The inspector rebuilds its HTML on every edit, so the
+       players live here, where they stay put. -->
+  <div class="scrim hide" id="studio-fxp-scrim">
+  <div class="modal studio-fxp-modal" id="studio-fxp" role="dialog" aria-modal="true" aria-labelledby="studio-fxp-title">
+    <div class="studio-fxp-head">
+      <div>
+        <h2 class="modal-title" id="studio-fxp-title">Choose an effect</h2>
+        <p class="muted studio-small" id="studio-fxp-lede"></p>
+      </div>
+      <label class="sr-only" for="studio-fxp-q">Search by name or code</label>
+      <input class="input studio-fxp-q" id="studio-fxp-q" type="search" autocomplete="off"
+             placeholder="Search by name or code, e.g. freeze or K04">
+    </div>
+    <div class="studio-fxp-main">
+      <div class="studio-fxp-list" id="studio-fxp-list"></div>
+      <aside class="studio-fxp-prev" id="studio-fxp-prev" aria-live="polite">
+        <div class="studio-fxp-prevshot" id="studio-fxp-prevshot"></div>
+        <p class="studio-fxp-prevname"><strong id="studio-fxp-prevname"></strong>
+          <span class="bin-code" id="studio-fxp-prevcode"></span></p>
+        <p class="muted studio-small" id="studio-fxp-prevblurb"></p>
+      </aside>
+    </div>
+    <div class="modal-actions">
+      <span class="muted studio-fxp-count" id="studio-fxp-count" role="status" aria-live="polite"></span>
+      <button type="button" class="btn btn-ghost hide" data-act="studio-fxp-clear" id="studio-fxp-clear">Clear all</button>
+      <button type="button" class="btn btn-ghost" data-act="studio-fxp-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary hide" data-act="studio-fxp-done" id="studio-fxp-done">Done</button>
+    </div>
+  </div>
+  </div>
+
   <!-- DELETING A REEL. Its own dialog rather than the clips one: what goes and
        what stays are the opposite way round here, and that is the whole
        question being asked. -->
@@ -1086,6 +1122,7 @@ function studio_preview(id) {
 }
 
 function studio_closeModals() {
+  if (studio.fxp) studio_fxpClose();
   const v = studio_el('studio-preview-video');
   if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
   const a = studio_el('studio-mk-audio');
@@ -3459,24 +3496,284 @@ function studio_select(i) {
 
 /* ------------------------------------------------------------ inspector */
 
-function studio_select_html(id, kind, value, allowNone) {
-  return '<select class="select" id="' + id + '">' + studio_parts(kind).map(p =>
-    '<option value="' + esc(p.id) + '"' + (p.id === value ? ' selected' : '') + '>' + esc(p.id.toUpperCase() + ' · ' + p.label) + '</option>'
-  ).join('') + '</select>';
+/* ONE LINE PER CHOICE, AND A DIALOG TO MAKE IT. These used to be a dropdown
+   of "K04 · Freeze" lines and walls of forty checkboxes -- names nobody had
+   seen move. Now the inspector says what is chosen, and Change opens the
+   picker (studio_fxpOpen), where every option plays. The button carries the
+   old control's id, so its <label for> still names it. */
+function studio_partCode(id) { return String(id || '').toUpperCase(); }
+
+function studio_select_html(id, kind, value) {
+  const part = value ? studio_part(value) : null;
+  const name = part && part.id ? (part.label || part.id) : 'None';
+  return '<button type="button" class="studio-pick-btn" id="' + id + '" data-act="studio-fxp-open"' +
+    ' data-kind="' + esc(kind) + '" data-target="' + id + '" data-part="' + esc(value || '') + '"' +
+    ' aria-haspopup="dialog">' +
+    '<span class="bin-code">' + esc(studio_partCode(value)) + '</span>' +
+    '<span class="studio-pick-name truncate">' + esc(name) + '</span>' +
+    '<span class="studio-pick-go">Change…</span></button>';
+}
+
+/* Several at once -- a shot's kill effects, the overlays, the pools every shot
+   draws from. What is on shows as chips that can each be taken off; adding
+   or swapping is the picker's job. */
+function studio_multi_html(attr, name, kind, values, skip) {
+  const on = (values || []).filter(v => !(skip || []).includes(v));
+  const chips = on.map(v => {
+    const part = studio_part(v);
+    const label = (part && part.label) || v;
+    return '<span class="studio-pick-chip" data-part="' + esc(v) + '">' +
+      '<span class="bin-code">' + esc(studio_partCode(v)) + '</span>' +
+      '<span class="truncate">' + esc(label) + '</span>' +
+      '<button type="button" class="studio-pick-x" data-act="studio-fxp-drop" ' + attr + '="' + esc(name) + '"' +
+      ' data-kind="' + esc(kind) + '" data-part="' + esc(v) + '"' +
+      ' aria-label="Remove ' + esc(label) + '">×</button></span>';
+  }).join('');
+  return '<div class="studio-pick-multi" ' + attr + '-row="' + esc(name) + '">' +
+    (chips || '<span class="muted studio-small">None</span>') +
+    '<button type="button" class="btn btn-sm studio-pick-add" data-act="studio-fxp-open" ' + attr + '="' + esc(name) + '"' +
+    ' data-kind="' + esc(kind) + '" aria-haspopup="dialog">' + (on.length ? 'Add or change…' : 'Add…') + '</button></div>';
 }
 
 function studio_pool_html(kind, values) {
-  return '<div class="studio-checks">' + studio_parts(kind).filter(p => p.id !== 't01' || kind === 'transition').map(p =>
-    '<label class="studio-check-chip' + (values.indexOf(p.id) >= 0 ? ' is-on' : '') + '" title="' + esc(p.blurb) + '">' +
-    '<input type="checkbox" data-pool="' + kind + '" value="' + esc(p.id) + '"' + (values.indexOf(p.id) >= 0 ? ' checked' : '') + '> ' +
-    esc(p.label) + '</label>').join('') + '</div>';
+  return studio_multi_html('data-pool', kind, kind, values, kind === 'transition' ? [] : ['t01']);
 }
 
 function studio_checks_html(name, kind, values, skip) {
-  return '<div class="studio-checks">' + studio_parts(kind).filter(p => !(skip || []).includes(p.id)).map(p =>
-    '<label class="studio-check-chip' + (values.indexOf(p.id) >= 0 ? ' is-on' : '') + '" title="' + esc(p.blurb) + '">' +
-    '<input type="checkbox" data-list="' + name + '" value="' + esc(p.id) + '"' + (values.indexOf(p.id) >= 0 ? ' checked' : '') + '> ' +
-    esc(p.label) + '</label>').join('') + '</div>';
+  return studio_multi_html('data-list', name, kind, values, skip);
+}
+
+/* ------------------------------------------------------------ the picker */
+
+const FXP_RECENT_KEY = 'autostream.fxRecent';
+const FXP_RECENT_MAX = 8;
+const FXP_TITLES = {intro: 'an opening', outro: 'an ending', transition: 'a transition', kill: 'kill effects',
+  hero: 'hero effects', camera: 'a camera move', speed: 'a speed', grade: 'a colour', overlay: 'overlays'};
+
+/* Recently used, per kind, kept in this browser only: a convenience, never
+   the record of anything -- the reel itself is the record. */
+function studio_fxpRecent(kind) {
+  try {
+    const all = JSON.parse(localStorage.getItem(FXP_RECENT_KEY) || '{}');
+    return (all[kind] || []).filter(id => studio_part(id).id);
+  } catch (e) { return []; }
+}
+
+function studio_fxpRemember(kind, ids) {
+  try {
+    const all = JSON.parse(localStorage.getItem(FXP_RECENT_KEY) || '{}');
+    const was = (all[kind] || []).filter(x => ids.indexOf(x) < 0);
+    all[kind] = ids.concat(was).slice(0, FXP_RECENT_MAX);
+    localStorage.setItem(FXP_RECENT_KEY, JSON.stringify(all));
+  } catch (e) { /* private window, blocked storage: recents simply stay empty */ }
+}
+
+/* What a list or pool holds right now, straight from the reel. */
+function studio_fxpCurrent(st) {
+  const p = studio.project;
+  if (!p) return [];
+  if (st.pool) return ((p.pools || {})[st.pool] || []).slice();
+  if (st.list === 'overlays') return (p.overlays || []).filter(o => o !== 'o07');
+  if (st.list && studio.sel >= 0 && p.shots[studio.sel]) return (p.shots[studio.sel][st.list] || []).slice();
+  return [];
+}
+
+function studio_fxpOpen(b) {
+  const st = {
+    kind: b.getAttribute('data-kind'), target: b.getAttribute('data-target') || '',
+    list: b.getAttribute('data-list') || '', pool: b.getAttribute('data-pool') || '', q: '',
+    opener: b.id || '', openerKey: b.getAttribute('data-list') || b.getAttribute('data-pool') || ''
+  };
+  st.multi = !!(st.list || st.pool);
+  st.sel = st.multi ? studio_fxpCurrent(st) : [b.getAttribute('data-part') || ''];
+  st.was = st.sel.slice();
+  studio.fxp = st;
+  studio_el('studio-fxp-title').textContent = 'Choose ' + (FXP_TITLES[st.kind] || 'an effect');
+  studio_el('studio-fxp-lede').textContent = st.multi
+    ? 'Click as many as you like, then press Done. Point at one to see it large.'
+    : 'Point at one to see it large, click it to use it.';
+  studio_el('studio-fxp-q').value = '';
+  studio_show('studio-fxp-done', st.multi);
+  studio_show('studio-fxp-clear', st.multi && !st.pool);
+  studio_show('studio-fxp-scrim', true);
+  studio_el('studio-fxp-prev').classList.add('is-empty');
+  if (!studio.examples && !studio.exLoading) {
+    studio.exLoading = true;
+    studio_binLoad(false).then(() => {
+      studio.exLoading = false;
+      if (studio.fxp) { const was = studio.fxp.shown; studio.fxp.shown = ''; studio_fxpDraw(); if (was) studio_fxpPreview(was); }
+    });
+  }
+  studio_fxpDraw();
+  const first = st.sel[0] || studio_fxpRecent(st.kind)[0] || (studio_parts(st.kind)[0] || {}).id;
+  if (first) studio_fxpPreview(first);
+  setTimeout(() => { const q = studio_el('studio-fxp-q'); if (q) q.focus(); }, 0);
+}
+
+function studio_fxpMatches(part, q) {
+  if (!q) return true;
+  const hay = (part.id + ' ' + (part.label || '') + ' ' + (part.blurb || '')).toLowerCase();
+  return q.split(/\s+/).every(w => hay.indexOf(w) >= 0);
+}
+
+function studio_fxpCard(part) {
+  const st = studio.fxp, on = st.sel.indexOf(part.id) >= 0;
+  return '<button type="button" class="bin-card studio-fxp-card' + (on ? ' is-on' : '') + '" role="option"' +
+    ' data-act="studio-fxp-pick" data-part="' + esc(part.id) + '" aria-selected="' + on + '">' +
+    studio_binShot(part.id) +
+    (on ? '<span class="studio-fxp-tick" aria-hidden="true">✓</span>' : '') +
+    '<span class="bin-meat"><span class="bin-name">' + esc(part.label || part.id) + '</span>' +
+    '<span class="bin-blurb">' + esc(part.blurb || '') + '</span></span></button>';
+}
+
+function studio_fxpSkip(st) {
+  if (st.list === 'overlays') return ['o07'];
+  if (st.pool && st.pool !== 'transition') return ['t01'];
+  return [];
+}
+
+function studio_fxpDraw() {
+  const st = studio.fxp;
+  const host = studio_el('studio-fxp-list');
+  if (!st || !host) return;
+  const top = host.scrollTop;
+  const q = (studio_el('studio-fxp-q').value || '').trim().toLowerCase();
+  st.q = q;
+  const skip = studio_fxpSkip(st);
+  const all = studio_parts(st.kind).filter(part => skip.indexOf(part.id) < 0);
+  const hits = all.filter(part => studio_fxpMatches(part, q));
+  const recent = q ? [] : studio_fxpRecent(st.kind).filter(id => skip.indexOf(id) < 0).map(id => studio_part(id));
+  const multi = st.multi ? 'true' : 'false';
+  let h = '';
+  if (recent.length) {
+    h += '<h3 class="studio-fxp-sec">Recently used</h3>' +
+      '<div class="bin-grid studio-fxp-grid" role="listbox" aria-label="Recently used" aria-multiselectable="' + multi + '">' +
+      recent.map(studio_fxpCard).join('') + '</div>';
+  }
+  h += '<h3 class="studio-fxp-sec">' + (q ? hits.length + ' found' : 'All ' + all.length) + '</h3>';
+  h += hits.length
+    ? '<div class="bin-grid studio-fxp-grid" role="listbox" aria-label="' + (q ? 'Search results' : 'Every option') + '"' +
+      ' aria-multiselectable="' + multi + '">' + hits.map(studio_fxpCard).join('') + '</div>'
+    : '<p class="muted studio-fxp-none">Nothing matches “' + esc(q) + '”. Try a shorter word, or a code like K04.</p>';
+  host.innerHTML = h;
+  host.scrollTop = top;
+  studio_el('studio-fxp-count').textContent = st.multi
+    ? (st.sel.length ? st.sel.length + ' chosen' : 'None chosen') : '';
+  studio_binWatch();
+}
+
+/* THE ONE UNDER THE POINTER, LARGE. Its own player beside the list, so the
+   cards can stay small and still be judged properly. */
+function studio_fxpPreview(id) {
+  const part = studio_part(id);
+  if (!part || !part.id || !studio.fxp) return;
+  if (studio.fxp.shown === id) return;
+  studio.fxp.shown = id;
+  const box = studio_el('studio-fxp-prev');
+  box.classList.remove('is-empty');
+  studio_el('studio-fxp-prevshot').innerHTML = studio_binShot(id);
+  studio_el('studio-fxp-prevname').textContent = part.label || id;
+  studio_el('studio-fxp-prevcode').textContent = studio_partCode(id);
+  studio_el('studio-fxp-prevblurb').textContent = part.blurb || '';
+  const v = box.querySelector('video');
+  if (v) { v.preload = 'auto'; v.play().catch(() => {}); }
+}
+
+function studio_fxpHover(e) {
+  const t = e.target;
+  if (!studio.fxp || !t || !t.closest) return;
+  const card = t.closest('#studio-fxp .studio-fxp-card');
+  if (card) studio_fxpPreview(card.getAttribute('data-part'));
+}
+
+function studio_fxpPick(id) {
+  const st = studio.fxp;
+  if (!st) return;
+  if (!st.multi) {
+    studio_fxpClose();
+    studio_fxpRemember(st.kind, [id]);
+    if (id !== st.was[0]) studio_inspectorSet(st.target, id);
+    return;
+  }
+  const at = st.sel.indexOf(id);
+  if (at >= 0) st.sel.splice(at, 1); else st.sel.push(id);
+  studio_fxpDraw();
+}
+
+function studio_fxpDone() {
+  const st = studio.fxp;
+  if (!st) return;
+  if (st.pool && !st.sel.length) { toast('Keep at least one to choose from.', 'warn'); return; }
+  studio_fxpClose();
+  const added = st.sel.filter(id => st.was.indexOf(id) < 0);
+  if (added.length) studio_fxpRemember(st.kind, added);
+  const same = st.sel.length === st.was.length && st.sel.every(id => st.was.indexOf(id) >= 0);
+  if (same) return;
+  if (st.pool) studio_setPool(st.pool, st.sel.slice());
+  else studio_setList(st.list, st.sel.slice());
+}
+
+function studio_fxpClose() {
+  const st = studio.fxp;
+  studio_show('studio-fxp-scrim', false);
+  document.querySelectorAll('#studio-fxp video').forEach(v => v.pause());
+  studio.fxp = null;
+  /* Focus goes back where it came from, so a keyboard user is not dropped at
+     the top of the page. The inspector may have been rebuilt meanwhile. */
+  if (!st) return;
+  const refocus = () => {
+    const sel = st.opener ? null : '#studio-insp [data-act="studio-fxp-open"][data-' + (st.pool ? 'pool' : 'list') +
+      '="' + st.openerKey + '"]';
+    const back = st.opener ? studio_el(st.opener) : document.querySelector(sel);
+    if (back) back.focus();
+  };
+  refocus();
+  setTimeout(refocus, 0);           /* again, after an edit has rebuilt the inspector */
+}
+
+function studio_fxpDrop(b) {
+  const id = b.getAttribute('data-part');
+  const pool = b.getAttribute('data-pool') || '', list = b.getAttribute('data-list') || '';
+  const vals = studio_fxpCurrent({pool: pool, list: list}).filter(x => x !== id);
+  if (pool) {
+    if (!vals.length) { toast('Keep at least one to choose from.', 'warn'); return; }
+    studio_setPool(pool, vals);
+  } else studio_setList(list, vals);
+}
+
+/* An edit made from the picker goes through exactly the path the old control
+   took, so its name in the "not rendered yet" list and its undo are unchanged. */
+function studio_inspectorSet(id, value) {
+  studio_inspectorInput({target: {id: id, value: value, checked: false,
+                                  closest: () => true, getAttribute: () => null}});
+}
+
+function studio_setPool(pool, vals) {
+  studio_change(pr => { pr.pools = Object.assign({}, pr.pools || {}); pr.pools[pool] = vals; },
+                'The ' + pool + ' effects to choose from');
+  studio_mix(pool, false);
+}
+
+function studio_setList(list, vals) {
+  const i = studio.sel;
+  /* The handle has its own switch, so its overlay is not in this list and
+     must survive the list being rewritten. */
+  studio_change(pr => {
+    if (list === 'overlays') pr.overlays = vals.concat((pr.overlays || []).includes('o07') ? ['o07'] : []);
+    else pr.shots[i][list] = vals;
+  }, list === 'overlays' ? 'Overlays' : studio_shotName(i) + ' · effects', list === 'overlays' ? -1 : i);
+}
+
+function studio_fxpKey(e) {
+  if (!studio.fxp) return false;
+  if (e.key === 'Escape') { e.preventDefault(); studio_fxpClose(); return true; }
+  if (e.key === 'Enter' && e.target && e.target.id === 'studio-fxp-q') {
+    e.preventDefault();
+    const first = document.querySelector('#studio-fxp-list .studio-fxp-card');
+    if (first) studio_fxpPick(first.getAttribute('data-part'));
+    return true;
+  }
+  return false;
 }
 
 /* The inspector is rebuilt from the project on every edit, and a rebuilt
@@ -3670,28 +3967,9 @@ function studio_inspectorInput(e) {
   if (!t || !studio.project || !t.closest || !t.closest('#studio-insp')) return;
   const i = studio.sel, p = studio.project;
   const s = i >= 0 ? p.shots[i] : null;
-  const pool = t.getAttribute('data-pool');
-  if (pool) {
-    const vals = Array.prototype.slice.call(studio_el('studio-insp').querySelectorAll('input[data-pool="' + pool + '"]:checked')).map(x => x.value);
-    if (!vals.length) { t.checked = true; toast('Keep at least one to choose from.', 'warn'); return; }
-    studio_change(pr => { pr.pools = Object.assign({}, pr.pools || {}); pr.pools[pool] = vals; },
-                  'The ' + pool + ' effects to choose from');
-    studio_mix(pool, false);
-    return;
-  }
-  const list = t.getAttribute('data-list');
-  if (list) {
-    const vals = Array.prototype.slice.call(studio_el('studio-insp').querySelectorAll('input[data-list="' + list + '"]:checked')).map(x => x.value);
-    /* The handle has its own switch, so its overlay is not in this list and
-       must survive the list being rewritten. */
-    studio_change(pr => {
-      if (list === 'overlays') pr.overlays = vals.concat((pr.overlays || []).includes('o07') ? ['o07'] : []);
-      else pr.shots[i][list] = vals;
-    },
-                  list === 'overlays' ? 'Overlays' : studio_shotName(i) + ' · effects', list === 'overlays' ? -1 : i);
-    return;
-  }
-  /* Each edit names itself for the card's list of what is not rendered yet. */
+  /* Lists and pools are edited in the picker now -- studio_setList and
+     studio_setPool. Each edit names itself for the card's list of what is not
+     rendered yet. */
   const map = {
     'studio-f-kill': () => studio_change(pr => { pr.shots[i].kill = Number(t.value); }, studio_shotName(i) + ' · where the kill is', i),
     'studio-f-speed': () => studio_change(pr => { pr.shots[i].speed = t.value; delete pr.shots[i].stretch; }, studio_shotName(i) + ' · speed', i),
@@ -3860,23 +4138,17 @@ function studio_fxPreview(id) {
   box.classList.remove('hide');
   const v = box.querySelector('video');
   if (v) { v.preload = 'auto'; v.play().catch(() => {}); }
-  document.querySelectorAll('#studio-insp .studio-check-chip.is-previewing').forEach(x => x.classList.remove('is-previewing'));
 }
 
 function studio_fxHover(e) {
   const t = e.target;
   if (!t || !t.closest) return;
-  const chip = t.closest('#studio-insp .studio-check-chip');
-  if (chip) {
-    const inp = chip.querySelector('input');
-    if (inp) { studio_fxPreview(inp.value); chip.classList.add('is-previewing'); }
-    return;
-  }
   /* The effect and transition marks on the tracks show theirs too. */
   const mark = t.closest('#studio-tracks [data-part]');
   if (mark) { studio_fxPreview(mark.getAttribute('data-part')); return; }
-  const sel = t.closest('#studio-insp select');
-  if (sel && /^studio-(f|r)-(speed|trans|camera|grade|intro|outro)$/.test(sel.id)) studio_fxPreview(sel.value);
+  /* The inspector's choices -- one line per pick, a chip per effect on. */
+  const pick = t.closest('#studio-insp .studio-pick-btn[data-part], #studio-insp .studio-pick-chip[data-part]');
+  if (pick && pick.getAttribute('data-part')) studio_fxPreview(pick.getAttribute('data-part'));
 }
 
 /* THE FRAME OVER THE PLAYER: where the handle will be, dragged into place.
@@ -4874,6 +5146,12 @@ function studio_wire() {
     else if (act === 'studio-imp-close') studio_impClose(false);
     else if (act === 'studio-restyle' && p) studio_restyle();
     else if (act === 'studio-mix' && p) studio_mix(b.getAttribute('data-what'), true);
+    else if (act === 'studio-fxp-open' && p) studio_fxpOpen(b);
+    else if (act === 'studio-fxp-pick') studio_fxpPick(b.getAttribute('data-part'));
+    else if (act === 'studio-fxp-done') studio_fxpDone();
+    else if (act === 'studio-fxp-cancel') studio_fxpClose();
+    else if (act === 'studio-fxp-clear' && studio.fxp) { studio.fxp.sel = []; studio_fxpDraw(); }
+    else if (act === 'studio-fxp-drop' && p) studio_fxpDrop(b);
     else if (act === 'studio-fx-all' && p && studio.sel >= 0) {
       const fx = p.shots[studio.sel].fx.slice();
       studio_change(pr => { pr.shots.forEach(s => { s.fx = fx.slice(); }); }, 'The same kill effect on every shot');
@@ -4912,7 +5190,10 @@ function studio_wire() {
   }, true);
   document.addEventListener('mouseover', studio_fxHover);
   document.addEventListener('focusin', studio_fxHover);
-  document.addEventListener('change', e => { if (e.target && e.target.closest && e.target.closest('#studio-insp select')) { studio.fxShown = ''; studio_fxHover(e); } });
+  document.addEventListener('mouseover', studio_fxpHover);
+  document.addEventListener('focusin', studio_fxpHover);
+  const fq = studio_el('studio-fxp-q');
+  if (fq) fq.addEventListener('input', studio_fxpDraw);
   ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(ev => {
     const chip = studio_el('studio-handle-chip');
     if (chip) chip.addEventListener(ev, studio_handlePointer);
@@ -5039,13 +5320,14 @@ function studio_wire() {
     });
     v.addEventListener('pause', () => { studio_el('studio-play-btn').textContent = 'Play'; });
   }
-  ['studio-make-scrim', 'studio-preview-scrim'].forEach(id => {
+  ['studio-make-scrim', 'studio-preview-scrim', 'studio-fxp-scrim'].forEach(id => {
     const sc = studio_el(id);
     if (sc) sc.addEventListener('click', e => { if (e.target === sc) studio_closeModals(); });
   });
   document.addEventListener('keydown', e => {
     if (shell_page !== 'studio') return;
     if (studio_impKey(e)) return;
+    if (studio_fxpKey(e)) return;
     if (e.key === 'Escape') { studio_closeModals(); return; }
     const tag = (e.target.tagName || '').toUpperCase();
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;

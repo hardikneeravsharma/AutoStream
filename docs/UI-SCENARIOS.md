@@ -165,7 +165,7 @@ listed so the gap is visible.
 
 # 6 · Studio — 121 controls
 
-`test_ui_playwright.py` covers the two big flows.
+`test_ui_playwright.py` covers the two big flows and the effect picker.
 
 | # | Scenario | Must be true | Covered |
 |---|---|---|---|
@@ -177,6 +177,7 @@ listed so the gap is visible.
 | 6.6 | Song tab: drag the part | Snaps to a beat | **gap** |
 | 6.7 | Facecam: draw a box, keep it | Box persists across reels | **gap** |
 | 6.8 | Every drawer of the parts bin deals | No dead drawer | sweep |
+| 6.9 | The effect picker: search by name and by code, preview follows the pointer, Esc closes and returns focus, a click applies undoably, recently used comes first, several at once with Done, a chip's × takes one off | The project changes exactly as chosen | yes |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.

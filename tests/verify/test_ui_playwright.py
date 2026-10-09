@@ -346,7 +346,7 @@ def test_a_reel_is_made_edited_and_rendered_again_in_the_studio(ui, app):
     rendered("first render")
     assert page.locator(".st-shot").count() == 2
     page.locator(".st-shot").nth(1).click()
-    page.locator('#studio-insp input[data-list="fx"][value="k06"]').check()
+    _fxp_set(page, '#studio-insp [data-act="studio-fxp-open"][data-list="fx"]', ["k06"])
     # "Apply 1 change" since the render strip was reworded in v1.33.0; this
     # waited for the old "Render changes" and timed out on every run since.
     page.wait_for_function("/^Apply/.test(document.getElementById('studio-render-btn').textContent)")
@@ -357,6 +357,90 @@ def test_a_reel_is_made_edited_and_rendered_again_in_the_studio(ui, app):
     project = json.loads(Path(saved["project"]).read_text(encoding="utf-8"))
     assert "k06" in project["shots"][1]["fx"], "the edit on the timeline never reached the render"
     ui.clean("making and editing a reel")
+
+
+def _fxp_set(page, opener: str, want: list[str], *, exact: bool = False) -> None:
+    """Choose effects the way a person does since the picker replaced the
+    checkbox walls: open it, find each by its code in the search box, click
+    it, press Done. `exact` also takes off whatever else was on."""
+    page.click(opener)
+    page.wait_for_selector("#studio-fxp-scrim:not(.hide)")
+    sel = page.evaluate("studio.fxp.sel.slice()")
+    toggle = [w for w in want if w not in sel] + ([x for x in sel if x not in want] if exact else [])
+    for pid in toggle:
+        page.fill("#studio-fxp-q", pid)
+        page.locator(f'#studio-fxp-list .studio-fxp-card[data-part="{pid}"]').first.click()
+    page.click("#studio-fxp-done")
+    page.wait_for_selector("#studio-fxp-scrim", state="hidden")
+
+
+def test_the_effect_picker_searches_previews_remembers_and_applies(ui, app):
+    """U1. Every effect choice on the timeline opens one dialog: search by
+    name or by code, a preview of whichever option the pointer is on, the
+    ones used recently first, and the choice applied through the same path
+    the old dropdowns took -- so it is undoable and named in the list of
+    what is not rendered yet."""
+    _studio_run(app, "2026-09-14_1200_VALORANT", 3)
+    page = ui.page
+    _studio_build(page, "12:00", 2, "story", "Picker check")
+    # Building starts a render; let it finish, or the next test's build finds
+    # the studio busy and never gets a job of its own.
+    _studio_rendered(page, "first render")
+    page.locator(".st-shot").nth(1).click()
+    page.evaluate("localStorage.removeItem('autostream.fxRecent')")
+
+    # --- one choice: the speed. Search by NAME, then by CODE.
+    page.click("#studio-f-speed")
+    page.wait_for_selector("#studio-fxp-scrim:not(.hide)")
+    assert page.evaluate("document.activeElement.id") == "studio-fxp-q", "search is not focused"
+    parts = page.evaluate("studio_parts('speed').map(p => [p.id, p.label])")
+    assert len(parts) >= 2
+    current = page.evaluate("studio.project.shots[1].speed")
+    pid, label = next((i, l) for i, l in parts if i != current)
+    page.fill("#studio-fxp-q", label.split()[0].lower())
+    assert page.locator(f'#studio-fxp-list .studio-fxp-card[data-part="{pid}"]').count() >= 1,         f"searching {label!r} by name did not find {pid}"
+    page.fill("#studio-fxp-q", pid.upper())
+    cards = page.locator("#studio-fxp-list .studio-fxp-card")
+    assert cards.count() >= 1 and cards.first.get_attribute("data-part") == pid,         f"searching the code {pid.upper()} did not put {pid} first"
+    page.fill("#studio-fxp-q", "zzqq-nothing")
+    assert "Nothing matches" in page.inner_text("#studio-fxp-list")
+
+    # --- the preview follows the pointer
+    page.fill("#studio-fxp-q", "")
+    other = page.locator(f'#studio-fxp-list .studio-fxp-card[data-part="{pid}"]').first
+    other.hover()
+    page.wait_for_function("(id) => document.getElementById('studio-fxp-prevcode').textContent === id.toUpperCase()",
+                           arg=pid)
+
+    # --- Escape closes without changing anything, and focus comes back
+    page.keyboard.press("Escape")
+    page.wait_for_selector("#studio-fxp-scrim", state="hidden")
+    assert page.evaluate("studio.project.shots[1].speed") == current
+    assert page.evaluate("document.activeElement.id") == "studio-f-speed"
+
+    # --- a click applies it, undoably, and it is remembered
+    page.click("#studio-f-speed")
+    page.wait_for_selector("#studio-fxp-scrim:not(.hide)")
+    page.fill("#studio-fxp-q", pid)
+    page.locator(f'#studio-fxp-list .studio-fxp-card[data-part="{pid}"]').first.click()
+    page.wait_for_selector("#studio-fxp-scrim", state="hidden")
+    page.wait_for_function("(id) => studio.project.shots[1].speed === id", arg=pid)
+    assert page.locator("#studio-f-speed").get_attribute("data-part") == pid
+    page.click("#studio-f-speed")
+    page.wait_for_selector("#studio-fxp-scrim:not(.hide)")
+    assert "recently used" in page.inner_text("#studio-fxp-list").lower()
+    page.keyboard.press("Escape")
+    page.click("#studio-undo-btn")
+    page.wait_for_function("(id) => studio.project.shots[1].speed === id", arg=current)
+
+    # --- several at once: kill effects, then one taken off by its chip
+    before = page.evaluate("studio.project.shots[1].fx.slice()")
+    add = next(i for i in page.evaluate("studio_parts('kill').map(p => p.id)") if i not in before)
+    _fxp_set(page, '#studio-insp [data-act="studio-fxp-open"][data-list="fx"]', [add])
+    page.wait_for_function("(id) => studio.project.shots[1].fx.indexOf(id) >= 0", arg=add)
+    page.click(f'#studio-insp .studio-pick-x[data-list="fx"][data-part="{add}"]')
+    page.wait_for_function("(id) => studio.project.shots[1].fx.indexOf(id) < 0", arg=add)
+    ui.clean("the effect picker")
 
 
 def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp_path):
@@ -402,15 +486,7 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     page.click('[data-act="studio-mix"][data-what="transition"]')
     page.wait_for_function("(b) => studio.project.shots.map(s => s.transition).join() !== b",
                            arg=before, timeout=15_000)
-    for v in page.evaluate("[...document.querySelectorAll('#studio-insp input[data-pool=\"kill\"]:checked')].map(x => x.value)"):
-        if v not in ("k02", "k06"):
-            page.locator(f'#studio-insp input[data-pool="kill"][value="{v}"]').uncheck()
-            page.wait_for_timeout(250)
-    for v in ("k02", "k06"):
-        box = page.locator(f'#studio-insp input[data-pool="kill"][value="{v}"]')
-        if not box.is_checked():
-            box.check()
-            page.wait_for_timeout(250)
+    _fxp_set(page, '#studio-insp [data-act="studio-fxp-open"][data-pool="kill"]', ["k02", "k06"], exact=True)
     page.wait_for_function(
         "studio.project.shots.every(s => s.fx.every(k => k === 'k02' || k === 'k06'))", timeout=15_000)
 
@@ -423,7 +499,7 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
 
     # --- one shot's effects, then onto every shot
     page.locator(".st-shot").nth(1).click()
-    page.locator('#studio-insp input[data-list="fx"][value="k03"]').check()
+    _fxp_set(page, '#studio-insp [data-act="studio-fxp-open"][data-list="fx"]', ["k03"])
     page.wait_for_function("studio.project.shots[1].fx.indexOf('k03') >= 0", timeout=15_000)
     page.click('[data-act="studio-fx-all"]')
     page.wait_for_function(
