@@ -92,21 +92,25 @@ def probe(path: Path) -> dict:
             "dur": float(d["format"]["duration"])}
 
 
-def fetch(src: str, folder: Path) -> Path:
-    """A local file as given, or a URL fetched with yt-dlp at 720p or less."""
+def fetch(src: str, folder: Path, cookies: Path | None = None) -> Path:
+    """A local file as given, or a URL fetched with yt-dlp at 720p or less.
+
+    `cookies` is a Netscape cookies.txt, for a machine YouTube asks to sign in.
+    """
     p = Path(src)
     if p.exists():
         return p
     folder.mkdir(parents=True, exist_ok=True)
     tmpl = str(folder / "%(id)s.%(ext)s")
-    subprocess.run(["yt-dlp", "--no-playlist", "-f",
-                    "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720]/b",
-                    "--merge-output-format", "mp4", "-o", tmpl, src],
-                   check=True, creationflags=NO_WINDOW)
-    vid = subprocess.run(["yt-dlp", "--no-playlist", "--print", "id", src],
-                         capture_output=True, text=True, check=True,
-                         creationflags=NO_WINDOW).stdout.strip()
-    return folder / f"{vid}.mp4"
+    args = ["yt-dlp", "--no-playlist", "--no-progress", "-f",
+            "bv*[height<=720][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720]/b",
+            "--merge-output-format", "mp4", "-o", tmpl,
+            "--print", "after_move:filepath"]
+    if cookies:
+        args += ["--cookies", str(cookies)]
+    got = subprocess.run([*args, src], capture_output=True, text=True, check=True,
+                         creationflags=NO_WINDOW).stdout.strip().splitlines()
+    return Path(got[-1])
 
 
 # ------------------------------------------------------------------ the video
@@ -243,8 +247,8 @@ def halves(beats: list[float]) -> list[float]:
     return sorted(beats + mids)
 
 
-def analyse(src: str, game: str, folder: Path) -> dict:
-    path = fetch(src, folder / "media")
+def analyse(src: str, game: str, folder: Path, cookies: Path | None = None) -> dict:
+    path = fetch(src, folder / "media", cookies)
     info = probe(path)
     m = music(path, folder / "media")
     cuts, flashes = cuts_and_flashes(small_frames(path))
@@ -277,6 +281,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("items", nargs="+", help="URL_OR_FILE:game  (game: valorant | cs2)")
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--cookies", type=Path, help="cookies.txt for yt-dlp, if YouTube asks to sign in")
     args = ap.parse_args(argv)
     args.out.mkdir(parents=True, exist_ok=True)
     every = []
@@ -285,7 +290,7 @@ def main(argv=None) -> int:
         if game not in ("valorant", "cs2"):
             src, game = item, "valorant"
         try:
-            res = analyse(src, game, args.out)
+            res = analyse(src, game, args.out, args.cookies)
         except (subprocess.CalledProcessError, RuntimeError, OSError) as e:
             print(f"[skip] {src}: {e}")
             every.append({"source": src, "game": game, "error": str(e)})
