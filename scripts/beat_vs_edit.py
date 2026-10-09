@@ -107,7 +107,9 @@ def fetch(src: str, folder: Path, cookies: Path | None = None) -> Path:
             "--merge-output-format", "mp4", "-o", tmpl,
             "--print", "after_move:filepath"]
     if cookies:
-        args += ["--cookies", str(cookies)]
+        # A signed-in fetch also has YouTube's player challenges to answer,
+        # and yt-dlp only reaches for deno unless told otherwise.
+        args += ["--cookies", str(cookies), "--js-runtimes", "node"]
     got = subprocess.run([*args, src], capture_output=True, text=True, check=True,
                          creationflags=NO_WINDOW).stdout.strip().splitlines()
     return Path(got[-1])
