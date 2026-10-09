@@ -3843,10 +3843,51 @@ STUDIO_CSS = r"""
 .studio-insp-head{display:flex;justify-content:space-between;align-items:center;gap:var(--space-3)}
 .studio-field{display:flex;flex-direction:column;gap:6px}
 .studio-nudge{gap:4px}
-.studio-checks{display:flex;flex-wrap:wrap;gap:6px}
-.studio-check-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:var(--radius-sm);
-  border:var(--border-hair) solid var(--border-subtle);font-size:12.5px;color:var(--text-secondary);cursor:pointer}
-.studio-check-chip.is-on{border-color:var(--accent);color:var(--text-primary)}
+/* The inspector's choices: one line per pick, a chip per effect that is on.
+   Making a choice is the picker's job (.studio-fxp-*), where every option plays. */
+.studio-pick-btn{display:flex;align-items:center;gap:var(--space-2);width:100%;min-height:36px;
+  padding:var(--space-2) var(--space-3);border-radius:var(--radius-sm);cursor:pointer;font:inherit;text-align:left;
+  background:var(--surface-sunken);color:var(--text-primary);border:var(--border-hair) solid var(--border-subtle)}
+.studio-pick-btn:hover{border-color:var(--border-strong)}
+.studio-pick-btn:focus-visible,.studio-pick-x:focus-visible,.studio-fxp-card:focus-visible{
+  outline:2px solid var(--accent);outline-offset:2px}
+.studio-pick-name{flex:1;min-width:0;font-size:13px}
+.studio-pick-go{font-size:12px;color:var(--accent-text);flex:none}
+.studio-pick-multi{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2)}
+.studio-pick-chip{display:inline-flex;align-items:center;gap:var(--space-1);max-width:100%;
+  padding:var(--space-1) var(--space-1) var(--space-1) var(--space-2);border-radius:var(--radius-sm);font-size:12.5px;
+  color:var(--text-primary);background:var(--surface-sunken);border:var(--border-hair) solid var(--border-subtle)}
+.studio-pick-x{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;
+  border:0;border-radius:var(--radius-sm);background:transparent;color:var(--text-tertiary);cursor:pointer;font:inherit}
+.studio-pick-x:hover{color:var(--text-primary);background:var(--surface)}
+
+/* The picker. Wide, because its point is that you watch the options: a grid
+   of playing cards, and the one under the pointer large beside it. */
+.studio-fxp-modal{width:min(1120px,100%);max-height:min(86vh,900px);gap:var(--space-4)}
+.studio-fxp-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:var(--space-4)}
+.studio-fxp-head .modal-title{margin:0}
+.studio-fxp-q{width:min(360px,100%)}
+.studio-fxp-main{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:var(--space-6);min-height:0;flex:1}
+.studio-fxp-list{overflow:auto;min-height:240px;padding-right:var(--space-1)}
+.studio-fxp-grid{grid-template-columns:repeat(auto-fill,minmax(176px,1fr));gap:var(--space-3)}
+.studio-fxp-sec{margin:var(--space-2) 0 var(--space-3);font-size:12px;font-weight:600;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--text-tertiary)}
+.studio-fxp-sec:first-child{margin-top:0}
+.studio-fxp-card{position:relative}
+.studio-fxp-card .bin-blurb{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.studio-fxp-tick{position:absolute;right:var(--space-2);top:var(--space-2);display:flex;align-items:center;
+  justify-content:center;width:24px;height:24px;border-radius:999px;font-size:13px;font-weight:700;
+  background:var(--accent);color:var(--text-on-accent)}
+.studio-fxp-none{margin:var(--space-4) 0}
+.studio-fxp-prev{display:flex;flex-direction:column;gap:var(--space-2);align-self:start;position:sticky;top:0}
+.studio-fxp-prev.is-empty{visibility:hidden}
+.studio-fxp-prevshot .bin-shot{border-radius:var(--radius-md);border:var(--border-hair) solid var(--border-subtle)}
+.studio-fxp-prevname{margin:0;display:flex;align-items:baseline;gap:var(--space-2);color:var(--text-primary)}
+.studio-fxp-count{margin-right:auto}
+@media (max-width:759px){
+  .studio-fxp-main{grid-template-columns:minmax(0,1fr)}
+  .studio-fxp-prev{display:none}
+}
 .studio-tip{margin:0;padding:8px 10px;border-radius:var(--radius-sm);background:var(--surface-sunken);
   border:var(--border-hair) solid var(--border-subtle);font-size:12.5px;color:var(--text-secondary)}
 .studio-small{font-size:12px;margin:0}
@@ -3993,8 +4034,6 @@ EDITOR_CSS = r"""
 .ed-group > summary:hover{color:var(--text-primary)}
 .ed-group-body{display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-3) 0 var(--space-2)}
 .ed-group-note{font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-tertiary);font-size:11.5px}
-.studio-check-chip:hover{border-color:var(--border-strong);color:var(--text-primary)}
-.studio-check-chip.is-previewing{box-shadow:0 0 0 1px var(--accent)}
 
 /* Nine places for the handle, laid out as the frame they stand for. */
 .ed-grid9{display:grid;grid-template-columns:repeat(3,28px);gap:4px}
