@@ -674,6 +674,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.app.clips_outro_info())
         elif u.path == "/api/clips/outro-video":
             self._outro_video()
+        elif u.path == "/api/clips/valorant/matches":
+            q = parse_qs(u.query)
+            self._json(self.app.clips_valorant_matches(
+                (q.get("started") or ["0"])[0], (q.get("seconds") or ["0"])[0]))
         elif u.path == "/api/clips/known-matches":
             q = parse_qs(u.query)
             self._json(self.app.clips_known_matches((q.get("path") or [""])[0]))
@@ -1543,6 +1547,22 @@ class Server:
             out.update(match_state=got["state"], match_count=got["matches"],
                        match_why=got.get("why", ""))
         return out
+
+    def clips_valorant_matches(self, started, seconds) -> dict:
+        """Every VALORANT match record saved on this PC, newest first, with
+        the ones played during the recording being looked at marked."""
+        from .clips import valorant_match
+
+        try:
+            started, seconds = float(started or 0), float(seconds or 0)
+        except (TypeError, ValueError):
+            started = seconds = 0.0
+        try:
+            rows = valorant_match.listing(started, seconds)
+        except Exception as e:                              # noqa: BLE001
+            log.warning("could not list the VALORANT match records: %s", e)
+            return {"ok": False, "matches": [], "error": "Could not read the saved match records."}
+        return {"ok": True, "matches": rows}
 
     def clips_valorant_explained(self) -> dict:
         from .clips import valorant_match
@@ -2550,6 +2570,20 @@ class Server:
         if start > 0 or end > 0:
             opt["scan_start"] = max(0.0, start)
             opt["scan_end"] = max(0.0, end)
+        # WHICH MATCHES. A recording holding several VALORANT matches can be
+        # clipped from only some of them: the page sends each ticked match as
+        # [start, end] seconds into the file. Malformed spans are dropped here;
+        # the job clamps the rest to the file.
+        spans = []
+        for sp in (body.get("match_spans") or [])[:30]:
+            try:
+                a, b = float(sp[0]), float(sp[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if b > a >= 0:
+                spans.append([a, b])
+        if spans:
+            opt["match_spans"] = spans
         # "Read the screen anyway." A Counter-Strike run stops rather than
         # spending forty minutes on OCR when no replay matched, so this is how
         # the page says the user has chosen that cost with their eyes open.

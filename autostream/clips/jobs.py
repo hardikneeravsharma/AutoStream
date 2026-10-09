@@ -920,6 +920,23 @@ class ClipJob:
                                    "the kills the feed showed had the game's "
                                    "kill emblem on screen.")
 
+        # ---- 1d. only the matches the user ticked ---------------------------
+        if self._match_spans():
+            before = len(kills)
+            kills = [k for k in kills if self._in_matches(float(k.get("time") or 0.0))]
+            if round_list:
+                round_list = [r for r in round_list
+                              if self._in_matches(float(getattr(r, "started", 0.0) or 0.0))]
+            self.diag.note("match_spans", {"spans": self._match_spans(),
+                                           "kills_before": before, "kills_after": len(kills)})
+            log.info("%d of %d kills are in the %d chosen match(es)",
+                     len(kills), before, len(self._match_spans()))
+            if not kills:
+                self._set(summary={"kills": 0, "clips": 0, "covered": 0,
+                                   "coverage": 0, "runtime": 0})
+                raise NoKills("No kills in the matches you picked. Tick another "
+                              "match, or clip the whole video.")
+
         # ---- 2. decide what to cut ---------------------------------------
         self.diag.stage("2. decide what to cut")
         if use_rounds and not round_list:
@@ -1615,6 +1632,13 @@ class ClipJob:
             return 0.0, 0.0
         a = max(0.0, min(a, total))
         b = total if b <= 0 else max(0.0, min(b, total))
+        # Only the chosen matches: read from the first one's start to the last
+        # one's end and no further. What lies between them is dropped after
+        # the read (_in_matches), not skipped, so one decode covers it.
+        spans = self._match_spans()
+        if spans:
+            a = max(a, min(x for x, _ in spans) - self.MATCH_SLACK)
+            b = min(b, max(y for _, y in spans) + self.MATCH_SLACK)
         if b - a < self.MIN_WINDOW:
             if a or b < total:
                 log.warning("the chosen part of %s is only %.0fs long, which "
@@ -1622,6 +1646,27 @@ class ClipJob:
                             self.source.name, b - a)
             return 0.0, total
         return a, b
+
+    # Seconds either side of a chosen match that still count as inside it:
+    # Riot's start is when the match loads, and the first kill can be clipped
+    # with its run-up.
+    MATCH_SLACK = 5.0
+
+    def _match_spans(self) -> list[tuple[float, float]]:
+        out = []
+        for sp in self.options.get("match_spans") or []:
+            try:
+                a, b = float(sp[0]), float(sp[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            if b > a >= 0:
+                out.append((a, b))
+        return out
+
+    def _in_matches(self, t: float) -> bool:
+        spans = self._match_spans()
+        return not spans or any(a - self.MATCH_SLACK <= t <= b + self.MATCH_SLACK
+                                for a, b in spans)
 
     def _trim_cached(self, cached: list | None) -> list | None:
         """Cached kills, cut down to the window. -> the list, or None.

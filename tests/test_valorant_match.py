@@ -696,3 +696,53 @@ def test_fetch_now_answers_for_the_recording_on_the_page(server, tmp_path, monke
     out = server.clips_valorant_fetch({"started": REC_STARTED, "seconds": 1800})
     assert out["added"] == 1
     assert out["match_state"] == "have" and out["match_count"] == 1
+
+
+# ------------------------------------------------------------- the listing
+
+def _rec(mid, start_s, queue="competitive", map_id="/Game/Maps/Triad/Triad",
+         mine_team="Blue", won=True, a=13, b=9, k=22, d=14, s=9):
+    from autostream.clips import valorant_match as vm
+    me = "me-puuid"
+    key = "numPoints" if queue == "hurm" else "roundsWon"
+    data = {"matchInfo": {"matchId": mid, "mapId": map_id, "queueID": queue,
+                          "isRanked": queue == "competitive",
+                          "gameStartMillis": int(start_s * 1000), "gameLengthMillis": 1_800_000},
+            "players": [{"subject": me, "teamId": mine_team,
+                         "stats": {"kills": k, "deaths": d, "assists": s}}],
+            "teams": [{"teamId": mine_team, "won": won, key: a},
+                      {"teamId": "Red" if mine_team == "Blue" else "Blue", "won": not won, key: b}],
+            vm.MINE: me}
+    return vm.Match(path=Path(f"{mid}.json"), data=data)
+
+
+def test_a_match_is_listed_the_way_a_player_would_describe_it():
+    """U2: the Clips page said "1 match found" and never showed it. A row is
+    the map's real name, the mode, the score from the player's side, and how
+    they did -- not Riot's internal names."""
+    from autostream.clips import valorant_match as vm
+    row = vm.summary(_rec("m1", 1000.0))
+    assert (row["map"], row["mode"], row["ranked"]) == ("Haven", "Competitive", True)
+    assert row["score"] == [13, 9] and row["won"] is True
+    assert (row["kills"], row["deaths"], row["assists"]) == (22, 14, 9)
+    tdm = vm.summary(_rec("m2", 1000.0, queue="hurm", map_id="/Game/Maps/HURM/HURM_Yard/HURM_Yard",
+                          won=False, a=91, b=100))
+    assert (tdm["map"], tdm["mode"]) == ("Piazza", "Team Deathmatch")
+    assert tdm["score"] == [91, 100] and tdm["won"] is False, "TDM is scored in kills to 100"
+
+
+def test_a_record_of_a_shape_riot_changed_still_lists():
+    from autostream.clips import valorant_match as vm
+    row = vm.summary(vm.Match(path=Path("x.json"), data={"matchInfo": {"matchId": "x"}}))
+    assert row["id"] == "x" and row["map"] == "Unknown map" and "score" not in row
+
+
+def test_the_listing_marks_where_this_recordings_matches_start(monkeypatch):
+    from autostream.clips import valorant_match as vm
+    recs = [_rec("old", 1000.0), _rec("here", 5000.0), _rec("new", 9000.0)]
+    monkeypatch.setattr(vm, "cached", lambda: list(recs))
+    rows = vm.listing(started=4500.0, seconds=2000.0)
+    assert [r["id"] for r in rows] == ["new", "here", "old"], "newest first"
+    here = {r["id"]: r.get("at") for r in rows}
+    assert here["here"] == pytest.approx(500.0) and here["old"] is None and here["new"] is None
+    assert all("at" not in r for r in vm.listing()), "no recording, nothing marked"

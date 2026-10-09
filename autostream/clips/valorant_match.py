@@ -146,6 +146,72 @@ class Match:
         return sorted(t for t in out if t > 0)
 
 
+# ------------------------------------------------------------ the listing
+
+# Riot's internal map names -> the names on the loading screen. A map missing
+# here shows its internal name, which is still a name a player can search.
+MAP_NAMES = {
+    "Ascent": "Ascent", "Bonsai": "Split", "Duality": "Bind", "Triad": "Haven",
+    "Port": "Icebox", "Foxtrot": "Breeze", "Canyon": "Fracture", "Pitt": "Pearl",
+    "Jam": "Lotus", "Juliett": "Sunset", "Infinity": "Abyss", "Rook": "Corrode",
+    "Range": "The Range", "HURM_Alley": "District", "HURM_Bowl": "Kasbah",
+    "HURM_Yard": "Piazza", "HURM_Helix": "Drift", "HURM_HighTide": "Glitch",
+}
+QUEUE_NAMES = {
+    "competitive": "Competitive", "unrated": "Unrated", "premier": "Premier",
+    "swiftplay": "Swiftplay", "spikerush": "Spike Rush", "deathmatch": "Deathmatch",
+    "hurm": "Team Deathmatch", "ggteam": "Escalation", "onefa": "Replication",
+    "snowball": "Snowball Fight", "newmap": "New Map", "": "Custom",
+}
+
+
+def summary(match: Match) -> dict:
+    """One match as a person would describe it: map, mode, when, the score,
+    and how they did. Never raises -- a record Riot changed the shape of
+    still lists, with what could be read."""
+    info = match.info
+    map_key = str(info.get("mapId") or "").rstrip("/").split("/")[-1]
+    queue = str(info.get("queueID") or "")
+    out = {"id": match.id, "started": match.started, "seconds": match.seconds,
+           "map": MAP_NAMES.get(map_key, map_key or "Unknown map"),
+           "mode": QUEUE_NAMES.get(queue, queue.title() or "Custom"),
+           "ranked": match.ranked}
+    try:
+        me = str(match.data.get(MINE) or "")
+        player = next((pl for pl in match.data.get("players") or []
+                       if pl.get("subject") == me), None) if me else None
+        teams = {t.get("teamId"): t for t in match.data.get("teams") or [] if isinstance(t, dict)}
+        if player:
+            st = player.get("stats") or {}
+            out.update(kills=int(st.get("kills") or 0), deaths=int(st.get("deaths") or 0),
+                       assists=int(st.get("assists") or 0))
+            mine = teams.pop(player.get("teamId"), None)
+            theirs = next(iter(teams.values()), None)
+            if mine is not None:
+                # Team Deathmatch is scored in kills to 100; everything else in rounds.
+                key = "numPoints" if queue == "hurm" else "roundsWon"
+                out["score"] = [int(mine.get(key) or 0),
+                                int((theirs or {}).get(key) or 0)]
+                out["won"] = bool(mine.get("won"))
+    except (TypeError, ValueError, AttributeError) as e:
+        log.debug("match %s only partly read: %s", match.id, e)
+    return out
+
+
+def listing(started: float = 0.0, seconds: float = 0.0) -> list[dict]:
+    """Every saved match, newest first; the ones played during a recording
+    that began at `started` carry `at`, seconds into that recording."""
+    here = {m.id for m in for_recording(started, seconds)} if started else set()
+    out = []
+    for m in cached():
+        row = summary(m)
+        if m.id in here:
+            row["at"] = max(0.0, m.started - started)
+        out.append(row)
+    out.sort(key=lambda r: -r["started"])
+    return out
+
+
 # --------------------------------------------------------------- the cache
 
 def cache_dir() -> Path:

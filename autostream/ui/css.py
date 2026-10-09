@@ -3845,6 +3845,27 @@ STUDIO_CSS = r"""
 .studio-nudge{gap:4px}
 /* The inspector's choices: one line per pick, a chip per effect that is on.
    Making a choice is the picker's job (.studio-fxp-*), where every option plays. */
+/* The saved VALORANT match records, under the match-record line on Clips. */
+.clip-matchlist{display:flex;flex-direction:column;gap:var(--space-2);margin-top:var(--space-3)}
+.clip-mhead{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);flex-wrap:wrap;
+  font-size:12.5px;color:var(--text-secondary)}
+.clip-mlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:var(--space-1);
+  max-height:320px;overflow:auto}
+.clip-mrow{display:grid;grid-template-columns:minmax(150px,1.4fr) minmax(130px,1fr) auto auto minmax(0,auto);
+  align-items:center;gap:var(--space-3);padding:var(--space-2) var(--space-3);border-radius:var(--radius-sm);
+  background:var(--surface-sunken);border:var(--border-hair) solid var(--border-subtle);font-size:13px}
+.clip-mrow.is-here{border-color:var(--accent)}
+.clip-mmap{display:flex;flex-direction:column;min-width:0}
+.clip-mmap b{color:var(--text-primary);font-weight:600}
+.clip-mmap .muted,.clip-mwhen{font-size:12px}
+.clip-mres{font-weight:600;white-space:nowrap}
+.clip-mres.is-won{color:var(--ok)}
+.clip-mres.is-lost{color:var(--danger)}
+.clip-mkda{white-space:nowrap;color:var(--text-primary)}
+.clip-mhere{display:inline-flex;align-items:center;gap:var(--space-2);font-size:12px;color:var(--accent-text);white-space:nowrap;cursor:pointer}
+.clip-mrow.is-off{opacity:.55;border-color:var(--border-subtle)}
+@media (max-width:719px){.clip-mrow{grid-template-columns:1fr auto}}
+
 .studio-pick-btn{display:flex;align-items:center;gap:var(--space-2);width:100%;min-height:36px;
   padding:var(--space-2) var(--space-3);border-radius:var(--radius-sm);cursor:pointer;font:inherit;text-align:left;
   background:var(--surface-sunken);color:var(--text-primary);border:var(--border-hair) solid var(--border-subtle)}

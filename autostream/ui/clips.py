@@ -548,8 +548,15 @@ One per line - a long session often covers several matches."></textarea>
     <span id="clip-matchtext"></span>
     <div class="field-inline" style="margin-top:6px">
       <button class="btn btn-sm" type="button" data-act="fetch-matches">Fetch match records now</button>
+      <button class="btn btn-sm btn-ghost" type="button" data-act="show-matches" id="clip-matchshow"
+              aria-expanded="false" aria-controls="clip-matchlist">Show matches</button>
       <span class="muted" id="clip-matchmsg"></span>
     </div>
+    <!-- THE MATCHES THEMSELVES. A line saying "1 match found" asked to be
+         taken on trust; this is the list it was counting -- every record
+         saved on this PC, this recording's first, so a match that was NOT
+         captured is as visible as one that was. -->
+    <div class="clip-matchlist hide" id="clip-matchlist"></div>
   </div>
 
   <!-- THE WAY OUT OF A GAME NOBODY HAS CALIBRATED. Until the audio reader
@@ -4922,6 +4929,7 @@ function clip_runBody(s) {
     rounds: clip_state.rounds !== false,
     whole_round: clip_state.whole !== false,
     round_types: clip_state.types || null,
+    match_spans: clip_matchSpans(),
     match_summary: !!clip_state.matchVid,
     summaries: !!clip_mvMake().summaries,
     highlights: !!clip_mvMake().highlights
@@ -5815,6 +5823,13 @@ function clip_renderMatchLine() {
   var s = clip_state.pick;
   var el = clip_el('clip-matchline');
   if (!el) return;
+  /* A list opened for another video would name the wrong matches. */
+  if (clip_state.matchListFor !== s) {
+    clip_state.matchListFor = s; clip_state.matchList = null; clip_state.matchSkip = {};
+    var lb = clip_el('clip-matchlist'), sb = clip_el('clip-matchshow');
+    if (lb) { lb.classList.add('hide'); lb.innerHTML = ''; }
+    if (sb) { sb.textContent = 'Show matches'; sb.setAttribute('aria-expanded', 'false'); }
+  }
   var st = s && s.match_state;
   el.classList.toggle('hide', !st);
   if (!st) return;
@@ -5833,6 +5848,10 @@ function clip_renderMatchLine() {
       + (s.match_why ? ' (' + s.match_why + ')' : '');
     el.classList.remove('is-warn');
     if (btn) btn.textContent = 'Check for more matches';
+    /* Several matches in one video: open the list, so choosing which to clip
+       is in front of the user rather than behind a button. */
+    var lb = clip_el('clip-matchlist');
+    if (s.match_count > 1 && lb && lb.classList.contains('hide') && !clip_state.matchList) clip_showMatches(true);
     return;
   }
   el.classList.add('is-warn');
@@ -5842,6 +5861,100 @@ function clip_renderMatchLine() {
     '. The clips will be cut from the screen. If the matches were played '
     + 'recently, open VALORANT and press Fetch: Riot keeps your last twenty '
     + 'matches.' + FROM;
+}
+
+/* ---------------------------------------------- the saved match records */
+
+function clip_fmtWhen(epoch) {
+  var d = new Date(epoch * 1000);
+  return d.toLocaleDateString(undefined, {day: 'numeric', month: 'short'}) + ' ' +
+    d.toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'});
+}
+
+function clip_fmtClock(sec) {
+  sec = Math.max(0, Math.round(sec || 0));
+  var h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0');
+}
+
+function clip_matchRow(r) {
+  var result = r.score
+    ? '<span class="clip-mres ' + (r.won ? 'is-won' : 'is-lost') + '">' + (r.won ? 'Won' : 'Lost') +
+      ' ' + r.score[0] + '–' + r.score[1] + '</span>'
+    : '<span class="muted">–</span>';
+  var kda = r.kills != null
+    ? '<span class="mono">' + r.kills + ' / ' + r.deaths + ' / ' + r.assists + '</span>'
+    : '<span class="muted">–</span>';
+  var on = !(clip_state.matchSkip || {})[r.id];
+  var here = r.at != null
+    ? '<label class="clip-mhere"><input type="checkbox" data-act="match-pick" data-mid="' + esc(r.id) + '"' +
+      (on ? ' checked' : '') + '> Clip this match · at <span class="mono">' + clip_fmtClock(r.at) + '</span></label>'
+    : '';
+  return '<li class="clip-mrow' + (r.at != null ? ' is-here' + (on ? '' : ' is-off') : '') + '">' +
+    '<span class="clip-mmap"><b>' + esc(r.map) + '</b><span class="muted">' + esc(r.mode) +
+    (r.ranked ? ' · ranked' : '') + '</span></span>' +
+    '<span class="clip-mwhen muted">' + esc(clip_fmtWhen(r.started)) + ' · ' + clip_fmtClock(r.seconds) + '</span>' +
+    result + '<span class="clip-mkda" title="Kills / deaths / assists">' + kda + '</span>' + here + '</li>';
+}
+
+/* Which of this video's matches get clipped. Every one, unless some are
+   unticked -- so a run nobody touched sends nothing and reads the whole file,
+   exactly as before. */
+function clip_matchPickNote(here) {
+  var skip = clip_state.matchSkip || {};
+  var n = here.filter(function (r) { return !skip[r.id]; }).length;
+  if (here.length === 1) return n ? '1 match in this recording' : 'The match in this recording is unticked';
+  return n === here.length ? 'Clipping all ' + here.length + ' matches in this recording'
+       : n ? 'Clipping ' + n + ' of the ' + here.length + ' matches in this recording'
+       : 'No match ticked - tick at least one to clip';
+}
+
+function clip_matchSpans() {
+  var st = clip_state.matchList, skip = clip_state.matchSkip || {};
+  if (!st || !Object.keys(skip).length) return null;
+  var here = (st.rows || []).filter(function (r) { return r.at != null; });
+  var on = here.filter(function (r) { return !skip[r.id]; });
+  if (!on.length || on.length === here.length) return null;
+  return on.map(function (r) { return [Math.max(0, r.at), r.at + r.seconds]; });
+}
+
+function clip_renderMatchList() {
+  var box = clip_el('clip-matchlist');
+  var st = clip_state.matchList;
+  if (!box || !st) return;
+  var rows = st.rows || [];
+  var here = rows.filter(function (r) { return r.at != null; });
+  var shown = st.all ? rows : here;
+  var h = '<div class="clip-mhead"><span>' +
+    (st.all ? 'All ' + rows.length + ' saved match' + (rows.length === 1 ? '' : 'es')
+            : (here.length ? clip_matchPickNote(here) : 'None of the saved matches was played during this recording')) +
+    '</span>' +
+    (rows.length > here.length
+      ? '<button class="btn btn-sm btn-ghost" type="button" data-act="matches-all">' +
+        (st.all ? 'Only this recording' : 'Show all ' + rows.length + ' saved') + '</button>'
+      : '') + '</div>';
+  h += shown.length
+    ? '<ul class="clip-mlist" role="list">' + shown.map(clip_matchRow).join('') + '</ul>'
+    : (rows.length ? '' : '<p class="muted">No VALORANT match records are saved on this PC yet. ' +
+       'Open VALORANT and press Fetch match records now.</p>');
+  box.innerHTML = h;
+}
+
+async function clip_showMatches(force) {
+  var box = clip_el('clip-matchlist'), btn = clip_el('clip-matchshow');
+  if (!box) return;
+  var open = box.classList.contains('hide') || force;
+  box.classList.toggle('hide', !open);
+  if (btn) { btn.setAttribute('aria-expanded', String(open)); btn.textContent = open ? 'Hide matches' : 'Show matches'; }
+  if (!open) return;
+  var s = clip_state.pick || {};
+  var q = '?started=' + encodeURIComponent(s.started || 0) + '&seconds=' + encodeURIComponent(s.duration || 0);
+  box.innerHTML = '<p class="muted">Reading the saved match records…</p>';
+  var r = await API.get('/api/clips/valorant/matches' + q);
+  if (!r || !r.ok) { box.innerHTML = '<p class="muted">' + esc((r && r.error) || 'Could not read the saved match records.') + '</p>'; return; }
+  var was = clip_state.matchList;
+  clip_state.matchList = {rows: r.matches || [], all: was ? was.all : false};
+  clip_renderMatchList();
 }
 
 async function clip_fetchMatches() {
@@ -5870,6 +5983,8 @@ async function clip_fetchMatches() {
   if (r.match_state && r.match_state !== 'have')
     said += ' None of them was played during this recording.';
   clip_say('clip-matchmsg', said);
+  var box = clip_el('clip-matchlist');
+  if (box && !box.classList.contains('hide')) clip_showMatches(true);
 }
 
 /* Two boxes ask this now -- the one on the options card, and the one on a run
@@ -6690,6 +6805,15 @@ function clip_wire() {
       clip_getDemos();
     } else if (act === 'fetch-matches') {
       clip_fetchMatches();
+    } else if (act === 'show-matches') {
+      clip_showMatches(false);
+    } else if (act === 'match-pick') {
+      var mid = b.getAttribute('data-mid');
+      clip_state.matchSkip = clip_state.matchSkip || {};
+      if (b.checked) delete clip_state.matchSkip[mid]; else clip_state.matchSkip[mid] = true;
+      clip_renderMatchList();
+    } else if (act === 'matches-all') {
+      if (clip_state.matchList) { clip_state.matchList.all = !clip_state.matchList.all; clip_renderMatchList(); }
     } else if (act === 'needsdemo-get') {
       clip_getDemos('clip-needsdemo-codes', 'clip-needsdemo-msg');
     } else if (act === 'demo-anyway') {

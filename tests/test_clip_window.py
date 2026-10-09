@@ -531,3 +531,36 @@ def test_a_recording_with_no_kills_is_a_finished_run(tmp_path, monkeypatch):
     assert job.results == []
     assert job.summary["why"] == "No kills found in this recording."
     assert "Failed" not in job.message
+
+
+# ------------------------------------------------ only some of the matches
+
+def test_ticked_matches_narrow_the_read_to_them(tmp_path):
+    """A video holding three VALORANT matches, two of them ticked: the read
+    runs from the first ticked match to the last, plus a little slack, and
+    no further -- the untouched tail of the file is never decoded."""
+    job = a_job(tmp_path, match_spans=[[600.0, 1500.0], [2400.0, 3000.0]])
+    a, b = job._window(HOUR)
+    assert a == pytest.approx(600.0 - job.MATCH_SLACK)
+    assert b == pytest.approx(3000.0 + job.MATCH_SLACK)
+
+
+def test_ticked_matches_stay_inside_a_chosen_part(tmp_path):
+    job = a_job(tmp_path, scan_start=900.0, scan_end=2700.0,
+                match_spans=[[600.0, 1500.0], [2400.0, 3000.0]])
+    assert job._window(HOUR) == (900.0, 2700.0)
+
+
+def test_a_kill_between_two_ticked_matches_is_not_theirs(tmp_path):
+    """The unticked match in the middle is read -- one decode covers the
+    stretch -- but nothing in it may be clipped."""
+    job = a_job(tmp_path, match_spans=[[600.0, 1500.0], [2400.0, 3000.0]])
+    assert job._in_matches(1000.0) and job._in_matches(2999.0)
+    assert job._in_matches(1503.0), "a kill right at the end keeps its slack"
+    assert not job._in_matches(2000.0)
+
+
+def test_no_ticked_matches_means_the_whole_video(tmp_path):
+    job = a_job(tmp_path, match_spans=[["x", None], [5.0, 1.0]])
+    assert job._match_spans() == [] and job._in_matches(1234.0)
+    assert job._window(HOUR) == (0.0, 3600.0)
