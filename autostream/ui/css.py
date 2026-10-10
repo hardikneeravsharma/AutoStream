@@ -3749,7 +3749,6 @@ STUDIO_CSS = r"""
   color:var(--text-primary);overflow-wrap:anywhere}
 .studio-pending li::before{content:"";flex:none;width:3px;height:3px;margin-top:6px;border-radius:var(--radius-pill);
   background:var(--warn)}
-.studio-pending-n{margin-left:auto;flex:none;font:11px var(--font-mono);color:var(--text-tertiary)}
 .studio-sync.is-bad .studio-pending li::before{background:var(--danger)}
 .studio-pending-more{color:var(--text-tertiary)}
 .studio-pending-more::before{background:var(--border-strong) !important}

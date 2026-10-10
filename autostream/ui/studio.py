@@ -846,8 +846,10 @@ const studio = {
   /* WHAT HAS NOT REACHED THE VIDEO YET. `dirty` could say that something had
      changed; it could not say what, so pressing render was an act of faith and
      not pressing it was a reel watched in the wrong version. Every edit names
-     itself here ({label, shot, n}); a render empties the list. */
-  pending: [], jobMsg: '', failMsg: '', renderNote: '', rendering: false,
+     itself here ({label, shot, paths}); a render empties the list. `base` is
+     the project the video was rendered from (or opened as), and an edit whose
+     fields are back to it leaves the list on its own. */
+  pending: [], base: null, shelved: [], jobMsg: '', failMsg: '', renderNote: '', rendering: false,
   /* Which explanations are open. The card is redrawn on every edit and on
      every poll tick, and a fold that shut itself each time could not be read. */
   folds: {build: false, clips: false},
@@ -2268,6 +2270,7 @@ async function studio_build() {
     /* A fresh reel has no video to differ from; a rebuild over an existing one
        has exactly one difference, and it is the whole reel. */
     studio.pending = []; studio.dirty = true; studio.failMsg = '';
+    studio.base = JSON.parse(JSON.stringify(studio.project));
     if (studio.output) studio_touched('Rebuilt from the clips');
     studio.adding = null;
     studio_renderTray();
@@ -2312,11 +2315,19 @@ function studio_pushUndo(snapshot) {
 
 /* ------------------------------------------------- what is not rendered yet
 
-   Three rules, and they are what make the count trustworthy enough to put on
-   a button: one undo step is one unit of change here, a render clears the
-   list, and an undo takes a unit back off it. When the count reaches zero the
-   project is byte-for-byte the one that was rendered, so "the video matches
-   your edits" is a fact and not a guess. */
+   The count is a comparison, not a tally of clicks. Each line on the list
+   remembers the fields its edit changed; after every edit, undo and server
+   answer, a line whose fields are all back to what was rendered goes. So a
+   switch turned on and off again is no change at all, and three edits with one
+   undone is two. A tally counted both clicks, and "Apply 2 changes" to a
+   project identical to the video was a button that could not be believed.
+
+   Two kinds of line cannot be compared and stay until a render: one with no
+   fields (a failed render, a deleted reel, a camera video attached -- none of
+   them live in the project), and any line about a shot while the shots are
+   not in the order the render had them, because "shot 3" then names another
+   shot. Both err toward saying the video is behind, never toward saying it
+   matches when it does not. */
 
 /* Shots are numbered from 1 on the timeline, so they are numbered from 1 here. */
 function studio_shotName(i) { return 'Shot ' + (Number(i) + 1); }
@@ -2334,7 +2345,66 @@ function studio_ago(when) {
   return d + (d === 1 ? ' day ago' : ' days ago');
 }
 
-function studio_touched(label, shot) {
+/* Equal for the purpose of "would the video differ": a number the server
+   rounded is the number the page sent, and a field that is absent is the
+   same as one that is null. */
+function studio_same(a, b) {
+  if (a === b) return true;
+  if (a === null || a === undefined || b === null || b === undefined)
+    return (a === null || a === undefined) && (b === null || b === undefined);
+  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) < 1e-6;
+  if (typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) return a.length === b.length && a.every((x, i) => studio_same(x, b[i]));
+  return Object.keys(Object.assign({}, a, b)).every(k => studio_same(a[k], b[k]));
+}
+
+/* Every field that differs between two projects, as a list of key paths --
+   ['vignette'], ['shots', '2', 'speed'], ['lyrics', 'pos']. A list of plain
+   values (a shot's effects, a position) is one field, not one per item: taking
+   an effect off and putting it back is the same list again. */
+function studio_diff(a, b, at, out) {
+  at = at || []; out = out || [];
+  const obj = x => x !== null && typeof x === 'object';
+  const deep = obj(a) && obj(b) && Array.isArray(a) === Array.isArray(b) &&
+               (!Array.isArray(a) || a.concat(b).some(obj));
+  if (!deep) { if (!studio_same(a, b)) out.push(at); return out; }
+  const keys = Array.isArray(a) ? Array.from({length: Math.max(a.length, b.length)}, (_, i) => i)
+                                : Object.keys(Object.assign({}, a, b));
+  keys.forEach(k => studio_diff(a[k], b[k], at.concat([String(k)]), out));
+  return out;
+}
+
+function studio_at(obj, path) {
+  return path.reduce((o, k) => (o === null || o === undefined) ? undefined : o[k], obj);
+}
+
+/* Which clip is in which place. While it differs from the render's, a shot
+   number names a different shot in each, so no shot's edit can be compared. */
+function studio_shotOrder(p) { return ((p && p.shots) || []).map(s => s.clip).join('\n'); }
+
+/* Does this line still describe a difference from the render? */
+function studio_differs(x) {
+  const base = studio.base, p = studio.project;
+  if (!x.paths || !base || !p) return true;
+  const ordered = studio_shotOrder(base) === studio_shotOrder(p);
+  return x.paths.some(k => (!ordered && k[0] === 'shots') || !studio_same(studio_at(base, k), studio_at(p, k)));
+}
+
+/* Drop every line whose fields are all back to what was rendered. A dropped
+   line is kept aside, so an undo that brings its difference back brings back
+   its name too, rather than calling it something vaguer. */
+function studio_reconcile() {
+  const gone = studio.pending.filter(x => !studio_differs(x));
+  if (gone.length) {
+    studio.pending = studio.pending.filter(x => gone.indexOf(x) < 0);
+    studio.shelved = (studio.shelved || []).filter(x => gone.indexOf(x) < 0).concat(gone).slice(-60);
+  }
+  studio.dirty = studio.pending.length > 0 || !studio.output;
+}
+
+/* `paths` is what the edit changed (studio_diff). Left out, the line cannot be
+   compared and stays until a render. */
+function studio_touched(label, shot, paths) {
   studio.dirty = true;
   studio.failMsg = '';
   /* "Ready · rendered in 23 s" stops being true the moment anything is
@@ -2343,21 +2413,36 @@ function studio_touched(label, shot) {
   studio_state('');
   const name = label || 'An edit on the timeline';
   const at = (shot === undefined || shot === null) ? -1 : shot;
+  const keys = paths || null;
   /* A slider fires per step and a nudge button per press: the same edit, made
-     again, is one line with a count and not twenty lines. */
-  const same = studio.pending.filter(x => x.label === name && x.shot === at)[0];
+     again, is still one line. So is the same field reached by another control
+     -- the kill dragged, then nudged -- because it is one thing that differs. */
+  const sig = ks => JSON.stringify(ks.map(k => k.join('\u0001')).sort());
+  const same = studio.pending.filter(x => x.label === name && x.shot === at)[0] ||
+    (keys && keys.length ? studio.pending.filter(x => x.paths && x.paths.length && sig(x.paths) === sig(keys))[0] : null);
   if (same) {
-    same.n++;
     studio.pending.splice(studio.pending.indexOf(same), 1);
+    same.label = name; same.shot = at;
+    same.paths = studio_union(same.paths, keys);
     studio.pending.push(same);
-    return;
+  } else {
+    studio.pending.push({label: name, shot: at, paths: keys});
   }
-  studio.pending.push({label: name, shot: at, n: 1});
+  studio_reconcile();
 }
 
-/* Rendered: the video and the project are the same thing again. */
+/* Two lines' fields as one; a line that cannot be compared makes both so. */
+function studio_union(a, b) {
+  if (!a || !b) return null;
+  const one = k => k.join('\u0001');
+  return a.concat(b.filter(k => !a.some(j => one(j) === one(k))));
+}
+
+/* Rendered: the video and the project are the same thing again, and this is
+   the project every later edit is compared against. */
 function studio_settled() {
-  studio.dirty = false; studio.pending = []; studio.failMsg = '';
+  studio.dirty = false; studio.pending = []; studio.shelved = []; studio.failMsg = '';
+  studio.base = studio.project ? JSON.parse(JSON.stringify(studio.project)) : null;
   /* The LYRICS stand-in is for placing the words; once a render is on its
      way the reel shows the real ones, and the stand-in would only cover them. */
   studio.lyrMove = false;
@@ -2375,28 +2460,46 @@ function studio_lyrPending() {
    claiming to know which shot they were. */
 function studio_forgetShots() { studio.pending.forEach(x => { x.shot = -1; }); }
 
+/* What a render writes about itself rather than what anyone chose: never a
+   reason to render again. */
+const STUDIO_NOT_EDITS = {output: 1, plan_notes: 1, lyrics_note: 1, render: 1, version: 1};
+
 function studio_untouched() {
-  const last = studio.pending[studio.pending.length - 1];
-  if (last && last.n > 1) { last.n--; return; }
-  if (last) {
-    studio.pending.pop();
-    studio.dirty = studio.pending.length > 0 || !studio.output;
-    return;
-  }
+  studio_reconcile();
+  const base = studio.base, p = studio.project;
+  if (!base || !p) return;
+  /* An edit that had been set back by hand, and that this undo has brought
+     back again: it returns under its own name. */
+  const back = (studio.shelved || []).filter(x => studio_differs(x));
+  studio.shelved = (studio.shelved || []).filter(x => back.indexOf(x) < 0);
+  back.forEach(x => {
+    const twin = studio.pending.filter(y => y.label === x.label && y.shot === x.shot)[0];
+    if (twin) twin.paths = studio_union(twin.paths, x.paths);
+    else studio.pending.push(x);
+  });
   /* Undone past the last render: the project is behind the video now, which
-     is still a difference, and still needs rendering to resolve. */
-  studio_touched('Undone past the last render');
+     is still a difference, and still needs rendering to resolve. Only what no
+     line on the list already accounts for. */
+  const mine = [];
+  studio.pending.forEach(x => (x.paths || []).forEach(k => mine.push(k)));
+  const under = (a, b) => a.length <= b.length && a.every((x, i) => x === b[i]);
+  const left = studio_diff(base, p).filter(k => k.length && !STUDIO_NOT_EDITS[k[0]] &&
+    !mine.some(m => under(m, k) || under(k, m)));
+  if (left.length) studio_touched('Undone past the last render', -1, left);
+  studio.dirty = studio.pending.length > 0 || !studio.output;
 }
 
 /* `label` is what the card will call this edit, and `shot` the shot it happened
    to, so the timeline can mark it. Both optional -- an unlabelled edit still
-   counts, it just reads as a generic one. */
-function studio_change(mutate, label, shot) {
+   counts, it just reads as a generic one. `sticky` is for an edit the project
+   cannot see (a camera video attached): it stays on the list until a render. */
+function studio_change(mutate, label, shot, sticky) {
   if (!studio.project) return;
-  studio_pushUndo(JSON.stringify(studio.project));
+  const was = JSON.stringify(studio.project);
+  studio_pushUndo(was);
   studio.gen++;
   mutate(studio.project);
-  studio_touched(label, shot);
+  studio_touched(label, shot, sticky ? null : studio_diff(JSON.parse(was), studio.project));
   studio_localDerive();
   studio_drawAll();
   clearTimeout(studio.checkTimer);
@@ -2406,12 +2509,25 @@ function studio_change(mutate, label, shot) {
 async function studio_check() {
   const n = ++studio.checking;
   const gen = studio.gen;
+  const sent = JSON.stringify(studio.project);
   const r = await API.post('/api/studio/check', {project: studio.project});
   /* An answer about an older project must never replace a newer one: an edit
      made while this was in flight would silently disappear. */
   if (n !== studio.checking || gen !== studio.gen) return;
   if (!r || !r.ok) { toast((r && r.error) || 'That edit could not be applied.', 'warn'); return; }
   studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
+  /* What the server did in answer -- a slower speed trimming the shot to the
+     footage there is -- belongs to the edit that caused it, so setting that
+     edit back does not claim the video matches while the trim remains. And
+     the answer can put a field back where the render had it: a transition
+     changed and changed back only gets its old length again here. */
+  const last = studio.pending[studio.pending.length - 1];
+  if (last && last.paths && studio.base) {
+    const knock = studio_diff(JSON.parse(sent), r.project).filter(k => k.length && !STUDIO_NOT_EDITS[k[0]] &&
+      !studio_same(studio_at(studio.base, k), studio_at(r.project, k)));
+    last.paths = studio_union(last.paths, knock);
+  }
+  studio_reconcile();
   studio_drawAll();
 }
 
@@ -2468,7 +2584,7 @@ async function studio_render() {
   /* The list of what is pending belongs to the project being sent. Clearing it
      here rather than on the job's reply means the card stops claiming, for the
      length of the render, that those edits are still missing. */
-  const sent = studio.pending.slice();
+  const sent = studio.pending.slice(), sentBase = studio.base;
   studio_settled();
   /* Said before the round trip, not after it: the gap between pressing the
      button and the first poll is exactly where the page used to look as if
@@ -2480,13 +2596,16 @@ async function studio_render() {
   const r = await API.post('/api/studio/render', {project: studio.project});
   if (!r || !r.ok) {
     studio_busy(false);
-    studio.pending = sent; studio.dirty = sent.length > 0;
+    studio.pending = sent; studio.base = sentBase; studio.dirty = sent.length > 0;
     studio_state((r && r.error) || 'Could not start the render.', true);
     studio_drawRenderCard();
     return;
   }
   studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
   studio.output = r.output;
+  /* What the server will render, rounded and clamped, is what later edits are
+     measured against -- not what the page sent a moment before. */
+  studio.base = JSON.parse(JSON.stringify(r.project)); studio_reconcile();
   studio.jobId = r.job || 0;
   studio_drawAll();
   studio_poll();
@@ -2584,9 +2703,10 @@ function studio_drawRenderCard() {
   studio_drawWhy();
 }
 
-/* How many single edits are waiting, which is what the button counts. */
+/* How many things differ from the video, which is what the button counts --
+   one per line, however many clicks it took to get there. */
 function studio_pendingCount() {
-  return studio.pending.reduce((a, x) => a + x.n, 0);
+  return studio.pending.length;
 }
 
 /* THE ANSWER TO "IS WHAT I AM WATCHING WHAT I HAVE EDITED?", in one strip:
@@ -2642,8 +2762,7 @@ function studio_drawSync() {
   studio_show('studio-pending', show && n > 0);
   if (show && n > 0) {
     const rows = studio.pending.slice().reverse();
-    list.innerHTML = rows.slice(0, 6).map(x =>
-      '<li>' + esc(x.label) + (x.n > 1 ? '<span class="studio-pending-n">×' + x.n + '</span>' : '') + '</li>').join('') +
+    list.innerHTML = rows.slice(0, 6).map(x => '<li>' + esc(x.label) + '</li>').join('') +
       (rows.length > 6 ? '<li class="studio-pending-more">and ' + (rows.length - 6) + ' more</li>' : '');
   }
   /* The player says it too: the sidebar is not where someone watching looks. */
@@ -3870,9 +3989,9 @@ function studio_inspectorSet(id, value) {
 }
 
 function studio_setPool(pool, vals) {
-  studio_change(pr => { pr.pools = Object.assign({}, pr.pools || {}); pr.pools[pool] = vals; },
-                'The ' + pool + ' effects to choose from');
-  studio_mix(pool, false);
+  const label = 'The ' + pool + ' effects to choose from';
+  studio_change(pr => { pr.pools = Object.assign({}, pr.pools || {}); pr.pools[pool] = vals; }, label);
+  studio_mix(pool, false, label);
 }
 
 function studio_setList(list, vals) {
@@ -4251,7 +4370,8 @@ function studio_pointerUp(e) {
   if (!g.moved) { studio_select(g.i); return; }
   studio.gen++;
   studio_pushUndo(g.snapshot);
-  studio_touched(studio_shotName(g.i) + (g.kind === 'trim' ? ' · trimmed' : g.kind === 'kill' ? ' · the kill moved' : ' moved'), g.i);
+  studio_touched(studio_shotName(g.i) + (g.kind === 'trim' ? ' · trimmed' : g.kind === 'kill' ? ' · the kill moved' : ' moved'), g.i,
+                 studio_diff(JSON.parse(g.snapshot), studio.project));
   studio.sel = g.i;
   studio_drawAll();
   studio_check();
@@ -4617,7 +4737,7 @@ async function studio_fcUnlink(key) {
    An empty edit of `cam` makes the page ask the server again, which is where
    the per-shot facecam files come from, and puts the change on the render list. */
 function studio_fcTouched(label) {
-  studio_change(pr => { pr.cam = Object.assign({}, pr.cam); }, label);
+  studio_change(pr => { pr.cam = Object.assign({}, pr.cam); }, label, -1, true);
   studio_fcDraw();
 }
 
@@ -5653,8 +5773,10 @@ async function studio_restyle() {
     /* The words belong to the song, not to the style: a new cut keeps them. */
     if (p.lyrics) r.project.lyrics = p.lyrics;
     studio.sel = -1;
-    studio_touched('Rebuilt as ' + label);
+    /* After the project is replaced, not before: the line is measured against
+       the reel it describes. */
     studio_setProject(r.project, r.derived, r.notes, r.song);
+    studio_touched('Rebuilt as ' + label, -1, studio_diff(JSON.parse(snapshot), r.project));
     studio_fit(); studio_drawAll();
     toast('Rebuilt as ' + label + ' — ' + r.project.shots.length + ' shots. Render to see it.', 'ok');
   } finally {
@@ -5663,7 +5785,7 @@ async function studio_restyle() {
   }
 }
 
-async function studio_mix(what, announce) {
+async function studio_mix(what, announce, ride) {
   const p = studio.project;
   if (!p) return;
   const gen = ++studio.gen;
@@ -5674,12 +5796,15 @@ async function studio_mix(what, announce) {
   if (announce) studio_pushUndo(snapshot);
   studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
   /* An unannounced mix rides along with the pool edit that asked for it, and
-     that edit has already named itself; naming it twice would double the count. */
+     that edit has already named itself; naming it twice would double the count.
+     It goes onto that edit's line instead, so putting the pool back does not
+     claim the video matches while the shots still carry the new mix. */
+  const changed = studio_diff(JSON.parse(snapshot), r.project);
   if (announce) {
     studio_touched(what === 'all' ? 'Everything mixed again'
-                 : what === 'kill' ? 'Kill effects mixed again' : 'Transitions mixed again');
-  } else {
-    studio.dirty = true;
+                 : what === 'kill' ? 'Kill effects mixed again' : 'Transitions mixed again', -1, changed);
+  } else if (changed.length) {
+    studio_touched(ride, -1, changed);
   }
   studio_drawAll();
   if (announce) toast(what === 'all' ? 'Everything mixed again.' : what === 'kill' ? 'Kill effects mixed again.' : 'Transitions mixed again.', 'ok');
@@ -6371,9 +6496,10 @@ async function studio_sgApply(noSong) {
     if (!r || !r.ok) { studio_el('studio-sg-msg').textContent = (r && r.error) || 'Could not use that song.'; return; }
     studio_pushUndo(snapshot);
     r.project.output = p.output;
-    studio_touched(noSong ? 'The song taken off'
-                 : sg.marks.length ? 'The song, and ' + sg.marks.length + ' kill marks' : 'The part of the song');
     studio_setProject(r.project, r.derived, r.notes, r.song);
+    studio_touched(noSong ? 'The song taken off'
+                 : sg.marks.length ? 'The song, and ' + sg.marks.length + ' kill marks' : 'The part of the song',
+                   -1, studio_diff(JSON.parse(snapshot), r.project));
     if (noSong) { sg.song = ''; sg.shape = null; sg.marks = []; }
     sg.touched = false;
     studio_el('studio-sg-msg').textContent = '';

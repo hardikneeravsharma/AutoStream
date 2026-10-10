@@ -175,10 +175,11 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     pixels wide.
   - **It always says whether the video is what you have edited.** The panel beside the
     player is either green — *the video matches your edits* — or amber, naming every
-    change that has not reached it yet (*shot 4 trimmed*, *music level ×3*), with the
+    change that has not reached it yet (*shot 4 trimmed*, *music level*), with the
     edited shots flagged on the timeline, a badge over the player itself, and a button
-    that counts them: *Apply 4 changes*. Undo takes one back off the list, and a render
-    that fails or is cancelled puts them back on it.
+    that counts them: *Apply 4 changes*. It counts what differs from the video, not
+    clicks: a switch turned on and off again is no change, and an edit undone or set
+    back by hand leaves the list. A render that fails or is cancelled puts them back on it.
   - **Your own GIF or video over the slow start.** Some songs take nine seconds to
     arrive, and AutoStream will not spend the first kill on a mark the opening shot
     cannot reach — so the reel holds on one shot until the music gets there. Drop in
