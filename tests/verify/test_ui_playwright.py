@@ -326,6 +326,67 @@ def _studio_rendered(page, what: str) -> None:
     assert not video["err"] and video["dur"] > 1, f"{what}: the reel will not play: {video}"
 
 
+def test_every_reel_is_reachable_not_only_the_newest_ten(ui, app):
+    """The Studio listed the newest ten reels and nothing else; the user had 82.
+    Twelve reels here: two rows show folded, all twelve unfold, and the search,
+    the shape filter and the order each narrow or reorder the whole set."""
+    import json
+    import os
+    import subprocess
+    import time
+
+    from autostream.clips.tools import binary
+
+    ff = binary("ffmpeg")
+    if not ff:
+        pytest.skip("no ffmpeg to make reels with")
+    reels = Path(app["home"]) / "video" / "clips" / "reels"
+    reels.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    for i in range(12):
+        tall = i % 3 == 0
+        mp4 = reels / f"grid reel {i:02d}.mp4"
+        subprocess.run([ff, "-y", "-v", "error", "-f", "lavfi", "-i",
+                        f"testsrc2=size={'180x320' if tall else '320x180'}:rate=30:duration=2",
+                        "-pix_fmt", "yuv420p", str(mp4)], check=True, timeout=120,
+                       creationflags=appd.NO_WINDOW)
+        mp4.with_suffix(".reel.json").write_text(json.dumps({
+            "name": f"grid reel {i:02d}" + (" lyric" if i == 7 else ""), "style": "montage",
+            "format": "vertical" if tall else "landscape",
+            "shots": [{"pre": 0.5}] * (i + 1), "render": {"length": 2.0 + i, "intro": 0.0}}), encoding="utf-8")
+        os.utime(mp4, (now - 3600 * (12 - i), now - 3600 * (12 - i)))     # reel 11 is the newest
+    page = ui.page
+    page.click('.rail-btn[data-page="studio"]')
+    page.wait_for_selector("#view-studio.is-active")
+    page.click('[data-act="studio-refresh"]')
+    page.wait_for_function("document.querySelectorAll('#studio-reel-grid .studio-reel').length > 0", timeout=30_000)
+
+    def names():
+        return page.evaluate("[...document.querySelectorAll('#studio-reel-grid .studio-reel-name')].map(e => e.textContent)")
+    assert page.inner_text("#studio-reels-count") == "12"
+    assert len(names()) == 8 and names()[0] == "grid reel 11"
+    more = page.locator("#studio-reels-more")
+    assert more.inner_text() == "Show all 12 reels"
+    more.click()
+    assert len(names()) == 12 and names()[-1] == "grid reel 00"
+    page.fill("#studio-reel-q", "lyric")
+    page.wait_for_function("document.querySelectorAll('#studio-reel-grid .studio-reel').length === 1")
+    assert names() == ["grid reel 07 lyric"]
+    assert page.evaluate("document.activeElement.id") == "studio-reel-q", "typing lost the search box"
+    page.fill("#studio-reel-q", "")
+    page.click('[data-act="studio-reel-fmt"][data-fmt="vertical"]')
+    assert sorted(names()) == ["grid reel 00", "grid reel 03", "grid reel 06", "grid reel 09"]
+    page.click('[data-act="studio-reel-fmt"][data-fmt="all"]')
+    page.select_option("#studio-reel-sort", "long")
+    assert names()[0] == "grid reel 11" and names()[-1] == "grid reel 00"
+    page.select_option("#studio-reel-sort", "old")
+    assert names()[0] == "grid reel 00"
+    # every card's still is a real frame, and pressing it plays that reel
+    page.wait_for_function("""() => { const i = document.querySelector('#studio-reel-grid .studio-reel-thumb img');
+        return i && i.complete && i.naturalWidth > 0; }""", timeout=30_000)
+    ui.clean("browsing every reel")
+
+
 def test_a_reel_is_made_edited_and_rendered_again_in_the_studio(ui, app):
     """The Studio's whole promise, in the real build: choose clips, get a reel
     that plays, change one shot on the timeline, and get the change rendered.

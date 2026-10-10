@@ -313,11 +313,25 @@ def reels(root: Path) -> list[dict]:
             size = mp4.stat().st_size
         except OSError:
             continue
-        out.append({"name": (meta or {}).get("name") or mp4.stem, "path": str(mp4),
+        m = meta or {}
+        shots = m.get("shots") or []
+        render = m.get("render") or {}
+        # THE POSTER IS THE FIRST KILL, not frame zero: frame zero of a reel is
+        # a fade from black or an intro card, and eighty of those in a grid
+        # are eighty black rectangles.
+        try:
+            poster = float(render.get("intro") or 0.0) + float(shots[0].get("pre") or 0.0) if shots else 1.0
+        except (TypeError, ValueError, AttributeError):
+            poster = 1.0
+        out.append({"name": m.get("name") or mp4.stem, "path": str(mp4),
                     "project": str(proj) if meta else "", "when": when, "size": size,
-                    "shots": len((meta or {}).get("shots") or []),
-                    "length": (meta or {}).get("render", {}).get("length"),
-                    "style": (meta or {}).get("style", "")})
+                    "shots": len(shots),
+                    "length": render.get("length"),
+                    "style": m.get("style", ""),
+                    "format": m.get("format") if m.get("format") in SIZES else "",
+                    "song": Path(str(m.get("song") or "")).stem if m.get("song") else "",
+                    "lyrics": ((m.get("lyrics") or {}).get("look") or "") if isinstance(m.get("lyrics"), dict) else "",
+                    "poster": round(max(0.0, poster), 2)})
     out.sort(key=lambda r: -r["when"])
     return out
 

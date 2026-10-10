@@ -3638,6 +3638,26 @@ STUDIO_CSS = r"""
    lands on: a card whose first button reads "Made before the Studio" wraps. */
 .studio-reel .field-inline{flex-wrap:wrap;align-items:center}
 .studio-reel .studio-del-btn{margin-left:auto}
+/* The reels section: its own tools row, a grid of stills, folded to two rows. */
+.studio-reels{display:flex;flex-direction:column;gap:var(--space-3);margin-top:var(--space-4)}
+.studio-reels-head{display:flex;flex-wrap:wrap;gap:var(--space-3) var(--space-4);align-items:center}
+.studio-reels-head .studio-h{margin:0;flex:0 0 auto}
+.studio-reels-head .studio-h b{font-family:var(--font-mono);font-weight:500;opacity:.75}
+.studio-reel-sortl{display:inline-flex;gap:6px;align-items:center;font-size:12px}
+.studio-reels-more{align-self:flex-start}
+.studio-reel{padding:var(--space-3)}
+/* One frame shape for both orientations, so the grid stays a grid: a tall
+   reel sits in the middle of it, letterboxed on the panel's own dark. */
+.studio-reel-thumb{position:relative;display:block;width:100%;aspect-ratio:16/9;padding:0;border:0;cursor:pointer;
+  border-radius:var(--radius-sm);overflow:hidden;background:var(--on-media-scrim)}
+.studio-reel-thumb img{display:block;width:100%;height:100%;object-fit:cover}
+.studio-reel-thumb.is-tall img{object-fit:contain}
+.studio-reel-thumb:hover img{filter:brightness(1.08)}
+.studio-reel-thumb:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.studio-reel-badge,.studio-reel-len{position:absolute;bottom:6px;font-family:var(--font-mono);font-size:11px;
+  padding:1px 6px;border-radius:var(--radius-sm);background:var(--on-media-scrim);color:var(--on-media)}
+.studio-reel-badge{left:6px}
+.studio-reel-len{right:6px}
 .studio-game-h{font-family:var(--font-display);font-size:18px;font-weight:600;color:var(--text-primary);
   margin:var(--space-6) 0 0;padding-bottom:6px;border-bottom:var(--border-hair) solid var(--border-subtle)}
 .studio-folder{display:flex;flex-direction:column;gap:var(--space-3);margin-top:var(--space-5)}
