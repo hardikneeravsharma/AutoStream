@@ -2414,6 +2414,12 @@ async function studio_poll() {
   if (j.state === 'done') {
     const same = studio.project && j.output === studio.project.output;
     studio.renderNote = 'took ' + j.elapsed + ' s' + (j.cached ? ' · ' + j.cached + ' shots reused' : '');
+    /* What the lyrics did is only knowable after the render: found or not,
+       and how many words landed on kills. The Lyrics group shows it. */
+    if ((j.lyrics_note || '') !== (studio.lyricsNote || '')) {
+      studio.lyricsNote = j.lyrics_note || '';
+      studio_drawInspector();
+    }
     studio_state('Ready · rendered in ' + j.elapsed + ' s' + (j.cached ? ' · ' + j.cached + ' shots reused' : ''));
     if (same) {
       /* Not studio_settled(): an edit made while the render ran is a real
@@ -2597,7 +2603,7 @@ async function studio_addClips() {
     start: p.song_offset || 0, end: p.part_end || ((p.song_offset || 0) + (d ? d.length : 0)),
     edited: !!(d && d.edited) || studio.undo.length > 0,
     keep: {cam: p.cam, vfit: p.vfit, handle: p.handle, handle_pos: p.handle_pos,
-           outro_len: p.outro_len, overlays: p.overlays}
+           outro_len: p.outro_len, overlays: p.overlays, lyrics: p.lyrics}
   };
   studio_tab('clips');
   studio_renderLib();
@@ -3806,6 +3812,34 @@ function studio_grp(key, title, body, note) {
     '<div class="ed-group-body">' + body + '</div></details>';
 }
 
+/* THE SONG'S OWN WORDS OVER THE REEL. A look and a typeface: the look owns the
+   motion and the colours, the typeface only swaps the font, and "the look's
+   own" keeps whichever font that look was copied with. The words are found
+   when the reel renders, so whether they were is reported after it. */
+function studio_lyricsGroup(p) {
+  const cat = (studio.catalog && studio.catalog.lyrics) || {looks: [], faces: []};
+  const ly = p.lyrics || {look: 'off', face: '', clean: false};
+  const look = cat.looks.filter(l => l.key === ly.look)[0];
+  const own = look ? cat.faces.filter(f => f.key === look.face)[0] : null;
+  const on = !!look;
+  const opt = (v, label, sel) => '<option value="' + esc(v) + '"' + (sel ? ' selected' : '') + '>' + esc(label) + '</option>';
+  return studio_grp('lyrics', 'Lyrics',
+    '<div class="studio-field"><label class="field-label" for="studio-r-lyrics">Look</label>' +
+    '<select class="select" id="studio-r-lyrics"' + (p.song ? '' : ' disabled') + '>' +
+    opt('off', 'No lyrics', !on) + cat.looks.map(l => opt(l.key, l.label, l.key === ly.look)).join('') + '</select>' +
+    '<span class="muted studio-small">' + esc(!p.song ? 'Add a song first: the words are the song’s own.'
+      : look ? look.blurb : 'The song’s own words, each on its sung syllable, with the word sung at a kill in red.') + '</span></div>' +
+    (on ? '<div class="studio-field"><label class="field-label" for="studio-r-lyricface">Typeface</label>' +
+      '<select class="select" id="studio-r-lyricface">' +
+      opt('', 'The look’s own' + (own ? ' (' + own.label + ')' : ''), !ly.face) +
+      cat.faces.map(f => opt(f.key, f.label, f.key === ly.face)).join('') + '</select>' +
+      '<label class="studio-check"><input type="checkbox" id="studio-r-lyricclean"' + (ly.clean ? ' checked' : '') + '> Star out swear words</label>' +
+      '<span class="muted studio-small">' + esc(studio.lyricsNote ||
+        'Synced lyrics are looked up on LRCLIB when the reel renders. A .lrc file named like the song, beside it, is used first.') +
+      '</span></div>' : ''),
+    on ? look.label : 'off');
+}
+
 /* Nine places, laid out as the frame they stand for. `at` is [x, y] in 0..1. */
 function studio_grid9(act, at) {
   let h = '<div class="ed-grid9" role="group">';
@@ -3947,6 +3981,7 @@ function studio_drawInspectorBody() {
       '<button type="button" class="btn btn-sm" data-act="studio-mix" data-what="transition">Mix transitions</button>' +
       '<button type="button" class="btn btn-sm" data-act="studio-mix" data-what="all">Mix everything</button></span>' +
       '<span class="field-label">Overlays</span>' + studio_checks_html('overlays', 'overlay', (p.overlays || []).filter(o => o !== 'o07'), ['o07'])) +
+    studio_lyricsGroup(p) +
     studio_grp('sound', 'Song and sound',
       '<div class="studio-field">' +
       '<span class="muted truncate">' + (p.song ? esc(p.song.split(/[\\/]/).pop()) : 'No song') + '</span>' +
@@ -3993,7 +4028,13 @@ function studio_inspectorInput(e) {
     'studio-r-handle': () => studio_change(pr => { pr.handle = t.value; }, 'Your handle'),
     'studio-r-music': () => studio_change(pr => { pr.music_db = Number(t.value); }, 'Music level'),
     'studio-r-game': () => studio_change(pr => { pr.game_db = Number(t.value); }, 'Game sound level'),
-    'studio-r-duck': () => studio_change(pr => { pr.duck = t.checked; }, 'Ducking the music under gunfire')
+    'studio-r-duck': () => studio_change(pr => { pr.duck = t.checked; }, 'Ducking the music under gunfire'),
+    'studio-r-lyrics': () => studio_change(pr => { pr.lyrics = Object.assign({}, pr.lyrics, {look: t.value}); },
+      t.value === 'off' ? 'Lyrics · off' : 'Lyrics · ' + t.options[t.selectedIndex].text),
+    'studio-r-lyricface': () => studio_change(pr => { pr.lyrics = Object.assign({}, pr.lyrics, {face: t.value}); },
+      'Lyrics typeface · ' + t.options[t.selectedIndex].text),
+    'studio-r-lyricclean': () => studio_change(pr => { pr.lyrics = Object.assign({}, pr.lyrics, {clean: t.checked}); },
+      t.checked ? 'Lyrics · swears starred' : 'Lyrics · as sung')
   };
   if (s === null && t.id && t.id.indexOf('studio-f-') === 0) return;
   if (map[t.id]) map[t.id]();
@@ -5383,6 +5424,8 @@ async function studio_restyle() {
     studio_pushUndo(snapshot);
     studio.gen++;
     r.project.output = p.output;
+    /* The words belong to the song, not to the style: a new cut keeps them. */
+    if (p.lyrics) r.project.lyrics = p.lyrics;
     studio.sel = -1;
     studio_touched('Rebuilt as ' + label);
     studio_setProject(r.project, r.derived, r.notes, r.song);

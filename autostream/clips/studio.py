@@ -71,7 +71,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import facecam, hits as hits_mod, mark as mark_mod, parts as parts_mod, rulebook, studio_refs
+from . import facecam, hits as hits_mod, lyrics as lyrics_mod, mark as mark_mod, parts as parts_mod, rulebook, studio_refs
 
 log = logging.getLogger(__name__)
 
@@ -961,6 +961,7 @@ def catalog() -> dict:
                     "picks": picks_of(s)}
                    for s in STYLES],
         "default_style": DEFAULT_STYLE,
+        "lyrics": lyrics_mod.catalog(),
     }
 
 
@@ -1168,6 +1169,12 @@ def _choose_offset(grid: Grid, first_kill_reel: float, style: Style,
     i = grid.index_at_or_after(start)
     back = int(round(first_kill_reel / grid.beat))
     return grid.beats[max(0, i - back)]
+
+
+# How far before the end of the opener's planned run-up its kill's hit may be,
+# as a share of the grid step. See plan(): the hit on the beat where the run-up
+# ends is that beat's, whichever side of it the bass peaks.
+FIRST_HIT_SLACK = 0.25
 
 
 def _first_kill(hits: list[float], big: list[float], *, earliest: float,
@@ -1654,7 +1661,14 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         first = max(first, offset + shots[0]["pre"])
     elif song and shots and grid.hits:
         floor = part_start
-        first = _first_kill(grid.hits, [], earliest=floor + shots[0]["pre"])
+        # A HIT A HAIR BEFORE THE OPENER'S RUN-UP ENDS IS STILL ITS HIT. The
+        # run-up is whole beats, so it ends on a beat, and the hit on that
+        # beat sits either side of it by a few milliseconds. Asked for "at or
+        # after", ambiforcashlyrics missed the hit on bar 2's downbeat by 26 ms
+        # (13.68 s against 13.706), took the off-beat one 0.6 s later, and had
+        # to slow its opener to fill the extra time. A shorter run-up always
+        # fits the footage the longer one did.
+        first = _first_kill(grid.hits, [], earliest=floor + max(0.0, shots[0]["pre"] - FIRST_HIT_SLACK * step))
     if song and shots and grid.hits:
         end = (part_start + part_len) if part_len else grid.seconds
         slots = _hit_slots(grid.hits, grid.hit_strength, first=first, end=end,
@@ -2227,10 +2241,16 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
             continue
         gap = k - (marks[i - 1] if i else pres[0])
         j = lead + i                                   # where this shot sits in the reel
-        want = min(float(s["pre"]) if s["pre"] > 0 else gap / 2, max(0.0, gap - 0.22))
+        prev = shots[j - 1]
+        # THE SHOT BEFORE KEEPS ITS OWN KILLS. A double kill is one shot with
+        # its second kill 0.8 s after the first; this shot's run-up used to be
+        # allowed everything but 0.22 s of the gap, and on ambiforcashlyrics a
+        # run-up grown to 4.08 s cut the opener 0.51 s after its first kill --
+        # its second was never seen.
+        keep = max(0.22, _own_tail(prev, pres[j - 1]))
+        want = min(float(s["pre"]) if s["pre"] > 0 else gap / 2, max(0.0, gap - keep))
         pre = max_pre(s, want)
         cut = k - pre
-        prev = shots[j - 1]
         need = cut - (cuts[j - 1] + pres[j - 1])       # time after the previous kill
         room = max_post(prev, pres[j - 1], need)
         if room < need - 1.0 / FPS:
@@ -2259,8 +2279,42 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
             s["duration"] = round(cuts[i + 1] - cuts[i], 5)
         else:
             post = max(0.22, float(s["duration"]) - float(s["pre"]) if s["duration"] > s["pre"] else 0.5)
+            post = max(post, _own_tail(s, pres[i]))
             s["duration"] = round(pres[i] + post, 5)
     return notes
+
+
+# A shot's own later kills -- the rest of a double or a triple -- are the ones
+# within this many seconds of its main kill, and each is held this long after
+# it lands so its emblem is seen, not just begun.
+OWN_KILLS_WITHIN = 3.0
+OWN_KILL_HOLD = 0.35
+
+
+def _own_tail(shot: dict, pre: float) -> float:
+    """Reel seconds after the main kill needed to show the shot's own later kills.
+
+    0 when it has none. Never more than its footage after the kill allows.
+    """
+    k0 = float(shot["kill"])
+    later = [float(k) for k in shot.get("kills") or [] if k0 + 1e-6 < float(k) <= k0 + OWN_KILLS_WITHIN]
+    if not later:
+        return 0.0
+    want_src = max(later) - k0 + OWN_KILL_HOLD
+
+    def src_after(post: float) -> float:
+        ps = pieces(shot["speed"], pre + post, pre)
+        return source_used(ps, pre + post) - source_used(ps, pre)
+    lo, hi = 0.0, 4.0 * want_src + 1.0          # slow-motion after a kill plays it at no less than 1/4
+    if src_after(hi) < want_src:
+        return max_post(shot, pre, hi)
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        if src_after(mid) >= want_src:
+            hi = mid
+        else:
+            lo = mid
+    return max_post(shot, pre, hi)
 
 
 def fit_to_part(project: dict, seconds: float) -> list[str]:
@@ -2437,6 +2491,8 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         "duck": bool(project.get("duck", True)),
         "saturation": round(_num(project.get("saturation"), 0.3, 1.5, 1.0), 3),
         "kill_sound": bool(project.get("kill_sound", True)),
+        # The song's own words over the reel, in one of five looks; off by default.
+        "lyrics": lyrics_mod.settings(project.get("lyrics")),
         "beat": _num(project.get("beat"), 0.2, 2.0, 60.0 / NO_SONG_BPM),
         "seed": int(_num(project.get("seed"), 0, 2 ** 31 - 1, 0)),
         "pools": {},
@@ -3303,11 +3359,12 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
 
 def assemble_command(project: dict, derived: dict, segs: list[Segment], files: list[Path],
                      out: Path, ff: str = "ffmpeg", encoder_args=None,
-                     textdir: Path | None = None, mark_at=None) -> list[str]:
+                     textdir: Path | None = None, mark_at=None, lyrics=None) -> list[str]:
     """ffmpeg argv that joins the shot renders into the finished reel.
 
     `mark_at` is (animation folder, resting still, x, y) for the AutoStream
-    mark, or None when it cannot be drawn. See THE MARK below.
+    mark, or None when it cannot be drawn. See THE MARK below. `lyrics` is a
+    lyrics.Prepared whose subtitle script is drawn over everything but the mark.
     """
     W, H, F = SIZES[project["format"]][0], SIZES[project["format"]][1], FPS
     L = derived["length"]
@@ -3458,6 +3515,14 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
                     f"[bs][bg]blend=all_expr='A*min(1,T/{b})+B*(1-min(1,T/{b}))'[bl]")
         g.append(chain_in)
         acc_label = "bl"
+    # THE LYRICS, LAST BUT FOR THE MARK: over the grade, the grain and the
+    # bars, so a word is never dimmed by the look it sits on. Stamp greys the
+    # picture under each red word first, the way the edit it copies does.
+    if lyrics is not None and lyrics.ass:
+        if lyrics.greys:
+            on = "+".join(_between(a, b) for a, b in lyrics.greys)
+            post.append(f"hue=s=0.15:enable='{on}'")
+        post.append(f"ass=filename={_path_arg(lyrics.ass)}:fontsdir={_path_arg(lyrics_mod.FONTS_DIR)}")
     post.append(f"trim=end_frame={Lf},format=yuv420p")
     if mark_at:
         # Above everything the post chain drew: a mark under the film grain or
@@ -3654,6 +3719,7 @@ class StudioJob:
         self.started = time.time()
         self.finished = 0.0
         self.cached = 0
+        self.lyrics_note = ""
         self._cancel = threading.Event()
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
@@ -3666,7 +3732,8 @@ class StudioJob:
                     "percent": max(0, min(100, pct)), "message": self.message, "error": self.error,
                     "output": str(self.out), "project": str(self.out.with_suffix(".reel.json")),
                     "elapsed": int((self.finished or time.time()) - self.started),
-                    "cached": self.cached, "name": self.project.get("name", "")}
+                    "cached": self.cached, "name": self.project.get("name", ""),
+                    "lyrics_note": self.lyrics_note}
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -3758,6 +3825,30 @@ class StudioJob:
             log.info("studio loudness pass skipped: %s", e)
         finally:
             _unlink(fixed)
+
+    def _lyrics(self, ff: str):
+        """The reel's lyrics, ready to draw, or None -- never a failed render.
+
+        A song with no synced lyrics, no network, or an ffmpeg without libass
+        each leaves the reel exactly as it would have been, with the reason in
+        `lyrics_note` for the page to show.
+        """
+        if lyrics_mod.settings(self.project.get("lyrics"))["look"] == "off":
+            return None
+        if not lyrics_mod.ffmpeg_draws_ass(ff):
+            self._set(lyrics_note="This copy of ffmpeg cannot draw subtitles (no libass), "
+                                  "so the reel has no lyrics.")
+            return None
+        self._set(step="join", message="Timing the lyrics to the song")
+        W, H = SIZES[self.project["format"]]
+        try:
+            got = lyrics_mod.prepare(self.project, self.derived, self.root / CACHE_DIR / "lyrics", W, H)
+        except Exception as e:                              # noqa: BLE001
+            log.warning("studio: lyrics failed (%s)", e)
+            self._set(lyrics_note="The lyrics could not be prepared, so the reel has none.")
+            return None
+        self._set(lyrics_note=got.note, message="Joining the shots and mixing the sound")
+        return got if got.ass else None
 
     def _prepend_intro(self, ff: str, path: Path) -> None:
         """Join the intro clip in front of the finished reel.
@@ -3861,9 +3952,10 @@ class StudioJob:
                     except Exception as e:
                         log.warning("studio: the mark could not be drawn (%s)", e)
                         mark_at = None
+                    lyr = self._lyrics(ff)
                     self._run_ff(assemble_command(self.project, self.derived, segs, files, tmp, ff,
                                                   video_codec_args("auto", cq=19), textdir,
-                                                  mark_at=mark_at))
+                                                  mark_at=mark_at, lyrics=lyr))
                 except Cancelled:
                     raise
                 except RuntimeError as e:
@@ -3888,6 +3980,8 @@ class StudioJob:
             # from, which is what every time in the project is measured against.
             ic = self.project.get("intro_clip") or None
             intro = round(float(ic["end"]) - float(ic["start"]), 3) if ic else 0.0
+            if self.lyrics_note:
+                meta["lyrics_note"] = self.lyrics_note
             meta["render"] = {"length": round(self.derived["length"] + intro, 3),
                               "reel": self.derived["length"], "intro": intro,
                               "when": int(time.time()),

@@ -579,12 +579,27 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     landed = [derived["shots"][i]["kill_reel"] + proj["song_offset"] for i in range(3)]
     assert landed == pytest.approx(marks, abs=0.04), f"marks {marks}, kills landed at {landed}"
 
+    # --- lyrics: a .lrc beside the song, so nothing is fetched, in a chosen look and face
+    song.with_suffix(".lrc").write_text(
+        "".join(f"[00:{t:02d}.00]line {t} of the test song here\n" for t in range(0, 40, 2)), encoding="utf-8")
+    page.click('#studio-insp [data-act="studio-select"][data-shot="-1"]')
+    page.evaluate("() => { const d = document.querySelector('#studio-insp details[data-grp=\"lyrics\"]'); if (d) d.open = true; }")
+    page.select_option("#studio-r-lyrics", "caption")
+    page.wait_for_function("studio.project.lyrics && studio.project.lyrics.look === 'caption'", timeout=15_000)
+    page.wait_for_selector("#studio-r-lyricface", timeout=15_000)
+    page.select_option("#studio-r-lyricface", "gochi")
+    page.wait_for_function("studio.project.lyrics.face === 'gochi'", timeout=15_000)
+
     page.evaluate("document.getElementById('studio-state').textContent = ''; window.__toasts = []")
     page.click("#studio-render-btn")
     _studio_rendered(page, "the render with a song, marks and mixed effects")
     page.wait_for_timeout(1000)
-    saved = json.loads(Path(ui.api("GET", "/api/studio/job")["project"]).read_text(encoding="utf-8"))
+    job = ui.api("GET", "/api/studio/job")
+    saved = json.loads(Path(job["project"]).read_text(encoding="utf-8"))
     assert saved["song"] == str(song) and saved["style"] == "hype"
+    assert saved["lyrics"] == {"look": "caption", "face": "gochi", "clean": False}
+    assert "studio song.lrc" in (saved.get("lyrics_note") or ""), saved.get("lyrics_note")
+    assert "studio song.lrc" in page.inner_text('#studio-insp details[data-grp="lyrics"]')
     assert page.evaluate("window.__toasts.filter(t => t === 'Reel ready.').length") == 1
     ui.clean("mixing, restyling and cutting to marked kills")
 

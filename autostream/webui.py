@@ -3610,7 +3610,7 @@ class Server:
         # Rebuilding a reel keeps what belongs to the reel rather than to the
         # plan. Untouched here: normalise clamps every one of them.
         keep = body.get("keep") if isinstance(body.get("keep"), dict) else {}
-        for k in ("cam", "vfit", "handle", "handle_pos", "outro_len", "overlays"):
+        for k in ("cam", "vfit", "handle", "handle_pos", "outro_len", "overlays", "lyrics"):
             if keep.get(k) is not None:
                 proj[k] = keep[k]
         try:
