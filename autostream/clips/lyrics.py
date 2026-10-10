@@ -74,12 +74,31 @@ LOOK_FACE = {"stamp": "anton", "glow": "poppins-xb", "serif": "crimson",
 # vertical default sits higher. The player can put them anywhere else.
 DEFAULT_POS = {"vertical": (0.5, 0.29), "landscape": (0.5, 0.40)}
 POS_EDGE = 0.05
+# How far the player may move every line, earlier or later, in seconds.
+SHIFT_MAX = 5.0
 
 LRCLIB = "https://lrclib.net/api"
 LENGTH_TOLERANCE = 3.0          # s. A release whose length differs more is a different cut
 MISS_RETRY = 24 * 3600          # s. A song with no lyrics is asked about again after a day
 HOOK_REACH = 0.5                # s. How far a kill's accent may move off a light word
 MIN_WORD = 0.1                  # s. The shortest a word is on screen
+# How fast a line is sung when nothing says otherwise: a syllable at least
+# every SYLLABLE_MAX seconds and at most every SYLLABLE_MIN, and how far a
+# word may move to land on a vocal rise. See place().
+SYLLABLE_MAX = 0.32
+SYLLABLE_MIN = 0.1
+SNAP = 0.1
+
+
+def _syllables(word: str) -> int:
+    """Vowel groups, a silent final e off: near enough to pace a line by."""
+    import unicodedata
+    # "cliché" is two: the accent is a vowel, not punctuation to drop.
+    w = re.sub(r"[^a-z]", "", unicodedata.normalize("NFKD", word.lower()))
+    n = len(re.findall(r"[aeiouy]+", w))
+    if n > 1 and word.lower().endswith("e") and not w.endswith(("le", "ee")):
+        n -= 1
+    return max(1, n)
 LIGHT = frozenset("a an the and or but of to in on at for with i me my you your it is be "
                   "i'm it's uh yeah oh".split())
 # Whole-word masks for "clean lyrics". Roots match inside a word (fucking,
@@ -93,7 +112,13 @@ def settings(raw) -> dict:
     raw = raw if isinstance(raw, dict) else {}
     look = raw.get("look") if raw.get("look") in LOOKS else "off"
     face = raw.get("face") if raw.get("face") in FACES else ""
-    return {"look": look, "face": face, "clean": bool(raw.get("clean")), "pos": _pos(raw.get("pos"))}
+    try:
+        shift = float(raw.get("shift") or 0.0)
+    except (TypeError, ValueError):
+        shift = 0.0
+    shift = 0.0 if shift != shift else round(max(-SHIFT_MAX, min(SHIFT_MAX, shift)), 2)
+    return {"look": look, "face": face, "clean": bool(raw.get("clean")), "pos": _pos(raw.get("pos")),
+            "shift": shift}
 
 
 def _pos(v) -> list[float] | None:
@@ -165,21 +190,6 @@ def _get_json(url: str, timeout: float = 10.0):
         return json.loads(r.read().decode("utf-8"))
 
 
-class Synced(str):
-    """Synced lyrics, and the length of the recording they were timed on (0 unknown)."""
-    duration: float = 0.0
-
-    def __new__(cls, text: str, duration: float = 0.0):
-        obj = super().__new__(cls, text)
-        obj.duration = float(duration or 0.0)
-        return obj
-
-
-class Lines(list):
-    """Parsed lines, and the length of the recording they were timed on (0 unknown)."""
-    ref_seconds: float = 0.0
-
-
 def fetch_lrclib(artist: str, title: str, seconds: float, *, get=_get_json) -> str:
     """The synced lyrics LRCLIB holds for this recording, or "".
 
@@ -196,7 +206,7 @@ def fetch_lrclib(artist: str, title: str, seconds: float, *, get=_get_json) -> s
         try:
             d = get(f"{LRCLIB}/get?{q}")
             if fits(d):
-                return Synced(d["syncedLyrics"], d.get("duration") or 0.0)
+                return d["syncedLyrics"]
         except Exception as e:                              # noqa: BLE001
             log.info("lyrics: no exact match for %s - %s (%s)", artist, title, e)
     q = urllib.parse.urlencode({"q": f"{artist} {title}".strip()} if artist else {"track_name": title})
@@ -207,7 +217,7 @@ def fetch_lrclib(artist: str, title: str, seconds: float, *, get=_get_json) -> s
         return ""
     best = sorted((d for d in found if fits(d)),
                   key=lambda d: abs(float(d.get("duration") or 0) - seconds))
-    return Synced(best[0]["syncedLyrics"], best[0].get("duration") or 0.0) if best else ""
+    return best[0]["syncedLyrics"] if best else ""
 
 
 def _clean_title(stem: str) -> str:
@@ -230,14 +240,9 @@ def find(song: Path, cache_dir: Path, *, seconds: float = 0.0, tags=None,
     if cache.is_file():
         try:
             held = json.loads(cache.read_text(encoding="utf-8"))
-            # A hit cached before the record's length was kept is asked for
-            # again, once: without the length, align() cannot tell which way
-            # this recording is cut against the one the lyrics were timed on.
-            if held.get("lrc") and "duration" in held:
-                out = Lines(parse_lrc(held["lrc"]))
-                out.ref_seconds = float(held.get("duration") or 0.0)
-                return out, "LRCLIB"
-            if not held.get("lrc") and time.time() - float(held.get("when") or 0) < MISS_RETRY:
+            if held.get("lrc"):
+                return parse_lrc(held["lrc"]), "LRCLIB"
+            if time.time() - float(held.get("when") or 0) < MISS_RETRY:
                 return [], ""
         except (OSError, ValueError):
             pass
@@ -255,18 +260,13 @@ def find(song: Path, cache_dir: Path, *, seconds: float = 0.0, tags=None,
         except Exception:                                   # noqa: BLE001
             seconds = 0.0
     lrc = fetch(artist, title, seconds) if seconds else ""
-    ref = float(getattr(lrc, "duration", 0.0) or 0.0)
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps({"lrc": str(lrc), "when": time.time(), "duration": ref,
+        cache.write_text(json.dumps({"lrc": lrc, "when": time.time(),
                                      "artist": artist, "title": title}), encoding="utf-8")
     except OSError:
         pass
-    if not lrc:
-        return [], ""
-    out = Lines(parse_lrc(str(lrc)))
-    out.ref_seconds = ref
-    return out, "LRCLIB"
+    return (parse_lrc(lrc), "LRCLIB") if lrc else ([], "")
 
 
 # ============================================================== the timing
@@ -305,68 +305,6 @@ def vocal_onsets(song: str, start: float, seconds: float) -> list[tuple[float, f
             if flux[i] > flux[i - 1] and flux[i] >= flux[i + 1] and flux[i] > 1.0]
 
 
-# How far a synced lyric may be moved to meet this recording, how close to a
-# candidate a shift has to be, and how much better it has to fit to be taken.
-ALIGN_REACH = 3.5
-ALIGN_NEAR = 0.3
-ALIGN_STEP = 0.02
-ALIGN_GAIN = 1.05
-
-
-def align_score(flux, fps: float, starts, shift: float) -> float:
-    """How strongly the vocals rise where the lines say they start, moved by `shift`."""
-    import numpy as np
-    v = []
-    for st in starts:
-        a, b = int((st + shift - 0.05) * fps) - 1, int((st + shift + 0.15) * fps) - 1
-        if 0 <= a < b <= len(flux):
-            v.append(float(flux[a:b].max()))
-    return float(np.mean(v)) if v else 0.0
-
-
-def align(lines: list[Line], flux, fps: float, ref_seconds: float,
-          song_seconds: float) -> tuple[float, float]:
-    """Seconds to move every line by so it starts where this recording sings it. -> (shift, gain)
-
-    MEASURED ON THE PLAYER'S OWN SONGS. A lyric is timed on one release; the
-    file is often another cut of it. JVKE's "(Lyrics)" upload is 121.88 s
-    against the 120 s release LRCLIB timed, and every line came 1.9 s early --
-    the reel showed each word two seconds before it was sung. "Ambition For
-    Cash" is 143.48 s against 143 and came 0.42 s early. Both times the shift
-    that best puts the line starts on vocal rises is the difference in length:
-    the extra is at the front.
-
-    So the length difference says where to look and the vocals say whether to
-    move. Shifts near 0 and near that difference are scored by how strongly
-    the vocal band rises at every line start, smoothed over neighbouring
-    shifts so one lucky hit cannot win, and the lines move only when the best
-    beats leaving them alone by ALIGN_GAIN. Nothing far from those two is
-    considered: a dense rap verse rises everywhere, and on Ambition For Cash a
-    shift of -2.8 s scored almost as well as the right one. With no record
-    length -- a .lrc the player supplied -- only small corrections near 0 are.
-    """
-    import numpy as np
-    starts = [ln.t for ln in lines]
-    if len(starts) < 4 or len(flux) < 8:
-        return 0.0, 1.0
-    shifts = np.round(np.arange(-ALIGN_REACH, ALIGN_REACH + 1e-9, ALIGN_STEP), 3)
-    raw = np.array([align_score(flux, fps, starts, s) for s in shifts])
-    smooth = np.convolve(raw, np.ones(7) / 7, mode="same")
-    centres = [0.0]
-    diff = song_seconds - ref_seconds if ref_seconds and song_seconds else 0.0
-    if ALIGN_NEAR < abs(diff) <= ALIGN_REACH - ALIGN_NEAR:
-        centres.append(diff)
-    ok = np.zeros(len(shifts), dtype=bool)
-    for c in centres:
-        ok |= np.abs(shifts - c) <= ALIGN_NEAR + 1e-9
-    base = float(smooth[int(np.argmin(np.abs(shifts)))])
-    best = int(np.argmax(np.where(ok, smooth, -np.inf)))
-    gain = float(smooth[best]) / base if base > 0 else 1.0
-    if gain < ALIGN_GAIN:
-        return 0.0, gain
-    return float(shifts[best]), gain
-
-
 def place(lines: list[Line], offset: float, length: float, onsets: list[tuple[float, float]],
           kills: list[float]) -> list[list[dict]]:
     """Each word of every line sung inside the reel, in reel seconds.
@@ -386,12 +324,26 @@ def place(lines: list[Line], offset: float, length: float, onsets: list[tuple[fl
         if b <= 0 or a >= length or b - a < 0.2:
             continue
         ws = ln.words
-        cand = [(t, s) for t, s in onsets if a - 0.12 <= t < b]
-        if len(cand) >= len(ws):
-            times = sorted(t for t, _ in sorted(cand, key=lambda c: -c[1])[:len(ws)])
-            times[0] = min(times[0], a + 0.05)
-        else:
-            times = [a + (b - a) * k / len(ws) for k in range(len(ws))]
+        # SUNG AT A SINGER'S PACE, THEN HELD. The words used to go on the
+        # strongest rises anywhere between this line and the next, and on a
+        # piano-and-drums mix the strongest rises are the piano and the drums:
+        # TISWFLFIL2 showed "so", then nothing for 1.6 s, then "this is love"
+        # in 0.2 s, and stretched a seven-word line over five seconds. Now each
+        # word takes its syllables at the pace the line's room allows -- never
+        # slower than SYLLABLE_MAX a syllable, so a line with a long gap after
+        # it is sung and then its last word held -- and is then moved onto a
+        # vocal rise only if one is within SNAP of where that pace puts it.
+        syl = [_syllables(w) for w in ws]
+        per = min(SYLLABLE_MAX, max(SYLLABLE_MIN, (b - a) / max(1, sum(syl))))
+        times, t = [], a
+        for n in syl:
+            times.append(t)
+            t += n * per
+        rises = [o for o, _s in onsets]
+        for k in range(1, len(times)):
+            near = [o for o in rises if abs(o - times[k]) <= SNAP]
+            if near:
+                times[k] = min(near, key=lambda o: abs(o - times[k]))
         # Two onsets closer than a word can be read are pushed apart, so a
         # one-word look never draws two words over each other.
         for k in range(1, len(times)):
@@ -637,19 +589,8 @@ class Prepared:
     hooks: int = 0
 
 
-def _song_shift(song: str, lines: list[Line]) -> tuple[float, float]:
-    """align() on the whole song, which is where the evidence is. -> (shift, gain)"""
-    from .tools import media_info
-    try:
-        seconds = float(media_info(str(song)).get("duration") or 0.0)
-    except Exception:                                       # noqa: BLE001
-        seconds = 0.0
-    flux, fps = vocal_flux(song)
-    return align(lines, flux, fps, float(getattr(lines, "ref_seconds", 0.0) or 0.0), seconds)
-
-
 def prepare(project: dict, derived: dict, cache_dir: Path, W: int, H: int, *,
-            finder=find, onsets=vocal_onsets, shifter=_song_shift) -> Prepared:
+            finder=find, onsets=vocal_onsets) -> Prepared:
     """Everything the join needs to draw this reel's lyrics, or why there are none."""
     cfg = settings(project.get("lyrics"))
     if cfg["look"] == "off":
@@ -665,14 +606,14 @@ def prepare(project: dict, derived: dict, cache_dir: Path, W: int, H: int, *,
     if not lines:
         return Prepared(None, [], "No synced lyrics were found for this song, so the reel has none. "
                                   "A .lrc file with the song's name, beside it, adds them.")
-    # THE LINES MOVED ONTO THIS RECORDING FIRST. See align(): a lyric timed on
-    # another cut of the song is early or late by however much that cut
-    # differs, and every word placed after that inherits it.
-    try:
-        shift, _gain = shifter(song, lines)
-    except Exception as e:                                  # noqa: BLE001
-        log.info("lyrics: could not check the timing against the song (%s)", e)
-        shift = 0.0
+    # THE PLAYER'S OWN TIMING, before any word is placed. A synced lyric is
+    # timed on one release of a song and the file is often another cut: on
+    # JVKE's "(Lyrics)" upload LRCLIB's lines came 0.9 s early (median of 22
+    # lines against that upload's own on-screen lyrics). Working that out
+    # from the audio was tried and measured unreliable -- it chose +1.9 s, a
+    # bar out, because a drum-heavy mix rises everywhere -- so the player
+    # sets it by ear, and every line moves together.
+    shift = cfg["shift"]
     if shift:
         lines = [Line(ln.t + shift, ln.words) for ln in lines]
     offset = float(project.get("song_offset") or 0.0)
@@ -694,7 +635,7 @@ def prepare(project: dict, derived: dict, cache_dir: Path, W: int, H: int, *,
     hooks = sum(1 for row in rows for w in row if w.get("hook"))
     return Prepared(p, grey_spans(cfg["look"], rows),
                     f"Lyrics from {source}: {len(rows)} lines, {hooks} on kills."
-                    + (f" Moved {shift:+.2f} s to match this recording of the song." if shift else ""),
+                    + (f" Every line moved {shift:+.2f} s." if shift else ""),
                     lines=len(rows), hooks=hooks)
 
 

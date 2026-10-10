@@ -2336,7 +2336,19 @@ function studio_touched(label, shot) {
 }
 
 /* Rendered: the video and the project are the same thing again. */
-function studio_settled() { studio.dirty = false; studio.pending = []; studio.failMsg = ''; }
+function studio_settled() {
+  studio.dirty = false; studio.pending = []; studio.failMsg = '';
+  /* The LYRICS stand-in is for placing the words; once a render is on its
+     way the reel shows the real ones, and the stand-in would only cover them. */
+  studio.lyrMove = false;
+  studio_frameDraw();
+}
+
+/* An unrendered move of the lyrics: the stand-in stays up until the render
+   shows the words where it says they are. */
+function studio_lyrPending() {
+  return studio.pending.some(x => /^Lyrics · (moved|back)/.test(x.label));
+}
 
 /* Removing or reordering shots renumbers them, so every shot index already on
    the list now points at the wrong shot. The edits still count; they just stop
@@ -3920,9 +3932,21 @@ function studio_lyricsGroup(p) {
       '<span class="muted studio-small">' + esc(studio.lyricsNote ||
         'Synced lyrics are looked up on LRCLIB when the reel renders. A .lrc file named like the song, beside it, is used first.') +
       '</span></div>' +
+      /* TIMING BY EAR. A lyric timed on another release of the song comes in
+         early or late by the same amount on every line; the player hears it,
+         and moves them all at once. */
+      '<div class="studio-field"><span class="field-label">Timing</span><span class="field-inline">' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-lyr-shift" data-d="-0.5">−0.5 s</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-lyr-shift" data-d="-0.1">−0.1</button>' +
+      '<span class="mono" id="studio-lyr-shift-val">' + ((ly.shift || 0) > 0 ? '+' : '') + Number(ly.shift || 0).toFixed(1) + ' s</span>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-lyr-shift" data-d="0.1">+0.1</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-lyr-shift" data-d="0.5">+0.5 s</button>' +
+      (ly.shift ? '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-lyr-shift" data-d="0">Reset</button>' : '') +
+      '</span><span class="muted studio-small">Words early? Press +. Late? Press −. Every line moves together.</span></div>' +
       '<div class="studio-field"><span class="field-label">Where</span><div class="ed-row">' +
       studio_grid9('studio-lyr-pos', studio_lyrGrid(studio_lyrPos(p))) +
-      '<span class="muted studio-small">Or drag <b>LYRICS</b> on the picture.' +
+      '<span class="muted studio-small"><button type="button" class="btn btn-sm" data-act="studio-lyr-move" ' +
+      'aria-pressed="' + (studio.lyrMove ? 'true' : 'false') + '">' + (studio.lyrMove ? 'Done moving' : 'Move on the picture') + '</button>' +
       (ly.pos ? ' <button type="button" class="btn btn-ghost btn-sm" data-act="studio-lyr-pos-reset">Back to the look’s place</button>' : '') +
       '</span></div></div>' : ''),
     on ? look.label : 'off');
@@ -4317,7 +4341,11 @@ function studio_frameDraw() {
   const lc = studio_el('studio-lyrics-chip');
   if (!fr || !chip) return;
   const on = !!(p && studio.sel < 0 && (p.overlays || []).indexOf('o07') >= 0 && p.handle);
-  const lyr = !!(p && studio.sel < 0 && p.lyrics && p.lyrics.look && p.lyrics.look !== 'off');
+  /* NOT ALWAYS ON. Over a rendered reel the stand-in sat on top of the real
+     words; it shows only while the words are being placed -- "Move on the
+     picture" pressed, a drag under way, or a move not rendered yet. */
+  const lyr = !!(p && studio.sel < 0 && p.lyrics && p.lyrics.look && p.lyrics.look !== 'off' &&
+                 (studio.lyrMove || studio.lyrDrag || studio_lyrPending()));
   fr.classList.toggle('hide', !on && !lyr);
   chip.classList.toggle('hide', !on);
   if (lc) lc.classList.toggle('hide', !lyr);
@@ -5304,6 +5332,17 @@ function studio_wire() {
       const y = STUDIO_LYR_Y[Math.round(Number(b.getAttribute('data-y')) * 2)];
       pr.lyrics = Object.assign({}, pr.lyrics, {pos: [x, y]});
     }, 'Lyrics · moved');
+    else if (act === 'studio-lyr-shift' && p) studio_change(pr => {
+      const d = Number(b.getAttribute('data-d'));
+      const was = Number((pr.lyrics || {}).shift || 0);
+      const now = d === 0 ? 0 : Math.max(-5, Math.min(5, Math.round((was + d) * 100) / 100));
+      pr.lyrics = Object.assign({}, pr.lyrics, {shift: now});
+    }, 'Lyrics · timing');
+    else if (act === 'studio-lyr-move' && p) {
+      studio.lyrMove = !studio.lyrMove;
+      studio_drawInspector();
+      studio_frameDraw();
+    }
     else if (act === 'studio-lyr-pos-reset' && p) studio_change(pr => {
       pr.lyrics = Object.assign({}, pr.lyrics, {pos: null});
     }, 'Lyrics · back to the look’s place');

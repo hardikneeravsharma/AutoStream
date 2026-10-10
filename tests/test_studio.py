@@ -470,7 +470,7 @@ def test_lyrics_are_drawn_over_the_look_but_under_the_mark(root, tmp_path):
 def test_a_projects_lyrics_settings_are_kept_and_clamped(root):
     proj = _project(root, lyrics={"look": "caption", "face": "gochi", "clean": True})
     got, _, _ = studio.normalise(proj, root)
-    assert got["lyrics"] == {"look": "caption", "face": "gochi", "clean": True, "pos": None}
+    assert got["lyrics"] == {"look": "caption", "face": "gochi", "clean": True, "pos": None, "shift": 0.0}
     got, _, _ = studio.normalise(_project(root, lyrics={"look": "<script>"}), root)
     assert got["lyrics"]["look"] == "off"
     assert [l["key"] for l in studio.catalog()["lyrics"]["looks"]] == list(studio.lyrics_mod.LOOKS)

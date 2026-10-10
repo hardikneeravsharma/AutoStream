@@ -640,6 +640,8 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-reel-fmt": "filters the reels to vertical or landscape; never leaves the browser",
     "studio-reels-more": "unfolds the reels from two rows to all of them",
     "studio-lyr-pos": "puts the lyrics at one of nine places; sent with the next render",
+    "studio-lyr-shift": "moves every lyric line earlier or later; sent with the next render",
+    "studio-lyr-move": "shows the LYRICS stand-in on the picture so it can be dragged; never leaves the browser",
     "studio-lyr-pos-reset": "puts the lyrics back at the look's own place; sent with the next render",
     "studio-pick": "selects or unselects a clip (shift selects a range)",
     "studio-folder": "selects or unselects every clip in a run",
