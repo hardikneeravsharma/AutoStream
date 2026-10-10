@@ -19,7 +19,7 @@
     `import` probe) would otherwise raise NativeCommandError and abort the
     build. Exit codes are checked explicitly instead.
 #>
-param([switch]$Clean, [switch]$Dist, [switch]$Media, [switch]$NoMedia)
+param([switch]$Clean, [switch]$Dist, [switch]$Media, [switch]$NoMedia, [switch]$HandOff)
 
 $ErrorActionPreference = "Continue"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -180,6 +180,28 @@ if (Test-Path $liveExe) {
     } catch {
         $inUse = $true
     }
+    # -HandOff: the tests above ran with the app open, and only now -- with
+    # the rewrite of dist\ the one step that needs it closed -- is it asked
+    # to close, by scripts\handoff.py, which waits until it is idle (no
+    # broadcast, recording, clip job or reel render) and never forces it.
+    # It is reopened as soon as dist\ is rewritten: a release used to lock
+    # the player out of the app for twenty minutes; this is two.
+    if ($inUse -and $HandOff) {
+        $code = Invoke-Native $vpy @((Join-Path $PSScriptRoot "handoff.py"), "quit") -Echo
+        if ($code -ne 0) {
+            Write-Bad "AutoStream is still busy - not rebuilding over it"
+            exit 1
+        }
+        for ($i = 0; $i -lt 60 -and $inUse; $i++) {
+            Start-Sleep -Seconds 1
+            try {
+                $fs = [System.IO.File]::Open($liveExe, 'Open', 'ReadWrite', 'None')
+                $fs.Close()
+                $inUse = $false
+            } catch { }
+        }
+        if (-not $inUse) { $script:reopen = $true }
+    }
     if ($inUse) {
         Write-Bad "dist\AutoStream\AutoStream.exe is running and holds files in dist\"
         Write-Host "       Check /api/status (phase, recording, clip job), then quit it with" -ForegroundColor Red
@@ -296,6 +318,13 @@ function Restore-LocalConfig {
 }
 Restore-LocalConfig
 Mark-Phase "carry the live install across"
+
+# Back in the player's hands now that dist\ is rewritten; the zip and the
+# installer below only read it.
+if ($script:reopen) {
+    Start-Process -FilePath (Join-Path $out "AutoStream.exe") -WorkingDirectory $out
+    Write-Ok "reopened AutoStream"
+}
 
 # ---- 4b. DIST mode: a clean, shareable package with NO credentials ---
 if ($Dist) {

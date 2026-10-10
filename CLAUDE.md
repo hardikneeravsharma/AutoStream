@@ -115,6 +115,13 @@ The build fails while `AutoStream.exe` is running. Ask it to quit with
 running clips job: quitting destroys a clip job in progress and ends a live broadcast.
 Say so rather than silently killing either.
 
+**Prefer `build.ps1 -Dist -HandOff` with the app left open.** The ~17-minute test gate
+does not need it closed; only the rewrite of `dist\AutoStream` does. `-HandOff` runs the
+gate first, then `scripts\handoff.py` closes the app only once it is idle (no broadcast,
+recording, clip job or reel render — it waits, and never forces), and the build reopens
+it as soon as `dist\` is rewritten. Quitting before the build locked the player out for
+twenty minutes a release; this is about two.
+
 Since v1.6.5 the build preserves the live install itself — config, secrets, logs and
 `state.json` are copied out before PyInstaller runs and restored afterwards. Do **not**
 hand-restore config after a build; that backup is older than what the app has, so
