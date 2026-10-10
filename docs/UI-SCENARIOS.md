@@ -178,6 +178,7 @@ listed so the gap is visible.
 | 6.7 | Facecam: draw a box, keep it | Box persists across reels | **gap** |
 | 6.8 | Every drawer of the parts bin deals | No dead drawer | sweep |
 | 6.9 | The effect picker: search by name and by code, preview follows the pointer, Esc closes and returns focus, a click applies undoably, recently used comes first, several at once with Done, a chip's × takes one off | The project changes exactly as chosen | yes |
+| 6.10 | Lyrics: with a .lrc beside the song, choose a look and a typeface, render | The reel is saved with both, and the Lyrics group says where the words came from | yes (inside 6.2) |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.

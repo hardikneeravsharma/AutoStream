@@ -448,6 +448,34 @@ def test_graphs_carry_no_escaped_commas_inside_quotes(root):
     assert "\\," not in argv[argv.index("-filter_complex") + 1]
 
 
+def test_lyrics_are_drawn_over_the_look_but_under_the_mark(root, tmp_path):
+    from autostream.clips import lyrics
+
+    got, derived, segs = _built(root)
+    files = [Path(f"{i}.mp4") for i in range(len(segs))]
+    plain = studio.assemble_command(got, derived, segs, files, Path("r.mp4"))
+    assert "ass=" not in plain[plain.index("-filter_complex") + 1]
+    ass = tmp_path / "w.ass"
+    ass.write_text("x", encoding="utf-8")
+    got["overlays"] = ["o04"]
+    argv = studio.assemble_command(got, derived, segs, files, Path("r.mp4"),
+                                   lyrics=lyrics.Prepared(ass, [(1.0, 1.5)], ""),
+                                   mark_at=(tmp_path, tmp_path / "s.png", 10, 10))
+    graph = argv[argv.index("-filter_complex") + 1]
+    assert graph.index("noise=") < graph.index("hue=s=0.15:enable='between(t,1.0000,1.5000)'") \
+        < graph.index("ass=filename=") < graph.index("overlay=")
+    assert "fontsdir=" in graph and "w.ass" in graph
+
+
+def test_a_projects_lyrics_settings_are_kept_and_clamped(root):
+    proj = _project(root, lyrics={"look": "caption", "face": "gochi", "clean": True})
+    got, _, _ = studio.normalise(proj, root)
+    assert got["lyrics"] == {"look": "caption", "face": "gochi", "clean": True}
+    got, _, _ = studio.normalise(_project(root, lyrics={"look": "<script>"}), root)
+    assert got["lyrics"]["look"] == "off"
+    assert [l["key"] for l in studio.catalog()["lyrics"]["looks"]] == list(studio.lyrics_mod.LOOKS)
+
+
 def test_a_freeze_never_changes_how_long_a_shot_is(root):
     got, derived, segs = _built(root, fx=["k04"])
     for seg in segs:

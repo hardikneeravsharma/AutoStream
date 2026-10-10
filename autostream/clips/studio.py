@@ -71,7 +71,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import facecam, hits as hits_mod, mark as mark_mod, parts as parts_mod, rulebook, studio_refs
+from . import facecam, hits as hits_mod, lyrics as lyrics_mod, mark as mark_mod, parts as parts_mod, rulebook, studio_refs
 
 log = logging.getLogger(__name__)
 
@@ -961,6 +961,7 @@ def catalog() -> dict:
                     "picks": picks_of(s)}
                    for s in STYLES],
         "default_style": DEFAULT_STYLE,
+        "lyrics": lyrics_mod.catalog(),
     }
 
 
@@ -2437,6 +2438,8 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         "duck": bool(project.get("duck", True)),
         "saturation": round(_num(project.get("saturation"), 0.3, 1.5, 1.0), 3),
         "kill_sound": bool(project.get("kill_sound", True)),
+        # The song's own words over the reel, in one of five looks; off by default.
+        "lyrics": lyrics_mod.settings(project.get("lyrics")),
         "beat": _num(project.get("beat"), 0.2, 2.0, 60.0 / NO_SONG_BPM),
         "seed": int(_num(project.get("seed"), 0, 2 ** 31 - 1, 0)),
         "pools": {},
@@ -3303,11 +3306,12 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
 
 def assemble_command(project: dict, derived: dict, segs: list[Segment], files: list[Path],
                      out: Path, ff: str = "ffmpeg", encoder_args=None,
-                     textdir: Path | None = None, mark_at=None) -> list[str]:
+                     textdir: Path | None = None, mark_at=None, lyrics=None) -> list[str]:
     """ffmpeg argv that joins the shot renders into the finished reel.
 
     `mark_at` is (animation folder, resting still, x, y) for the AutoStream
-    mark, or None when it cannot be drawn. See THE MARK below.
+    mark, or None when it cannot be drawn. See THE MARK below. `lyrics` is a
+    lyrics.Prepared whose subtitle script is drawn over everything but the mark.
     """
     W, H, F = SIZES[project["format"]][0], SIZES[project["format"]][1], FPS
     L = derived["length"]
@@ -3458,6 +3462,14 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
                     f"[bs][bg]blend=all_expr='A*min(1,T/{b})+B*(1-min(1,T/{b}))'[bl]")
         g.append(chain_in)
         acc_label = "bl"
+    # THE LYRICS, LAST BUT FOR THE MARK: over the grade, the grain and the
+    # bars, so a word is never dimmed by the look it sits on. Stamp greys the
+    # picture under each red word first, the way the edit it copies does.
+    if lyrics is not None and lyrics.ass:
+        if lyrics.greys:
+            on = "+".join(_between(a, b) for a, b in lyrics.greys)
+            post.append(f"hue=s=0.15:enable='{on}'")
+        post.append(f"ass=filename={_path_arg(lyrics.ass)}:fontsdir={_path_arg(lyrics_mod.FONTS_DIR)}")
     post.append(f"trim=end_frame={Lf},format=yuv420p")
     if mark_at:
         # Above everything the post chain drew: a mark under the film grain or
@@ -3654,6 +3666,7 @@ class StudioJob:
         self.started = time.time()
         self.finished = 0.0
         self.cached = 0
+        self.lyrics_note = ""
         self._cancel = threading.Event()
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
@@ -3666,7 +3679,8 @@ class StudioJob:
                     "percent": max(0, min(100, pct)), "message": self.message, "error": self.error,
                     "output": str(self.out), "project": str(self.out.with_suffix(".reel.json")),
                     "elapsed": int((self.finished or time.time()) - self.started),
-                    "cached": self.cached, "name": self.project.get("name", "")}
+                    "cached": self.cached, "name": self.project.get("name", ""),
+                    "lyrics_note": self.lyrics_note}
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -3758,6 +3772,30 @@ class StudioJob:
             log.info("studio loudness pass skipped: %s", e)
         finally:
             _unlink(fixed)
+
+    def _lyrics(self, ff: str):
+        """The reel's lyrics, ready to draw, or None -- never a failed render.
+
+        A song with no synced lyrics, no network, or an ffmpeg without libass
+        each leaves the reel exactly as it would have been, with the reason in
+        `lyrics_note` for the page to show.
+        """
+        if lyrics_mod.settings(self.project.get("lyrics"))["look"] == "off":
+            return None
+        if not lyrics_mod.ffmpeg_draws_ass(ff):
+            self._set(lyrics_note="This copy of ffmpeg cannot draw subtitles (no libass), "
+                                  "so the reel has no lyrics.")
+            return None
+        self._set(step="join", message="Timing the lyrics to the song")
+        W, H = SIZES[self.project["format"]]
+        try:
+            got = lyrics_mod.prepare(self.project, self.derived, self.root / CACHE_DIR / "lyrics", W, H)
+        except Exception as e:                              # noqa: BLE001
+            log.warning("studio: lyrics failed (%s)", e)
+            self._set(lyrics_note="The lyrics could not be prepared, so the reel has none.")
+            return None
+        self._set(lyrics_note=got.note, message="Joining the shots and mixing the sound")
+        return got if got.ass else None
 
     def _prepend_intro(self, ff: str, path: Path) -> None:
         """Join the intro clip in front of the finished reel.
@@ -3861,9 +3899,10 @@ class StudioJob:
                     except Exception as e:
                         log.warning("studio: the mark could not be drawn (%s)", e)
                         mark_at = None
+                    lyr = self._lyrics(ff)
                     self._run_ff(assemble_command(self.project, self.derived, segs, files, tmp, ff,
                                                   video_codec_args("auto", cq=19), textdir,
-                                                  mark_at=mark_at))
+                                                  mark_at=mark_at, lyrics=lyr))
                 except Cancelled:
                     raise
                 except RuntimeError as e:
@@ -3888,6 +3927,8 @@ class StudioJob:
             # from, which is what every time in the project is measured against.
             ic = self.project.get("intro_clip") or None
             intro = round(float(ic["end"]) - float(ic["start"]), 3) if ic else 0.0
+            if self.lyrics_note:
+                meta["lyrics_note"] = self.lyrics_note
             meta["render"] = {"length": round(self.derived["length"] + intro, 3),
                               "reel": self.derived["length"], "intro": intro,
                               "when": int(time.time()),

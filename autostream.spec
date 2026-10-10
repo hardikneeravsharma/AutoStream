@@ -111,6 +111,10 @@ datas += [("autostream/clips/templates/*.npy", "autostream/clips/templates")]
 # has no clips of their own to cut examples from. Drawn, not recorded -- see
 # scripts/make_stock_examples.py.
 datas += [("autostream/clips/stock_examples/*.mp4", "autostream/clips/stock_examples")]
+# The lyric typefaces, with their licence: libass reads them from this folder
+# by name, so a reel looks the same on a machine that has none of them.
+datas += [("autostream/clips/fonts/*.ttf", "autostream/clips/fonts"),
+          ("autostream/clips/fonts/OFL.txt", "autostream/clips/fonts")]
 
 # The app icon. Embedded in the exe below for Explorer and the taskbar, and
 # also shipped as a file so shortcuts and the installer can point at it without
