@@ -315,7 +315,13 @@ def sharpen(env: np.ndarray, bpm: float) -> float:
     # the beat itself is wanted, and the window is far too narrow for the p/2
     # and p/3 peaks to be in range.
     phases = 2.0 * np.pi * (t[None, :] / cands[:, None])
-    score = np.abs(np.exp(1j * phases).sum(axis=1))
+    # EACH ONSET WEIGHTED BY HOW HARD IT HIT. Counted equally, a hat on every
+    # off-beat is a vector pointing the opposite way to every kick, and the
+    # two cancel at the true period: measured on a 100 BPM kick-and-hats
+    # pattern, the unweighted sum pulled 99.4 to 96.8. Weighted, the kicks and
+    # snares that define the beat outvote the hats between them.
+    w = env[t.astype(int)].astype(float)
+    score = np.abs((w[None, :] * np.exp(1j * phases)).sum(axis=1))
     return float(60.0 * fps / cands[int(np.argmax(score))])
 
 
@@ -345,6 +351,31 @@ def _best_metrical(env: np.ndarray, bpm: float) -> float:
     return best
 
 
+# A BEAT REPEATS AT THE HALF BAR AND THE BAR TOO. The lag is chosen by the
+# autocorrelation at the lag AND at twice and four times it, weighted by these,
+# rather than by its own peak alone. A subdivision repeats at its own period
+# just as strongly as the beat does, but its multiples land between the bars;
+# the beat's land on them. Measured on 96 synthetic drum patterns (kick, snare
+# and hats at 72-174 BPM) with the in-range fix above already in: 49 -> 68
+# right, and the fourteen real songs of published tempo unchanged at 13/14,
+# every tempo identical to within 0.1 BPM.
+COMB = ((1, 1.0), (2, 0.7), (4, 0.5))
+COMB_STEP = 0.25               # frames between the lags tried
+
+
+def _comb_lag(ac: np.ndarray, a: int, b: int) -> float:
+    """The lag in [a, b) whose multiples, as well as itself, the music repeats at."""
+    lags = np.arange(a, b, COMB_STEP)
+    score = np.zeros(lags.size)
+    for m, w in COMB:
+        x = lags * m
+        i = np.minimum(np.floor(x).astype(int), len(ac) - 2)
+        f = x - i
+        ok = x < len(ac) - 1
+        score += w * np.where(ok, ac[i] * (1 - f) + ac[i + 1] * f, 0.0)
+    return float(lags[int(np.argmax(score))])
+
+
 def estimate_bpm(env: np.ndarray) -> float:
     if env.size < 64:
         return 0.0
@@ -354,7 +385,18 @@ def estimate_bpm(env: np.ndarray) -> float:
     lo, hi = search_lags(len(ac))
     if hi <= lo:
         return 0.0
-    lag = lo + int(np.argmax(ac[lo:hi]))
+    # THE PEAK IS LOOKED FOR INSIDE THE DECLARED RANGE ONLY. search_lags reaches
+    # a frame beyond each bound so the parabola below has neighbours, and the
+    # argmax used to be taken over those extra frames too. With hi-hats on the
+    # eighths of a 100 BPM song, lag 13 -- 198.8 BPM, the HATS, outside the
+    # range -- scored 0.964 against the beat's 0.918, won, and was clamped to
+    # 180. That is the "a quiet hi-hat between the kicks reads 100 as 135 or
+    # 180" failure the beat study found against real edits.
+    lag_min, lag_max = fps * 60.0 / BPM_MAX, fps * 60.0 / BPM_MIN
+    a, b = max(lo, int(np.ceil(lag_min))), min(hi, int(np.floor(lag_max)) + 1)
+    if b <= a:
+        return 0.0
+    lag = _comb_lag(ac, a, b)
     if not lag:
         return 0.0
 
@@ -373,7 +415,10 @@ def estimate_bpm(env: np.ndarray) -> float:
     # better, because when both explain the signal the faster one is the beat.
     for _ in range(2):                       # halve at most twice
         half = lag / 2.0
-        if half < lo:
+        # Never onto a lag faster than BPM_MAX: halving a 100 BPM beat lands on
+        # its own eighth-note hats, which always explain the music "nearly as
+        # well" -- they are half of it.
+        if half < lag_min - 0.5:
             break
         near = int(round(half))
         if near <= 0 or near >= len(ac):
@@ -387,6 +432,7 @@ def estimate_bpm(env: np.ndarray) -> float:
     # Fitting a parabola through the peak and its neighbours recovers most of
     # the fractional lag; `sharpen` below takes out the rest, because a
     # parabola fitted to a triangular peak undershoots by a known margin.
+    lag = int(round(lag))
     if 0 < lag < len(ac) - 1:
         y0, y1, y2 = float(ac[lag - 1]), float(ac[lag]), float(ac[lag + 1])
         denom = y0 - 2 * y1 + y2

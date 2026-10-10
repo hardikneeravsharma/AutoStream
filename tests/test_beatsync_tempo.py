@@ -179,3 +179,63 @@ def test_a_clip_too_short_to_analyse_says_so_instead_of_guessing():
     tiny = np.zeros(bs.WIN, dtype=np.float32)
     assert bs.onset_envelope(tiny).size == 0
     assert bs.estimate_bpm(bs.onset_envelope(tiny)) == 0.0
+
+
+# ------------------------------------------- a real drum kit, hats between the kicks
+
+def _hit(x: np.ndarray, at: float, freq: float, amp: float, decay: float,
+         noise: float, rng) -> None:
+    n = int(SR * 0.12)
+    t = np.arange(n) / SR
+    s = (np.sin(2 * np.pi * freq * t) if freq else np.zeros(n)) * np.exp(-decay * t)
+    if noise:
+        s = s + noise * rng.standard_normal(n) * np.exp(-decay * t)
+    i = int(at * SR)
+    if i + n < len(x):
+        x[i:i + n] += (amp * s).astype(np.float32)
+
+
+def kit(bpm: float, hats: str, hat_amp: float = 0.4, seconds: float = 40.0) -> np.ndarray:
+    """Kick on 1, 3 and the and-of-4, snare on 2 and 4, hats between.
+
+    The pattern the beat study found the tempo finder failing on: measured
+    against real edits, a quiet hi-hat between the kicks read a 100 BPM song
+    as 135, and on this kit the old finder returned 180 or 135 for every 100
+    BPM variant -- the hats' own period, just outside the range, won the
+    search and was clamped.
+    """
+    rng = np.random.default_rng(int(bpm))
+    x = np.zeros(int(SR * seconds), dtype=np.float32)
+    b = 60.0 / bpm
+    for k in range(int(seconds / b)):
+        t = k * b
+        if k % 4 in (0, 2):
+            _hit(x, t, 55, 1.0, 22, 0.0, rng)
+        if k % 4 == 3:
+            _hit(x, t + b / 2, 55, 0.8, 22, 0.0, rng)
+        if k % 4 in (1, 3):
+            _hit(x, t, 190, 0.6, 30, 0.8, rng)
+        steps = {"8ths": (0, 0.5), "offbeat": (0.5,), "16ths": (0, 0.25, 0.5, 0.75)}[hats]
+        for s in steps:
+            _hit(x, t + s * b, 0, hat_amp, 100, 1.0, rng)
+    return x
+
+
+def _octave_of(got: float, bpm: float) -> bool:
+    return any(abs(got - bpm * m) / (bpm * m) <= 0.02 for m in (1, 2, 0.5))
+
+
+@pytest.mark.parametrize("hats", ["8ths", "offbeat", "16ths"])
+@pytest.mark.parametrize("amp", [0.4, 0.9])
+def test_hats_between_the_kicks_do_not_set_the_tempo(hats, amp):
+    got = bs.estimate_bpm(bs.onset_envelope(kit(100.0, hats, amp)))
+    assert _octave_of(got, 100.0), f"100 BPM with {hats} hats read as {got:.1f}"
+
+
+def test_the_drum_kit_set_is_mostly_right():
+    """A floor, not a target: 96 patterns from the scratch harness scored 68
+    after the fix and 44 before; this subset pins the gain."""
+    cases = [(bpm, hats) for bpm in (80, 96, 100, 128, 140, 160, 174)
+             for hats in ("8ths", "offbeat")]
+    right = sum(_octave_of(bs.estimate_bpm(bs.onset_envelope(kit(b, h))), b) for b, h in cases)
+    assert right >= 11, f"only {right} of {len(cases)} drum patterns read at their tempo"
