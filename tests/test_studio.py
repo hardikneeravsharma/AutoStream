@@ -1589,3 +1589,31 @@ def test_without_the_option_every_kill_goes_in_as_before(root):
     proj, _ = studio.plan(_clips(root), "story", shape=Shape(bpm=120.0))
     assert proj["hs_only"] is False
     assert len({s["clip"] for s in proj["shots"]}) == len(_clips(root))
+
+
+# ------------------------------------------------------------------ recorded kills onto their emblems
+
+def test_a_recorded_kill_moves_onto_its_own_emblem():
+    """Aftrhrs: Riot's time sat -0.17 to +0.53 s from the emblem on screen, so a
+    story reel's visible kills landed a quarter second after the beat."""
+    ks, n = studio._snap_recorded([3.50, 10.0], [3.78, 9.9])
+    assert ks == [3.78, 9.9] and n == 2
+
+
+def test_two_recorded_kills_close_together_each_keep_their_own_emblem():
+    """The reason recorded clips were never checked: one emblem must not take both kills."""
+    ks, n = studio._snap_recorded([5.0, 5.4], [5.45])
+    assert ks == [5.0, 5.45] and n == 1                    # the nearer kill gets it; the other stays
+    ks, _ = studio._snap_recorded([5.0, 5.4], [5.1, 5.5])
+    assert ks == [5.1, 5.5]
+
+
+def test_an_emblem_too_far_away_is_another_kills():
+    ks, n = studio._snap_recorded([3.5], [2.6, 4.4])      # -0.9 and +0.9: neighbours, not this one
+    assert ks == [3.5] and n == 0
+
+
+def test_the_emblem_check_never_drops_or_adds_a_recorded_kill():
+    clips = [{"path": "a.mp4", "kills": [3.5, 9.0], "recorded": True, "game": "VALORANT"}]
+    out, moved, dropped, added = studio._confirm_kills(clips, lambda p, g: [3.8, 6.0, 20.0])
+    assert out[0]["kills"] == [3.8, 9.0] and moved == 1 and dropped == 0 and added == 0

@@ -1448,7 +1448,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             for c in chosen:
                 if c.get("_hs_times"):
                     c["kills"] = [k for k in c["kills"]
-                                  if any(abs(k - h) <= 0.6 for h in c["_hs_times"])] or c["kills"][:0]
+                                  if any(abs(k - h) <= SNAP_AFTER + 0.05 for h in c["_hs_times"])] or c["kills"][:0]
             chosen = [c for c in chosen if c.get("kills")]
         kept_paths = {c["path"] for c in chosen}
         left_out((p for p in before if p not in kept_paths),
@@ -1847,26 +1847,38 @@ def _confirm_kills(clips: list[dict], confirm, theirs=None) -> tuple[list[dict],
 
     A clip whose every kill turned out to have no emblem is left out: there is
     no kill in it to show. A clip whose kills came from Riot's match record is
-    left as it is: two kills half a second apart share one emblem, and the
-    check would drop the second.
+    never dropped from or added to -- two kills half a second apart share one
+    emblem, and the check would drop the second -- but each of its kills is
+    moved onto its own emblem when one is close. See _snap_recorded.
     """
     from concurrent.futures import ThreadPoolExecutor
 
     from . import killmark
 
     def one(c):
-        if c.get("recorded"):
-            return None
         return confirm(c["path"], c.get("game") or "")
     with ThreadPoolExecutor(max_workers=4) as pool:
         found = list(pool.map(one, clips))
+    # RIOT'S TIME IS NOT THE MOMENT ON SCREEN. A recorded kill is the server's
+    # clock lined up with the video, and measured on Aftrhrs it sat -0.17 to
+    # +0.53 s from the kill emblem the viewer sees (median +0.13): a story
+    # reel, which has no punch on the kill to hide it, landed the visible kill
+    # off its beat. So each recorded kill moves onto its own emblem when one is
+    # close -- one emblem per kill, nothing dropped, nothing added, which keeps
+    # the reason recorded clips were skipped (two kills half a second apart
+    # sharing one emblem must not lose the second).
+    out, moved, dropped, added = [], 0, 0, 0
     # Whether the HUD shows the emblem at all is a property of a RUN, not of a
     # clip: a run in which no clip shows one keeps its kills, while a clip with
     # no emblem in a run that shows them has no kill (checked by eye).
     shows = {c.get("folder") or Path(c["path"]).parent.parent.name
              for c, m in zip(clips, found) if m}
-    out, moved, dropped, added = [], 0, 0, 0
     for c, marks in zip(clips, found):
+        if c.get("recorded"):
+            ks, n = _snap_recorded([float(k) for k in c.get("kills") or []], marks or [])
+            moved += n
+            out.append(dict(c, kills=ks) if n else c)
+            continue
         run = c.get("folder") or Path(c["path"]).parent.parent.name
         if marks is None or run not in shows:
             out.append(c)
@@ -1879,6 +1891,33 @@ def _confirm_kills(clips: list[dict], confirm, theirs=None) -> tuple[list[dict],
         if kills:
             out.append(dict(c, kills=[round(k, 3) for k in kills], kill_count=len(kills)))
     return out, moved, dropped, added
+
+
+# How far from Riot's time a recorded kill's emblem may be and still be ITS
+# emblem. Measured on Aftrhrs's 22 recorded kills: 19 of 21 emblems sat inside
+# this; the two outside (-0.87, +1.24) were a neighbouring kill's.
+SNAP_BEFORE = 0.35
+SNAP_AFTER = 0.70
+
+
+def _snap_recorded(kills: list[float], emblems: list[float]) -> tuple[list[float], int]:
+    """Each recorded kill on its own nearby emblem, one emblem per kill. -> (kills, moved)
+
+    Nearest pairs first, so two kills close together each get the emblem that
+    is theirs rather than the first one taking the second's.
+    """
+    pairs = sorted((abs(e - k), i, j) for i, k in enumerate(kills) for j, e in enumerate(emblems)
+                   if -SNAP_BEFORE <= e - k <= SNAP_AFTER)
+    got: dict[int, float] = {}
+    used: set[int] = set()
+    for _d, i, j in pairs:
+        if i in got or j in used:
+            continue
+        got[i] = emblems[j]
+        used.add(j)
+    out = [round(got.get(i, k), 3) for i, k in enumerate(kills)]
+    moved = sum(1 for a, b in zip(out, kills) if abs(a - b) > 0.02)
+    return sorted(out), moved
 
 
 _ACTION_CACHE: dict[tuple, float | None] = {}
