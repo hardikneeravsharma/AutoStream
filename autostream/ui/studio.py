@@ -162,6 +162,7 @@ STUDIO_HTML = r"""
                point at, not a number. Shown while the Reel tab is open. -->
           <div class="ed-frame hide" id="studio-frame" aria-hidden="true">
             <span class="ed-handle" id="studio-handle-chip" title="Drag to move your handle"></span>
+            <span class="ed-handle ed-lyrics" id="studio-lyrics-chip" title="Drag to move the lyrics">LYRICS</span>
           </div>
         </div>
       </div>
@@ -3918,8 +3919,30 @@ function studio_lyricsGroup(p) {
       '<label class="studio-check"><input type="checkbox" id="studio-r-lyricclean"' + (ly.clean ? ' checked' : '') + '> Star out swear words</label>' +
       '<span class="muted studio-small">' + esc(studio.lyricsNote ||
         'Synced lyrics are looked up on LRCLIB when the reel renders. A .lrc file named like the song, beside it, is used first.') +
-      '</span></div>' : ''),
+      '</span></div>' +
+      '<div class="studio-field"><span class="field-label">Where</span><div class="ed-row">' +
+      studio_grid9('studio-lyr-pos', studio_lyrGrid(studio_lyrPos(p))) +
+      '<span class="muted studio-small">Or drag <b>LYRICS</b> on the picture.' +
+      (ly.pos ? ' <button type="button" class="btn btn-ghost btn-sm" data-act="studio-lyr-pos-reset">Back to the look’s place</button>' : '') +
+      '</span></div></div>' : ''),
     on ? look.label : 'off');
+}
+
+/* WHERE THE WORDS SIT: the centre of the line, as shares of the frame -- what
+   clips/lyrics.py draws at. Unset is the look's own place for this shape. The
+   nine quick places are a grid of centres, kept clear of the edges, because
+   a line of words centred on a corner would hang off it. */
+const STUDIO_LYR_X = [0.25, 0.5, 0.75], STUDIO_LYR_Y = [0.15, 0.5, 0.85];
+function studio_lyrPos(p) {
+  const ly = (p && p.lyrics) || {};
+  if (ly.pos) return ly.pos;
+  const d = (studio.catalog && studio.catalog.lyrics && studio.catalog.lyrics.default_pos) || {};
+  return d[p && p.format === 'vertical' ? 'vertical' : 'landscape'] || [0.5, 0.4];
+}
+function studio_lyrGrid(pos) {
+  const ix = STUDIO_LYR_X.findIndex(v => Math.abs(v - pos[0]) < 0.005);
+  const iy = STUDIO_LYR_Y.findIndex(v => Math.abs(v - pos[1]) < 0.005);
+  return ix >= 0 && iy >= 0 ? [ix / 2, iy / 2] : null;
 }
 
 /* Nine places, laid out as the frame they stand for. `at` is [x, y] in 0..1. */
@@ -4291,12 +4314,24 @@ function studio_videoRect() {
 
 function studio_frameDraw() {
   const fr = studio_el('studio-frame'), chip = studio_el('studio-handle-chip'), p = studio.project;
+  const lc = studio_el('studio-lyrics-chip');
   if (!fr || !chip) return;
   const on = !!(p && studio.sel < 0 && (p.overlays || []).indexOf('o07') >= 0 && p.handle);
-  fr.classList.toggle('hide', !on);
-  if (!on) return;
+  const lyr = !!(p && studio.sel < 0 && p.lyrics && p.lyrics.look && p.lyrics.look !== 'off');
+  fr.classList.toggle('hide', !on && !lyr);
+  chip.classList.toggle('hide', !on);
+  if (lc) lc.classList.toggle('hide', !lyr);
   const r = studio_videoRect();
   if (!r) return;
+  if (lyr && lc) {
+    /* Centred where the words will be centred: the render puts the middle of
+       the line at this share of the frame. */
+    lc.style.fontSize = Math.max(10, r.h * 0.045) + 'px';
+    const lp = (studio.lyrDrag && studio.lyrDrag.pos) || studio_lyrPos(p);
+    lc.style.left = (r.x + r.w * lp[0] - lc.offsetWidth / 2) + 'px';
+    lc.style.top = (r.y + r.h * lp[1] - lc.offsetHeight / 2) + 'px';
+  }
+  if (!on) return;
   chip.textContent = p.handle;
   /* The reel draws it at 3.2% of the frame's height. */
   chip.style.fontSize = Math.max(9, r.h * 0.032) + 'px';
@@ -4330,6 +4365,33 @@ function studio_handlePointer(e) {
   const pos = [Math.round(g.pos[0] * 1000) / 1000, Math.round(g.pos[1] * 1000) / 1000];
   if (Math.abs(pos[0] - g.start[0]) + Math.abs(pos[1] - g.start[1]) > 0.002) {
     studio_change(pr => { pr.handle_pos = pos; }, 'Your handle · moved');
+  } else studio_frameDraw();
+}
+
+/* The lyrics, dragged anywhere on the picture. Same shape as the handle's
+   drag; the position is the line's centre, held clear of the edges the way
+   clips/lyrics.py clamps it. */
+function studio_lyrPointer(e) {
+  const chip = studio_el('studio-lyrics-chip'), p = studio.project;
+  if (!chip || !p) return;
+  if (e.type === 'pointerdown') {
+    const start = studio_lyrPos(p).slice();
+    studio.lyrDrag = {x0: e.clientX, y0: e.clientY, pos: start.slice(), start: start,
+                      r: studio_videoRect(), id: e.pointerId};
+    try { chip.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
+    e.preventDefault();
+    return;
+  }
+  const g = studio.lyrDrag;
+  if (!g || e.pointerId !== g.id || !g.r) return;
+  const cl = v => Math.max(0.05, Math.min(0.95, v));
+  g.pos = [cl(g.start[0] + (e.clientX - g.x0) / Math.max(1, g.r.w)),
+           cl(g.start[1] + (e.clientY - g.y0) / Math.max(1, g.r.h))];
+  if (e.type === 'pointermove') { studio_frameDraw(); return; }
+  studio.lyrDrag = null;
+  const pos = [Math.round(g.pos[0] * 1000) / 1000, Math.round(g.pos[1] * 1000) / 1000];
+  if (Math.abs(pos[0] - g.start[0]) + Math.abs(pos[1] - g.start[1]) > 0.002) {
+    studio_change(pr => { pr.lyrics = Object.assign({}, pr.lyrics, {pos: pos}); }, 'Lyrics · moved');
   } else studio_frameDraw();
 }
 
@@ -5237,6 +5299,14 @@ function studio_wire() {
     else if (act === 'studio-cam-pos' && p) studio_change(pr => {
       pr.cam = Object.assign({}, pr.cam, {pos: [Number(b.getAttribute('data-x')), Number(b.getAttribute('data-y'))]});
     }, 'Facecam position');
+    else if (act === 'studio-lyr-pos' && p) studio_change(pr => {
+      const x = STUDIO_LYR_X[Math.round(Number(b.getAttribute('data-x')) * 2)];
+      const y = STUDIO_LYR_Y[Math.round(Number(b.getAttribute('data-y')) * 2)];
+      pr.lyrics = Object.assign({}, pr.lyrics, {pos: [x, y]});
+    }, 'Lyrics · moved');
+    else if (act === 'studio-lyr-pos-reset' && p) studio_change(pr => {
+      pr.lyrics = Object.assign({}, pr.lyrics, {pos: null});
+    }, 'Lyrics · back to the look’s place');
     else if (act === 'studio-handle-pos' && p) studio_change(pr => {
       pr.handle_pos = [Number(b.getAttribute('data-x')), Number(b.getAttribute('data-y'))];
     }, 'Your handle · moved');
@@ -5328,6 +5398,8 @@ function studio_wire() {
   ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(ev => {
     const chip = studio_el('studio-handle-chip');
     if (chip) chip.addEventListener(ev, studio_handlePointer);
+    const lchip = studio_el('studio-lyrics-chip');
+    if (lchip) lchip.addEventListener(ev, studio_lyrPointer);
     const st = studio_el('studio-fc-stage');
     if (st) st.addEventListener(ev, studio_fcPointer);
   });

@@ -650,6 +650,20 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     page.wait_for_selector("#studio-r-lyricface", timeout=15_000)
     page.select_option("#studio-r-lyricface", "gochi")
     page.wait_for_function("studio.project.lyrics.face === 'gochi'", timeout=15_000)
+    # put them anywhere: drag the LYRICS stand-in on the picture, then one of the nine places
+    chip = page.locator("#studio-lyrics-chip")
+    chip.wait_for(state="visible", timeout=15_000)
+    box = chip.bounding_box()
+    vr = page.evaluate("studio_videoRect()")
+    cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(cx, cy)
+    page.mouse.down()
+    page.mouse.move(cx + vr["w"] * 0.2, cy + vr["h"] * 0.3, steps=6)
+    page.mouse.up()
+    page.wait_for_function("studio.project.lyrics.pos && studio.project.lyrics.pos[1] > 0.6", timeout=15_000)
+    page.click('#studio-insp [data-act="studio-lyr-pos"][data-x="0"][data-y="1"]')
+    page.wait_for_function("studio.project.lyrics.pos[0] === 0.25 && studio.project.lyrics.pos[1] === 0.85",
+                           timeout=15_000)
 
     page.evaluate("document.getElementById('studio-state').textContent = ''; window.__toasts = []")
     page.click("#studio-render-btn")
@@ -658,7 +672,7 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     job = ui.api("GET", "/api/studio/job")
     saved = json.loads(Path(job["project"]).read_text(encoding="utf-8"))
     assert saved["song"] == str(song) and saved["style"] == "hype"
-    assert saved["lyrics"] == {"look": "caption", "face": "gochi", "clean": False}
+    assert saved["lyrics"] == {"look": "caption", "face": "gochi", "clean": False, "pos": [0.25, 0.85]}
     assert "studio song.lrc" in (saved.get("lyrics_note") or ""), saved.get("lyrics_note")
     assert "studio song.lrc" in page.inner_text('#studio-insp details[data-grp="lyrics"]')
     assert page.evaluate("window.__toasts.filter(t => t === 'Reel ready.').length") == 1

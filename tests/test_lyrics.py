@@ -121,10 +121,39 @@ def test_every_face_and_its_licence_ship_with_the_app():
 
 
 def test_settings_are_off_unless_a_known_look_is_asked_for():
-    assert lyrics.settings(None) == {"look": "off", "face": "", "clean": False}
+    assert lyrics.settings(None) == {"look": "off", "face": "", "clean": False, "pos": None}
     assert lyrics.settings({"look": "bogus", "face": "comic"})["look"] == "off"
     assert lyrics.settings({"look": "glow", "face": "bebas", "clean": 1}) == \
-        {"look": "glow", "face": "bebas", "clean": True}
+        {"look": "glow", "face": "bebas", "clean": True, "pos": None}
+
+
+def test_a_position_is_kept_clamped_inside_the_frame_and_junk_is_dropped():
+    assert lyrics.settings({"look": "stamp", "pos": [0.3, 0.7]})["pos"] == [0.3, 0.7]
+    assert lyrics.settings({"look": "stamp", "pos": [-4, 9]})["pos"] == [lyrics.POS_EDGE, 1 - lyrics.POS_EDGE]
+    for junk in ("x", [1], [None, 2], {"a": 1}, [float("nan"), 0.5]):
+        assert lyrics.settings({"look": "stamp", "pos": junk})["pos"] is None
+
+
+@pytest.mark.parametrize("look", lyrics.LOOKS)
+@pytest.mark.parametrize("size", [(1080, 1920), (1920, 1080)])
+def test_the_words_are_drawn_where_the_player_put_them(look, size):
+    rows = lyrics.place(_lines(), 100.0, 10.0, [], kills=[0.6])
+    W, H = size
+    text = lyrics.build_ass(look, rows, W, H, pos=[0.5, 0.8])
+    at = set(re.findall(r"\\(?:pos|move)\((\d+),(\d+)", text))
+    # every look puts a word's resting place on the chosen centre
+    assert (str(round(W * 0.5)), str(round(H * 0.8))) in at, sorted(at)[:6]
+    assert lyrics.build_ass(look, rows, W, H) != text
+
+
+@pytest.mark.parametrize("look", lyrics.LOOKS)
+def test_a_line_placed_at_the_edge_is_moved_in_until_it_fits(look):
+    """A caption centred 5% across hung its first word off the frame."""
+    rows = lyrics.place([lyrics.Line(100.0, ["unbelievable", "extraordinary", "everything", "tonight"])],
+                        100.0, 10.0, [], kills=[])
+    text = lyrics.build_ass(look, rows, 1080, 1920, pos=[0.05, 0.5])
+    xs = [int(x) for x in re.findall(r"\\(?:pos|move)\((\d+),960[,)]", text)]
+    assert xs and min(xs) > round(1080 * 0.05), sorted(set(xs))
 
 
 # ---------------------------------------------------------------- finding them
@@ -160,6 +189,33 @@ def test_a_fetch_is_cached_and_a_miss_is_not_asked_again_at_once(tmp_path):
     n = len(asked)
     assert lyrics.find(other, tmp_path / "c", seconds=60.0, tags={}, fetch=fetch_none)[0] == []
     assert len(asked) == n
+
+
+def test_the_records_length_is_kept_and_an_old_cache_without_it_is_asked_again(tmp_path):
+    import json
+
+    song = tmp_path / "Song.m4a"
+    song.write_bytes(b"x")
+    asked = []
+
+    def fetch(artist, title, seconds):
+        asked.append(title)
+        return lyrics.Synced(LRC, 120.0)
+    first, _ = lyrics.find(song, tmp_path / "c", seconds=121.88, tags={}, fetch=fetch)
+    again, _ = lyrics.find(song, tmp_path / "c", seconds=121.88, tags={}, fetch=fetch)
+    assert first.ref_seconds == again.ref_seconds == 120.0 and len(asked) == 1
+    cache = next((tmp_path / "c").glob("*.json"))
+    held = json.loads(cache.read_text(encoding="utf-8"))
+    del held["duration"]                                  # what v1.46-v1.48 wrote
+    cache.write_text(json.dumps(held), encoding="utf-8")
+    third, _ = lyrics.find(song, tmp_path / "c", seconds=121.88, tags={}, fetch=fetch)
+    assert len(asked) == 2 and third.ref_seconds == 120.0
+
+
+def test_lrclib_hands_back_the_records_length():
+    got = lyrics.fetch_lrclib("", "Song", 121.88,
+                              get=lambda url: [{"syncedLyrics": "[00:01.00]x", "duration": 120.0}])
+    assert got == "[00:01.00]x" and got.duration == 120.0
 
 
 def test_artist_dash_title_in_a_file_name_is_split(tmp_path):
@@ -199,10 +255,66 @@ def test_prepare_writes_the_script_and_greys_under_stamps_red_words(tmp_path):
                "lyrics": {"look": "stamp"}}
     derived = {"length": 10.0, "kills": [0.6]}
     got = lyrics.prepare(project, derived, tmp_path / "c", 1080, 1920,
-                         finder=lambda s, c: (_lines(), "a test"), onsets=lambda *a: [])
+                         finder=lambda s, c: (_lines(), "a test"), onsets=lambda *a: [],
+                         shifter=lambda s, ls: (0.0, 1.0))
     assert got.ass and got.ass.is_file()
     assert got.greys and got.hooks == 1
-    assert "a test" in got.note
+    assert "a test" in got.note and "Moved" not in got.note
+
+
+def test_prepare_moves_the_lines_onto_this_recording_before_placing_words(tmp_path):
+    """TISWFLFIL2: every word came 1.9 s before it was sung."""
+    project = {"song": str(tmp_path / "s.m4a"), "song_offset": 100.0, "lyrics": {"look": "stamp"}}
+    got = lyrics.prepare(project, {"length": 10.0, "kills": [2.6]}, tmp_path / "c", 1080, 1920,
+                         finder=lambda s, c: (_lines(), "a test"), onsets=lambda *a: [],
+                         shifter=lambda s, ls: (0.5, 1.2))
+    events = [ln for ln in got.ass.read_text(encoding="utf-8").splitlines() if ln.startswith("Dialogue:")]
+    assert events[0].split(",")[1] == "0:00:00.50"       # the first line was at 0.0 of the reel
+    assert "+0.50 s" in got.note
+
+
+# ---------------------------------------------------------------- moving a lyric onto this recording
+
+def _flux_for(starts, shift, seconds=120.0, fps=lyrics.VOCAL_SR / lyrics.VOCAL_HOP, extra=()):
+    np = pytest.importorskip("numpy")
+    rng = np.random.default_rng(3)
+    flux = rng.normal(0.0, 0.3, int(seconds * fps))
+    for t in list(starts) + list(extra):
+        i = int((t + shift) * fps) - 1
+        flux[i:i + 3] += 4.0
+    return flux, fps
+
+
+def _song_lines():
+    return [lyrics.Line(10.0 + 4.3 * i, ["word"] * 5) for i in range(20)]
+
+
+def test_a_lyric_timed_on_a_shorter_cut_moves_by_the_difference():
+    lines = _song_lines()
+    flux, fps = _flux_for([ln.t for ln in lines], 1.9)
+    shift, gain = lyrics.align(lines, flux, fps, ref_seconds=120.0, song_seconds=121.88)
+    assert shift == pytest.approx(1.9, abs=0.05) and gain > lyrics.ALIGN_GAIN
+
+
+def test_without_the_record_length_only_a_small_correction_is_made():
+    lines = _song_lines()
+    flux, fps = _flux_for([ln.t for ln in lines], 1.9)
+    assert lyrics.align(lines, flux, fps, ref_seconds=0.0, song_seconds=121.88)[0] == 0.0
+    flux, fps = _flux_for([ln.t for ln in lines], 0.2)
+    assert lyrics.align(lines, flux, fps, ref_seconds=0.0, song_seconds=121.88)[0] == pytest.approx(0.2, abs=0.05)
+
+
+def test_a_rise_far_from_both_candidates_is_never_taken():
+    """A dense verse rises everywhere: Ambition For Cash scored almost as well at -2.8 s."""
+    lines = _song_lines()
+    flux, fps = _flux_for([ln.t for ln in lines], -2.8)
+    assert lyrics.align(lines, flux, fps, ref_seconds=143.0, song_seconds=143.48)[0] == 0.0
+
+
+def test_lines_already_in_time_are_left_alone():
+    lines = _song_lines()
+    flux, fps = _flux_for([ln.t for ln in lines], 0.0)
+    assert lyrics.align(lines, flux, fps, ref_seconds=120.0, song_seconds=121.88)[0] == 0.0
 
 
 def test_prepare_says_why_when_there_are_no_words(tmp_path):
