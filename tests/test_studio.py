@@ -1055,6 +1055,144 @@ def test_a_longer_run_up_never_shows_a_kill_twice(tmp_path):
             assert a2 >= b1 - 1e-6, f"{Path(clip).name}: {a1:.2f}-{b1:.2f} overlaps {a2:.2f}-{b2:.2f}"
 
 
+@pytest.fixture
+def quadra(tmp_path):
+    """Aftrhrs's opener in miniature: a 26.4 s round with kills 1.9 s apart, a
+    long walk, then two kills 0.83 s apart -- and two ordinary clips after it."""
+    r = tmp_path / "clips"
+    _run(r, "2026-10-10_2215_VALORANT", "VALORANT",
+         [{"start": 1000.0, "end": 1026.4, "kills": 4},
+          {"start": 2000.0, "end": 2012.0}, {"start": 3000.0, "end": 3012.0}],
+         kills=[1003.567, 1005.467, 1017.6, 1018.433, 2006.0, 3006.0])
+    return r
+
+
+def _quadra_first(r, *, hero_freeze=False):
+    """The planned reel with the quadra's shots first, as the user's reel had them."""
+    proj, _ = studio.plan(_clips(r), "story", shape=Shape(bpm=110.0))
+    shots = proj["shots"]
+    q = [s for s in shots if s["clip_seconds"] == pytest.approx(26.4)]
+    proj["shots"] = q + [s for s in shots if s not in q]
+    assert [s["kills"] for s in q] == [[3.567], [5.467], [17.6, 18.433]]
+    for s in proj["shots"]:
+        s["speed"], s["fx"], s["hero"], s["hero_fx"] = "s00", ["k15"], False, []
+    if hero_freeze:
+        q[2].update(speed="s04", hero=True, hero_fx=["h02"])
+    return proj, q
+
+
+def _shown(proj, r):
+    """clip -> every kill the reel plays, once per time it plays."""
+    got, derived, _ = studio.normalise(proj, r)
+    out = {}
+    for s, row in zip(got["shots"], derived["shots"]):
+        a, b = row["source_in"], row["source_out"]
+        out.setdefault(s["clip"], []).extend(round(k, 3) for k in s["kills"] if a - 1e-6 <= k <= b + 1e-6)
+    return got, derived, out
+
+
+def test_a_follow_up_never_replays_the_footage_the_shot_before_showed(quadra):
+    """Aftrhrs: the quadra's first two kills were 1.90 s apart in the footage
+    and their marks 4.40 s apart. The opener ran on past the second kill to its
+    cut, the follow-up started 2.20 s back inside that, and the second kill --
+    and the run into it -- played twice."""
+    proj, q = _quadra_first(quadra)
+    notes = studio.apply_marks(proj, [3.30, 7.70, 11.01, 13.80, 16.50])
+    got, derived, shown = _shown(proj, quadra)
+    clip = q[0]["clip"]
+    spans = sorted(studio._span(s) for s in got["shots"] if s["clip"] == clip)
+    for (a1, b1), (a2, b2) in zip(spans, spans[1:]):
+        assert a2 >= b1 - 1e-3, f"{a1:.2f}-{b1:.2f} overlaps {a2:.2f}-{b2:.2f}"
+    assert sorted(shown[clip]) == [3.567, 5.467, 17.6, 18.433], shown[clip]
+    # The two close kills are one shot now, and the mark passed on: the
+    # quadra's third kill takes the second mark rather than waiting a mark.
+    assert got["shots"][0]["kills"] == [3.567, 5.467]
+    assert derived["shots"][1]["kill_reel"] == pytest.approx(7.70, abs=1.0 / studio.FPS)
+    assert any("showing its kill twice" in n for n in notes), notes
+
+
+def test_a_freeze_on_the_kill_does_not_cut_off_the_shots_later_kill(quadra):
+    """Aftrhrs: the climax quadra froze 0.75 s on its third kill inside a
+    1.10 s tail and rushed out at 2.2x; 0.11 s of footage followed the
+    freeze and the fourth kill, 0.83 s on, never appeared."""
+    proj, q = _quadra_first(quadra, hero_freeze=True)
+    marks = [3.30, 7.70, 11.01, 13.80, 16.50]
+    studio.apply_marks(proj, marks)
+    got, derived, shown = _shown(proj, quadra)
+    hero = next(i for i, s in enumerate(got["shots"]) if s.get("hero"))
+    s, row = got["shots"][hero], derived["shots"][hero]
+    assert 18.433 in [round(k, 3) for k in s["kills"]]
+    # Shown: what plays after the freeze reaches past the fourth kill, held.
+    assert row["source_out"] >= 18.433 + studio.OWN_KILL_HOLD - 1e-3, row
+    # ...at real speed, not rushed: the ramp out waits for it.
+    k_src = 18.433 - row["source_in"]
+    used = 0.0
+    for a, b, rate in row["pieces"]:
+        if k_src <= used + (b - a) * rate + 1e-9:
+            assert rate <= 1.0, row["pieces"]
+            break
+        used += (b - a) * rate
+    # and the next kill still lands on its own mark
+    assert derived["shots"][hero + 1]["kill_reel"] == pytest.approx(
+        marks[hero + 1], abs=1.0 / studio.FPS)
+
+
+def test_a_ramp_out_of_the_kill_waits_for_the_shots_own_later_kills():
+    own = 0.833 + studio.OWN_KILL_HOLD
+    for speed in ("s03", "s04"):
+        ps = studio.pieces(speed, 4.0, 2.0, own=own)
+        assert ps[-1][1] == pytest.approx(4.0)
+        k = studio.source_used(ps, 2.0)
+        # every piece that plays the footage from the kill to `own` past it is
+        # at real speed or slower
+        used = 0.0
+        for a, b, rate in ps:
+            lo, hi = used, used + (b - a) * rate
+            if hi > k + 1e-6 and lo < k + own - 1e-6:
+                assert rate <= 1.0, (speed, ps)
+            used = hi
+        # and without later kills the ramp is exactly what it always was
+        assert studio.pieces(speed, 4.0, 2.0) == studio.pieces(speed, 4.0, 2.0, own=0.0)
+
+
+def test_a_mark_too_soon_after_a_shots_later_kills_goes_to_the_next_shot(tmp_path):
+    """Aftrhrs: a triple's tail needed 2.75 s and the next mark came 2.20 s
+    after its first kill. The cut fell there, the third kill was never seen,
+    and the next shot opened on its own kill with no run-up at all."""
+    r = tmp_path / "clips"
+    _run(r, "2026-10-10_2215_VALORANT", "VALORANT",
+         [{"start": 1000.0, "end": 1026.0, "kills": 3},
+          {"start": 2000.0, "end": 2012.0}, {"start": 3000.0, "end": 3012.0}],
+         kills=[1003.5, 1004.7, 1005.9, 2006.0, 3006.0])
+    proj, _ = studio.plan(_clips(r), "story", shape=Shape(bpm=110.0))
+    tri = next(s for s in proj["shots"] if len(s["kills"]) == 3)
+    proj["shots"] = [tri] + [s for s in proj["shots"] if s is not tri]
+    for s in proj["shots"]:
+        s["speed"], s["fx"], s["hero"], s["hero_fx"] = "s00", ["k15"], False, []
+    notes = studio.apply_marks(proj, [3.0, 5.2, 8.0, 11.0])
+    got, derived, shown = _shown(proj, r)
+    assert sorted(shown[tri["clip"]]) == [3.5, 4.7, 5.9]
+    assert derived["shots"][1]["kill_reel"] == pytest.approx(8.0, abs=1.0 / studio.FPS)
+    assert got["shots"][1]["pre"] >= rulebook.MIN_RUN_SECONDS
+    assert any("took the mark after" in n for n in notes), notes
+
+
+def test_a_planned_reel_shows_every_kill_of_its_clips_once(quadra):
+    """The whole plan, cut to a song's hits, keeps the rule end to end."""
+    hits = [1.0 + 0.545 * n for n in range(1, 200)]
+    shape = Shape(bpm=110.0, seconds=120.0, phase=0.0, hits=hits)
+    proj, _ = studio.plan(_clips(quadra), "story", shape=shape, song="s.mp3")
+    got, derived, shown = _shown(proj, quadra)
+    for clip, spans in _spans_by_clip(got["shots"]).items():
+        spans.sort()
+        for (a1, b1), (a2, b2) in zip(spans, spans[1:]):
+            assert a2 >= b1 - 1e-3, f"{Path(clip).name}: {a1:.2f}-{b1:.2f} overlaps {a2:.2f}-{b2:.2f}"
+    for clip, kills in shown.items():
+        assert len(kills) == len(set(kills)), (Path(clip).name, kills)
+    q = next(c for c in shown if "VALORANT_00" in c)
+    assert sorted(shown[q]) == [3.567, 5.467, 17.6, 18.433]
+
+
 def test_without_a_part_the_planner_chooses_as_before(long_run):
     shape = Shape(bpm=120.0, seconds=120.0, phase=0.0, drums_in=8.0)
     a, _ = studio.plan(_clips(long_run)[:8], "story", shape=shape, song="s.mp3")

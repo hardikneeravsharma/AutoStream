@@ -1078,12 +1078,18 @@ def _grid_div(shot_seconds: float, beat: float) -> int:
 # ============================================================== speed
 
 def pieces(speed: str, dur: float, pre: float,
-           stretch=None) -> list[tuple[float, float, float]]:
+           stretch=None, own: float = 0.0) -> list[tuple[float, float, float]]:
     """Output-time pieces of one shot: (start, end, playback rate), covering [0, dur].
 
     `pre` is where the kill falls in the shot's output time. Every preset keeps
     the kill inside a slow piece or at real speed, so it is still on screen
     when it lands on its beat.
+
+    `own` is how many source seconds after that kill the shot's OWN later
+    kills need (see _own_after). A ramp that rushes away from the kill waits
+    until they have played at real speed. Measured on Aftrhrs: the climax's
+    quadra was 17.6 s and 18.433 s into its clip, s04 rushed out at 2.2x from
+    0.45 s after the first, and the fourth kill went by in a third of a second.
 
     `stretch` is (rate, real, hold): the run-up slowed to `rate` up to the
     last `real` seconds before the kill, which play as recorded, after the
@@ -1092,6 +1098,7 @@ def pieces(speed: str, dur: float, pre: float,
     while its kill still lands exactly on it.
     """
     k = max(0.0, min(dur, pre))
+    own = max(0.0, float(own or 0.0))
     if stretch:
         rate, real = float(stretch[0]), max(0.0, min(k, float(stretch[1])))
         hold = max(0.0, min(k - real, float(stretch[2]) if len(stretch) > 2 else 0.0))
@@ -1105,10 +1112,15 @@ def pieces(speed: str, dur: float, pre: float,
         raw = [(0.0, k - 0.45, 1.6), (k - 0.45, k - 0.15, 0.7), (k - 0.15, k + 0.55, 0.3),
                (k + 0.55, dur, 1.0)]
     elif speed == "s03":
-        raw = [(0.0, k - 0.15, 1.0), (k - 0.15, k + 0.5, 0.3), (k + 0.5, k + 0.8, 1.0),
-               (k + 0.8, dur, 2.2)]
+        # 0.45 s of source has played by k + 0.8 (0.15 slowed, 0.3 real).
+        out_at = k + 0.8 + max(0.0, own - 0.45)
+        raw = [(0.0, k - 0.15, 1.0), (k - 0.15, k + 0.5, 0.3), (k + 0.5, out_at, 1.0),
+               (out_at, dur, 2.2)]
     elif speed == "s04":
-        raw = [(0.0, k - 0.3, 2.2), (k - 0.3, k + 0.45, 0.3), (k + 0.45, dur, 2.2)]
+        # 0.135 s of source has played by k + 0.45 (0.45 s at 0.3).
+        out_at = k + 0.45 + max(0.0, own - 0.135)
+        raw = [(0.0, k - 0.3, 2.2), (k - 0.3, k + 0.45, 0.3), (k + 0.45, out_at, 1.0),
+               (out_at, dur, 2.2)]
     elif speed == "s05":
         raw = [(0.0, k - 0.15, 0.5), (k - 0.15, dur, 1.0)]
     elif speed in ("exit", "s06"):
@@ -1133,9 +1145,44 @@ def pieces(speed: str, dur: float, pre: float,
 
 def shot_pieces(shot: dict, dur: float | None = None, pre: float | None = None,
                 speed: str | None = None) -> list[tuple[float, float, float]]:
-    """pieces() for a shot as it stands, stretch included."""
+    """pieces() for a shot as it stands, stretch and its own later kills included."""
     return pieces(speed or shot["speed"], shot["duration"] if dur is None else dur,
-                  shot["pre"] if pre is None else pre, _stretch_of(shot))
+                  shot["pre"] if pre is None else pre, _stretch_of(shot), _own_after(shot))
+
+
+def _own_after(shot: dict) -> float:
+    """Source seconds after the main kill that the shot's own later kills need, held.
+
+    0 when it has none. Its own are the kills that follow the main one in a
+    chain, each within OWN_KILLS_WITHIN of the one before: the rest of a double
+    or a triple, and the kill of a follow-up folded into it by apply_marks. A
+    kill further on is another fight a hand-built shot happened to list.
+    """
+    k0 = float(shot["kill"])
+    last = k0
+    for k in sorted(float(x) for x in shot.get("kills") or []):
+        if k <= last + 1e-6:
+            continue
+        if k - last > OWN_KILLS_WITHIN:
+            break
+        last = k
+    return last - k0 + OWN_KILL_HOLD if last > k0 else 0.0
+
+
+def _freeze_of(shot: dict) -> float:
+    """Seconds of freeze the render inserts at this shot's kill.
+
+    A freeze REPLACES footage -- the shot is not lengthened by it -- so it is
+    taken out of what plays after the kill, and the planner has to leave room
+    for it when the shot has later kills of its own to show.
+    """
+    freeze = 0.4 if "k04" in (shot.get("fx") or []) else 0.0
+    # By FAMILY, not by id: "h02" is only the middle of the freeze family,
+    # and an exact match left "Freeze and push in (a long beat)" offered,
+    # picked and doing nothing at all.
+    if shot.get("hero") and (pid := picked(shot.get("hero_fx") or [], "h02")):
+        freeze = max(freeze, knob(pid, "hold", 0.75))
+    return freeze
 
 
 def _stretch_of(shot: dict):
@@ -1627,7 +1674,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     rulebook.budget(shots, pools)
     clip_look = {m.clip["path"]: looks.get(m.group) for m in picked}
     def speed_ok(shot, speed):
-        ps = pieces(speed, shot["duration"], shot["pre"])
+        ps = pieces(speed, shot["duration"], shot["pre"], own=_own_after(shot))
         before = source_used(ps, shot["pre"])
         after = source_used(ps, shot["duration"]) - before
         return (before <= float(shot["kill"]) + 1e-6
@@ -2208,9 +2255,10 @@ def max_pre(shot: dict, want: float) -> float:
 def max_post(shot: dict, pre: float, want: float) -> float:
     """The longest time after the kill, up to `want`, the footage after it allows."""
     room = max(0.0, float(shot["clip_seconds"]) - float(shot["kill"]))
+    own = _own_after(shot)
 
     def fits(post: float) -> bool:
-        ps = pieces(shot["speed"], pre + post, pre)
+        ps = pieces(shot["speed"], pre + post, pre, own=own)
         return source_used(ps, pre + post) - source_used(ps, pre) <= room + 1e-6
     if fits(want):
         return want
@@ -2309,12 +2357,8 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
         s.pop("stretch", None)              # the marks decide every stretch afresh
     if len(shots) > 1 and max_pre(shots[0], marks[0]) < marks[0] - slack             and not stretch_to(dict(shots[0]), marks[0]):
         lead = 1
-    n = min(len(marks), len(shots) - lead)
-    if n <= 0:
+    if len(shots) - lead <= 0:
         return notes
-    if len(marks) > len(shots) - lead:
-        notes.append(f"{len(marks)} kills were marked but the reel has {len(shots) - lead} shots to "
-                     f"put on them; the last {len(marks) - n} marks were not used.")
     cuts = []
     pres = []
     if lead:
@@ -2329,10 +2373,12 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
         notes.append(f"Shot 1 has only {pre0:.2f} s of footage before its kill and the first mark is "
                      f"{marks[0]:.2f} s in, so it opens the reel as the lead-in and shot 2's kill "
                      f"lands on that mark instead.")
-    for i in range(n):
-        s = shots[lead + i]
-        k = marks[i]
-        if i == 0 and not lead:
+    folded = skipped = early = 0
+    j, mi = lead, 0                                    # the next shot, and the next mark
+    while j < len(shots) and mi < len(marks):
+        s = shots[j]
+        k = marks[mi]
+        if j == 0:
             pre = max_pre(s, k)
             if pre < k - 1.0 / FPS:
                 if stretch_to(s, k):
@@ -2344,16 +2390,44 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
                                  f"{k - pre:.2f} s before the first mark.")
             cuts.append(0.0)
             pres.append(pre)
+            j, mi = j + 1, mi + 1
             continue
-        gap = k - (marks[i - 1] if i else pres[0])
-        j = lead + i                                   # where this shot sits in the reel
         prev = shots[j - 1]
+        prev_kill = cuts[j - 1] + pres[j - 1]          # where the shot before lands its kill
+        gap = k - prev_kill
+        # THE SAME FOOTAGE NEVER PLAYS TWICE. A follow-up from the same clip
+        # whose kill is closer to the one before in the footage than the
+        # marks are apart can only meet its mark by replaying what the shot
+        # before has just shown. Measured on Aftrhrs: a quadra's first two
+        # kills 1.90 s apart, on marks 4.40 s apart -- the opener ran on past
+        # the second kill to its cut, and the follow-up started 2.20 s back
+        # inside that and showed the second kill again. So it is folded into
+        # the shot before -- one shot, both kills, the footage as it happened
+        # -- and the mark passes on to the shot after it.
+        if (s["clip"] == prev["clip"] and float(s["kill"]) > float(prev["kill"]) + 1e-6
+                and gap > float(s["kill"]) - float(prev["kill"]) + 1.0 / FPS
+                and min(float(x) for x in s["kills"]) - (float(prev["kill"]) + _own_after(prev) - OWN_KILL_HOLD)
+                <= OWN_KILLS_WITHIN):
+            _fold(prev, shots.pop(j))
+            folded += 1
+            continue
         # THE SHOT BEFORE KEEPS ITS OWN KILLS. A double kill is one shot with
         # its second kill 0.8 s after the first; this shot's run-up used to be
         # allowed everything but 0.22 s of the gap, and on ambiforcashlyrics a
         # run-up grown to 4.08 s cut the opener 0.51 s after its first kill --
         # its second was never seen.
         keep = max(0.22, _own_tail(prev, pres[j - 1]))
+        if keep > 0.22 and gap - keep < rulebook.MIN_RUN_SECONDS:
+            # ...and when the next mark comes too soon after them for this
+            # shot to have any run-up at all, it takes the mark after. On
+            # Aftrhrs a triple's tail needed 2.75 s and the next mark was
+            # 2.20 s on: the third kill was cut off and the next shot opened
+            # on its own kill with no fight before it.
+            if mi + 1 < len(marks):
+                mi += 1
+                skipped += 1
+                continue
+            break                                      # no mark left: it follows at its own length
         want = min(float(s["pre"]) if s["pre"] > 0 else gap / 2, max(0.0, gap - keep))
         pre = max_pre(s, want)
         cut = k - pre
@@ -2372,16 +2446,51 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
             if cut > cuts[j - 1] + pres[j - 1] + room + 1.0 / FPS:
                 notes.append(f"Shot {j} runs out of footage before shot {j + 1}'s mark; "
                              f"shot {j + 1} may land early.")
-        cuts.append(max(cut, cuts[j - 1] + pres[j - 1] + 1.0 / FPS))
-        pres.append(k - cuts[-1])
+        cut = max(cut, prev_kill + 1.0 / FPS)
+        if s["clip"] == prev["clip"] and float(s["kill"]) > float(prev["kill"]) + 1e-6:
+            # The same rule for a follow-up too far on to fold: where the shot
+            # before would still be playing footage this one starts in, the
+            # cut moves to where they meet and this kill lands early instead.
+            # A kill off its mark is a lesser fault than a kill seen twice.
+            fz = _freeze_of(prev)
+            ps_prev = pieces(prev["speed"], cut - cuts[j - 1], pres[j - 1], own=_own_after(prev))
+            shown_to = float(prev["kill"]) + source_used(ps_prev, max(pres[j - 1], cut - cuts[j - 1] - fz)) \
+                - source_used(ps_prev, pres[j - 1])
+            starts = float(s["kill"]) - source_used(shot_pieces(s, 60.0 + pre, k - cut), k - cut)
+            if shown_to > starts + 1.0 / FPS:
+                meet = min(float(s["kill"]), max(starts, float(prev["kill"]) + _own_after(prev)))
+                s.pop("stretch", None)
+                cut = prev_kill + _post_for(prev, pres[j - 1], meet - float(prev["kill"])) + fz
+                cuts.append(cut)
+                pres.append(_pre_for(s, float(s["kill"]) - meet))
+                early += 1
+                j, mi = j + 1, mi + 1
+                continue
+        cuts.append(cut)
+        pres.append(k - cut)
+        j, mi = j + 1, mi + 1
+    done = len(cuts)                                   # shots that were placed
+    if mi < len(marks):
+        notes.append(f"{len(marks)} kills were marked but the reel has {len(shots) - lead} shots to "
+                     f"put on them; the last {len(marks) - mi} marks were not used.")
+    if folded:
+        notes.append(f"{folded} follow-up shot(s) were the same footage as the shot before, closer "
+                     f"than the marks are apart, so each became part of that shot rather than "
+                     f"showing its kill twice.")
+    if skipped:
+        notes.append(f"{skipped} mark(s) came too soon after a shot's own later kills to cut on; "
+                     f"the next shot took the mark after instead.")
+    if early:
+        notes.append(f"{early} kill(s) land before their mark: reaching it would have replayed "
+                     f"footage the shot before had just shown.")
     for s in shots:
         s.pop("lead_in", None)
     if lead:
         shots[0]["lead_in"] = True
-    for i in range(lead + n):
+    for i in range(done):
         s = shots[i]
         s["pre"] = round(pres[i], 5)
-        if i < lead + n - 1:
+        if i < done - 1:
             s["duration"] = round(cuts[i + 1] - cuts[i], 5)
         else:
             post = max(0.22, float(s["duration"]) - float(s["pre"]) if s["duration"] > s["pre"] else 0.5)
@@ -2390,9 +2499,25 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
     return notes
 
 
+def _fold(into: dict, follow: dict) -> None:
+    """Make `follow`, a later moment of the same clip, part of the shot `into`. In place.
+
+    The kills join; the caption and the hero treatment go with whichever had
+    them, since the follow-up is usually the sequence's last shot and so the
+    one captioned DOUBLE or QUADRA KILL.
+    """
+    into["kills"] = sorted({round(float(x), 3) for x in list(into["kills"]) + list(follow["kills"])})
+    if follow.get("caption") and not into.get("caption"):
+        into["caption"] = follow["caption"]
+    if follow.get("hero") and not into.get("hero"):
+        into["hero"] = True
+        into["hero_fx"] = list(follow.get("hero_fx") or [])
+
+
 # A shot's own later kills -- the rest of a double or a triple -- are the ones
-# within this many seconds of its main kill, and each is held this long after
-# it lands so its emblem is seen, not just begun.
+# that follow its main kill each within this many seconds of the one before
+# (see _own_after), and the last is held this long after it lands so its
+# emblem is seen, not just begun.
 OWN_KILLS_WITHIN = 3.0
 OWN_KILL_HOLD = 0.35
 
@@ -2401,26 +2526,52 @@ def _own_tail(shot: dict, pre: float) -> float:
     """Reel seconds after the main kill needed to show the shot's own later kills.
 
     0 when it has none. Never more than its footage after the kill allows.
+
+    A FREEZE ON THE KILL COMES OUT OF THIS TAIL, so it is added to it. On
+    Aftrhrs the climax quadra froze 0.75 s on its third kill inside a tail of
+    1.10 s: 0.11 s of footage played after the freeze and the fourth kill,
+    0.83 s on, never appeared.
     """
-    k0 = float(shot["kill"])
-    later = [float(k) for k in shot.get("kills") or [] if k0 + 1e-6 < float(k) <= k0 + OWN_KILLS_WITHIN]
-    if not later:
+    want_src = _own_after(shot)
+    if not want_src:
         return 0.0
-    want_src = max(later) - k0 + OWN_KILL_HOLD
+    return _post_for(shot, pre, want_src) + _freeze_of(shot)
+
+
+def _post_for(shot: dict, pre: float, src: float) -> float:
+    """Output seconds after the kill that play `src` seconds of footage past it.
+
+    Capped at what the clip has after the kill.
+    """
+    own = _own_after(shot)
 
     def src_after(post: float) -> float:
-        ps = pieces(shot["speed"], pre + post, pre)
+        ps = pieces(shot["speed"], pre + post, pre, own=own)
         return source_used(ps, pre + post) - source_used(ps, pre)
-    lo, hi = 0.0, 4.0 * want_src + 1.0          # slow-motion after a kill plays it at no less than 1/4
-    if src_after(hi) < want_src:
+    lo, hi = 0.0, 4.0 * src + 1.0               # slow-motion after a kill plays it at no less than 1/4
+    if src_after(hi) < src:
         return max_post(shot, pre, hi)
     for _ in range(40):
         mid = (lo + hi) / 2
-        if src_after(mid) >= want_src:
+        if src_after(mid) >= src:
             hi = mid
         else:
             lo = mid
     return max_post(shot, pre, hi)
+
+
+def _pre_for(shot: dict, src: float) -> float:
+    """The run-up, in output seconds, that starts `src` seconds of footage before the kill."""
+    src = max(0.0, min(float(src), float(shot["kill"])))
+    lo, hi = 0.0, 4.0 * src + 1.0
+    big = hi + 10.0
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        if source_used(pieces(shot["speed"], big, mid), mid) >= src:
+            hi = mid
+        else:
+            lo = mid
+    return hi
 
 
 def fit_to_part(project: dict, seconds: float) -> list[str]:
@@ -2808,10 +2959,15 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
 
 
 def _span(shot: dict) -> tuple[float, float]:
-    """Source seconds the shot's own (handle-free) footage covers."""
+    """Source seconds the shot's own (handle-free) footage covers.
+
+    A freeze on the kill replaces that much of what follows it, so the
+    footage ends that much sooner.
+    """
     ps = shot_pieces(shot)
     start = shot["kill"] - source_used(ps, shot["pre"])
-    return start, start + source_used(ps, shot["duration"])
+    end = max(float(shot["pre"]), float(shot["duration"]) - _freeze_of(shot))
+    return start, start + source_used(ps, end)
 
 
 def _head_room(shot: dict) -> float:
@@ -2836,10 +2992,12 @@ def derive(project: dict) -> dict:
     for i, (s, t0) in enumerate(zip(shots, starts)):
         ps = shot_pieces(s)
         a, b = _span(s)
+        freeze = _freeze_of(s)
         inside = []
         for k in s["kills"]:
             if a - 1e-6 <= k <= b + 1e-6:
-                inside.append(round(t0 + output_at(ps, k - a), 4))
+                later = freeze if k > float(s["kill"]) + 1e-6 else 0.0
+                inside.append(round(t0 + output_at(ps, k - a) + later, 4))
         kills_reel.extend(inside)
         rows.append({"index": i, "start": round(t0, 5), "end": round(t0 + s["duration"], 5),
                      "kill_reel": round(t0 + s["pre"], 5), "kills_reel": inside,
@@ -3045,7 +3203,7 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
         speed = s["speed"]
         if i == len(shots) - 1 and project["outro"] == "e03":
             speed = "exit"
-        ps = pieces(speed, dur, min(s["pre"], dur), _stretch_of(s))
+        ps = pieces(speed, dur, min(s["pre"], dur), _stretch_of(s), _own_after(s))
         src_body_start = s["kill"] - source_used(ps, min(s["pre"], dur))
         hsec, tsec = head / FPS, tail / FPS
         seg_ps = []
@@ -3054,20 +3212,15 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
         seg_ps += [(a + hsec, b + hsec, r) for a, b, r in ps]
         if tail:
             seg_ps.append((hsec + dur, hsec + dur + tsec, 1.0))
-        freeze = 0.0
-        push = False
-        if "k04" in s["fx"]:
-            freeze = 0.4
-        # By FAMILY, not by id: "h02" is only the middle of the freeze family,
-        # and an exact match left "Freeze and push in (a long beat)" offered,
-        # picked and doing nothing at all.
-        if s["hero"] and (pid := picked(s["hero_fx"], "h02")):
-            freeze, push = max(freeze, knob(pid, "hold", 0.75)), True
+        freeze = _freeze_of(s)
+        push = bool(s["hero"] and picked(s["hero_fx"], "h02"))
         kill_at = hsec + min(s["pre"], dur)
         # Every kill this shot shows, where it plays in the segment -- through
-        # the speed map, so a slowed kill is still gated at the right moment.
+        # the speed map, so a slowed kill is still gated at the right moment,
+        # and a kill after a freeze plays that much later.
         k_src = source_used(ps, min(s["pre"], dur))
-        kill_times = sorted({round(hsec + output_at(ps, max(0.0, k_src + (k - s["kill"]))), 4)
+        kill_times = sorted({round(hsec + output_at(ps, max(0.0, k_src + (k - s["kill"])))
+                                   + (freeze if k > s["kill"] + 1e-6 else 0.0), 4)
                              for k in s["kills"] if s["kill"] - 1e-6 <= k <= s["kill"] + dur})
         seg_beats = []
         if song_beats is not None:
