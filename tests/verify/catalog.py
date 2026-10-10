@@ -255,6 +255,11 @@ CONTROLS: list[Control] = [
             "Fetch match records now", "clips", acts=("fetch-matches",),
             why="reads the running Riot Client and calls Riot; no network "
                 "in tests, so it is covered in test_valorant_match.py"),
+    Control("/api/clips/valorant/matches", "GET", CALL, "Show matches", "clips",
+            query="started=0&seconds=0", expect=_has("ok", "matches"),
+            acts=("show-matches",),
+            why="lists the match records already saved on this PC; reads files, "
+                "never the network"),
     Control("/api/clips/valorant/explained", "POST", CALL,
             "Got it (match record notice)", "dashboard", body={}, expect=_has("ok"),
             acts=("dash-vmatch-ok",),
@@ -643,6 +648,8 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-bin-favonly": "shows only the parts kept as favourites; never leaves the browser",
     "studio-shape": "nudges one of the shaping dials; sent with the next Build",
     "studio-shape-reset": "puts every shaping dial back to what the style measured",
+    "matches-all": "switches the match list between this recording and every saved match",
+    "match-pick": "ticks which of this video's matches are clipped; sent with the run as match_spans",
     "studio-fxp-open": "opens the effect picker; nothing changes until a choice is made",
     "studio-fxp-cancel": "closes the effect picker and keeps what was chosen before",
     "studio-fxp-clear": "unticks everything in the picker; sent only with Done",
