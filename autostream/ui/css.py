@@ -4090,6 +4090,9 @@ EDITOR_CSS = r"""
   font:600 13px/1.4 var(--font-text);color:var(--on-media);background:var(--on-media-scrim);
   outline:1px dashed rgba(255,255,255,.8);white-space:nowrap;user-select:none;touch-action:none}
 .ed-handle:active{cursor:grabbing}
+.ed-handle.hide{display:none}
+/* The lyrics stand-in: the reel's own red, so it reads as the words and not the handle. */
+.ed-lyrics{font-family:var(--font-display);letter-spacing:.04em;color:#fff;background:rgba(224,38,58,.55)}
 .ed-cambox{position:absolute;border:2px dashed var(--warn);background:rgba(255,200,60,.12);pointer-events:none}
 .ed-cambox span{position:absolute;left:4px;top:2px;font:600 11px var(--font-text);color:var(--warn)}
 """
