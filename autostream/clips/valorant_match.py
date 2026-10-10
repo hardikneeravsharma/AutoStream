@@ -389,6 +389,31 @@ def for_recording(started: float, seconds: float,
     return got
 
 
+def by_ids(ids) -> list[Match]:
+    """The saved matches with these ids, oldest first -- the ones the user said
+    are in the video, for a recording whose own clock says nothing (a stream
+    downloaded from YouTube carries the download's time, not the match's)."""
+    want = {str(i) for i in ids or [] if i}
+    got = [m for m in cached() if m.id in want]
+    got.sort(key=lambda m: m.started)
+    return got
+
+
+def align_free(match: Match, puuid: str, detected: list[float]) -> cs2_demo.Sync:
+    """Where this match sits in the video, from its kills alone.
+
+    For a match the USER placed in this video. There is no clock to check the
+    fingerprint against, so the fingerprint is the whole answer -- which is
+    why it needs the user's word that the match is in there at all.
+    """
+    mine = match.my_kill_times(puuid)
+    if not mine:
+        return cs2_demo.Sync(why="the record has no kills by this player")
+    if len(detected) < 3:
+        return cs2_demo.Sync(total=len(mine), why="too few kills read off the video to find it by")
+    return cs2_demo.align(mine, detected)
+
+
 def align(match: Match, puuid: str, started: float,
           detected: list[float]) -> cs2_demo.Sync:
     """Where this match sits on the recording's timeline.

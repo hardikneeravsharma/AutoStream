@@ -564,3 +564,11 @@ def test_no_ticked_matches_means_the_whole_video(tmp_path):
     job = a_job(tmp_path, match_spans=[["x", None], [5.0, 1.0]])
     assert job._match_spans() == [] and job._in_matches(1234.0)
     assert job._window(HOUR) == (0.0, 3600.0)
+
+
+def test_where_a_picked_match_was_found_is_where_clips_come_from(tmp_path):
+    """Matches ticked as 'in this video' are only located after the read, so
+    their spans join the user's own and the kills outside them are dropped."""
+    job = a_job(tmp_path)
+    job.picked_spans = [(900.0, 1400.0)]
+    assert job._in_matches(1000.0) and not job._in_matches(2000.0)

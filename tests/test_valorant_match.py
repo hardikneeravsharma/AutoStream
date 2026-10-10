@@ -746,3 +746,38 @@ def test_the_listing_marks_where_this_recordings_matches_start(monkeypatch):
     here = {r["id"]: r.get("at") for r in rows}
     assert here["here"] == pytest.approx(500.0) and here["old"] is None and here["new"] is None
     assert all("at" not in r for r in vm.listing()), "no recording, nothing marked"
+
+
+# --------------------------------------- a match the user says is in the video
+
+def _with_kills(mid, start_s, kill_s):
+    from autostream.clips import valorant_match as vm
+    m = _rec(mid, start_s)
+    m.data["kills"] = [{"killer": m.data[vm.MINE], "gameTime": int(t * 1000)} for t in kill_s]
+    return m
+
+
+def test_a_picked_match_is_found_in_a_downloaded_video_by_its_kills_alone():
+    """A stream downloaded from YouTube carries the day it was downloaded, so
+    no match lines up by time. The user ticks the match; its kill pattern
+    finds where it is -- here 900 s in -- with no clock involved."""
+    from autostream.clips import valorant_match as vm
+    gaps = [31.0, 74.5, 80.2, 141.0, 233.7, 240.1, 301.9, 388.4]
+    m = _with_kills("picked", 1.0e9, gaps)               # a clock that means nothing
+    seen = sorted([t + 900.0 for t in gaps] + [55.0, 1500.0])   # plus two strays
+    sync = vm.align_free(m, m.data[vm.MINE], seen)
+    assert sync.ok, sync.why
+    assert sync.offset == pytest.approx(900.0, abs=0.6)
+
+
+def test_a_picked_match_with_too_few_kills_on_screen_is_not_guessed():
+    from autostream.clips import valorant_match as vm
+    m = _with_kills("picked", 1.0e9, [10.0, 20.0, 30.0])
+    assert not vm.align_free(m, m.data[vm.MINE], [5.0, 6.0]).ok
+
+
+def test_picked_matches_come_back_oldest_first(monkeypatch):
+    from autostream.clips import valorant_match as vm
+    recs = [_rec("b", 9000.0), _rec("a", 1000.0), _rec("c", 5000.0)]
+    monkeypatch.setattr(vm, "cached", lambda: list(recs))
+    assert [m.id for m in vm.by_ids(["a", "b", "nope"])] == ["a", "b"]

@@ -650,6 +650,7 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-shape-reset": "puts every shaping dial back to what the style measured",
     "matches-all": "switches the match list between this recording and every saved match",
     "match-pick": "ticks which of this video's matches are clipped; sent with the run as match_spans",
+    "match-claim": "ticks a saved match as being in this video; sent with the run as match_ids",
     "studio-fxp-open": "opens the effect picker; nothing changes until a choice is made",
     "studio-fxp-cancel": "closes the effect picker and keeps what was chosen before",
     "studio-fxp-clear": "unticks everything in the picker; sent only with Done",
