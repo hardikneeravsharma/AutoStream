@@ -178,19 +178,22 @@ def test_the_studio_judges_a_missing_emblem_per_run(tmp_path):
     assert got[0]["kills"] == [3.2] and moved == 1 and dropped == 1
 
 
-def test_the_studio_leaves_a_clip_cut_from_the_match_record_alone(tmp_path):
+def test_the_studio_never_drops_a_kill_cut_from_the_match_record(tmp_path):
+    """Two recorded kills 0.47 s apart and one emblem between them: the emblem
+    is the nearer kill's, and the other keeps Riot's time -- it is never
+    dropped, which is why recorded clips used to be skipped entirely. Since
+    v1.51.1 the near one moves onto the emblem: Riot's clock put the visible
+    kill up to half a second off its beat."""
     rec = {"path": str(tmp_path / "run" / "clips" / "r.mp4"), "game": "VALORANT",
            "kills": [3.73, 4.2], "kill_count": 2, "recorded": True}
     other = {"path": str(tmp_path / "run" / "clips" / "s.mp4"), "game": "VALORANT",
              "kills": [3.5], "kill_count": 1}
-    asked = []
 
     def confirm(path, game):
-        asked.append(path)
         return [3.83, 9.0]
     got, moved, dropped, added = studio._confirm_kills(
         [rec, other], confirm, theirs=lambda path, game, t: t == 9.0)
-    assert got[0]["kills"] == [3.73, 4.2] and asked == [other["path"]]
+    assert got[0]["kills"] == [3.83, 4.2] and len(got[0]["kills"]) == 2
     assert got[1]["kills"] == [3.83] and added == 0       # 9.0 was a team-mate's
 
 
