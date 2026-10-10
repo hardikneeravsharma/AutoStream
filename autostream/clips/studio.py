@@ -204,6 +204,9 @@ def library(root: Path) -> dict:
         rows_k = [k for k in (sess.get("kills") or [])
                   if isinstance(k, dict) and k.get("time") is not None]
         kills = sorted(float(k["time"]) for k in rows_k)
+        # Whether each kill was a headshot, where it was read (Valorant): True,
+        # False, or absent when it was not. Looked up by time below.
+        hs_at = {round(float(k["time"]), 3): k["hs"] for k in rows_k if isinstance(k.get("hs"), bool)}
         # Riot's record, not a screen reading: the Studio must not move these.
         recorded = sorted(float(k["time"]) for k in rows_k if k.get("record"))
         try:
@@ -235,8 +238,10 @@ def library(root: Path) -> dict:
                 continue
             if dur <= 0:
                 continue
-            offs = [round(k - start, 3) for k in kills if start - 0.05 <= k <= end + 0.05]
+            inside = [k for k in kills if start - 0.05 <= k <= end + 0.05]
+            offs = [round(k - start, 3) for k in inside]
             offs = [min(max(0.0, o), dur) for o in offs]
+            hs = [hs_at.get(round(k, 3)) for k in inside]
             from_record = bool(offs) and len(offs) == sum(
                 1 for k in recorded if start - 0.05 <= k <= end + 0.05)
             if not offs:
@@ -260,6 +265,8 @@ def library(root: Path) -> dict:
                 "duration": round(dur, 3),
                 "kills": offs,
                 "kill_count": int(c.get("kills") or len(offs)),
+                # Per kill, beside `kills`: True a headshot, False not, None unread.
+                **({"hs": hs} if any(v is not None for v in hs) else {}),
                 "caption": str(c.get("caption") or ""),
                 "labels": [str(x) for x in (c.get("labels") or c.get("tags") or [])],
                 "at": str(c.get("at") or ""),
@@ -1262,7 +1269,31 @@ def _arrangement(raw: dict | None) -> dict:
             if path:
                 pins[slot] = path
     return {"arrange": how, "pins": pins,
-            "seed": int(_num(raw.get("shuffle_seed"), 0, 2 ** 31 - 1, 0))}
+            "seed": int(_num(raw.get("shuffle_seed"), 0, 2 ** 31 - 1, 0)),
+            # Only kills read as headshots go in. See _headshots_only().
+            "hs_only": bool(raw.get("hs_only"))}
+
+
+def _headshots_only(chosen: list[dict]) -> tuple[list[dict], list[str], int]:
+    """Each clip with only its headshot kills. -> (clips, paths with none, kills dropped)
+
+    A kill counts only when it was READ as a headshot: one the reader could
+    not see is left out rather than guessed in, because the player asked for
+    headshots and an unread kill is as likely as not to be a body shot. A clip
+    with no headshot reading at all keeps nothing.
+    """
+    kept, none, dropped = [], [], 0
+    for c in chosen:
+        hs = list(c.get("hs") or [])
+        ks = list(c.get("kills") or [])
+        good = [k for k, h in zip(ks, hs) if h is True]
+        dropped += len(ks) - len(good)
+        if good:
+            kept.append(dict(c, kills=good, hs=[True] * len(good), _hs_times=good,
+                             kill_count=len(good)))
+        else:
+            none.append(c["path"])
+    return kept, none, dropped
 
 
 def _shaping(raw: dict | None) -> dict:
@@ -1308,6 +1339,9 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # ride on the same dict the dials do, so one control panel carries all of
     # it and a rebuild keeps what was asked for.
     arrangement = _arrangement(shape_it)
+    # Not an ordering: which kills may go in at all. Kept apart from the
+    # kwargs rulebook.order takes.
+    hs_only = arrangement.pop("hs_only")
     if tw["effects"] != 1.0:
         # Scaled on the style itself rather than at the draw: _vary() is called
         # from the page too, and a dial the page could not see would be lost
@@ -1395,9 +1429,27 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # MOMENTS, NOT CLIPS -- see rulebook.
     run_b = max(1, int(math.ceil(max(rulebook.MIN_RUN_BEATS * beat, rulebook.MIN_RUN_SECONDS) / step - 1e-6)))
 
+    if hs_only:
+        chosen, no_hs, dropped_k = _headshots_only(chosen)
+        left_out(no_hs, "No kill in this clip was read as a headshot.")
+        if dropped_k:
+            notes.append(f"Headshots only: {dropped_k} kill(s) that were not headshots, or could "
+                         f"not be read, were left out.")
+        if not chosen:
+            raise ProjectError("None of the chosen clips has a kill read as a headshot.")
+
     if confirm is not None:
         before = [c["path"] for c in chosen]
         chosen, moved, dropped, added = _confirm_kills(chosen, confirm, theirs)
+        if hs_only:
+            # The emblem check may move a kill a few frames, or add one the
+            # feed missed. A moved headshot is still that headshot; an added
+            # kill was never read, so it does not go in.
+            for c in chosen:
+                if c.get("_hs_times"):
+                    c["kills"] = [k for k in c["kills"]
+                                  if any(abs(k - h) <= 0.6 for h in c["_hs_times"])] or c["kills"][:0]
+            chosen = [c for c in chosen if c.get("kills")]
         kept_paths = {c["path"] for c in chosen}
         left_out((p for p in before if p not in kept_paths),
                  "No kill showed on screen: the game's kill icon never appeared in this clip.")
@@ -1618,6 +1670,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         "saturation": sat_trim,
         "beat": round(beat, 6), "step": round(step, 6),
         "shaping": tw, "arrange": arrangement["arrange"], "pins": arrangement["pins"],
+        "hs_only": hs_only,
         "seed": int(seed), "pools": pools, "shots": shots,
     }
     # Where in the song reel zero sits: chosen before the walk, so each shot's
@@ -2519,8 +2572,10 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
     # own grid.
     out["step"] = _grid_step(project.get("step"), out["beat"])
     out["shaping"] = _shaping(project.get("shaping"))
-    arranged = _arrangement({"arrange": project.get("arrange"), "pins": project.get("pins")})
+    arranged = _arrangement({"arrange": project.get("arrange"), "pins": project.get("pins"),
+                             "hs_only": project.get("hs_only")})
     out["arrange"], out["pins"] = arranged["arrange"], arranged["pins"]
+    out["hs_only"] = arranged["hs_only"]
     raw_pools = project.get("pools") if isinstance(project.get("pools"), dict) else {}
     for kind, part_kind in POOL_KINDS.items():
         valid = set(ids_of(part_kind))

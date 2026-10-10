@@ -387,6 +387,45 @@ def test_every_reel_is_reachable_not_only_the_newest_ten(ui, app):
     ui.clean("browsing every reel")
 
 
+def test_headshots_only_is_offered_for_read_clips_and_keeps_only_headshots(ui, app):
+    """Valorant clips carry a headshot reading per kill. The tiles count them,
+    the Make dialog offers "Headshot kills only" with what it would keep, and
+    ticking it plans a reel of the headshot kills alone."""
+    import json
+
+    _studio_run(app, "2026-09-15_1200_VALORANT", 3)
+    sess_p = Path(app["home"]) / "video" / "clips" / "2026-09-15_1200_VALORANT" / "session.json"
+    sess = json.loads(sess_p.read_text())
+    for k, hs in zip(sess["kills"], (True, False, True)):
+        k["hs"] = hs
+    sess_p.write_text(json.dumps(sess))
+    page = ui.page
+    page.click('.rail-btn[data-page="studio"]')
+    page.wait_for_selector("#view-studio.is-active")
+    page.click('[data-act="studio-refresh"]')
+    folder = page.locator(".studio-folder", has_text="12:00").first
+    folder.wait_for(timeout=30_000)
+    assert "1 HS" in folder.locator(".studio-clip-kills").nth(0).inner_text()
+    assert "HS" not in folder.locator(".studio-clip-kills").nth(1).inner_text().replace("0 HS", "")
+    page.click('[data-act="studio-clear"]') if page.is_visible('[data-act="studio-clear"]') else None
+    for i in range(3):
+        folder.locator(".studio-clip-hit").nth(i).click()
+    page.click('[data-act="studio-make"]')
+    row = page.locator("#studio-hs-row")
+    assert row.is_visible(), "headshots only is not offered for clips that carry a reading"
+    assert "2 of 3 kills were headshots" in row.inner_text()
+    page.check("#studio-hs-only")
+    page.click('[data-act="studio-style"][data-style="story"]')
+    page.fill("#studio-name", "Headshots")
+    page.click('[data-act="studio-build"]')
+    page.wait_for_selector("#studio-pane-timeline:not(.hide)", timeout=60_000)
+    proj = page.evaluate("studio.project")
+    assert proj["hs_only"] is True
+    assert sorted(Path(s["clip"]).name for s in proj["shots"]) == ["ui_0.mp4", "ui_2.mp4"]
+    page.evaluate("API.post('/api/studio/cancel', {})")
+    ui.clean("headshots only")
+
+
 def test_a_reel_is_made_edited_and_rendered_again_in_the_studio(ui, app):
     """The Studio's whole promise, in the real build: choose clips, get a reel
     that plays, change one shot on the timeline, and get the change rendered.

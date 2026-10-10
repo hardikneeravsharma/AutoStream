@@ -259,6 +259,15 @@ def save(root: Path, clip: str, kills, title: str | None = None, game: str | Non
     if imported:
         sess["kills"] = [{"time": t, "end": t, "score": 1.0, "count": 1,
                           "record": True} for t in ks]
+        # A Valorant clip's marked kills are read for headshots straight away:
+        # three frames of the feed each, a second or two for the clip.
+        from . import headshot
+        if headshot.is_valorant(game or man.get("game") or sess.get("game") or ""):
+            master = Path(str(row.get("master") or clip))
+            try:
+                headshot.annotate(master if master.is_file() else Path(clip), sess["kills"])
+            except Exception:                                # noqa: BLE001
+                pass
     row["marks"] = ks
     row["kills"] = len(ks)
     if title is not None:
