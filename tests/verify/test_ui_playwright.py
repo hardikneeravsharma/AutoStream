@@ -543,6 +543,93 @@ def test_the_effect_picker_searches_previews_remembers_and_applies(ui, app):
     ui.clean("the effect picker")
 
 
+def test_the_change_count_is_what_differs_from_the_video_not_clicks(ui, app):
+    """6.13. "If I select and unselect a setting, the changes count increases."
+    It counted clicks: a switch turned on and off again was two changes to a
+    project identical to the video, and the button begged to apply them. The
+    count is now a comparison with what was rendered, so it is driven here
+    through the real controls and read back off the card, the button and the
+    badge over the player -- the three places that say it."""
+    _studio_run(app, "2026-09-14_1200_VALORANT", 3)
+    page = ui.page
+    _studio_build(page, "12:00", 2, "story", "Count check")
+    _studio_rendered(page, "first render")
+
+    def says(n: int) -> None:
+        page.wait_for_function("(n) => studio_pendingCount() === n", arg=n, timeout=15_000)
+        head = page.inner_text("#studio-sync-head")
+        button = page.inner_text("#studio-render-btn")
+        if n:
+            word = "change" if n == 1 else "changes"
+            assert head == f"{n} {word} {'is' if n == 1 else 'are'} not in the video", head
+            assert button == f"Apply {n} {word}", button
+            assert page.inner_text("#studio-stale") == f"Last render · {n} {word} not shown"
+            assert page.locator("#studio-pending li").count() == n
+        else:
+            assert head == "The video matches your edits", head
+            assert not button.startswith("Apply"), f"nothing differs, yet the button says {button!r}"
+            assert not page.is_visible("#studio-stale")
+
+    def settle() -> None:
+        # The server's answer to an edit lands a moment later and can move a
+        # field; the count must still be right once it has.
+        page.wait_for_timeout(700)
+
+    says(0)
+    page.click('#studio-insp [data-act="studio-select"][data-shot="-1"]')
+    vig = page.evaluate("studio.project.vignette")
+
+    # --- the reported bug: on, then off again
+    page.click("#studio-r-vignette")
+    page.wait_for_function("(v) => studio.project.vignette === !v", arg=vig)
+    says(1)
+    assert "Vignette" in page.inner_text("#studio-pending")
+    page.click("#studio-r-vignette")
+    page.wait_for_function("(v) => studio.project.vignette === v", arg=vig)
+    says(0)
+    settle()
+    says(0)
+
+    # --- two different things, one undone
+    fit = page.evaluate("studio.project.vfit || 'zoom'")
+    other = "fit" if fit == "zoom" else "zoom"
+    page.click("#studio-r-vignette")
+    page.click(f'#studio-insp [data-act="studio-rfit"][data-fit="{other}"]')
+    page.wait_for_function("(f) => studio.project.vfit === f", arg=other)
+    says(2)
+    page.click("#studio-undo-btn")
+    page.wait_for_function("(f) => (studio.project.vfit || 'zoom') === f", arg=fit)
+    says(1)
+    page.click("#studio-undo-btn")
+    page.wait_for_function("(v) => studio.project.vignette === v", arg=vig)
+    says(0)
+    settle()
+    says(0)
+
+    # --- one shot's field, changed and then put back by hand. The camera move,
+    # because it asks nothing of the footage: a speed can make the server trim
+    # the shot, and then putting the speed back rightly leaves a change.
+    page.locator(".st-shot").nth(1).click()
+    if not page.evaluate("document.querySelector('#studio-insp details[data-grp=\"camera\"]').open"):
+        page.click('#studio-insp details[data-grp="camera"] > summary')
+    current = page.evaluate("studio.project.shots[1].camera")
+    other = next(i for i in page.evaluate("studio_parts('camera').map(p => p.id)") if i != current)
+    for pid in (other, current):
+        page.click("#studio-f-camera")
+        page.wait_for_selector("#studio-fxp-scrim:not(.hide)")
+        page.fill("#studio-fxp-q", pid)
+        page.locator(f'#studio-fxp-list .studio-fxp-card[data-part="{pid}"]').first.click()
+        page.wait_for_selector("#studio-fxp-scrim", state="hidden")
+        page.wait_for_function("(id) => studio.project.shots[1].camera === id", arg=pid)
+        if pid == other:
+            says(1)
+            assert "Shot 2 · camera move" in page.inner_text("#studio-pending")
+    says(0)
+    settle()
+    says(0)
+    ui.clean("the change count")
+
+
 def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp_path):
     """Everything the timeline offers beyond one shot's checkboxes, in the build.
 

@@ -181,6 +181,7 @@ listed so the gap is visible.
 | 6.10 | Lyrics: with a .lrc beside the song, choose a look and a typeface, the LYRICS stand-in hidden until "Move on the picture", drag it, pick one of nine places, move the timing +0.5 s, render (stand-in gone) | The reel is saved with the look, face and place, and the Lyrics group says where the words came from | yes (inside 6.2) |
 | 6.11 | Your reels: more than eight fold to two rows; unfold, search, filter by shape, sort | Every reel is reachable, typing keeps focus, each card shows a real still | yes |
 | 6.12 | Headshots: Valorant clips with a reading show "· N HS"; Make offers "Headshot kills only" with what it keeps; ticked, the plan uses only headshot kills | Only headshot kills are in the project | yes |
+| 6.13 | The change count after a render: the vignette on (1), off again (0, the button stops saying Apply), two reel settings changed and one undone (1), a shot's speed changed and put back by hand (0) | The count is what differs from the video, never how many clicks it took | yes |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.
