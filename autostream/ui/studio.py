@@ -72,7 +72,27 @@ STUDIO_HTML = r"""
            friend. Added here they are clips like any other. -->
       <button type="button" class="btn btn-sm" data-act="studio-imp-add">Add your own clip…</button>
     </div>
-    <div class="studio-reels" id="studio-reels"></div>
+    <!-- EVERY REEL, NOT THE LAST TEN. The tools are markup of their own and
+         only the grid is redrawn, so typing in the search never loses focus. -->
+    <section class="studio-reels hide" id="studio-reels" aria-labelledby="studio-reels-h">
+      <div class="studio-reels-head">
+        <h3 class="studio-h" id="studio-reels-h">Your reels <b id="studio-reels-count"></b></h3>
+        <input class="input studio-search" id="studio-reel-q" type="search"
+               placeholder="Search reels by name, style or song" aria-label="Search reels">
+        <div class="studio-games" id="studio-reel-fmts" role="group" aria-label="Reel shape"></div>
+        <label class="studio-reel-sortl"><span class="muted">Sort</span>
+          <select class="select" id="studio-reel-sort" aria-label="Sort reels">
+            <option value="new">Newest first</option>
+            <option value="old">Oldest first</option>
+            <option value="name">Name A&ndash;Z</option>
+            <option value="long">Longest first</option>
+          </select></label>
+      </div>
+      <div class="studio-reel-row" id="studio-reel-grid"></div>
+      <p class="muted studio-empty hide" id="studio-reel-none"></p>
+      <button type="button" class="btn btn-sm studio-reels-more hide" data-act="studio-reels-more"
+              id="studio-reels-more" aria-expanded="false"></button>
+    </section>
     <div id="studio-lib" class="studio-lib"></div>
     <p class="muted studio-empty hide" id="studio-empty"></p>
 
@@ -811,6 +831,7 @@ STUDIO_JS = r"""
 const studio = {
   lib: null, catalog: null, loadedAt: 0,
   game: 'all', q: '', selected: [], lastClick: null,
+  reelQ: '', reelSort: 'new', reelFmt: 'all', reelsAll: false,
   examples: null, picks: null, binOn: null, binObs: null, binTimer: null,
   sv: null, svShow: null, svWin: 8, songList: null,
   /* The music lane: the whole song's spectrogram as one image, which song has
@@ -941,6 +962,84 @@ function studio_visible() {
   return out;
 }
 
+/* YOUR REELS. It used to be the newest ten and nothing else: an eleventh reel
+   could only be reached through the file explorer, and the timeline it was
+   made on not at all. Now every reel, folded to two rows until asked, with a
+   search, the reel's shape and an order -- and a still of its first kill, so a
+   grid of eighty is something to look at rather than to read. */
+const STUDIO_REELS_FOLDED = 8;
+const STUDIO_REEL_SORTS = {
+  new: (a, b) => b.when - a.when,
+  old: (a, b) => a.when - b.when,
+  name: (a, b) => String(a.name).localeCompare(String(b.name), undefined, {numeric: true, sensitivity: 'base'}),
+  long: (a, b) => (b.length || 0) - (a.length || 0)
+};
+
+function studio_reelCard(r) {
+  const fmt = r.format === 'vertical' ? '9:16' : r.format === 'landscape' ? '16:9' : '';
+  const style = studio.catalog ? (studio.catalog.styles || []).filter(s => s.key === r.style)[0] : null;
+  const facts = [style ? style.label : '', r.shots ? r.shots + ' shots' : '',
+                 r.lyrics ? 'lyrics' : ''].filter(Boolean).join(' · ');
+  return '<article class="studio-reel" aria-label="' + esc(r.name) + '">' +
+    /* The still plays the reel: the biggest target on the card does the
+       commonest thing. */
+    '<button type="button" class="studio-reel-thumb' + (r.format === 'vertical' ? ' is-tall' : '') + '" data-act="studio-watch" ' +
+    'data-path="' + esc(r.path) + '" aria-label="Play ' + esc(r.name) + '">' +
+    '<img loading="lazy" alt="" src="' + studio_media('/api/studio/thumb', r.path, '&t=' + (r.poster || 1) + '&v=' + r.when) + '">' +
+    (fmt ? '<span class="studio-reel-badge">' + fmt + '</span>' : '') +
+    (r.length ? '<span class="studio-reel-len">' + studio_dur(r.length) + '</span>' : '') +
+    '</button>' +
+    '<span class="studio-reel-name truncate" title="' + esc(r.name) + '">' + esc(r.name) + '</span>' +
+    '<span class="muted studio-reel-meta">' + esc(facts ? facts + ' · ' : '') +
+    new Date(r.when * 1000).toLocaleDateString() + '</span>' +
+    (r.song ? '<span class="muted studio-reel-meta truncate" title="' + esc(r.song) + '">♪ ' + esc(r.song.replace(/\s*\[[^\]]*\]\s*$/, '')) + '</span>' : '') +
+    '<span class="field-inline">' +
+    (r.project ? '<button type="button" class="btn btn-sm" data-act="studio-open" data-path="' + esc(r.path) + '">Open timeline</button>'
+               : '<span class="muted studio-reel-old">Made before the Studio</span>') +
+    /* A reel is the biggest file the app makes and the easiest to make
+       another of, so it needs a way out that is not the file explorer. */
+    '<button type="button" class="btn btn-ghost btn-sm studio-del-btn" data-act="studio-reel-del" ' +
+    'data-path="' + esc(r.path) + '" data-name="' + esc(r.name) + '" ' +
+    'title="Delete this reel">Delete…</button>' +
+    '</span></article>';
+}
+
+function studio_renderReels() {
+  const all = (studio.lib && studio.lib.reels) || [];
+  studio_show('studio-reels', all.length > 0);
+  if (!all.length) return;
+  studio_el('studio-reels-count').textContent = all.length;
+  const counts = {all: all.length, vertical: 0, landscape: 0};
+  all.forEach(r => { if (counts[r.format] !== undefined) counts[r.format]++; });
+  const fmt = studio.reelFmt || 'all';
+  studio_el('studio-reel-fmts').innerHTML = [['all', 'All'], ['vertical', 'Vertical'], ['landscape', 'Landscape']]
+    .filter(f => f[0] === 'all' || counts[f[0]])
+    .map(f => '<button type="button" class="chip' + (fmt === f[0] ? ' is-on' : '') + '" data-act="studio-reel-fmt" data-fmt="' +
+      f[0] + '" aria-pressed="' + (fmt === f[0]) + '">' + f[1] + ' <b>' + counts[f[0]] + '</b></button>').join('');
+  const q = (studio.reelQ || '').trim().toLowerCase();
+  const words = q ? q.split(/\s+/) : [];
+  const styleName = k => { const s = studio.catalog ? (studio.catalog.styles || []).filter(x => x.key === k)[0] : null; return s ? s.label : k; };
+  const hits = all.filter(r => (fmt === 'all' || r.format === fmt) &&
+    words.every(w => (r.name + ' ' + styleName(r.style) + ' ' + (r.song || '') + ' ' + (r.lyrics ? 'lyrics' : '')).toLowerCase().indexOf(w) >= 0))
+    .slice().sort(STUDIO_REEL_SORTS[studio.reelSort] || STUDIO_REEL_SORTS.new);
+  /* Folded only when nothing narrows the list: a search or a filter is
+     already the answer to "which of my reels", and hiding half of it would be
+     a second question. */
+  const narrowed = !!words.length || fmt !== 'all';
+  const shown = studio.reelsAll || narrowed ? hits : hits.slice(0, STUDIO_REELS_FOLDED);
+  studio_el('studio-reel-grid').innerHTML = shown.map(studio_reelCard).join('');
+  const none = studio_el('studio-reel-none');
+  studio_show('studio-reel-none', !hits.length);
+  if (!hits.length) none.textContent = 'No reel matches that.';
+  const more = studio_el('studio-reels-more');
+  const folds = !narrowed && hits.length > STUDIO_REELS_FOLDED;
+  studio_show('studio-reels-more', folds);
+  if (folds) {
+    more.textContent = studio.reelsAll ? 'Show fewer' : 'Show all ' + hits.length + ' reels';
+    more.setAttribute('aria-expanded', studio.reelsAll ? 'true' : 'false');
+  }
+}
+
 function studio_renderLib() {
   const lib = studio.lib;
   if (!lib) return;
@@ -965,24 +1064,7 @@ function studio_renderLib() {
     ((lib.fav_count || 0) ? '' : ' disabled title="Star a clip with the star on its card"') +
     '>\u2605 Favourites <b>' + (lib.fav_count || 0) + '</b></button>';
 
-  const reels = lib.reels || [];
-  studio_el('studio-reels').innerHTML = reels.length
-    ? '<h3 class="studio-h">Your reels</h3><div class="studio-reel-row">' + reels.slice(0, 10).map(r =>
-      '<div class="studio-reel">' +
-      '<span class="studio-reel-name truncate" title="' + esc(r.name) + '">' + esc(r.name) + '</span>' +
-      '<span class="muted studio-reel-meta">' + (r.shots ? r.shots + ' shots · ' : '') +
-      (r.length ? studio_dur(r.length) + ' · ' : '') + new Date(r.when * 1000).toLocaleDateString() + '</span>' +
-      '<span class="field-inline">' +
-      (r.project ? '<button type="button" class="btn btn-sm" data-act="studio-open" data-path="' + esc(r.path) + '">Open timeline</button>'
-                 : '<span class="muted studio-reel-old">Made before the Studio</span>') +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-watch" data-path="' + esc(r.path) + '">Play</button>' +
-      /* A reel is the biggest file the app makes and the easiest to make
-         another of, so it needs a way out that is not the file explorer. */
-      '<button type="button" class="btn btn-ghost btn-sm studio-del-btn" data-act="studio-reel-del" ' +
-      'data-path="' + esc(r.path) + '" data-name="' + esc(r.name) + '" ' +
-      'title="Delete this reel">Delete…</button>' +
-      '</span></div>').join('') + '</div>'
-    : '';
+  studio_renderReels();
 
   const groups = studio_visible();
   const pos = {};
@@ -4970,6 +5052,14 @@ function studio_wire() {
     else if (act === 'studio-edit-song') studio_tab('song');
     else if (act === 'studio-refresh') studio_load(true);
     else if (act === 'studio-game') { studio.game = b.getAttribute('data-game'); studio_renderLib(); }
+    else if (act === 'studio-reel-fmt') { studio.reelFmt = b.getAttribute('data-fmt'); studio_renderReels(); }
+    else if (act === 'studio-reels-more') {
+      studio.reelsAll = !studio.reelsAll;
+      studio_renderReels();
+      /* Folding back up from the bottom of eighty reels leaves the page
+         scrolled into the clips; bring the section's top back into view. */
+      if (!studio.reelsAll) studio_el('studio-reels').scrollIntoView({block: 'start'});
+    }
     else if (act === 'studio-pick') studio_pick(b.getAttribute('data-clip'), e.shiftKey);
     else if (act === 'studio-folder') studio_folderToggle(b.getAttribute('data-folder'));
     else if (act === 'studio-preview') studio_preview(b.getAttribute('data-clip'));
@@ -5297,6 +5387,10 @@ function studio_wire() {
   if (yti) yti.addEventListener('keydown', studio_ytKey);
   const q = studio_el('studio-q');
   if (q) q.addEventListener('input', () => { studio.q = q.value; studio_renderLib(); });
+  const rq = studio_el('studio-reel-q');
+  if (rq) rq.addEventListener('input', () => { studio.reelQ = rq.value; studio_renderReels(); });
+  const rs = studio_el('studio-reel-sort');
+  if (rs) rs.addEventListener('change', () => { studio.reelSort = rs.value; studio_renderReels(); });
   /* The intro dialog's own controls. Wired once, because unlike the inspector
      this markup is never rebuilt. */
   ['studio-intro-a', 'studio-intro-b'].forEach(id => {

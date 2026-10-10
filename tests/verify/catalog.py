@@ -637,6 +637,8 @@ NOT_A_FLOW: dict[str, str] = {
     # --- the Studio page: selection, layout and the timeline's own view
     "studio-tab": "switches between the clip library and the timeline",
     "studio-game": "filters the library to one game",
+    "studio-reel-fmt": "filters the reels to vertical or landscape; never leaves the browser",
+    "studio-reels-more": "unfolds the reels from two rows to all of them",
     "studio-pick": "selects or unselects a clip (shift selects a range)",
     "studio-folder": "selects or unselects every clip in a run",
     "studio-clear": "empties the selection",
