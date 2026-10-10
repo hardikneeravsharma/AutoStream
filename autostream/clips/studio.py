@@ -3003,6 +3003,11 @@ def derive(project: dict) -> dict:
                      "kill_reel": round(t0 + s["pre"], 5), "kills_reel": inside,
                      "lead_in": bool(s.get("lead_in")),
                      "source_in": round(a, 4), "source_out": round(b, 4),
+                     # The page's instant preview plays the clip files
+                     # themselves, so it has to know where the render holds
+                     # the kill's frame -- and that what follows plays this
+                     # much later. See preview_at().
+                     "freeze": round(freeze, 4),
                      "pieces": [[round(x, 4), round(y, 4), r] for x, y, r in ps]})
     # A LONGER ENDING NEVER FADES THE LAST KILL. The fade runs over the last
     # `outro_len` seconds, and where the last shot ends sooner after its kill
@@ -3054,6 +3059,54 @@ def derive(project: dict) -> dict:
             "selection": selection, "lead_in": lead_in, "intro_clip": intro_clip,
             "outro_hold": hold, "outro_fade": round(fade, 4),
             "edited": bool(project.get("plan_sig")) and signature(shots) != project.get("plan_sig")}
+
+
+def preview_at(derived: dict, t: float) -> dict:
+    """Which clip, and which second of it, the reel shows at reel time `t`.
+
+    THE ARITHMETIC THE PAGE'S INSTANT PREVIEW RUNS, written once here so it
+    can be tested against the renderer rather than trusted. The Studio plays
+    the timeline straight off the clip files while the real render catches up
+    (studio_pvAt in ui/studio.py is this function, line for line), so a
+    deleted shot is gone from the player the moment it is deleted instead of
+    twenty seconds later.
+
+    -> {"shot", "src", "rate"}: the shot index, the source second to show,
+    and the playback rate there -- 0 while a frame is held (a freeze on the
+    kill, a stretched run-up's held opening, a long ending's last frame).
+    shot is -1 when the reel has no shots.
+    """
+    rows = derived.get("shots") or []
+    if not rows:
+        return {"shot": -1, "src": 0.0, "rate": 0.0}
+    t = max(0.0, float(t))
+    i = 0
+    while i + 1 < len(rows) and t >= rows[i + 1]["start"]:
+        i += 1
+    r = rows[i]
+    dur = r["end"] - r["start"]
+    u = t - r["start"]
+    ps = [tuple(p) for p in r["pieces"]]
+    # Where the kill sits in the shot's own output time: the render's freeze
+    # starts there (segment_command loops the frame at kill_at).
+    pre = r["kill_reel"] - r["start"]
+    freeze = float(r.get("freeze") or 0.0)
+    held = u >= dur                       # past the shot: the long ending's hold
+    u = min(u, dur)
+    if freeze and pre <= u < pre + freeze:
+        return {"shot": i, "src": round(r["source_in"] + source_used(ps, pre), 4), "rate": 0.0}
+    if freeze and u >= pre + freeze:
+        u -= freeze
+    rate = 0.0 if held else next((p[2] for p in ps if p[0] <= u < p[1]), ps[-1][2])
+    if rate < PREVIEW_MIN_RATE:
+        rate = 0.0
+    return {"shot": i, "src": round(r["source_in"] + source_used(ps, u), 4), "rate": rate}
+
+
+# Slower than this is a held frame, not slow motion: it is what HOLD_RATE is
+# for, and it is also the slowest a browser will play (Chrome refuses
+# playbackRate below 1/16).
+PREVIEW_MIN_RATE = 0.0625
 
 
 def signature(shots: list[dict]) -> str:
@@ -3967,10 +4020,14 @@ class StudioJob:
     """One reel render: the shots that are not cached, then the join."""
 
     def __init__(self, project: dict, derived: dict, root: Path, out: Path, *,
-                 shape_beats: list[float] | None = None):
+                 shape_beats: list[float] | None = None, auto: bool = False):
         self.id = next(_JOB_IDS)
         self.project, self.derived, self.root, self.out = project, derived, root, out
         self.shape_beats = shape_beats
+        # Started by the page on its own, once the user stopped editing, rather
+        # than by Render. A newer edit -- or a press of Render -- replaces it
+        # without asking: see Runner.yield_auto.
+        self.auto = bool(auto)
         self.state = "queued"
         self.step = "shots"
         self.done = 0
@@ -3994,7 +4051,7 @@ class StudioJob:
                     "output": str(self.out), "project": str(self.out.with_suffix(".reel.json")),
                     "elapsed": int((self.finished or time.time()) - self.started),
                     "cached": self.cached, "name": self.project.get("name", ""),
-                    "lyrics_note": self.lyrics_note}
+                    "lyrics_note": self.lyrics_note, "auto": self.auto}
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -4348,6 +4405,29 @@ class Runner:
         with self._lock:
             job = self.job
         return job.snapshot() if job else None
+
+    def yield_auto(self, wait: float = 8.0) -> bool:
+        """Make way for a newer render. -> True when nothing is rendering now.
+
+        A BACKGROUND RENDER IS NEVER IN THE WAY. It was started because the
+        user paused, not because they asked; an edit since then, or Render
+        itself, has a better claim on the encoder. So a running auto job is
+        cancelled here and waited for -- ffmpeg is terminated, so this is well
+        under a second -- and the shots it finished stay in the cache for the
+        render that replaces it. A render the user started is never touched:
+        that is False, and the caller says it is busy.
+        """
+        with self._lock:
+            job = self.job
+        if job is None or job.state not in ("queued", "running"):
+            return True
+        if not job.auto:
+            return False
+        job.cancel()
+        deadline = time.monotonic() + wait
+        while job.state in ("queued", "running") and time.monotonic() < deadline:
+            time.sleep(0.02)
+        return job.state not in ("queued", "running")
 
     def cancel(self) -> bool:
         with self._lock:
