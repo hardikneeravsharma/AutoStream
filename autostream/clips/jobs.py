@@ -275,6 +275,8 @@ class ClipJob:
         # early gets an answer that is true of every run without a window.
         self.win_start = 0.0
         self.win_end = 0.0
+        # Where the matches the user ticked turned out to be, once found.
+        self.picked_spans: list[tuple[float, float]] = []
         self.win_whole = True
         # A match-video run's progress in estimated seconds of work, and how
         # long the work already done really took -- see _summary_eta.
@@ -1453,6 +1455,13 @@ class ClipJob:
         """
         from . import valorant_match as vmatch
 
+        # THE USER'S WORD FIRST. Matches ticked as "in this video" are found
+        # in it by their kills, with no clock -- a downloaded YouTube stream
+        # carries the download's time, so the clock could only ever say no.
+        picked = [str(i) for i in self.options.get("match_ids") or [] if i]
+        if picked:
+            return self._from_picked_matches(kills, prof, picked)
+
         started = self._source_started()
         if not started:
             log.info("no start time for this recording, so its Valorant match "
@@ -1503,6 +1512,45 @@ class ClipJob:
                           "matched": sync.matched, "total": sync.total,
                           "how": sync.why},
             })
+        return out
+
+    def _from_picked_matches(self, kills: list[dict], prof, picked: list[str]) -> list[dict]:
+        """_from_matches for the matches the user ticked. Each one found is
+        also where clips may come from (see _match_spans)."""
+        from . import valorant_match as vmatch
+
+        vod = sorted(float(k["time"]) for k in kills)
+        out: list[dict] = []
+        lost: list[str] = []
+        for m in vmatch.by_ids(picked):
+            puuid = vmatch.puuid_of(m, getattr(prof, "player", "") or "")
+            sync = vmatch.align_free(m, puuid, vod) if puuid else None
+            if sync is None or not sync.ok:
+                log.info("picked match %s not found in the video: %s", m.id[:8],
+                         sync.why if sync else "cannot tell which player is you")
+                lost.append(vmatch.summary(m)["map"])
+                continue
+            got_kills = vmatch.kills_from(m, puuid, sync)
+            if not got_kills:
+                continue
+            span = vmatch.span_of(m, sync)
+            self.picked_spans.append((float(span[0]), float(span[1])))
+            log.info("picked match %s found at %+.1fs: %s", m.id[:8], sync.offset, sync.why)
+            out.append({
+                "kills": got_kills,
+                "rounds": vmatch.rounds_from(m, puuid, sync),
+                "span": span,
+                "about": {"match": m.id, "mode": m.mode, "ranked": m.ranked,
+                          "offset": round(sync.offset, 2), "matched": sync.matched,
+                          "total": sync.total, "how": "picked by you; " + sync.why},
+            })
+        self.diag.note("picked_matches", {"picked": len(picked), "found": len(out),
+                                          "not_found": lost})
+        if lost:
+            self._set(demo_note=(
+                "Could not find " + ", ".join(lost) + " in this video by its kills"
+                + (", so it was left out." if out else
+                   ". Clips are cut from what is on screen instead.")))
         return out
 
     def _tags(self, kills, wanted: bool) -> dict[float, list[str]]:
@@ -1653,7 +1701,7 @@ class ClipJob:
     MATCH_SLACK = 5.0
 
     def _match_spans(self) -> list[tuple[float, float]]:
-        out = []
+        out = list(getattr(self, "picked_spans", []) or [])
         for sp in self.options.get("match_spans") or []:
             try:
                 a, b = float(sp[0]), float(sp[1])

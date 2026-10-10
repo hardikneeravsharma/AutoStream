@@ -2584,6 +2584,11 @@ class Server:
                 spans.append([a, b])
         if spans:
             opt["match_spans"] = spans
+        # Matches the user says are in this video, by id: for a downloaded
+        # stream nothing lines up by time, so the user's tick is the link.
+        ids = [str(i)[:64] for i in (body.get("match_ids") or [])[:30] if i]
+        if ids:
+            opt["match_ids"] = ids
         # "Read the screen anyway." A Counter-Strike run stops rather than
         # spending forty minutes on OCR when no replay matched, so this is how
         # the page says the user has chosen that cost with their eyes open.
