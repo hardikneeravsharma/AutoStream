@@ -64,7 +64,7 @@ from typing import Callable
 
 import numpy as np
 
-from .tools import _NO_WINDOW, binary, has_cuda, media_info
+from .tools import _NO_WINDOW, binary, decode_args, gpu_frames_args, hw_decoder, media_info
 
 log = logging.getLogger("autostream.clips.rivals")
 
@@ -402,8 +402,7 @@ def _chain(on_gpu: bool) -> str:
 
 
 def _args(video: Path, start: float, dur: float, on_gpu: bool) -> list[str]:
-    pre = (["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"] if on_gpu
-           else (["-hwaccel", "cuda"] if has_cuda() else []))
+    pre = gpu_frames_args() if on_gpu else decode_args()
     return [binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
             *pre, "-ss", f"{start:.3f}", "-i", str(video),
             "-t", f"{max(0.5, dur):.3f}", "-an", "-sn",
@@ -438,7 +437,7 @@ def _frames(video: Path, start: float, dur: float, on_gpu: bool,
 
 def _gpu_works(video: Path) -> bool:
     """Whether frames can be dropped on the card. Probed, not assumed."""
-    if not has_cuda():
+    if not hw_decoder():
         return False
     try:
         out = subprocess.run(_args(video, 0.0, 0.6, True), capture_output=True,

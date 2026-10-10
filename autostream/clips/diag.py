@@ -245,11 +245,19 @@ def gpu_info() -> dict:
     from . import tools
 
     out: dict[str, Any] = {}
-    for key, fn in (("nvenc", tools.has_nvenc), ("cuda", tools.has_cuda)):
+    for key, fn in (("nvenc", tools.has_nvenc), ("cuda", tools.has_cuda),
+                    ("amf", tools.has_amf), ("qsv", tools.has_qsv), ("d3d11va", tools.has_d3d11va)):
         try:
             out[key] = bool(fn())
         except Exception as e:                               # noqa: BLE001
             out[key] = f"(check failed: {e})"
+    # What the run will actually use, so a report answers "was it on the card?"
+    # without the reader having to know the order the probes are tried in.
+    try:
+        out["decode"] = tools.hw_decoder() or "cpu"
+        out["encode"] = tools.gpu_encoder() or "cpu"
+    except Exception as e:                                   # noqa: BLE001
+        out["decode"] = out["encode"] = f"(check failed: {e})"
     out["adapters"] = adapters()
     return out
 

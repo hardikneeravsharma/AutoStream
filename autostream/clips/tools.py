@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import functools
 import json
+import logging
 import os
 import shutil
 import subprocess
 import time
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 # Windows only: keeps a console window from flashing up on every ffmpeg call.
 # The frozen build is windowed, so without this each clip would blink a black
@@ -120,8 +123,16 @@ def run(args: list[str], **kw) -> subprocess.CompletedProcess:
 def ffmpeg(*args: str) -> subprocess.CompletedProcess:
     # -nostdin matters: without it ffmpeg can swallow the parent's stdin and
     # wedge when called in a loop.
-    return run([binary("ffmpeg"), "-hide_banner", "-loglevel", "error",
-                "-nostdin", *args])
+    head = [binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin"]
+    try:
+        return run([*head, *args])
+    except RuntimeError as e:
+        soft = software_fallback(list(args))
+        if soft is None:
+            raise
+        log.warning("hardware encode failed, using the CPU for the rest of this run: %s",
+                    str(e).splitlines()[-1] if str(e) else e)
+        return run([*head, *soft])
 
 
 def ffmpeg_raw(args: list[str]) -> bytes:
@@ -265,20 +276,194 @@ def has_cuda() -> bool:
                        "-f", "null", "-"])
 
 
+# ------------------------------------------------- AMD and Intel cards too
+#
+# EVERY GPU PATH HERE USED TO BE NVIDIA'S. Decode was `-hwaccel cuda` or
+# nothing, encode was NVENC or libx264 -- so a Radeon user's clip job ran
+# entirely on the CPU. Measured on a friend's RX 9070 XT run (v1.42, 50 min of
+# 1440p): 20 minutes, of which 9 1/4 were libx264 encodes and 10 1/2 were CPU
+# decodes for the scans, every core pinned throughout. Their ffmpeg (the same
+# Gyan build this machine has) ships h264_amf and d3d11va; nothing asked for
+# them.
+#
+# D3D11VA IS THE DECODER FOR EVERY CARD ON WINDOWS -- AMD, Intel and NVIDIA
+# alike -- so it is the fallback under CUDA rather than an AMD special case.
+# Each is probed the same way NVENC and CUDA are: listed AND used once.
+
+
+@functools.lru_cache(maxsize=1)
+def _encoders() -> str:
+    try:
+        return run([binary("ffmpeg"), "-hide_banner", "-encoders"]).stdout or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+@functools.lru_cache(maxsize=1)
+def has_amf() -> bool:
+    """AMD's hardware encoder: listed by every Gyan/BtbN build, usable only on a Radeon."""
+    if "h264_amf" not in _encoders():
+        return False
+    # With the flags a real clip uses, so a driver that refuses one of them
+    # is found here and not forty clips into a job.
+    if not _gpu_probe(["-f", "lavfi", "-i", "color=black:s=256x256:d=0.1",
+                       "-frames:v", "1", *_amf_args(20), "-f", "null", "-"]):
+        return False
+    # AND BEHIND THE DECODER A CUT WILL USE. Given a D3D11VA decode, h264_amf
+    # builds its device from the decoder's -- and fails outright when that is
+    # another vendor's card. Measured on a machine with an NVIDIA card driving
+    # the display and a Radeon iGPU: AMF alone encodes, the pair exits with
+    # "Failed to create derived AMF device". There, AMF is not used at all.
+    if hw_decoder() == "d3d11va":
+        sample = _tiny_h264()
+        return bool(sample) and _gpu_probe(["-hwaccel", "d3d11va", "-i", sample, "-frames:v", "1",
+                                            *_amf_args(20), "-f", "null", "-"])
+    return True
+
+
+@functools.lru_cache(maxsize=1)
+def _tiny_h264() -> str:
+    """A tenth of a second of H.264 to put through a hardware decoder. "" if none can be made."""
+    import tempfile
+    p = Path(tempfile.gettempdir()) / "autostream-probe-h264.mp4"
+    if p.is_file() and p.stat().st_size > 0:
+        return str(p)
+    ok = _gpu_probe(["-y", "-f", "lavfi", "-i", "testsrc=s=256x256:d=0.2", "-c:v", "libx264",
+                     "-pix_fmt", "yuv420p", str(p)])
+    return str(p) if ok and p.is_file() else ""
+
+
+@functools.lru_cache(maxsize=1)
+def has_qsv() -> bool:
+    """Intel's hardware encoder (Quick Sync), for an Intel GPU or iGPU."""
+    if "h264_qsv" not in _encoders():
+        return False
+    return _gpu_probe(["-f", "lavfi", "-i", "color=black:s=256x256:d=0.1",
+                       "-frames:v", "1", *_qsv_args(20), "-f", "null", "-"])
+
+
+@functools.lru_cache(maxsize=1)
+def has_d3d11va() -> bool:
+    """Whether the Windows video decoder (any vendor's card) can be opened."""
+    try:
+        p = run([binary("ffmpeg"), "-hide_banner", "-hwaccels"])
+    except Exception:  # noqa: BLE001
+        return False
+    if "d3d11va" not in p.stdout:
+        return False
+    return _gpu_probe(["-init_hw_device", "d3d11va=gpu", "-f", "lavfi",
+                       "-i", "nullsrc=s=64x64:d=0.1", "-frames:v", "1",
+                       "-f", "null", "-"])
+
+
+def hw_decoder() -> str:
+    """The hardware decoder a scan or cut should use: "cuda", "d3d11va" or ""."""
+    if has_cuda():
+        return "cuda"
+    if has_d3d11va():
+        return "d3d11va"
+    return ""
+
+
+def decode_args() -> list[str]:
+    """Input flags that decode on the card and hand frames back to system memory.
+
+    No output format is asked for, so the frames arrive where the CPU crop,
+    scale and fps filters expect them. A recording the card cannot decode (a
+    10-bit or unusual profile) is decoded in software by ffmpeg itself.
+    """
+    hw = hw_decoder()
+    return ["-hwaccel", hw] if hw else []
+
+
+def gpu_frames_args() -> list[str]:
+    """Input flags that keep decoded frames ON the card, for a chain that drops
+    the ones it does not want and then `hwdownload`s the rest. [] without one."""
+    hw = hw_decoder()
+    if hw == "cuda":
+        return ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
+    if hw == "d3d11va":
+        return ["-hwaccel", "d3d11va", "-hwaccel_output_format", "d3d11"]
+    return []
+
+
+# A hardware encoder that passed its probe and then failed a real encode (a
+# driver that runs out of sessions, a resolution it will not take) is not
+# asked again this run: every later clip goes to the CPU instead of failing.
+_HW_ENCODE_FAILED = False
+# Each hardware encoder block handed out, and the libx264 block at the same
+# quality that replaces it if the encode fails. See software_fallback().
+_SOFT: dict[tuple[str, ...], list[str]] = {}
+
+
+def software_fallback(argv: list[str]) -> list[str] | None:
+    """`argv` with its hardware encoder swapped for libx264, or None if it has none.
+
+    THE AMD PATH COULD NOT BE TESTED ON THE MACHINE IT WAS WRITTEN ON, so a
+    failure must cost a clip its speed, not the clip. The probe proves AMF
+    runs at all; this covers what a one-frame probe cannot.
+    """
+    global _HW_ENCODE_FAILED
+    for hw, soft in _SOFT.items():
+        n = len(hw)
+        for i in range(len(argv) - n + 1):
+            if tuple(argv[i:i + n]) == hw:
+                _HW_ENCODE_FAILED = True
+                return [*argv[:i], *soft, *argv[i + n:]]
+    return None
+
+
+def gpu_encoder() -> str:
+    """The hardware encoder "auto" uses: "nvenc", "amf", "qsv" or "" for the CPU."""
+    if _HW_ENCODE_FAILED:
+        return ""
+    if has_nvenc():
+        return "nvenc"
+    if has_amf():
+        return "amf"
+    if has_qsv():
+        return "qsv"
+    return ""
+
+
 def video_codec_args(encoder: str = "auto", *, cq: int = 20) -> list[str]:
     """Encoder flags for a delivery-quality clip.
 
-    NVENC is several times faster than libx264 here and the quality difference
-    at CQ 20 is not visible on gameplay footage, so it leads when present.
+    A hardware encoder is several times faster than libx264 here and the
+    quality difference at CQ 20 is not visible on gameplay footage, so the
+    card's own leads when there is one. A named encoder the machine cannot run
+    falls back to libx264 rather than failing the job.
     """
+    soft = ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(cq), "-pix_fmt", "yuv420p"]
     if encoder == "auto":
-        encoder = "nvenc" if has_nvenc() else "libx264"
+        encoder = gpu_encoder() or "libx264"
+    if _HW_ENCODE_FAILED:
+        return soft
+    hw: list[str] = []
     if encoder == "nvenc" and has_nvenc():
-        return ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq",
-                "-rc", "vbr", "-cq", str(cq), "-b:v", "0",
-                "-pix_fmt", "yuv420p"]
-    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(cq),
+        hw = ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq",
+              "-rc", "vbr", "-cq", str(cq), "-b:v", "0", "-pix_fmt", "yuv420p"]
+    elif encoder == "amf" and has_amf():
+        hw = _amf_args(cq)
+    elif encoder == "qsv" and has_qsv():
+        hw = _qsv_args(cq)
+    if not hw:
+        return soft
+    _SOFT[tuple(hw)] = soft
+    return hw
+
+
+def _amf_args(cq: int) -> list[str]:
+    # Constant QP is AMF's nearest to NVENC's -cq: the same number means about
+    # the same picture. B-frames one step coarser, as x264 does.
+    return ["-c:v", "h264_amf", "-usage", "transcoding", "-quality", "quality",
+            "-rc", "cqp", "-qp_i", str(cq), "-qp_p", str(cq), "-qp_b", str(cq + 2),
             "-pix_fmt", "yuv420p"]
+
+
+def _qsv_args(cq: int) -> list[str]:
+    return ["-c:v", "h264_qsv", "-preset", "medium", "-global_quality", str(cq),
+            "-pix_fmt", "nv12"]
 
 
 def hms(seconds: float) -> str:

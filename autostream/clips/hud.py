@@ -60,7 +60,7 @@ from pathlib import Path
 import numpy as np
 
 from .. import paths
-from .tools import _NO_WINDOW, binary, has_cuda
+from .tools import _NO_WINDOW, binary, decode_args
 
 log = logging.getLogger("autostream.clips.hud")
 
@@ -330,7 +330,7 @@ def _scan_span(video: Path, start: float, duration: float, fps: float,
     # the PNGs. read_frame() wants a full frame to apply its fractions to, so
     # the crop is undone by handing it a frame of the right nominal height --
     # simpler to keep the whole width and the top 12%.
-    accel = ["-hwaccel", "cuda"] if has_cuda() else []
+    accel = decode_args()
     tmp = Path(tempfile.mkdtemp(prefix="hud_"))
     try:
         subprocess.run([

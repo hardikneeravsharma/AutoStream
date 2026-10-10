@@ -657,7 +657,7 @@ def _extract_two(video: Path, start: float, duration: float, fps: float,
     import tempfile
 
     from .killfeed import _NO_WINDOW
-    from .tools import binary, has_cuda
+    from .tools import binary, decode_args
 
     def crop(band):
         x1, y1, x2, y2 = band
@@ -667,7 +667,7 @@ def _extract_two(video: Path, start: float, duration: float, fps: float,
     tmp = Path(tempfile.mkdtemp(prefix="cs2c_"))
     subprocess.run([
         binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
-        *(["-hwaccel", "cuda"] if has_cuda() else []),
+        *decode_args(),
         "-ss", f"{start:.3f}",
         # -t BEFORE -i. After it, it is an output option and binds only to the
         # FIRST output, leaving the second to decode to end of file.
@@ -890,7 +890,7 @@ def _pipe_view(video: Path, start: float, duration: float, fps: float,
     import subprocess
 
     from .killfeed import _NO_WINDOW
-    from .tools import binary, has_cuda
+    from .tools import binary, decode_args
 
     import tempfile
     import time
@@ -901,7 +901,7 @@ def _pipe_view(video: Path, start: float, duration: float, fps: float,
     frame = w * h * 3
     args = [
         binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
-        *(["-hwaccel", "cuda"] if has_cuda() else []),
+        *decode_args(),
         "-ss", f"{start:.3f}",
         # -t BEFORE -i, as an input option: after it, it binds to the output.
         "-t", f"{max(0.05, duration):.3f}",

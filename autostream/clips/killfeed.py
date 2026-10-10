@@ -73,7 +73,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import deps
-from .tools import _NO_WINDOW, binary, has_cuda
+from .tools import _NO_WINDOW, binary, decode_args, has_cuda
 
 log = logging.getLogger("autostream.clips.killfeed")
 
@@ -500,7 +500,7 @@ def _extract(video: Path, band, start: float, duration: float,
 
     from . import diag
 
-    accel = ["-hwaccel", "cuda"] if has_cuda() else []
+    accel = decode_args()
     tmp = Path(tempfile.mkdtemp(prefix="kf_"))
     args = [
         binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
@@ -562,7 +562,7 @@ def _extract_pair(video: Path, band, start: float, duration: float,
     x1, y1, x2, y2 = band
     feed = (f"crop=iw*{x2 - x1:.6f}:ih*{y2 - y1:.6f}"
             f":iw*{x1:.6f}:ih*{y1:.6f}")
-    accel = ["-hwaccel", "cuda"] if has_cuda() else []
+    accel = decode_args()
     tmp = Path(tempfile.mkdtemp(prefix="kf_"))
     subprocess.run([
         binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",

@@ -31,7 +31,7 @@ from typing import Callable, Iterable
 import numpy as np
 
 from .profiles import Profile
-from .tools import ffmpeg_raw, has_cuda, media_info
+from .tools import decode_args, ffmpeg_raw, media_info
 
 log = logging.getLogger("autostream.clips.detect")
 
@@ -188,12 +188,10 @@ def scan_span(video: Path, profile: Profile, start: float, duration: float,
     vf = (f"fps={profile.scan_fps},crop={w}:{h}:{x}:{y},"
           f"scale={rw}:{rh}:flags=bilinear,"
           f"format={'rgb24' if colour_mode else 'gray'}")
-    args = []
-    if has_cuda():
-        # Decode on the GPU; frames come back to system memory automatically
-        # because no hwaccel_output_format is requested, which is what the CPU
-        # crop/scale filters need.
-        args += ["-hwaccel", "cuda"]
+    # Decode on the card -- CUDA, or D3D11VA on an AMD or Intel one; frames
+    # come back to system memory because no output format is requested, which
+    # is what the CPU crop/scale filters need.
+    args = decode_args()
     args += ["-ss", f"{start:.3f}", "-i", str(video), "-t", f"{duration:.3f}",
              "-an", "-sn", "-vf", vf, "-f", "rawvideo", "-"]
 

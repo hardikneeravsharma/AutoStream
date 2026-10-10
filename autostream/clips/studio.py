@@ -3764,7 +3764,24 @@ class StudioJob:
                 setattr(self, k, v)
 
     def _run_ff(self, argv: list[str], *, capture: bool = False) -> str:
-        """Run ffmpeg where Cancel can reach it. -> its stderr when `capture`."""
+        """Run ffmpeg where Cancel can reach it. -> its stderr when `capture`.
+
+        A hardware encode that fails is run again on the CPU, and the CPU is
+        used for the rest of the process -- see tools.software_fallback.
+        """
+        from .tools import software_fallback
+        try:
+            return self._run_ff_once(argv, capture=capture)
+        except Cancelled:
+            raise
+        except RuntimeError as e:
+            soft = software_fallback(argv)
+            if soft is None:
+                raise
+            log.warning("studio: hardware encode failed, using the CPU (%s)", str(e)[-200:])
+            return self._run_ff_once(soft, capture=capture)
+
+    def _run_ff_once(self, argv: list[str], *, capture: bool = False) -> str:
         from .killfeed import _NO_WINDOW
         if self._cancel.is_set():
             raise Cancelled("cancelled")

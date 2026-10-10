@@ -987,15 +987,14 @@ def _decode_args(video: Path, band, start: float, dur: float, fps: float,
     the same picture (measured bit-identical over a span) at 8.6s a span
     against 13.4s.
     """
-    from .killfeed import has_cuda
-    from .tools import binary
+    from .tools import binary, decode_args, gpu_frames_args
 
     crop = _crop_expr(band)
     if on_gpu:
-        pre = ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
+        pre = gpu_frames_args()
         chain = f"fps={fps},hwdownload,format=nv12,{crop}"
     else:
-        pre = ["-hwaccel", "cuda"] if has_cuda() else []
+        pre = decode_args()
         chain = f"fps={fps},{crop}"
     return [binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin",
             *pre, "-ss", f"{start:.3f}", "-i", str(video),
@@ -1010,9 +1009,10 @@ def gpu_drop_works(video: Path, band, shape: tuple[int, int]) -> bool:
     codec the card cannot decode will not. One frame says so in well under a
     second, and the answer stands for the whole scan.
     """
-    from .killfeed import _NO_WINDOW, has_cuda
+    from .killfeed import _NO_WINDOW
+    from .tools import hw_decoder
 
-    if not has_cuda():
+    if not hw_decoder():
         return False
     h, w = shape
     try:

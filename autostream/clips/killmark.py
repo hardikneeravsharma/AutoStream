@@ -109,7 +109,10 @@ def _region(video: Path, spec: Spec, ff: str, t0: float = 0.0, seconds: float = 
     h = int(round(REGION_WIDTH * (spec.y1 - spec.y0) * 9 / 16 / (spec.x1 - spec.x0)))
     args = [ff, "-v", "error"]
     if hwaccel:
-        args += ["-hwaccel", "auto"]
+        # The card that is actually there, probed -- "auto" tried each
+        # hwaccel in ffmpeg's own order on every call.
+        from .tools import decode_args
+        args += decode_args()
     if t0 > 0:
         args += ["-ss", f"{t0:.3f}"]
     args += ["-i", str(video)]
