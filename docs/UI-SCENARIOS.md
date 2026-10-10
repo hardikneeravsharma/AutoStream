@@ -181,6 +181,9 @@ listed so the gap is visible.
 | 6.10 | Lyrics: with a .lrc beside the song, choose a look and a typeface, the LYRICS stand-in hidden until "Move on the picture", drag it, pick one of nine places, move the timing +0.5 s, render (stand-in gone) | The reel is saved with the look, face and place, and the Lyrics group says where the words came from | yes (inside 6.2) |
 | 6.11 | Your reels: more than eight fold to two rows; unfold, search, filter by shape, sort | Every reel is reachable, typing keeps focus, each card shows a real still | yes |
 | 6.12 | Headshots: Valorant clips with a reading show "· N HS"; Make offers "Headshot kills only" with what it keeps; ticked, the plan uses only headshot kills | Only headshot kills are in the project | yes |
+| 6.13 | How long: "Fill the song part I picked" is greyed until a song and a part are chosen, then lit by default; "Every clip I chose" says what it does; Keep every kill ticked; Best order chosen; Build | The plan request carries the part, `fill`, `keep_all` and `arrange: hits`, the project keeps all four, and the reel fills most of the part | yes (`test_ui_studio_length`) |
+| 6.14 | Rebuild with another style on a reel cut to a part | The new plan is asked for on the same part, with the same How long and Keep every kill | yes (`test_ui_studio_length`) |
+| 6.15 | Song tab: lengthen the part well past the reel and "Use this part" | The reel is planned again to fill it, the part is kept on the project, and the tab reopens on it rather than on the reel's length | yes (`test_ui_studio_length`) |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.
@@ -209,8 +212,8 @@ nothing noticed.
 
 | | count |
 |---|---|
-| Scenarios catalogued | 62 |
-| Covered by a focused test | 23 |
+| Scenarios catalogued | 65 |
+| Covered by a focused test | 26 |
 | Covered only by the sweep | 12 |
 | **Known gaps** | **27** |
 

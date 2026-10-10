@@ -208,9 +208,25 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     waveform in the Make dialog, nudge either end by a bar, or jump to the drums, the
     drop or the whole song — and play it: play and pause, a slider to seek anywhere
     in the part, five seconds back or forward, and loop. Every clip you chose goes in unless the
-    part is full; if the clips are short of it, each kill gets a longer run-up (as far
+    part is full, and the kills are spread over the part, each on one of the song's
+    hits; if the clips are short of it, each kill gets a longer run-up (as far
     as its clip has footage, never over 8 s), and after that the reel ends early and
-    says so. *Let AutoStream choose* keeps the old behaviour.
+    says so. *Let AutoStream choose* keeps the old behaviour. A part chosen later, on
+    the Song tab, longer than the reel plans it again to fill the part, and every
+    rebuild or new style keeps the part.
+  - **Say how long.** *The style's length*, *Fill the song part I picked* or *Every
+    clip I chose* (as long as the kills need, at the style's pace). The style then sets
+    only the feel — the pace, the effects, the flashes — so a long Hype reel still
+    cuts like Hype.
+  - **Keep every kill.** A kill with too little footage before it starts on its clip's
+    first frame, or has its run-up slowed, instead of being left out; one where
+    nothing moves goes in last in line; and to fit a length the kills move closer
+    together rather than clips falling out. Only a part too short for them even then
+    leaves the weakest out, and every clip — and every kill of a clip that went in —
+    that is not shown says why.
+  - **Best order.** Beside Build up, As it happened, Best first and Shuffle: the
+    biggest moments (aces, 4Ks, clutches, multi-kills) on the song's biggest hits, each
+    multi-kill kept together and in order, and no two alike back to back.
   - **You can see which of your clips made it in.** The timeline lists the clips you
     chose that are not in the reel and why — the part was full, nothing moved around
     the kill, removed on the timeline — and it stays with the reel when you reopen it.

@@ -1755,3 +1755,232 @@ def test_the_emblem_check_never_drops_or_adds_a_recorded_kill():
     clips = [{"path": "a.mp4", "kills": [3.5, 9.0], "recorded": True, "game": "VALORANT"}]
     out, moved, dropped, added = studio._confirm_kills(clips, lambda p, g: [3.8, 6.0, 20.0])
     assert out[0]["kills"] == [3.8, 9.0] and moved == 1 and dropped == 0 and added == 0
+
+
+# ------------------------------------------------------------------ how long, every kill, best order
+
+def _song_file(clips_root: Path) -> str:
+    """A song file that exists, so normalise keeps the song and its marks."""
+    p = clips_root.parent / "s.mp3"
+    p.write_bytes(b"not really a song")
+    return str(p)
+
+
+def _hit_shape(bpm=120.0, seconds=180.0, big=()):
+    """A song with a bass hit on every beat, as clips/hits.py would find it."""
+    sh = Shape(bpm=bpm, seconds=seconds, phase=0.0)
+    sh.hits = list(sh.beats[1:])
+    sh.big = list(big)
+    sh.hit_strength = [3.0 if any(abs(t - b) < 1e-6 for b in big) else 1.0 for t in sh.hits]
+    return sh
+
+
+def _overlaps(shots):
+    bad = []
+    for clip, spans in _spans_by_clip(shots).items():
+        spans.sort()
+        bad += [(clip, a1, b1, a2) for (a1, b1), (a2, b2) in zip(spans, spans[1:]) if a2 < b1 - 1e-3]
+    return bad
+
+
+def test_a_long_part_is_filled_even_at_a_fast_styles_pace(long_run):
+    """dwayIR: a 93 s part in Hype came out 63 s, while the plan said every
+    run-up had been lengthened to fill it. The kills were cut 1.1 s apart --
+    Hype's pace -- whatever the part. Now they are spread over the part."""
+    shape = _hit_shape()
+    proj, notes = studio.plan(_clips(long_run)[:12], "hype", shape=shape, song=_song_file(long_run), part=(10.0, 70.0))
+    got, derived, _ = studio.normalise(proj, long_run)
+    assert derived["length"] == pytest.approx(60.0, abs=2.5), derived["length"]
+    assert derived["on_marks"] == len(got["shots"])                  # every kill still on a hit
+    assert not _overlaps(got["shots"])
+    assert all(x["why"] == "" for x in proj["selection"])
+    assert any("spread over the part" in n for n in notes), notes
+
+
+def test_every_clip_i_chose_puts_every_clip_in_at_the_styles_pace(long_run):
+    """A vertical story reel holds 48 s; twenty-four clips need more. The
+    style's length leaves some out; "Every clip I chose" does not."""
+    shape = _hit_shape()
+    styled, _ = studio.plan(_clips(long_run), "story", shape=shape, song=_song_file(long_run), fmt="vertical")
+    assert any(x["why"] for x in styled["selection"])
+    proj, _ = studio.plan(_clips(long_run), "story", shape=shape, song=_song_file(long_run), fmt="vertical",
+                          shape_it={"fill": "all"})
+    assert all(x["why"] == "" for x in proj["selection"]), [x["why"] for x in proj["selection"] if x["why"]]
+    assert len({s["clip"] for s in proj["shots"]}) == 24
+    assert proj["fill"] == "all"
+    # carried on the project, so a rebuild or a new style keeps it
+    got, _, _ = studio.normalise(proj, long_run)
+    assert got["fill"] == "all" and got["keep_all"] is False
+
+
+def test_the_styles_length_starts_on_the_part_and_never_passes_its_end(long_run):
+    shape = _hit_shape()
+    proj, _ = studio.plan(_clips(long_run), "story", shape=shape, song=_song_file(long_run), fmt="vertical",
+                          part=(20.0, 150.0), shape_it={"fill": "style"})
+    total = sum(s["duration"] for s in proj["shots"])
+    assert proj["song_offset"] == pytest.approx(20.0) and proj["part_end"] == pytest.approx(150.0)
+    assert total < 60.0                                    # the style's length, not the 130 s part
+    assert any("Every clip I chose" in x["why"] for x in proj["selection"] if x["why"])
+
+
+@pytest.fixture
+def awkward(tmp_path):
+    """Clips the planner used to lose kills from: one whose only kill is
+    0.2 s in, one with a kill 0.2 s in and another 6 s later, and ordinary ones."""
+    r = tmp_path / "clips"
+    _run(r, "2026-10-11_1200_VALORANT", "VALORANT",
+         [{"start": 1000.0, "end": 1008.0}, {"start": 2000.0, "end": 2010.0, "kills": 2}]
+         + [{"start": 3000.0 + 100 * i, "end": 3010.0 + 100 * i} for i in range(5)],
+         kills=[1000.2, 2000.2, 2006.2] + [3005.0 + 100 * i for i in range(5)])
+    return r
+
+
+def test_without_keep_every_kill_a_kill_with_no_run_up_is_left_out_and_says_why(awkward):
+    proj, notes = studio.plan(_clips(awkward), "story", shape=_hit_shape(), song=_song_file(awkward))
+    rows = {Path(x["clip"]).name: x for x in proj["selection"]}
+    assert "footage before its kill" in rows["VALORANT_00.mp4"]["why"]
+    gone = rows["VALORANT_01.mp4"]["kills_out"]
+    assert [k["kill"] for k in gone] == [pytest.approx(0.2)] and "footage before it" in gone[0]["why"]
+    assert any("Keep every kill" in n for n in notes)
+    # and the timeline's fold can list them
+    got, derived, _ = studio.normalise(proj, awkward)
+    row = next(x for x in derived["selection"] if x["clip"].endswith("VALORANT_01.mp4"))
+    assert row["in"] and row["kills_out"]
+
+
+def test_keep_every_kill_shows_a_kill_from_the_clips_first_frame(awkward):
+    """Kept, the shot starts on the clip's first frame (or slows into the
+    kill) instead of being dropped, and still lands on its hit."""
+    proj, notes = studio.plan(_clips(awkward), "story", shape=_hit_shape(), song=_song_file(awkward),
+                              shape_it={"keep_all": True})
+    got, derived, _ = studio.normalise(proj, awkward)
+    shown = {}
+    for s, row in zip(got["shots"], derived["shots"]):
+        shown.setdefault(Path(s["clip"]).name, []).extend(
+            round(k, 2) for k in s["kills"] if row["source_in"] - 1e-3 <= k <= row["source_out"] + 1e-3)
+    assert shown["VALORANT_00.mp4"] == [0.2]
+    assert sorted(shown["VALORANT_01.mp4"]) == [0.2, 6.2]
+    assert all(not x["why"] and not x.get("kills_out") for x in proj["selection"])
+    for row in derived["shots"]:
+        assert row["source_in"] >= -1e-3                       # never before the clip's first frame
+    assert derived["on_marks"] == len(got["shots"])
+    assert proj["keep_all"] is True
+
+
+def test_keep_every_kill_keeps_a_still_moment(long_run):
+    """A death camera reads as nothing moving and was dropped; kept, it goes in last in line."""
+    clips = _clips(long_run)[:6]
+    still = clips[2]["path"]
+
+    def measure(path, t0, t1):
+        return {"action": 1.0 if path == still else 14.0}
+    shape = _hit_shape()
+    proj, _ = studio.plan(clips, "story", shape=shape, song=_song_file(long_run), measure=measure)
+    assert "Nothing moves" in next(x["why"] for x in proj["selection"] if x["clip"] == still)
+    proj, _ = studio.plan(clips, "story", shape=shape, song=_song_file(long_run), measure=measure,
+                          shape_it={"keep_all": True})
+    assert still in {s["clip"] for s in proj["shots"]}
+
+
+def test_keep_every_kill_closes_the_kills_up_rather_than_leave_clips_out(long_run):
+    """The style's length leaves the weakest out; keeping every kill puts the
+    kills closer together instead, every one still on a hit."""
+    shape = _hit_shape()
+    styled, _ = studio.plan(_clips(long_run), "story", shape=shape, song=_song_file(long_run), fmt="vertical")
+    kept, notes = studio.plan(_clips(long_run), "story", shape=shape, song=_song_file(long_run), fmt="vertical",
+                              shape_it={"keep_all": True})
+    assert len(kept["shots"]) > len(styled["shots"])
+    assert all(x["why"] == "" for x in kept["selection"])
+    got, derived, _ = studio.normalise(kept, long_run)
+    assert derived["on_marks"] == len(got["shots"]) and not _overlaps(got["shots"])
+
+
+def test_a_part_too_short_even_for_every_kill_leaves_the_weakest_out_and_says_so(long_run):
+    shape = _hit_shape()
+    proj, notes = studio.plan(_clips(long_run), "hype", shape=shape, song=_song_file(long_run), part=(10.0, 22.0),
+                              shape_it={"fill": "part", "keep_all": True})
+    total = sum(s["duration"] for s in proj["shots"])
+    assert total <= 12.0 + 1e-6
+    out = [x for x in proj["selection"] if x["why"]]
+    assert out and all("part" in x["why"] for x in out)
+
+
+def test_the_song_tabs_part_is_kept_on_the_project(long_run):
+    """dwayIR's part was chosen on the Song tab, and only its start survived."""
+    shape = _hit_shape()
+    proj, _ = studio.plan(_clips(long_run)[:6], "hype", shape=shape, song=_song_file(long_run))
+    studio.apply_song(proj, shape, proj["song"], 6.9458, 100.0)
+    assert proj["song_offset"] == pytest.approx(6.9458) and proj["part_end"] == pytest.approx(100.0)
+
+
+def test_best_order_is_one_of_the_arrangements_and_survives_the_round_trip(long_run):
+    assert "hits" in rulebook.ARRANGEMENTS
+    proj, _ = studio.plan(_clips(long_run)[:8], "hype", shape=_hit_shape(), song=_song_file(long_run),
+                          shape_it={"arrange": "hits"})
+    got, _, _ = studio.normalise(proj, long_run)
+    assert got["arrange"] == "hits"
+
+
+def _seq(group, kills, strength):
+    c = {"path": f"c{group}.mp4", "name": f"c{group}", "caption": ""}
+    ms = [rulebook.Moment(clip=c, kills=[float(k)], group=group, seq=j, seq_len=len(kills),
+                          strength=strength) for j, k in enumerate(kills)]
+    ms[-1].caption = rulebook.label_for(len(kills))
+    return ms
+
+
+def test_best_order_puts_the_biggest_moment_on_the_biggest_slot():
+    """The weights are the song's hits; the ace's last kill goes on the biggest."""
+    seqs = [_seq(0, [5, 7, 9, 11, 13], 15.0), _seq(1, [3], 3.0), _seq(2, [3, 6], 6.0)] + \
+        [_seq(g, [3], 3.0 - g * 0.01) for g in range(3, 9)]
+    n = sum(len(s) for s in seqs)
+    weights = [0.3] * n
+    weights[5] = 2.0                                      # the big hit, early in the reel
+    out = rulebook.best_order(sorted(seqs, key=lambda s: -s[0].strength), weights)
+    flat = [m for s in out for m in s]
+    ace = [i for i, m in enumerate(flat) if m.group == 0]
+    assert ace == list(range(ace[0], ace[0] + 5))          # together, in the order they happened
+    assert [flat[i].kills[0] for i in ace] == [5.0, 7.0, 9.0, 11.0, 13.0]
+    assert ace[-1] == 5, [m.group for m in flat]           # its last kill on the big hit
+    # the build would have put it two thirds in
+    built = rulebook.order(flat, None, None, arrange="build")
+    assert [i for i, m in enumerate(built) if m.group == 0][-1] != 5
+
+
+def test_best_order_keeps_two_alike_apart():
+    """Two double kills back to back read as the same shot twice."""
+    seqs = [_seq(g, [3, 6], 6.0) for g in range(3)] + [_seq(g, [3], 3.0) for g in range(3, 9)]
+    n = sum(len(s) for s in seqs)
+    out = rulebook.best_order(seqs, [0.5] * n)
+    shapes = [len(s) for s in out]
+    assert all(not (a == b == 2) for a, b in zip(shapes, shapes[1:])), shapes
+
+
+def test_best_order_on_a_real_plan_lands_the_triple_on_the_big_hit(tmp_path):
+    r = tmp_path / "clips"
+    _run(r, "2026-10-11_1300_VALORANT", "VALORANT",
+         [{"start": 1000.0, "end": 1012.0, "kills": 3}]
+         + [{"start": 2000.0 + 100 * i, "end": 2012.0 + 100 * i} for i in range(8)],
+         kills=[1006.0, 1006.4, 1006.8] + [2006.0 + 100 * i for i in range(8)])
+    shape = _hit_shape(big=(18.0,))
+    proj, _ = studio.plan(_clips(r), "hype", shape=shape, song=_song_file(r), shape_it={"arrange": "hits"})
+    got, derived, _ = studio.normalise(proj, r)
+    tri = next(i for i, s in enumerate(got["shots"]) if len(s["kills"]) == 3)
+    at = got["song_offset"] + derived["shots"][tri]["kill_reel"]
+    assert at == pytest.approx(18.0, abs=0.06), (at, got["song_marks"][:12])
+    built, _ = studio.plan(_clips(r), "hype", shape=shape, song=_song_file(r))
+    got_b, derived_b, _ = studio.normalise(built, r)
+    tri_b = next(i for i, s in enumerate(got_b["shots"]) if len(s["kills"]) == 3)
+    assert got_b["song_offset"] + derived_b["shots"][tri_b]["kill_reel"] != pytest.approx(18.0, abs=0.06)
+
+
+def test_a_cut_rounded_to_its_footage_does_not_lose_a_beat_off_the_shot():
+    """Aftrhrs in Best order: a ramped climax cut exactly at its footage read
+    5 us over it after rounding, normalise took a whole beat off its tail,
+    and every kill after it slid 0.55 s off its mark (17 of 43 on marks)."""
+    shot = {"clip": "x.mp4", "kill": 17.6, "kills": [17.6, 18.433], "pre": 2.15599,
+            "duration": 7.12081, "speed": "s04", "clip_seconds": 26.41, "fx": [], "hero": True,
+            "hero_fx": ["h02"]}
+    before = dict(shot)
+    studio._fit(shot, 0.55077)
+    assert shot["duration"] == before["duration"] and shot["pre"] == before["pre"]

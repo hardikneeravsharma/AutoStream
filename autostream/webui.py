@@ -3722,8 +3722,50 @@ class Server:
             except (TypeError, ValueError):
                 return default
         marks = [num(m, -1.0) for m in (body.get("marks") or [])[:studio.MAX_SHOTS * 2]]
-        notes = studio.apply_song(proj, shape, song, num(body.get("start")), num(body.get("end")),
-                                  [m for m in marks if m >= 0])
+        marks = [m for m in marks if m >= 0]
+        start, end = num(body.get("start")), num(body.get("end"))
+        # The Song tab opens with the reel's own marks filled in, so "marks
+        # were sent" is not "kills were marked by hand": only marks that
+        # differ from the ones the plan cut to are the player's.
+        own = sorted(float(m) for m in (proj.get("song_marks") or []))
+        by_hand = bool(marks) and not (
+            len(own) == len(marks) and all(abs(a - b) < 0.02 for a, b in zip(own, sorted(marks))))
+        # A LONGER PART IS PLANNED AGAIN, NOT STRETCHED. Fitting the timeline
+        # to a part can only take shots away, so a part chosen here longer
+        # than the reel changed nothing -- the clips left out "to fit the
+        # reel's length" stayed out, and the part itself was forgotten.
+        # Re-planned only when that loses nothing: no kills marked by hand,
+        # the timeline as the plan made it, and How long not pinned to the
+        # style's length.
+        try:
+            now = studio.derive(proj)
+        except (KeyError, ValueError, TypeError):
+            now = {"length": 0.0, "edited": True}
+        longer = end > start and (end - start) > now["length"] + 4 * float(shape.beat)
+        same_song = bool(proj.get("song")) and \
+            os.path.normcase(os.path.abspath(song)) == os.path.normcase(os.path.abspath(proj["song"]))
+        if (longer and not by_hand and same_song and proj.get("selection")
+                and not now.get("edited") and proj.get("fill") != "style"):
+            shaping = dict(proj.get("shaping") or {})
+            shaping.update(arrange=proj.get("arrange"), pins=proj.get("pins") or {},
+                           hs_only=bool(proj.get("hs_only")), fill=proj.get("fill") or "",
+                           keep_all=bool(proj.get("keep_all")))
+            r = self.studio_plan({
+                "clips": [row["clip"] for row in proj["selection"]], "style": proj.get("style"),
+                "song": song, "format": proj.get("format"), "name": proj.get("name"),
+                "part_start": start, "part_end": end, "shaping": shaping,
+                "intro_clip": proj.get("intro_clip"), "vfit": proj.get("vfit"),
+                "keep": {k: proj.get(k) for k in ("cam", "vfit", "handle", "handle_pos", "outro_len",
+                                                  "overlays", "lyrics")}})
+            if r.get("ok"):
+                said = (f"The part is {end - start:.0f} s and the reel was {now['length']:.0f} s, "
+                        f"so it was planned again to fill the part.")
+                r["notes"] = [said] + list(r.get("notes") or [])
+                return r
+        notes = studio.apply_song(proj, shape, song, start, end, marks)
+        if longer and now.get("edited") and not by_hand:
+            notes.append("The part is longer than the reel, but the timeline has your edits, so it "
+                         "was not planned again. The part is kept: rebuild the reel to fill it.")
         try:
             proj, derived, more = studio.normalise(proj, root)
         except studio.ProjectError as e:
