@@ -27,7 +27,7 @@ import shutil
 from pathlib import Path
 
 from .plan import ClipPlan
-from .tools import ffmpeg, has_cuda, media_info, video_codec_args
+from .tools import decode_args, ffmpeg, media_info, video_codec_args
 
 log = logging.getLogger("autostream.clips.cutter")
 
@@ -46,7 +46,7 @@ def _cut(source: Path, start: float, duration: float, out: Path, *,
         # Decode on the GPU where there is one. NVENC was already doing the
         # encoding, but every clip still decoded on the CPU: measured 5.33s
         # against 3.93s for one 15-second cut, and a run cuts dozens.
-        *(["-hwaccel", "cuda"] if has_cuda() else []),
+        *decode_args(),
         "-ss", f"{start:.3f}", "-i", str(source),
         "-t", f"{duration:.3f}",
         *audio,
@@ -151,7 +151,7 @@ def preview(source: Path, start: float, end: float, out: Path, *,
     """
     out.parent.mkdir(parents=True, exist_ok=True)
     ffmpeg(
-        *(["-hwaccel", "cuda"] if has_cuda() else []),
+        *decode_args(),
         "-ss", f"{start:.3f}", "-i", str(source),
         "-t", f"{max(0.1, end - start):.3f}",
         "-map", "0:v:0", "-map", "0:a:0?",

@@ -1154,12 +1154,15 @@ CONFIG_SCHEMA: list[Section] = [
             _field(
                 "clips.encoder",
                 "Encoder",
-                "Automatic uses your GPU when it can, which is several times faster. "
+                "Automatic uses your graphics card when it can -- NVIDIA, AMD or Intel -- "
+                "which is several times faster and leaves the CPU free. "
                 "Switch to CPU if clips come out corrupted.",
                 "select",
                 options=_opts(
                     ("auto", "Automatic - GPU when available"),
                     ("nvenc", "NVIDIA GPU"),
+                    ("amf", "AMD GPU"),
+                    ("qsv", "Intel GPU"),
                     ("libx264", "CPU"),
                 ),
                 advanced=True,
