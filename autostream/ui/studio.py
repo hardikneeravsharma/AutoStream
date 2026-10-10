@@ -549,6 +549,20 @@ STUDIO_HTML = r"""
           <button type="button" class="seg-btn" data-act="studio-order" data-order="oldest">Oldest first</button>
         </div>
       </div>
+      <!-- HOW LONG, ASKED RATHER THAN DECIDED. The style used to set the
+           length as well as the feel, so a long part and twenty-five clips
+           came out a 43 s Hype reel with eleven clips left out. The style
+           now keeps the pace, the effects and the flashes either way. -->
+      <h3 class="studio-h">How long</h3>
+      <div class="seg studio-fill" role="group" aria-label="How long" id="studio-fill">
+        <button type="button" class="seg-btn" data-act="studio-fill" data-fill="style">The style's length</button>
+        <button type="button" class="seg-btn" data-act="studio-fill" data-fill="part" id="studio-fill-part">Fill the song part I picked</button>
+        <button type="button" class="seg-btn" data-act="studio-fill" data-fill="all">Every clip I chose</button>
+      </div>
+      <p class="muted studio-small" id="studio-fill-note"></p>
+      <label class="studio-check" id="studio-keep-row"><input type="checkbox" id="studio-keep-all"> Keep every kill</label>
+      <p class="muted studio-small">A kill with little run-up starts on its clip's first frame, or its run-up
+        is slowed, instead of being left out; to fit a length the kills move closer together.</p>
       <label class="field-label" for="studio-name">Name</label>
       <input class="input" id="studio-name" maxlength="80" placeholder="Montage reel">
       <!-- Valorant clips carry a headshot reading per kill; shown only when some do. -->
@@ -864,6 +878,10 @@ const studio = {
   /* HOW THE REEL IS ORDERED, and anything pinned into a slot. Rides in the
      same payload as the dials so one Build carries all of it. */
   arrange: 'build', pins: {}, shuffleSeed: 0,
+  /* HOW LONG and KEEP EVERY KILL, from the Make dialog. '' is "not chosen":
+     the part when one is picked, otherwise the style's length -- what the
+     server does with nothing asked, so the button lit is the one that runs. */
+  fill: '', keepAll: false,
   sg: {song: '', shape: null, start: 0, end: 0, marks: [], drag: null, ticked: {}, ac: null,
        sel: -1, seeded: ''},
   /* The part of the song chosen on the Make dialog, in song seconds. */
@@ -1275,12 +1293,16 @@ async function studio_openMake() {
       studio.mk.mode = 'part'; studio.mk.touched = true;
       studio.mk.start = ad.start; studio.mk.end = Math.max(ad.start + studio_mkBar(), ad.end);
     }
+    /* What the reel asked for, so a rebuild is the same kind of reel. */
+    studio.fill = ad.fill || '';
+    studio.keepAll = !!ad.keep_all;
   }
   studio_renderStyles();
   studio_hand();
   studio_show('studio-make-scrim', true);
   studio_show('studio-mk-fit', studio.fmt === 'vertical');
   studio_mkDefault();
+  studio_fillDraw();
 }
 
 function studio_renderStyles() {
@@ -1299,6 +1321,7 @@ function studio_renderStyles() {
   }).join('');
   const st = cat.styles.find(s => s.key === studio.style);
   studio_el('studio-name').placeholder = (st ? st.label : 'My') + ' reel';
+  studio_fillDraw();                       /* its note names the style */
 }
 
 async function studio_pickSong() {
@@ -1416,9 +1439,54 @@ function studio_mkSpan() {
   return {start: 0, end: sh.seconds};
 }
 
+/* Whether the Make dialog will send a part: the same test studio_build makes. */
+function studio_mkHasPart() {
+  const mk = studio.mk;
+  return !!(studio.song && studio.songShape && mk.mode === 'part' && mk.end > mk.start);
+}
+
+/* The How long that will run: what was chosen, or what nothing chosen means. */
+function studio_fillNow() {
+  const f = studio.fill;
+  if (f === 'part' && !studio_mkHasPart()) return 'style';
+  return f || (studio_mkHasPart() ? 'part' : 'style');
+}
+
+function studio_fillDraw() {
+  const now = studio_fillNow(), part = studio_mkHasPart();
+  document.querySelectorAll('#studio-fill [data-act="studio-fill"]').forEach(x => {
+    const on = x.getAttribute('data-fill') === now;
+    x.classList.toggle('is-active', on);
+    x.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  const pb = studio_el('studio-fill-part');
+  if (pb) {
+    pb.disabled = !part;
+    pb.title = part ? '' : 'Choose a song and a part of it first.';
+  }
+  const st = studio.catalog && studio.catalog.styles.find(s => s.key === studio.style);
+  const name = st ? st.label : 'The style';
+  const len = studio.mk.end - studio.mk.start;
+  const note = studio_el('studio-fill-note');
+  if (note) {
+    note.textContent = now === 'part'
+      ? 'The kills are spread over the ' + studio_dur(len) + ' part, each on a hit. ' + name +
+        ' still sets the pace, effects and flashes; with fewer kills than the part needs at that pace, the cuts come slower.'
+      : now === 'all'
+        ? 'Every clip you chose goes in, at ' + name + "'s pace, however long that runs" +
+          (part ? ' — from the start of the part, past its end if it needs to.' : '.')
+        : name + ' decides the length, as it always has' +
+          (part ? ', starting at the part you picked and never past its end.' : '.') +
+          ' Clips that do not fit are left out, and the reel says which.';
+  }
+  const ka = studio_el('studio-keep-all');
+  if (ka) ka.checked = !!studio.keepAll;
+}
+
 function studio_mkDraw() {
   const sh = studio.songShape, mk = studio.mk;
   const choosing = mk.mode === 'part';
+  studio_fillDraw();
   studio_show('studio-mk-partctl', choosing);
   document.querySelectorAll('#studio-mk-part [data-act="studio-mk-mode"]').forEach(x =>
     x.classList.toggle('is-active', x.getAttribute('data-mode') === mk.mode));
@@ -1432,8 +1500,7 @@ function studio_mkDraw() {
     studio_el('studio-mk-start').textContent = studio_secs(mk.start);
     studio_el('studio-mk-end').textContent = studio_secs(mk.end);
     studio_el('studio-mk-facts').textContent = studio_dur(len) + ' · ' + bars + (bars === 1 ? ' bar' : ' bars') +
-      '. Every clip you chose goes in unless the part is full. If they are short of it, each kill gets a ' +
-      'longer run-up, as far as its clip has footage (never over 8 s); if that is still not enough, the reel ends early.';
+      '. How long, below, decides whether the reel fills it.';
   }
   const c = studio_sgCanvas('studio-mk-wave', 70);
   if (!c || !sh.peaks) return;
@@ -1876,7 +1943,9 @@ const ARRANGES = [
   {k: 'build', name: 'Build up', why: 'A strong opener, the best one two thirds in, a strong close.'},
   {k: 'time', name: 'As it happened', why: 'The fights in the order you played them.'},
   {k: 'best', name: 'Best first', why: 'The strongest moment opens the reel.'},
-  {k: 'shuffle', name: 'Shuffle', why: 'A fresh draw. Press again for another.'}
+  {k: 'shuffle', name: 'Shuffle', why: 'A fresh draw. Press again for another.'},
+  {k: 'hits', name: 'Best order', why: "The biggest moments - aces, 4Ks, clutches, multi-kills - on the song's " +
+    'biggest hits, each multi-kill kept together and in order, and no two alike back to back.'}
 ];
 
 function studio_arrangeDraw() {
@@ -2240,7 +2309,11 @@ async function studio_build() {
       shaping: Object.assign({}, studio.shaping, {arrange: studio.arrange,
         pins: studio.pins, shuffle_seed: studio.shuffleSeed,
         hs_only: !!(studio_el('studio-hs-only') && studio_el('studio-hs-only').checked &&
-                    !studio_el('studio-hs-row').classList.contains('hide'))})
+                    !studio_el('studio-hs-row').classList.contains('hide')),
+        /* As chosen, '' when not: the server resolves '' exactly as
+           studio_fillNow draws it, and the project keeps what was ASKED. */
+        fill: studio.fill === 'part' && !studio_mkHasPart() ? '' : studio.fill,
+        keep_all: !!studio.keepAll})
     };
     /* The whole clip, cover-fitted: the trim and the fit are the timeline
        dialog's job, and normalise clamps both anyway. What is chosen here is
@@ -2251,7 +2324,7 @@ async function studio_build() {
                          end: got ? Number(got.seconds) : 0,
                          audio: !!studio.mkIntro.audio, fit: 'cover'};
     }
-    if (studio.song && studio.songShape && studio.mk.mode === 'part' && studio.mk.end > studio.mk.start) {
+    if (studio_mkHasPart()) {
       body.part_start = studio.mk.start;
       body.part_end = studio.mk.end;
     }
@@ -2812,6 +2885,17 @@ function studio_drawWhy() {
         (out.length === 1 ? ' clip was left out:' : ' clips were left out:') + '</p><ul class="studio-fold-list">' +
         out.map(x => '<li><strong>' + esc(x.name) + '</strong> — ' + esc(x.why) + '</li>').join('') + '</ul></details>'
       : '<p class="studio-fold-flat">All ' + sel.length + ' chosen clips are in this reel</p>';
+    /* A clip can be in the reel with one of its kills not: that is a
+       decision too, and says why, kill by kill. */
+    const part = sel.filter(x => x.in && x.kills_out && x.kills_out.length);
+    const nk = part.reduce((n, x) => n + x.kills_out.length, 0);
+    if (nk) {
+      h += '<details class="studio-fold" data-fold="kills"' + (studio.folds.kills ? ' open' : '') +
+        '><summary>Kills not shown<span class="studio-fold-n">' + nk + '</span></summary>' +
+        '<ul class="studio-fold-list">' + part.map(x => '<li><strong>' + esc(x.name) + '</strong> — ' +
+          x.kills_out.map(k => esc(studio_secs(k.kill) + ': ' + k.why)).join('; ') + '</li>').join('') +
+        '</ul></details>';
+    }
   }
   h += '<button type="button" class="btn btn-sm studio-add-btn" data-act="studio-add">Add clips…</button>';
   box.innerHTML = h;
@@ -2835,6 +2919,7 @@ async function studio_addClips() {
     name: p.name, style: p.style, song: p.song || '', fmt: p.format,
     output: studio.output || p.output || '',
     start: p.song_offset || 0, end: p.part_end || ((p.song_offset || 0) + (d ? d.length : 0)),
+    fill: p.fill || '', keep_all: !!p.keep_all,
     edited: !!(d && d.edited) || studio.undo.length > 0,
     keep: {cam: p.cam, vfit: p.vfit, handle: p.handle, handle_pos: p.handle_pos,
            outro_len: p.outro_len, overlays: p.overlays, lyrics: p.lyrics}
@@ -5327,6 +5412,7 @@ function studio_wire() {
       studio_mkDefault();
     }
     else if (act === 'studio-mk-mode') { studio.mk.mode = b.getAttribute('data-mode'); studio_mkDraw(); }
+    else if (act === 'studio-fill') { studio.fill = b.getAttribute('data-fill'); studio_fillDraw(); }
     else if (act === 'studio-mk-nudge') studio_mkNudge(b.getAttribute('data-what'), b.getAttribute('data-d') === 'bar' ? 'bar' : '-bar');
     else if (act === 'studio-mk-preset') studio_mkPreset(b.getAttribute('data-preset'));
     else if (act === 'studio-mk-play') studio_mkPlay();
@@ -5669,6 +5755,8 @@ function studio_wire() {
     studio.mkIntro.audio = mia.checked;
     studio_mkIntroDraw();
   });
+  const keepAll = studio_el('studio-keep-all');
+  if (keepAll) keepAll.addEventListener('change', () => { studio.keepAll = keepAll.checked; });
   const ivid = studio_el('studio-intro-video');
   if (ivid) {
     ivid.addEventListener('play', () => {
@@ -5762,10 +5850,19 @@ async function studio_restyle() {
     const from = (p.selection && p.selection.length) ? p.selection.map(x => x.clip) : p.shots.map(x => x.clip);
     const clips = [];
     from.forEach(c => { if (clips.indexOf(c) < 0) clips.push(c); });
-    const r = await API.post('/api/studio/plan', {clips: clips, style: key,
+    /* THE PART GOES WITH IT. A new style used to re-plan without the part
+       the reel was cut to, so the style's own length came back and the
+       clips that had filled the part fell out "to fit the reel's length".
+       How long and Keep every kill go too. */
+    const body = {clips: clips, style: key,
       song: p.song, format: p.format, name: p.name, shaping: Object.assign({}, studio.shaping,
         {arrange: studio.arrange, pins: studio.pins, shuffle_seed: studio.shuffleSeed,
-         hs_only: !!p.hs_only})});
+         hs_only: !!p.hs_only, fill: p.fill || '', keep_all: !!p.keep_all})};
+    if (p.song && p.part_end > (p.song_offset || 0)) {
+      body.part_start = p.song_offset || 0;
+      body.part_end = p.part_end;
+    }
+    const r = await API.post('/api/studio/plan', body);
     if (!r || !r.ok) { toast((r && r.error) || 'Could not rebuild with that style.', 'warn'); return; }
     studio_pushUndo(snapshot);
     studio.gen++;
@@ -6068,7 +6165,10 @@ function studio_sgReset() {
   const len = (studio.derived && studio.derived.length) || 30;
   if (sg.song === p.song && !sg.touched) {
     sg.start = p.song_offset || 0;
-    sg.end = Math.min(sh.seconds, sg.start + len);
+    /* On the part the reel was cut to, not on the reel's length: opened on
+       the length, a part chosen longer than the reel was forgotten the
+       moment the tab was left. */
+    sg.end = Math.min(sh.seconds, p.part_end > sg.start ? p.part_end : sg.start + len);
   }
   // Open on the marks this reel is already using, so the section is an editor
   // of what is there rather than a blank sheet. Once per song: retyping them
