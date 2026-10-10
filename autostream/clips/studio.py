@@ -1171,6 +1171,12 @@ def _choose_offset(grid: Grid, first_kill_reel: float, style: Style,
     return grid.beats[max(0, i - back)]
 
 
+# How far before the end of the opener's planned run-up its kill's hit may be,
+# as a share of the grid step. See plan(): the hit on the beat where the run-up
+# ends is that beat's, whichever side of it the bass peaks.
+FIRST_HIT_SLACK = 0.25
+
+
 def _first_kill(hits: list[float], big: list[float], *, earliest: float,
                 drums_in: float = 0.0) -> float:
     """Where the reel's first kill belongs in the song.
@@ -1655,7 +1661,14 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         first = max(first, offset + shots[0]["pre"])
     elif song and shots and grid.hits:
         floor = part_start
-        first = _first_kill(grid.hits, [], earliest=floor + shots[0]["pre"])
+        # A HIT A HAIR BEFORE THE OPENER'S RUN-UP ENDS IS STILL ITS HIT. The
+        # run-up is whole beats, so it ends on a beat, and the hit on that
+        # beat sits either side of it by a few milliseconds. Asked for "at or
+        # after", ambiforcashlyrics missed the hit on bar 2's downbeat by 26 ms
+        # (13.68 s against 13.706), took the off-beat one 0.6 s later, and had
+        # to slow its opener to fill the extra time. A shorter run-up always
+        # fits the footage the longer one did.
+        first = _first_kill(grid.hits, [], earliest=floor + max(0.0, shots[0]["pre"] - FIRST_HIT_SLACK * step))
     if song and shots and grid.hits:
         end = (part_start + part_len) if part_len else grid.seconds
         slots = _hit_slots(grid.hits, grid.hit_strength, first=first, end=end,
@@ -2228,10 +2241,16 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
             continue
         gap = k - (marks[i - 1] if i else pres[0])
         j = lead + i                                   # where this shot sits in the reel
-        want = min(float(s["pre"]) if s["pre"] > 0 else gap / 2, max(0.0, gap - 0.22))
+        prev = shots[j - 1]
+        # THE SHOT BEFORE KEEPS ITS OWN KILLS. A double kill is one shot with
+        # its second kill 0.8 s after the first; this shot's run-up used to be
+        # allowed everything but 0.22 s of the gap, and on ambiforcashlyrics a
+        # run-up grown to 4.08 s cut the opener 0.51 s after its first kill --
+        # its second was never seen.
+        keep = max(0.22, _own_tail(prev, pres[j - 1]))
+        want = min(float(s["pre"]) if s["pre"] > 0 else gap / 2, max(0.0, gap - keep))
         pre = max_pre(s, want)
         cut = k - pre
-        prev = shots[j - 1]
         need = cut - (cuts[j - 1] + pres[j - 1])       # time after the previous kill
         room = max_post(prev, pres[j - 1], need)
         if room < need - 1.0 / FPS:
@@ -2260,8 +2279,42 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
             s["duration"] = round(cuts[i + 1] - cuts[i], 5)
         else:
             post = max(0.22, float(s["duration"]) - float(s["pre"]) if s["duration"] > s["pre"] else 0.5)
+            post = max(post, _own_tail(s, pres[i]))
             s["duration"] = round(pres[i] + post, 5)
     return notes
+
+
+# A shot's own later kills -- the rest of a double or a triple -- are the ones
+# within this many seconds of its main kill, and each is held this long after
+# it lands so its emblem is seen, not just begun.
+OWN_KILLS_WITHIN = 3.0
+OWN_KILL_HOLD = 0.35
+
+
+def _own_tail(shot: dict, pre: float) -> float:
+    """Reel seconds after the main kill needed to show the shot's own later kills.
+
+    0 when it has none. Never more than its footage after the kill allows.
+    """
+    k0 = float(shot["kill"])
+    later = [float(k) for k in shot.get("kills") or [] if k0 + 1e-6 < float(k) <= k0 + OWN_KILLS_WITHIN]
+    if not later:
+        return 0.0
+    want_src = max(later) - k0 + OWN_KILL_HOLD
+
+    def src_after(post: float) -> float:
+        ps = pieces(shot["speed"], pre + post, pre)
+        return source_used(ps, pre + post) - source_used(ps, pre)
+    lo, hi = 0.0, 4.0 * want_src + 1.0          # slow-motion after a kill plays it at no less than 1/4
+    if src_after(hi) < want_src:
+        return max_post(shot, pre, hi)
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        if src_after(mid) >= want_src:
+            hi = mid
+        else:
+            lo = mid
+    return max_post(shot, pre, hi)
 
 
 def fit_to_part(project: dict, seconds: float) -> list[str]:

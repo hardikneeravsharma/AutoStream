@@ -789,6 +789,42 @@ def test_a_first_mark_out_of_reach_goes_to_the_next_shot(long_run):
     assert derived["shots"][0]["kill_reel"] == pytest.approx(6.0, abs=1.0 / studio.FPS)
 
 
+def test_a_double_kill_keeps_its_second_kill_when_the_next_run_up_grows(long_run):
+    """ambiforcashlyrics: the opener's second kill came 0.84 s after its first,
+    the next shot's run-up was allowed all but 0.22 s of the gap, and the cut
+    fell 0.51 s after the first kill -- the second was never seen."""
+    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=Shape(bpm=120.0))
+    s0, s1 = proj["shots"][0], proj["shots"][1]
+    s0["speed"] = s1["speed"] = "s00"
+    s0["kills"] = [s0["kill"], s0["kill"] + 0.84]
+    s1["pre"] = 5.5                                       # a run-up grown to fill a part
+    studio.apply_marks(proj, [4.0, 10.0, 12.0])
+    got, derived, _ = studio.normalise(proj, long_run)
+    a, b = derived["shots"][0]["source_in"], derived["shots"][0]["source_out"]
+    assert b >= s0["kill"] + 0.84 + studio.OWN_KILL_HOLD - 1.0 / studio.FPS, (a, b)
+    for i, m in enumerate([4.0, 10.0, 12.0]):
+        assert derived["shots"][i]["kill_reel"] == pytest.approx(m, abs=1.0 / studio.FPS), i
+
+
+def test_the_openers_hit_may_sit_a_hair_before_its_run_up_ends(long_run, monkeypatch):
+    """The run-up ends on a beat and the hit on that beat peaked 26 ms early, so
+    "at or after" skipped it for the off-beat hit 0.6 s later -- and the opener
+    was slowed to fill the difference."""
+    seen = {}
+    real = studio.apply_marks
+
+    def spy(project, marks):
+        seen.setdefault("pre0", project["shots"][0]["pre"])
+        seen.setdefault("first", marks[0])
+        return real(project, marks)
+    monkeypatch.setattr(studio, "apply_marks", spy)
+    hits = [10.0 + 0.5 * n - 0.026 for n in range(1, 60)]          # every beat, a hair early
+    shape = Shape(bpm=120.0, seconds=120.0, phase=0.0, hits=hits)
+    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=shape, song="s.mp3", part=(10.0, 34.0))
+    assert seen["first"] == pytest.approx(seen["pre0"] - 0.026, abs=1e-3)
+    assert not proj["shots"][0].get("stretch")
+
+
 def test_a_first_mark_within_reach_is_still_the_openers(long_run):
     proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=Shape(bpm=120.0))
     studio.apply_marks(proj, [4.0, 6.0, 8.0])
