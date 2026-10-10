@@ -586,7 +586,10 @@ CONTROLS: list[Control] = [
     Control("/api/studio/render", "POST", CALL, "Render", "studio",
             body={"project": None}, expect=_has("ok"),
             reject={"project": None}, reject_soft=True, acts=("studio-render",),
-            why="a project with no usable clips is refused before ffmpeg starts"),
+            why="a project with no usable clips is refused before ffmpeg starts. The page "
+                "also sends it by itself with auto:true once the edits stop; that one "
+                "answers ok:false with `held` while live, recording, cutting clips or "
+                "rendering what the user started (tests/test_instant_preview.py)"),
     Control("/api/studio/cancel", "POST", CALL, "Cancel the render", "studio",
             body={}, expect=_has("ok"), acts=("studio-cancel",),
             why="ok:false when nothing is rendering"),
@@ -671,9 +674,10 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-nosong": "clears the chosen song in the dialog",
     "studio-fmt": "chooses landscape or vertical in the dialog; sent with Build",
     "studio-order": "chooses the clip order in the dialog; sent with Build",
-    "studio-play": "plays or pauses the rendered reel",
+    "studio-play": "plays or pauses the reel: the rendered file, or the instant preview of edits "
+                   "not rendered yet (clip files the page already streams)",
     "studio-zoom": "zooms the timeline",
-    "studio-seek": "moves the playhead of the rendered reel",
+    "studio-seek": "moves the playhead of the reel, rendered or previewed",
     "studio-select": "selects a shot, or the reel, in the inspector",
     "studio-edit-song": "opens the Song tab",
     "studio-sg-play": "plays or pauses the chosen part of the song",

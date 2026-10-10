@@ -3647,7 +3647,19 @@ class Server:
             return {"ok": False, "error": "ffmpeg is not available, so nothing can be rendered."}
         root = self._clips_dir(c)
         run = studio.runner()
-        if run.busy():
+        auto = bool(body.get("auto"))
+        if auto:
+            # Asked by the page, not the user, so the server decides too:
+            # hiding the page's timer is not what keeps a background encode
+            # off a live broadcast.
+            held = self.studio_auto_held()
+            if held:
+                return {"ok": False, "held": held}
+        # A background render gives way to anything newer, a render the user
+        # asked for never does.
+        if run.busy() and not run.yield_auto():
+            if auto:
+                return {"ok": False, "held": "Waiting for the render you started."}
             return {"ok": False, "error": "A reel is already rendering."}
         # Claimed before the preparation below, not after it: the page shows
         # its Cancel button the moment the button is pressed, so a cancel can
@@ -3663,15 +3675,47 @@ class Server:
         out = Path(proj["output"]) if proj.get("output") else \
             _free_reel(outdir, plan_mod.slug(proj["name"]) or "reel")
         proj["output"] = str(out)
-        job = studio.StudioJob(proj, derived, root, out)
+        job = studio.StudioJob(proj, derived, root, out, auto=auto)
         # start() is the gate that holds the lock; busy() above is only the
         # fast answer. Two POSTs that both passed it must not both be "ok".
         err = run.start(job, claim)
         if err:
             return {"ok": False, "error": err}
-        log.info("studio: rendering %d shots -> %s", len(proj["shots"]), out.name)
+        log.info("studio: rendering %d shots -> %s%s", len(proj["shots"]), out.name,
+                 " (in the background)" if auto else "")
         return {"ok": True, "job": job.id, "output": str(out), "project": proj,
-                "derived": derived, "notes": notes}
+                "derived": derived, "notes": notes, "auto": auto}
+
+    def studio_auto_held(self) -> str:
+        """Why a background render must not start now. "" when it may.
+
+        THE ENCODER BELONGS TO THE BROADCAST. A reel render saturates it, and
+        on a session that is live or recording that is dropped frames in the
+        thing that matters more than any reel. A clip job is the same fight
+        over the same encoder. The user can still press Render: that is their
+        call. Only the render nobody asked for waits.
+        """
+        from . import clips
+        from . import state as st
+
+        if not cfg.load().clips.get("auto_render", True):
+            return "Background rendering is switched off."
+        e = getattr(self, "engine", None)
+        s = getattr(e, "state", None)
+        phase = getattr(s, "phase", st.IDLE)
+        # Every phase but IDLE: ARMING is a game about to go live, COOLDOWN is
+        # still on air, and a session that only records is LIVE with
+        # streaming off.
+        if phase != st.IDLE:
+            return "Waiting until you are not live."
+        if getattr(s, "recording", False):
+            return "Waiting until the recording stops."
+        try:
+            if clips.runner().busy():
+                return "Waiting for the clip job to finish."
+        except Exception:                                   # noqa: BLE001
+            pass
+        return ""
 
     def studio_vary(self, body: dict) -> dict:
         """Mix the timeline's effects again; shots and timing stay put."""

@@ -170,7 +170,12 @@ DEFAULTS: dict[str, Any] = {
         # than cutting them individually. A lone kill rarely earns a post; a
         # dozen of them cut short and run together is a channel advert.
         "promo": True,
-        "promo_caption": "LIVE MOST EVENINGS \U0001F3AE",
+        # The Studio renders a reel by itself a couple of seconds after the
+        # last edit, so the real video is usually ready by the time the
+        # instant preview has been watched. Never while live, recording or
+        # cutting clips -- see webui.studio_auto_held.
+        "auto_render": True,
+        "promo_caption":"LIVE MOST EVENINGS \U0001F3AE",
     },
     # The three screen savers. AutoStream builds the OBS scenes itself from
     # these files -- see screens.py -- so what is configured is a video, not a

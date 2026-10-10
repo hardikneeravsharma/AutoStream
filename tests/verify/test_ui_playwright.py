@@ -459,6 +459,168 @@ def test_a_reel_is_made_edited_and_rendered_again_in_the_studio(ui, app):
     ui.clean("making and editing a reel")
 
 
+def _wait_auto(page, what: str, after: int, timeout: float = 300_000) -> dict:
+    """The first background-render event of kind `what` logged after `after`
+    (a Date.now() on the page). -> the log row."""
+    page.wait_for_function(
+        "([w, a]) => studio.auto.log.some(x => x.what === w && x.at >= a)",
+        arg=[what, after], timeout=timeout)
+    return page.evaluate(
+        "([w, a]) => studio.auto.log.find(x => x.what === w && x.at >= a)", [what, after])
+
+
+def test_an_edit_plays_at_once_and_renders_itself_in_the_background(ui, app):
+    """THE ASK: "to delete a clip from the reel the user marks it deleted, waits
+    10-20 s for rendering, then checks. Make it fast."
+
+    Deleting a shot must show in the player at once, with nothing rendered:
+    the preview plays the timeline off the clip files, so its shot list, its
+    length and the clip on screen after the cut all change in the same frame
+    as the timeline. Its arithmetic is the server's -- checked here against
+    clips/studio.py preview_at for the project actually on the page -- and it
+    cuts on time, measured while it plays. Then, with nobody pressing Render,
+    the real render starts once the edits stop and the player changes over to
+    it when it matches the project."""
+    import json
+
+    from autostream.clips import studio as studio_mod
+
+    _studio_run(app, "2026-09-16_1415_VALORANT", 3)
+    page = ui.page
+    _studio_build(page, "14:15", 3, "story", "Instant preview")
+    _studio_rendered(page, "the first render")
+    page.wait_for_function("!studio.pv.on && studio.project.shots.length === 3", timeout=30_000)
+    before = page.evaluate("({len: studio.derived.length, clips: studio.project.shots.map(s => s.clip),"
+                           " out: studio.output, at: studio.renderedAt})")
+
+    # --- delete the middle shot and time how long the player takes to show it
+    page.locator(".st-shot").nth(1).click()
+    page.wait_for_selector('#studio-insp [data-act="studio-remove"]', timeout=15_000)
+    got = page.evaluate("""async () => {
+        const t0 = performance.now(), wall = Date.now();
+        document.querySelector('#studio-insp [data-act="studio-remove"]').click();
+        const sync = performance.now() - t0;
+        const rows = studio.derived.shots.length, len = studio.derived.length, on = studio.pv.on;
+        /* and until a frame of the edit is on screen: the cued player at the
+           new cut holds the shot that now follows it, decoded */
+        const ready = () => { const els = studio_pvEls();
+            return els.some(e => Number(e.getAttribute('data-shot')) === 1 && e.readyState >= 2 && !e.seeking); };
+        while (!ready() && performance.now() - t0 < 10000) await new Promise(r => requestAnimationFrame(r));
+        return {sync: sync, frame: performance.now() - t0, rows: rows, len: len, on: on, wall: wall,
+                clips: studio.project.shots.map(s => s.clip), ready: ready()};
+    }""")
+    edited_at = got["wall"]
+    assert got["on"], "the player is still on the old render after a shot was deleted"
+    assert got["rows"] == 2 and got["clips"] == [before["clips"][0], before["clips"][2]]
+    assert got["len"] < before["len"] - 0.5, f"the reel did not get shorter: {before['len']} -> {got['len']}"
+    assert got["ready"], "the shot after the cut never loaded in the preview"
+    assert got["sync"] < 100, f"the preview took {got['sync']:.0f} ms to take the edit"
+    assert page.is_visible("#studio-pv-tag") and not page.is_visible("#studio-video")
+    print(f"\n  delete -> preview updated {got['sync']:.1f} ms, next shot's frame decoded {got['frame']:.0f} ms")
+
+    # --- the page's arithmetic is the server's
+    page.wait_for_function("studio.derived.shots.every(r => r.source_in !== undefined && r.freeze !== undefined)",
+                           timeout=15_000)
+    derived = page.evaluate("studio.derived")
+    ts = [round(derived["length"] * k / 23, 3) for k in range(24)] + \
+         [r["start"] for r in derived["shots"]] + [r["kill_reel"] for r in derived["shots"]]
+    page_at = page.evaluate("(ts) => ts.map(t => studio_pvAt(t))", ts)
+    for t, mine in zip(ts, page_at):
+        want = studio_mod.preview_at(derived, t)
+        assert mine["shot"] == want["shot"] and mine["rate"] == pytest.approx(want["rate"]), (t, mine, want)
+        assert mine["src"] == pytest.approx(want["src"], abs=1e-3), (t, mine, want)
+
+    # --- play across the new cut and measure it
+    cut = derived["shots"][1]["start"]
+    page.evaluate("(t) => { studio.pv.cuts = []; studio_seekTo(t); studio_pvPlay(); }", max(0.0, cut - 0.8))
+    page.wait_for_function("(c) => studio_pvTime() > c + 0.7", arg=cut, timeout=15_000)
+    played = page.evaluate("""() => { const el = studio_pvEls()[studio.pv.act], t = studio_pvTime();
+        const r = {cuts: studio.pv.cuts.slice(), clip: el.getAttribute('data-clip'), cur: el.currentTime,
+                   want: studio_pvAt(t).src, paused: el.paused, rate: el.playbackRate};
+        studio_pvPause(); return r; }""")
+    assert played["cuts"], "the preview played across a cut and never cut"
+    first = played["cuts"][0]
+    assert first["shot"] == 1 and first["cued"], played["cuts"]
+    assert abs(first["late"]) < 0.05, f"the cut landed {first['late'] * 1000:.0f} ms off"
+    assert played["clip"] == before["clips"][2], "after the cut the preview played the deleted shot"
+    assert abs(played["cur"] - played["want"]) < 0.2, f"the preview drifted off the clock: {played}"
+    print(f"  cut played {first['late'] * 1000:+.0f} ms from its place (cued player: {first['cued']})")
+
+    # --- nobody presses Render: it renders itself, and the player changes over
+    started = _wait_auto(page, "start", edited_at, timeout=60_000)
+    done = _wait_auto(page, "done", edited_at)
+    page.wait_for_function("!studio.pv.on && studio.renderedAt !== %d" % before["at"], timeout=30_000)
+    state = page.evaluate("""async () => { const v = document.getElementById('studio-video');
+        if (v.readyState < 1) await new Promise(r => { v.onloadedmetadata = r; v.onerror = r; setTimeout(r, 15000); });
+        return {dur: v.duration, err: v.error && v.error.code, hidden: v.classList.contains('hide'),
+                sync: document.getElementById('studio-sync-head').textContent,
+                auto: document.getElementById('studio-auto-state').textContent,
+                len: studio.derived.length, dirty: studio.dirty}; }""")
+    assert not state["err"] and not state["hidden"], state
+    assert state["dur"] == pytest.approx(state["len"], abs=0.25), \
+        f"the rendered reel is {state['dur']:.2f} s, the edited timeline {state['len']:.2f} s"
+    assert not state["dirty"] and state["sync"] == "The video matches your edits", state
+    assert state["auto"] == "Up to date.", state
+    saved = json.loads(Path(before["out"]).with_suffix(".reel.json").read_text(encoding="utf-8"))
+    assert len(saved["shots"]) == 2, "the background render did not render the deleted shot away"
+    print(f"  background render began {(started['at'] - edited_at) / 1000:.1f} s after the edit, "
+          f"took {done['why']} s; rendered video in the player "
+          f"{(page.evaluate('Date.now()') - edited_at) / 1000:.1f} s after the delete")
+    ui.clean("an edit previewed at once and rendered in the background")
+
+
+def test_no_background_render_starts_while_a_render_you_started_runs(ui, app):
+    """Render is the user's: a background render must never start beside it,
+    however long it runs. Edit, press Render, edit again while it renders --
+    with the idle delay cut to 0.2 s, so the timer would fire many times over
+    -- and not one background request may leave the page until that render is
+    done. The edit made during it is then rendered by itself afterwards."""
+    import json
+    import time
+
+    _studio_run(app, "2026-09-16_1530_VALORANT", 3)
+    page = ui.page
+    _studio_build(page, "15:30", 3, "story", "No second encode")
+    _studio_rendered(page, "the first render")
+    sent = []
+    page.on("request", lambda r: sent.append((time.time() * 1000, r.post_data or ""))
+            if "/api/studio/render" in r.url else None)
+    # When the page's own Render job stops running, on the page's clock.
+    page.evaluate("""() => { const busy = studio_busy;
+        window.studio_busy = function (on) {
+            if (!on && studio.rendering) window.__manualEnd = Date.now();
+            return busy.apply(this, arguments); }; }""")
+    page.locator(".st-shot").nth(0).click()
+    page.click('#studio-insp [data-act="studio-move"][data-d="1"]')
+    page.evaluate("document.getElementById('studio-state').textContent = ''")
+    page.click("#studio-render-btn")
+    page.wait_for_function("studio.rendering", timeout=30_000)
+    # Only now: a timer that fired before Render was pressed is a background
+    # render started before yours, which Render then replaced -- correct, and
+    # not what this test is about.
+    t0 = page.evaluate("studio.auto.idleMs = 200; Date.now()")
+    page.locator(".st-shot").nth(2).click()
+    page.click('#studio-insp [data-act="studio-move"][data-d="-1"]')
+    held = _wait_auto(page, "held", t0, timeout=15_000)
+    assert held["why"] == "Waiting for the render you started.", held
+    assert page.evaluate("studio.pv.on"), "the edit made during the render is not being previewed"
+    _studio_rendered(page, "the render you started")
+    end = page.evaluate("window.__manualEnd")
+    assert end and end >= t0, "the render you started never finished on the page"
+    autos = [at for at, body in sent
+             if t0 <= at < end and '"auto":true' in body.replace(" ", "")]
+    assert autos == [], f"{len(autos)} background render(s) asked for while yours ran"
+    # and once that render is done, the edit made during it renders itself
+    started = _wait_auto(page, "start", t0, timeout=30_000)
+    assert started["at"] >= end, "a background render started before yours had finished"
+    _wait_auto(page, "done", end)
+    page.wait_for_function("!studio.dirty && !studio.pv.on", timeout=30_000)
+    order = page.evaluate("studio.project.shots.map(s => s.clip)")
+    saved = json.loads(Path(page.evaluate("studio.output")).with_suffix(".reel.json").read_text(encoding="utf-8"))
+    assert [s["clip"] for s in saved["shots"]] == order, "the edit made during your render never reached a video"
+    ui.clean("a render you started is left alone")
+
+
 def _fxp_set(page, opener: str, want: list[str], *, exact: bool = False) -> None:
     """Choose effects the way a person does since the picker replaced the
     checkbox walls: open it, find each by its code in the search box, click
@@ -765,6 +927,21 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     assert proj["song_offset"] == pytest.approx(start, abs=1e-3)
     landed = [derived["shots"][i]["kill_reel"] + proj["song_offset"] for i in range(3)]
     assert landed == pytest.approx(marks, abs=0.04), f"marks {marks}, kills landed at {landed}"
+    # --- the instant preview plays the new song under the cuts, from where
+    # the reel starts it -- before anything has been rendered with it
+    song_play = page.evaluate("""async () => {
+        /* held off for the length of the check, so a background render
+           finishing mid-way cannot swap the player out from under it */
+        const was = studio.auto.on; studio.auto.on = false;
+        studio_seekTo(0.5); studio_pvPlay();
+        const a = document.getElementById('studio-pv-song'), t0 = performance.now();
+        while ((a.paused || a.readyState < 2 || a.currentTime < studio.project.song_offset + 1.0)
+               && performance.now() - t0 < 15000) await new Promise(r => setTimeout(r, 50));
+        const r = {on: studio.pv.on, err: a.error && a.error.code, paused: a.paused,
+                   drift: a.currentTime - (studio.project.song_offset + studio_pvTime())};
+        studio_pvPause(); studio.auto.on = was; return r; }""")
+    assert song_play["on"] and not song_play["err"] and not song_play["paused"], song_play
+    assert abs(song_play["drift"]) < 0.2, f"the preview's song is {song_play['drift']:+.2f} s off the cuts"
 
     # --- lyrics: a .lrc beside the song, so nothing is fetched, in a chosen look and face
     song.with_suffix(".lrc").write_text(
