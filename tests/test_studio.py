@@ -1545,3 +1545,47 @@ def test_a_short_reel_keeps_the_command_readable(root, tmp_path):
     argv = studio.assemble_command(got, derived, segs, files, tmp_path / "out.mp4",
                                    textdir=tmp_path)
     assert "-filter_complex" in argv and "-filter_complex_script" not in argv
+
+
+# ------------------------------------------------------------------ headshots only (Valorant)
+
+def _with_headshots(root, hs: dict[float, bool]):
+    """Write a headshot reading onto the VALORANT run's kills."""
+    sess_p = root / "2026-09-14_0045_VALORANT" / "session.json"
+    sess = json.loads(sess_p.read_text())
+    for k in sess["kills"]:
+        if k["time"] in hs:
+            k["hs"] = hs[k["time"]]
+    sess_p.write_text(json.dumps(sess))
+
+
+def test_the_library_carries_each_kills_headshot_reading(root):
+    _with_headshots(root, {203.0: True, 206.5: False})
+    by = {c["name"]: c for c in _clips(root)}
+    two = by["VALORANT_01"]
+    assert two["kills"] == [3.0, 6.5] and two["hs"] == [True, False]
+    assert "hs" not in by["VALORANT_00"]                 # never read: no key at all
+
+
+def test_headshots_only_keeps_only_kills_read_as_headshots(root):
+    _with_headshots(root, {103.5: False, 203.0: True, 206.5: False})
+    proj, notes = studio.plan(_clips(root), "story", shape=Shape(bpm=120.0),
+                              shape_it={"hs_only": True})
+    assert proj["hs_only"] is True
+    used = {(s["clip"].split("\\")[-1].split("/")[-1], round(s["kill"], 2)) for s in proj["shots"]}
+    assert used == {("VALORANT_01.mp4", 3.0)}
+    why = {Path(x["clip"]).name: x["why"] for x in proj["selection"]}
+    assert "headshot" in why["VALORANT_00.mp4"] and "headshot" in why["VALORANT_02.mp4"]
+    assert any("Headshots only" in n for n in notes)
+
+
+def test_headshots_only_with_none_read_says_so(root):
+    with pytest.raises(studio.ProjectError):
+        studio.plan(_clips(root), "story", shape=Shape(bpm=120.0), shape_it={"hs_only": True})
+
+
+def test_without_the_option_every_kill_goes_in_as_before(root):
+    _with_headshots(root, {103.5: False, 203.0: True, 206.5: False})
+    proj, _ = studio.plan(_clips(root), "story", shape=Shape(bpm=120.0))
+    assert proj["hs_only"] is False
+    assert len({s["clip"] for s in proj["shots"]}) == len(_clips(root))

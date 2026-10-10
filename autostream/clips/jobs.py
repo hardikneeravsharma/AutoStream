@@ -939,6 +939,22 @@ class ClipJob:
                 raise NoKills("No kills in the matches you picked. Tick another "
                               "match, or clip the whole video.")
 
+        # ---- 1e. which kills were headshots --------------------------------
+        # Valorant only, and only around each kill already found: three frames
+        # of the feed band a moment after it -- no scan. Recorded on the kill,
+        # so session.json carries it to the Studio's "headshots only".
+        from . import headshot
+        if kills and headshot.is_valorant(self.game_key or self.game):
+            self.diag.stage("1e. headshots")
+            self._set(message="Checking which kills were headshots…")
+            try:
+                read = headshot.annotate(self.source, kills)
+                hs = sum(1 for k in kills if k.get("hs"))
+                self.diag.note("headshots", {"read": read, "headshots": hs, "kills": len(kills)})
+                log.info("headshots: %d of %d kill(s), %d unread", hs, len(kills), len(kills) - read)
+            except Exception as e:                           # noqa: BLE001
+                log.warning("headshots could not be read: %s", e)
+
         # ---- 2. decide what to cut ---------------------------------------
         self.diag.stage("2. decide what to cut")
         if use_rounds and not round_list:

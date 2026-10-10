@@ -551,6 +551,9 @@ STUDIO_HTML = r"""
       </div>
       <label class="field-label" for="studio-name">Name</label>
       <input class="input" id="studio-name" maxlength="80" placeholder="Montage reel">
+      <!-- Valorant clips carry a headshot reading per kill; shown only when some do. -->
+      <label class="studio-check hide" id="studio-hs-row"><input type="checkbox" id="studio-hs-only">
+        Headshot kills only <span class="muted studio-small" id="studio-hs-note"></span></label>
     </div>
     <div class="modal-actions">
       <span class="muted" id="studio-make-msg"></span>
@@ -1101,7 +1104,9 @@ function studio_tile(c, n) {
     '<img loading="lazy" alt="" width="320" height="180" src="' + studio_media('/api/studio/thumb', c.path, '&t=' + at + '&v=' + (c.mtime || 0)) + '">' +
     '<span class="studio-clip-n">' + (n || '') + '</span>' +
     '<span class="studio-clip-dur mono">' + studio_dur(c.duration) + '</span>' +
-    '<span class="studio-clip-kills">' + (c.unmarked ? 'no kills marked' : c.kill_count > 1 ? c.kill_count + ' kills' : '1 kill') + '</span>' +
+    '<span class="studio-clip-kills">' + (c.unmarked ? 'no kills marked' : c.kill_count > 1 ? c.kill_count + ' kills' : '1 kill') +
+      /* Valorant: how many of them were read as headshots. */
+      (c.hs && c.hs.length ? ' · ' + c.hs.filter(h => h === true).length + ' HS' : '') + '</span>' +
     '</button>' +
     '<div class="studio-clip-foot"><span class="truncate" title="' + esc(c.name) + '">' +
     esc(c.caption || c.name) + '</span>' +
@@ -1229,6 +1234,19 @@ async function studio_openMake() {
     'you can change anything on the timeline afterwards.' +
     (ad ? ' Rebuilding ' + ad.name + ' plans every shot again' +
       (ad.edited ? ', so the changes you made on its timeline will be replaced.' : '.') : '');
+  /* HEADSHOTS ONLY, offered when some chosen kills carry a headshot reading
+     (Valorant). The note says what it would keep, so ticking it is not a
+     guess at how short the reel becomes. */
+  const hsKnown = sel.filter(c => c.hs && c.hs.length);
+  const hsRow = studio_el('studio-hs-row');
+  if (hsRow) {
+    hsRow.classList.toggle('hide', !hsKnown.length);
+    const heads = sel.reduce((n, c) => n + (c.hs || []).filter(h => h === true).length, 0);
+    const all = sel.reduce((n, c) => n + (c.kills || []).length, 0);
+    const withHs = sel.filter(c => (c.hs || []).some(h => h === true)).length;
+    studio_el('studio-hs-note').textContent = '— ' + heads + ' of ' + all + ' kills were headshots, in ' +
+      withHs + ' of ' + sel.length + ' clips. The rest are left out.';
+  }
   studio_el('studio-make-title').textContent = ad ? 'Rebuild ' + ad.name : 'Make a reel';
   studio_el('studio-build-btn').textContent = ad ? 'Rebuild and render' : 'Build and render';
   studio_el('studio-make-msg').textContent = '';
@@ -2218,7 +2236,9 @@ async function studio_build() {
          montage came out with the same kill effect on all six kills. */
       template: studio.picks || null,
       shaping: Object.assign({}, studio.shaping, {arrange: studio.arrange,
-        pins: studio.pins, shuffle_seed: studio.shuffleSeed})
+        pins: studio.pins, shuffle_seed: studio.shuffleSeed,
+        hs_only: !!(studio_el('studio-hs-only') && studio_el('studio-hs-only').checked &&
+                    !studio_el('studio-hs-row').classList.contains('hide'))})
     };
     /* The whole clip, cover-fitted: the trim and the fit are the timeline
        dialog's job, and normalise clamps both anyway. What is chosen here is
@@ -5624,7 +5644,8 @@ async function studio_restyle() {
     from.forEach(c => { if (clips.indexOf(c) < 0) clips.push(c); });
     const r = await API.post('/api/studio/plan', {clips: clips, style: key,
       song: p.song, format: p.format, name: p.name, shaping: Object.assign({}, studio.shaping,
-        {arrange: studio.arrange, pins: studio.pins, shuffle_seed: studio.shuffleSeed})});
+        {arrange: studio.arrange, pins: studio.pins, shuffle_seed: studio.shuffleSeed,
+         hs_only: !!p.hs_only})});
     if (!r || !r.ok) { toast((r && r.error) || 'Could not rebuild with that style.', 'warn'); return; }
     studio_pushUndo(snapshot);
     studio.gen++;
