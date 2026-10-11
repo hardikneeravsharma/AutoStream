@@ -104,6 +104,19 @@ REVEAL_FIT = {"stamp": 9, "glow": 12, "serif": 34, "caption": 38, "scrawl": 9}
 # are no longer the look you chose.
 REVEAL_MIN_SCALE = 0.42
 
+# THE BOX THE WORDS LIVE IN, how big they are in it, and how solid.
+#
+# Stamp draws a word at 250px, which is most of a 1080 frame -- fine for
+# "YEAH" and a wall for "YEAH HELL", and worse once a reveal puts a whole
+# line in it. The box is a share of the frame's width: the words wrap inside
+# it and come down in size until they fit, so narrowing it is how you keep
+# the lyrics out of the picture rather than over it.
+BOX_MIN, BOX_MAX = 0.2, 1.0
+SIZE_MIN, SIZE_MAX = 0.5, 1.6
+# Fully transparent lyrics would be a setting that looks like a bug, so the
+# faintest offered still reads over a bright frame.
+ALPHA_MIN, ALPHA_MAX = 0.15, 1.0
+
 # WHERE THE WORDS SIT BY DEFAULT: the centre of the line, as shares of the
 # frame. Eight of the ten edits studied put the words mid-height, over the
 # crosshair; on a vertical reel that is where the kill emblem is, so the
@@ -154,8 +167,21 @@ def settings(raw) -> dict:
         shift = 0.0
     shift = 0.0 if shift != shift else round(max(-SHIFT_MAX, min(SHIFT_MAX, shift)), 2)
     reveal = raw.get("reveal") if raw.get("reveal") in REVEALS else "look"
+
+    def num(key, lo, hi):
+        try:
+            v = float(raw.get(key))
+        except (TypeError, ValueError):
+            return hi if key != "size" else 1.0
+        if v != v:                                       # NaN
+            return hi if key != "size" else 1.0
+        return round(min(hi, max(lo, v)), 3)
+
     return {"look": look, "face": face, "clean": bool(raw.get("clean")), "pos": _pos(raw.get("pos")),
-            "shift": shift, "reveal": reveal}
+            "shift": shift, "reveal": reveal,
+            # How wide the words may run, how big they are, and how solid.
+            "box": num("box", BOX_MIN, BOX_MAX), "size": num("size", SIZE_MIN, SIZE_MAX),
+            "alpha": num("alpha", ALPHA_MIN, ALPHA_MAX)}
 
 
 def _pos(v) -> list[float] | None:
@@ -476,7 +502,17 @@ def _wrap(text: str, budget: int) -> str:
     return "\\N".join(lines)
 
 
-def _regroup(look: str, rows: list[list[dict]], reveal: str) -> list[list[dict]]:
+def _budget(look: str, box: float, size: float) -> int:
+    """How many characters of this look's type fit across the box.
+
+    REVEAL_FIT is what fits across the whole frame at the look's own size,
+    so a narrower box or bigger type fits proportionally fewer.
+    """
+    full = REVEAL_FIT.get(look, 20)
+    return max(3, int(round(full * max(BOX_MIN, box) / max(0.1, size))))
+
+
+def _regroup(look: str, rows: list[list[dict]], reveal: str, budget: int) -> list[list[dict]]:
     """The units a look should draw, for this reveal. Rows in, rows out.
 
     Every look reads the same shape -- a list of lines, each a list of
@@ -485,7 +521,6 @@ def _regroup(look: str, rows: list[list[dict]], reveal: str) -> list[list[dict]]
     """
     if reveal not in REVEALS or reveal == "look":
         return rows
-    budget = REVEAL_FIT.get(look, 20)
     out: list[list[dict]] = []
     for row in rows:
         if not row:
@@ -533,7 +568,7 @@ def _regroup(look: str, rows: list[list[dict]], reveal: str) -> list[list[dict]]
     return out
 
 
-def _shrink(look: str, rows: list[list[dict]]) -> float:
+def _shrink(look: str, rows: list[list[dict]], budget: int) -> float:
     """How far the type must come down for the widest unit to fit.
 
     A look's size was chosen for the unit it draws -- Stamp's 250px is one
@@ -541,7 +576,6 @@ def _shrink(look: str, rows: list[list[dict]]) -> float:
     edges; never below REVEAL_MIN_SCALE, past which it is not that look any
     more and a wrap is the better answer.
     """
-    budget = REVEAL_FIT.get(look, 20)
     widest = max((len(part) for row in rows for u in row
                   for part in str(u["w"]).split("\\N")), default=0)
     if widest <= budget:
@@ -550,13 +584,21 @@ def _shrink(look: str, rows: list[list[dict]]) -> float:
 
 
 def build_ass(look: str, rows: list[list[dict]], W: int, H: int, *, face: str = "",
-              clean_words: bool = False, pos=None, reveal: str = "look") -> str:
+              clean_words: bool = False, pos=None, reveal: str = "look",
+              box: float = 1.0, size: float = 1.0, alpha: float = 1.0) -> str:
     """The subtitle script that draws `rows` in `look`, at W x H."""
     rows = [[dict(w, w=clean(w["w"]) if clean_words else w["w"]) for w in row] for row in rows]
-    rows = _regroup(look, rows, reveal)
+    budget = _budget(look, box, size)
+    rows = _regroup(look, rows, reveal, budget)
     fid = face if face in FACES else LOOK_FACE[look]
     fname, bold, fscale, _ = FACES[fid]
-    rel = fscale / FACES[LOOK_FACE[look]][2] * _shrink(look, rows)
+    # THE DEFAULT IS UNTOUCHED. A look asked for its own reveal in a
+    # full-width box renders exactly as it did before any of this existed;
+    # shrinking is what a narrower box or a wider unit buys.
+    tight = reveal != "look" or box < 1.0 or size != 1.0
+    rel = fscale / FACES[LOOK_FACE[look]][2] * size
+    if tight:
+        rel *= _shrink(look, rows, budget)
     k = min(W, H) / 1080                    # every size was measured on a 1080-wide frame
     vertical = H > W
     px, py = _pos(pos) or default_pos("vertical" if vertical else "landscape")
@@ -701,7 +743,35 @@ def build_ass(look: str, rows: list[list[dict]], W: int, H: int, *, face: str = 
                                                       f"\\clip(0,0,{wx - round(450 * k)},{H})\\t(0,320,\\clip(0,0,{W},{H}))}}{path}"))
     else:
         raise ValueError(f"unknown lyric look {look!r}")
-    return _HEAD.format(W=W, H=H, wrap=wrap, style=st) + "".join(evs)
+    return _opacity(_HEAD.format(W=W, H=H, wrap=wrap, style=st) + "".join(evs), alpha)
+
+
+def _opacity(script: str, alpha: float) -> str:
+    """Fade the whole script to `alpha` (1.0 solid), in place.
+
+    ASS carries transparency in the top byte of every colour and in the
+    \alpha override, and the looks animate alpha themselves -- Serif fades
+    each word in, Glow fades the line out. So this cannot simply prepend an
+    override: it has to move the OPAQUE end of every animation, which is
+    `&H00&`, to the chosen value, and dim the style's own colours to match.
+    A fade from invisible still starts invisible.
+    """
+    if alpha >= 1.0:
+        return script
+    aa = f"{round((1.0 - max(0.0, min(1.0, alpha))) * 255):02X}"
+
+    def colour(m):
+        return m.group(1) + aa + m.group(3)
+
+    out = []
+    for line in script.splitlines(keepends=True):
+        if line.startswith("Style:"):
+            # &HAABBGGRR -- only the alpha byte of each colour moves.
+            line = re.sub(r"(&H)([0-9A-Fa-f]{2})([0-9A-Fa-f]{6})", colour, line)
+        elif line.startswith("Dialogue:"):
+            line = line.replace("\\alpha&H00&", f"\\alpha&H{aa}&")
+        out.append(line)
+    return "".join(out)
 
 
 def grey_spans(look: str, rows: list[list[dict]]) -> list[tuple[float, float]]:
@@ -760,7 +830,9 @@ def prepare(project: dict, derived: dict, cache_dir: Path, W: int, H: int, *,
     if not rows:
         return Prepared(None, [], "Nothing is sung in the part of the song this reel uses.")
     text = build_ass(cfg["look"], rows, W, H, face=cfg["face"], clean_words=cfg["clean"],
-                     pos=cfg["pos"], reveal=cfg.get("reveal") or "look")
+                     pos=cfg["pos"], reveal=cfg.get("reveal") or "look",
+                     box=cfg.get("box", 1.0), size=cfg.get("size", 1.0),
+                     alpha=cfg.get("alpha", 1.0))
     cache = Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
     p = cache / f"{hashlib.sha1(text.encode('utf-8')).hexdigest()[:16]}.ass"

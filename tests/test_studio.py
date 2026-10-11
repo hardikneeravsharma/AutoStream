@@ -591,7 +591,8 @@ def test_a_projects_lyrics_settings_are_kept_and_clamped(root):
     proj = _project(root, lyrics={"look": "caption", "face": "gochi", "clean": True})
     got, _, _ = studio.normalise(proj, root)
     assert got["lyrics"] == {"look": "caption", "face": "gochi", "clean": True, "pos": None,
-                             "shift": 0.0, "reveal": "look"}
+                             "shift": 0.0, "reveal": "look",
+                             "box": 1.0, "size": 1.0, "alpha": 1.0}
     got, _, _ = studio.normalise(_project(root, lyrics={"look": "<script>"}), root)
     assert got["lyrics"]["look"] == "off"
     assert [l["key"] for l in studio.catalog()["lyrics"]["looks"]] == list(studio.lyrics_mod.LOOKS)

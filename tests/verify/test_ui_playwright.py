@@ -1311,6 +1311,23 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     assert any("typewriter" in n.lower() for n in labels), labels
     page.select_option("#studio-r-lyricreveal", "look")
     page.wait_for_function("studio.project.lyrics.reveal === 'look'", timeout=15_000)
+    # THE BOX, THE SIZE AND THE OPACITY (U27). Stamp draws a word at 250px --
+    # most of the frame, and a wall once a reveal puts a whole line in it.
+    for el, want, key in (("studio-r-lyricbox", "0.5", "box"),
+                          ("studio-r-lyricsize", "0.8", "size"),
+                          ("studio-r-lyricalpha", "0.7", "alpha")):
+        page.wait_for_selector("#" + el, timeout=15_000)
+        page.select_option("#" + el, want)
+        page.wait_for_function(
+            "(a) => studio.project.lyrics[a[0]] === Number(a[1])", arg=[key, want], timeout=15_000)
+    labels = page.evaluate("() => studio.pending.map(p => p.label)")
+    assert any("width" in n.lower() for n in labels), labels
+    assert any("opacity" in n.lower() for n in labels), labels
+    # Put them back, so the rest of this journey renders the look as it was.
+    for el, want in (("studio-r-lyricbox", "1"), ("studio-r-lyricsize", "1"),
+                     ("studio-r-lyricalpha", "1")):
+        page.select_option("#" + el, want)
+    page.wait_for_function("studio.project.lyrics.alpha === 1", timeout=15_000)
     # put them anywhere: drag the LYRICS stand-in on the picture, then one of the nine places.
     # The stand-in is not over the video until asked for -- it covered the real words.
     chip = page.locator("#studio-lyrics-chip")
@@ -1341,7 +1358,8 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     saved = json.loads(Path(job["project"]).read_text(encoding="utf-8"))
     assert saved["song"] == str(song) and saved["style"] == "hype"
     assert saved["lyrics"] == {"look": "caption", "face": "gochi", "clean": False,
-                               "pos": [0.25, 0.85], "shift": 0.5, "reveal": "look"}
+                               "pos": [0.25, 0.85], "shift": 0.5, "reveal": "look",
+                               "box": 1.0, "size": 1.0, "alpha": 1.0}
     assert not page.locator("#studio-lyrics-chip").is_visible(), "the LYRICS stand-in stayed over the rendered words"
     assert "studio song.lrc" in (saved.get("lyrics_note") or ""), saved.get("lyrics_note")
     assert "studio song.lrc" in page.inner_text('#studio-insp details[data-grp="lyrics"]')

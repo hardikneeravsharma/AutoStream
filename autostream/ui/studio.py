@@ -5448,9 +5448,19 @@ function studio_grp(key, title, body, note) {
    motion and the colours, the typeface only swaps the font, and "the look's
    own" keeps whichever font that look was copied with. The words are found
    when the reel renders, so whether they were is reported after it. */
+/* The steps offered for the three. Named rather than numbered: "Half the
+   frame" is a decision, "0.5" is a measurement. */
+const LYR_BOXES = [[1, 'The whole frame'], [0.75, 'Three quarters'], [0.5, 'Half the frame'],
+                   [0.35, 'A third'], [0.25, 'A quarter']];
+const LYR_SIZES = [[1.6, 'Much bigger'], [1.3, 'Bigger'], [1, 'The look’s own'],
+                   [0.8, 'Smaller'], [0.6, 'Much smaller'], [0.5, 'Smallest']];
+const LYR_ALPHAS = [[1, 'Solid'], [0.85, 'Barely faded'], [0.7, 'Faded'],
+                    [0.5, 'Half there'], [0.3, 'A ghost']];
+
 function studio_lyricsGroup(p) {
   const cat = (studio.catalog && studio.catalog.lyrics) || {looks: [], faces: []};
-  const ly = p.lyrics || {look: 'off', face: '', clean: false, reveal: 'look'};
+  const ly = p.lyrics || {look: 'off', face: '', clean: false, reveal: 'look',
+                          box: 1, size: 1, alpha: 1};
   const look = cat.looks.filter(l => l.key === ly.look)[0];
   const own = look ? cat.faces.filter(f => f.key === look.face)[0] : null;
   const on = !!look;
@@ -5473,6 +5483,25 @@ function studio_lyricsGroup(p) {
       (cat.reveals || []).map(r => opt(r.key, r.label, r.key === (ly.reveal || 'look'))).join('') + '</select>' +
       '<span class="muted studio-small">' + esc(((cat.reveals || [])
         .filter(r => r.key === (ly.reveal || 'look'))[0] || {}).blurb || '') + '</span>' +
+      /* HOW BIG, HOW WIDE AND HOW SOLID. Stamp draws a word at 250px --
+         most of the frame, and a wall once a reveal puts a whole line in it
+         ("it takes the whole screen space"). The width is the box the words
+         live in: they wrap inside it and come down in size until they fit,
+         so narrowing it is how the lyrics stay out of the picture rather
+         than over it. Steps rather than a slider, so one choice is one edit
+         in the change list and one press of undo. */
+      '<label class="field-label" for="studio-r-lyricbox">Width</label>' +
+      '<select class="select" id="studio-r-lyricbox">' +
+      LYR_BOXES.map(b => opt(b[0], b[1], Math.abs(b[0] - (ly.box === undefined ? 1 : ly.box)) < 0.001)).join('') +
+      '</select>' +
+      '<label class="field-label" for="studio-r-lyricsize">Size</label>' +
+      '<select class="select" id="studio-r-lyricsize">' +
+      LYR_SIZES.map(b => opt(b[0], b[1], Math.abs(b[0] - (ly.size === undefined ? 1 : ly.size)) < 0.001)).join('') +
+      '</select>' +
+      '<label class="field-label" for="studio-r-lyricalpha">Opacity</label>' +
+      '<select class="select" id="studio-r-lyricalpha">' +
+      LYR_ALPHAS.map(b => opt(b[0], b[1], Math.abs(b[0] - (ly.alpha === undefined ? 1 : ly.alpha)) < 0.001)).join('') +
+      '</select>' +
       '<label class="studio-check"><input type="checkbox" id="studio-r-lyricclean"' + (ly.clean ? ' checked' : '') + '> Star out swear words</label>' +
       '<span class="muted studio-small">' + esc(studio.lyricsNote ||
         'Synced lyrics are looked up on LRCLIB when the reel renders. A .lrc file named like the song, beside it, is used first.') +
@@ -5709,6 +5738,12 @@ function studio_inspectorInput(e) {
       'Lyrics typeface · ' + t.options[t.selectedIndex].text),
     'studio-r-lyricreveal': () => studio_change(pr => { pr.lyrics = Object.assign({}, pr.lyrics, {reveal: t.value}); },
       'Lyrics · ' + t.options[t.selectedIndex].text.toLowerCase()),
+    'studio-r-lyricbox': () => studio_change(pr => { pr.lyrics = Object.assign({}, pr.lyrics, {box: Number(t.value)}); },
+      'Lyrics width · ' + t.options[t.selectedIndex].text.toLowerCase()),
+    'studio-r-lyricsize': () => studio_change(pr => { pr.lyrics = Object.assign({}, pr.lyrics, {size: Number(t.value)}); },
+      'Lyrics size · ' + t.options[t.selectedIndex].text.toLowerCase()),
+    'studio-r-lyricalpha': () => studio_change(pr => { pr.lyrics = Object.assign({}, pr.lyrics, {alpha: Number(t.value)}); },
+      'Lyrics opacity · ' + t.options[t.selectedIndex].text.toLowerCase()),
     'studio-r-lyricclean': () => studio_change(pr => { pr.lyrics = Object.assign({}, pr.lyrics, {clean: t.checked}); },
       t.checked ? 'Lyrics · swears starred' : 'Lyrics · as sung')
   };
