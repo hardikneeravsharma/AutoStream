@@ -3764,16 +3764,46 @@ STUDIO_CSS = r"""
    opaque. Opacity, not display or visibility, so the cued one keeps decoding
    its first frame and the cut is a swap rather than a load. A vertical reel
    crops the game the way the render does unless it was asked to fit it. */
-.studio-pv{position:absolute;inset:0;background:#000}
+.studio-pv{position:absolute;inset:0;background:#000;container-type:size}
 .studio-pv-v{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:0}
 .studio-pv-v.is-on{opacity:1}
+/* The lyrics over the clips; the overlay is the reel's own shape. */
+.studio-pv-lyr{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
+  background:transparent !important;pointer-events:none}
 .studio-player.is-vertical .studio-pv-v{object-fit:cover}
-.studio-player.is-vertical.is-fit .studio-pv-v{object-fit:contain}
+.studio-player.is-vertical.is-fit .studio-pv-v{object-fit:contain;background:transparent}
+/* The render's boxblur=24:2 and eq=brightness=-0.12:saturation=0.8, near
+   enough: scaled past the edges so the blur has no lighter rim. */
+.studio-pv-bg{display:none;position:absolute;inset:0;width:100%;height:100%;
+  filter:blur(14px) brightness(.84) saturate(.8);transform:scale(1.12)}
+.studio-player.is-vertical.is-fit .studio-pv-bg{display:block}
 .studio-pv-tag{position:absolute;top:var(--space-5);left:var(--space-5);z-index:1;
   max-width:calc(100% - 2 * var(--space-5));
   padding:var(--space-3) var(--space-5);border-radius:var(--radius-sm);
   background:var(--on-media-scrim);color:var(--on-media);font:600 11.5px/1.3 var(--font-text);
   pointer-events:none}
+/* Its bar, where the browser puts its own on the rendered video: along the
+   foot of the picture, on screen while paused or pointed at, out of the way
+   while it plays. Above the handle frame, which covers the whole picture. */
+.studio-pv-bar{position:absolute;left:0;right:0;bottom:0;z-index:2;
+  display:flex;align-items:center;gap:var(--space-3);
+  padding:var(--space-6) var(--space-4) var(--space-3);
+  background:linear-gradient(to top,rgba(0,0,0,.72),rgba(0,0,0,0));color:var(--on-media);
+  opacity:0;transition:opacity .18s ease}
+/* :focus-visible, not :focus-within: a button pressed with the mouse keeps
+   focus, and would pin the bar over the picture for the rest of the reel. */
+.studio-pv:not(.is-playing) .studio-pv-bar,.studio-pv:hover .studio-pv-bar,
+.studio-pv-bar:has(:focus-visible){opacity:1}
+.studio-pv-btn{flex:none;min-width:30px;height:30px;padding:0 var(--space-2);border:0;border-radius:var(--radius-sm);
+  background:transparent;color:var(--on-media);font-size:15px;line-height:1;cursor:pointer}
+.studio-pv-btn:hover{background:rgba(255,255,255,.16)}
+.studio-pv-btn:focus-visible{outline:var(--focus-ring-width) solid var(--on-media);outline-offset:1px}
+.studio-pv-time{flex:none;font-size:12px;color:var(--on-media)}
+/* White, like the bar it stands in for: the accent budget has no room for it. */
+.studio-pv-seek{flex:1 1 auto;min-width:2rem;accent-color:var(--on-media);cursor:pointer}
+.studio-player:fullscreen{border-radius:0}
+/* A 9:16 player is narrow: the clock goes before mute and fullscreen do. */
+@container (max-width:300px){.studio-pv-time{display:none}.studio-pv-bar{gap:var(--space-1)}}
 .studio-auto{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3) var(--space-4);
   padding-top:var(--space-3);border-top:var(--border-hair) solid var(--border-subtle)}
 .studio-auto-state{font-size:12px;color:var(--text-secondary)}
@@ -3920,32 +3950,57 @@ STUDIO_CSS = r"""
   border:0;border-radius:var(--radius-sm);background:transparent;color:var(--text-tertiary);cursor:pointer;font:inherit}
 .studio-pick-x:hover{color:var(--text-primary);background:var(--surface)}
 
-/* The picker. Wide, because its point is that you watch the options: a grid
-   of playing cards, and the one under the pointer large beside it. */
-.studio-fxp-modal{width:min(1120px,100%);max-height:min(86vh,900px);gap:var(--space-4)}
+/* The picker. Its point is that you watch the options, so the one being
+   looked at is the biggest thing in it: a narrow list of playing rows down
+   the left, and the stage -- the example at the largest 16:9 the dialog
+   holds, centred -- taking everything else. */
+.studio-fxp-modal{width:min(1480px,100%);height:min(92vh,1000px);max-height:none;gap:var(--space-4)}
 .studio-fxp-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:var(--space-4)}
 .studio-fxp-head .modal-title{margin:0}
 .studio-fxp-q{width:min(360px,100%)}
-.studio-fxp-main{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:var(--space-6);min-height:0;flex:1}
-.studio-fxp-list{overflow:auto;min-height:240px;padding-right:var(--space-1)}
-.studio-fxp-grid{grid-template-columns:repeat(auto-fill,minmax(176px,1fr));gap:var(--space-3)}
+.studio-fxp-main{display:grid;grid-template-columns:minmax(240px,300px) minmax(0,1fr);gap:var(--space-6);
+  min-height:0;flex:1}
+.studio-fxp-list{overflow:auto;min-height:0;padding-right:var(--space-2)}
+.studio-fxp-grid.bin-grid{display:flex;flex-direction:column;gap:var(--space-2)}
 .studio-fxp-sec{margin:var(--space-2) 0 var(--space-3);font-size:12px;font-weight:600;letter-spacing:.06em;
   text-transform:uppercase;color:var(--text-tertiary)}
 .studio-fxp-sec:first-child{margin-top:0}
-.studio-fxp-card{position:relative}
-.studio-fxp-card .bin-blurb{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.studio-fxp-tick{position:absolute;right:var(--space-2);top:var(--space-2);display:flex;align-items:center;
-  justify-content:center;width:24px;height:24px;border-radius:999px;font-size:13px;font-weight:700;
-  background:var(--accent);color:var(--text-on-accent)}
+/* A row: a small playing thumbnail, the name, one line of what it does. */
+.studio-fxp-card.bin-card{position:relative;flex-direction:row;align-items:center;min-height:0}
+.studio-fxp-card .bin-shot{flex:none;width:112px}
+.studio-fxp-card .bin-shot .bin-tag{left:3px;top:3px;padding:1px 4px;font-size:9.5px}
+.studio-fxp-card .bin-shot .bin-sample{display:none}
+.studio-fxp-card .bin-shot .bin-none{font-size:9.5px}
+.studio-fxp-card .bin-meat{padding:6px 10px;min-width:0;gap:2px}
+.studio-fxp-card .bin-name{font-size:13px}
+.studio-fxp-card .bin-blurb{display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;
+  font-size:11.5px}
+.studio-fxp-tick{position:absolute;right:var(--space-2);top:50%;transform:translateY(-50%);display:flex;
+  align-items:center;justify-content:center;width:22px;height:22px;border-radius:999px;font-size:12px;
+  font-weight:700;background:var(--accent);color:var(--text-on-accent)}
+.studio-fxp-card.is-on .bin-meat{padding-right:36px}
 .studio-fxp-none{margin:var(--space-4) 0}
-.studio-fxp-prev{display:flex;flex-direction:column;gap:var(--space-2);align-self:start;position:sticky;top:0}
+/* The stage: the example as large as the space allows, never cropped. */
+.studio-fxp-prev{display:flex;flex-direction:column;gap:var(--space-4);min-height:0;min-width:0}
 .studio-fxp-prev.is-empty{visibility:hidden}
-.studio-fxp-prevshot .bin-shot{border-radius:var(--radius-md);border:var(--border-hair) solid var(--border-subtle)}
-.studio-fxp-prevname{margin:0;display:flex;align-items:baseline;gap:var(--space-2);color:var(--text-primary)}
+.studio-fxp-prevshot{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;
+  container-type:size;background:#000;border-radius:var(--radius-md);overflow:hidden}
+.studio-fxp-prevshot .bin-shot{width:min(100cqw,calc(100cqh * 16 / 9));height:auto;aspect-ratio:16/9;
+  border-radius:var(--radius-sm)}
+.studio-fxp-prevshot .bin-shot video,.studio-fxp-prevshot .bin-shot img{object-fit:contain;background:#000}
+.studio-fxp-prevshot .bin-shot .bin-tag{left:10px;top:10px;font-size:12px;padding:3px 8px}
+.studio-fxp-prevshot .bin-shot .bin-sample{right:10px;bottom:10px;font-size:11px}
+.studio-fxp-prevfoot{flex:none;display:flex;align-items:flex-start;gap:var(--space-5)}
+.studio-fxp-prevtext{flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--space-1)}
+.studio-fxp-prevname{margin:0;display:flex;align-items:baseline;gap:var(--space-2);color:var(--text-primary);
+  font-size:16px}
+.studio-fxp-prevnote:empty{display:none}
 .studio-fxp-count{margin-right:auto}
+/* Narrow: the stage on top, the list under it. */
 @media (max-width:759px){
-  .studio-fxp-main{grid-template-columns:minmax(0,1fr)}
-  .studio-fxp-prev{display:none}
+  .studio-fxp-modal{height:min(94vh,1000px)}
+  .studio-fxp-main{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(180px,42%) minmax(0,1fr)}
+  .studio-fxp-prev{order:-1}
 }
 .studio-tip{margin:0;padding:8px 10px;border-radius:var(--radius-sm);background:var(--surface-sunken);
   border:var(--border-hair) solid var(--border-subtle);font-size:12.5px;color:var(--text-secondary)}

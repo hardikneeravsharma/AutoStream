@@ -53,6 +53,17 @@ SHOT_SECONDS = 1.8
 CARD_WIDTH = 480
 CARD_FPS = 24
 CARD_CRF = 30
+# THE ONE ON THE STAGE, SHARP. The picker shows the option under the pointer
+# large, in the middle, so the difference between two can be seen -- and at
+# card size there is none to see: fine and coarse grain, fine and wide
+# scanlines, side by side at 360 wide, are the same picture (measured on the
+# stock set). So the one being looked at is cut again at this size when it is
+# first shown, and kept. Only the parts somebody has looked at are ever made.
+LARGE_FOLDER = "large"
+LARGE_WIDTH = 1280
+LARGE_FPS = 30
+LARGE_CRF = 20
+LARGE_RETRY = 120.0            # seconds before a part that could not be made is tried again
 # Parts that are the absence of an effect. An example of "no camera move" is
 # an empty card, so nothing is rendered for them and they are not counted
 # missing. A hard cut is NOT one of these: seeing two shots meet with nothing
@@ -207,20 +218,20 @@ def _project(part: str, kind: str, clips: list[dict]) -> dict | None:
     return proj
 
 
-def _shrink(out: Path) -> None:
+def _shrink(out: Path, width: int = CARD_WIDTH, fps: int = CARD_FPS, crf: int = CARD_CRF) -> None:
     """Card-sized and silent, in place. A failed shrink keeps the big file."""
     import subprocess
 
-    from .tools import binary
+    from .tools import _NO_WINDOW, binary
 
     small = out.with_name(out.stem + ".card.mp4")
     argv = [binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
             "-i", str(out), "-an",
-            "-vf", f"fps={CARD_FPS},scale={CARD_WIDTH}:-2:flags=lanczos",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", str(CARD_CRF),
+            "-vf", f"fps={fps},scale={width}:-2:flags=lanczos",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf),
             "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(small)]
     try:
-        r = subprocess.run(argv, capture_output=True, text=True)
+        r = subprocess.run(argv, capture_output=True, text=True, creationflags=_NO_WINDOW)
         if r.returncode == 0 and small.is_file() and small.stat().st_size:
             small.replace(out)
             return
@@ -228,6 +239,133 @@ def _shrink(out: Path) -> None:
     except OSError as e:
         log.info("examples: could not shrink %s: %s", out.name, e)
     small.unlink(missing_ok=True)
+
+
+def large_path(root: Path, part: str) -> Path | None:
+    """The sharp copy of one part's example, if one is made and still current.
+
+    A card cut again since (a rebuild from newer clips) makes it stale: the
+    stage would show other footage than the card it stands for.
+    """
+    if part not in known() or part in NOTHING:
+        return None
+    f = folder(root) / LARGE_FOLDER / f"{part}.mp4"
+    own = path_for(root, part, stock=False)
+    try:
+        if not f.is_file() or (own and own.stat().st_mtime > f.stat().st_mtime):
+            return None
+    except OSError:
+        return None
+    return f
+
+
+def make_large(root: Path, part: str) -> dict:
+    """Cut the sharp copy of one part's example. -> {"ok", "file"} | {"ok": False, "error"}
+
+    The same two-shot project a card is cut from, rendered by the same
+    StudioJob, shrunk to LARGE_WIDTH instead of CARD_WIDTH. The shots are
+    usually in the render cache already, from the card, so most of the time
+    this is the join and one scale.
+    """
+    root = Path(root)
+    parts = known()
+    if part not in parts or part in NOTHING:
+        return {"ok": False, "error": "Nothing to show for that part."}
+    clips = sources(root)
+    if len(clips) < 2:
+        return {"ok": False, "error": "Two clips with a kill are needed to cut a large example."}
+    here = folder(root) / LARGE_FOLDER
+    here.mkdir(parents=True, exist_ok=True)
+    out = here / f"{part}.mp4"
+    tmp = here / f"{part}.cut.mp4"
+    try:
+        proj = _project(part, parts[part], clips)
+        if proj is None:
+            return {"ok": False, "error": "No shot could be cut for it."}
+        proj, derived, _notes = studio.normalise(proj, root)
+        job = studio.StudioJob(proj, derived, root, tmp)
+        job.run()
+        snap = job.snapshot()
+        if snap["state"] != "done" or not tmp.is_file():
+            return {"ok": False, "error": snap.get("error") or "The render failed."}
+        _shrink(tmp, LARGE_WIDTH, LARGE_FPS, LARGE_CRF)
+        tmp.replace(out)
+        return {"ok": True, "file": out.name}
+    except Exception as e:                           # noqa: BLE001
+        log.info("examples: large %s failed: %s", part, e)
+        return {"ok": False, "error": str(e)[:200]}
+    finally:
+        tmp.unlink(missing_ok=True)
+        tmp.with_suffix(".reel.json").unlink(missing_ok=True)
+
+
+class _Large:
+    """Sharp copies, made one at a time, the newest ask first.
+
+    The picker asks for whichever part is on its stage; a pointer run down
+    the list asks for a dozen in a second. Only the last one asked for is
+    worth making next, so the queue is one deep: a newer ask replaces it.
+    """
+
+    def __init__(self) -> None:
+        import threading
+
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._thread = None
+        self._next: tuple[Path, str] | None = None
+        self._doing = ""
+        # A failure is remembered for a while, not for ever: clips added since
+        # (the usual reason) should be tried.
+        self._failed: dict[str, tuple[float, str]] = {}
+
+    def ask(self, root: Path, part: str) -> dict:
+        """-> {"state": "ready"|"making"|"failed", ...} for `part`."""
+        import threading
+
+        f = large_path(root, part)
+        if f is not None:
+            return {"state": "ready", "when": int(f.stat().st_mtime)}
+        with self._lock:
+            when, why = self._failed.get(part, (0.0, ""))
+            if time.monotonic() - when < LARGE_RETRY:
+                return {"state": "failed", "error": why}
+            if self._doing != part:
+                self._next = (Path(root), part)
+                self._wake.set()
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._work, daemon=True)
+                self._thread.start()
+        return {"state": "making"}
+
+    def _work(self) -> None:
+        while True:
+            if not self._wake.wait(30):
+                with self._lock:
+                    if self._next is None:
+                        self._thread = None
+                        return
+            with self._lock:
+                job, self._next = self._next, None
+                self._wake.clear()
+                if job is None:
+                    continue
+                self._doing = job[1]
+            out = make_large(*job)
+            with self._lock:
+                self._doing = ""
+                if not out.get("ok"):
+                    self._failed[job[1]] = (time.monotonic(), out.get("error") or "It could not be made.")
+
+
+_LARGE: _Large | None = None
+
+
+def large() -> _Large:
+    global _LARGE
+    if _LARGE is None:
+        _LARGE = _Large()
+    return _LARGE
 
 
 def build(root: Path, only: list[str] | None = None, on_step=None,

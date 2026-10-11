@@ -655,3 +655,111 @@ def ffmpeg_draws_ass(ff: str) -> bool:
         except (OSError, subprocess.SubprocessError):
             _HAS_ASS[ff] = False
     return _HAS_ASS[ff]
+
+
+# ====================================================== the preview's words
+
+# THE WORDS OVER THE PREVIEW, BEFORE ANY RENDER. The instant preview plays the
+# timeline off the clip files, and a lyric look changed there showed nothing
+# until the render came back -- 20-odd seconds to see whether Glow suits the
+# song better than Stamp. So the same subtitle script is drawn on its own, on
+# nothing, into a small transparent video the page lays over the preview and
+# keeps on the reel's clock. Same script, same libass, same fonts: what shows
+# is what the render will draw, only smaller.
+OVERLAY_FPS = 15
+OVERLAY_SHORT = 540            # the frame's short side; libass scales the script to it
+
+
+def mask_ass(text: str) -> str:
+    """The same script with every colour white and every alpha kept.
+
+    libass cannot draw onto a transparent frame -- it blends into the pixels,
+    and the alpha channel stays empty -- so the overlay is drawn twice on
+    black: once as it is, which is colour times coverage, and once in white,
+    which is the coverage alone. Dividing the first by the second gives the
+    colour back, and the second is the alpha.
+    """
+    out = []
+    for line in text.splitlines(True):
+        if line.startswith("Style:"):
+            line = re.sub(r"&H([0-9A-Fa-f]{2})[0-9A-Fa-f]{6}", r"&H\g<1>FFFFFF", line)
+        elif line.startswith("Dialogue:"):
+            line = re.sub(r"\\([1-4]?c)&H[0-9A-Fa-f]{1,8}&", r"\\\g<1>&HFFFFFF&", line)
+        out.append(line)
+    return "".join(out)
+
+
+def overlay_size(W: int, H: int) -> tuple[int, int]:
+    k = OVERLAY_SHORT / min(W, H)
+    return (round(W * k / 2) * 2, round(H * k / 2) * 2)
+
+
+def overlay(ass: Path, W: int, H: int, length: float, out: Path) -> Path:
+    """`ass` drawn alone into a transparent VP9 .webm at `out`. -> out.
+
+    Measured on a 62 s Glow reel: 2.7 s. Work is done only where a word is,
+    since most of every frame is empty.
+    """
+    import subprocess
+
+    import numpy as np
+
+    from .tools import _NO_WINDOW, binary
+
+    ff = binary("ffmpeg")
+    w, h = overlay_size(W, H)
+    ass = Path(ass)
+    mask = ass.with_name(ass.stem + ".mask.ass")
+    if not mask.is_file():
+        mask.write_text(mask_ass(ass.read_text(encoding="utf-8")), encoding="utf-8")
+    def arg(p: Path) -> str:
+        """A path as a quoted filter option: 'C\\:/like/this'."""
+        return "'" + str(p).replace("\\", "/").replace(":", "\\:") + "'"
+
+    def draw(script: Path):
+        return subprocess.Popen(
+            [ff, "-hide_banner", "-loglevel", "error", "-nostdin",
+             "-f", "lavfi", "-i", f"color=c=black:s={w}x{h}:r={OVERLAY_FPS}:d={max(0.1, length):.3f}",
+             "-vf", f"format=rgb24,ass=filename={arg(script)}:fontsdir={arg(FONTS_DIR)}",
+             "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=_NO_WINDOW)
+
+    tmp = out.with_name(out.stem + ".part.webm")
+    col, cov = draw(ass), draw(mask)
+    enc = subprocess.Popen(
+        [ff, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+         "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{w}x{h}", "-r", str(OVERLAY_FPS), "-i", "-",
+         "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-deadline", "realtime", "-cpu-used", "8",
+         "-row-mt", "1", "-b:v", "0", "-crf", "36", "-auto-alt-ref", "0", str(tmp)],
+        stdin=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=_NO_WINDOW)
+    n = w * h * 3
+    frame = np.zeros((h, w, 4), np.uint8)
+    try:
+        while True:
+            ca, ma = col.stdout.read(n), cov.stdout.read(n)
+            if len(ca) < n or len(ma) < n:
+                break
+            m = np.frombuffer(ma, np.uint8).reshape(h, w, 3)[..., 1]
+            frame[:] = 0
+            rows = np.flatnonzero(m.max(axis=1))
+            if rows.size:
+                y0, y1 = rows[0], rows[-1] + 1
+                cols = np.flatnonzero(m[y0:y1].max(axis=0))
+                x0, x1 = cols[0], cols[-1] + 1
+                a = m[y0:y1, x0:x1]
+                c = np.frombuffer(ca, np.uint8).reshape(h, w, 3)[y0:y1, x0:x1]
+                frame[y0:y1, x0:x1, :3] = np.minimum(
+                    255, c.astype(np.uint16) * 255 // np.maximum(a, 1).astype(np.uint16)[..., None])
+                frame[y0:y1, x0:x1, 3] = a
+            enc.stdin.write(frame.tobytes())
+    finally:
+        for p in (col, cov):
+            p.stdout.close()
+            p.wait()
+        enc.stdin.close()
+        enc.wait()
+    if enc.returncode != 0 or not tmp.is_file():
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError("the lyric overlay could not be encoded")
+    tmp.replace(out)
+    return out

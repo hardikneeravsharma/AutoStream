@@ -656,6 +656,222 @@ def test_an_edit_plays_at_once_and_renders_itself_in_the_background(ui, app):
     ui.clean("an edit previewed at once and rendered in the background")
 
 
+def test_the_preview_has_its_own_play_bar(ui, app):
+    """6.20. "I changed the outro, then the auto rendering applied, but in that
+    state the on screen play back option disappeared."
+
+    The rendered video carries the browser's bar; the preview, which is what
+    the player shows from an edit until the render catches up, had none. Its
+    bar is pressed here the way a person would: play and pause from it and
+    from the picture, a seek to three quarters, mute, fullscreen -- and the
+    app's own volume and speed, which the preview used to write over."""
+    _studio_run(app, "2026-09-16_1445_VALORANT", 3)
+    page = ui.page
+    _studio_build(page, "14:45", 3, "story", "Preview bar")
+    _studio_rendered(page, "the first render")
+    page.wait_for_function("!studio.pv.on && studio.project.shots.length === 3", timeout=30_000)
+    # Hold the background render off, so the preview stays up to be pressed.
+    # An hour, not 1e9: setTimeout fires at once past 2**31 - 1 ms.
+    page.evaluate("studio.auto.idleMs = 3600000")
+    page.locator(".st-shot").nth(1).click()
+    page.wait_for_selector('#studio-insp [data-act="studio-remove"]', timeout=15_000)
+    page.click('#studio-insp [data-act="studio-remove"]')
+    page.wait_for_function("studio.pv.on", timeout=10_000)
+    bar = page.locator("#studio-pv-bar")
+    opacity = "() => getComputedStyle(document.getElementById('studio-pv-bar')).opacity"
+
+    # --- paused, the bar is on screen and says where the reel is
+    assert bar.is_visible() and not page.is_visible("#studio-video")
+    page.wait_for_function(f"({opacity})() === '1'", timeout=5_000)
+    length = page.evaluate("studio.derived.length")
+    assert page.text_content("#studio-pv-time").strip().endswith(
+        f"{int(length) // 60}:{int(length) % 60:02d}"), page.text_content("#studio-pv-time")
+
+    # --- its play button plays the preview, and pauses it
+    page.click("#studio-pv-play")
+    page.wait_for_function("studio.pv.playing && studio_pvTime() > 0.6", timeout=10_000)
+    assert page.get_attribute("#studio-pv-play", "aria-label") == "Pause"
+    # out of the way while it plays and nobody points at it; back when pointed at
+    page.mouse.move(2, 2)
+    page.wait_for_function(f"({opacity})() === '0'", timeout=5_000)
+    page.hover("#studio-pv")
+    page.wait_for_function(f"({opacity})() === '1'", timeout=5_000)
+    page.click("#studio-pv-play")
+    assert not page.evaluate("studio.pv.playing")
+    assert page.get_attribute("#studio-pv-play", "aria-label") == "Play"
+
+    # --- a click on the picture plays and pauses it, as on the rendered video
+    page.click("#studio-pv", position={"x": 40, "y": 60})
+    assert page.evaluate("studio.pv.playing")
+    page.click("#studio-pv", position={"x": 40, "y": 60})
+    assert not page.evaluate("studio.pv.playing")
+
+    # --- a seek three quarters along the bar lands three quarters into the reel,
+    # on the shot the timeline has there
+    box = page.locator("#studio-pv-seek").bounding_box()
+    page.mouse.click(box["x"] + box["width"] * 0.75, box["y"] + box["height"] / 2)
+    got = page.evaluate("""() => ({t: studio_pvTime(), len: studio.derived.length,
+        shot: Number(studio_pvEls()[studio.pv.act].getAttribute('data-shot')),
+        want: studio_pvAt(studio_pvTime()).shot})""")
+    assert got["t"] == pytest.approx(got["len"] * 0.75, abs=got["len"] * 0.05), got
+    assert got["shot"] == got["want"], got
+
+    # --- mute silences the clip and the song; pressed again, it does not
+    page.click("#studio-pv-mute")
+    assert page.evaluate("studio_pvEls()[studio.pv.act].muted && document.getElementById('studio-pv-song').muted")
+    assert page.get_attribute("#studio-pv-mute", "aria-pressed") == "true"
+    page.click("#studio-pv-mute")
+    assert not page.evaluate("studio_pvEls()[studio.pv.act].muted || document.getElementById('studio-pv-song').muted")
+
+    # --- the app's volume and speed reach the preview
+    knobs = '.media-knobs[data-for="studio-video"] '
+    try:
+        page.locator(knobs + 'input[data-knob="vol"]').fill("50")
+        lv = page.evaluate("""() => ({v: studio_pvEls()[studio.pv.act].volume,
+            want: studio_dbGain(studio.project.game_db) * 0.5})""")
+        assert lv["v"] == pytest.approx(lv["want"], abs=0.01), lv
+        page.select_option(knobs + 'select[data-knob="rate"]', "2")
+        page.evaluate("studio_seekTo(0)")
+        page.click("#studio-pv-play")
+        sped = page.evaluate("""async () => { const a = studio_pvTime(), w = performance.now();
+            await new Promise(r => setTimeout(r, 1000));
+            const r = {reel: studio_pvTime() - a, wall: (performance.now() - w) / 1000};
+            studio_pvPause(); return r; }""")
+        assert sped["reel"] / sped["wall"] == pytest.approx(2.0, abs=0.15), sped
+    finally:
+        page.locator(knobs + 'input[data-knob="vol"]').fill("100")
+        page.select_option(knobs + 'select[data-knob="rate"]', "1")
+
+    # --- fullscreen takes the whole player, so a render landing under it stays in it
+    page.click("#studio-pv-full")
+    page.wait_for_function("document.fullscreenElement && document.fullscreenElement.id === 'studio-player'",
+                           timeout=5_000)
+    page.evaluate("document.exitFullscreen()")
+    page.wait_for_function("!document.fullscreenElement", timeout=5_000)
+    ui.clean("the preview's own play bar")
+
+
+def test_the_preview_draws_the_lyrics_and_the_blurred_fit(ui, app, tmp_path):
+    """6.21 / 6.22. "When I change the lyrics style it is not shown until it is
+    re-rendered", and "with 9:16 and Fit the whole picture, the bands above
+    and below should be blurred, not black."
+
+    Both were the preview, not the render: it played the clips and nothing
+    else. The lyrics are now the render's own script drawn alone into a
+    transparent video, laid over the preview on its clock, and a new look
+    gets a new one in seconds; a fitted 9:16 draws the picture over a
+    blurred copy of itself, as the render does."""
+    _studio_run(app, "2026-09-16_1505_VALORANT", 3)
+    page = ui.page
+    _studio_build(page, "15:05", 3, "story", "Preview looks")
+    _studio_rendered(page, "the first render")
+    page.wait_for_function("!studio.pv.on && studio.project.shots.length === 3", timeout=30_000)
+    page.evaluate("studio.auto.idleMs = 3600000")       # an hour: keep the preview up
+    song = appd.click_track(tmp_path / "preview song.wav", seconds=40.0, bpm=120.0)
+    song.with_suffix(".lrc").write_text(
+        "".join(f"[00:{t:02d}.00]line {t} of the test song here\n" for t in range(0, 40, 2)), encoding="utf-8")
+
+    # --- a look chosen: the words are over the preview, on its clock, before any render
+    page.evaluate("""(path) => studio_change(pr => { pr.song = path; pr.song_offset = 0;
+        pr.lyrics = Object.assign({}, pr.lyrics || {}, {look: 'glow'}); }, 'Lyrics')""", str(song))
+    page.wait_for_function("studio.pv.on && studio.project.lyrics.look === 'glow'", timeout=15_000)
+    page.wait_for_function("!!studio.pv.lyr.name", timeout=60_000)
+    first = page.evaluate("studio.pv.lyr.name")
+    got = page.evaluate("""async () => {
+        const v = document.getElementById('studio-pv-lyr');
+        if (v.readyState < 2) await new Promise(r => { v.onloadeddata = r; v.onerror = r; setTimeout(r, 15000); });
+        studio_seekTo(1.0);
+        await new Promise(r => setTimeout(r, 400));
+        const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+        const g = c.getContext('2d'); g.drawImage(v, 0, 0);
+        const px = g.getImageData(0, 0, c.width, c.height).data;
+        let ink = 0, clear = 0;
+        for (let i = 3; i < px.length; i += 4) { if (px[i] > 128) ink++; else if (px[i] === 0) clear++; }
+        return {err: v.error && v.error.code, dur: v.duration, len: studio.derived.length, w: v.videoWidth,
+                h: v.videoHeight, at: v.currentTime, ink: ink, clear: clear, total: px.length / 4,
+                shown: !v.classList.contains('hide')}; }""")
+    assert not got["err"] and got["shown"], got
+    assert got["dur"] == pytest.approx(got["len"], abs=0.3), got
+    assert got["at"] == pytest.approx(1.0, abs=0.1), got
+    assert got["ink"] > 200, f"no words drawn over the preview: {got}"
+    assert got["clear"] > got["total"] * 0.6, f"the overlay is not transparent: {got}"
+
+    # --- another look: another overlay, without a render
+    page.evaluate("studio_change(pr => { pr.lyrics = Object.assign({}, pr.lyrics, {look: 'stamp'}); }, 'Lyrics')")
+    page.wait_for_function("(was) => studio.pv.lyr.name && studio.pv.lyr.name !== was", arg=first, timeout=60_000)
+    assert not page.evaluate("studio.rendering")
+
+    # --- 9:16, the whole picture fitted: a blurred copy behind it, not black bands
+    page.evaluate("studio_change(pr => { pr.format = 'vertical'; pr.vfit = 'fit'; }, 'Format')")
+    page.wait_for_function("document.getElementById('studio-player').classList.contains('is-fit')", timeout=15_000)
+    page.evaluate("studio_seekTo(1.5)")
+    page.wait_for_timeout(600)
+    bg = page.evaluate("""() => {
+        const cv = document.getElementById('studio-pv-bg'), v = studio_pvEls()[studio.pv.act];
+        const px = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+        let lit = 0; for (let i = 0; i < px.length; i += 4) if (px[i] + px[i + 1] + px[i + 2] > 30) lit++;
+        return {shown: getComputedStyle(cv).display !== 'none', lit: lit, total: px.length / 4,
+                vbg: getComputedStyle(v).backgroundColor, fit: getComputedStyle(v).objectFit}; }""")
+    assert bg["shown"] and bg["fit"] == "contain", bg
+    assert bg["vbg"] in ("rgba(0, 0, 0, 0)", "transparent"), f"the bands are painted black: {bg}"
+    assert bg["lit"] > bg["total"] * 0.5, f"the blurred copy is empty: {bg}"
+    # and the words are redrawn for the reel's new shape
+    page.wait_for_function("studio.pv.lyr.name && studio.pv.lyr.name.indexOf('540x960') > 0", timeout=60_000)
+    ui.clean("lyrics and the blurred fit in the preview")
+
+
+def test_the_effect_picker_shows_the_effect_large_in_the_middle(ui, app):
+    """6.23. "Put the actual preview in the centre and big so that it is easy
+    to spot the difference, and put the list anywhere else."
+
+    The stage takes most of the dialog and the list is a column beside it;
+    the one shown there is swapped for a sharp copy cut for it (at card size
+    fine and coarse grain are the same picture); and the stage's own button
+    does what clicking the card would."""
+    # Longer than 4 s: examples are cut only from clips with room either side of the kill.
+    _studio_run(app, "2026-09-16_1520_VALORANT", 3, seconds=6.0)
+    page = ui.page
+    _studio_build(page, "15:20", 2, "story", "Picker stage")
+    _studio_rendered(page, "the first render")
+    page.locator(".st-shot").nth(1).click()
+    page.click("#studio-f-speed")
+    page.wait_for_selector("#studio-fxp-scrim:not(.hide)")
+    current = page.evaluate("studio.project.shots[1].speed")
+    pid = next(i for i in page.evaluate("studio_parts('speed').map(p => p.id)")
+               if i != current and i not in ("s00",))
+    card = page.locator(f'#studio-fxp-list .studio-fxp-card[data-part="{pid}"]').first
+    card.hover()
+    page.wait_for_function("(id) => studio.fxp && studio.fxp.shown === id", arg=pid, timeout=5_000)
+
+    # --- the stage is the big thing, and the list is not
+    box = page.evaluate("""() => { const r = id => document.getElementById(id).getBoundingClientRect();
+        const v = document.querySelector('#studio-fxp-prevshot .bin-shot').getBoundingClientRect();
+        return {modal: r('studio-fxp').width, list: r('studio-fxp-list').width, stage: v.width, stageH: v.height,
+                stageX: v.left + v.width / 2, modalX: r('studio-fxp').left + r('studio-fxp').width / 2}; }""")
+    assert box["stage"] > box["modal"] * 0.55, f"the preview is not the big thing: {box}"
+    assert box["stage"] > box["list"] * 2, box
+    assert box["stage"] / box["stageH"] == pytest.approx(16 / 9, abs=0.05), box
+
+    # --- and it is swapped for a sharp copy
+    try:
+        page.wait_for_selector("#studio-fxp-prevshot.is-large", timeout=120_000)
+    except Exception:
+        why = page.evaluate("(id) => API.post('/api/studio/example/large', {id: id})", pid)
+        note = page.inner_text("#studio-fxp-prevnote")
+        raise AssertionError(f"no sharp copy on the stage: {why} / {note!r}")
+    w = page.evaluate("""async () => { const v = document.querySelector('#studio-fxp-prevshot video');
+        if (v.readyState < 1) await new Promise(r => { v.onloadedmetadata = r; setTimeout(r, 10000); });
+        return v.videoWidth; }""")
+    assert w >= 1200, f"the stage plays a {w}px copy"
+
+    # --- its button uses it, as a click on the card would
+    assert page.inner_text("#studio-fxp-stage").strip() == "Use this"
+    page.click("#studio-fxp-stage")
+    page.wait_for_selector("#studio-fxp-scrim", state="hidden")
+    page.wait_for_function("(id) => studio.project.shots[1].speed === id", arg=pid)
+    ui.clean("the picker's stage")
+
+
 def test_no_background_render_starts_while_a_render_you_started_runs(ui, app):
     """Render is the user's: a background render must never start beside it,
     however long it runs. Edit, press Render, edit again while it renders --

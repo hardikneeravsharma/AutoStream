@@ -228,6 +228,8 @@ _PUBLIC_FILES = {"/favicon.ico"}
 # on purpose, so a state does not survive a restart and cannot be replayed
 # later. Each is spent on first use.
 _PENDING: dict = {}
+# The preview's lyrics are drawn one at a time (WebApp.studio_lyrics_preview).
+_LYRICS_LOCK = threading.Lock()
 # A connect nobody finishes should not sit here for the life of the process.
 _PENDING_TTL = 600.0
 
@@ -748,8 +750,20 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(_up.detector().status())
         elif u.path == "/api/studio/examples":
             self._json(self.app.studio_examples())
+        elif u.path == "/api/studio/lyrics/overlay":
+            # Only a drawn overlay, only from the lyrics cache: a name, not a path.
+            from .clips import studio as _st
+
+            name = (parse_qs(u.query).get("name") or [""])[0]
+            if not re.fullmatch(r"[0-9a-f]{16}\.\d+x\d+\.webm", name):
+                self._json({"error": "Not an overlay name."}, 400)
+            else:
+                cache = self.app._clips_dir(cfg.load()) / _st.CACHE_DIR / "lyrics"
+                self._media(str(cache / name), cache, (".webm",), "lyrics")
         elif u.path == "/api/studio/example":
-            blob, ctype, err = self.app.studio_example((parse_qs(u.query).get("id") or [""])[0])
+            q = parse_qs(u.query)
+            blob, ctype, err = self.app.studio_example((q.get("id") or [""])[0],
+                                                       (q.get("size") or [""])[0] == "large")
             if err:
                 self._json({"error": err}, 400)
             else:
@@ -890,6 +904,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_check(b))
             elif p == "/api/studio/render":
                 self._json(self.app.studio_render(b))
+            elif p == "/api/studio/lyrics/preview":
+                self._json(self.app.studio_lyrics_preview(b))
             elif p == "/api/studio/cancel":
                 self._json(self.app.studio_cancel())
             elif p == "/api/studio/vary":
@@ -932,6 +948,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_facecam_inset(b))
             elif p == "/api/studio/facecam/sync":
                 self._json(self.app.studio_facecam_sync(b))
+            elif p == "/api/studio/example/large":
+                self._json(self.app.studio_example_large(b))
             elif p == "/api/studio/examples/build":
                 self._json(self.app.studio_examples_build(b))
             elif p == "/api/studio/examples/cancel":
@@ -3492,17 +3510,52 @@ class Server:
         out["build"] = examples.runner().status()
         return out
 
-    def studio_example(self, part: str) -> tuple[bytes, str, str | None]:
-        """One example, by part id. Only ever from the examples folder."""
+    def studio_example(self, part: str, large: bool = False) -> tuple[bytes, str, str | None]:
+        """One example, by part id. Only ever from the examples folder.
+
+        `large` is the sharp copy the picker's stage plays (examples.make_large),
+        or the card when there is none yet.
+        """
         from .clips import examples
 
-        f = examples.path_for(self._clips_dir(cfg.load()), str(part or "").strip())
+        root, part = self._clips_dir(cfg.load()), str(part or "").strip()
+        f = (examples.large_path(root, part) if large else None) or examples.path_for(root, part)
         if f is None:
             return b"", "", "No example for that part."
         try:
             return f.read_bytes(), examples.TYPES.get(f.suffix.lower(), "video/mp4"), None
         except OSError as e:
             return b"", "", str(e)
+
+    def studio_example_large(self, body: dict) -> dict:
+        """Ask for the sharp copy of one part's example. -> {"state", ...}
+
+        Made in the background, one at a time; the page asks again until it is
+        ready. Not while anything that matters more holds the encoder -- a
+        broadcast, a recording, a clip job, a reel render, the cards' rebuild:
+        the stage shows the card meanwhile, and says why.
+        """
+        from . import clips
+        from .clips import examples, studio
+
+        c = cfg.load()
+        root, part = self._clips_dir(c), str(body.get("id") or "").strip()
+        if part not in examples.known() or part in examples.NOTHING:
+            return {"state": "none"}
+        f = examples.large_path(root, part)
+        if f is not None:
+            return {"state": "ready", "when": int(f.stat().st_mtime)}
+        held = self.studio_encoder_held()
+        if not held and studio.runner().busy():
+            held = "Shown at card size while your reel renders."
+        if not held and examples.runner().busy():
+            held = "Shown at card size while the examples are cut."
+        if held:
+            return {"state": "held", "why": held}
+        clips.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+        if not clips.available():
+            return {"state": "failed", "error": "ffmpeg is not available."}
+        return examples.large().ask(root, part)
 
     def studio_examples_build(self, body: dict) -> dict:
         """Cut the missing examples again, from this machine's own clips."""
@@ -3635,6 +3688,50 @@ class Server:
             return {"ok": False, "error": str(e)}
         return {"ok": True, "project": proj, "derived": derived, "notes": notes}
 
+    def studio_lyrics_preview(self, body: dict) -> dict:
+        """The lyrics of the project on the page, drawn alone for the preview.
+
+        -> {"ok", "overlay": file name} | {"ok", "none": why} | {"ok": False,
+        "held"|"error"}. The same lyrics.prepare the render runs, so the words,
+        their timing and their look are the render's; drawn small and on
+        nothing (lyrics.overlay), for the page to lay over the clips it plays.
+        """
+        from . import clips
+        from .clips import lyrics, studio
+        from .clips.tools import binary
+
+        c = cfg.load()
+        clips.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+        root = self._clips_dir(c)
+        try:
+            proj, derived, _notes = studio.normalise(body.get("project"), root)
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        if lyrics.settings(proj.get("lyrics"))["look"] == "off":
+            return {"ok": True, "none": ""}
+        held = self.studio_encoder_held()
+        if held:
+            return {"ok": False, "held": held}
+        if not clips.available() or not lyrics.ffmpeg_draws_ass(binary("ffmpeg")):
+            return {"ok": False, "error": "This copy of ffmpeg cannot draw subtitles."}
+        W, H = studio.SIZES[proj["format"]]
+        cache = root / studio.CACHE_DIR / "lyrics"
+        # One at a time: a look clicked through quickly asks several times,
+        # and the second of two identical asks should find the first's file.
+        with _LYRICS_LOCK:
+            try:
+                got = lyrics.prepare(proj, derived, cache, W, H)
+                if not got.ass:
+                    return {"ok": True, "none": got.note}
+                w, h = lyrics.overlay_size(W, H)
+                out = got.ass.with_name(f"{got.ass.stem}.{w}x{h}.webm")
+                if not out.is_file():
+                    lyrics.overlay(got.ass, W, H, float(derived["length"]), out)
+            except Exception as e:                          # noqa: BLE001
+                log.warning("studio: preview lyrics failed (%s)", e)
+                return {"ok": False, "error": "The lyrics could not be drawn for the preview."}
+        return {"ok": True, "overlay": out.name, "note": got.note}
+
     def studio_render(self, body: dict) -> dict:
         """Render a timeline. Returns as soon as the job has started."""
         from . import clips
@@ -3695,11 +3792,17 @@ class Server:
         over the same encoder. The user can still press Render: that is their
         call. Only the render nobody asked for waits.
         """
+        if not cfg.load().clips.get("auto_render", True):
+            return "Background rendering is switched off."
+        return self.studio_encoder_held()
+
+    def studio_encoder_held(self) -> str:
+        """Why nothing the user did not ask for may encode now. "" when it may:
+        not live, not recording, no clip job. The background render and the
+        preview's lyrics both ask."""
         from . import clips
         from . import state as st
 
-        if not cfg.load().clips.get("auto_render", True):
-            return "Background rendering is switched off."
         e = getattr(self, "engine", None)
         s = getattr(e, "state", None)
         phase = getattr(s, "phase", st.IDLE)
