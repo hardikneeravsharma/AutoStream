@@ -158,7 +158,7 @@ and a free port, was refused whenever the app was running. `appd` now passes
 run the checkout while working, so there is no excuse for an unexercised UI edit.
 
 [docs/UI-SCENARIOS.md](docs/UI-SCENARIOS.md) is the catalogue every browser test is
-written from: 62 scenarios across all eight pages, each marked covered, sweep-only
+written from: 84 scenarios across all eight pages, each marked covered, sweep-only
 or a gap. Add to it before adding a test, so the gaps stay countable.
 
 Three rules worth keeping:
@@ -175,7 +175,7 @@ Three rules worth keeping:
   - **Console windows** — any `subprocess.run` a test adds takes
     `creationflags=appd.NO_WINDOW`, or every ffmpeg call flashes a console. A verify
     run makes dozens.
-- **The sweep reaches 117 of the 190 controls the source declares.** `REACHED_FLOOR`
+- **The sweep reaches 132 of the 226 controls the source declares.** `REACHED_FLOOR`
   pins that so a page which quietly stops rendering fails rather than passing with
   less under test. Raise it when coverage improves; never lower it without saying
   what stopped being reachable.

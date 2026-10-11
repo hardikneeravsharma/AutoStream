@@ -116,13 +116,23 @@ def _spy(pg, song: Path) -> None:
 
 def _pick(pg, folder_label: str, picks: int) -> None:
     pg.click('[data-act="studio-refresh"]')
+    # The library is a drill-down (U15): open the run this test seeded, then
+    # its clips are on screen. Pressing the way in is test_ui_studio_folders'
+    # job; this one is about what the plan carries.
     pg.wait_for_function(
-        "(n) => [...document.querySelectorAll('.studio-folder')].some(f => f.textContent.indexOf(n) >= 0)",
+        "(n) => studio.lib && (studio.lib.games || []).some("
+        "g => g.folders.some(f => f.label.indexOf(n) >= 0))",
         arg=folder_label, timeout=30_000)
-    folder = pg.locator(".studio-folder", has_text=folder_label).first
+    opened = pg.evaluate("""(n) => {
+        for (const g of (studio.lib.games || []))
+            for (const f of g.folders)
+                if (f.label.indexOf(n) >= 0) { studio_openRun(f.folder); return true; }
+        return false; }""", folder_label)
+    assert opened, f"no run labelled {folder_label!r} in the studio library"
+    pg.wait_for_selector("#studio-lib .studio-clip-hit", timeout=30_000)
     if pg.is_visible('[data-act="studio-clear"]'):
         pg.click('[data-act="studio-clear"]')
-    tiles = folder.locator(".studio-clip-hit")
+    tiles = pg.locator("#studio-lib .studio-clip-hit")
     for i in range(picks):
         tiles.nth(i).click()
 

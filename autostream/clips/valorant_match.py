@@ -389,6 +389,24 @@ def for_recording(started: float, seconds: float,
     return got
 
 
+def one(match_id: str) -> Match | None:
+    """The saved record with this id, read as one file -- or None.
+
+    `cached()` parses every record on disk (41 MB of them on the developer's
+    machine) and is right for a listing. A page that wants the map name of
+    four known matches must not pay for the other eighty-two.
+    """
+    mid = str(match_id or "")
+    if not mid or "/" in mid or "\\" in mid or mid.startswith("."):
+        return None
+    f = cache_dir() / f"{mid}.json"
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return Match(f, data) if isinstance(data, dict) and data.get("matchInfo") else None
+
+
 def by_ids(ids) -> list[Match]:
     """The saved matches with these ids, oldest first -- the ones the user said
     are in the video, for a recording whose own clock says nothing (a stream

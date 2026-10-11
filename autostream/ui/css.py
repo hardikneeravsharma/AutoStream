@@ -3663,6 +3663,66 @@ STUDIO_CSS = r"""
 .studio-folder{display:flex;flex-direction:column;gap:var(--space-3);margin-top:var(--space-5)}
 .studio-folder-h{display:flex;flex-wrap:wrap;gap:var(--space-4);align-items:center}
 .studio-folder-name{font-weight:600;color:var(--text-primary)}
+/* THE LIBRARY AS A DRILL-DOWN: folders, then that folder's runs, then the
+   run's clips under the match each came from. The alternative was 339 clip
+   tiles in one pane, which is what this replaced. */
+.studio-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2);
+  margin:var(--space-5) 0 var(--space-3);font-size:13px;color:var(--text-tertiary)}
+.studio-crumb{padding:2px 6px;border:0;border-radius:var(--radius-sm);background:none;cursor:pointer;
+  color:var(--text-secondary);font:inherit}
+.studio-crumb:hover{color:var(--text-primary);background:var(--surface-hover)}
+.studio-crumb:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.studio-crumb-now{color:var(--text-primary);font-weight:600}
+.studio-folders{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));
+  gap:var(--space-4);margin-top:var(--space-4)}
+.studio-folder-card{display:block;padding:0;text-align:left;cursor:pointer;color:inherit;font:inherit;
+  background:var(--surface);border:var(--border-hair) solid var(--border-subtle);
+  border-radius:var(--radius-lg);overflow:hidden;
+  transition:border-color var(--dur-instant),box-shadow var(--dur-instant)}
+.studio-folder-card:hover{border-color:var(--border-strong);box-shadow:var(--shadow-md)}
+.studio-folder-card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.studio-folder-card[disabled]{opacity:var(--opacity-disabled);cursor:default}
+.studio-folder-mosaic{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:2px;
+  aspect-ratio:16/9;background:var(--surface-sunken);overflow:hidden}
+.studio-folder-mosaic img{display:block;width:100%;height:100%;object-fit:cover}
+.studio-folder-star{display:grid;place-items:center;font-size:40px;color:var(--text-tertiary)}
+.studio-folder-card-body{display:block;padding:var(--space-3) var(--space-4) var(--space-4)}
+.studio-folder-card-name{display:block;font-family:var(--font-display);font-size:15px;font-weight:600;
+  color:var(--text-primary)}
+.studio-folder-card-facts{display:block;margin-top:5px;font-size:12.5px;color:var(--text-tertiary)}
+.studio-folder-go{display:block;margin-top:var(--space-3);font-size:12.5px;color:var(--accent-text)}
+.studio-runs{display:flex;flex-direction:column;gap:var(--space-3);margin-top:var(--space-4)}
+.studio-run{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3);
+  background:var(--surface);border:var(--border-hair) solid var(--border-subtle);
+  border-radius:var(--radius-md);padding:var(--space-2) var(--space-4) var(--space-2) var(--space-2)}
+.studio-run:hover{border-color:var(--border-strong)}
+.studio-run-hit{display:flex;align-items:center;gap:var(--space-4);flex:1;min-width:240px;
+  padding:0;border:0;background:none;cursor:pointer;text-align:left;color:inherit;font:inherit}
+.studio-run-hit:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.studio-run-shot{width:112px;height:63px;flex:0 0 auto;object-fit:cover;border-radius:var(--radius-sm);
+  background:var(--surface-sunken)}
+.studio-run-who{display:flex;flex-direction:column;gap:4px;min-width:0}
+.studio-run-name{font-family:var(--font-display);font-size:14.5px;font-weight:600;color:var(--text-primary)}
+.studio-run-facts{font-size:12.5px;color:var(--text-tertiary)}
+.studio-run-acts{display:flex;align-items:center;gap:var(--space-2);margin-left:auto}
+.studio-run-head{margin-top:var(--space-5)}
+.studio-run-head .studio-game-h{margin:0;border:0;padding:0}
+.studio-mchips{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+.studio-mchip{font-size:11.5px;padding:2px 9px;border-radius:var(--radius-pill);
+  background:var(--surface-sunken);border:var(--border-hair) solid var(--border-subtle);
+  color:var(--text-secondary)}
+/* Won and lost are read at a glance here and are never the accent: the accent
+   budget is the focus ring, the rail, the primary button and an on state. */
+.studio-mchip.is-win,.studio-match-score.is-win{color:var(--ok);border-color:var(--ok)}
+.studio-mchip.is-loss,.studio-match-score.is-loss{color:var(--danger);border-color:var(--danger)}
+.studio-match{display:flex;flex-direction:column;gap:var(--space-3);margin-top:var(--space-5)}
+.studio-match-h{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3) var(--space-4);
+  padding:var(--space-2) var(--space-4);background:var(--surface);
+  border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-md)}
+.studio-match-name{font-family:var(--font-display);font-size:14.5px;font-weight:600;color:var(--text-primary)}
+.studio-match-score{font-size:13px;font-weight:600;padding:2px 8px;border-radius:var(--radius-sm);
+  background:var(--surface-sunken);border:var(--border-hair) solid var(--border-subtle)}
+.studio-match-btn{margin-left:auto}
 .studio-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:var(--space-4)}
 .studio-clip{position:relative;display:flex;flex-direction:column;background:var(--surface);
   border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-md);overflow:hidden;

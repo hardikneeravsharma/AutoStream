@@ -2645,6 +2645,14 @@ class Server:
             opt["rounds"] = bool(body.get("rounds"))
         if body.get("whole_round") is not None:
             opt["whole_round"] = bool(body.get("whole_round"))
+        # THE WHOLE MATCH AS ONE VIDEO (C2). The page has sent this since
+        # v1.41.0 and nothing read it: `jobs.ClipJob` asks
+        # `opt.get("match_summary")`, and the flag was never copied out of the
+        # body -- so the switch on the Clips page did nothing at all, for every
+        # game, from the day it shipped. The browser test only ever checked
+        # what the page put in the request, which is why it stayed green.
+        if body.get("match_summary") is not None:
+            opt["match_summary"] = bool(body.get("match_summary"))
         want = body.get("round_types")
         if isinstance(want, list) and want:
             opt["round_types"] = [str(x) for x in want][:16]

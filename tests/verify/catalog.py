@@ -651,7 +651,11 @@ COMMANDS_REFUSED = ("kill", "launch", "chat", "", "QUIT", "stop; rm -rf")
 NOT_A_FLOW: dict[str, str] = {
     # --- the Studio page: selection, layout and the timeline's own view
     "studio-tab": "switches between the clip library and the timeline",
-    "studio-game": "filters the library to one game",
+    "studio-game": "opens one game's folder, or goes back to the folder grid",
+    "studio-open-folder": "opens a game's folder from its card in the library",
+    "studio-open-run": "opens one run, whose clips are grouped by the match they came from",
+    "studio-crumb": "walks back up the library: a run to its folder, a folder to the grid",
+    "studio-match": "selects or unselects every clip of one match in the open run",
     "studio-reel-fmt": "filters the reels to vertical or landscape; never leaves the browser",
     "studio-reels-more": "unfolds the reels from two rows to all of them",
     "studio-lyr-pos": "puts the lyrics at one of nine places; sent with the next render",
@@ -673,7 +677,7 @@ NOT_A_FLOW: dict[str, str] = {
     "match-pick": "ticks which of this video's matches are clipped; sent with the run as match_spans",
     "match-claim": "ticks a saved match as being in this video; sent with the run as match_ids",
     "studio-fxp-open": "opens the effect picker; nothing changes until a choice is made",
-    "studio-fxp-cancel": "closes the effect picker and keeps what was chosen before",
+    "studio-fxp-cancel": "closes the effect picker and puts back what was chosen before it opened",
     "studio-fxp-clear": "unticks everything in the picker; sent only with Done",
     "studio-arrange": "chooses how the reel is ordered; sent with the next Build",
     "studio-pin": "pins a clip to the opener, the climax or the closer; sent with the next Build",

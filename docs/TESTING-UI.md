@@ -123,9 +123,9 @@ click. If both fail, the control is genuinely unreachable and worth looking at.
 
 ## Coverage, honestly
 
-The sweep reaches **117 of the 190** `data-act` controls the source declares.
+The sweep reaches **132 of the 226** `data-act` controls the source declares.
 The rest sit behind a dialog, a selection, or a job that has actually run.
-`REACHED_FLOOR` in `test_ui_sweep.py` pins 117 so that a page which quietly
+`REACHED_FLOOR` in `test_ui_sweep.py` pins 132 so that a page which quietly
 stops rendering fails there instead of passing with less under test. Raise it
 when coverage improves; never lower it without saying what stopped being
 reachable.

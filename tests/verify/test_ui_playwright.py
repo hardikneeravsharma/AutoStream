@@ -292,15 +292,31 @@ def _studio_run(app, name: str, count: int, seconds: float = 4.0) -> None:
         {"game": "VALORANT", "kills": [{"time": 10.0 * (i + 1) + seconds / 2} for i in range(count)]}))
 
 
+def _studio_open_run(page, folder_label: str) -> None:
+    """THE LIBRARY IS A DRILL-DOWN (U15): folders, then that folder's runs,
+    then the run's clips under the match each came from. These journeys are
+    about what happens after the clips are picked, so they go to the run they
+    seeded by its label; the drill-down's own controls are pressed one by one
+    in test_ui_studio_folders.py."""
+    page.wait_for_function(
+        "(n) => studio.lib && (studio.lib.games || []).some("
+        "g => g.folders.some(f => f.label.indexOf(n) >= 0))",
+        arg=folder_label, timeout=30_000)
+    opened = page.evaluate("""(n) => {
+        for (const g of (studio.lib.games || []))
+            for (const f of g.folders)
+                if (f.label.indexOf(n) >= 0) { studio_openRun(f.folder); return true; }
+        return false; }""", folder_label)
+    assert opened, f"no run labelled {folder_label!r} in the studio library"
+    page.wait_for_selector("#studio-lib .studio-clip-hit", timeout=30_000)
+
+
 def _studio_build(page, folder_label: str, picks: int, style: str, name: str) -> None:
     page.click('.rail-btn[data-page="studio"]')
     page.wait_for_selector("#view-studio.is-active")
     page.click('[data-act="studio-refresh"]')
-    page.wait_for_function(
-        "(n) => [...document.querySelectorAll('.studio-folder')].some(f => f.textContent.indexOf(n) >= 0)",
-        arg=folder_label, timeout=30_000)
-    folder = page.locator(".studio-folder", has_text=folder_label).first
-    tiles = folder.locator(".studio-clip-hit")
+    _studio_open_run(page, folder_label)
+    tiles = page.locator("#studio-lib .studio-clip-hit")
     page.click('[data-act="studio-clear"]') if page.is_visible('[data-act="studio-clear"]') else None
     for i in range(picks):
         tiles.nth(i).click()
@@ -403,13 +419,13 @@ def test_headshots_only_is_offered_for_read_clips_and_keeps_only_headshots(ui, a
     page.click('.rail-btn[data-page="studio"]')
     page.wait_for_selector("#view-studio.is-active")
     page.click('[data-act="studio-refresh"]')
-    folder = page.locator(".studio-folder", has_text="12:00").first
-    folder.wait_for(timeout=30_000)
-    assert "1 HS" in folder.locator(".studio-clip-kills").nth(0).inner_text()
-    assert "HS" not in folder.locator(".studio-clip-kills").nth(1).inner_text().replace("0 HS", "")
+    _studio_open_run(page, "12:00")
+    kills = page.locator("#studio-lib .studio-clip-kills")
+    assert "1 HS" in kills.nth(0).inner_text()
+    assert "HS" not in kills.nth(1).inner_text().replace("0 HS", "")
     page.click('[data-act="studio-clear"]') if page.is_visible('[data-act="studio-clear"]') else None
     for i in range(3):
-        folder.locator(".studio-clip-hit").nth(i).click()
+        page.locator("#studio-lib .studio-clip-hit").nth(i).click()
     page.click('[data-act="studio-make"]')
     row = page.locator("#studio-hs-row")
     assert row.is_visible(), "headshots only is not offered for clips that carry a reading"
@@ -464,11 +480,10 @@ def test_perfect_fit_keeps_every_kill_on_a_beat_and_survives_a_restyle(ui, app, 
     page.click('.rail-btn[data-page="studio"]')
     page.wait_for_selector("#view-studio.is-active")
     page.click('[data-act="studio-refresh"]')
-    folder = page.locator(".studio-folder", has_text="16 Sep").first
-    folder.wait_for(timeout=30_000)
+    _studio_open_run(page, "16 Sep")
     page.click('[data-act="studio-clear"]') if page.is_visible('[data-act="studio-clear"]') else None
     for i in range(3):
-        folder.locator(".studio-clip-hit").nth(i).click()
+        page.locator("#studio-lib .studio-clip-hit").nth(i).click()
     # The bin redraws its buttons as the library loads, so the locator is
     # resolved afresh at each step rather than held.
     fit_btn = page.locator('[data-act="studio-arrange"][data-how="fit"]')
@@ -867,8 +882,24 @@ def test_the_effect_picker_shows_the_effect_large_in_the_middle(ui, app):
     # --- its button uses it, as a click on the card would
     assert page.inner_text("#studio-fxp-stage").strip() == "Use this"
     page.click("#studio-fxp-stage")
-    page.wait_for_selector("#studio-fxp-scrim", state="hidden")
     page.wait_for_function("(id) => studio.project.shots[1].speed === id", arg=pid)
+    # --- AND THE DIALOG STAYS OPEN. It used to close on the first choice, so
+    # trying four speeds meant opening it four times ("to add 4 effects I have
+    # to open the page 4 times"). The choice applies as it is clicked; Done is
+    # what closes it.
+    assert page.is_visible("#studio-fxp-scrim:not(.hide)"), (
+        "a single choice still closes the picker")
+    assert page.inner_text("#studio-fxp-stage").strip() == "In use"
+    other = next(i for i in page.evaluate("studio_parts('speed').map(p => p.id)")
+                 if i not in (pid, current, "s00"))
+    page.fill("#studio-fxp-q", other)
+    page.locator(f'#studio-fxp-list .studio-fxp-card[data-part="{other}"]').first.click()
+    page.wait_for_function("(id) => studio.project.shots[1].speed === id", arg=other)
+    assert page.is_visible("#studio-fxp-scrim:not(.hide)")
+    # --- and Cancel means what it says, even after a choice has applied
+    page.click('#studio-fxp [data-act="studio-fxp-cancel"]')
+    page.wait_for_selector("#studio-fxp-scrim", state="hidden")
+    page.wait_for_function("(id) => studio.project.shots[1].speed === id", arg=current)
     ui.clean("the picker's stage")
 
 
@@ -983,13 +1014,16 @@ def test_the_effect_picker_searches_previews_remembers_and_applies(ui, app):
     assert page.evaluate("studio.project.shots[1].speed") == current
     assert page.evaluate("document.activeElement.id") == "studio-f-speed"
 
-    # --- a click applies it, undoably, and it is remembered
+    # --- a click applies it, undoably, and it is remembered. The dialog
+    #     stays open: Done is what closes it, so several can be tried in a row.
     page.click("#studio-f-speed")
     page.wait_for_selector("#studio-fxp-scrim:not(.hide)")
     page.fill("#studio-fxp-q", pid)
     page.locator(f'#studio-fxp-list .studio-fxp-card[data-part="{pid}"]').first.click()
-    page.wait_for_selector("#studio-fxp-scrim", state="hidden")
     page.wait_for_function("(id) => studio.project.shots[1].speed === id", arg=pid)
+    assert page.is_visible("#studio-fxp-scrim:not(.hide)"), "one choice closed the picker"
+    page.click("#studio-fxp-done")
+    page.wait_for_selector("#studio-fxp-scrim", state="hidden")
     assert page.locator("#studio-f-speed").get_attribute("data-part") == pid
     page.click("#studio-f-speed")
     page.wait_for_selector("#studio-fxp-scrim:not(.hide)")
@@ -1084,6 +1118,9 @@ def test_the_change_count_is_what_differs_from_the_video_not_clicks(ui, app):
         page.wait_for_selector("#studio-fxp-scrim:not(.hide)")
         page.fill("#studio-fxp-q", pid)
         page.locator(f'#studio-fxp-list .studio-fxp-card[data-part="{pid}"]').first.click()
+        # The choice applies on the click and the dialog stays open (U21);
+        # Done is what dismisses it.
+        page.click("#studio-fxp-done")
         page.wait_for_selector("#studio-fxp-scrim", state="hidden")
         page.wait_for_function("(id) => studio.project.shots[1].camera === id", arg=pid)
         if pid == other:

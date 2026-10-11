@@ -72,7 +72,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import facecam, hits as hits_mod, lyrics as lyrics_mod, mark as mark_mod, parts as parts_mod, rulebook, studio_refs
+from . import (facecam, hits as hits_mod, lyrics as lyrics_mod, mark as mark_mod,
+               parts as parts_mod, rulebook, studio_refs, valorant_match)
 
 log = logging.getLogger(__name__)
 
@@ -130,6 +131,64 @@ def _folder_label(name: str) -> str:
     if n:
         label += f" · run {n}"
     return label
+
+
+def _match_groups(sess: dict, clips: list[dict]) -> list[dict]:
+    """The matches a run's clips were cut from, in the order they were played.
+
+    BOTH HALVES OF THIS ARE ALREADY ON DISK and neither costs a frame of
+    video. The run's own session.json says where each match starts in the
+    recording -- `demo.matches`, written when the detected kills were aligned
+    against Riot's record -- and the record the Clips page already fetched has
+    the map, the mode and the score. Checked against each other on the 10 Oct
+    run before this was built: the four spans take 10 + 4 + 15 + 9 of its 38
+    clips, and the kills in each group are 18 / 23 / 24 / 27, exactly what
+    Riot says the player got on Lotus, Drift, Haven and Piazza.
+
+    Each clip inside a match is given that group's index in `match`. A run with
+    no records -- CS2, Delta Force, anything imported -- gets no groups, and
+    the page shows the one grid it always did.
+    """
+    demo = sess.get("demo")
+    if not isinstance(demo, dict):
+        return []
+    rows = demo.get("matches")
+    if not isinstance(rows, list):
+        # One match aligned, before runs recorded a list of them.
+        rows = [demo] if demo.get("match") else []
+    spans = []
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("match"):
+            continue
+        try:
+            spans.append((float(row.get("offset") or 0.0), str(row["match"])))
+        except (TypeError, ValueError):
+            continue
+    spans.sort()
+    if not spans:
+        return []
+    out = []
+    for i, (at, mid) in enumerate(spans):
+        end = spans[i + 1][0] if i + 1 < len(spans) else float("inf")
+        inside = [c for c in clips if at <= c["start"] < end]
+        if not inside:
+            continue
+        match = valorant_match.one(mid)
+        if match is None:
+            # The record has been deleted since the clips were cut. The span is
+            # still real, so the clips stay grouped -- without a map name.
+            row = {"id": mid}
+        else:
+            row = valorant_match.summary(match)
+        for c in inside:
+            c["match"] = len(out)
+        # `kills` and `seconds` on a summary are Riot's -- the player's kills
+        # in the match and how long it ran. What the clips add up to is its
+        # own pair of keys, so neither can be mistaken for the other.
+        out.append({**row, "at": round(at, 2), "clips": len(inside),
+                    "clip_kills": sum(c["kill_count"] for c in inside),
+                    "clip_seconds": round(sum(c["duration"] for c in inside), 1)})
+    return out
 
 
 def _read_json(p: Path) -> Any:
@@ -293,6 +352,7 @@ def library(root: Path) -> dict:
         g = games.setdefault(game, {"game": game, "clips": 0, "folders": []})
         g["folders"].append({"folder": str(folder), "name": folder.name,
                              "label": _folder_label(folder.name), "when": when,
+                             "matches": _match_groups(sess, clips),
                              "clips": clips})
         g["clips"] += len(clips)
         total += len(clips)

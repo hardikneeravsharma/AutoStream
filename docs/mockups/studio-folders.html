@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio Folders</title>
+<style>
+:root{
+  --bg: #0C1016;
+  --chrome: #090D12;
+  --surface: #12171F;
+  --surface-raised: #1A212B;
+  --surface-sunken: #080B10;
+  --surface-overlay: #1F2732;
+  --surface-hover: #171D27;
+  --surface-active: #222A36;
+  --border-subtle: #1F2833;
+  --border-strong: #68768A;
+  --border-focus: #58A6FF;
+  --text-primary: #E9EFF7;
+  --text-secondary: #AAB8C9;
+  --text-tertiary: #909EB0;
+  --text-on-accent: #04121F;
+  --text-on-ok: #04121F;
+  --accent: #4D9FFF;
+  --accent-hover: #6FB2FF;
+  --accent-text: #7CB8FF;
+  --accent-muted: #0D1B2B;
+  --live: #FF6B6B;
+  --live-muted: #2A0F11;
+  --ok: #4FC97A;
+  --ok-muted: #0A1A11;
+  --warn: #E3AC3B;
+  --warn-muted: #1E1708;
+  --danger: #FF7A70;
+  --danger-muted: #2B100E;
+  --idle: #909EB0;
+  --idle-muted: #161B23;
+  --track: #1C242F;
+  --shadow-color: rgba(2,5,10,.62);
+  --rim: rgba(255,255,255,.055);
+  --scrim: rgba(4,7,12,.66);
+  --selection: rgba(77,159,255,.30);
+  --text-on-danger: #1A0706;
+  --text-on-warn: #1A1305;
+  --fg: #E9EFF7;
+  --dim: #AAB8C9;
+  --faint: #909EB0;
+  --line: #1F2833;
+  --raised: #1A212B;
+  --accent-fg: #04121F;
+  --radius:10px; --radius-lg:14px; --radius-pill:999px;
+  --gutter:28px; --rail-w:216px;
+  --font-display:"Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
+  --font-text:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+  --font-mono:"Cascadia Mono",Consolas,ui-monospace,monospace;
+  --on-media:#fff; --on-media-scrim:rgba(0,0,0,.62);
+  --shadow-md:0 2px 4px -1px rgba(0,0,0,.5), 0 6px 14px -4px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text-primary);font:14px/1.45 var(--font-text);
+  -webkit-font-smoothing:antialiased}
+.app{display:flex;min-height:100vh}
+/* ---- the shell, only so the mockup reads as the real page ---- */
+.rail{width:var(--rail-w);flex:0 0 var(--rail-w);background:var(--chrome);
+  border-right:1px solid var(--border-subtle);display:flex;flex-direction:column;padding:0 10px 14px}
+.brand{height:56px;display:flex;align-items:center;gap:10px;padding:0 8px;font:600 15px/1 var(--font-display)}
+.brand .dot{width:26px;height:26px;border-radius:50%;border:2px solid var(--text-secondary);
+  display:grid;place-items:center;font-size:11px}
+.nav a{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:8px;
+  color:var(--text-secondary);text-decoration:none;font-size:13.5px}
+.nav a.on{background:var(--surface-active);color:var(--text-primary)}
+.nav a .ic{width:16px;text-align:center;opacity:.8}
+.rail .foot{margin-top:auto;color:var(--text-tertiary);font-size:11.5px;padding:0 10px}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{height:56px;display:flex;align-items:center;justify-content:space-between;
+  padding:0 var(--gutter);border-bottom:1px solid var(--border-subtle);background:var(--chrome)}
+.topbar h1{margin:0;font:600 19px/1 var(--font-display)}
+.pill{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 12px;border-radius:var(--radius-pill);
+  background:var(--surface-raised);border:1px solid var(--border-subtle);color:var(--text-secondary);
+  font-size:12px;letter-spacing:.04em}
+.pill .dot{width:6px;height:6px;border-radius:50%;background:var(--text-tertiary)}
+.page{padding:22px var(--gutter) 60px;max-width:1340px}
+h2{font:600 15px/1 var(--font-display);letter-spacing:.06em;text-transform:uppercase;
+  color:var(--text-secondary);margin:30px 0 14px}
+.muted{color:var(--text-tertiary)}
+.sub{color:var(--text-secondary);margin:2px 0 18px}
+
+/* ---- buttons / chips, as the app draws them ---- */
+.btn{height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--border-subtle);
+  background:var(--surface-raised);color:var(--text-primary);font:500 13px var(--font-text);cursor:pointer}
+.btn:hover{background:var(--surface-hover)}
+.btn.ghost{background:transparent}
+.btn.sm{height:26px;padding:0 9px;font-size:12.5px}
+.chip{height:28px;padding:0 12px;border-radius:var(--radius-pill);border:1px solid var(--border-subtle);
+  background:var(--surface);color:var(--text-secondary);font-size:12.5px;cursor:pointer;margin:0 6px 6px 0}
+.chip.on{background:var(--surface-active);color:var(--text-primary);border-color:var(--border-strong)}
+.chip b{color:var(--text-primary);margin-left:4px}
+input.search{height:30px;width:260px;padding:0 10px;border-radius:8px;background:var(--surface-sunken);
+  border:1px solid var(--border-subtle);color:var(--text-primary);font:13px var(--font-text)}
+.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.crumbs{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-tertiary);margin-bottom:6px}
+.crumbs a{color:var(--text-secondary);text-decoration:none;cursor:pointer}
+.crumbs a:hover{color:var(--text-primary);text-decoration:underline}
+.title-row{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.title-row h3{margin:0;font:600 22px/1.2 var(--font-display)}
+
+/* ---- level 1: folders ---- */
+.folders{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:18px}
+.folder-card{background:var(--surface);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);
+  overflow:hidden;cursor:pointer;text-align:left;padding:0;color:inherit;font:inherit;display:block;
+  transition:transform .14s,border-color .14s,box-shadow .14s}
+.folder-card:hover{transform:translateY(-2px);border-color:var(--border-strong);box-shadow:var(--shadow-md)}
+.mosaic{display:grid;overflow:hidden;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:2px;aspect-ratio:16/9;
+  background:var(--surface-sunken)}
+.mosaic img{width:100%;height:100%;object-fit:cover;display:block}
+.mosaic.one{grid-template-columns:1fr;grid-template-rows:1fr}
+.folder-body{padding:12px 14px 14px;display:block}
+.folder-name{font:600 15px/1.2 var(--font-display);display:flex;align-items:center;gap:8px}
+.folder-facts{color:var(--text-tertiary);font-size:12.5px;margin-top:5px;display:block}
+.folder-card .go{color:var(--accent-text);font-size:12.5px;margin-top:10px;display:block}
+.fav-card .mosaic{display:grid;overflow:hidden;place-items:center;font-size:42px;color:var(--text-tertiary)}
+
+/* ---- level 2: runs in a folder ---- */
+.runs{display:flex;flex-direction:column;gap:10px}
+.run{display:flex;align-items:center;gap:14px;background:var(--surface);border:1px solid var(--border-subtle);
+  border-radius:var(--radius);padding:10px 14px 10px 10px;cursor:pointer}
+.run:hover{background:var(--surface-hover);border-color:var(--border-strong)}
+.run img{width:112px;height:63px;object-fit:cover;border-radius:7px;flex:0 0 auto;background:var(--surface-sunken)}
+.run .who{flex:1;min-width:0}
+.run .nm{font:600 14.5px/1.2 var(--font-display)}
+.run .fx{color:var(--text-tertiary);font-size:12.5px;margin-top:4px}
+.mchips{margin-top:7px;display:flex;gap:6px;flex-wrap:wrap}
+.mchip{font-size:11.5px;padding:2px 9px;border-radius:var(--radius-pill);background:var(--surface-sunken);
+  border:1px solid var(--border-subtle);color:var(--text-secondary)}
+.mchip.win{border-color:#2f5d3f;color:#9fdcb4}
+.mchip.loss{border-color:#5d3030;color:#e4a7a7}
+.run .acts{display:flex;gap:8px;align-items:center;flex:0 0 auto}
+
+/* ---- level 3: matches and clips ---- */
+.match{margin:0 0 26px}
+.match-h{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:9px 12px;border-radius:9px;
+  background:var(--surface);border:1px solid var(--border-subtle);margin-bottom:12px}
+.match-h .n{font:600 14.5px var(--font-display)}
+.match-h .score{font:600 13px var(--font-mono);padding:2px 8px;border-radius:6px;background:var(--surface-sunken)}
+.match-h .score.win{color:#9fdcb4} .match-h .score.loss{color:#e4a7a7}
+.match-h .sp{flex:1}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:16px}
+.clip{background:var(--surface);border:1px solid var(--border-subtle);border-radius:var(--radius);overflow:hidden}
+.clip .shot{position:relative;display:block;aspect-ratio:16/9;background:var(--surface-sunken)}
+.clip .shot img{width:100%;height:100%;object-fit:cover;display:block}
+.badge{position:absolute;bottom:6px;font-size:11px;color:var(--on-media);background:var(--on-media-scrim);
+  padding:2px 6px;border-radius:5px;line-height:1.3}
+.badge.l{left:6px} .badge.r{right:6px;font-family:var(--font-mono)}
+.clip .foot{display:flex;align-items:center;gap:6px;padding:7px 8px}
+.clip .foot .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;
+  color:var(--text-secondary)}
+.star{background:none;border:0;color:var(--text-tertiary);cursor:pointer;font-size:14px;padding:0 2px}
+.star.on{color:#f4c04a}
+.note{margin:18px 0 0;padding:12px 14px;border-left:3px solid var(--accent);background:var(--surface);
+  border-radius:0 9px 9px 0;color:var(--text-secondary);font-size:13px;max-width:900px}
+.note b{color:var(--text-primary)}
+.reels-bar{display:flex;align-items:center;gap:14px;background:var(--surface);border:1px solid var(--border-subtle);
+  border-radius:var(--radius);padding:11px 14px;color:var(--text-secondary)}
+.reels-bar b{color:var(--text-primary)}
+.ph{display:block;width:100%;height:100%;background:repeating-linear-gradient(135deg,var(--surface-raised) 0 10px,var(--surface-sunken) 10px 20px);opacity:.55}
+.stamp{position:absolute;right:18px;top:68px;font-size:11px;color:var(--text-tertiary);
+  background:var(--surface);border:1px solid var(--border-subtle);border-radius:var(--radius-pill);padding:4px 12px}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail">
+    <div class="brand"><span class="dot">◎</span> AutoStream</div>
+    <div class="nav">
+      <a href="#"><span class="ic">◷</span> Dashboard</a>
+      <a href="#"><span class="ic">▤</span> Library</a>
+      <a href="#"><span class="ic">▣</span> Clips</a>
+      <a href="#" class="on"><span class="ic">≡</span> Studio</a>
+      <a href="#"><span class="ic">⚙</span> Settings</a>
+      <a href="#"><span class="ic">▤</span> Logs</a>
+    </div>
+    <div class="foot">v1.53.0 · session 87</div>
+  </nav>
+  <div class="main">
+    <div class="topbar"><h1>Studio</h1><span class="pill"><span class="dot"></span> IDLE</span></div>
+    <div class="page" id="page"></div>
+  </div>
+</div>
+<div class="stamp" id="stamp">mockup · not the real app</div>
+<script>
+const DATA = {"clip_count": 339, "reels": 90, "fav_count": 22, "games": [{"game": "VALORANT", "clips": 222, "folders": [{"label": "10 Oct 2026, 22:15", "name": "2026-10-10_2215_VALORANT", "n": 38, "kills": 92, "secs": 1386, "cover": "", "clips": [], "matches": [{"map": "Lotus", "mode": "Competitive", "score": [7, 13], "won": false, "kda": [18, 14, 4], "at": 299.02, "n": 10, "kills": 18, "secs": 430, "clips": [{"name": "VALORANT_04_4-KILLS_r10_21m13s_26s", "dur": 26.41, "kills": 4, "hs": 2, "fav": false, "thumb": ""}, {"name": "VALORANT_05_4-KILLS_r16_31m15s_1m24s", "dur": 84.03, "kills": 4, "hs": 3, "fav": false, "thumb": ""}, {"name": "VALORANT_15_LAST-ALIVE_r18_35m46s_25s", "dur": 25.17, "kills": 2, "hs": 1, "fav": false, "thumb": ""}, {"name": "VALORANT_17_2-KILLS_r19_37m06s_58s", "dur": 58.02, "kills": 2, "hs": 2, "fav": false, "thumb": ""}, {"name": "VALORANT_25_LAST-ALIVE-1v3_r9_19m48s_41s", "dur": 41.07, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_26_LAST-ALIVE-1v3_r17_34m06s_15s", "dur": 15.08, "kills": 1, "hs": 0, "fav": false, "thumb": ""}]}, {"map": "Drift", "mode": "Team Deathmatch", "score": [100, 80], "won": true, "kda": [23, 11, 9], "at": 2632.48, "n": 4, "kills": 23, "secs": 198, "clips": [{"name": "VALORANT_01_12kills_46m20s_2m02s", "dur": 122.23, "kills": 12, "hs": 6, "fav": false, "thumb": ""}, {"name": "VALORANT_06_4kills_49m03s_26s", "dur": 26.41, "kills": 4, "hs": 1, "fav": false, "thumb": ""}, {"name": "VALORANT_07_4kills_44m31s_31s", "dur": 30.89, "kills": 4, "hs": 3, "fav": false, "thumb": ""}, {"name": "VALORANT_10_3kills_45m16s_19s", "dur": 18.51, "kills": 3, "hs": 3, "fav": false, "thumb": ""}]}, {"map": "Haven", "mode": "Competitive", "score": [13, 11], "won": true, "kda": [24, 16, 7], "at": 3214.8, "n": 15, "kills": 24, "secs": 505, "clips": [{"name": "VALORANT_09_3-KILLS_r12_1h12m27s_50s", "dur": 49.75, "kills": 3, "hs": 3, "fav": false, "thumb": ""}, {"name": "VALORANT_13_CLUTCH-1v2_r2_57m04s_21s", "dur": 21.27, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_14_ALMOST-1v3_r4_59m26s_38s", "dur": 37.7, "kills": 2, "hs": 1, "fav": false, "thumb": ""}, {"name": "VALORANT_16_LAST-ALIVE-1v5_r16_1h19m05s_19s", "dur": 18.95, "kills": 2, "hs": 2, "fav": false, "thumb": ""}, {"name": "VALORANT_18_2-KILLS_r3_57m59s_40s", "dur": 40.34, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_19_2-KILLS_r13_1h14m21s_37s", "dur": 36.91, "kills": 2, "hs": 1, "fav": false, "thumb": ""}]}, {"map": "Piazza", "mode": "Custom", "score": [1, 0], "won": true, "kda": [27, 21, 8], "at": 5985.07, "n": 9, "kills": 27, "secs": 253, "clips": [{"name": "VALORANT_02_6kills_1h45m51s_1m12s", "dur": 72.08, "kills": 6, "hs": 1, "fav": false, "thumb": ""}, {"name": "VALORANT_03_5kills_1h47m29s_56s", "dur": 56.16, "kills": 5, "hs": 2, "fav": false, "thumb": ""}, {"name": "VALORANT_08_4kills_1h48m46s_32s", "dur": 31.57, "kills": 4, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_11_3kills_1h43m00s_27s", "dur": 27.05, "kills": 3, "hs": 2, "fav": false, "thumb": ""}, {"name": "VALORANT_12_3kills_1h44m26s_28s", "dur": 28.07, "kills": 3, "hs": 1, "fav": false, "thumb": ""}, {"name": "VALORANT_22_2kills_1h40m30s_11s", "dur": 10.77, "kills": 2, "hs": 1, "fav": false, "thumb": ""}]}], "n_matches": 4}, {"label": "10 Oct 2026, 19:18", "name": "2026-10-10_1918_VALORANT", "n": 9, "kills": 13, "secs": 320, "cover": "", "clips": [{"name": "VALORANT_01_LAST-ALIVE_r16_37m10s_59s", "dur": 59.05, "kills": 3, "hs": 2, "fav": false, "thumb": ""}, {"name": "VALORANT_02_3-KILLS_r19_43m03s_1m01s", "dur": 61.01, "kills": 3, "hs": 2, "fav": false, "thumb": ""}, {"name": "VALORANT_03_1-KILLS_r2_14m41s_12s", "dur": 11.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_04_1-KILLS_r4_17m10s_33s", "dur": 33.16, "kills": 1, "hs": 1, "fav": false, "thumb": ""}, {"name": "VALORANT_05_1-KILLS_r7_21m40s_24s", "dur": 24.27, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_06_1-KILLS_r8_24m27s_21s", "dur": 20.67, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_07_1-KILLS_r13_32m50s_22s", "dur": 22.19, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_08_1-KILLS_r14_34m24s_33s", "dur": 32.7, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_09_FLAWLESS_r5_18m11s_56s", "dur": 55.92, "kills": 1, "hs": 0, "fav": false, "thumb": ""}], "matches": []}, {"label": "5 Oct 2026, 22:21", "name": "2026-10-05_2221_VALORANT", "n": 16, "kills": 27, "secs": 596, "cover": "", "clips": [{"name": "4 KILLS", "dur": 50.43, "kills": 4, "hs": 2, "fav": false, "thumb": ""}, {"name": "TRIPLE KILL", "dur": 67.01, "kills": 3, "hs": 2, "fav": false, "thumb": ""}, {"name": "TRIPLE KILL", "dur": 26.25, "kills": 3, "hs": 3, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 46.44, "kills": 2, "hs": 1, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 37.66, "kills": 2, "hs": 2, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 66.87, "kills": 2, "hs": 1, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 14.37, "kills": 2, "hs": 1, "fav": false, "thumb": ""}, {"name": "LAST ALIVE 1V3", "dur": 25.79, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_09_1-KILLS_r9_25m25s_47s", "dur": 47.44, "kills": 1, "hs": 1, "fav": false, "thumb": ""}, {"name": "VALORANT_10_1-KILLS_r11_28m45s_14s", "dur": 14.19, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_11_1-KILLS_r12_30m20s_32s", "dur": 32.28, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_12_1-KILLS_r13_31m40s_56s", "dur": 56.33, "kills": 1, "hs": 0, "fav": false, "thumb": ""}], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 15 30 02", "name": "import-2026-10-04_1534-Valorant-2026-10-04-15-15-30-02", "n": 1, "kills": 1, "secs": 34, "cover": "", "clips": [{"name": "Valorant-2026-10-04-15-15-30-02", "dur": 33.968, "kills": 1, "hs": 0, "fav": false, "thumb": ""}], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 14 51 01", "name": "import-2026-10-04_1532-Valorant-2026-10-04-15-14-51-01", "n": 1, "kills": 2, "secs": 22, "cover": "", "clips": [{"name": "Double kill", "dur": 21.536, "kills": 2, "hs": 0, "fav": false, "thumb": ""}], "matches": []}, {"label": "26 Sep 2026, 18:59", "name": "2026-09-26_1859_VALORANT", "n": 2, "kills": 2, "secs": 37, "cover": "", "clips": [], "matches": [{"map": "Plummet", "mode": "Competitive", "score": [6, 13], "won": false, "kda": [4, 14, 3], "at": 1356.33, "n": 2, "kills": 2, "secs": 37, "clips": [{"name": "VALORANT_21_1-KILLS_r5_29m13s_26s", "dur": 25.54, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "THRIFTY", "dur": 11.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}]}], "n_matches": 1}, {"label": "27 Aug 2026, 20:47 \u00b7 run 2", "name": "2026-08-27_2047_VALORANT_2", "n": 24, "kills": 34, "secs": 913, "cover": "", "clips": [], "matches": [{"map": "Ascent", "mode": "Competitive", "score": [7, 13], "won": false, "kda": [17, 17, 1], "at": 1187.99, "n": 10, "kills": 13, "secs": 310, "clips": [{"name": "TEAM ACE", "dur": 64.28, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "ALMOST A 1v3", "dur": 31.72, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "LAST ALIVE 1V3", "dur": 12.58, "kills": 1, "hs": 0, "fav": true, "thumb": ""}, {"name": "LAST ALIVE 1V3", "dur": 13.7, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "FLAWLESS", "dur": 14.21, "kills": 2, "hs": 0, "fav": true, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 14.83, "kills": 2, "hs": 0, "fav": false, "thumb": ""}]}, {"map": "Split", "mode": "Competitive", "score": [13, 11], "won": true, "kda": [21, 15, 6], "at": 3440.53, "n": 14, "kills": 21, "secs": 603, "clips": [{"name": "ALMOST A 1v2", "dur": 101.52, "kills": 3, "hs": 0, "fav": true, "thumb": ""}, {"name": "ALMOST A 1v2", "dur": 44.6, "kills": 1, "hs": 0, "fav": true, "thumb": ""}, {"name": "LAST ALIVE 1V4", "dur": 28.78, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "TRIPLE KILL", "dur": 30.61, "kills": 3, "hs": 0, "fav": true, "thumb": ""}, {"name": "TRIPLE KILL", "dur": 38.89, "kills": 3, "hs": 0, "fav": true, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 27.6, "kills": 2, "hs": 0, "fav": false, "thumb": ""}]}], "n_matches": 2}, {"label": "16 Sep 2026, 15:37", "name": "2026-09-16_1537_VALORANT", "n": 36, "kills": 53, "secs": 848, "cover": "", "clips": [], "matches": [{"map": "Lotus", "mode": "Deathmatch", "score": [0, 0], "won": false, "kda": [21, 28, 10], "at": -31.05, "n": 7, "kills": 10, "secs": 58, "clips": [{"name": "DOUBLE KILL", "dur": 11.44, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 10.07, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 14.04, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_31_1kill_0m24s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_32_1kill_1m13s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_33_1kill_3m52s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}]}, {"map": "Split", "mode": "Deathmatch", "score": [0, 0], "won": false, "kda": [15, 31, 7], "at": 606.3, "n": 7, "kills": 8, "secs": 48, "clips": [{"name": "DOUBLE KILL", "dur": 15.0, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_29_1kill_13m47s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_30_1kill_16m26s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_35_1kill_11m18s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_36_1kill_14m48s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_37_1kill_15m10s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}]}, {"map": "Ascent", "mode": "Custom", "score": [1, 0], "won": true, "kda": [35, 23, 7], "at": 1106.7, "n": 5, "kills": 9, "secs": 59, "clips": [{"name": "DOUBLE KILL", "dur": 14.01, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 14.61, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 14.69, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 9.76, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_39_1kill_27m43s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}]}, {"map": "Abyss", "mode": "Competitive", "score": [13, 8], "won": true, "kda": [26, 10, 6], "at": 1827.56, "n": 17, "kills": 26, "secs": 684, "clips": [{"name": "1v4 CLUTCH", "dur": 33.21, "kills": 4, "hs": 0, "fav": true, "thumb": ""}, {"name": "LAST ALIVE", "dur": 63.38, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 67.29, "kills": 2, "hs": 0, "fav": true, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 83.96, "kills": 2, "hs": 0, "fav": true, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 34.05, "kills": 2, "hs": 0, "fav": true, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 59.75, "kills": 2, "hs": 0, "fav": true, "thumb": ""}]}], "n_matches": 4}, {"label": "Added \u00b7 Valorant 2026 09 30 00 12 01 02", "name": "import-2026-09-30_0015-Valorant-2026-09-30-00-12-01-02", "n": 1, "kills": 5, "secs": 70, "cover": "", "clips": [{"name": "ACE", "dur": 69.584, "kills": 5, "hs": 0, "fav": false, "thumb": ""}], "matches": []}, {"label": "23 Sep 2026, 21:57", "name": "2026-09-23_2157_VALORANT", "n": 43, "kills": 60, "secs": 1606, "cover": "", "clips": [], "matches": [{"map": "Sunset", "mode": "Competitive", "score": [13, 3], "won": true, "kda": [13, 5, 4], "at": 1067.16, "n": 12, "kills": 15, "secs": 331, "clips": [{"name": "ALMOST A 1v3", "dur": 23.3, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "LAST ALIVE 1V3", "dur": 29.63, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "TRIPLE KILL", "dur": 36.19, "kills": 3, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_17_1-KILLS_r1_19m19s_32s", "dur": 32.06, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_18_1-KILLS_r3_22m11s_14s", "dur": 13.84, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "FLAWLESS", "dur": 23.38, "kills": 1, "hs": 0, "fav": false, "thumb": ""}]}, {"map": "Split", "mode": "Competitive", "score": [13, 6], "won": true, "kda": [20, 12, 5], "at": 3014.59, "n": 15, "kills": 21, "secs": 658, "clips": [{"name": "ALMOST A 1v2", "dur": 76.42, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "LAST ALIVE 1V5", "dur": 13.0, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "TRIPLE KILL", "dur": 65.31, "kills": 3, "hs": 0, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 15.81, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 17.26, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 59.11, "kills": 2, "hs": 0, "fav": false, "thumb": ""}]}, {"map": "Ascent", "mode": "Competitive", "score": [14, 12], "won": true, "kda": [23, 16, 9], "at": 5514.17, "n": 16, "kills": 24, "secs": 616, "clips": [{"name": "1v2 CLUTCH", "dur": 15.69, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "LAST ALIVE", "dur": 43.52, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "LAST ALIVE 1V3", "dur": 13.26, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "TRIPLE KILL", "dur": 25.02, "kills": 3, "hs": 0, "fav": false, "thumb": ""}, {"name": "TRIPLE KILL", "dur": 35.5, "kills": 3, "hs": 0, "fav": false, "thumb": ""}, {"name": "FLAWLESS", "dur": 37.08, "kills": 2, "hs": 0, "fav": false, "thumb": ""}]}], "n_matches": 3}, {"label": "13 Sep 2026, 23:13", "name": "2026-09-13_2313_VALORANT", "n": 15, "kills": 25, "secs": 541, "cover": "", "clips": [{"name": "ALMOST A 1v2", "dur": 43.5, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "4 KILLS", "dur": 83.41, "kills": 4, "hs": 0, "fav": true, "thumb": ""}, {"name": "LAST ALIVE 1V3", "dur": 26.66, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "LAST ALIVE 1V4", "dur": 17.26, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "LAST ALIVE 1V4", "dur": 22.52, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "TRIPLE KILL", "dur": 50.48, "kills": 3, "hs": 0, "fav": false, "thumb": ""}, {"name": "TRIPLE KILL", "dur": 18.69, "kills": 3, "hs": 0, "fav": true, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 81.77, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 36.58, "kills": 2, "hs": 0, "fav": true, "thumb": ""}, {"name": "VALORANT_10_1-KILLS_r3_9m09s_12s", "dur": 11.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_11_1-KILLS_r12_23m33s_55s", "dur": 54.81, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_12_1-KILLS_r15_28m32s_23s", "dur": 22.55, "kills": 1, "hs": 0, "fav": true, "thumb": ""}], "matches": []}, {"label": "6 Sep 2026, 16:53 \u00b7 run 2", "name": "2026-09-06_1653_VALORANT_2", "n": 13, "kills": 13, "secs": 72, "cover": "", "clips": [{"name": "VALORANT_01_1kill_2h21m14s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_02_1kill_2h22m17s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_03_1kill_2h26m08s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_04_1kill_2h28m57s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_05_1kill_2h30m45s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_06_1kill_2h32m02s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_07_1kill_2h35m18s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_08_1kill_2h38m11s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_09_1kill_2h41m27s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_10_1kill_2h41m50s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_11_1kill_2h42m58s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_12_1kill_2h46m29s_6s", "dur": 5.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}], "matches": []}, {"label": "27 Aug 2026, 20:47", "name": "2026-08-27_2047_VALORANT", "n": 23, "kills": 29, "secs": 246, "cover": "", "clips": [{"name": "TRIPLE KILL", "dur": 26.5, "kills": 3, "hs": 0, "fav": false, "thumb": ""}, {"name": "TRIPLE KILL", "dur": 30.62, "kills": 3, "hs": 0, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 24.0, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "DOUBLE KILL", "dur": 22.0, "kills": 2, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_05_1kill_21m07s_8s", "dur": 7.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_06_1kill_24m56s_8s", "dur": 7.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_07_1kill_26m54s_8s", "dur": 7.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_08_1kill_40m57s_8s", "dur": 7.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_09_1kill_42m30s_8s", "dur": 7.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_10_1kill_43m43s_8s", "dur": 7.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_11_1kill_45m20s_8s", "dur": 7.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}, {"name": "VALORANT_12_1kill_48m25s_8s", "dur": 7.5, "kills": 1, "hs": 0, "fav": false, "thumb": ""}], "matches": []}], "covers": ["", "", "", ""]}, {"game": "Counter-Strike 2", "clips": 53, "folders": [{"label": "4 Oct 2026, 02:32 \u00b7 context", "name": "2026-10-04_0232_Counter-Strike-2_context", "n": 8, "kills": 12, "secs": 110, "cover": "", "clips": [], "matches": []}, {"label": "3 Oct 2026, 19:51", "name": "2026-10-03_1951_Counter-Strike-2", "n": 2, "kills": 5, "secs": 26, "cover": "", "clips": [], "matches": []}, {"label": "3 Oct 2026, 15:50 \u00b7 context", "name": "2026-10-03_1550_Counter-Strike-2_context", "n": 6, "kills": 14, "secs": 81, "cover": "", "clips": [], "matches": []}, {"label": "1 Oct 2026, 12:01", "name": "2026-10-01_1201_Counter-Strike-2", "n": 4, "kills": 8, "secs": 44, "cover": "", "clips": [], "matches": []}, {"label": "27 Sep 2026, 20:55 \u00b7 run 2", "name": "2026-09-27_2055_Counter-Strike-2_2", "n": 25, "kills": 30, "secs": 200, "cover": "", "clips": [], "matches": []}, {"label": "27 Sep 2026, 20:55", "name": "2026-09-27_2055_Counter-Strike-2", "n": 5, "kills": 10, "secs": 50, "cover": "", "clips": [], "matches": []}, {"label": "4 Sep 2026, 18:43", "name": "2026-09-04_1843_Counter-Strike-2", "n": 3, "kills": 7, "secs": 37, "cover": "", "clips": [], "matches": []}], "covers": ["", "", "", ""]}, {"game": "Delta Force", "clips": 44, "folders": [{"label": "20 Aug 2026, 00:05", "name": "2026-08-20_0005_Delta-Force", "n": 26, "kills": 64, "secs": 610, "cover": "", "clips": [], "matches": []}, {"label": "19 Aug 2026, 05:15 \u00b7 captioned", "name": "2026-08-19_0515_Delta-Force_captioned", "n": 18, "kills": 27, "secs": 173, "cover": "", "clips": [], "matches": []}], "covers": ["", "", "", ""]}, {"game": "Other", "clips": 20, "folders": [{"label": "Added \u00b7 Valorant 2026 10 04 15 14 51 01", "name": "import-2026-10-05_2139-Valorant-2026-10-04-15-14-51-01", "n": 1, "kills": 1, "secs": 22, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 15 30 02", "name": "import-2026-10-05_2139-Valorant-2026-10-04-15-15-30-02", "n": 1, "kills": 1, "secs": 34, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 16 48 03", "name": "import-2026-10-05_2139-Valorant-2026-10-04-15-16-48-03", "n": 1, "kills": 1, "secs": 43, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 17 45 04", "name": "import-2026-10-05_2139-Valorant-2026-10-04-15-17-45-04", "n": 1, "kills": 1, "secs": 84, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 19 25 05", "name": "import-2026-10-05_2139-Valorant-2026-10-04-15-19-25-05", "n": 1, "kills": 1, "secs": 20, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 20 26 06", "name": "import-2026-10-05_2139-Valorant-2026-10-04-15-20-26-06", "n": 1, "kills": 1, "secs": 43, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 21 28 07", "name": "import-2026-10-05_2139-Valorant-2026-10-04-15-21-28-07", "n": 1, "kills": 1, "secs": 15, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 22 01 08", "name": "import-2026-10-05_2139-Valorant-2026-10-04-15-22-01-08", "n": 1, "kills": 1, "secs": 42, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 23 18 09", "name": "import-2026-10-05_2139-Valorant-2026-10-04-15-23-18-09", "n": 1, "kills": 1, "secs": 25, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 25 38 10", "name": "import-2026-10-05_2139-Valorant-2026-10-04-15-25-38-10", "n": 1, "kills": 1, "secs": 21, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 14 51 01", "name": "import-2026-10-05_2122-Valorant-2026-10-04-15-14-51-01", "n": 1, "kills": 1, "secs": 22, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 15 30 02", "name": "import-2026-10-05_2122-Valorant-2026-10-04-15-15-30-02", "n": 1, "kills": 1, "secs": 34, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 16 48 03", "name": "import-2026-10-05_2122-Valorant-2026-10-04-15-16-48-03", "n": 1, "kills": 1, "secs": 43, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 17 45 04", "name": "import-2026-10-05_2122-Valorant-2026-10-04-15-17-45-04", "n": 1, "kills": 1, "secs": 84, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 19 25 05", "name": "import-2026-10-05_2122-Valorant-2026-10-04-15-19-25-05", "n": 1, "kills": 1, "secs": 20, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 20 26 06", "name": "import-2026-10-05_2122-Valorant-2026-10-04-15-20-26-06", "n": 1, "kills": 1, "secs": 43, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 21 28 07", "name": "import-2026-10-05_2122-Valorant-2026-10-04-15-21-28-07", "n": 1, "kills": 1, "secs": 15, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 22 01 08", "name": "import-2026-10-05_2122-Valorant-2026-10-04-15-22-01-08", "n": 1, "kills": 1, "secs": 42, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 23 18 09", "name": "import-2026-10-05_2122-Valorant-2026-10-04-15-23-18-09", "n": 1, "kills": 1, "secs": 25, "cover": "", "clips": [], "matches": []}, {"label": "Added \u00b7 Valorant 2026 10 04 15 25 38 10", "name": "import-2026-10-05_2122-Valorant-2026-10-04-15-25-38-10", "n": 1, "kills": 1, "secs": 21, "cover": "", "clips": [], "matches": []}], "covers": ["", "", "", ""]}]};
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const dur = s => { s = Math.round(s); const m = Math.floor(s / 60); return m ? m + 'm ' + String(s % 60).padStart(2, '0') + 's' : s + 's'; };
+const long = s => { s = Math.round(s); if (s < 60) return s + 's'; const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h ? h + 'h ' + m + 'm' : m + 'm'; };
+let view = {at: 'folders', game: null, folder: null};
+
+function clipTile(c) {
+  return '<div class="clip"><span class="shot">' +
+    (c.thumb ? '<img src="' + c.thumb + '" alt="">' : '<span class="ph"></span>') +
+    '<span class="badge l">' + c.kills + (c.kills === 1 ? ' kill' : ' kills') +
+      (c.hs ? ' · ' + c.hs + ' HS' : '') + '</span>' +
+    '<span class="badge r">' + dur(c.dur) + '</span></span>' +
+    '<div class="foot"><span class="nm">' + esc(c.name) + '</span>' +
+    '<button class="star' + (c.fav ? ' on' : '') + '">' + (c.fav ? '★' : '☆') + '</button>' +
+    '<button class="btn ghost sm">Edit</button>' +
+    '<button class="btn ghost sm">▷</button></div></div>';
+}
+
+function folders() {
+  const g = DATA.games;
+  const runs = g.reduce((n, x) => n + x.folders.length, 0);
+  let h = '<div class="title-row"><h3>Your clips</h3></div>' +
+    '<p class="sub">' + DATA.clip_count + ' clips in ' + runs + ' runs across ' + g.length +
+    ' games. Open a folder to pick from it.</p>' +
+    '<div class="reels-bar"><b>Your reels</b><span>' + DATA.reels + ' made</span>' +
+    '<span style="flex:1"></span><button class="btn">Open reels</button></div>' +
+    '<h2>Folders</h2>' +
+    '<div class="toolbar"><input class="search" placeholder="Search a game, a date, a clip…">' +
+    '<button class="chip on">Newest</button><button class="chip">Most clips</button>' +
+    '<button class="chip">A–Z</button></div><div class="folders">';
+  g.forEach((x, i) => {
+    const newest = x.folders[0] ? x.folders[0].label.split(' · ')[0] : '';
+    h += '<button class="folder-card" data-game="' + i + '">' +
+      '<span class="mosaic">' + x.covers.map(t => t ? '<img src="' + t + '" alt="">' : '<span class="ph"></span>').join('') + '</span>' +
+      '<span class="folder-body"><span class="folder-name">' + esc(x.game) + '</span>' +
+      '<span class="folder-facts">' + x.clips + ' clips · ' + x.folders.length +
+      (x.folders.length === 1 ? ' run' : ' runs') + '<br>newest ' + esc(newest) + '</span>' +
+      '<span class="go">Open →</span></span></button>';
+  });
+  h += '<button class="folder-card fav-card"><span class="mosaic">★</span>' +
+    '<span class="folder-body"><span class="folder-name">Favourites</span>' +
+    '<span class="folder-facts">' + DATA.fav_count + ' clips · across every game</span>' +
+    '<span class="go">Open →</span></span></button></div>' +
+    '<p class="note"><b>What changed:</b> the page opens on ' + (g.length + 1) +
+    ' cards instead of ' + DATA.clip_count + ' clip tiles in one scroll. Nothing is lost — ' +
+    'the search box still looks inside every folder.</p>';
+  return h;
+}
+
+function runs() {
+  const g = DATA.games[view.game];
+  let h = '<div class="crumbs"><a data-back="folders">Folders</a> › <span>' + esc(g.game) + '</span></div>' +
+    '<div class="title-row"><h3>' + esc(g.game) + '</h3><span class="muted">' + g.clips +
+    ' clips in ' + g.folders.length + ' runs</span></div>' +
+    '<div class="toolbar"><input class="search" placeholder="Search this folder…">' +
+    '<button class="chip on">Newest</button><button class="chip">Most kills</button>' +
+    '<button class="btn ghost">Select every clip in this folder</button></div><div class="runs">';
+  g.folders.forEach((f, i) => {
+    const ms = f.matches || [];
+    h += '<div class="run" data-folder="' + i + '">' +
+      (f.cover ? '<img src="' + f.cover + '" alt="">' : '<span class="ph" style="width:112px;height:63px;border-radius:7px;flex:0 0 auto"></span>') +
+      '<div class="who"><div class="nm">' + esc(f.label) + '</div>' +
+      '<div class="fx">' + f.n + (f.n === 1 ? ' clip' : ' clips') + ' · ' + f.kills + (f.kills === 1 ? ' kill · ' : ' kills · ') +
+      long(f.secs) + ' of footage' + (ms.length ? ' · ' + ms.length + (ms.length === 1 ? ' match' : ' matches') : '') + '</div>' +
+      (ms.length ? '<div class="mchips">' + ms.map(m => '<span class="mchip ' +
+        (m.won === true ? 'win' : m.won === false ? 'loss' : '') + '">' + esc(m.map) + ' · ' +
+        (m.score ? m.score.join('–') : m.mode) + '</span>').join('') + '</div>' : '') +
+      '</div><div class="acts"><button class="btn ghost sm">Select run</button>' +
+      '<button class="btn sm">Open</button></div></div>';
+  });
+  h += '</div><p class="note"><b>A run is a sitting at the PC</b>, which is what the folder on disk is. ' +
+    'The matches inside it come from the Riot records AutoStream already saved.</p>';
+  return h;
+}
+
+function clips() {
+  const g = DATA.games[view.game], f = g.folders[view.folder];
+  let h = '<div class="crumbs"><a data-back="folders">Folders</a> › <a data-back="runs">' + esc(g.game) +
+    '</a> › <span>' + esc(f.label) + '</span></div>' +
+    '<div class="title-row"><h3>' + esc(f.label) + '</h3><span class="muted">' + f.n + ' clips · ' +
+    f.kills + ' kills · ' + long(f.secs) + '</span>' +
+    '<span style="flex:1"></span><button class="btn ghost sm">Select the whole run</button></div>' +
+    '<p class="sub">Grouped by the match each clip was cut from.</p>';
+  const ms = f.matches || [];
+  if (!ms.length) {
+    h += '<div class="grid">' + f.clips.map(clipTile).join('') + '</div>';
+    return h;
+  }
+  ms.forEach((m, i) => {
+    const won = m.won === true ? 'win' : m.won === false ? 'loss' : '';
+    h += '<section class="match"><div class="match-h">' +
+      '<span class="n">Match ' + (i + 1) + ' · ' + esc(m.map) + '</span>' +
+      '<span class="muted">' + esc(m.mode) + '</span>' +
+      (m.score ? '<span class="score ' + won + '">' + m.score.join(' – ') + '</span>' : '') +
+      '<span class="muted">' + (m.kda[0] != null ? m.kda.join(' / ') + ' K/D/A' : '') + '</span>' +
+      '<span class="muted">' + m.n + ' clips · ' + m.kills + ' kills · ' + long(m.secs) + '</span>' +
+      '<span class="muted">at ' + long(m.at) + ' into the recording</span>' +
+      '<span class="sp"></span><button class="btn ghost sm">Select match</button></div>' +
+      '<div class="grid">' + m.clips.map(clipTile).join('') +
+      (m.n > m.clips.length ? '<div class="clip" style="display:grid;place-items:center;color:var(--text-tertiary);' +
+        'min-height:150px">+ ' + (m.n - m.clips.length) + ' more</div>' : '') +
+      '</div></section>';
+  });
+  h += '<p class="note"><b>Every one of these headings is already on disk.</b> The match offsets are in the ' +
+    'run\'s <code>session.json</code>, and the map, the mode and the score are in the Riot record the ' +
+    'Clips page already fetched. The Studio has simply never read them.</p>';
+  return h;
+}
+
+function render() {
+  const page = document.getElementById('page');
+  page.innerHTML = view.at === 'folders' ? folders() : view.at === 'runs' ? runs() : clips();
+  page.querySelectorAll('[data-game]').forEach(el => el.onclick = () => {
+    view = {at: 'runs', game: +el.dataset.game, folder: null}; render();
+  });
+  page.querySelectorAll('[data-folder]').forEach(el => el.onclick = () => {
+    view.folder = +el.dataset.folder; view.at = 'clips'; render();
+  });
+  page.querySelectorAll('[data-back]').forEach(el => el.onclick = () => {
+    view.at = el.dataset.back; render();
+  });
+  window.scrollTo(0, 0);
+}
+render();
+window.mock = {go: (at, game, folder) => { view = {at, game, folder}; render(); }};
+</script>
+</body>
+</html>
