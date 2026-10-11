@@ -1030,7 +1030,8 @@ const studio = {
      `held` why it is waiting, `failed` a project that failed once and is not
      retried until it changes. */
   auto: {on: true, known: false, timer: null, dueAt: 0, armed: '', sig: '', job: 0,
-         running: false, pct: 0, held: '', heldUntil: 0, failed: '', idleMs: 2500, log: []}
+         running: false, pct: 0, held: '', heldUntil: 0, failed: '', idleMs: 2500,
+         waitMs: 2500, lastMs: 0, log: []}
 };
 
 const studio_el = (id) => document.getElementById(id);
@@ -3310,6 +3311,9 @@ async function studio_poll() {
 function studio_autoDone(j) {
   const a = studio.auto;
   a.running = false;
+  /* What this reel costs to render, learned from the render itself -- a
+     render the user started teaches it too, since that is the same work. */
+  if (Number(j.elapsed) > 0) a.lastMs = Number(j.elapsed) * 1000;
   const news = j.id !== studio.seenJob && (j.id === studio.jobId || j.id === studio.watching || j.id === a.job);
   studio.seenJob = j.id;
   if (!news) { studio_drawRenderCard(); return; }
@@ -3852,14 +3856,27 @@ function studio_autoBusyElsewhere() {
 
 /* After every redraw of the render card: a project that has changed since the
    timer was last started starts it again. */
+/* The longest the page will sit on an edit before rendering it anyway. Long
+   enough for a four-minute render to survive ordinary editing, short enough
+   that nobody wonders whether it is coming. */
+const AUTO_WAIT_MAX = 20000;
+
 function studio_autoArm() {
   const a = studio.auto, sig = studio_projSig();
   if (sig === a.armed) return;
   a.armed = sig;
   clearTimeout(a.timer); a.timer = null;
-  /* Counted from the last edit even when something is in the way, so the
+  /* WAIT IN PROPORTION TO WHAT A RENDER COSTS ON THIS REEL. 2.5 s was a
+     pause between keystrokes; on a 47-shot reel the render takes 4m18s and
+     `yield_auto` throws the running one away for the next edit, so a steady
+     editor restarted it forever and nothing ever landed -- which reads as
+     "the render does not start by itself". A tenth of the last render,
+     capped, is long enough to mean the editing has actually stopped.
+
+     Counted from the last edit even when something is in the way, so the
      poll that finds the way clear does not start it mid-gesture. */
-  a.dueAt = Date.now() + a.idleMs;
+  a.waitMs = Math.min(AUTO_WAIT_MAX, Math.max(a.idleMs, (a.lastMs || 0) / 10));
+  a.dueAt = Date.now() + a.waitMs;
   if (!a.on || !studio.project || !studio.dirty) return;
   if (studio.rendering) {
     /* Never a second encode beside the one the user asked for. The edit
@@ -3870,7 +3887,7 @@ function studio_autoArm() {
   }
   if (a.running && sig === a.sig) return;
   a.held = '';
-  a.timer = setTimeout(studio_autoGo, a.idleMs);
+  a.timer = setTimeout(studio_autoGo, a.waitMs || a.idleMs);
 }
 
 async function studio_autoGo() {
@@ -5433,7 +5450,7 @@ function studio_grp(key, title, body, note) {
    when the reel renders, so whether they were is reported after it. */
 function studio_lyricsGroup(p) {
   const cat = (studio.catalog && studio.catalog.lyrics) || {looks: [], faces: []};
-  const ly = p.lyrics || {look: 'off', face: '', clean: false};
+  const ly = p.lyrics || {look: 'off', face: '', clean: false, reveal: 'look'};
   const look = cat.looks.filter(l => l.key === ly.look)[0];
   const own = look ? cat.faces.filter(f => f.key === look.face)[0] : null;
   const on = !!look;
@@ -5448,6 +5465,14 @@ function studio_lyricsGroup(p) {
       '<select class="select" id="studio-r-lyricface">' +
       opt('', 'The look’s own' + (own ? ' (' + own.label + ')' : ''), !ly.face) +
       cat.faces.map(f => opt(f.key, f.label, f.key === ly.face)).join('') + '</select>' +
+      /* HOW THE WORDS ARRIVE, asked separately from the look. It used to be
+         welded to it -- Stamp was one word at a time because Stamp was -- so
+         somebody who wanted whole lines in Stamp's type had no way to ask. */
+      '<label class="field-label" for="studio-r-lyricreveal">How they arrive</label>' +
+      '<select class="select" id="studio-r-lyricreveal">' +
+      (cat.reveals || []).map(r => opt(r.key, r.label, r.key === (ly.reveal || 'look'))).join('') + '</select>' +
+      '<span class="muted studio-small">' + esc(((cat.reveals || [])
+        .filter(r => r.key === (ly.reveal || 'look'))[0] || {}).blurb || '') + '</span>' +
       '<label class="studio-check"><input type="checkbox" id="studio-r-lyricclean"' + (ly.clean ? ' checked' : '') + '> Star out swear words</label>' +
       '<span class="muted studio-small">' + esc(studio.lyricsNote ||
         'Synced lyrics are looked up on LRCLIB when the reel renders. A .lrc file named like the song, beside it, is used first.') +
@@ -5682,6 +5707,8 @@ function studio_inspectorInput(e) {
       t.value === 'off' ? 'Lyrics · off' : 'Lyrics · ' + t.options[t.selectedIndex].text),
     'studio-r-lyricface': () => studio_change(pr => { pr.lyrics = Object.assign({}, pr.lyrics, {face: t.value}); },
       'Lyrics typeface · ' + t.options[t.selectedIndex].text),
+    'studio-r-lyricreveal': () => studio_change(pr => { pr.lyrics = Object.assign({}, pr.lyrics, {reveal: t.value}); },
+      'Lyrics · ' + t.options[t.selectedIndex].text.toLowerCase()),
     'studio-r-lyricclean': () => studio_change(pr => { pr.lyrics = Object.assign({}, pr.lyrics, {clean: t.checked}); },
       t.checked ? 'Lyrics · swears starred' : 'Lyrics · as sung')
   };

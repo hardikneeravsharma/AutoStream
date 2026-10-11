@@ -138,10 +138,12 @@ def test_every_face_and_its_licence_ship_with_the_app():
 
 
 def test_settings_are_off_unless_a_known_look_is_asked_for():
-    assert lyrics.settings(None) == {"look": "off", "face": "", "clean": False, "pos": None, "shift": 0.0}
+    assert lyrics.settings(None) == {"look": "off", "face": "", "clean": False, "pos": None,
+                                     "shift": 0.0, "reveal": "look"}
     assert lyrics.settings({"look": "bogus", "face": "comic"})["look"] == "off"
     assert lyrics.settings({"look": "glow", "face": "bebas", "clean": 1}) == \
-        {"look": "glow", "face": "bebas", "clean": True, "pos": None, "shift": 0.0}
+        {"look": "glow", "face": "bebas", "clean": True, "pos": None, "shift": 0.0,
+         "reveal": "look"}
 
 
 def test_a_position_is_kept_clamped_inside_the_frame_and_junk_is_dropped():
@@ -276,3 +278,93 @@ def test_prepare_says_why_when_there_are_no_words(tmp_path):
     assert got.ass is None and ".lrc" in got.note
     off = lyrics.prepare({"lyrics": {"look": "off"}}, {"length": 5.0}, tmp_path, 1080, 1920)
     assert off.ass is None and off.note == ""
+
+
+# ------------------------------------------- how the words arrive (U25)
+
+def _row(words, t0=0.0, step=0.4, hook=-1):
+    return [{"w": w, "a": round(t0 + i * step, 3), "b": round(t0 + (i + 1) * step, 3),
+             **({"hook": True} if i == hook else {})} for i, w in enumerate(words)]
+
+
+def _texts(script):
+    """What each Dialogue event actually draws, tags stripped."""
+    out = []
+    for line in script.splitlines():
+        if line.startswith("Dialogue:"):
+            out.append(re.sub(r"\{[^}]*\}", "", line.split(",", 9)[-1]))
+    return out
+
+
+def test_the_reveal_is_a_setting_of_its_own():
+    assert lyrics.settings({"look": "stamp"})["reveal"] == "look"
+    assert lyrics.settings({"look": "stamp", "reveal": "type"})["reveal"] == "type"
+    # Anything the page did not offer falls back to the look's own.
+    assert lyrics.settings({"look": "stamp", "reveal": "wiggle"})["reveal"] == "look"
+    assert {r["key"] for r in lyrics.catalog()["reveals"]} == set(lyrics.REVEALS)
+
+
+def test_each_reveal_draws_what_it_says():
+    rows = [_row(["never", "gonna", "give"])]
+    by = {r: _texts(lyrics.build_ass("serif", rows, 1080, 1920, reveal=r)) for r in lyrics.REVEALS}
+    assert by["word"] == ["never", "gonna", "give"]
+    assert by["line"] == ["never gonna give"]
+    assert by["build"] == ["never", "never gonna", "never gonna give"]
+    assert by["type"][:4] == ["n", "ne", "nev", "neve"]
+    assert by["type"][-1] == "never gonna give"
+
+
+def test_a_whole_line_is_held_while_it_is_sung():
+    rows = [_row(["never", "gonna", "give"])]
+    script = lyrics.build_ass("serif", rows, 1080, 1920, reveal="line")
+    ev = [l for l in script.splitlines() if l.startswith("Dialogue:")][0].split(",")
+    assert ev[1].strip() == lyrics._ts(0.0).strip()      # the first word's start
+    assert ev[2].strip() == lyrics._ts(1.2).strip()      # the last word's end
+
+
+def test_a_look_that_joins_a_whole_row_still_obeys_the_reveal():
+    """Caption joins a row into one phrase and Serif prepends the words
+    already sung, so units handed over as one row came out doubled --
+    "never never gonna". Each unit is a row of its own."""
+    rows = [_row(["never", "gonna", "give"])]
+    # Caption whips each unit in and out, so one unit is two events; what
+    # matters is that it draws three separate words, not one joined phrase.
+    drawn = [t.lower() for t in
+             _texts(lyrics.build_ass("caption", rows, 1080, 1920, reveal="word"))]
+    assert sorted(set(drawn)) == ["give", "gonna", "never"], drawn
+    # ...and no single event repeats a word it has already drawn: Serif
+    # prepending the words already sung, on top of units that already
+    # contain them, is what produced "never never gonna".
+    for drawn in _texts(lyrics.build_ass("serif", rows, 1080, 1920, reveal="build")):
+        got = drawn.split()
+        assert len(got) == len(dict.fromkeys(got)), drawn
+
+
+def test_every_look_draws_every_reveal():
+    rows = [_row(["never", "gonna", "give", "you", "up"], hook=1),
+            _row(["never", "let", "you", "down"], t0=2.2)]
+    for look in lyrics.LOOKS:
+        for reveal in lyrics.REVEALS:
+            script = lyrics.build_ass(look, rows, 1080, 1920, reveal=reveal)
+            assert script.startswith("[Script Info]"), (look, reveal)
+            assert [l for l in script.splitlines() if l.startswith("Dialogue:")], (look, reveal)
+
+
+def test_a_line_too_wide_for_the_look_wraps_and_shrinks():
+    """Stamp's 250px was chosen for one word. Asked for a whole line it has
+    to come down, or it hangs off both edges."""
+    rows = [_row(["everybody", "wants", "to", "rule", "the", "world"])]
+    wrapped = lyrics._regroup("stamp", rows, "line")
+    assert "\\N" in wrapped[0][0]["w"]
+    assert all(len(part) <= lyrics.REVEAL_FIT["stamp"] + 1
+               for part in wrapped[0][0]["w"].split("\\N")), wrapped[0][0]["w"]
+    # ...and never so far down that it stops being that look.
+    assert lyrics._shrink("stamp", [[{"w": "a" * 60}]]) == lyrics.REVEAL_MIN_SCALE
+
+
+def test_the_looks_own_reveal_is_untouched():
+    """The default must draw exactly what it drew before this existed."""
+    rows = [_row(["never", "gonna", "give"], hook=2)]
+    for look in lyrics.LOOKS:
+        assert lyrics.build_ass(look, rows, 1080, 1920) == \
+            lyrics.build_ass(look, rows, 1080, 1920, reveal="look")

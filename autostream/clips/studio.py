@@ -4622,7 +4622,12 @@ class StudioJob:
                             song_beats=self.derived.get("beats"))
             files = [cache / f"{s.key()}.mp4" for s in segs]
             todo = [(s, f) for s, f in zip(segs, files) if not f.is_file()]
-            self._set(total=len(todo) + 2, cached=len(segs) - len(todo),
+            # THE CACHED SHOTS COUNT TOWARDS THE BAR. They were `total=len(todo)+2`,
+            # so a reel whose every shot was already cut had total=2 and done=0
+            # and sat at 0% for the whole join -- four minutes on a 47-shot reel,
+            # which is indistinguishable from a render that never started.
+            self._set(total=len(segs) + 2, done=len(segs) - len(todo),
+                      cached=len(segs) - len(todo),
                       message=f"Rendering {len(todo)} of {len(segs)} shots")
             enc_seg = video_codec_args("auto", cq=16)
             for j, (s, f) in enumerate(todo):
@@ -4640,8 +4645,12 @@ class StudioJob:
                     if not tmp.is_file() or self._cancel.is_set():
                         _unlink(tmp)
                 tmp.replace(f)
-                self._set(done=j + 1)
-            self._set(step="join", message="Joining the shots and mixing the sound")
+                self._set(done=len(segs) - len(todo) + j + 1)
+            # THE JOIN IS THE LONG PART when the shots are cached -- 258 s of a
+            # 258 s render on the reel this was measured on. Say so, rather
+            # than leaving a still bar to mean whatever the watcher fears.
+            self._set(step="join",
+                      message=f"Joining {len(segs)} shots and mixing the sound")
             self.out.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.out.with_name(self.out.stem + ".part.mp4")
             try:

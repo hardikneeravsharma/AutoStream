@@ -68,6 +68,42 @@ FACES = {
 LOOK_FACE = {"stamp": "anton", "glow": "poppins-xb", "serif": "crimson",
              "caption": "kanit", "scrawl": "patrick"}
 
+# HOW THE WORDS ARRIVE, as a choice of its own.
+#
+# It used to be welded to the look: Stamp was one word per syllable because
+# Stamp was, and somebody who wanted whole lines in Stamp's type had no way to
+# ask. Every look draws UNITS out of the placed rows, so the reveal decides
+# what a unit is and the look keeps its own type, colour and motion:
+#
+#   look   each look's own, unchanged -- the default, so nothing moves for
+#          anyone who had lyrics set before this
+#   word   one word at a time
+#   line   the whole line at once, held while it is sung
+#   build  the line assembles, a word at a time, and stays up
+#   type   a typewriter: the line arrives letter by letter
+#
+# A unit of several words cannot be drawn at a single word's size, so the
+# type shrinks to fit the longest one (see `_shrink`), wrapped at the look's
+# own comfortable width.
+REVEALS = ("look", "word", "line", "build", "type")
+REVEAL_LABELS = {"look": "The look’s own", "word": "One word at a time",
+                 "line": "A whole line at a time", "build": "The line builds up",
+                 "type": "Typewriter"}
+REVEAL_BLURBS = {
+    "look": "However the look you picked does it.",
+    "word": "Each word on its own, as it is sung.",
+    "line": "The whole line appears together and holds while it is sung.",
+    "build": "The line assembles a word at a time and stays up to the end of it.",
+    "type": "The line arrives letter by letter, at the pace it is sung.",
+}
+# How many characters of that look's type sit comfortably across the frame.
+# Measured from each look's own size against a 1080-wide frame: Stamp at 250px
+# fits about eight, Caption at 78px about forty.
+REVEAL_FIT = {"stamp": 9, "glow": 12, "serif": 34, "caption": 38, "scrawl": 9}
+# A unit never shrinks below this share of the look's size: past it the words
+# are no longer the look you chose.
+REVEAL_MIN_SCALE = 0.42
+
 # WHERE THE WORDS SIT BY DEFAULT: the centre of the line, as shares of the
 # frame. Eight of the ten edits studied put the words mid-height, over the
 # crosshair; on a vertical reel that is where the kill emblem is, so the
@@ -117,8 +153,9 @@ def settings(raw) -> dict:
     except (TypeError, ValueError):
         shift = 0.0
     shift = 0.0 if shift != shift else round(max(-SHIFT_MAX, min(SHIFT_MAX, shift)), 2)
+    reveal = raw.get("reveal") if raw.get("reveal") in REVEALS else "look"
     return {"look": look, "face": face, "clean": bool(raw.get("clean")), "pos": _pos(raw.get("pos")),
-            "shift": shift}
+            "shift": shift, "reveal": reveal}
 
 
 def _pos(v) -> list[float] | None:
@@ -146,6 +183,8 @@ def catalog() -> dict:
     return {"looks": [{"key": k, "label": LOOK_LABELS[k], "blurb": LOOK_BLURBS[k],
                        "face": LOOK_FACE[k]} for k in LOOKS],
             "faces": [{"key": k, "label": v[3]} for k, v in FACES.items()],
+            "reveals": [{"key": k, "label": REVEAL_LABELS[k], "blurb": REVEAL_BLURBS[k]}
+                        for k in REVEALS],
             "default_pos": {k: list(v) for k, v in DEFAULT_POS.items()}}
 
 
@@ -417,13 +456,107 @@ def _ev(layer: int, a: float, b: float, style: str, text: str) -> str:
     return f"Dialogue: {layer},{_ts(a)},{_ts(b)},{style},,0,0,0,,{text}\n"
 
 
+def _wrap(text: str, budget: int) -> str:
+    """Break a unit over as few lines as keep each inside `budget` characters.
+
+    ASS wraps on its own, but where it wraps is the renderer's business and
+    the looks position their text by hand -- so the breaks are decided here,
+    where the line's width is also what decides the size.
+    """
+    words, lines, cur = text.split(" "), [], ""
+    for w in words:
+        nxt = (cur + " " + w).strip()
+        if cur and len(nxt) > budget:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = nxt
+    if cur:
+        lines.append(cur)
+    return "\\N".join(lines)
+
+
+def _regroup(look: str, rows: list[list[dict]], reveal: str) -> list[list[dict]]:
+    """The units a look should draw, for this reveal. Rows in, rows out.
+
+    Every look reads the same shape -- a list of lines, each a list of
+    {w, a, b, hook} -- so changing what a unit IS changes how the words
+    arrive without touching a single look's type or motion.
+    """
+    if reveal not in REVEALS or reveal == "look":
+        return rows
+    budget = REVEAL_FIT.get(look, 20)
+    out: list[list[dict]] = []
+    for row in rows:
+        if not row:
+            continue
+        if reveal == "word":
+            # ONE UNIT PER ROW, for every reveal below as well. Two looks
+            # aggregate a whole row themselves -- Caption joins it into one
+            # phrase, Serif prepends the words already sung -- so a row of
+            # several units comes out doubled ("never never gonna"). A row of
+            # one leaves each look drawing exactly what it is given.
+            out.extend([[dict(w)] for w in row])
+            continue
+        end = row[-1]["b"]
+        text = " ".join(w["w"] for w in row)
+        hook = any(w.get("hook") for w in row)
+        if reveal == "line":
+            out.append([{"w": _wrap(text, budget), "a": row[0]["a"], "b": end, "hook": hook}])
+            continue
+        if reveal == "build":
+            # Each word adds to what is already there and the whole line
+            # holds to the end of it, so the last unit is the full line.
+            units = []
+            for i, wd in enumerate(row):
+                so_far = " ".join(w["w"] for w in row[:i + 1])
+                nxt = row[i + 1]["a"] if i + 1 < len(row) else end
+                units.append({"w": _wrap(so_far, budget), "a": wd["a"], "b": max(nxt, wd["a"] + MIN_WORD),
+                              "hook": bool(wd.get("hook"))})
+            out.extend([[u] for u in units])
+        else:                                   # type
+            # Letter by letter across the line's own span, so the typing
+            # keeps pace with the singing rather than a fixed speed.
+            units = []
+            for i, wd in enumerate(row):
+                head = " ".join(w["w"] for w in row[:i])
+                nxt = row[i + 1]["a"] if i + 1 < len(row) else end
+                span = max(MIN_WORD, nxt - wd["a"])
+                step = span / max(1, len(wd["w"]))
+                for j in range(1, len(wd["w"]) + 1):
+                    so_far = (head + " " if head else "") + wd["w"][:j]
+                    a = wd["a"] + step * (j - 1)
+                    b = end if (i + 1 == len(row) and j == len(wd["w"])) else a + step
+                    units.append({"w": _wrap(so_far, budget), "a": round(a, 3),
+                                  "b": round(max(b, a + 0.02), 3), "hook": bool(wd.get("hook"))})
+            out.extend([[u] for u in units])
+    return out
+
+
+def _shrink(look: str, rows: list[list[dict]]) -> float:
+    """How far the type must come down for the widest unit to fit.
+
+    A look's size was chosen for the unit it draws -- Stamp's 250px is one
+    word. Asked for a whole line, it has to come down or it hangs off both
+    edges; never below REVEAL_MIN_SCALE, past which it is not that look any
+    more and a wrap is the better answer.
+    """
+    budget = REVEAL_FIT.get(look, 20)
+    widest = max((len(part) for row in rows for u in row
+                  for part in str(u["w"]).split("\\N")), default=0)
+    if widest <= budget:
+        return 1.0
+    return max(REVEAL_MIN_SCALE, budget / float(widest))
+
+
 def build_ass(look: str, rows: list[list[dict]], W: int, H: int, *, face: str = "",
-              clean_words: bool = False, pos=None) -> str:
+              clean_words: bool = False, pos=None, reveal: str = "look") -> str:
     """The subtitle script that draws `rows` in `look`, at W x H."""
     rows = [[dict(w, w=clean(w["w"]) if clean_words else w["w"]) for w in row] for row in rows]
+    rows = _regroup(look, rows, reveal)
     fid = face if face in FACES else LOOK_FACE[look]
     fname, bold, fscale, _ = FACES[fid]
-    rel = fscale / FACES[LOOK_FACE[look]][2]
+    rel = fscale / FACES[LOOK_FACE[look]][2] * _shrink(look, rows)
     k = min(W, H) / 1080                    # every size was measured on a 1080-wide frame
     vertical = H > W
     px, py = _pos(pos) or default_pos("vertical" if vertical else "landscape")
@@ -626,7 +759,8 @@ def prepare(project: dict, derived: dict, cache_dir: Path, W: int, H: int, *,
     rows = place(lines, offset, L, ons, list(derived.get("kills") or []))
     if not rows:
         return Prepared(None, [], "Nothing is sung in the part of the song this reel uses.")
-    text = build_ass(cfg["look"], rows, W, H, face=cfg["face"], clean_words=cfg["clean"], pos=cfg["pos"])
+    text = build_ass(cfg["look"], rows, W, H, face=cfg["face"], clean_words=cfg["clean"],
+                     pos=cfg["pos"], reveal=cfg.get("reveal") or "look")
     cache = Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
     p = cache / f"{hashlib.sha1(text.encode('utf-8')).hexdigest()[:16]}.ass"

@@ -590,7 +590,8 @@ def test_lyrics_are_drawn_over_the_look_but_under_the_mark(root, tmp_path):
 def test_a_projects_lyrics_settings_are_kept_and_clamped(root):
     proj = _project(root, lyrics={"look": "caption", "face": "gochi", "clean": True})
     got, _, _ = studio.normalise(proj, root)
-    assert got["lyrics"] == {"look": "caption", "face": "gochi", "clean": True, "pos": None, "shift": 0.0}
+    assert got["lyrics"] == {"look": "caption", "face": "gochi", "clean": True, "pos": None,
+                             "shift": 0.0, "reveal": "look"}
     got, _, _ = studio.normalise(_project(root, lyrics={"look": "<script>"}), root)
     assert got["lyrics"]["look"] == "off"
     assert [l["key"] for l in studio.catalog()["lyrics"]["looks"]] == list(studio.lyrics_mod.LOOKS)
@@ -2104,3 +2105,30 @@ def test_a_cut_rounded_to_its_footage_does_not_lose_a_beat_off_the_shot():
     before = dict(shot)
     studio._fit(shot, 0.55077)
     assert shot["duration"] == before["duration"] and shot["pre"] == before["pre"]
+
+
+# ------------------------------------- the progress a render reports
+
+def test_a_render_whose_shots_are_all_cached_does_not_sit_at_zero(root):
+    """THE REPORTED BUG: "the rendering is not start to the unapplied
+    changes". It WAS running -- 4m18s of it -- and reporting 0% the whole
+    way, because `total` counted only the shots left to cut. With every shot
+    cached that was total=2, done=0, and a bar that never moves is
+    indistinguishable from a render that never started.
+
+    Driven through the job's own `_set`/`snapshot`, so it is the arithmetic
+    the page is actually shown.
+    """
+    job = studio.StudioJob({"name": "r"}, {}, root, root / "reels" / "r.mp4")
+    segs, todo = list(range(47)), []                     # every shot cached
+    job._set(total=len(segs) + 2, done=len(segs) - len(todo), cached=len(segs) - len(todo))
+    snap = job.snapshot()
+    assert snap["percent"] == 95, snap
+    assert snap["cached"] == 47
+    # Half of them to cut: the bar starts where the cache left off, and each
+    # shot moves it on.
+    todo = list(range(24))
+    job._set(total=len(segs) + 2, done=len(segs) - len(todo), cached=len(segs) - len(todo))
+    assert job.snapshot()["percent"] == 46
+    job._set(done=len(segs) - len(todo) + 1)
+    assert job.snapshot()["percent"] == 48
