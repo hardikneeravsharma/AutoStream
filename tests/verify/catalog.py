@@ -586,7 +586,10 @@ CONTROLS: list[Control] = [
     Control("/api/studio/render", "POST", CALL, "Render", "studio",
             body={"project": None}, expect=_has("ok"),
             reject={"project": None}, reject_soft=True, acts=("studio-render",),
-            why="a project with no usable clips is refused before ffmpeg starts"),
+            why="a project with no usable clips is refused before ffmpeg starts. The page "
+                "also sends it by itself with auto:true once the edits stop; that one "
+                "answers ok:false with `held` while live, recording, cutting clips or "
+                "rendering what the user started (tests/test_instant_preview.py)"),
     Control("/api/studio/cancel", "POST", CALL, "Cancel the render", "studio",
             body={}, expect=_has("ok"), acts=("studio-cancel",),
             why="ok:false when nothing is rendering"),
@@ -671,9 +674,10 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-nosong": "clears the chosen song in the dialog",
     "studio-fmt": "chooses landscape or vertical in the dialog; sent with Build",
     "studio-order": "chooses the clip order in the dialog; sent with Build",
-    "studio-play": "plays or pauses the rendered reel",
+    "studio-play": "plays or pauses the reel: the rendered file, or the instant preview of edits "
+                   "not rendered yet (clip files the page already streams)",
     "studio-zoom": "zooms the timeline",
-    "studio-seek": "moves the playhead of the rendered reel",
+    "studio-seek": "moves the playhead of the reel, rendered or previewed",
     "studio-select": "selects a shot, or the reel, in the inspector",
     "studio-edit-song": "opens the Song tab",
     "studio-sg-play": "plays or pauses the chosen part of the song",
@@ -689,6 +693,7 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-sg-atdrop": "moves the part so it builds into the song's drop",
     "studio-sg-fit": "sets the part's end to the timeline's length",
     "studio-mk-mode": "chooses the part of the song or lets the planner choose; sent with Build",
+    "studio-fill": "chooses How long -- the style's length, the part picked, or every clip; sent with Build",
     "studio-mk-fit": "chooses whether a vertical reel crops the game or fits all of it; sent with Build",
     "studio-mk-nudge": "moves the chosen part's start or end by a bar; sent with Build",
     "studio-mk-preset": "moves the chosen part to the drums, into the drop, or to the whole song; sent with Build",

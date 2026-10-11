@@ -175,10 +175,20 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     pixels wide.
   - **It always says whether the video is what you have edited.** The panel beside the
     player is either green — *the video matches your edits* — or amber, naming every
-    change that has not reached it yet (*shot 4 trimmed*, *music level ×3*), with the
-    edited shots flagged on the timeline, a badge over the player itself, and a button
-    that counts them: *Apply 4 changes*. Undo takes one back off the list, and a render
-    that fails or is cancelled puts them back on it.
+    change that has not reached it yet (*shot 4 trimmed*, *music level*), with the
+    edited shots flagged on the timeline, and a button
+    that counts them: *Apply 4 changes*. It counts what differs from the video, not
+    clicks: a switch turned on and off again is no change, and an edit undone or set
+    back by hand leaves the list. A render that fails or is cancelled puts them back on it.
+  - **An edit plays the moment you make it.** Delete a shot, reorder, trim or move a
+    kill and the player shows it at once — no render, no wait. Until the render catches
+    up it plays the timeline straight off your clips, cut where the reel cuts, at the
+    speed each shot plays, with the song underneath; the effects and colour arrive with
+    the render, and the picture says so. **And the render does itself:** a couple of
+    seconds after your last edit it starts in the background, a newer edit replaces it,
+    and the player changes over to the real video when it is ready. It waits while you
+    are live, recording or cutting clips, never starts beside a render you pressed, and
+    can be switched off beside the player or in Settings › Clips.
   - **Your own GIF or video over the slow start.** Some songs take nine seconds to
     arrive, and AutoStream will not spend the first kill on a mark the opening shot
     cannot reach — so the reel holds on one shot until the music gets there. Drop in
@@ -208,9 +218,25 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     waveform in the Make dialog, nudge either end by a bar, or jump to the drums, the
     drop or the whole song — and play it: play and pause, a slider to seek anywhere
     in the part, five seconds back or forward, and loop. Every clip you chose goes in unless the
-    part is full; if the clips are short of it, each kill gets a longer run-up (as far
+    part is full, and the kills are spread over the part, each on one of the song's
+    hits; if the clips are short of it, each kill gets a longer run-up (as far
     as its clip has footage, never over 8 s), and after that the reel ends early and
-    says so. *Let AutoStream choose* keeps the old behaviour.
+    says so. *Let AutoStream choose* keeps the old behaviour. A part chosen later, on
+    the Song tab, longer than the reel plans it again to fill the part, and every
+    rebuild or new style keeps the part.
+  - **Say how long.** *The style's length*, *Fill the song part I picked* or *Every
+    clip I chose* (as long as the kills need, at the style's pace). The style then sets
+    only the feel — the pace, the effects, the flashes — so a long Hype reel still
+    cuts like Hype.
+  - **Keep every kill.** A kill with too little footage before it starts on its clip's
+    first frame, or has its run-up slowed, instead of being left out; one where
+    nothing moves goes in last in line; and to fit a length the kills move closer
+    together rather than clips falling out. Only a part too short for them even then
+    leaves the weakest out, and every clip — and every kill of a clip that went in —
+    that is not shown says why.
+  - **Best order.** Beside Build up, As it happened, Best first and Shuffle: the
+    biggest moments (aces, 4Ks, clutches, multi-kills) on the song's biggest hits, each
+    multi-kill kept together and in order, and no two alike back to back.
   - **You can see which of your clips made it in.** The timeline lists the clips you
     chose that are not in the reel and why — the part was full, nothing moved around
     the kill, removed on the timeline — and it stays with the reel when you reopen it.

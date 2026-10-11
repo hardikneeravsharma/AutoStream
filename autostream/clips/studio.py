@@ -54,6 +54,7 @@ VARIETY, NOT A RUBBER STAMP
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import itertools
 import json
@@ -1282,6 +1283,43 @@ def _hit_slots(hits: list[float], strengths: list[float], *, first: float, end: 
     return kills[:count] if count else kills
 
 
+def _spread_slots(hits: list[float], strengths: list[float], big: list[float], *,
+                  first: float, last: float, count: int, min_gap: float) -> list[float]:
+    """`count` song times from `first` to about `last`, evenly spread, each on a hit.
+
+    For a reel asked to FILL a length rather than run at its style's pace.
+    _hit_slots thins the hits to the style's gap, so a Hype reel put its kills
+    1.1 s apart whatever part of the song was chosen: dwayIR's 93 s part came
+    out 63 s long while the plan said the run-ups had been lengthened to fill
+    it. Here the gap is the part's: each kill takes the strongest hit near its
+    even share of it, a big hit first, never closer than `min_gap` to the one
+    before -- so the kills are spread over the part and still land on the bass.
+    """
+    if count <= 0:
+        return []
+    if count == 1 or last <= first:
+        return [first]
+    top = max(strengths) if strengths and len(strengths) == len(hits) else 0.0
+    pool = sorted((t, (strengths[i] / top if top > 0 else 1.0)
+                   + (1.0 if any(abs(t - b) < 0.01 for b in big) else 0.0))
+                  for i, t in enumerate(hits) if first - 1e-6 <= t <= last + 1e-6)
+    share = (last - first) / (count - 1)
+    out = [first]
+    for n in range(1, count):
+        aim = first + n * share
+        lo = out[-1] + min_gap
+        near = [(t, s) for t, s in pool if lo - 1e-6 <= t and abs(t - aim) <= share / 2]
+        if near:
+            # Strength first, then closeness: a big hit a third of a share away
+            # beats an ordinary one on the aim.
+            t = max(near, key=lambda x: (x[1] - abs(x[0] - aim) / max(share, 1e-6), -x[0]))[0]
+        else:
+            later = [t for t, _ in pool if t >= lo - 1e-6]
+            t = min(later, key=lambda x: abs(x - aim)) if later else max(lo, aim)
+        out.append(t)
+    return out
+
+
 # What the shaping dials mean, and how far each may be pushed. A dial is a
 # MULTIPLIER on what the style's references measured, so 1.0 is "as the style
 # has it" and every reel ever planned without them is unchanged.
@@ -1315,10 +1353,17 @@ def _arrangement(raw: dict | None) -> dict:
             path = str(got.get(slot) or "").strip()
             if path:
                 pins[slot] = path
+    fill = str(raw.get("fill") or "")
     return {"arrange": how, "pins": pins,
             "seed": int(_num(raw.get("shuffle_seed"), 0, 2 ** 31 - 1, 0)),
             # Only kills read as headshots go in. See _headshots_only().
-            "hs_only": bool(raw.get("hs_only"))}
+            "hs_only": bool(raw.get("hs_only")),
+            # How long, and whether a kill may be left out for its run-up, its
+            # stillness or the length. Like hs_only, not an ordering: plan()
+            # takes both off before rulebook.order sees the rest. "" is "as it
+            # always was": the part when one was chosen, else the style.
+            "fill": fill if fill in rulebook.FILLS else "",
+            "keep_all": bool(raw.get("keep_all"))}
 
 
 def _headshots_only(chosen: list[dict]) -> tuple[list[dict], list[str], int]:
@@ -1351,6 +1396,27 @@ def _shaping(raw: dict | None) -> dict:
     return out
 
 
+def _plan_fit(clips: list[dict], style_key: str, *, shape_it: dict, **kw) -> tuple[dict, list[str]]:
+    """PERFECT FIT (SLOWER): the order and the song searched together -- see arrange_fit.
+
+    Kept to this one door so plan() itself is untouched by it. Anything that
+    goes wrong in there plans the ordinary way and says so, rather than
+    leaving the player with no reel at all; a ProjectError (nothing usable
+    chosen) is the player's to read either way.
+    """
+    from . import arrange_fit
+
+    try:
+        return arrange_fit.plan(clips, style_key, shape_it=shape_it, **kw)
+    except ProjectError:
+        raise
+    except Exception as e:                              # noqa: BLE001
+        log.warning("studio: perfect fit failed, planning the usual way: %s", e, exc_info=True)
+        proj, notes = plan(clips, style_key, shape_it=dict(shape_it, arrange="build"), **kw)
+        proj["arrange"] = "fit"                         # a rebuild tries the fit again
+        return proj, ["Perfect fit could not plan this reel, so it was planned the usual way."] + notes
+
+
 def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
          song: str = "", fmt: str = "landscape", name: str = "",
          max_seconds: float = 0.0, seed: int | None = None,
@@ -1373,7 +1439,16 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
 
     `part` is (start, end) in song seconds: the stretch of the song the player
     chose to cut to. See the PART OF THE SONG comment below.
+
+    `shape_it` is the dials plus how the reel is made: `arrange` (see
+    rulebook.ARRANGEMENTS; "hits" is Best order), `pins`, `hs_only`, `fill`
+    (How long: "style", "part", "all"; "" is the part when one was chosen) and
+    `keep_all` (Keep every kill). All of them are kept on the project.
     """
+    if str((shape_it or {}).get("arrange") or "") == "fit":
+        return _plan_fit(clips, style_key, shape=shape, song=song, fmt=fmt, name=name,
+                         max_seconds=max_seconds, seed=seed, measure=measure, confirm=confirm,
+                         theirs=theirs, part=part, template=template, shape_it=shape_it)
     style = STYLE.get(style_key) or STYLE[DEFAULT_STYLE]
     if template:
         style = templated(style, template)
@@ -1389,6 +1464,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # Not an ordering: which kills may go in at all. Kept apart from the
     # kwargs rulebook.order takes.
     hs_only = arrangement.pop("hs_only")
+    fill = arrangement.pop("fill")
+    keep_all = arrangement.pop("keep_all")
     if tw["effects"] != 1.0:
         # Scaled on the style itself rather than at the draw: _vary() is called
         # from the page too, and a dial the page could not see would be lost
@@ -1415,6 +1492,14 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         part_len = end - part_start
         if part_len < rulebook.MIN_RUN_SECONDS + beat:
             part_start = part_len = 0.0
+    # HOW LONG. Unasked, it is what it always was: a chosen part is filled,
+    # otherwise the style decides. Asked, the style keeps only the feel.
+    asked_fill = fill
+    if not fill:
+        fill = "part" if part_len else "style"
+    if fill == "part" and not part_len:
+        fill = "style"
+        notes.append("No part of the song was chosen to fill, so the reel is the style's length.")
 
     # WHY EACH CHOSEN CLIP IS NOT IN THE REEL, first reason wins. The page used
     # to say "N of M moments" once, in a note nothing kept, so a clip that
@@ -1503,7 +1588,14 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         if moved or dropped or added:
             notes.append(f"Kill times checked against the game's own kill emblem: {moved} moved onto it, "
                          f"{dropped} with no emblem left out, {added} the kill feed missed added.")
-    all_moments = rulebook.moments(chosen, beat)
+    # WHY EACH KILL OF A CLIP THAT WENT IN IS NOT IN IT. A clip's row said
+    # nothing when one of its three kills fell out, so a missing kill looked
+    # like a bug rather than a decision. (clip path, kill) -> reason.
+    kill_why: dict[tuple[str, float], str] = {}
+    short: list[tuple[str, float]] = []
+    all_moments = rulebook.moments(chosen, beat, keep_short=keep_all, dropped=short)
+    for key in short:
+        kill_why.setdefault(key, "too little footage before it to show the fight")
     with_moments = {m.clip["path"] for m in all_moments}
     left_out((c["path"] for c in chosen if c["path"] not in with_moments),
              "Too little footage before its kill to show the fight.")
@@ -1518,7 +1610,13 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                 looks[m.group] = st["hist"]
         sat_trim = rulebook.saturation_trim(
             [st.get("sat") for st in stats.values() if isinstance(st, dict)], style.grade)
-        all_moments, still = rulebook.drop_still(all_moments, stats)
+        before_still = list(all_moments)
+        all_moments, still = rulebook.drop_still(all_moments, stats, keep_all=keep_all)
+        stayed = {id(m) for m in all_moments}
+        for m in before_still:
+            if id(m) not in stayed:
+                for k in m.kills:
+                    kill_why.setdefault((m.clip["path"], k), "nothing moves on screen around it")
         if still:
             notes.append(f"{still} moment(s) left out: nothing moves on screen around the kill "
                          f"(a death camera, or standing still).")
@@ -1527,11 +1625,15 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                  "Nothing moves on screen around its kill (a death camera, or standing still).")
     est = {id(m): (rulebook.FOLLOW_UP_BEATS * div if m.seq > 0 else shot_beats) for m in all_moments}
     available = sum(est.values()) * step
-    if part_len:
+    # The chosen part's end is the one length no setting may pass.
+    hard = math.floor(part_len / beat + 1e-6) * beat if part_len else 0.0
+    if fill == "part":
         # Whole beats of the chosen part. select() below keeps every moment
         # when there is less material than this, and leaves out the weakest
         # only when the part cannot hold them all.
-        target = math.floor(part_len / beat + 1e-6) * beat
+        target = hard
+    elif fill == "all":
+        target = 0.0
     else:
         target = rulebook.phrase_seconds(beat, fmt, available, max_seconds)
         if tw["length"] != 1.0:
@@ -1543,14 +1645,26 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             phrase = rulebook.PHRASE_BARS * 4 * beat
             n = max(1, int(round(target * tw["length"] / phrase)))
             target = min(n * phrase, rulebook.MAX_SECONDS.get(fmt, 86.0))
+        if hard:
+            target = min(target, hard)
     # A reel with less material than one phrase uses all of it: the phrase
     # rule trims a surplus, it never throws away a short selection's clips.
-    if not part_len and target < rulebook.PHRASE_BARS * 4 * beat - 1e-6 and not max_seconds:
+    # "Every clip I chose" is the same rule with no phrase to round to.
+    if fill == "all" or (not part_len and target < rulebook.PHRASE_BARS * 4 * beat - 1e-6
+                         and not max_seconds):
         target = 0.0
         pool = list(all_moments)
     want_beats = int(round(target / step))
     if target:
         pool = rulebook.select(all_moments, target, lambda m: est[id(m)] * step)
+    min_gap = rulebook.MIN_KILL_GAP_SECONDS
+    if keep_all:
+        # KEEP EVERY KILL: nothing is left out to fit a length. The kills are
+        # put closer together instead (see the marks below), down to
+        # MIN_KILL_GAP_SECONDS apart -- and only a chosen part too short to
+        # hold them even then loses its weakest (see room_for below), because
+        # its end is the one length the player fixed.
+        pool = list(all_moments)
     spare = [m for m in all_moments if m not in pool]
 
     # PACE FROM THE SONG -- see rulebook.pace. Reel zero is fixed first (the
@@ -1592,13 +1706,110 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                               phrase_from=first_kill_b, div=div)
         return lens_, heroes_
 
+    # WHERE THE KILLS LAND, as a rule both the ordering and the cut use. At the
+    # style's pace unless a length was asked for: then spread over the part,
+    # or -- keeping every kill -- closed up to fit the style's length.
+    gap_style = 60.0 / max(cpm, 1.0)
+    end_at = (part_start + part_len) if (part_len and fill != "all") else grid.seconds
+    tail_s = max(1.0, closer_post * step)
+
+    def spread_to(first: float, count: int) -> float | None:
+        if fill == "part" and part_len:
+            return end_at - tail_s
+        if keep_all and target and count > 1:
+            # Closed up only when the style's own pace cannot fit them all in
+            # the style's length -- and never past the part's end.
+            span = target - first_kill_b * step - tail_s
+            natural = _hit_slots(grid.hits, grid.hit_strength, first=first, end=first + span,
+                                 gap=gap_style, count=count)
+            if len(natural) < count:
+                return min(end_at - tail_s, first + max(span, (count - 1) * min_gap))
+        return None
+
+    def kill_slots(first: float, count: int, last: float | None = None) -> list[float]:
+        last = spread_to(first, count) if last is None else last
+        if last is None:
+            return _hit_slots(grid.hits, grid.hit_strength, first=first, end=end_at,
+                              gap=gap_style, count=count)
+        return _spread_slots(grid.hits, grid.hit_strength, grid.big, first=first,
+                             last=min(last, end_at), count=count, min_gap=min_gap)
+
+    # Where the first kill will land, worked out before the shots are, as the
+    # cut below works it out. For what follows, not for the cut itself.
+    first0 = 0.0
+    room_full = False
+    if song and grid.hits:
+        if part_len:
+            first0 = _first_kill(grid.hits, [], earliest=part_start + first_kill_b * step)
+        else:
+            first0 = _first_kill(grid.hits, grid.big, earliest=run_b * step, drums_in=grid.drums_in or 0.0)
+    if keep_all and part_len and fill != "all" and song and grid.hits:
+        # How many kills the part can hold at the closest they may be: hits,
+        # not seconds, because a kill only lands on a hit and the song's hits
+        # are where they are. A part that cannot hold every kill even then
+        # loses its weakest sequences, whole.
+        inside = [t for t in grid.hits if first0 - 1e-6 <= t <= end_at - tail_s + 1e-6]
+        dt = (sorted(b - a for a, b in zip(inside, inside[1:]))[(len(inside) - 1) // 2]
+              if len(inside) > 2 else beat)
+
+        def need(m) -> float:
+            # A kill lands on a hit, at least min_gap after the one before,
+            # and a moment's own later kills play out before the next.
+            own = (m.last - m.first) + OWN_KILL_HOLD + rulebook.MIN_RUN_SECONDS if len(m.kills) > 1 else 0.0
+            return math.ceil(max(min_gap, own) / max(dt, 1e-3) - 1e-6) * dt
+        room = end_at - tail_s - first0 + dt
+        if sum(need(m) for m in pool) > room + 1e-6:
+            pool = rulebook.select_fit(all_moments, room, need)
+            spare = [m for m in all_moments if m not in pool]
+            room_full = True
+            notes.append(f"The part you chose holds {len(pool)} of the {len(all_moments)} moments even with "
+                         f"their kills as close as {min_gap:.2f} s; the weakest were left out.")
+    if arrangement["arrange"] == "hits" and song and grid.hits:
+        # BEST ORDER needs to know how big each slot's hit is before it can
+        # put the biggest moments on the biggest ones. The slots are worked
+        # out here as the cut will work them out below, from where the first
+        # kill will land; a fold or a skipped mark can shift a later one by a
+        # slot, which costs the heuristic a little and nothing else.
+        #
+        # What a slot is worth: how hard its hit is and how loud the song is
+        # around it (the chorus against the verse), each RANKED across the
+        # reel's own slots, plus a whole step for a big hit. Ranked because
+        # the slots are already the loudest hit in each window: raw, they sit
+        # within a few percent of each other and the big moments went nowhere
+        # in particular (dwayIR: impact against hit, rho +0.08 for the build).
+        #
+        # A FLAT SONG IS NOT A SIGNAL, though. Aftrhrs is loud end to end --
+        # every slot within 10% of the next -- and ranking that noise put its
+        # biggest moments worse than the build did. Where a measure varies by
+        # less than FLAT across the slots, the build's arc stands in for it.
+        ts = kill_slots(first0, len(all_moments))
+        has_s = len(grid.hit_strength) == len(grid.hits)
+        arc = rulebook.arc_weights(len(ts))
+
+        def ranked_or_arc(xs: list[float]) -> list[float]:
+            lo, hi = min(xs), max(xs)
+            if hi - lo < rulebook.FLAT_SPREAD * max(abs(hi), 1e-6):
+                lo_a, hi_a = min(arc), max(arc)
+                return [(a - lo_a) / max(hi_a - lo_a, 1e-6) for a in arc]
+            order_ = sorted(range(len(xs)), key=lambda i: xs[i])
+            out = [0.0] * len(xs)
+            for r, i in enumerate(order_):
+                out[i] = r / max(1, len(xs) - 1)
+            return out
+        hit_s = [grid.hit_strength[min(range(len(grid.hits)), key=lambda j: abs(grid.hits[j] - t))]
+                 if has_s else 0.0 for t in ts]
+        loud = [energy(t - 1.0, t + 1.0) for t in ts]
+        arrangement["slot_weights"] = [
+            0.4 * a + 0.6 * b + (1.0 if any(abs(t - x) < 0.01 for x in grid.big) else 0.0)
+            for a, b, t in zip(ranked_or_arc(hit_s), ranked_or_arc(loud), ts)]
+
     picked = rulebook.order(pool, looks, opener_ok, **arrangement)
     lens, hero_set = plan_walk(picked)
     # Settle the count: add the next-best sequence while the walk falls short
     # of the phrase, drop the weakest middle one while it runs a shot over.
     # A drop needs its build: the fourth shot is the one on the drop.
     min_groups = 5 if style.drop else 3
-    for _ in range(24 if target else 0):
+    for _ in range(24 if target and not keep_all else 0):
         total = sum(sum(x) for x in lens)
         if total < want_beats - 1 and spare:
             nxt = max(spare, key=lambda m: m.strength)
@@ -1638,13 +1849,19 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             idx0 = grid.index_at_or_after(offset)
             lens, hero_set = plan_walk(picked, fixed={i: lens[i] for i in range(4)},
                                        start=offset, first_index=idx0)
-    if target and len(picked) < len(all_moments):
+    if target and len(picked) < len(all_moments) and not room_full:
         notes.append(f"{len(picked)} of {len(all_moments)} moments fill {target:.0f} s "
                      f"({int(round(target / (4 * beat)))} bars); the weakest were left out.")
     in_plan = {m.clip["path"] for m in picked}
-    left_out((m.clip["path"] for m in all_moments if m.clip["path"] not in in_plan),
-             "The song part was full: the clips that went in were stronger." if part_len else
-             "Left out to fit the reel's length: the clips that went in were stronger.")
+    if keep_all and part_len and fill != "all":
+        why_full = (f"The song part was full even with the kills {min_gap:.2f} s apart: "
+                    f"the clips that went in were stronger.")
+    elif fill == "part":
+        why_full = "The song part was full: the clips that went in were stronger."
+    else:
+        why_full = ("Left out to fit the reel's length: the clips that went in were stronger. "
+                    "\"Every clip I chose\" under How long puts it in.")
+    left_out((m.clip["path"] for m in all_moments if m.clip["path"] not in in_plan), why_full)
 
     shots = []
     for i, m in enumerate(picked):
@@ -1692,7 +1909,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         _fit(s, step, notes)
     if target:
         _fit_total(shots, step, target, run_b * step, rulebook.shot_cap(shot_beats, step) * step)
-    if part_len and shots:
+    fills_part = fill == "part" and bool(part_len)
+    if fills_part and shots:
         want_b = int(round(target / step))
         before_b = int(round(sum(s["duration"] for s in shots) / step))
         _lengthen_run_ups(shots, step, want_b)
@@ -1701,7 +1919,9 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             notes.append(f"The clips were short of the part, so their kills got longer run-ups "
                          f"({(have_b - before_b) * step:.0f} s more in all, as far as each clip has "
                          f"footage and never over {rulebook.MAX_LEAD_UP_SECONDS:.0f} s).")
-        if have_b < want_b:
+        if have_b < want_b and not (song and grid.hits):
+            # With hits to cut to, the cut below decides the length; this is
+            # said there, against what actually came out.
             notes.append(f"Your clips fill {have_b * step:.0f} s of the {target:.0f} s part, even with "
                          f"every kill given as much run-up as it can have, so the reel ends early. "
                          f"Add clips or choose a shorter part to fill it.")
@@ -1718,6 +1938,9 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         "beat": round(beat, 6), "step": round(step, 6),
         "shaping": tw, "arrange": arrangement["arrange"], "pins": arrangement["pins"],
         "hs_only": hs_only,
+        # As asked, not as resolved: a rebuild with a new part should fill it
+        # if the player never chose, and keep their choice if they did.
+        "fill": asked_fill, "keep_all": keep_all,
         "seed": int(seed), "pools": pools, "shots": shots,
     }
     # Where in the song reel zero sits: chosen before the walk, so each shot's
@@ -1784,21 +2007,58 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         # fits the footage the longer one did.
         first = _first_kill(grid.hits, [], earliest=floor + max(0.0, shots[0]["pre"] - FIRST_HIT_SLACK * step))
     if song and shots and grid.hits:
-        end = (part_start + part_len) if part_len else grid.seconds
-        slots = _hit_slots(grid.hits, grid.hit_strength, first=first, end=end,
-                           gap=60.0 / max(cpm, 1.0), count=len(shots))
+        last = spread_to(first, len(shots))
+        spread = last is not None
+        # A FILLED PART ENDS ON ITS END, NOT PAST IT. A shot whose mark comes
+        # too soon after another's later kills takes the mark after (see
+        # apply_marks), so the last shots can run past the last mark: on
+        # dwayIR's 93 s part two of them did and were cut off by the part's
+        # end. Aim the last kill earlier by what ran over and place again.
+        # Never closer than min_gap: past that the shots that do not fit are
+        # the part's to cut, below.
+        floor_last = first + (len(shots) - 1) * min_gap
+        hard_end = bool(part_len) and fill != "all"
+        for attempt in range(5):
+            trial = {**proj, "shots": copy.deepcopy(shots)}
+            slots = kill_slots(first, len(shots), last)
+            got_notes = apply_marks(trial, [t - offset for t in slots])
+            over = sum(s["duration"] for s in trial["shots"]) - (end_at - offset)
+            if not hard_end or over <= 0.05 or attempt == 4:
+                break
+            if last is None:
+                if not slots:
+                    break
+                last = slots[-1]
+            if last <= floor_last + 1e-6:
+                break
+            last, spread = max(floor_last, last - over), True
+        proj["shots"] = shots = trial["shots"]
         proj["song_offset"] = round(offset, 5)
         # The hits the kills were aimed at, kept in song seconds. Without them
         # the timeline could only redraw what a detector would pick *now*, at
         # its own default pace -- not the marks this reel was actually cut to,
         # which is the only set worth checking a kill against.
         proj["song_marks"] = [round(t, 4) for t in slots]
-        notes += apply_marks(proj, [t - offset for t in slots])
+        notes += got_notes
         big_on = sum(1 for t in slots if any(abs(t - b) < 0.01 for b in grid.big))
         what = grid.pattern or "bass hits"
-        notes.append(f"{len(slots)} kills land on the song's own {what}, a cut every "
-                     f"{60.0 / max(cpm, 1.0):.1f} s at {style.label}'s pace"
-                     + (f", {big_on} of them on a big hit" if big_on else "") + ".")
+        every = (slots[-1] - slots[0]) / (len(slots) - 1) if len(slots) > 1 else gap_style
+        if spread and every > gap_style * 1.15:
+            notes.append(f"{len(slots)} kills are spread over the part you chose, on the song's own "
+                         f"{what}: a cut every {every:.1f} s, slower than {style.label}'s "
+                         f"{gap_style:.1f} s because there are not enough kills to cut faster. "
+                         f"Add clips to cut faster, or choose \"Every clip I chose\" under How long "
+                         f"for a shorter reel at {style.label}'s pace"
+                         + (f"; {big_on} kills are on a big hit." if big_on else "."))
+        elif spread and every < gap_style * 0.87:
+            notes.append(f"{len(slots)} kills land on the song's own {what}, closer together than "
+                         f"{style.label}'s pace -- a cut every {every:.1f} s against {gap_style:.1f} s -- "
+                         f"so that every kill fits"
+                         + (f"; {big_on} of them on a big hit." if big_on else "."))
+        else:
+            notes.append(f"{len(slots)} kills land on the song's own {what}, a cut every "
+                         f"{gap_style:.1f} s at {style.label}'s pace"
+                         + (f", {big_on} of them on a big hit" if big_on else "") + ".")
         if len(slots) < len(shots):
             notes.append(f"The song ran out of hits after {len(slots)} of {len(shots)} shots; "
                          f"the rest follow at their own length.")
@@ -1821,9 +2081,17 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     if song and part_len:
         proj["part_end"] = round(part_start + part_len, 5)
         before = [s["clip"] for s in proj["shots"]]
-        notes += fit_to_part(proj, min(part_len, grid.seconds - part_start - 0.5))
+        # "Every clip I chose" runs on past the part's end; the song's is the limit.
+        room = grid.seconds - part_start - 0.5
+        notes += fit_to_part(proj, room if fill == "all" else min(part_len, room))
         kept_clips = {s["clip"] for s in proj["shots"]}
-        left_out((c for c in before if c not in kept_clips), "The song part ends before this clip.")
+        left_out((c for c in before if c not in kept_clips),
+                 "The song ends before this clip." if fill == "all" else "The song part ends before this clip.")
+        have = sum(s["duration"] for s in proj["shots"])
+        if fills_part and grid.hits and have < part_len - 4 * beat:
+            notes.append(f"Your clips fill {have:.0f} s of the {part_len:.0f} s part, even with every "
+                         f"kill given as much run-up as its footage allows, so the reel ends early. "
+                         f"Add clips or choose a shorter part to fill it.")
     elif song and grid.seconds:
         room = grid.seconds - proj["song_offset"] - 0.5
         if max_seconds:
@@ -1847,9 +2115,29 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             t += s["duration"]
         proj["shots"] = kept
     in_reel = {s["clip"] for s in proj["shots"]}
+    # Every kill of a clip that went in, and whether the reel shows it.
+    shown: dict[str, list[float]] = {}
+    for s in proj["shots"]:
+        a, b = _span(s)
+        shown.setdefault(s["clip"], []).extend(float(k) for k in s["kills"] if a - 1e-3 <= float(k) <= b + 1e-3)
+    missing: dict[str, list[dict]] = {}
+    for c in chosen:
+        if c["path"] not in in_reel:
+            continue
+        for k in c.get("kills") or []:
+            if not any(abs(float(k) - x) < 0.01 for x in shown.get(c["path"], [])):
+                missing.setdefault(c["path"], []).append(
+                    {"kill": round(float(k), 3),
+                     "why": kill_why.get((c["path"], k), "its shot ends before it")})
+    if missing:
+        n = sum(len(v) for v in missing.values())
+        reasons = sorted({x["why"] for v in missing.values() for x in v})
+        notes.append(f"{n} kill(s) in clips that went in are not shown: {'; '.join(reasons)}."
+                     + ("" if keep_all else " \"Keep every kill\" puts them in."))
     proj["selection"] = [{"clip": c["path"], "name": str(c.get("name") or Path(c["path"]).stem),
                           "why": "" if c["path"] in in_reel else
-                          why_out.get(c["path"], "Left out to fit the reel's length.")}
+                          why_out.get(c["path"], "Left out to fit the reel's length."),
+                          **({"kills_out": missing[c["path"]]} if c["path"] in missing else {})}
                          for c in offered]
     return proj, notes
 
@@ -2617,6 +2905,12 @@ def apply_song(project: dict, shape, song: str, start: float, end: float = 0.0,
     start = max(0.0, min(float(start), max(0.0, shape.seconds - 1.0)))
     project["song_offset"] = round(start, 4)
     part = (min(float(end), shape.seconds) - start) if end and end > start else shape.seconds - start
+    # THE PART IS KEPT. Chosen here it was used once and forgotten: part_end
+    # was written only by the planner, so the Song tab reopened on the reel's
+    # length and a rebuild or a new style planned to the style's length again.
+    # dwayIR is that: its song_offset is 6.9458, to the four places only this
+    # function rounds to, so a part was chosen here -- and it has no end.
+    project["part_end"] = round(start + part, 5)
     if marks:
         kept = [m for m in marks if start <= m <= start + part]
         project["song_marks"] = [round(m, 4) for m in sorted(kept)]
@@ -2647,8 +2941,13 @@ def _fit(shot: dict, beat: float, notes: list[str] | None = None) -> None:
         ps = shot_pieces(shot)
         before = source_used(ps, shot["pre"])
         after = source_used(ps, shot["duration"]) - before
-        ok_head = kill - before >= -1e-6
-        ok_tail = kill + after <= dur_clip + 1e-6
+        # A tenth of a millisecond, not a microsecond: apply_marks stores a
+        # cut to 5 decimals, a 2.2x ramp multiplies that rounding, and a shot
+        # cut exactly to its footage read 5 us over it -- so a whole beat came
+        # off its tail and every kill after it in Aftrhrs's best order slid
+        # 0.55 s off its mark (17 of 43 on marks instead of 43).
+        ok_head = kill - before >= -1e-4
+        ok_tail = kill + after <= dur_clip + 1e-4
         if ok_head and ok_tail:
             return
         step = beat if beat >= MIN_SHOT else MIN_SHOT
@@ -2763,9 +3062,13 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
     out["step"] = _grid_step(project.get("step"), out["beat"])
     out["shaping"] = _shaping(project.get("shaping"))
     arranged = _arrangement({"arrange": project.get("arrange"), "pins": project.get("pins"),
-                             "hs_only": project.get("hs_only")})
+                             "hs_only": project.get("hs_only"), "fill": project.get("fill"),
+                             "keep_all": project.get("keep_all")})
     out["arrange"], out["pins"] = arranged["arrange"], arranged["pins"]
     out["hs_only"] = arranged["hs_only"]
+    # How long and Keep every kill ride on the project too, so a rebuild or a
+    # new style keeps what was asked for -- as the arrangement does.
+    out["fill"], out["keep_all"] = arranged["fill"], arranged["keep_all"]
     raw_pools = project.get("pools") if isinstance(project.get("pools"), dict) else {}
     for kind, part_kind in POOL_KINDS.items():
         valid = set(ids_of(part_kind))
@@ -2885,6 +3188,13 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
             sel.append({"clip": str(row["clip"])[:1000],
                         "name": re.sub(r"[\r\n]", " ", str(row.get("name") or Path(str(row["clip"])).stem))[:120],
                         "why": re.sub(r"[\r\n]", " ", str(row.get("why") or ""))[:200]})
+            # The kills of a clip that went in but are not shown, each with why.
+            gone = row.get("kills_out") if isinstance(row.get("kills_out"), list) else []
+            gone = [{"kill": round(_num(x.get("kill"), 0.0, 36000.0, 0.0), 3),
+                     "why": re.sub(r"[\r\n]", " ", str(x.get("why") or ""))[:120]}
+                    for x in gone[:40] if isinstance(x, dict)]
+            if gone:
+                sel[-1]["kills_out"] = gone
     if sel:
         out["selection"] = sel
     if isinstance(project.get("plan_sig"), str) and re.fullmatch(r"[0-9a-f]{8}", project["plan_sig"]):
@@ -3003,6 +3313,11 @@ def derive(project: dict) -> dict:
                      "kill_reel": round(t0 + s["pre"], 5), "kills_reel": inside,
                      "lead_in": bool(s.get("lead_in")),
                      "source_in": round(a, 4), "source_out": round(b, 4),
+                     # The page's instant preview plays the clip files
+                     # themselves, so it has to know where the render holds
+                     # the kill's frame -- and that what follows plays this
+                     # much later. See preview_at().
+                     "freeze": round(freeze, 4),
                      "pieces": [[round(x, 4), round(y, 4), r] for x, y, r in ps]})
     # A LONGER ENDING NEVER FADES THE LAST KILL. The fade runs over the last
     # `outro_len` seconds, and where the last shot ends sooner after its kill
@@ -3034,7 +3349,8 @@ def derive(project: dict) -> dict:
     in_reel = {str(s["clip"]).lower() for s in shots}
     selection = [{"clip": r["clip"], "name": r["name"],
                   "in": str(r["clip"]).lower() in in_reel,
-                  "why": "" if str(r["clip"]).lower() in in_reel else (r.get("why") or "Removed on the timeline.")}
+                  "why": "" if str(r["clip"]).lower() in in_reel else (r.get("why") or "Removed on the timeline."),
+                  "kills_out": list(r.get("kills_out") or []) if str(r["clip"]).lower() in in_reel else []}
                  for r in project.get("selection") or []]
     # THE HOLE AN INTRO IS FOR. A lead-in opener holds from reel zero until the
     # song reaches the first mark, and that hold is the dead air the user wants
@@ -3054,6 +3370,54 @@ def derive(project: dict) -> dict:
             "selection": selection, "lead_in": lead_in, "intro_clip": intro_clip,
             "outro_hold": hold, "outro_fade": round(fade, 4),
             "edited": bool(project.get("plan_sig")) and signature(shots) != project.get("plan_sig")}
+
+
+def preview_at(derived: dict, t: float) -> dict:
+    """Which clip, and which second of it, the reel shows at reel time `t`.
+
+    THE ARITHMETIC THE PAGE'S INSTANT PREVIEW RUNS, written once here so it
+    can be tested against the renderer rather than trusted. The Studio plays
+    the timeline straight off the clip files while the real render catches up
+    (studio_pvAt in ui/studio.py is this function, line for line), so a
+    deleted shot is gone from the player the moment it is deleted instead of
+    twenty seconds later.
+
+    -> {"shot", "src", "rate"}: the shot index, the source second to show,
+    and the playback rate there -- 0 while a frame is held (a freeze on the
+    kill, a stretched run-up's held opening, a long ending's last frame).
+    shot is -1 when the reel has no shots.
+    """
+    rows = derived.get("shots") or []
+    if not rows:
+        return {"shot": -1, "src": 0.0, "rate": 0.0}
+    t = max(0.0, float(t))
+    i = 0
+    while i + 1 < len(rows) and t >= rows[i + 1]["start"]:
+        i += 1
+    r = rows[i]
+    dur = r["end"] - r["start"]
+    u = t - r["start"]
+    ps = [tuple(p) for p in r["pieces"]]
+    # Where the kill sits in the shot's own output time: the render's freeze
+    # starts there (segment_command loops the frame at kill_at).
+    pre = r["kill_reel"] - r["start"]
+    freeze = float(r.get("freeze") or 0.0)
+    held = u >= dur                       # past the shot: the long ending's hold
+    u = min(u, dur)
+    if freeze and pre <= u < pre + freeze:
+        return {"shot": i, "src": round(r["source_in"] + source_used(ps, pre), 4), "rate": 0.0}
+    if freeze and u >= pre + freeze:
+        u -= freeze
+    rate = 0.0 if held else next((p[2] for p in ps if p[0] <= u < p[1]), ps[-1][2])
+    if rate < PREVIEW_MIN_RATE:
+        rate = 0.0
+    return {"shot": i, "src": round(r["source_in"] + source_used(ps, u), 4), "rate": rate}
+
+
+# Slower than this is a held frame, not slow motion: it is what HOLD_RATE is
+# for, and it is also the slowest a browser will play (Chrome refuses
+# playbackRate below 1/16).
+PREVIEW_MIN_RATE = 0.0625
 
 
 def signature(shots: list[dict]) -> str:
@@ -3967,10 +4331,14 @@ class StudioJob:
     """One reel render: the shots that are not cached, then the join."""
 
     def __init__(self, project: dict, derived: dict, root: Path, out: Path, *,
-                 shape_beats: list[float] | None = None):
+                 shape_beats: list[float] | None = None, auto: bool = False):
         self.id = next(_JOB_IDS)
         self.project, self.derived, self.root, self.out = project, derived, root, out
         self.shape_beats = shape_beats
+        # Started by the page on its own, once the user stopped editing, rather
+        # than by Render. A newer edit -- or a press of Render -- replaces it
+        # without asking: see Runner.yield_auto.
+        self.auto = bool(auto)
         self.state = "queued"
         self.step = "shots"
         self.done = 0
@@ -3994,7 +4362,7 @@ class StudioJob:
                     "output": str(self.out), "project": str(self.out.with_suffix(".reel.json")),
                     "elapsed": int((self.finished or time.time()) - self.started),
                     "cached": self.cached, "name": self.project.get("name", ""),
-                    "lyrics_note": self.lyrics_note}
+                    "lyrics_note": self.lyrics_note, "auto": self.auto}
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -4348,6 +4716,29 @@ class Runner:
         with self._lock:
             job = self.job
         return job.snapshot() if job else None
+
+    def yield_auto(self, wait: float = 8.0) -> bool:
+        """Make way for a newer render. -> True when nothing is rendering now.
+
+        A BACKGROUND RENDER IS NEVER IN THE WAY. It was started because the
+        user paused, not because they asked; an edit since then, or Render
+        itself, has a better claim on the encoder. So a running auto job is
+        cancelled here and waited for -- ffmpeg is terminated, so this is well
+        under a second -- and the shots it finished stay in the cache for the
+        render that replaces it. A render the user started is never touched:
+        that is False, and the caller says it is busy.
+        """
+        with self._lock:
+            job = self.job
+        if job is None or job.state not in ("queued", "running"):
+            return True
+        if not job.auto:
+            return False
+        job.cancel()
+        deadline = time.monotonic() + wait
+        while job.state in ("queued", "running") and time.monotonic() < deadline:
+            time.sleep(0.02)
+        return job.state not in ("queued", "running")
 
     def cancel(self) -> bool:
         with self._lock:

@@ -1055,6 +1055,16 @@ CONFIG_SCHEMA: list[Section] = [
                 placeholder="LIVE MOST EVENINGS",
             ),
             _field(
+                "clips.auto_render",
+                "Render reels in the background",
+                "In the Studio, a reel is rendered by itself a couple of seconds "
+                "after your last edit, so the finished video is usually ready by "
+                "the time you have watched the preview. It waits while you are "
+                "live, recording or cutting clips. Off means nothing renders "
+                "until you press Render; the preview still shows every edit.",
+                "toggle",
+            ),
+            _field(
                 "clips.sounds_dir",
                 "Sound effects folder",
                 "Drop .mp3, .wav, .m4a or .ogg files in here and they can be "

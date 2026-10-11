@@ -152,6 +152,20 @@ STUDIO_HTML = r"""
       <div class="ed-stage">
         <div class="studio-player" id="studio-player">
           <video id="studio-video" controls playsinline preload="metadata"></video>
+          <!-- THE TIMELINE, PLAYED OFF THE CLIPS. Deleting a shot used to mean
+               a render and a 10-20 second wait before the player could say
+               whether it was the right shot. This plays the edit as it stands,
+               straight from the clip files: two players swapped at each cut,
+               the next one already loaded, and the song under both. The cuts,
+               the order, the timing and the music are the reel's own; the
+               effects and the colour arrive with the render, and the label
+               says so. See studio_pvTick. -->
+          <div class="studio-pv hide" id="studio-pv">
+            <video class="studio-pv-v" id="studio-pv-a" playsinline preload="auto"></video>
+            <video class="studio-pv-v" id="studio-pv-b" playsinline preload="auto"></video>
+            <audio id="studio-pv-song" preload="auto"></audio>
+            <span class="studio-pv-tag" id="studio-pv-tag">Preview · effects appear when rendered</span>
+          </div>
           <div class="studio-player-empty" id="studio-player-empty">Press Render and your reel plays here.</div>
           <!-- THE PLAYER IS WHERE THE EYES ARE. A sidebar saying the edits are
                not in the video yet is missed by someone watching the video, so
@@ -220,6 +234,14 @@ STUDIO_HTML = r"""
         <p class="studio-state" id="studio-state" role="status" aria-live="polite"></p>
         <div class="meter hide" id="studio-meter-wrap" aria-hidden="true"><div class="meter-fill" id="studio-meter" style="width:0%"></div></div>
         <ul class="studio-pending hide" id="studio-pending"></ul>
+        <!-- THE RENDER NOBODY HAS TO ASK FOR. A couple of seconds after the
+             last edit the real render starts by itself, so the finished video
+             is usually there by the time the preview has been watched. The
+             same setting as Settings > Clips; see studio_autoGo. -->
+        <div class="studio-auto">
+          <label class="studio-check"><input type="checkbox" id="studio-auto-render" checked> Render in the background</label>
+          <span class="studio-auto-state" id="studio-auto-state" role="status" aria-live="polite"></span>
+        </div>
       </div>
 
       <!-- WHAT AN EFFECT LOOKS LIKE, BEFORE IT IS PICKED. Pointing at any
@@ -549,6 +571,20 @@ STUDIO_HTML = r"""
           <button type="button" class="seg-btn" data-act="studio-order" data-order="oldest">Oldest first</button>
         </div>
       </div>
+      <!-- HOW LONG, ASKED RATHER THAN DECIDED. The style used to set the
+           length as well as the feel, so a long part and twenty-five clips
+           came out a 43 s Hype reel with eleven clips left out. The style
+           now keeps the pace, the effects and the flashes either way. -->
+      <h3 class="studio-h">How long</h3>
+      <div class="seg studio-fill" role="group" aria-label="How long" id="studio-fill">
+        <button type="button" class="seg-btn" data-act="studio-fill" data-fill="style">The style's length</button>
+        <button type="button" class="seg-btn" data-act="studio-fill" data-fill="part" id="studio-fill-part">Fill the song part I picked</button>
+        <button type="button" class="seg-btn" data-act="studio-fill" data-fill="all">Every clip I chose</button>
+      </div>
+      <p class="muted studio-small" id="studio-fill-note"></p>
+      <label class="studio-check" id="studio-keep-row"><input type="checkbox" id="studio-keep-all"> Keep every kill</label>
+      <p class="muted studio-small">A kill with little run-up starts on its clip's first frame, or its run-up
+        is slowed, instead of being left out; to fit a length the kills move closer together.</p>
       <label class="field-label" for="studio-name">Name</label>
       <input class="input" id="studio-name" maxlength="80" placeholder="Montage reel">
       <!-- Valorant clips carry a headshot reading per kill; shown only when some do. -->
@@ -846,8 +882,10 @@ const studio = {
   /* WHAT HAS NOT REACHED THE VIDEO YET. `dirty` could say that something had
      changed; it could not say what, so pressing render was an act of faith and
      not pressing it was a reel watched in the wrong version. Every edit names
-     itself here ({label, shot, n}); a render empties the list. */
-  pending: [], jobMsg: '', failMsg: '', renderNote: '', rendering: false,
+     itself here ({label, shot, paths}); a render empties the list. `base` is
+     the project the video was rendered from (or opened as), and an edit whose
+     fields are back to it leaves the list on its own. */
+  pending: [], base: null, shelved: [], jobMsg: '', failMsg: '', renderNote: '', rendering: false,
   /* Which explanations are open. The card is redrawn on every edit and on
      every poll tick, and a fold that shut itself each time could not be read. */
   folds: {build: false, clips: false},
@@ -862,6 +900,10 @@ const studio = {
   /* HOW THE REEL IS ORDERED, and anything pinned into a slot. Rides in the
      same payload as the dials so one Build carries all of it. */
   arrange: 'build', pins: {}, shuffleSeed: 0,
+  /* HOW LONG and KEEP EVERY KILL, from the Make dialog. '' is "not chosen":
+     the part when one is picked, otherwise the style's length -- what the
+     server does with nothing asked, so the button lit is the one that runs. */
+  fill: '', keepAll: false,
   sg: {song: '', shape: null, start: 0, end: 0, marks: [], drag: null, ticked: {}, ac: null,
        sel: -1, seeded: ''},
   /* The part of the song chosen on the Make dialog, in song seconds. */
@@ -890,7 +932,22 @@ const studio = {
            picked in one go; `at` is where you are in it. */
         batch: [], at: 0,
         /* The piece being removed, in clip seconds. See studio_impCut. */
-        cutFrom: null, cutTo: null}
+        cutFrom: null, cutTo: null},
+  /* THE INSTANT PREVIEW (studio_pvTick). `on` is whether the player is showing
+     it rather than the rendered file; `t` the reel second it is paused on, or
+     `base` + the wall clock since `t0` while it plays; `act` which of the two
+     <video>s is on screen and `shot` the shot it holds. `cuts` is every cut it
+     has played, with how late it was -- read by the browser test. `info`
+     remembers, per shot, what the server worked out about its footage, so a
+     shot the page has only moved keeps playing the right seconds. */
+  pv: {on: false, t: 0, base: 0, t0: 0, playing: false, act: 0, shot: -1, raf: 0,
+       cuts: [], info: {}, planSig: ''},
+  /* THE BACKGROUND RENDER (studio_autoGo). `sig` is the project the running
+     or last one was given, `armed` the project the idle timer was started for,
+     `held` why it is waiting, `failed` a project that failed once and is not
+     retried until it changes. */
+  auto: {on: true, known: false, timer: null, dueAt: 0, armed: '', sig: '', job: 0,
+         running: false, pct: 0, held: '', heldUntil: 0, failed: '', idleMs: 2500, log: []}
 };
 
 const studio_el = (id) => document.getElementById(id);
@@ -1273,12 +1330,16 @@ async function studio_openMake() {
       studio.mk.mode = 'part'; studio.mk.touched = true;
       studio.mk.start = ad.start; studio.mk.end = Math.max(ad.start + studio_mkBar(), ad.end);
     }
+    /* What the reel asked for, so a rebuild is the same kind of reel. */
+    studio.fill = ad.fill || '';
+    studio.keepAll = !!ad.keep_all;
   }
   studio_renderStyles();
   studio_hand();
   studio_show('studio-make-scrim', true);
   studio_show('studio-mk-fit', studio.fmt === 'vertical');
   studio_mkDefault();
+  studio_fillDraw();
 }
 
 function studio_renderStyles() {
@@ -1297,6 +1358,7 @@ function studio_renderStyles() {
   }).join('');
   const st = cat.styles.find(s => s.key === studio.style);
   studio_el('studio-name').placeholder = (st ? st.label : 'My') + ' reel';
+  studio_fillDraw();                       /* its note names the style */
 }
 
 async function studio_pickSong() {
@@ -1414,9 +1476,54 @@ function studio_mkSpan() {
   return {start: 0, end: sh.seconds};
 }
 
+/* Whether the Make dialog will send a part: the same test studio_build makes. */
+function studio_mkHasPart() {
+  const mk = studio.mk;
+  return !!(studio.song && studio.songShape && mk.mode === 'part' && mk.end > mk.start);
+}
+
+/* The How long that will run: what was chosen, or what nothing chosen means. */
+function studio_fillNow() {
+  const f = studio.fill;
+  if (f === 'part' && !studio_mkHasPart()) return 'style';
+  return f || (studio_mkHasPart() ? 'part' : 'style');
+}
+
+function studio_fillDraw() {
+  const now = studio_fillNow(), part = studio_mkHasPart();
+  document.querySelectorAll('#studio-fill [data-act="studio-fill"]').forEach(x => {
+    const on = x.getAttribute('data-fill') === now;
+    x.classList.toggle('is-active', on);
+    x.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  const pb = studio_el('studio-fill-part');
+  if (pb) {
+    pb.disabled = !part;
+    pb.title = part ? '' : 'Choose a song and a part of it first.';
+  }
+  const st = studio.catalog && studio.catalog.styles.find(s => s.key === studio.style);
+  const name = st ? st.label : 'The style';
+  const len = studio.mk.end - studio.mk.start;
+  const note = studio_el('studio-fill-note');
+  if (note) {
+    note.textContent = now === 'part'
+      ? 'The kills are spread over the ' + studio_dur(len) + ' part, each on a hit. ' + name +
+        ' still sets the pace, effects and flashes; with fewer kills than the part needs at that pace, the cuts come slower.'
+      : now === 'all'
+        ? 'Every clip you chose goes in, at ' + name + "'s pace, however long that runs" +
+          (part ? ' — from the start of the part, past its end if it needs to.' : '.')
+        : name + ' decides the length, as it always has' +
+          (part ? ', starting at the part you picked and never past its end.' : '.') +
+          ' Clips that do not fit are left out, and the reel says which.';
+  }
+  const ka = studio_el('studio-keep-all');
+  if (ka) ka.checked = !!studio.keepAll;
+}
+
 function studio_mkDraw() {
   const sh = studio.songShape, mk = studio.mk;
   const choosing = mk.mode === 'part';
+  studio_fillDraw();
   studio_show('studio-mk-partctl', choosing);
   document.querySelectorAll('#studio-mk-part [data-act="studio-mk-mode"]').forEach(x =>
     x.classList.toggle('is-active', x.getAttribute('data-mode') === mk.mode));
@@ -1430,8 +1537,7 @@ function studio_mkDraw() {
     studio_el('studio-mk-start').textContent = studio_secs(mk.start);
     studio_el('studio-mk-end').textContent = studio_secs(mk.end);
     studio_el('studio-mk-facts').textContent = studio_dur(len) + ' · ' + bars + (bars === 1 ? ' bar' : ' bars') +
-      '. Every clip you chose goes in unless the part is full. If they are short of it, each kill gets a ' +
-      'longer run-up, as far as its clip has footage (never over 8 s); if that is still not enough, the reel ends early.';
+      '. How long, below, decides whether the reel fills it.';
   }
   const c = studio_sgCanvas('studio-mk-wave', 70);
   if (!c || !sh.peaks) return;
@@ -1874,7 +1980,13 @@ const ARRANGES = [
   {k: 'build', name: 'Build up', why: 'A strong opener, the best one two thirds in, a strong close.'},
   {k: 'time', name: 'As it happened', why: 'The fights in the order you played them.'},
   {k: 'best', name: 'Best first', why: 'The strongest moment opens the reel.'},
-  {k: 'shuffle', name: 'Shuffle', why: 'A fresh draw. Press again for another.'}
+  {k: 'shuffle', name: 'Shuffle', why: 'A fresh draw. Press again for another.'},
+  {k: 'hits', name: 'Best order', why: "The biggest moments - aces, 4Ks, clutches, multi-kills - on the song's " +
+    'biggest hits, each multi-kill kept together and in order, and no two alike back to back.'},
+  /* Not an order but a search: every kill of every clip on a beat of the song,
+     every clip of three or more kills whole. Up to half a minute to plan. */
+  {k: 'fit', name: 'Perfect fit (slower)',
+   why: 'Searches the order and the song together: every kill lands on a beat and no clip with 3 or more kills loses one. Takes up to ~30 s to plan.'}
 ];
 
 function studio_arrangeDraw() {
@@ -1896,7 +2008,8 @@ function studio_arrangePick(how) {
   if (how === 'shuffle') studio.shuffleSeed = Math.floor(Math.random() * 2147483000) + 1;
   studio.arrange = how;
   studio_arrangeDraw();
-  toast('Make the reel again to see it.');
+  toast(how === 'fit' ? 'Make the reel again to see it. A perfect fit takes up to ~30 s to plan.'
+                      : 'Make the reel again to see it.');
 }
 
 /* PINNING A CLIP TO A SLOT. Moving a shot with the arrows moves it once; a pin
@@ -2225,7 +2338,9 @@ async function studio_build() {
      and nothing else, so the render started anyway a moment later and looked
      like a Cancel that had been ignored. */
   const gen = ++studio.buildGen;
-  studio_el('studio-make-msg').textContent = studio.song ? 'Finding the beat and planning every shot…' : 'Planning every shot…';
+  studio_el('studio-make-msg').textContent = !studio.song ? 'Planning every shot…'
+    : studio.arrange === 'fit' ? 'Finding the perfect fit of every kill to the song — this can take up to ~30 s…'
+    : 'Finding the beat and planning every shot…';
   try {
     const body = {
       clips: studio_ordered().map(c => c.path), style: studio.style, song: studio.song,
@@ -2238,7 +2353,11 @@ async function studio_build() {
       shaping: Object.assign({}, studio.shaping, {arrange: studio.arrange,
         pins: studio.pins, shuffle_seed: studio.shuffleSeed,
         hs_only: !!(studio_el('studio-hs-only') && studio_el('studio-hs-only').checked &&
-                    !studio_el('studio-hs-row').classList.contains('hide'))})
+                    !studio_el('studio-hs-row').classList.contains('hide')),
+        /* As chosen, '' when not: the server resolves '' exactly as
+           studio_fillNow draws it, and the project keeps what was ASKED. */
+        fill: studio.fill === 'part' && !studio_mkHasPart() ? '' : studio.fill,
+        keep_all: !!studio.keepAll})
     };
     /* The whole clip, cover-fitted: the trim and the fit are the timeline
        dialog's job, and normalise clamps both anyway. What is chosen here is
@@ -2249,7 +2368,7 @@ async function studio_build() {
                          end: got ? Number(got.seconds) : 0,
                          audio: !!studio.mkIntro.audio, fit: 'cover'};
     }
-    if (studio.song && studio.songShape && studio.mk.mode === 'part' && studio.mk.end > studio.mk.start) {
+    if (studio_mkHasPart()) {
       body.part_start = studio.mk.start;
       body.part_end = studio.mk.end;
     }
@@ -2268,6 +2387,7 @@ async function studio_build() {
     /* A fresh reel has no video to differ from; a rebuild over an existing one
        has exactly one difference, and it is the whole reel. */
     studio.pending = []; studio.dirty = true; studio.failMsg = '';
+    studio.base = JSON.parse(JSON.stringify(studio.project));
     if (studio.output) studio_touched('Rebuilt from the clips');
     studio.adding = null;
     studio_renderTray();
@@ -2302,6 +2422,12 @@ function studio_setProject(project, derived, notes, songShape) {
   studio_el('studio-tab-facecam').disabled = false;
   studio_el('studio-pname').value = project.name || '';
   if (studio.sel >= project.shots.length) studio.sel = project.shots.length - 1;
+  /* The reel's own arrangement, so a rebuild or a new style keeps it: a
+     perfect-fit reel restyled from a fresh session came back built up. */
+  if (project.arrange && ARRANGES.some(a => a.k === project.arrange) && project.arrange !== studio.arrange) {
+    studio.arrange = project.arrange;
+    studio_arrangeDraw();
+  }
   studio_drawAll();
 }
 
@@ -2312,11 +2438,19 @@ function studio_pushUndo(snapshot) {
 
 /* ------------------------------------------------- what is not rendered yet
 
-   Three rules, and they are what make the count trustworthy enough to put on
-   a button: one undo step is one unit of change here, a render clears the
-   list, and an undo takes a unit back off it. When the count reaches zero the
-   project is byte-for-byte the one that was rendered, so "the video matches
-   your edits" is a fact and not a guess. */
+   The count is a comparison, not a tally of clicks. Each line on the list
+   remembers the fields its edit changed; after every edit, undo and server
+   answer, a line whose fields are all back to what was rendered goes. So a
+   switch turned on and off again is no change at all, and three edits with one
+   undone is two. A tally counted both clicks, and "Apply 2 changes" to a
+   project identical to the video was a button that could not be believed.
+
+   Two kinds of line cannot be compared and stay until a render: one with no
+   fields (a failed render, a deleted reel, a camera video attached -- none of
+   them live in the project), and any line about a shot while the shots are
+   not in the order the render had them, because "shot 3" then names another
+   shot. Both err toward saying the video is behind, never toward saying it
+   matches when it does not. */
 
 /* Shots are numbered from 1 on the timeline, so they are numbered from 1 here. */
 function studio_shotName(i) { return 'Shot ' + (Number(i) + 1); }
@@ -2334,7 +2468,66 @@ function studio_ago(when) {
   return d + (d === 1 ? ' day ago' : ' days ago');
 }
 
-function studio_touched(label, shot) {
+/* Equal for the purpose of "would the video differ": a number the server
+   rounded is the number the page sent, and a field that is absent is the
+   same as one that is null. */
+function studio_same(a, b) {
+  if (a === b) return true;
+  if (a === null || a === undefined || b === null || b === undefined)
+    return (a === null || a === undefined) && (b === null || b === undefined);
+  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) < 1e-6;
+  if (typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) return a.length === b.length && a.every((x, i) => studio_same(x, b[i]));
+  return Object.keys(Object.assign({}, a, b)).every(k => studio_same(a[k], b[k]));
+}
+
+/* Every field that differs between two projects, as a list of key paths --
+   ['vignette'], ['shots', '2', 'speed'], ['lyrics', 'pos']. A list of plain
+   values (a shot's effects, a position) is one field, not one per item: taking
+   an effect off and putting it back is the same list again. */
+function studio_diff(a, b, at, out) {
+  at = at || []; out = out || [];
+  const obj = x => x !== null && typeof x === 'object';
+  const deep = obj(a) && obj(b) && Array.isArray(a) === Array.isArray(b) &&
+               (!Array.isArray(a) || a.concat(b).some(obj));
+  if (!deep) { if (!studio_same(a, b)) out.push(at); return out; }
+  const keys = Array.isArray(a) ? Array.from({length: Math.max(a.length, b.length)}, (_, i) => i)
+                                : Object.keys(Object.assign({}, a, b));
+  keys.forEach(k => studio_diff(a[k], b[k], at.concat([String(k)]), out));
+  return out;
+}
+
+function studio_at(obj, path) {
+  return path.reduce((o, k) => (o === null || o === undefined) ? undefined : o[k], obj);
+}
+
+/* Which clip is in which place. While it differs from the render's, a shot
+   number names a different shot in each, so no shot's edit can be compared. */
+function studio_shotOrder(p) { return ((p && p.shots) || []).map(s => s.clip).join('\n'); }
+
+/* Does this line still describe a difference from the render? */
+function studio_differs(x) {
+  const base = studio.base, p = studio.project;
+  if (!x.paths || !base || !p) return true;
+  const ordered = studio_shotOrder(base) === studio_shotOrder(p);
+  return x.paths.some(k => (!ordered && k[0] === 'shots') || !studio_same(studio_at(base, k), studio_at(p, k)));
+}
+
+/* Drop every line whose fields are all back to what was rendered. A dropped
+   line is kept aside, so an undo that brings its difference back brings back
+   its name too, rather than calling it something vaguer. */
+function studio_reconcile() {
+  const gone = studio.pending.filter(x => !studio_differs(x));
+  if (gone.length) {
+    studio.pending = studio.pending.filter(x => gone.indexOf(x) < 0);
+    studio.shelved = (studio.shelved || []).filter(x => gone.indexOf(x) < 0).concat(gone).slice(-60);
+  }
+  studio.dirty = studio.pending.length > 0 || !studio.output;
+}
+
+/* `paths` is what the edit changed (studio_diff). Left out, the line cannot be
+   compared and stays until a render. */
+function studio_touched(label, shot, paths) {
   studio.dirty = true;
   studio.failMsg = '';
   /* "Ready · rendered in 23 s" stops being true the moment anything is
@@ -2343,21 +2536,36 @@ function studio_touched(label, shot) {
   studio_state('');
   const name = label || 'An edit on the timeline';
   const at = (shot === undefined || shot === null) ? -1 : shot;
+  const keys = paths || null;
   /* A slider fires per step and a nudge button per press: the same edit, made
-     again, is one line with a count and not twenty lines. */
-  const same = studio.pending.filter(x => x.label === name && x.shot === at)[0];
+     again, is still one line. So is the same field reached by another control
+     -- the kill dragged, then nudged -- because it is one thing that differs. */
+  const sig = ks => JSON.stringify(ks.map(k => k.join('\u0001')).sort());
+  const same = studio.pending.filter(x => x.label === name && x.shot === at)[0] ||
+    (keys && keys.length ? studio.pending.filter(x => x.paths && x.paths.length && sig(x.paths) === sig(keys))[0] : null);
   if (same) {
-    same.n++;
     studio.pending.splice(studio.pending.indexOf(same), 1);
+    same.label = name; same.shot = at;
+    same.paths = studio_union(same.paths, keys);
     studio.pending.push(same);
-    return;
+  } else {
+    studio.pending.push({label: name, shot: at, paths: keys});
   }
-  studio.pending.push({label: name, shot: at, n: 1});
+  studio_reconcile();
 }
 
-/* Rendered: the video and the project are the same thing again. */
+/* Two lines' fields as one; a line that cannot be compared makes both so. */
+function studio_union(a, b) {
+  if (!a || !b) return null;
+  const one = k => k.join('\u0001');
+  return a.concat(b.filter(k => !a.some(j => one(j) === one(k))));
+}
+
+/* Rendered: the video and the project are the same thing again, and this is
+   the project every later edit is compared against. */
 function studio_settled() {
-  studio.dirty = false; studio.pending = []; studio.failMsg = '';
+  studio.dirty = false; studio.pending = []; studio.shelved = []; studio.failMsg = '';
+  studio.base = studio.project ? JSON.parse(JSON.stringify(studio.project)) : null;
   /* The LYRICS stand-in is for placing the words; once a render is on its
      way the reel shows the real ones, and the stand-in would only cover them. */
   studio.lyrMove = false;
@@ -2375,28 +2583,46 @@ function studio_lyrPending() {
    claiming to know which shot they were. */
 function studio_forgetShots() { studio.pending.forEach(x => { x.shot = -1; }); }
 
+/* What a render writes about itself rather than what anyone chose: never a
+   reason to render again. */
+const STUDIO_NOT_EDITS = {output: 1, plan_notes: 1, lyrics_note: 1, render: 1, version: 1};
+
 function studio_untouched() {
-  const last = studio.pending[studio.pending.length - 1];
-  if (last && last.n > 1) { last.n--; return; }
-  if (last) {
-    studio.pending.pop();
-    studio.dirty = studio.pending.length > 0 || !studio.output;
-    return;
-  }
+  studio_reconcile();
+  const base = studio.base, p = studio.project;
+  if (!base || !p) return;
+  /* An edit that had been set back by hand, and that this undo has brought
+     back again: it returns under its own name. */
+  const back = (studio.shelved || []).filter(x => studio_differs(x));
+  studio.shelved = (studio.shelved || []).filter(x => back.indexOf(x) < 0);
+  back.forEach(x => {
+    const twin = studio.pending.filter(y => y.label === x.label && y.shot === x.shot)[0];
+    if (twin) twin.paths = studio_union(twin.paths, x.paths);
+    else studio.pending.push(x);
+  });
   /* Undone past the last render: the project is behind the video now, which
-     is still a difference, and still needs rendering to resolve. */
-  studio_touched('Undone past the last render');
+     is still a difference, and still needs rendering to resolve. Only what no
+     line on the list already accounts for. */
+  const mine = [];
+  studio.pending.forEach(x => (x.paths || []).forEach(k => mine.push(k)));
+  const under = (a, b) => a.length <= b.length && a.every((x, i) => x === b[i]);
+  const left = studio_diff(base, p).filter(k => k.length && !STUDIO_NOT_EDITS[k[0]] &&
+    !mine.some(m => under(m, k) || under(k, m)));
+  if (left.length) studio_touched('Undone past the last render', -1, left);
+  studio.dirty = studio.pending.length > 0 || !studio.output;
 }
 
 /* `label` is what the card will call this edit, and `shot` the shot it happened
    to, so the timeline can mark it. Both optional -- an unlabelled edit still
-   counts, it just reads as a generic one. */
-function studio_change(mutate, label, shot) {
+   counts, it just reads as a generic one. `sticky` is for an edit the project
+   cannot see (a camera video attached): it stays on the list until a render. */
+function studio_change(mutate, label, shot, sticky) {
   if (!studio.project) return;
-  studio_pushUndo(JSON.stringify(studio.project));
+  const was = JSON.stringify(studio.project);
+  studio_pushUndo(was);
   studio.gen++;
   mutate(studio.project);
-  studio_touched(label, shot);
+  studio_touched(label, shot, sticky ? null : studio_diff(JSON.parse(was), studio.project));
   studio_localDerive();
   studio_drawAll();
   clearTimeout(studio.checkTimer);
@@ -2406,12 +2632,25 @@ function studio_change(mutate, label, shot) {
 async function studio_check() {
   const n = ++studio.checking;
   const gen = studio.gen;
+  const sent = JSON.stringify(studio.project);
   const r = await API.post('/api/studio/check', {project: studio.project});
   /* An answer about an older project must never replace a newer one: an edit
      made while this was in flight would silently disappear. */
   if (n !== studio.checking || gen !== studio.gen) return;
   if (!r || !r.ok) { toast((r && r.error) || 'That edit could not be applied.', 'warn'); return; }
   studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
+  /* What the server did in answer -- a slower speed trimming the shot to the
+     footage there is -- belongs to the edit that caused it, so setting that
+     edit back does not claim the video matches while the trim remains. And
+     the answer can put a field back where the render had it: a transition
+     changed and changed back only gets its old length again here. */
+  const last = studio.pending[studio.pending.length - 1];
+  if (last && last.paths && studio.base) {
+    const knock = studio_diff(JSON.parse(sent), r.project).filter(k => k.length && !STUDIO_NOT_EDITS[k[0]] &&
+      !studio_same(studio_at(studio.base, k), studio_at(r.project, k)));
+    last.paths = studio_union(last.paths, knock);
+  }
+  studio_reconcile();
   studio_drawAll();
 }
 
@@ -2464,11 +2703,15 @@ async function studio_render() {
   /* The previous render is old news once a new one is asked for: a poll that
      lands in between must not say "Ready" about the reel being replaced. */
   studio.seenJob = studio.jobId; studio.watching = -1;
+  /* Render beats the background render: the server cancels that one to start
+     this, and its timer has nothing left to do. */
+  clearTimeout(studio.auto.timer); studio.auto.timer = null;
+  studio.auto.running = false; studio.auto.job = 0; studio.auto.held = '';
   studio.project.name = studio_el('studio-pname').value.trim() || studio.project.name;
   /* The list of what is pending belongs to the project being sent. Clearing it
      here rather than on the job's reply means the card stops claiming, for the
      length of the render, that those edits are still missing. */
-  const sent = studio.pending.slice();
+  const sent = studio.pending.slice(), sentBase = studio.base;
   studio_settled();
   /* Said before the round trip, not after it: the gap between pressing the
      button and the first poll is exactly where the page used to look as if
@@ -2480,13 +2723,16 @@ async function studio_render() {
   const r = await API.post('/api/studio/render', {project: studio.project});
   if (!r || !r.ok) {
     studio_busy(false);
-    studio.pending = sent; studio.dirty = sent.length > 0;
+    studio.pending = sent; studio.base = sentBase; studio.dirty = sent.length > 0;
     studio_state((r && r.error) || 'Could not start the render.', true);
     studio_drawRenderCard();
     return;
   }
   studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
   studio.output = r.output;
+  /* What the server will render, rounded and clamped, is what later edits are
+     measured against -- not what the page sent a moment before. */
+  studio.base = JSON.parse(JSON.stringify(r.project)); studio_reconcile();
   studio.jobId = r.job || 0;
   studio_drawAll();
   studio_poll();
@@ -2507,19 +2753,26 @@ async function studio_poll() {
   const mine = ++studio.pollTok;
   const j = await API.get('/api/studio/job');
   if (mine !== studio.pollTok) return;
-  if (!j || j.state === 'idle') { studio_busy(false); studio_drawRenderCard(); return; }
+  if (!j || j.state === 'idle') { studio_busy(false); studio.auto.running = false; studio_drawRenderCard(); return; }
   const running = j.state === 'running' || j.state === 'queued';
-  studio_busy(running);
+  /* A background render does not take the Render button away: pressing it
+     replaces the background one. */
+  const bg = !!j.auto;
+  studio_busy(running && !bg);
+  studio.auto.running = running && bg;
+  if (running && bg) { studio.auto.job = j.id; studio.auto.pct = j.percent || 0; }
+  studio_show('studio-meter-wrap', running);
   studio_el('studio-meter').style.width = (running ? j.percent : 100) + '%';
   if (running) {
     studio.watching = j.id;       /* seen running on this page: its finish is news */
     studio.jobMsg = j.message + (j.cached ? ' · ' + j.cached + ' shots unchanged' : '');
-    studio_state(studio.jobMsg);
+    studio_state(bg ? '' : studio.jobMsg);
     studio_drawRenderCard();
     studio.polling = setTimeout(studio_poll, 700);
     return;
   }
   studio.jobMsg = '';
+  if (bg) { studio_autoDone(j); return; }
   /* A finished job is news once, and only to a page that started it or watched
      it run. The server keeps the last job for as long as it runs, so without
      this every visit to the page announced the same reel again. */
@@ -2557,6 +2810,47 @@ async function studio_poll() {
   studio_drawRenderCard();
 }
 
+/* A background render has finished, one way or another. Said quietly: nobody
+   pressed anything, so there is no toast -- the player changing over to the
+   real video, and the strip turning green, are the news. */
+function studio_autoDone(j) {
+  const a = studio.auto;
+  a.running = false;
+  const news = j.id !== studio.seenJob && (j.id === studio.jobId || j.id === studio.watching || j.id === a.job);
+  studio.seenJob = j.id;
+  if (!news) { studio_drawRenderCard(); return; }
+  const mine = j.id === a.job;
+  if (j.state === 'done') {
+    /* The video IS the project only if nothing was edited since it was sent.
+       Otherwise it is still newer than the last one -- worth loading -- and
+       the preview stays up over it until the render of the newest edit. */
+    const fresh = mine && !!a.sig && a.sig === studio_projSig();
+    const extra = j.cached ? ' · ' + j.cached + ' shots reused' : '';
+    studio.renderNote = 'took ' + j.elapsed + ' s' + extra;
+    if ((j.lyrics_note || '') !== (studio.lyricsNote || '')) {
+      studio.lyricsNote = j.lyrics_note || '';
+      studio_drawInspector();
+    }
+    if (studio.project && j.output === studio.project.output) {
+      studio.output = j.output; studio.renderedAt = Date.now();
+      if (fresh) studio_settled();
+      studio_loadVideo();
+    }
+    studio_state(fresh ? 'Rendered in the background in ' + j.elapsed + ' s' + extra : '');
+    studio_autoLog('done', String(j.elapsed));
+  } else if (j.state === 'failed') {
+    if (mine) a.failed = a.sig;
+    studio_state(j.error || 'The render failed.', true);
+    studio_autoLog('failed', j.error || '');
+  } else {
+    /* Replaced by a newer edit or switched off: nothing went wrong, and
+       nothing was taken off the list of edits, so there is nothing to say. */
+    studio_autoLog('cancelled');
+  }
+  if (mine) a.sig = '';
+  studio_drawRenderCard();
+}
+
 function studio_busy(on) {
   studio.rendering = !!on;
   studio_show('studio-cancel-btn', on);
@@ -2571,6 +2865,459 @@ function studio_loadVideo() {
   studio_show('studio-player-empty', false);
 }
 
+/* ------------------------------------------------- the instant preview
+
+   An edit used to be invisible until it had been rendered. Now the player
+   plays the timeline itself whenever the rendered file is not the project on
+   screen: every shot is its clip file, played from the second the render
+   would take, at the speed the render would play it, with the song started
+   where the reel starts it. Nothing is encoded, so a deleted shot is gone from
+   the player in the same frame it is gone from the timeline.
+
+   What it is not: the effects, the grade, the transitions' blends, the text.
+   Those are ffmpeg's, and the label over the picture says they arrive with
+   the render -- which, with background rendering on, is already under way. */
+
+/* Seconds of a shot's footage consumed by `upto` seconds of its output. */
+function studio_pvUsed(ps, upto) {
+  let used = 0;
+  for (const p of ps) {
+    if (upto <= p[0]) break;
+    used += (Math.min(p[1], upto) - p[0]) * p[2];
+  }
+  return used;
+}
+
+/* What decides a shot's footage, as one string: two shots that agree on it
+   play the same seconds of the same clip. */
+function studio_pvKey(s) {
+  return JSON.stringify([s.clip, s.kill, s.pre, s.duration, s.speed, s.stretch || null,
+                         s.kills || [], s.fx || [], !!s.hero, s.hero_fx || []]);
+}
+
+/* The server's account of shot i's footage: where it starts in the clip, its
+   speed map, and how long the kill's frame is held. Only the server's derive
+   carries them; while the page's own quick estimate stands in (a drag, the
+   quarter second before /check answers), a shot nothing has changed about
+   keeps what the server said last time, and a shot being changed plays at
+   real speed from where its kill puts it. */
+function studio_pvInfo(i) {
+  const p = studio.project, d = studio.derived;
+  const s = p && p.shots[i], r = d && d.shots[i];
+  if (!s || !r) return null;
+  const key = studio_pvKey(s);
+  if (r.source_in !== undefined && r.freeze !== undefined) {
+    const got = {source_in: r.source_in, pieces: r.pieces, freeze: r.freeze};
+    studio.pv.info[key] = got;
+    return got;
+  }
+  return studio.pv.info[key] ||
+    {source_in: Math.max(0, s.kill - s.pre), pieces: [[0, s.duration, 1]], freeze: 0};
+}
+
+/* WHERE THE REEL IS AT REEL SECOND t: which shot, which second of its clip,
+   and how fast -- 0 while a frame is held. clips/studio.py preview_at() is the
+   same arithmetic, and the browser test holds the two to each other. */
+function studio_pvAt(t) {
+  const d = studio.derived, rows = (d && d.shots) || [];
+  if (!rows.length) return {shot: -1, src: 0, rate: 0};
+  t = Math.max(0, Number(t) || 0);
+  let i = 0;
+  while (i + 1 < rows.length && t >= rows[i + 1].start) i++;
+  const r = rows[i], info = studio_pvInfo(i);
+  const ps = info.pieces, dur = r.end - r.start;
+  let u = t - r.start;
+  const pre = r.kill_reel - r.start, freeze = Number(info.freeze) || 0;
+  const held = u >= dur;
+  u = Math.min(u, dur);
+  if (freeze && u >= pre && u < pre + freeze) {
+    return {shot: i, src: info.source_in + studio_pvUsed(ps, pre), rate: 0};
+  }
+  if (freeze && u >= pre + freeze) u -= freeze;
+  let rate = 0;
+  if (!held) {
+    const piece = ps.find(x => x[0] <= u && u < x[1]);
+    rate = piece ? piece[2] : ps[ps.length - 1][2];
+  }
+  /* Slower than a browser will play is a held frame, which is what the
+     render's HOLD_RATE is for anyway. */
+  if (rate < 0.0625) rate = 0;
+  return {shot: i, src: info.source_in + studio_pvUsed(ps, u), rate: rate};
+}
+
+function studio_pvEls() { return [studio_el('studio-pv-a'), studio_el('studio-pv-b')]; }
+
+/* The reel second the preview is on. */
+function studio_pvTime() {
+  const pv = studio.pv;
+  return pv.playing ? pv.base + (performance.now() - pv.t0) / 1000 : pv.t;
+}
+
+/* Is the rendered file NOT the project on screen? Then the player shows the
+   preview: never rendered, an edit since, or a render of it still running. */
+function studio_pvWanted() {
+  return !!(studio.project && studio.derived && studio.project.shots.length &&
+            (!studio.output || studio.dirty || studio.rendering));
+}
+
+/* The reel second the player is on, whichever it is showing. */
+function studio_now() {
+  if (studio.pv.on) return studio_pvTime();
+  const v = studio_el('studio-video');
+  return v && v.src ? v.currentTime || 0 : 0;
+}
+
+function studio_dbGain(db) { return Math.max(0, Math.min(1, Math.pow(10, (Number(db) || 0) / 20))); }
+
+/* Put shot i's clip in a player, at source second `src`. A player already
+   holding that clip only seeks; one that is still loading seeks when it can. */
+function studio_pvLoad(el, i, src) {
+  const s = studio.project.shots[i];
+  if (!el || !s) return;
+  el.setAttribute('data-shot', String(i));
+  if (el.getAttribute('data-clip') !== s.clip) {
+    el.setAttribute('data-clip', s.clip);
+    el.setAttribute('data-seek', String(src));
+    el.src = studio_media('/api/clips/video', s.clip);
+    return;
+  }
+  if (el.readyState >= 1) {
+    if (Math.abs(el.currentTime - src) > 0.02) el.currentTime = src;
+  } else el.setAttribute('data-seek', String(src));
+}
+
+/* The next shot, cued in the player that is off screen, so the cut is a swap
+   and not a load. */
+function studio_pvCue(i) {
+  const pv = studio.pv, rows = studio.derived.shots;
+  const other = studio_pvEls()[1 - pv.act];
+  if (i + 1 >= rows.length) return;
+  const at = studio_pvAt(rows[i + 1].start);
+  other.pause();
+  studio_pvLoad(other, i + 1, at.src);
+}
+
+/* Show shot `at.shot` -- the cued player if it holds it, else load it here. */
+function studio_pvCut(at, t) {
+  const pv = studio.pv, els = studio_pvEls();
+  const p = studio.project, rows = studio.derived.shots;
+  let cued = false;
+  if (Number(els[1 - pv.act].getAttribute('data-shot')) === at.shot && pv.shot >= 0) {
+    pv.act = 1 - pv.act;
+    cued = true;
+  }
+  const el = els[pv.act], off = els[1 - pv.act];
+  studio_pvLoad(el, at.shot, at.src);
+  el.classList.add('is-on');
+  off.classList.remove('is-on');
+  off.pause();
+  off.muted = true;
+  el.muted = false;
+  el.volume = studio_dbGain(p.game_db);
+  if (pv.playing && at.rate > 0) { el.playbackRate = at.rate; el.play().catch(() => {}); }
+  if (pv.playing && pv.shot >= 0) {
+    const want = rows[at.shot].start;
+    pv.cuts.push({shot: at.shot, at: Math.round(t * 1000) / 1000, want: want,
+                  late: Math.round((t - want) * 1000) / 1000, cued: cued, ready: el.readyState});
+    if (pv.cuts.length > 50) pv.cuts.shift();
+  }
+  pv.shot = at.shot;
+  studio_pvCue(at.shot);
+}
+
+function studio_pvSongSync(t, playing) {
+  const a = studio_el('studio-pv-song'), p = studio.project;
+  if (!a) return;
+  if (!p || !p.song || !playing) { if (!a.paused) a.pause(); return; }
+  const want = (Number(p.song_offset) || 0) + t;
+  if (a.getAttribute('data-song') !== p.song) {
+    a.setAttribute('data-song', p.song);
+    a.src = studio_media('/api/reel/audio', p.song);
+  }
+  a.volume = studio_dbGain(p.music_db);
+  if (a.readyState >= 1 && Math.abs(a.currentTime - want) > 0.12) a.currentTime = want;
+  if (a.paused) { if (a.readyState >= 1) a.currentTime = want; a.play().catch(() => {}); }
+}
+
+/* One frame of playback: the clock says where the reel is, and everything
+   follows it -- the shot on screen, its speed, the song. The players are
+   corrected toward the clock rather than trusted, because a <video> that
+   stalls for a moment would otherwise carry every later cut late with it. */
+function studio_pvTick() {
+  const pv = studio.pv, d = studio.derived;
+  pv.raf = 0;
+  if (!pv.playing || !pv.on || !d) return;
+  if (shell_page !== 'studio') { studio_pvPause(); return; }
+  let t = studio_pvTime();
+  if (t >= d.length) { pv.t = d.length; studio_pvPause(); return; }
+  const at = studio_pvAt(t);
+  if (at.shot !== pv.shot) studio_pvCut(at, t);
+  const el = studio_pvEls()[pv.act];
+  if (at.rate === 0) {
+    if (!el.paused) el.pause();
+    if (el.readyState >= 1 && Math.abs(el.currentTime - at.src) > 0.05 && !el.seeking) el.currentTime = at.src;
+  } else if (el.readyState >= 1) {
+    const drift = el.currentTime - at.src;
+    if (Math.abs(drift) > 0.3) { if (!el.seeking) el.currentTime = at.src; }
+    const rate = Math.max(0.0625, Math.min(16, at.rate * (1 - Math.max(-0.25, Math.min(0.25, drift)))));
+    if (Math.abs(el.playbackRate - rate) > 0.02) el.playbackRate = rate;
+    if (el.paused) el.play().catch(() => {});
+  }
+  studio_pvSongSync(t, true);
+  studio_playhead();
+  pv.raf = requestAnimationFrame(studio_pvTick);
+}
+
+/* Paused on reel second t: the right frame of the right clip, still. */
+function studio_pvShow(t) {
+  const pv = studio.pv, d = studio.derived;
+  if (!d || !studio.project) return;
+  pv.t = Math.max(0, Math.min(Number(t) || 0, d.length));
+  const at = studio_pvAt(Math.min(pv.t, Math.max(0, d.length - 0.001)));
+  if (at.shot < 0) return;
+  studio_pvCut(at, pv.t);
+  studio_pvEls()[pv.act].pause();
+  studio_pvSongSync(pv.t, false);
+  studio_playhead();
+}
+
+function studio_pvPlay() {
+  const pv = studio.pv, d = studio.derived;
+  if (!pv.on || !d || pv.playing) return;
+  if (pv.t >= d.length - 0.05) pv.t = 0;
+  pv.base = pv.t; pv.t0 = performance.now(); pv.playing = true;
+  pv.shot = -1;               /* the first frame re-takes the shot it is in */
+  studio_el('studio-play-btn').textContent = 'Pause';
+  pv.raf = requestAnimationFrame(studio_pvTick);
+}
+
+function studio_pvPause() {
+  const pv = studio.pv;
+  if (pv.playing) pv.t = studio_pvTime();
+  pv.playing = false;
+  if (pv.raf) cancelAnimationFrame(pv.raf);
+  pv.raf = 0;
+  studio_pvEls().forEach(v => { if (v && !v.paused) v.pause(); });
+  studio_pvSongSync(pv.t, false);
+  const b = studio_el('studio-play-btn');
+  if (b) b.textContent = 'Play';
+  studio_playhead();
+}
+
+/* The player's transport, whichever it is showing. */
+function studio_toggle() {
+  if (studio.pv.on) { if (studio.pv.playing) studio_pvPause(); else studio_pvPlay(); return; }
+  const v = studio_el('studio-video');
+  if (v.src) { if (v.paused) v.play().catch(() => {}); else v.pause(); }
+}
+
+function studio_seekTo(t) {
+  t = Math.max(0, Number(t) || 0);
+  if (studio.pv.on) {
+    if (studio.pv.playing) { studio.pv.base = t; studio.pv.t0 = performance.now(); studio.pv.shot = -1; }
+    else studio_pvShow(t);
+  } else {
+    const v = studio_el('studio-video');
+    if (v.src) v.currentTime = t;
+  }
+  studio_playhead();
+}
+
+/* Called whenever the render card is redrawn, which is after every edit, every
+   answer from /check and every poll of the render: which player is up, and
+   whether the preview's shots still mean what they meant. */
+function studio_pvSync() {
+  const pv = studio.pv, want = studio_pvWanted(), v = studio_el('studio-video');
+  if (!v) return;
+  if (want !== pv.on) {
+    if (want) {
+      /* From the rendered file to the preview, at the same second. */
+      const t = v.src ? v.currentTime || 0 : pv.t, was = v.src && !v.paused;
+      if (!v.paused) v.pause();
+      pv.on = true; pv.t = t; pv.shot = -1; pv.planSig = '';
+      studio_pvEls().forEach(e => e.setAttribute('data-shot', '-1'));
+      studio_pvShow(t);
+      if (was) studio_pvPlay();
+    } else {
+      /* The render has caught up: the real thing, at the same second. */
+      const t = studio_pvTime(), was = pv.playing;
+      studio_pvPause();
+      pv.on = false;
+      const go = () => { v.currentTime = Math.min(t, v.duration || t); if (was) v.play().catch(() => {}); };
+      if (v.readyState >= 1) go(); else v.addEventListener('loadedmetadata', go, {once: true});
+    }
+  }
+  studio_show('studio-pv', pv.on);
+  v.classList.toggle('hide', pv.on);
+  if (pv.on) studio_show('studio-player-empty', false);
+  else studio_show('studio-player-empty', !studio.output);
+  if (!pv.on) return;
+  /* The shots moved under the preview -- deleted, reordered, re-timed. Shot 3
+     may be a different clip now, so nothing cued can be trusted. */
+  const d = studio.derived, p = studio.project;
+  const sig = JSON.stringify(d.shots.map((r, i) => [p.shots[i] && p.shots[i].clip, r.start, r.end,
+                                                     r.source_in, r.freeze])) + '|' + d.length;
+  if (sig === pv.planSig) return;
+  pv.planSig = sig;
+  pv.shot = -1;
+  studio_pvEls().forEach(e => e.setAttribute('data-shot', '-1'));
+  if (pv.playing) {
+    const t = Math.min(studio_pvTime(), d.length);
+    pv.base = t; pv.t0 = performance.now();
+  } else studio_pvShow(Math.min(pv.t, d.length));
+}
+
+/* ------------------------------------------------- the background render
+
+   The preview is exact about the cut and approximate about the look, so the
+   real render is still wanted -- just not as a thing to remember to press.
+   When the edits stop for a couple of seconds it starts by itself; an edit
+   made while it runs replaces it (the server cancels it; the shots it had
+   finished stay cached); and Render still works, and wins.
+
+   It never starts while you are live, recording or cutting clips: the
+   encoder is the broadcast's first. The page checks, and so does the server
+   (webui.studio_auto_held), because a timer the page forgot to stop is not
+   what should decide whether a live stream drops frames. */
+
+/* The project as one string, minus where it renders to (which the server
+   fills in) -- so "is the video this project?" is a string comparison. */
+function studio_canon(v) {
+  if (Array.isArray(v)) return '[' + v.map(studio_canon).join(',') + ']';
+  if (v && typeof v === 'object') {
+    return '{' + Object.keys(v).filter(k => k !== 'output').sort()
+      .map(k => JSON.stringify(k) + ':' + studio_canon(v[k])).join(',') + '}';
+  }
+  return JSON.stringify(v === undefined ? null : v);
+}
+
+function studio_projSig() { return studio.project ? studio_canon(studio.project) : ''; }
+
+function studio_autoLog(what, why) {
+  const a = studio.auto;
+  a.log.push({at: Date.now(), what: what, why: why || '', job: a.job});
+  if (a.log.length > 40) a.log.shift();
+}
+
+/* Whatever on this machine has a better claim on the encoder, from the
+   status poll the shell already makes. */
+function studio_autoBusyElsewhere() {
+  const s = (typeof STATUS !== 'undefined' && STATUS) || {};
+  if (s.phase && s.phase !== 'IDLE') return 'Waiting until you are not live.';
+  if (s.recording) return 'Waiting until the recording stops.';
+  const j = s.clips;
+  if (j && (j.state === 'running' || j.state === 'queued')) return 'Waiting for the clip job to finish.';
+  return '';
+}
+
+/* After every redraw of the render card: a project that has changed since the
+   timer was last started starts it again. */
+function studio_autoArm() {
+  const a = studio.auto, sig = studio_projSig();
+  if (sig === a.armed) return;
+  a.armed = sig;
+  clearTimeout(a.timer); a.timer = null;
+  /* Counted from the last edit even when something is in the way, so the
+     poll that finds the way clear does not start it mid-gesture. */
+  a.dueAt = Date.now() + a.idleMs;
+  if (!a.on || !studio.project || !studio.dirty) return;
+  if (studio.rendering) {
+    /* Never a second encode beside the one the user asked for. The edit
+       waits, and the poll starts it when that render is done. */
+    a.held = 'Waiting for the render you started.';
+    studio_autoLog('held', a.held);
+    return;
+  }
+  if (a.running && sig === a.sig) return;
+  a.held = '';
+  a.timer = setTimeout(studio_autoGo, a.idleMs);
+}
+
+async function studio_autoGo() {
+  const a = studio.auto;
+  clearTimeout(a.timer); a.timer = null;
+  if (!a.on || !studio.project || !studio.dirty) { studio_autoDraw(); return; }
+  if (studio.drag) { a.timer = setTimeout(studio_autoGo, 600); return; }
+  const sig = studio_projSig();
+  if (a.running && a.sig === sig) return;
+  let held = studio.rendering ? 'Waiting for the render you started.' : studio_autoBusyElsewhere();
+  if (!held && sig === a.failed) held = 'The last render of these edits failed. Press Render to try again.';
+  if (held) { a.held = held; studio_autoLog('held', held); studio_autoDraw(); return; }
+  const gen = studio.gen;
+  a.held = '';
+  a.sig = sig;
+  studio_autoLog('start');
+  clearTimeout(studio.checkTimer);
+  const r = await API.post('/api/studio/render', {project: studio.project, auto: true}).catch(() => null);
+  if (!r || !r.ok) {
+    a.sig = '';
+    if (r && r.held) { a.held = r.held; a.heldUntil = Date.now() + 5000; studio_autoLog('held', r.held); }
+    else { a.failed = sig; a.held = (r && r.error) || 'The background render could not start.'; studio_autoLog('refused', a.held); }
+    studio_autoDraw();
+    return;
+  }
+  /* The answer is the project normalised, with the file it renders to. Taken
+     only if nothing was edited during the round trip -- an edit made since is
+     newer than this answer, and already has its own timer running. */
+  if (gen === studio.gen) {
+    studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
+    a.sig = studio_projSig();
+    a.armed = a.sig;
+  }
+  studio.output = r.output;
+  a.job = r.job || 0; a.running = true; a.pct = 0;
+  studio.seenJob = studio.jobId; studio.watching = -1;
+  studio.jobId = a.job;
+  studio_drawAll();
+  studio_poll();
+}
+
+/* The status poll's turn, every two seconds while the Studio is open: an
+   edit left waiting -- for a render the user started, a stream, a clip job --
+   goes as soon as nothing is in its way. */
+function studio_autoTick() {
+  const a = studio.auto;
+  if (!a.on || !studio.project || !studio.dirty || a.timer || a.running || studio.rendering) return;
+  if (Date.now() < a.heldUntil || Date.now() < a.dueAt) return;
+  if (studio_projSig() === a.failed) return;
+  studio_autoGo();
+}
+
+/* The switch, which is the same setting as Settings > Clips. */
+async function studio_autoSet(on) {
+  const a = studio.auto;
+  a.on = !!on; a.armed = ''; a.held = '';
+  if (!a.on) {
+    clearTimeout(a.timer); a.timer = null;
+    if (a.running) API.post('/api/studio/cancel', {}).then(studio_poll);
+  }
+  studio_drawRenderCard();
+  const r = await API.post('/api/settings/save', {values: {'clips.auto_render': a.on}}).catch(() => null);
+  if (!r || r.error || (r.errors && r.errors['clips.auto_render'])) toast('Could not save that setting.', 'warn');
+}
+
+/* The setting, read once per visit: Settings may have changed it. */
+async function studio_autoLoad() {
+  const r = await API.get('/api/settings/values').catch(() => null);
+  if (!r) return;
+  studio.auto.on = r['clips.auto_render'] !== false;
+  studio.auto.known = true;
+  studio_drawRenderCard();
+}
+
+function studio_autoDraw() {
+  const a = studio.auto, box = studio_el('studio-auto-state'), cb = studio_el('studio-auto-render');
+  if (cb && cb.checked !== a.on) cb.checked = a.on;
+  if (!box) return;
+  let say = '';
+  if (!a.on) say = 'Off · press Render when you want the video.';
+  else if (a.running) say = 'Rendering in the background' + (a.pct ? ' · ' + a.pct + '%' : '…');
+  else if (a.held && studio.dirty) say = a.held;
+  else if (a.timer) say = 'Starts when you stop editing.';
+  else if (studio.output && !studio.dirty && !studio.rendering) say = 'Up to date.';
+  box.textContent = say;
+}
+
 function studio_drawRenderCard() {
   const p = studio.project, d = studio.derived;
   if (!p || !d) return;
@@ -2582,11 +3329,15 @@ function studio_drawRenderCard() {
   studio_el('studio-undo-btn').disabled = !studio.undo.length;
   studio_el('studio-show-btn').disabled = !studio.output || studio.dirty && !studio.renderedAt;
   studio_drawWhy();
+  studio_pvSync();
+  studio_autoArm();
+  studio_autoDraw();
 }
 
-/* How many single edits are waiting, which is what the button counts. */
+/* How many things differ from the video, which is what the button counts --
+   one per line, however many clicks it took to get there. */
 function studio_pendingCount() {
-  return studio.pending.reduce((a, x) => a + x.n, 0);
+  return studio.pending.length;
 }
 
 /* THE ANSWER TO "IS WHAT I AM WATCHING WHAT I HAVE EDITED?", in one strip:
@@ -2603,6 +3354,12 @@ function studio_drawSync() {
     kind = 'busy'; label = 'Rendering…';
     head = 'Rendering your changes';
     sub = '';
+  } else if (studio.auto.running && !studio.failMsg) {
+    /* Not "N changes are not in the video": they are on their way into it,
+       and the preview is already showing them. */
+    kind = 'busy'; label = 'Render now';
+    head = 'Rendering your changes in the background';
+    sub = 'The preview is showing them already. Keep editing; a newer edit starts it again.';
   } else if (studio.failMsg) {
     kind = 'bad'; label = n ? 'Try again · ' + n + (n === 1 ? ' change' : ' changes') : 'Try again';
     head = 'The last render failed';
@@ -2616,7 +3373,9 @@ function studio_drawSync() {
     label = n ? 'Apply ' + n + (n === 1 ? ' change' : ' changes') : 'Apply your changes';
     head = n ? n + (n === 1 ? ' change is not in the video' : ' changes are not in the video')
              : 'Your changes are not in the video';
-    sub = 'The player is still showing the last render.';
+    /* The player is on the preview whenever this is true (studio_pvWanted),
+       so what is missing is the look, not the edit. */
+    sub = 'The player is previewing them; rendering adds the effects and colour.';
   } else {
     kind = 'ok'; label = 'Render again';
     head = 'The video matches your edits';
@@ -2642,14 +3401,14 @@ function studio_drawSync() {
   studio_show('studio-pending', show && n > 0);
   if (show && n > 0) {
     const rows = studio.pending.slice().reverse();
-    list.innerHTML = rows.slice(0, 6).map(x =>
-      '<li>' + esc(x.label) + (x.n > 1 ? '<span class="studio-pending-n">×' + x.n + '</span>' : '') + '</li>').join('') +
+    list.innerHTML = rows.slice(0, 6).map(x => '<li>' + esc(x.label) + '</li>').join('') +
       (rows.length > 6 ? '<li class="studio-pending-more">and ' + (rows.length - 6) + ' more</li>' : '');
   }
   /* The player says it too: the sidebar is not where someone watching looks. */
   const stale = studio_el('studio-stale');
   if (stale) {
-    studio_show('studio-stale', kind === 'stale' && !!studio.output);
+    /* Not over the preview: that IS the edits, and says what it leaves out. */
+    studio_show('studio-stale', kind === 'stale' && !!studio.output && !studio_pvWanted());
     stale.textContent = 'Last render · ' + n + (n === 1 ? ' change not shown' : ' changes not shown');
   }
 }
@@ -2693,6 +3452,17 @@ function studio_drawWhy() {
         (out.length === 1 ? ' clip was left out:' : ' clips were left out:') + '</p><ul class="studio-fold-list">' +
         out.map(x => '<li><strong>' + esc(x.name) + '</strong> — ' + esc(x.why) + '</li>').join('') + '</ul></details>'
       : '<p class="studio-fold-flat">All ' + sel.length + ' chosen clips are in this reel</p>';
+    /* A clip can be in the reel with one of its kills not: that is a
+       decision too, and says why, kill by kill. */
+    const part = sel.filter(x => x.in && x.kills_out && x.kills_out.length);
+    const nk = part.reduce((n, x) => n + x.kills_out.length, 0);
+    if (nk) {
+      h += '<details class="studio-fold" data-fold="kills"' + (studio.folds.kills ? ' open' : '') +
+        '><summary>Kills not shown<span class="studio-fold-n">' + nk + '</span></summary>' +
+        '<ul class="studio-fold-list">' + part.map(x => '<li><strong>' + esc(x.name) + '</strong> — ' +
+          x.kills_out.map(k => esc(studio_secs(k.kill) + ': ' + k.why)).join('; ') + '</li>').join('') +
+        '</ul></details>';
+    }
   }
   h += '<button type="button" class="btn btn-sm studio-add-btn" data-act="studio-add">Add clips…</button>';
   box.innerHTML = h;
@@ -2716,6 +3486,7 @@ async function studio_addClips() {
     name: p.name, style: p.style, song: p.song || '', fmt: p.format,
     output: studio.output || p.output || '',
     start: p.song_offset || 0, end: p.part_end || ((p.song_offset || 0) + (d ? d.length : 0)),
+    fill: p.fill || '', keep_all: !!p.keep_all,
     edited: !!(d && d.edited) || studio.undo.length > 0,
     keep: {cam: p.cam, vfit: p.vfit, handle: p.handle, handle_pos: p.handle_pos,
            outro_len: p.outro_len, overlays: p.overlays, lyrics: p.lyrics}
@@ -3170,9 +3941,9 @@ function studio_zoomAt(pps, clientX) {
 /* The playhead when it is on screen, so zooming from the buttons keeps the
    frame being watched rather than the middle of the view. */
 function studio_anchorX() {
-  const box = studio_el('studio-scroll'), v = studio_el('studio-video');
+  const box = studio_el('studio-scroll');
   if (!box) return null;
-  const t = (v && v.src) ? (v.currentTime || 0) : 0;
+  const t = studio_now();
   const px = t * studio.pps - box.scrollLeft;
   if (px < 0 || px > box.clientWidth) return null;
   return box.getBoundingClientRect().left + px;
@@ -3602,8 +4373,8 @@ function studio_musicNeed() {
 }
 
 function studio_playhead() {
-  const v = studio_el('studio-video'), ph = studio_el('studio-ph');
-  const t = v && v.src ? v.currentTime || 0 : 0;
+  const ph = studio_el('studio-ph');
+  const t = studio_now();
   if (ph) ph.style.left = (t * studio.pps).toFixed(1) + 'px';
   const c = studio_el('studio-clock');
   if (c) c.textContent = studio_secs(t);
@@ -3870,9 +4641,9 @@ function studio_inspectorSet(id, value) {
 }
 
 function studio_setPool(pool, vals) {
-  studio_change(pr => { pr.pools = Object.assign({}, pr.pools || {}); pr.pools[pool] = vals; },
-                'The ' + pool + ' effects to choose from');
-  studio_mix(pool, false);
+  const label = 'The ' + pool + ' effects to choose from';
+  studio_change(pr => { pr.pools = Object.assign({}, pr.pools || {}); pr.pools[pool] = vals; }, label);
+  studio_mix(pool, false, label);
 }
 
 function studio_setList(list, vals) {
@@ -4251,7 +5022,8 @@ function studio_pointerUp(e) {
   if (!g.moved) { studio_select(g.i); return; }
   studio.gen++;
   studio_pushUndo(g.snapshot);
-  studio_touched(studio_shotName(g.i) + (g.kind === 'trim' ? ' · trimmed' : g.kind === 'kill' ? ' · the kill moved' : ' moved'), g.i);
+  studio_touched(studio_shotName(g.i) + (g.kind === 'trim' ? ' · trimmed' : g.kind === 'kill' ? ' · the kill moved' : ' moved'), g.i,
+                 studio_diff(JSON.parse(g.snapshot), studio.project));
   studio.sel = g.i;
   studio_drawAll();
   studio_check();
@@ -4286,6 +5058,7 @@ function studio_tab(which) {
   });
   const a = studio_el('studio-sg-audio');
   if (which !== 'song' && a && !a.paused) a.pause();
+  if (which !== 'timeline' && studio.pv.playing) studio_pvPause();
   if (which === 'timeline') { studio_fitEditor(); studio_fit(); studio_drawAll(); }
   if (which === 'song') studio_sgOpen();
   if (which === 'facecam') studio_fcOpen();
@@ -4305,7 +5078,10 @@ function studio_fitEditor() {
   const h = Math.max(600, host.clientHeight - top - 20);
   ed.style.setProperty('--ed-h', h + 'px');
   const pl = studio_el('studio-player');
-  if (pl && studio.project) pl.classList.toggle('is-vertical', studio.project.format === 'vertical');
+  if (pl && studio.project) {
+    pl.classList.toggle('is-vertical', studio.project.format === 'vertical');
+    pl.classList.toggle('is-fit', studio.project.vfit === 'fit');
+  }
   studio_frameDraw();
 }
 
@@ -4617,7 +5393,7 @@ async function studio_fcUnlink(key) {
    An empty edit of `cam` makes the page ask the server again, which is where
    the per-shot facecam files come from, and puts the change on the render list. */
 function studio_fcTouched(label) {
-  studio_change(pr => { pr.cam = Object.assign({}, pr.cam); }, label);
+  studio_change(pr => { pr.cam = Object.assign({}, pr.cam); }, label, -1, true);
   studio_fcDraw();
 }
 
@@ -5207,6 +5983,7 @@ function studio_wire() {
       studio_mkDefault();
     }
     else if (act === 'studio-mk-mode') { studio.mk.mode = b.getAttribute('data-mode'); studio_mkDraw(); }
+    else if (act === 'studio-fill') { studio.fill = b.getAttribute('data-fill'); studio_fillDraw(); }
     else if (act === 'studio-mk-nudge') studio_mkNudge(b.getAttribute('data-what'), b.getAttribute('data-d') === 'bar' ? 'bar' : '-bar');
     else if (act === 'studio-mk-preset') studio_mkPreset(b.getAttribute('data-preset'));
     else if (act === 'studio-mk-play') studio_mkPlay();
@@ -5279,20 +6056,15 @@ function studio_wire() {
     else if (act === 'studio-cancel') API.post('/api/studio/cancel', {}).then(studio_poll);
     else if (act === 'studio-undo') studio_undo();
     else if (act === 'studio-show') { if (studio.output && typeof clip_reveal === 'function') clip_reveal(studio.output); }
-    else if (act === 'studio-play') {
-      const v = studio_el('studio-video');
-      if (v.src) { if (v.paused) v.play().catch(() => {}); else v.pause(); }
-    }
+    else if (act === 'studio-play') studio_toggle();
     else if (act === 'studio-zoom') {
       const z = Number(b.getAttribute('data-z'));
       if (z === 0) { studio_fit(); studio_drawTimeline(); }
       else studio_zoomAt(studio.pps * (z > 0 ? 1.5 : 1 / 1.5), studio_anchorX());
     }
     else if (act === 'studio-seek') {
-      const v = studio_el('studio-video');
       const box = b.getBoundingClientRect();
-      if (v.src) v.currentTime = Math.max(0, (e.clientX - box.left) / studio.pps);
-      studio_playhead();
+      studio_seekTo((e.clientX - box.left) / studio.pps);
     }
     else if (act === 'studio-select') studio_select(Number(b.getAttribute('data-shot')));
     else if (act === 'studio-move' && p) {
@@ -5549,6 +6321,8 @@ function studio_wire() {
     studio.mkIntro.audio = mia.checked;
     studio_mkIntroDraw();
   });
+  const keepAll = studio_el('studio-keep-all');
+  if (keepAll) keepAll.addEventListener('change', () => { studio.keepAll = keepAll.checked; });
   const ivid = studio_el('studio-intro-video');
   if (ivid) {
     ivid.addEventListener('play', () => {
@@ -5586,6 +6360,17 @@ function studio_wire() {
     });
     v.addEventListener('pause', () => { studio_el('studio-play-btn').textContent = 'Play'; });
   }
+  /* A preview player given a new clip seeks once it knows the clip's length;
+     before that, currentTime is not the browser's to set. */
+  studio_pvEls().forEach(pe => {
+    if (!pe) return;
+    pe.addEventListener('loadedmetadata', () => {
+      const at = pe.getAttribute('data-seek');
+      if (at !== null) { pe.removeAttribute('data-seek'); pe.currentTime = Number(at) || 0; }
+    });
+  });
+  const ar = studio_el('studio-auto-render');
+  if (ar) ar.addEventListener('change', () => studio_autoSet(ar.checked));
   ['studio-make-scrim', 'studio-preview-scrim', 'studio-fxp-scrim'].forEach(id => {
     const sc = studio_el(id);
     if (sc) sc.addEventListener('click', e => { if (e.target === sc) studio_closeModals(); });
@@ -5611,7 +6396,7 @@ function studio_wire() {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); studio_undo(); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); studio_select(Math.min(studio.project.shots.length - 1, studio.sel + 1)); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); studio_select(Math.max(0, studio.sel - 1)); }
-    else if (e.key === ' ') { e.preventDefault(); const vv = studio_el('studio-video'); if (vv.src) { if (vv.paused) vv.play().catch(() => {}); else vv.pause(); } }
+    else if (e.key === ' ') { e.preventDefault(); studio_toggle(); }
     else if (e.key === '+' || e.key === '=') { e.preventDefault(); studio_zoomAt(studio.pps * 1.5, studio_anchorX()); }
     else if (e.key === '-' || e.key === '_') { e.preventDefault(); studio_zoomAt(studio.pps / 1.5, studio_anchorX()); }
     else if (e.key === '0') { e.preventDefault(); studio_fit(); studio_drawTimeline(); }
@@ -5642,10 +6427,19 @@ async function studio_restyle() {
     const from = (p.selection && p.selection.length) ? p.selection.map(x => x.clip) : p.shots.map(x => x.clip);
     const clips = [];
     from.forEach(c => { if (clips.indexOf(c) < 0) clips.push(c); });
-    const r = await API.post('/api/studio/plan', {clips: clips, style: key,
+    /* THE PART GOES WITH IT. A new style used to re-plan without the part
+       the reel was cut to, so the style's own length came back and the
+       clips that had filled the part fell out "to fit the reel's length".
+       How long and Keep every kill go too. */
+    const body = {clips: clips, style: key,
       song: p.song, format: p.format, name: p.name, shaping: Object.assign({}, studio.shaping,
         {arrange: studio.arrange, pins: studio.pins, shuffle_seed: studio.shuffleSeed,
-         hs_only: !!p.hs_only})});
+         hs_only: !!p.hs_only, fill: p.fill || '', keep_all: !!p.keep_all})};
+    if (p.song && p.part_end > (p.song_offset || 0)) {
+      body.part_start = p.song_offset || 0;
+      body.part_end = p.part_end;
+    }
+    const r = await API.post('/api/studio/plan', body);
     if (!r || !r.ok) { toast((r && r.error) || 'Could not rebuild with that style.', 'warn'); return; }
     studio_pushUndo(snapshot);
     studio.gen++;
@@ -5653,8 +6447,10 @@ async function studio_restyle() {
     /* The words belong to the song, not to the style: a new cut keeps them. */
     if (p.lyrics) r.project.lyrics = p.lyrics;
     studio.sel = -1;
-    studio_touched('Rebuilt as ' + label);
+    /* After the project is replaced, not before: the line is measured against
+       the reel it describes. */
     studio_setProject(r.project, r.derived, r.notes, r.song);
+    studio_touched('Rebuilt as ' + label, -1, studio_diff(JSON.parse(snapshot), r.project));
     studio_fit(); studio_drawAll();
     toast('Rebuilt as ' + label + ' — ' + r.project.shots.length + ' shots. Render to see it.', 'ok');
   } finally {
@@ -5663,7 +6459,7 @@ async function studio_restyle() {
   }
 }
 
-async function studio_mix(what, announce) {
+async function studio_mix(what, announce, ride) {
   const p = studio.project;
   if (!p) return;
   const gen = ++studio.gen;
@@ -5674,12 +6470,15 @@ async function studio_mix(what, announce) {
   if (announce) studio_pushUndo(snapshot);
   studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
   /* An unannounced mix rides along with the pool edit that asked for it, and
-     that edit has already named itself; naming it twice would double the count. */
+     that edit has already named itself; naming it twice would double the count.
+     It goes onto that edit's line instead, so putting the pool back does not
+     claim the video matches while the shots still carry the new mix. */
+  const changed = studio_diff(JSON.parse(snapshot), r.project);
   if (announce) {
     studio_touched(what === 'all' ? 'Everything mixed again'
-                 : what === 'kill' ? 'Kill effects mixed again' : 'Transitions mixed again');
-  } else {
-    studio.dirty = true;
+                 : what === 'kill' ? 'Kill effects mixed again' : 'Transitions mixed again', -1, changed);
+  } else if (changed.length) {
+    studio_touched(ride, -1, changed);
   }
   studio_drawAll();
   if (announce) toast(what === 'all' ? 'Everything mixed again.' : what === 'kill' ? 'Kill effects mixed again.' : 'Transitions mixed again.', 'ok');
@@ -5943,7 +6742,10 @@ function studio_sgReset() {
   const len = (studio.derived && studio.derived.length) || 30;
   if (sg.song === p.song && !sg.touched) {
     sg.start = p.song_offset || 0;
-    sg.end = Math.min(sh.seconds, sg.start + len);
+    /* On the part the reel was cut to, not on the reel's length: opened on
+       the length, a part chosen longer than the reel was forgotten the
+       moment the tab was left. */
+    sg.end = Math.min(sh.seconds, p.part_end > sg.start ? p.part_end : sg.start + len);
   }
   // Open on the marks this reel is already using, so the section is an editor
   // of what is there rather than a blank sheet. Once per song: retyping them
@@ -6371,9 +7173,10 @@ async function studio_sgApply(noSong) {
     if (!r || !r.ok) { studio_el('studio-sg-msg').textContent = (r && r.error) || 'Could not use that song.'; return; }
     studio_pushUndo(snapshot);
     r.project.output = p.output;
-    studio_touched(noSong ? 'The song taken off'
-                 : sg.marks.length ? 'The song, and ' + sg.marks.length + ' kill marks' : 'The part of the song');
     studio_setProject(r.project, r.derived, r.notes, r.song);
+    studio_touched(noSong ? 'The song taken off'
+                 : sg.marks.length ? 'The song, and ' + sg.marks.length + ' kill marks' : 'The part of the song',
+                   -1, studio_diff(JSON.parse(snapshot), r.project));
     if (noSong) { sg.song = ''; sg.shape = null; sg.marks = []; }
     sg.touched = false;
     studio_el('studio-sg-msg').textContent = '';
@@ -6418,8 +7221,9 @@ window.PAGE_STUDIO = {
     studio_wire();
     studio_load(false);
     studio_poll();
+    studio_autoLoad();
   },
-  onTick: function () {}
+  onTick: function () { studio_autoTick(); }
 };
 """
 

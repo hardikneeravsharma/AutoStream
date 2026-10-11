@@ -3647,7 +3647,19 @@ class Server:
             return {"ok": False, "error": "ffmpeg is not available, so nothing can be rendered."}
         root = self._clips_dir(c)
         run = studio.runner()
-        if run.busy():
+        auto = bool(body.get("auto"))
+        if auto:
+            # Asked by the page, not the user, so the server decides too:
+            # hiding the page's timer is not what keeps a background encode
+            # off a live broadcast.
+            held = self.studio_auto_held()
+            if held:
+                return {"ok": False, "held": held}
+        # A background render gives way to anything newer, a render the user
+        # asked for never does.
+        if run.busy() and not run.yield_auto():
+            if auto:
+                return {"ok": False, "held": "Waiting for the render you started."}
             return {"ok": False, "error": "A reel is already rendering."}
         # Claimed before the preparation below, not after it: the page shows
         # its Cancel button the moment the button is pressed, so a cancel can
@@ -3663,15 +3675,47 @@ class Server:
         out = Path(proj["output"]) if proj.get("output") else \
             _free_reel(outdir, plan_mod.slug(proj["name"]) or "reel")
         proj["output"] = str(out)
-        job = studio.StudioJob(proj, derived, root, out)
+        job = studio.StudioJob(proj, derived, root, out, auto=auto)
         # start() is the gate that holds the lock; busy() above is only the
         # fast answer. Two POSTs that both passed it must not both be "ok".
         err = run.start(job, claim)
         if err:
             return {"ok": False, "error": err}
-        log.info("studio: rendering %d shots -> %s", len(proj["shots"]), out.name)
+        log.info("studio: rendering %d shots -> %s%s", len(proj["shots"]), out.name,
+                 " (in the background)" if auto else "")
         return {"ok": True, "job": job.id, "output": str(out), "project": proj,
-                "derived": derived, "notes": notes}
+                "derived": derived, "notes": notes, "auto": auto}
+
+    def studio_auto_held(self) -> str:
+        """Why a background render must not start now. "" when it may.
+
+        THE ENCODER BELONGS TO THE BROADCAST. A reel render saturates it, and
+        on a session that is live or recording that is dropped frames in the
+        thing that matters more than any reel. A clip job is the same fight
+        over the same encoder. The user can still press Render: that is their
+        call. Only the render nobody asked for waits.
+        """
+        from . import clips
+        from . import state as st
+
+        if not cfg.load().clips.get("auto_render", True):
+            return "Background rendering is switched off."
+        e = getattr(self, "engine", None)
+        s = getattr(e, "state", None)
+        phase = getattr(s, "phase", st.IDLE)
+        # Every phase but IDLE: ARMING is a game about to go live, COOLDOWN is
+        # still on air, and a session that only records is LIVE with
+        # streaming off.
+        if phase != st.IDLE:
+            return "Waiting until you are not live."
+        if getattr(s, "recording", False):
+            return "Waiting until the recording stops."
+        try:
+            if clips.runner().busy():
+                return "Waiting for the clip job to finish."
+        except Exception:                                   # noqa: BLE001
+            pass
+        return ""
 
     def studio_vary(self, body: dict) -> dict:
         """Mix the timeline's effects again; shots and timing stay put."""
@@ -3722,8 +3766,50 @@ class Server:
             except (TypeError, ValueError):
                 return default
         marks = [num(m, -1.0) for m in (body.get("marks") or [])[:studio.MAX_SHOTS * 2]]
-        notes = studio.apply_song(proj, shape, song, num(body.get("start")), num(body.get("end")),
-                                  [m for m in marks if m >= 0])
+        marks = [m for m in marks if m >= 0]
+        start, end = num(body.get("start")), num(body.get("end"))
+        # The Song tab opens with the reel's own marks filled in, so "marks
+        # were sent" is not "kills were marked by hand": only marks that
+        # differ from the ones the plan cut to are the player's.
+        own = sorted(float(m) for m in (proj.get("song_marks") or []))
+        by_hand = bool(marks) and not (
+            len(own) == len(marks) and all(abs(a - b) < 0.02 for a, b in zip(own, sorted(marks))))
+        # A LONGER PART IS PLANNED AGAIN, NOT STRETCHED. Fitting the timeline
+        # to a part can only take shots away, so a part chosen here longer
+        # than the reel changed nothing -- the clips left out "to fit the
+        # reel's length" stayed out, and the part itself was forgotten.
+        # Re-planned only when that loses nothing: no kills marked by hand,
+        # the timeline as the plan made it, and How long not pinned to the
+        # style's length.
+        try:
+            now = studio.derive(proj)
+        except (KeyError, ValueError, TypeError):
+            now = {"length": 0.0, "edited": True}
+        longer = end > start and (end - start) > now["length"] + 4 * float(shape.beat)
+        same_song = bool(proj.get("song")) and \
+            os.path.normcase(os.path.abspath(song)) == os.path.normcase(os.path.abspath(proj["song"]))
+        if (longer and not by_hand and same_song and proj.get("selection")
+                and not now.get("edited") and proj.get("fill") != "style"):
+            shaping = dict(proj.get("shaping") or {})
+            shaping.update(arrange=proj.get("arrange"), pins=proj.get("pins") or {},
+                           hs_only=bool(proj.get("hs_only")), fill=proj.get("fill") or "",
+                           keep_all=bool(proj.get("keep_all")))
+            r = self.studio_plan({
+                "clips": [row["clip"] for row in proj["selection"]], "style": proj.get("style"),
+                "song": song, "format": proj.get("format"), "name": proj.get("name"),
+                "part_start": start, "part_end": end, "shaping": shaping,
+                "intro_clip": proj.get("intro_clip"), "vfit": proj.get("vfit"),
+                "keep": {k: proj.get(k) for k in ("cam", "vfit", "handle", "handle_pos", "outro_len",
+                                                  "overlays", "lyrics")}})
+            if r.get("ok"):
+                said = (f"The part is {end - start:.0f} s and the reel was {now['length']:.0f} s, "
+                        f"so it was planned again to fill the part.")
+                r["notes"] = [said] + list(r.get("notes") or [])
+                return r
+        notes = studio.apply_song(proj, shape, song, start, end, marks)
+        if longer and now.get("edited") and not by_hand:
+            notes.append("The part is longer than the reel, but the timeline has your edits, so it "
+                         "was not planned again. The part is kept: rebuild the reel to fill it.")
         try:
             proj, derived, more = studio.normalise(proj, root)
         except studio.ProjectError as e:

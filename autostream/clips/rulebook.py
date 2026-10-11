@@ -49,6 +49,17 @@ TARGET_SECONDS = {"landscape": 46.0, "vertical": 30.0}
 # them; a vertical one stops short of the 60 s a Short is allowed.
 MAX_SECONDS = {"landscape": 86.0, "vertical": 58.0}
 PHRASE_BARS = 8
+# HOW LONG, ASKED FOR. The style's length is the default and every reel ever
+# planned without a choice. "part" fills the stretch of song the player chose;
+# "all" puts every chosen clip in, at the style's pace, however long that runs.
+# Either way the style keeps the feel -- pace, effects, flashes -- and stops
+# deciding the length: dwayIR, 25 clips and a long part picked, came out a 43 s
+# Hype reel with 11 clips "left out to fit the reel's length".
+FILLS = ("style", "part", "all")
+# The closest two kills are put when every kill must fit a length: a run-up of
+# MIN_RUN_SECONDS and a quarter second of the kill landing. Under this a cut is
+# a flicker, not a fight.
+MIN_KILL_GAP_SECONDS = MIN_RUN_SECONDS + 0.25
 
 
 @dataclass
@@ -75,13 +86,21 @@ def label_for(kills: int) -> str:
     return {2: "DOUBLE KILL", 3: "TRIPLE KILL", 4: "QUADRA KILL"}.get(kills, "ACE" if kills >= 5 else "")
 
 
-def moments(clips: list[dict], beat: float) -> list[Moment]:
+def moments(clips: list[dict], beat: float, *, keep_short: bool = False,
+            dropped: list[tuple[str, float]] | None = None) -> list[Moment]:
     """Every usable moment in the chosen clips, in clip order.
 
     Kills within GROUP_BEATS of each other share a moment. A moment whose clip
     holds less than MIN_RUN of footage before its first kill is folded into
     the next one when it can be, and dropped when it cannot -- there is
     nothing to show before it.
+
+    KEEP EVERY KILL (`keep_short`) keeps it instead: the shot starts on the
+    clip's first frame, with what run-up there is, and the planner may slow
+    that run-up to reach its mark (studio.stretch_to). Measured on dwayIR and
+    Aftrhrs, "too little run-up" was how a kill most often went missing from a
+    clip the player had chosen for it. `dropped` collects (clip path, kill) for
+    every kill that is still left out, so the page can say which and why.
     """
     run = max(MIN_RUN_BEATS * beat, MIN_RUN_SECONDS)
     out: list[Moment] = []
@@ -101,11 +120,13 @@ def moments(clips: list[dict], beat: float) -> list[Moment]:
         for g in groups:
             g = carry + g
             carry = []
-            if g[0] < run:
+            if g[0] < run and not keep_short:
                 # Not enough footage before it: show it only as part of the
                 # next kill's shot, and only if that one is close enough.
                 if len(g) > 1 and g[-1] - g[0] <= GROUP_BEATS * beat * 2:
                     usable.append(g)
+                elif dropped is not None:
+                    dropped.extend((c.get("path", ""), k) for k in g)
                 continue
             usable.append(g)
         total = sum(len(g) for g in usable)
@@ -167,6 +188,30 @@ def select(moments_: list[Moment], seconds: float, length_of) -> list[Moment]:
     return [m for s in chosen for m in s]
 
 
+def select_fit(moments_: list[Moment], seconds: float, length_of) -> list[Moment]:
+    """The strongest sequences that FIT in `seconds`, whole, in clip order.
+
+    select() takes the strongest until the length is reached, so it runs over
+    by up to a sequence -- right for a soft length, wrong for the end of a
+    chosen part, where the overrun is cut off the reel's end. This skips a
+    sequence that would not fit and tries the next, so a short part keeps as
+    many kills as it can hold rather than stopping at the first ace that
+    would not go in.
+    """
+    seqs: dict[int, list[Moment]] = {}
+    for m in moments_:
+        seqs.setdefault(m.group, []).append(m)
+    ranked = sorted(seqs.values(), key=lambda s: (-max(x.strength for x in s), s[0].group))
+    took: set[int] = set()
+    used = 0.0
+    for s in ranked:
+        need = sum(length_of(m) for m in s)
+        if used + need <= seconds + 1e-6:
+            took.add(s[0].group)
+            used += need
+    return [m for m in moments_ if m.group in took]
+
+
 # ------------------------------------------------------------------ action
 
 # A moment whose footage around the kill moves less than this share of the
@@ -183,13 +228,18 @@ def _action_of(v) -> float | None:
     return float(v) if v is not None else None
 
 
-def drop_still(moments_: list[Moment], stats: dict[int, dict | float | None]) -> tuple[list[Moment], int]:
+def drop_still(moments_: list[Moment], stats: dict[int, dict | float | None],
+               keep_all: bool = False) -> tuple[list[Moment], int]:
     """Moments with action around their kill, and how many were dropped.
 
     `stats` maps id(moment) to what was measured around it (see studio.action);
     a moment with no measurement is kept (nothing is known against it).
     Surviving moments gain strength from their action, so of two double kills
     the one where something visibly happens wins.
+
+    With `keep_all` (the player asked to keep every kill) a still moment stays
+    in, at the bottom of the ranking: the measure says it is dull, not that it
+    is not a kill, and the player chose that clip for it.
     """
     action = {k: _action_of(v) for k, v in stats.items()}
     known = sorted(v for v in action.values() if v is not None)
@@ -200,6 +250,9 @@ def drop_still(moments_: list[Moment], stats: dict[int, dict | float | None]) ->
     for m in moments_:
         a = action.get(id(m))
         if a is not None and a < MIN_ACTION_SHARE * med:
+            if keep_all:
+                m.strength -= 1.0
+                keep.append(m)
             continue
         if a is not None:
             m.strength += min(2.0, a / max(med, 1e-6)) - 1.0
@@ -416,7 +469,14 @@ def walk(moments_: list[Moment], *, beat: float, energy, song_start: float,
 # How the reel may be arranged. `build` is what every reel has always been and
 # stays the default; the others answer questions it cannot -- "show me what
 # actually happened", "open on the best one", "give me a different draw".
-ARRANGEMENTS = ("build", "time", "best", "shuffle")
+# `hits` -- "Best order" on the page -- puts the biggest moments on the song's
+# biggest hits; see best_order().
+ARRANGEMENTS = ("build", "time", "best", "shuffle", "hits",
+                # "Perfect fit (slower)": not an order() shape at all --
+                # studio.plan() hands the whole reel to arrange_fit.plan(),
+                # which searches the order and the song together. Here it is
+                # only a name normalise() keeps; order() treats it as build.
+                "fit")
 # Where the climax sits when a reel is built rather than ordered by hand: about
 # two thirds in, which is where the reference edits put theirs.
 CLIMAX_AT = 2 / 3
@@ -499,9 +559,148 @@ def pin_seqs(seq: list[list[Moment]], pins: dict) -> list[list[Moment]]:
     return out
 
 
+# What makes a moment big, past its kill count: a clutch or an ace says so in
+# the clip's own caption or labels (VALORANT_25_LAST-ALIVE-1v3, TEAM-ACE). Worth
+# about one more kill: a 1v3 with two kills ranks with a triple, not above a 4K.
+BIG_WORDS = ("CLUTCH", "LAST-ALIVE", "LAST ALIVE", "1V", "ACE")
+BIG_BONUS = 2.5
+
+
+def impact(seq: list[Moment]) -> float:
+    """How big a sequence is, for putting it on a big hit."""
+    c = seq[0].clip
+    text = " ".join([str(c.get("caption") or ""), str(c.get("name") or "")]
+                    + [str(x) for x in (c.get("labels") or [])]).upper()
+    return _strength(seq) + (BIG_BONUS if any(w in text for w in BIG_WORDS) else 0.0)
+
+
+def arc_weights(n: int) -> list[float]:
+    """Slot weights without a song to read them off: the build's shape -- a
+    strong open, rising to the climax two thirds in, a strong close."""
+    if n <= 0:
+        return []
+    peak = max(0, int(round((n - 1) * CLIMAX_AT)))
+    # Rising to the climax, falling back a little after it.
+    out = [0.3 + 0.6 * i / peak if i <= peak and peak else 0.5 for i in range(n)]
+    out[0] = max(out[0], 0.8)
+    out[-1] = max(out[-1], 0.85)
+    out[peak] = 1.0
+    return out
+
+
+# A measure of the song across a reel's slots that varies by less than this
+# share of its largest value says nothing about where the big moments belong.
+FLAT_SPREAD = 0.2
+
+# Each costs about what putting the biggest moment on an ordinary hit does.
+SAME_PLACE_COST = 0.6
+SAME_SHAPE_COST = 0.25
+WEAK_OPENER_COST = 1.0
+
+
+def best_order(ranked: list[list[Moment]], weights: list[float] | None,
+               looks: dict[int, list[float]] | None = None, opener_ok=None) -> list[list[Moment]]:
+    """BEST ORDER: the biggest moments on the song's biggest hits. `ranked` is strongest first.
+
+    `weights[i]` is how big the hit the i-th kill of the reel lands on is --
+    the planner reads it off the song (its bass hits, the big ones, how loud it
+    is there); without a song the build's own arc stands in. A sequence keeps
+    its kills together and in the order they happened, and is scored on the
+    hit its LAST kill lands on: that is the one captioned TRIPLE KILL.
+
+    Then no two alike back to back: the same place (the colour histograms
+    spread_looks reads) or the same multi-kill shape twice running costs
+    about what a big moment on an ordinary hit does. The opener still has to
+    carry a build when the song has one.
+
+    A heuristic, not a search: deal the biggest sequences to the biggest
+    slots, then keep any move of one sequence, or swap of two, that scores
+    better until none does -- and the build itself if that scores better
+    still. Swaps alone stuck: two sequences of different lengths shift every
+    slot between them, and on dwayIR the strongest double kill finished on
+    one of the weakest slots. Fast enough to run on every plan; arrange_fit
+    is where an exact answer would live.
+    """
+    seqs = list(ranked)
+    if len(seqs) <= 1:
+        return seqs
+    n = sum(len(s) for s in seqs)
+    w = list(weights or [])[:n]
+    if not w:
+        w = arc_weights(n)
+    if len(w) < n:
+        w += [sum(w) / len(w)] * (n - len(w))
+    lo, hi = min(w), max(w)
+    w = [(x - lo) / (hi - lo) if hi > lo else 0.5 for x in w]
+    imp = {id(s): impact(s) for s in seqs}
+    a, b = min(imp.values()), max(imp.values())
+    big = {k: ((v - a) / (b - a) if b > a else 0.5) for k, v in imp.items()}
+    place = places([s[0].group for s in seqs], looks) if looks else {}
+
+    def score(order_: list[list[Moment]]) -> float:
+        total, pos = 0.0, 0
+        for k, s in enumerate(order_):
+            v = big[id(s)]
+            for j in range(len(s)):
+                total += v * w[pos + j] * (1.0 if j == len(s) - 1 else 0.25)
+            pos += len(s)
+            if k:
+                prev = order_[k - 1]
+                if place and place[prev[0].group] == place[s[0].group]:
+                    total -= SAME_PLACE_COST
+                if len(s) > 1 and len(prev) == len(s):
+                    total -= SAME_SHAPE_COST
+        if opener_ok is not None and not opener_ok(order_[0][0]):
+            total -= WEAK_OPENER_COST
+        return total
+
+    # The deal: the k-th biggest sequence aims its last kill at the k-th
+    # biggest slot, and the sequences are laid out in the order of their aims.
+    by_weight = sorted(range(n), key=lambda i: (-w[i], i))
+    by_size = sorted(seqs, key=lambda s: (-big[id(s)], s[0].group))
+    aim = {id(s): by_weight[k] for k, s in enumerate(by_size)}
+    dealt = sorted(seqs, key=lambda s: (aim[id(s)], s[0].group))
+    # The build is the other start: strong open, climax, close.
+    flat = order([m for s in seqs for m in s], looks, opener_ok)
+    by_group = {s[0].group: s for s in seqs}
+    built = [by_group[g] for g in dict.fromkeys(m.group for m in flat)]
+
+    def climb(cur: list[list[Moment]]) -> tuple[float, list[list[Moment]]]:
+        best = score(cur)
+        for _ in range(8):
+            better = False
+            for i in range(len(cur)):
+                # Move sequence i to every other place...
+                for j in range(len(cur)):
+                    if j == i:
+                        continue
+                    trial = cur[:i] + cur[i + 1:]
+                    trial.insert(j, cur[i])
+                    got = score(trial)
+                    if got > best + 1e-9:
+                        best, cur, better = got, trial, True
+                        break
+            for i in range(len(cur)):
+                # ...and swap it with every other.
+                for j in range(i + 1, len(cur)):
+                    cur[i], cur[j] = cur[j], cur[i]
+                    got = score(cur)
+                    if got > best + 1e-9:
+                        best, better = got, True
+                    else:
+                        cur[i], cur[j] = cur[j], cur[i]
+            if not better:
+                break
+        return best, cur
+
+    a_score, a = climb(dealt)
+    b_score, b = climb(built)
+    return a if a_score >= b_score else b
+
+
 def order(moments_: list[Moment], looks: dict[int, list[float]] | None = None,
           opener_ok=None, arrange: str = "build", pins: dict | None = None,
-          seed: int = 0) -> list[Moment]:
+          seed: int = 0, slot_weights: list[float] | None = None) -> list[Moment]:
     """A build, not a list: a strong opener, rising middle, the best at the climax, a strong close.
 
     Sequences stay together. The strongest sequence goes about two thirds of
@@ -518,6 +717,9 @@ def order(moments_: list[Moment], looks: dict[int, list[float]] | None = None,
     for m in moments_:
         seqs.setdefault(m.group, []).append(m)
     ranked = sorted(seqs.values(), key=lambda s: (-_strength(s), s[0].group))
+    if arrange == "hits":
+        out = pin_seqs(best_order(ranked, slot_weights, looks, opener_ok), pins or {})
+        return [m for s in out for m in s]
     if arrange in ("time", "best", "shuffle"):
         out = pin_seqs(arrange_seqs(ranked, arrange, seed), pins or {})
         return [m for s in out for m in s]

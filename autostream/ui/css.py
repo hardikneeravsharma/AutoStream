@@ -3749,7 +3749,6 @@ STUDIO_CSS = r"""
   color:var(--text-primary);overflow-wrap:anywhere}
 .studio-pending li::before{content:"";flex:none;width:3px;height:3px;margin-top:6px;border-radius:var(--radius-pill);
   background:var(--warn)}
-.studio-pending-n{margin-left:auto;flex:none;font:11px var(--font-mono);color:var(--text-tertiary)}
 .studio-sync.is-bad .studio-pending li::before{background:var(--danger)}
 .studio-pending-more{color:var(--text-tertiary)}
 .studio-pending-more::before{background:var(--border-strong) !important}
@@ -3760,6 +3759,25 @@ STUDIO_CSS = r"""
   padding:var(--space-3) var(--space-5);border-radius:var(--radius-pill);
   background:var(--warn);color:#1a1300;font:600 11.5px/1 var(--font-text);
   box-shadow:var(--shadow-md);pointer-events:none}
+
+/* THE INSTANT PREVIEW: two players on top of each other, the one on screen
+   opaque. Opacity, not display or visibility, so the cued one keeps decoding
+   its first frame and the cut is a swap rather than a load. A vertical reel
+   crops the game the way the render does unless it was asked to fit it. */
+.studio-pv{position:absolute;inset:0;background:#000}
+.studio-pv-v{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:0}
+.studio-pv-v.is-on{opacity:1}
+.studio-player.is-vertical .studio-pv-v{object-fit:cover}
+.studio-player.is-vertical.is-fit .studio-pv-v{object-fit:contain}
+.studio-pv-tag{position:absolute;top:var(--space-5);left:var(--space-5);z-index:1;
+  max-width:calc(100% - 2 * var(--space-5));
+  padding:var(--space-3) var(--space-5);border-radius:var(--radius-sm);
+  background:var(--on-media-scrim);color:var(--on-media);font:600 11.5px/1.3 var(--font-text);
+  pointer-events:none}
+.studio-auto{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3) var(--space-4);
+  padding-top:var(--space-3);border-top:var(--border-hair) solid var(--border-subtle)}
+.studio-auto-state{font-size:12px;color:var(--text-secondary)}
+.studio-auto-state:empty{display:none}
 
 .studio-acts{gap:var(--space-4);flex-wrap:wrap}
 
