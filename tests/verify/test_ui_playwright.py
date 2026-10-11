@@ -486,13 +486,17 @@ def test_perfect_fit_keeps_every_kill_on_a_beat_and_survives_a_restyle(ui, app, 
     page.click('[data-act="studio-clear"]') if page.is_visible('[data-act="studio-clear"]') else None
     for i in range(3):
         page.locator("#studio-lib .studio-clip-hit").nth(i).click()
-    # The bin redraws its buttons as the library loads, so the locator is
-    # resolved afresh at each step rather than held.
-    fit_btn = page.locator('[data-act="studio-arrange"][data-how="fit"]')
+    # The arrangement is offered in two places now -- the strip on the Looks
+    # tab and the Make dialog -- so the selector says which, and the strip
+    # redraws its buttons as the library loads, so it is resolved afresh at
+    # each step rather than held.
+    page.click('[data-act="studio-tab"][data-tab="looks"]')
+    fit_btn = page.locator('#bin-arrange [data-act="studio-arrange"][data-how="fit"]')
     assert "30 s" in (fit_btn.get_attribute("title") or ""), "the slower arrangement does not say it is slower"
     fit_btn.click()
     page.wait_for_function("studio.arrange === 'fit'")
     assert fit_btn.get_attribute("aria-pressed") == "true"
+    page.click('[data-act="studio-tab"][data-tab="clips"]')
     page.evaluate("""(path) => { const real = API.post;
         API.post = function (u, b) {                  /* the native file dialog, answered */
             if (u === '/api/clips/pick') return Promise.resolve({path: path});
@@ -1295,6 +1299,18 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     page.wait_for_selector("#studio-r-lyricface", timeout=15_000)
     page.select_option("#studio-r-lyricface", "gochi")
     page.wait_for_function("studio.project.lyrics.face === 'gochi'", timeout=15_000)
+    # HOW THE WORDS ARRIVE, asked apart from the look (U25). Caption's own
+    # reveal is whole phrases; this asks for a typewriter in Caption's type.
+    page.wait_for_selector("#studio-r-lyricreveal", timeout=15_000)
+    assert page.evaluate(
+        "() => [...document.querySelectorAll('#studio-r-lyricreveal option')].map(o => o.value)"
+    ) == ["look", "word", "line", "build", "type"]
+    page.select_option("#studio-r-lyricreveal", "type")
+    page.wait_for_function("studio.project.lyrics.reveal === 'type'", timeout=15_000)
+    labels = page.evaluate("() => studio.pending.map(p => p.label)")
+    assert any("typewriter" in n.lower() for n in labels), labels
+    page.select_option("#studio-r-lyricreveal", "look")
+    page.wait_for_function("studio.project.lyrics.reveal === 'look'", timeout=15_000)
     # put them anywhere: drag the LYRICS stand-in on the picture, then one of the nine places.
     # The stand-in is not over the video until asked for -- it covered the real words.
     chip = page.locator("#studio-lyrics-chip")
@@ -1324,7 +1340,8 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     job = ui.api("GET", "/api/studio/job")
     saved = json.loads(Path(job["project"]).read_text(encoding="utf-8"))
     assert saved["song"] == str(song) and saved["style"] == "hype"
-    assert saved["lyrics"] == {"look": "caption", "face": "gochi", "clean": False, "pos": [0.25, 0.85], "shift": 0.5}
+    assert saved["lyrics"] == {"look": "caption", "face": "gochi", "clean": False,
+                               "pos": [0.25, 0.85], "shift": 0.5, "reveal": "look"}
     assert not page.locator("#studio-lyrics-chip").is_visible(), "the LYRICS stand-in stayed over the rendered words"
     assert "studio song.lrc" in (saved.get("lyrics_note") or ""), saved.get("lyrics_note")
     assert "studio song.lrc" in page.inner_text('#studio-insp details[data-grp="lyrics"]')
