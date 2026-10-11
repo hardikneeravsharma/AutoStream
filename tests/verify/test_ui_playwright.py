@@ -427,7 +427,7 @@ def test_headshots_only_is_offered_for_read_clips_and_keeps_only_headshots(ui, a
 
 
 def test_perfect_fit_keeps_every_kill_on_a_beat_and_survives_a_restyle(ui, app, tmp_path):
-    """6.13. "Perfect fit (slower)" is chosen like any arrangement, the Make
+    """6.19. "Perfect fit (slower)" is chosen like any arrangement, the Make
     dialog warns that it takes longer, and the plan it returns has every kill
     of every chosen clip in it -- the triple whole -- each shot's kill on one
     of the song's hits. Rebuilding in another style keeps the arrangement."""
