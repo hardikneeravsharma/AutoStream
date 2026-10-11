@@ -227,20 +227,23 @@ Do not add these back without a reason that is written down here.
 
 ## State of the tree, 2026-10-11
 
-- `__version__` is **1.54.0**, on the branch `studio-folders` and in the open
-  PR; v1.53.0 is the last published release
-  (<https://github.com/hardikneeravsharma/AutoStream/releases/tag/v1.53.0>),
-  whose installer and share zip were downloaded back and their sha256 checked.
-- **One PR is open**: `studio-folders` -- U15 (the library drill-down) and the
-  C2 switch that had never reached the server. Everything in the Progress
-  table down to v1.53.0 is on `main` and in that release.
+- `__version__` is **1.54.0**, published and on `main` as `6c9d7d5`:
+  <https://github.com/hardikneeravsharma/AutoStream/releases/tag/v1.54.0>
+  -- the installer and the share zip were downloaded back and their sha256
+  checked, and the developer's own `dist\AutoStream` runs it.
+- **No PR is open and no branch is outstanding.** Everything in the
+  Progress table down to v1.54.0 is on `main` and in that release.
+- **The browser tier ran against the checkout, not the built exe**, for
+  v1.54.0: 334 tests green with `AUTOSTREAM_VERIFY_SOURCE=1`, and the build
+  itself ran tiers 1-4. Tier 7 against `dist\AutoStream\AutoStream.exe`
+  needs the app closed, and it was rendering a reel.
 - Releases are built with `scripts\build.ps1 -Dist -HandOff` with the app
   left open; it closes the app only when idle (about two minutes) and
   reopens it.
-- Since the last version of this section: v1.43.0 through v1.53.0 -- the
-  CS2 card-tally fixes, Valorant headshots, AMD and Intel GPUs for clip
-  work, and the Studio's lyrics, reel length, arrangements, instant preview,
-  background render and effect picker. Each has its row in Progress.
+- Since the last version of this section: v1.54.0 -- the Studio library
+  as a drill-down (U15), the whole-match switch that had never reached the
+  server (C2), and the effect picker that stays open (U21). Each has its
+  row in Progress.
 
 ### What is not finished
 
