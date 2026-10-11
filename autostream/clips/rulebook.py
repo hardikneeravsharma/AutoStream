@@ -471,7 +471,12 @@ def walk(moments_: list[Moment], *, beat: float, energy, song_start: float,
 # actually happened", "open on the best one", "give me a different draw".
 # `hits` -- "Best order" on the page -- puts the biggest moments on the song's
 # biggest hits; see best_order().
-ARRANGEMENTS = ("build", "time", "best", "shuffle", "hits")
+ARRANGEMENTS = ("build", "time", "best", "shuffle", "hits",
+                # "Perfect fit (slower)": not an order() shape at all --
+                # studio.plan() hands the whole reel to arrange_fit.plan(),
+                # which searches the order and the song together. Here it is
+                # only a name normalise() keeps; order() treats it as build.
+                "fit")
 # Where the climax sits when a reel is built rather than ordered by hand: about
 # two thirds in, which is where the reference edits put theirs.
 CLIMAX_AT = 2 / 3

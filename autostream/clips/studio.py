@@ -1396,6 +1396,27 @@ def _shaping(raw: dict | None) -> dict:
     return out
 
 
+def _plan_fit(clips: list[dict], style_key: str, *, shape_it: dict, **kw) -> tuple[dict, list[str]]:
+    """PERFECT FIT (SLOWER): the order and the song searched together -- see arrange_fit.
+
+    Kept to this one door so plan() itself is untouched by it. Anything that
+    goes wrong in there plans the ordinary way and says so, rather than
+    leaving the player with no reel at all; a ProjectError (nothing usable
+    chosen) is the player's to read either way.
+    """
+    from . import arrange_fit
+
+    try:
+        return arrange_fit.plan(clips, style_key, shape_it=shape_it, **kw)
+    except ProjectError:
+        raise
+    except Exception as e:                              # noqa: BLE001
+        log.warning("studio: perfect fit failed, planning the usual way: %s", e, exc_info=True)
+        proj, notes = plan(clips, style_key, shape_it=dict(shape_it, arrange="build"), **kw)
+        proj["arrange"] = "fit"                         # a rebuild tries the fit again
+        return proj, ["Perfect fit could not plan this reel, so it was planned the usual way."] + notes
+
+
 def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
          song: str = "", fmt: str = "landscape", name: str = "",
          max_seconds: float = 0.0, seed: int | None = None,
@@ -1424,6 +1445,10 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     (How long: "style", "part", "all"; "" is the part when one was chosen) and
     `keep_all` (Keep every kill). All of them are kept on the project.
     """
+    if str((shape_it or {}).get("arrange") or "") == "fit":
+        return _plan_fit(clips, style_key, shape=shape, song=song, fmt=fmt, name=name,
+                         max_seconds=max_seconds, seed=seed, measure=measure, confirm=confirm,
+                         theirs=theirs, part=part, template=template, shape_it=shape_it)
     style = STYLE.get(style_key) or STYLE[DEFAULT_STYLE]
     if template:
         style = templated(style, template)
