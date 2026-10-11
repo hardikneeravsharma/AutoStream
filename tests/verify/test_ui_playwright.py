@@ -656,6 +656,101 @@ def test_an_edit_plays_at_once_and_renders_itself_in_the_background(ui, app):
     ui.clean("an edit previewed at once and rendered in the background")
 
 
+def test_the_preview_has_its_own_play_bar(ui, app):
+    """6.20. "I changed the outro, then the auto rendering applied, but in that
+    state the on screen play back option disappeared."
+
+    The rendered video carries the browser's bar; the preview, which is what
+    the player shows from an edit until the render catches up, had none. Its
+    bar is pressed here the way a person would: play and pause from it and
+    from the picture, a seek to three quarters, mute, fullscreen -- and the
+    app's own volume and speed, which the preview used to write over."""
+    _studio_run(app, "2026-09-16_1445_VALORANT", 3)
+    page = ui.page
+    _studio_build(page, "14:45", 3, "story", "Preview bar")
+    _studio_rendered(page, "the first render")
+    page.wait_for_function("!studio.pv.on && studio.project.shots.length === 3", timeout=30_000)
+    # Hold the background render off, so the preview stays up to be pressed.
+    # An hour, not 1e9: setTimeout fires at once past 2**31 - 1 ms.
+    page.evaluate("studio.auto.idleMs = 3600000")
+    page.locator(".st-shot").nth(1).click()
+    page.wait_for_selector('#studio-insp [data-act="studio-remove"]', timeout=15_000)
+    page.click('#studio-insp [data-act="studio-remove"]')
+    page.wait_for_function("studio.pv.on", timeout=10_000)
+    bar = page.locator("#studio-pv-bar")
+    opacity = "() => getComputedStyle(document.getElementById('studio-pv-bar')).opacity"
+
+    # --- paused, the bar is on screen and says where the reel is
+    assert bar.is_visible() and not page.is_visible("#studio-video")
+    page.wait_for_function(f"({opacity})() === '1'", timeout=5_000)
+    length = page.evaluate("studio.derived.length")
+    assert page.text_content("#studio-pv-time").strip().endswith(
+        f"{int(length) // 60}:{int(length) % 60:02d}"), page.text_content("#studio-pv-time")
+
+    # --- its play button plays the preview, and pauses it
+    page.click("#studio-pv-play")
+    page.wait_for_function("studio.pv.playing && studio_pvTime() > 0.6", timeout=10_000)
+    assert page.get_attribute("#studio-pv-play", "aria-label") == "Pause"
+    # out of the way while it plays and nobody points at it; back when pointed at
+    page.mouse.move(2, 2)
+    page.wait_for_function(f"({opacity})() === '0'", timeout=5_000)
+    page.hover("#studio-pv")
+    page.wait_for_function(f"({opacity})() === '1'", timeout=5_000)
+    page.click("#studio-pv-play")
+    assert not page.evaluate("studio.pv.playing")
+    assert page.get_attribute("#studio-pv-play", "aria-label") == "Play"
+
+    # --- a click on the picture plays and pauses it, as on the rendered video
+    page.click("#studio-pv", position={"x": 40, "y": 60})
+    assert page.evaluate("studio.pv.playing")
+    page.click("#studio-pv", position={"x": 40, "y": 60})
+    assert not page.evaluate("studio.pv.playing")
+
+    # --- a seek three quarters along the bar lands three quarters into the reel,
+    # on the shot the timeline has there
+    box = page.locator("#studio-pv-seek").bounding_box()
+    page.mouse.click(box["x"] + box["width"] * 0.75, box["y"] + box["height"] / 2)
+    got = page.evaluate("""() => ({t: studio_pvTime(), len: studio.derived.length,
+        shot: Number(studio_pvEls()[studio.pv.act].getAttribute('data-shot')),
+        want: studio_pvAt(studio_pvTime()).shot})""")
+    assert got["t"] == pytest.approx(got["len"] * 0.75, abs=got["len"] * 0.05), got
+    assert got["shot"] == got["want"], got
+
+    # --- mute silences the clip and the song; pressed again, it does not
+    page.click("#studio-pv-mute")
+    assert page.evaluate("studio_pvEls()[studio.pv.act].muted && document.getElementById('studio-pv-song').muted")
+    assert page.get_attribute("#studio-pv-mute", "aria-pressed") == "true"
+    page.click("#studio-pv-mute")
+    assert not page.evaluate("studio_pvEls()[studio.pv.act].muted || document.getElementById('studio-pv-song').muted")
+
+    # --- the app's volume and speed reach the preview
+    knobs = '.media-knobs[data-for="studio-video"] '
+    try:
+        page.locator(knobs + 'input[data-knob="vol"]').fill("50")
+        lv = page.evaluate("""() => ({v: studio_pvEls()[studio.pv.act].volume,
+            want: studio_dbGain(studio.project.game_db) * 0.5})""")
+        assert lv["v"] == pytest.approx(lv["want"], abs=0.01), lv
+        page.select_option(knobs + 'select[data-knob="rate"]', "2")
+        page.evaluate("studio_seekTo(0)")
+        page.click("#studio-pv-play")
+        sped = page.evaluate("""async () => { const a = studio_pvTime(), w = performance.now();
+            await new Promise(r => setTimeout(r, 1000));
+            const r = {reel: studio_pvTime() - a, wall: (performance.now() - w) / 1000};
+            studio_pvPause(); return r; }""")
+        assert sped["reel"] / sped["wall"] == pytest.approx(2.0, abs=0.15), sped
+    finally:
+        page.locator(knobs + 'input[data-knob="vol"]').fill("100")
+        page.select_option(knobs + 'select[data-knob="rate"]', "1")
+
+    # --- fullscreen takes the whole player, so a render landing under it stays in it
+    page.click("#studio-pv-full")
+    page.wait_for_function("document.fullscreenElement && document.fullscreenElement.id === 'studio-player'",
+                           timeout=5_000)
+    page.evaluate("document.exitFullscreen()")
+    page.wait_for_function("!document.fullscreenElement", timeout=5_000)
+    ui.clean("the preview's own play bar")
+
+
 def test_no_background_render_starts_while_a_render_you_started_runs(ui, app):
     """Render is the user's: a background render must never start beside it,
     however long it runs. Edit, press Render, edit again while it renders --

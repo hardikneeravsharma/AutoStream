@@ -188,6 +188,7 @@ listed so the gap is visible.
 | 6.17 | Instant preview: delete a shot from a rendered reel; play across the new cut; a song applied plays under it | The player takes the edit in the same frame (shots, length, the clip after the cut) with nothing rendered; its clip/second/rate at 30 reel times equal `preview_at()`'s; the cut lands within 50 ms; the song is within 0.2 s of the cuts | yes |
 | 6.18 | Background render: stop editing; then edit again while a Render you pressed is running | It starts itself after the idle delay and the player changes over to a file as long as the edited timeline; never a background request while your render runs; the edit made during it renders itself afterwards | yes |
 | 6.19 | Perfect fit: the arrangement says it is slower, the Make dialog warns it takes up to ~30 s, and the plan has every kill of a triple, a double and a single, each shot's kill within a frame of its hit; a rebuild in another style keeps the arrangement | Every chosen kill is in the timeline; `arrange` is still `fit` after a restyle | yes |
+| 6.20 | The preview has its own play bar: from an edit until the render catches up, play and pause from the bar and from the picture, seek to three quarters, mute, fullscreen, the app's volume and speed | The bar is on screen while paused and hovered and out of the way while playing; the seek lands on the shot `studio_pvAt` has there; mute silences clip and song; volume and 2x reach the preview; fullscreen takes `#studio-player` | yes |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.
@@ -216,8 +217,8 @@ nothing noticed.
 
 | | count |
 |---|---|
-| Scenarios catalogued | 68 |
-| Covered by a focused test | 29 |
+| Scenarios catalogued | 69 |
+| Covered by a focused test | 30 |
 | Covered only by the sweep | 12 |
 | **Known gaps** | **27** |
 

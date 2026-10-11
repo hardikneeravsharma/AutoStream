@@ -676,6 +676,8 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-order": "chooses the clip order in the dialog; sent with Build",
     "studio-play": "plays or pauses the reel: the rendered file, or the instant preview of edits "
                    "not rendered yet (clip files the page already streams)",
+    "studio-pv-mute": "mutes the instant preview's clip and song in the page; nothing is sent",
+    "studio-pv-full": "puts the player fullscreen in the browser; nothing is sent",
     "studio-zoom": "zooms the timeline",
     "studio-seek": "moves the playhead of the reel, rendered or previewed",
     "studio-select": "selects a shot, or the reel, in the inspector",

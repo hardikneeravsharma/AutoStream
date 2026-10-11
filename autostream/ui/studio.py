@@ -161,10 +161,27 @@ STUDIO_HTML = r"""
                effects and the colour arrive with the render, and the label
                says so. See studio_pvTick. -->
           <div class="studio-pv hide" id="studio-pv">
-            <video class="studio-pv-v" id="studio-pv-a" playsinline preload="auto"></video>
-            <video class="studio-pv-v" id="studio-pv-b" playsinline preload="auto"></video>
-            <audio id="studio-pv-song" preload="auto"></audio>
+            <video class="studio-pv-v" id="studio-pv-a" playsinline preload="auto" data-knobs="off"></video>
+            <video class="studio-pv-v" id="studio-pv-b" playsinline preload="auto" data-knobs="off"></video>
+            <audio id="studio-pv-song" preload="auto" data-knobs="off"></audio>
             <span class="studio-pv-tag" id="studio-pv-tag">Preview · effects appear when rendered</span>
+            <!-- THE PREVIEW'S OWN BAR. The rendered video brings the browser's
+                 -- play, seek, mute, fullscreen -- and the preview, two players
+                 swapped at each cut, has none, so the bar vanished the moment
+                 an edit was made ("the on screen play back option
+                 disappeared"). This one drives the reel's clock, so a seek
+                 lands on the shot the timeline has there. -->
+            <div class="studio-pv-bar" id="studio-pv-bar">
+              <button type="button" class="studio-pv-btn" data-act="studio-play" id="studio-pv-play"
+                      title="Play (space)" aria-label="Play">&#9654;</button>
+              <span class="mono studio-pv-time" id="studio-pv-time">0:00 / 0:00</span>
+              <input type="range" class="studio-pv-seek" id="studio-pv-seek" min="0" max="1000" step="1" value="0"
+                     aria-label="Seek">
+              <button type="button" class="studio-pv-btn" data-act="studio-pv-mute" id="studio-pv-mute"
+                      title="Mute" aria-label="Mute" aria-pressed="false">&#128266;</button>
+              <button type="button" class="studio-pv-btn" data-act="studio-pv-full" id="studio-pv-full"
+                      title="Fullscreen" aria-label="Fullscreen">&#9974;</button>
+            </div>
           </div>
           <div class="studio-player-empty" id="studio-player-empty">Press Render and your reel plays here.</div>
           <!-- THE PLAYER IS WHERE THE EYES ARE. A sidebar saying the edits are
@@ -941,7 +958,7 @@ const studio = {
      remembers, per shot, what the server worked out about its footage, so a
      shot the page has only moved keeps playing the right seconds. */
   pv: {on: false, t: 0, base: 0, t0: 0, playing: false, act: 0, shot: -1, raf: 0,
-       cuts: [], info: {}, planSig: ''},
+       cuts: [], info: {}, planSig: '', rate: 1, muted: false, scrub: false},
   /* THE BACKGROUND RENDER (studio_autoGo). `sig` is the project the running
      or last one was given, `armed` the project the idle timer was started for,
      `held` why it is waiting, `failed` a project that failed once and is not
@@ -2950,7 +2967,57 @@ function studio_pvEls() { return [studio_el('studio-pv-a'), studio_el('studio-pv
 /* The reel second the preview is on. */
 function studio_pvTime() {
   const pv = studio.pv;
-  return pv.playing ? pv.base + (performance.now() - pv.t0) / 1000 : pv.t;
+  return pv.playing ? pv.base + (performance.now() - pv.t0) / 1000 * pv.rate : pv.t;
+}
+
+/* The app's one volume and speed (shell mediaKnobs) under the preview too.
+   Its players opt out of shell_knobApply (data-knobs="off"), because the
+   rate is the shot's own and the volume the project's game level -- the
+   viewer's choice is multiplied in here instead of written over them. */
+function studio_pvKnobs() {
+  return typeof shell_knobPrefs === 'function' ? shell_knobPrefs() : {vol: 1, rate: 1};
+}
+
+function studio_pvLevels(vol) {
+  const pv = studio.pv, p = studio.project;
+  if (typeof vol !== 'number' || isNaN(vol)) vol = studio_pvKnobs().vol;
+  const el = studio_pvEls()[pv.act], a = studio_el('studio-pv-song');
+  if (el && p) { el.muted = pv.muted; el.volume = Math.max(0, Math.min(1, studio_dbGain(p.game_db) * vol)); }
+  if (a && p) { a.muted = pv.muted; a.volume = Math.max(0, Math.min(1, studio_dbGain(p.music_db) * vol)); }
+  const m = studio_el('studio-pv-mute');
+  if (m) {
+    m.innerHTML = pv.muted ? '&#128263;' : '&#128266;';
+    m.setAttribute('aria-pressed', pv.muted ? 'true' : 'false');
+    m.setAttribute('aria-label', pv.muted ? 'Unmute' : 'Mute');
+    m.title = pv.muted ? 'Unmute' : 'Mute';
+  }
+}
+
+/* The bar over the preview: its button, its clock and where its seek is. */
+function studio_pvBar() {
+  const pv = studio.pv, d = studio.derived;
+  const len = d ? d.length : 0, t = Math.min(studio_pvTime(), len);
+  const mmss = x => { x = Math.max(0, Math.floor(x)); return Math.floor(x / 60) + ':' + String(x % 60).padStart(2, '0'); };
+  const tm = studio_el('studio-pv-time');
+  if (tm) tm.textContent = mmss(t) + ' / ' + mmss(len);
+  const sk = studio_el('studio-pv-seek');
+  if (sk && !pv.scrub) sk.value = String(len > 0 ? Math.round(t / len * 1000) : 0);
+  const b = studio_el('studio-pv-play');
+  if (b) {
+    b.innerHTML = pv.playing ? '&#10073;&#10073;' : '&#9654;';
+    b.setAttribute('aria-label', pv.playing ? 'Pause' : 'Play');
+    b.title = (pv.playing ? 'Pause' : 'Play') + ' (space)';
+  }
+  const box = studio_el('studio-pv');
+  if (box) box.classList.toggle('is-playing', pv.playing);
+}
+
+/* Fullscreen takes the whole player, not the preview alone: the render can
+   finish while it is up, and the rendered video is beside the preview in it. */
+function studio_pvFull() {
+  const pl = studio_el('studio-player');
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else if (pl && pl.requestFullscreen) pl.requestFullscreen().catch(() => {});
 }
 
 /* Is the rendered file NOT the project on screen? Then the player shows the
@@ -3012,9 +3079,8 @@ function studio_pvCut(at, t) {
   off.classList.remove('is-on');
   off.pause();
   off.muted = true;
-  el.muted = false;
-  el.volume = studio_dbGain(p.game_db);
-  if (pv.playing && at.rate > 0) { el.playbackRate = at.rate; el.play().catch(() => {}); }
+  studio_pvLevels();
+  if (pv.playing && at.rate > 0) { el.playbackRate = Math.min(16, at.rate * pv.rate); el.play().catch(() => {}); }
   if (pv.playing && pv.shot >= 0) {
     const want = rows[at.shot].start;
     pv.cuts.push({shot: at.shot, at: Math.round(t * 1000) / 1000, want: want,
@@ -3026,7 +3092,7 @@ function studio_pvCut(at, t) {
 }
 
 function studio_pvSongSync(t, playing) {
-  const a = studio_el('studio-pv-song'), p = studio.project;
+  const a = studio_el('studio-pv-song'), p = studio.project, pv = studio.pv;
   if (!a) return;
   if (!p || !p.song || !playing) { if (!a.paused) a.pause(); return; }
   const want = (Number(p.song_offset) || 0) + t;
@@ -3034,7 +3100,9 @@ function studio_pvSongSync(t, playing) {
     a.setAttribute('data-song', p.song);
     a.src = studio_media('/api/reel/audio', p.song);
   }
-  a.volume = studio_dbGain(p.music_db);
+  studio_pvLevels();
+  a.preservesPitch = true;
+  if (Math.abs(a.playbackRate - pv.rate) > 0.001) a.playbackRate = pv.rate;
   if (a.readyState >= 1 && Math.abs(a.currentTime - want) > 0.12) a.currentTime = want;
   if (a.paused) { if (a.readyState >= 1) a.currentTime = want; a.play().catch(() => {}); }
 }
@@ -3059,7 +3127,7 @@ function studio_pvTick() {
   } else if (el.readyState >= 1) {
     const drift = el.currentTime - at.src;
     if (Math.abs(drift) > 0.3) { if (!el.seeking) el.currentTime = at.src; }
-    const rate = Math.max(0.0625, Math.min(16, at.rate * (1 - Math.max(-0.25, Math.min(0.25, drift)))));
+    const rate = Math.max(0.0625, Math.min(16, at.rate * pv.rate * (1 - Math.max(-0.25, Math.min(0.25, drift)))));
     if (Math.abs(el.playbackRate - rate) > 0.02) el.playbackRate = rate;
     if (el.paused) el.play().catch(() => {});
   }
@@ -3085,9 +3153,11 @@ function studio_pvPlay() {
   const pv = studio.pv, d = studio.derived;
   if (!pv.on || !d || pv.playing) return;
   if (pv.t >= d.length - 0.05) pv.t = 0;
+  pv.rate = studio_pvKnobs().rate || 1;
   pv.base = pv.t; pv.t0 = performance.now(); pv.playing = true;
   pv.shot = -1;               /* the first frame re-takes the shot it is in */
   studio_el('studio-play-btn').textContent = 'Pause';
+  studio_pvBar();
   pv.raf = requestAnimationFrame(studio_pvTick);
 }
 
@@ -3102,6 +3172,7 @@ function studio_pvPause() {
   const b = studio_el('studio-play-btn');
   if (b) b.textContent = 'Play';
   studio_playhead();
+  studio_pvBar();
 }
 
 /* The player's transport, whichever it is showing. */
@@ -4378,6 +4449,7 @@ function studio_playhead() {
   if (ph) ph.style.left = (t * studio.pps).toFixed(1) + 'px';
   const c = studio_el('studio-clock');
   if (c) c.textContent = studio_secs(t);
+  if (studio.pv.on) studio_pvBar();
 }
 
 function studio_select(i) {
@@ -6057,6 +6129,8 @@ function studio_wire() {
     else if (act === 'studio-undo') studio_undo();
     else if (act === 'studio-show') { if (studio.output && typeof clip_reveal === 'function') clip_reveal(studio.output); }
     else if (act === 'studio-play') studio_toggle();
+    else if (act === 'studio-pv-mute') { studio.pv.muted = !studio.pv.muted; studio_pvLevels(); }
+    else if (act === 'studio-pv-full') studio_pvFull();
     else if (act === 'studio-zoom') {
       const z = Number(b.getAttribute('data-z'));
       if (z === 0) { studio_fit(); studio_drawTimeline(); }
@@ -6369,6 +6443,34 @@ function studio_wire() {
       if (at !== null) { pe.removeAttribute('data-seek'); pe.currentTime = Number(at) || 0; }
     });
   });
+  /* The preview bar's seek: dragged, it shows each second it passes; let go,
+     the clock carries on from there. */
+  const sk = studio_el('studio-pv-seek');
+  if (sk) {
+    const to = () => { if (studio.derived) studio_seekTo(Number(sk.value) / 1000 * studio.derived.length); };
+    sk.addEventListener('pointerdown', () => { studio.pv.scrub = true; });
+    sk.addEventListener('input', () => { studio.pv.scrub = true; to(); });
+    sk.addEventListener('change', () => { to(); studio.pv.scrub = false; studio_pvBar(); });
+    ['pointerup', 'pointercancel', 'blur'].forEach(ev => sk.addEventListener(ev, () => { studio.pv.scrub = false; }));
+  }
+  /* A click on the picture plays and pauses it, as it does the rendered video. */
+  const pvBox = studio_el('studio-pv');
+  if (pvBox) pvBox.addEventListener('click', e => { if (!e.target.closest('.studio-pv-bar')) studio_toggle(); });
+  /* The app's volume and speed, changed while the preview is up. A new speed
+     mid-play restarts the clock from where it is, at the new rate. */
+  const onKnob = e => {
+    const which = e.target && e.target.getAttribute && e.target.getAttribute('data-knob');
+    if (!which || !studio.pv.on) return;
+    /* Read off the control rather than the saved choice: shell_knobsBind's
+       listener, which saves it, is not promised to have run first. */
+    if (which === 'vol') { studio_pvLevels(Number(e.target.value) / 100); return; }
+    const pv = studio.pv, r = Number(e.target.value) || 1;
+    if (pv.playing && r !== pv.rate) { pv.base = studio_pvTime(); pv.t0 = performance.now(); }
+    pv.rate = r;
+    studio_pvSongSync(studio_pvTime(), pv.playing);
+  };
+  document.addEventListener('input', onKnob);
+  document.addEventListener('change', onKnob);
   const ar = studio_el('studio-auto-render');
   if (ar) ar.addEventListener('change', () => studio_autoSet(ar.checked));
   ['studio-make-scrim', 'studio-preview-scrim', 'studio-fxp-scrim'].forEach(id => {

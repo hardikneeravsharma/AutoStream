@@ -3774,6 +3774,26 @@ STUDIO_CSS = r"""
   padding:var(--space-3) var(--space-5);border-radius:var(--radius-sm);
   background:var(--on-media-scrim);color:var(--on-media);font:600 11.5px/1.3 var(--font-text);
   pointer-events:none}
+/* Its bar, where the browser puts its own on the rendered video: along the
+   foot of the picture, on screen while paused or pointed at, out of the way
+   while it plays. Above the handle frame, which covers the whole picture. */
+.studio-pv-bar{position:absolute;left:0;right:0;bottom:0;z-index:2;
+  display:flex;align-items:center;gap:var(--space-3);
+  padding:var(--space-6) var(--space-4) var(--space-3);
+  background:linear-gradient(to top,rgba(0,0,0,.72),rgba(0,0,0,0));color:var(--on-media);
+  opacity:0;transition:opacity .18s ease}
+/* :focus-visible, not :focus-within: a button pressed with the mouse keeps
+   focus, and would pin the bar over the picture for the rest of the reel. */
+.studio-pv:not(.is-playing) .studio-pv-bar,.studio-pv:hover .studio-pv-bar,
+.studio-pv-bar:has(:focus-visible){opacity:1}
+.studio-pv-btn{flex:none;min-width:30px;height:30px;padding:0 var(--space-2);border:0;border-radius:var(--radius-sm);
+  background:transparent;color:var(--on-media);font-size:15px;line-height:1;cursor:pointer}
+.studio-pv-btn:hover{background:rgba(255,255,255,.16)}
+.studio-pv-btn:focus-visible{outline:var(--focus-ring-width) solid var(--on-media);outline-offset:1px}
+.studio-pv-time{flex:none;font-size:12px;color:var(--on-media)}
+/* White, like the bar it stands in for: the accent budget has no room for it. */
+.studio-pv-seek{flex:1 1 auto;min-width:4rem;accent-color:var(--on-media);cursor:pointer}
+.studio-player:fullscreen{border-radius:0}
 .studio-auto{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3) var(--space-4);
   padding-top:var(--space-3);border-top:var(--border-hair) solid var(--border-subtle)}
 .studio-auto-state{font-size:12px;color:var(--text-secondary)}
