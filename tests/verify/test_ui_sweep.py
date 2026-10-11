@@ -1,7 +1,7 @@
 r"""Tier 7: press everything, and listen.
 
-WHY A SWEEP RATHER THAN 244 CASES. The UI declares 190 `data-act` controls and
-54 operable ids. Hand-writing a case for each would produce 244 things to keep
+WHY A SWEEP RATHER THAN 283 CASES. The UI declares 226 `data-act` controls and
+57 operable ids. Hand-writing a case for each would produce 283 things to keep
 current, and most of them would assert only that pressing did not explode --
 which is a real property, but one worth asserting mechanically rather than by
 hand.
@@ -79,7 +79,7 @@ def _seed_data(home: Path) -> None:
     """A recording and a finished run, so the pages have something to draw.
 
     WITHOUT THIS THE SWEEP IS NEARLY EMPTY. Measured on a blank install: 14 of
-    the 190 declared controls ever render, because almost every one lives in a
+    the declared controls ever render, because almost every one lives in a
     card that only appears once there is a stream, a clip or a reel. A sweep
     of an empty app mostly proves that an empty app has no buttons.
     """
@@ -297,7 +297,7 @@ def swept(browser, app):
 
     # OPENING THE PAGE IS NOT OPENING THE PAGE. Most controls live inside a
     # stage, a tab or a panel that only exists once something has been chosen.
-    # Measured: a seeded install shows 19 of the 190 declared controls from
+    # Measured: a seeded install shows 19 of the declared controls from
     # the six top-level pages alone. These put each page into its several
     # states, and the sweep enumerates afresh in each one.
     STATES = {
@@ -366,6 +366,21 @@ def swept(browser, app):
         "studio": [
             ("as opened", ""),
             ("clips tab", "studio_tab && studio_tab('clips')"),
+            # THE LIBRARY IS A DRILL-DOWN: folders, then that folder's runs,
+            # then the run's clips. Every clip control -- the tile, the star,
+            # Edit, the player, Select run, Select match -- lives two clicks
+            # in, so a sweep that only ever saw the folder grid would stop
+            # reaching a third of this page and the floor below would be the
+            # thing that noticed.
+            ("the library, one folder open", """
+                studio_tab && studio_tab('clips');
+                const g = studio.lib && studio.lib.games && studio.lib.games[0];
+                if (g && window.studio_openFolder) studio_openFolder(g.game);"""),
+            ("the library, one run open", """
+                studio_tab && studio_tab('clips');
+                const g = studio.lib && studio.lib.games && studio.lib.games[0];
+                const f = g && g.folders && g.folders[0];
+                if (f && window.studio_openRun) studio_openRun(f.folder);"""),
             ("timeline tab", "studio_tab && studio_tab('timeline')"),
             ("song tab", "studio_tab && studio_tab('song')"),
             ("facecam tab", "studio_tab && studio_tab('facecam')"),
@@ -607,21 +622,23 @@ def _sweep_state(page, page_id, state_name, noise, results, base) -> None:
 # rendering -- and so stops its controls being swept -- fails here rather than
 # passing with less and less under test. Raise it when coverage genuinely
 # improves; never lower it without saying what stopped being reachable.
-# MEASURED, not chosen: 117 of the 190 controls the source declares, on an
+# MEASURED, not chosen: 132 of the 226 controls the source declares, on an
 # install seeded with a recording, a finished run, a song, an intro and a reel.
 # It got there in stages -- 43 with nothing seeded, 86 once the dialogs were
 # opened, 99 with a song, 111 with a reel project, 117 with a shot selected,
-# and 122 once the kill marker could be opened on a clip the app had cut
-# itself. That last one was not a sweep change: the marker was gated on
-# `imported` until S2, so the whole dialog was unreachable for a seeded run
-# and its controls could not have been swept however the states were written.
+# 122 once the kill marker could be opened on a clip the app had cut itself,
+# and 132 once the library's folder and run were opened (U15). Neither of the
+# last two was a sweep change in the usual sense: the marker was gated on
+# `imported` until S2, and the library now holds its clip controls two clicks
+# in -- a page that renders perfectly can stop being swept because of where
+# its controls live, which is exactly what this floor is here to catch.
 #
 # The honest account of the 73 still out of reach is in docs/UI-SCENARIOS.md
 # rather than hidden behind a comfortable number here.
 #
 # A FLOOR, not a target. It exists so that a change which quietly stops a page
 # rendering fails here rather than passing with less and less under test.
-REACHED_FLOOR = 122
+REACHED_FLOOR = 132
 
 
 def _reached(swept) -> set:

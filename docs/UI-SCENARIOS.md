@@ -13,17 +13,22 @@ Counted from the source rather than estimated — `surface.ui_actions()` and
 `surface.ui_operable_ids()` enumerate them, and `tests/verify/test_surface.py`
 fails if one appears that nothing accounts for.
 
+Re-counted 2026-10-11, when the Studio library became a drill-down. The
+numbers below are what the two helpers print today; the ones they replace
+(190 controls, studio 121) were a year of features out of date, which is how
+a measured figure quietly becomes an estimate.
+
 | Page | `data-act` controls | Operable ids |
 |---|---|---|
-| studio | 121 | 15 |
-| clips | 40 | 10 |
+| studio | 147 | 17 |
+| clips | 47 | 10 |
 | reel | 22 | 2 |
-| settings | 6 | 10 |
+| settings | 7 | 10 |
 | setup | 2 | 1 |
-| dashboard | 0 | 11 |
+| dashboard | 2 | 12 |
 | logs | 0 | 3 |
 | shell | 0 | 2 |
-| **total** | **190** | **54** |
+| **total** | **226** | **57** |
 
 Dashboard, logs and shell carry no `data-act`: they are wired by element id,
 which is why both columns matter.
@@ -163,7 +168,7 @@ listed so the gap is visible.
 | 5.30 | Framing marks its choice | The reported bug | yes |
 | 5.31 | Upload to YouTube | Refused safely with no account | **gap** |
 
-# 6 · Studio — 121 controls
+# 6 · Studio — 147 controls
 
 `test_ui_playwright.py` covers the two big flows and the effect picker.
 
@@ -192,6 +197,10 @@ listed so the gap is visible.
 | 6.21 | Instant preview with lyrics: a look chosen, then another, before any render | The render's own words are over the preview within seconds, on its clock, transparent where nothing is sung; a new look brings a new overlay without a render | yes |
 | 6.22 | Instant preview of a 9:16 reel with Fit the whole picture | The picture sits over a blurred copy of itself, not black bands; the lyrics are redrawn for the new shape | yes |
 | 6.23 | The effect picker: point at an option | It plays on a stage that takes most of the dialog, centred, 16:9, with the list in a column beside it; a sharp 1280-wide copy replaces the card-sized one; the stage's button does what clicking the card does | yes |
+| 6.24 | The library opens on folders: one card per game plus Favourites, each saying how many clips and runs; open one and its runs are listed, newest first, with a chip per match in them; a run with no match record shows no chips | No clip tile is rendered before a folder is opened, and a folder opens on runs rather than straight onto clips | yes (`test_ui_studio_folders`) |
+| 6.25 | A run opens on its clips, grouped by the match each was cut from: the map, the mode, the score coloured by the result, the player's K/D/A and where the match starts in the recording; clips outside every match get their own group; Select match takes that match and nothing else; Select run still takes the sitting | Every clip in the run is on screen exactly once, under its own match; the selection is the clips of the group pressed | yes (`test_ui_studio_folders`) |
+| 6.26 | Getting back out: the crumbs walk a run up to its folder and a folder up to the grid; where you are survives the pane being rebuilt; a search typed at the folders finds a clip two levels down, and clearing it puts you back where you were | A drill-down takes nothing away: the search still answers from the whole library, and no level is a one-way door | yes (`test_ui_studio_folders`) |
+| 6.27 | The effect picker on a single choice (an ending, a speed): click one, then another, then Done | Each click applies straight away and the dialog stays up, with the tick and the stage button on what is in use; Done closes it keeping the last one, and Cancel closes it putting back the one that was there when it opened | yes (inside 6.9 and 6.23) |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.
@@ -246,10 +255,10 @@ run. Measurements, not estimates -- and what `REACHED_FLOOR` is set from.
 
 | | count |
 |---|---|
-| Controls the source declares | 195 |
-| Reached by the sweep | **122** |
+| Controls the source declares | 226 |
+| Reached by the sweep | **132** |
 | Excused, with a reason each | 23 |
-| Still unreached | 73 |
+| Still unreached | 71 |
 
 It got there in stages, and the stages say what actually unlocks a UI:
 
@@ -260,7 +269,8 @@ It got there in stages, and the stages say what actually unlocks a UI:
 | + a song on disk | 99 |
 | + a reel project on disk | 111 |
 | + a shot selected on the timeline | 117 |
-| + the kill marker open on a clip | **122** |
+| + the kill marker open on a clip | 122 |
+| + a folder and a run opened in the library | **132** |
 
 That last row is not a sweep change. The marker was gated on `imported` until
 S2 (2026-10-05), so for a seeded run the dialog could not be opened at all and

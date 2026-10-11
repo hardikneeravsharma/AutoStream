@@ -312,6 +312,28 @@ def test_the_recordings_length_is_read_from_the_field_that_exists():
     assert _rec_seconds({"recording_seconds": "nonsense", "duration": 7}) == 7.0
 
 
+def test_the_whole_match_switch_actually_reaches_the_job():
+    """"Also make the whole match as one video" did nothing for a year.
+
+    The page has sent `match_summary` since v1.41.0 and `jobs.ClipJob` asks
+    for `opt.get("match_summary")` -- but `clips_run` never copied the flag
+    out of the request body, so the condition was false on every run started
+    from the UI, for every game. The browser test that covered it asserted
+    what the PAGE put in the request and stopped there, which is exactly the
+    shape of hole this pins shut: both ends, in one test.
+    """
+    from autostream import webui as w
+    from autostream.ui import clips as clips_page
+
+    assert "match_summary: !!clip_state.matchVid" in clips_page.CLIPS_JS, (
+        "the Clips page no longer sends the switch under this name")
+    src = pathlib.Path(w.__file__).read_text(encoding="utf-8")
+    run = src[src.index("def clips_run(self, body: dict) -> dict:"):]
+    run = run[:run.index("    def _cached_kills(")]
+    assert 'opt["match_summary"]' in run, (
+        "the whole-match switch is sent by the page and dropped by the server")
+
+
 def test_a_run_and_a_re_render_cannot_overlap():
     """Both are encodes on the same machine. clips_edit already refused while a
     job was running; this is the other half."""

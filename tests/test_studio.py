@@ -20,7 +20,7 @@ from autostream.clips import rulebook, studio, studio_refs
 # ------------------------------------------------------------------ fixtures
 
 def _run(root: Path, name: str, game: str, clips: list[dict], kills: list[float],
-         pre_roll: float = 3.5) -> Path:
+         pre_roll: float = 3.5, demo: dict | None = None) -> Path:
     folder = root / name
     (folder / "clips").mkdir(parents=True)
     rows = []
@@ -32,9 +32,11 @@ def _run(root: Path, name: str, game: str, clips: list[dict], kills: list[float]
                      "name": master.stem, "master": str(master), "vertical": "",
                      "caption": c.get("caption", ""), "tags": [], "at": ""})
     (folder / "clips.json").write_text(json.dumps({"game": game, "clips": rows}))
-    (folder / "session.json").write_text(json.dumps(
-        {"game": game, "kills": [{"time": k} for k in kills],
-         "options": {"pre_roll": pre_roll}}))
+    sess = {"game": game, "kills": [{"time": k} for k in kills],
+            "options": {"pre_roll": pre_roll}}
+    if demo is not None:
+        sess["demo"] = demo
+    (folder / "session.json").write_text(json.dumps(sess))
     return folder
 
 
@@ -115,6 +117,124 @@ def test_a_clip_whose_file_is_gone_is_left_out(root):
 def test_reels_and_hidden_folders_are_not_runs(root):
     names = [f["name"] for g in studio.library(root)["games"] for f in g["folders"]]
     assert "reels" not in names and ".studio" not in names
+
+
+# ----------------------------------------------- the matches inside a run
+
+ME = "me-puuid"
+
+
+def _record(cache: Path, mid: str, map_key: str, queue: str, mine: int, theirs: int,
+            kills: int = 0, deaths: int = 0, assists: int = 0) -> None:
+    """One cached Riot match record, shaped like the fields summary() reads."""
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / f"{mid}.json").write_text(json.dumps({
+        "matchInfo": {"matchId": mid, "mapId": f"/Game/Maps/{map_key}/{map_key}",
+                      "queueID": queue, "isRanked": queue == "competitive",
+                      "gameStartMillis": 1_788_030_000_000, "gameLengthMillis": 600_000},
+        "players": [{"subject": ME, "teamId": "Blue",
+                     "stats": {"kills": kills, "deaths": deaths, "assists": assists}}],
+        "teams": [{"teamId": "Blue", "roundsWon": mine, "numPoints": mine, "won": mine > theirs},
+                  {"teamId": "Red", "roundsWon": theirs, "numPoints": theirs, "won": theirs > mine}],
+        "_autostream_puuid": ME,
+    }))
+
+
+@pytest.fixture
+def matched(tmp_path, monkeypatch):
+    """A run of five clips over two matches, with both records cached.
+
+    The spans are the ones a real run writes: `demo.matches` carries each
+    match's offset into the recording, which is what the kills were aligned
+    against when the clips were cut.
+    """
+    from autostream.clips import valorant_match as vm
+    cache = tmp_path / "matches"
+    monkeypatch.setattr(vm, "CACHE", cache)
+    _record(cache, "match-one", "Jam", "competitive", 13, 9, kills=18, deaths=14, assists=4)
+    _record(cache, "match-two", "HURM_Helix", "hurm", 100, 80, kills=23, deaths=11, assists=9)
+    r = tmp_path / "clips"
+    _run(r, "2026-10-10_2215_VALORANT", "VALORANT",
+         [{"start": 50.0, "end": 60.0},                      # before either match
+          {"start": 310.0, "end": 320.0, "kills": 2},        # match one
+          {"start": 900.0, "end": 912.0, "kills": 3},        # match one
+          {"start": 2700.0, "end": 2706.0},                  # match two
+          {"start": 2800.0, "end": 2810.0, "kills": 4}],     # match two
+         kills=[], demo={"matches": [
+             {"match": "match-two", "offset": 2632.0},
+             {"match": "match-one", "offset": 299.0}]})
+    return r
+
+
+def _folder(root):
+    return studio.library(root)["games"][0]["folders"][0]
+
+
+def test_a_runs_clips_are_grouped_under_the_match_they_came_from(matched):
+    f = _folder(matched)
+    assert [m["map"] for m in f["matches"]] == ["Lotus", "Drift"]
+    assert [m["mode"] for m in f["matches"]] == ["Competitive", "Team Deathmatch"]
+    # In the order they were played, whatever order the run wrote them in.
+    assert [m["at"] for m in f["matches"]] == [299.0, 2632.0]
+    assert [m["clips"] for m in f["matches"]] == [2, 2]
+    by_name = {c["name"]: c.get("match") for c in f["clips"]}
+    assert by_name["VALORANT_01"] == 0 and by_name["VALORANT_02"] == 0
+    assert by_name["VALORANT_03"] == 1 and by_name["VALORANT_04"] == 1
+
+
+def test_a_clip_outside_every_match_belongs_to_none(matched):
+    """Warm-up, the range, a match with no record: it stays in the run and is
+    grouped on its own, rather than being folded into the first match."""
+    f = _folder(matched)
+    first = [c for c in f["clips"] if c["name"] == "VALORANT_00"][0]
+    assert "match" not in first
+    assert sum(m["clips"] for m in f["matches"]) == len(f["clips"]) - 1
+
+
+def test_the_groups_own_counts_are_not_riots(matched):
+    """`kills` on a group is the player's kills in the match, from Riot.
+    What the clips in it add up to is `clip_kills` -- two numbers that are
+    usually close and must never be mistaken for one another."""
+    one = _folder(matched)["matches"][0]
+    assert one["kills"] == 18 and one["deaths"] == 14 and one["assists"] == 4
+    assert one["clip_kills"] == 5                 # 2 + 3, the clips' own
+    assert one["clip_seconds"] == 22.0
+    assert one["score"] == [13, 9] and one["won"] is True
+
+
+def test_team_deathmatch_is_scored_in_points(matched):
+    two = _folder(matched)["matches"][1]
+    assert two["score"] == [100, 80] and two["mode"] == "Team Deathmatch"
+
+
+def test_a_match_whose_record_is_gone_still_groups_its_clips(matched, monkeypatch):
+    """The span is in the run's own file. Losing the record costs the map
+    name, not the grouping."""
+    from autostream.clips import valorant_match as vm
+    (vm.CACHE / "match-one.json").unlink()
+    one = _folder(matched)["matches"][0]
+    assert one["id"] == "match-one" and "map" not in one
+    assert one["clips"] == 2 and one["clip_kills"] == 5
+
+
+def test_a_run_with_no_match_records_has_no_groups(root):
+    """CS2, Delta Force, anything imported: the page shows the one grid it
+    always did rather than inventing a match."""
+    for g in studio.library(root)["games"]:
+        for f in g["folders"]:
+            assert f["matches"] == []
+            assert all("match" not in c for c in f["clips"])
+
+
+def test_one_record_is_read_without_parsing_the_whole_cache(tmp_path, monkeypatch):
+    from autostream.clips import valorant_match as vm
+    monkeypatch.setattr(vm, "CACHE", tmp_path / "matches")
+    _record(tmp_path / "matches", "match-one", "Ascent", "competitive", 13, 7)
+    assert vm.one("match-one").id == "match-one"
+    assert vm.one("match-missing") is None
+    # A match id is a file name; it never reaches outside the cache.
+    assert vm.one("../../etc/passwd") is None
+    assert vm.one("") is None
 
 
 def test_a_reel_with_a_project_can_be_reopened(root):

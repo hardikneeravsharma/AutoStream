@@ -135,10 +135,14 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
 - **Cuts a reel to your own music.** Beats found without librosa; the cuts land on
   them, the acts change on phrase boundaries, and the best moment of the session
   lands on the drop — with the clips still in the order they happened.
-- **Makes reels from every clip you have, in the Studio.** One page lists every clip
-  from every game and every run, grouped the way they were made. Pick any of them —
-  one at a time, a range, or a whole run — choose a style and a song, and it builds
-  the reel with every cut and every kill on the beat.
+- **Makes reels from every clip you have, in the Studio.** One page holds every clip
+  from every game and every run. It opens on a **folder per game**: open one and it
+  lists your sittings at the PC, newest first; open a sitting and its clips are
+  **grouped by the match they came from** — the map, the mode, the score and your own
+  K/D/A, read from the match record Valorant already gave AutoStream, never from the
+  screen. Pick any of them — one at a time, a range, a whole match or a whole run —
+  choose a style and a song, and it builds the reel with every cut and every kill on
+  the beat. The search box still looks through every folder at once.
   - **Your own clips too.** "Add your own clip…" takes any video you already have —
     saved by the game, by Medal, sent by a friend — and you mark its kills by pressing
     <kbd>K</kbd> as it plays (or let the Valorant / Counter-Strike detector find them),

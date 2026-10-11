@@ -246,7 +246,9 @@ def test_09_the_run_reaches_the_studio_library(page):
     got = page.evaluate("""() => {
         const e = document.getElementById('studio-empty');
         const sub = document.getElementById('studio-sub');
-        return {rows: document.querySelectorAll('.studio-folder').length,
+        /* The library opens on folder cards (U15); a search or the
+           favourites still render .studio-folder sections. */
+        return {rows: document.querySelectorAll('.studio-folder-card, .studio-folder').length,
                 empty_shown: !!e && !e.classList.contains('hide'),
                 empty_text: e ? e.textContent.trim() : '',
                 sub_text: sub ? sub.textContent.trim() : ''};

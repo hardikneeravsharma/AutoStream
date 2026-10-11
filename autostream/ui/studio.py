@@ -789,7 +789,7 @@ STUDIO_HTML = r"""
     <div class="modal-actions">
       <span class="muted studio-fxp-count" id="studio-fxp-count" role="status" aria-live="polite"></span>
       <button type="button" class="btn btn-ghost hide" data-act="studio-fxp-clear" id="studio-fxp-clear">Clear all</button>
-      <button type="button" class="btn btn-ghost" data-act="studio-fxp-cancel">Cancel</button>
+      <button type="button" class="btn btn-ghost" data-act="studio-fxp-cancel" id="studio-fxp-cancel">Cancel</button>
       <button type="button" class="btn btn-primary hide" data-act="studio-fxp-done" id="studio-fxp-done">Done</button>
     </div>
   </div>
@@ -910,7 +910,12 @@ STUDIO_JS = r"""
 
 const studio = {
   lib: null, catalog: null, loadedAt: 0,
-  game: 'all', q: '', selected: [], lastClick: null,
+  /* WHERE IN THE LIBRARY THE PLAYER IS. `game` is the open folder ('all' is
+     the folder grid itself, 'fav' the favourites) and `run` the open run's
+     path. Both live here rather than in the markup because the pane is
+     rebuilt on every edit -- state kept in the DOM would drop the player back
+     at the top every time they came back from making a reel. */
+  game: 'all', run: '', q: '', selected: [], lastClick: null,
   reelQ: '', reelSort: 'new', reelFmt: 'all', reelsAll: false,
   examples: null, picks: null, binOn: null, binObs: null, binTimer: null,
   sv: null, svShow: null, svWin: 8, songList: null,
@@ -1049,19 +1054,213 @@ async function studio_load(force) {
 
 /* ------------------------------------------------------------ the library */
 
+/* WHAT IS IN SCOPE RIGHT NOW: the folders whose clips the player is looking
+   at, which is what the tray counts, what shift-range runs over and what
+   "Select run" toggles. The library is a drill-down -- folders, then the runs
+   in one folder, then the clips in one run -- so scope narrows as you go in.
+
+   A SEARCH IS NOT NARROWED BY WHERE YOU ARE. Typing looks through every clip
+   in every folder: a drill-down that could only search the drawer you had
+   already opened would have taken something away. */
 function studio_visible() {
   const q = studio.q.trim().toLowerCase();
   const out = [];
   const favOnly = studio.game === 'fav';
   (studio.lib ? studio.lib.games : []).forEach(g => {
-    if (studio.game !== 'all' && !favOnly && g.game !== studio.game) return;
+    if (!q && !favOnly && studio.game !== 'all' && g.game !== studio.game) return;
     g.folders.forEach(f => {
+      if (!q && studio.run && f.folder !== studio.run) return;
       const clips = f.clips.filter(c => (!favOnly || c.fav) && (!q ||
         (c.name + ' ' + c.caption + ' ' + f.label + ' ' + g.game).toLowerCase().indexOf(q) >= 0));
+      /* IN THE ORDER THEY ARE ON SCREEN, because this is what shift-click
+         ranges over. An open run draws its clips under the match each came
+         from, so the rank order the manifest has is not what the eye sees,
+         and a range would take clips from three groups at once. */
+      if (!q && f.folder === studio.run && (f.matches || []).length) {
+        const last = f.matches.length;
+        clips.sort((a, b) => (a.match === undefined ? last : a.match) -
+                             (b.match === undefined ? last : b.match));
+      }
       if (clips.length) out.push({game: g.game, folder: f, clips: clips});
     });
   });
   return out;
+}
+
+/* Which of the three levels is on screen. The search is a level of its own:
+   it answers across the whole library, from wherever it was typed. */
+function studio_level() {
+  if (studio.q.trim()) return 'search';
+  if (studio.game === 'all') return 'folders';
+  if (studio.game === 'fav') return 'fav';
+  return studio.run ? 'clips' : 'runs';
+}
+
+/* The run a folder path belongs to, and the game it is in. */
+function studio_runOf(path) {
+  let hit = null;
+  (studio.lib ? studio.lib.games : []).forEach(g => g.folders.forEach(f => {
+    if (f.folder === path) hit = {game: g.game, folder: f};
+  }));
+  return hit;
+}
+
+function studio_thumbOf(c, cls) {
+  const kill = (c && c.kills && c.kills.length ? c.kills[0] : 0);
+  const at = Math.max(0, kill - 0.3).toFixed(2);
+  return '<img loading="lazy" alt="" class="' + cls + '" src="' +
+    studio_media('/api/studio/thumb', c.path, '&t=' + at + '&v=' + (c.mtime || 0)) + '">';
+}
+
+/* Where a match starts in the recording, said the way a person would say it. */
+function studio_into(t) {
+  t = Math.max(0, Math.round(Number(t) || 0));
+  const h = Math.floor(t / 3600), m = Math.round((t % 3600) / 60);
+  return t < 60 ? t + 's' : h ? h + 'h ' + m + 'm' : m + 'm';
+}
+
+function studio_longDur(t) {
+  t = Math.max(0, Math.round(Number(t) || 0));
+  return t < 60 ? t + 's' : studio_into(t);
+}
+
+/* LEVEL 1 -- one card per game, not 339 clip tiles. The mosaic is the newest
+   runs' best clip, so a folder is recognised by its footage rather than read
+   as a line of text. */
+function studio_folderCards() {
+  const lib = studio.lib;
+  let html = '<div class="studio-folders">';
+  lib.games.forEach(g => {
+    const covers = [];
+    g.folders.forEach(f => { if (covers.length < 4 && f.clips.length) covers.push(f.clips[0]); });
+    (g.folders[0] ? g.folders[0].clips : []).forEach(c => {
+      if (covers.length < 4 && covers.indexOf(c) < 0) covers.push(c);
+    });
+    const runs = g.folders.length;
+    const newest = g.folders[0] ? g.folders[0].label : '';
+    html += '<button type="button" class="studio-folder-card" data-act="studio-open-folder" ' +
+      'data-game="' + esc(g.game) + '" aria-label="Open ' + esc(g.game) + ', ' + g.clips + ' clips">' +
+      '<span class="studio-folder-mosaic">' +
+      covers.map(c => studio_thumbOf(c, '')).join('') + '</span>' +
+      '<span class="studio-folder-card-body"><span class="studio-folder-card-name">' + esc(g.game) + '</span>' +
+      '<span class="studio-folder-card-facts">' + g.clips + ' clips · ' + runs +
+      (runs === 1 ? ' run' : ' runs') + (newest ? '<br>newest ' + esc(newest) : '') + '</span>' +
+      '<span class="studio-folder-go">Open →</span></span></button>';
+  });
+  /* Favourites cut across every game, so the card sits with the folders
+     rather than inside one of them. */
+  html += '<button type="button" class="studio-folder-card studio-fav-card" data-act="studio-open-folder" ' +
+    'data-game="fav" aria-label="Open your favourites"' +
+    ((lib.fav_count || 0) ? '' : ' disabled title="Star a clip with the star on its card"') + '>' +
+    '<span class="studio-folder-mosaic studio-folder-star">★</span>' +
+    '<span class="studio-folder-card-body"><span class="studio-folder-card-name">Favourites</span>' +
+    '<span class="studio-folder-card-facts">' + (lib.fav_count || 0) +
+    ' clips · across every game</span><span class="studio-folder-go">Open →</span></span></button>';
+  return html + '</div>';
+}
+
+/* A match as a chip: the map and the score, coloured by whether it was won. */
+function studio_matchChip(m) {
+  const cls = m.won === true ? ' is-win' : m.won === false ? ' is-loss' : '';
+  return '<span class="studio-mchip' + cls + '">' + esc(m.map || 'Match') +
+    (m.score ? ' · ' + m.score[0] + '–' + m.score[1] : m.mode ? ' · ' + esc(m.mode) : '') + '</span>';
+}
+
+/* LEVEL 2 -- the runs in one folder. A run is a sitting at the PC, which is
+   what the folder on disk is; the matches inside it come from the Riot records
+   the Clips page already fetched. */
+function studio_runRows(game) {
+  const g = (studio.lib.games || []).filter(x => x.game === game)[0];
+  if (!g) return '';
+  const pos = {};
+  studio.selected.forEach(id => { pos[id] = 1; });
+  let html = '<div class="studio-runs">';
+  g.folders.forEach(f => {
+    const ms = f.matches || [];
+    const kills = f.clips.reduce((n, c) => n + (c.kill_count || 0), 0);
+    const secs = f.clips.reduce((n, c) => n + (c.duration || 0), 0);
+    const allOn = f.clips.every(c => pos[c.id]);
+    html += '<div class="studio-run">' +
+      '<button type="button" class="studio-run-hit" data-act="studio-open-run" data-folder="' +
+      esc(f.folder) + '" aria-label="Open ' + esc(f.label) + '">' +
+      (f.clips.length ? studio_thumbOf(f.clips[0], 'studio-run-shot') : '') +
+      '<span class="studio-run-who"><span class="studio-run-name">' + esc(f.label) + '</span>' +
+      '<span class="studio-run-facts">' + f.clips.length +
+      (f.clips.length === 1 ? ' clip · ' : ' clips · ') + kills +
+      (kills === 1 ? ' kill · ' : ' kills · ') + studio_longDur(secs) + ' of footage' +
+      (ms.length ? ' · ' + ms.length + (ms.length === 1 ? ' match' : ' matches') : '') + '</span>' +
+      (ms.length ? '<span class="studio-mchips">' + ms.map(studio_matchChip).join('') + '</span>' : '') +
+      '</span></button>' +
+      '<span class="studio-run-acts">' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-folder" data-folder="' +
+      esc(f.folder) + '">' + (allOn ? 'Unselect run' : 'Select run') + '</button>' +
+      '<button type="button" class="btn btn-sm" data-act="studio-open-run" data-folder="' +
+      esc(f.folder) + '">Open</button></span></div>';
+  });
+  return html + '</div>';
+}
+
+/* LEVEL 3 -- the clips in one run, under the match each was cut from.
+
+   Nothing here is detected: the match spans are in the run's own session.json
+   and the map, mode and score in the record the Clips page fetched. A run with
+   no records (CS2, anything imported) shows the one grid it always did, and
+   clips that fall outside every match get their own group rather than being
+   quietly dropped. */
+function studio_matchSections(gr, pos) {
+  const ms = gr.folder.matches || [];
+  const tile = c => studio_tile(c, pos[c.id]);
+  if (!ms.length) return '<div class="studio-grid">' + gr.clips.map(tile).join('') + '</div>';
+  let html = '';
+  ms.forEach((m, i) => {
+    const mine = gr.clips.filter(c => c.match === i);
+    if (!mine.length) return;
+    const allOn = mine.every(c => pos[c.id]);
+    const cls = m.won === true ? ' is-win' : m.won === false ? ' is-loss' : '';
+    html += '<section class="studio-match" aria-label="' + esc(m.map || ('Match ' + (i + 1))) + '">' +
+      '<div class="studio-match-h"><span class="studio-match-name">Match ' + (i + 1) +
+      (m.map ? ' · ' + esc(m.map) : '') + '</span>' +
+      (m.mode ? '<span class="muted">' + esc(m.mode) + '</span>' : '') +
+      (m.score ? '<span class="studio-match-score mono' + cls + '">' + m.score[0] + ' – ' + m.score[1] + '</span>' : '') +
+      (m.kills === undefined ? '' : '<span class="muted">' + m.kills + ' / ' + m.deaths + ' / ' + m.assists + ' K/D/A</span>') +
+      '<span class="muted">' + mine.length + ' clips · ' + m.clip_kills + ' kills · ' +
+      studio_longDur(m.clip_seconds) + '</span>' +
+      '<span class="muted">at ' + studio_into(m.at) + ' into the recording</span>' +
+      '<button type="button" class="btn btn-ghost btn-sm studio-match-btn" data-act="studio-match" ' +
+      'data-match="' + i + '">' + (allOn ? 'Unselect match' : 'Select match') + '</button></div>' +
+      '<div class="studio-grid">' + mine.map(tile).join('') + '</div></section>';
+  });
+  const rest = gr.clips.filter(c => c.match === undefined);
+  if (rest.length) {
+    const allOn = rest.every(c => pos[c.id]);
+    html += '<section class="studio-match" aria-label="Outside those matches">' +
+      '<div class="studio-match-h"><span class="studio-match-name">Outside those matches</span>' +
+      '<span class="muted">' + rest.length + (rest.length === 1 ? ' clip' : ' clips') +
+      ' · warm-up, the range, or a match with no record</span>' +
+      '<button type="button" class="btn btn-ghost btn-sm studio-match-btn" data-act="studio-match" ' +
+      'data-match="-1">' + (allOn ? 'Unselect these' : 'Select these') + '</button></div>' +
+      '<div class="studio-grid">' + rest.map(tile).join('') + '</div></section>';
+  }
+  return html;
+}
+
+/* The line above the library saying where you are and how to get back. */
+function studio_crumbs(level, game, label) {
+  if (level === 'folders') return '';
+  const back = '<button type="button" class="studio-crumb" data-act="studio-crumb" data-to="folders">Folders</button>';
+  if (level === 'search') return '<nav class="studio-crumbs" aria-label="Where you are">' + back +
+    '<span class="studio-crumb-sep">›</span><span class="studio-crumb-now">Search</span></nav>';
+  if (level === 'fav') return '<nav class="studio-crumbs" aria-label="Where you are">' + back +
+    '<span class="studio-crumb-sep">›</span><span class="studio-crumb-now">★ Favourites</span></nav>';
+  let html = '<nav class="studio-crumbs" aria-label="Where you are">' + back + '<span class="studio-crumb-sep">›</span>';
+  if (level === 'clips') {
+    html += '<button type="button" class="studio-crumb" data-act="studio-crumb" data-to="runs">' +
+      esc(game) + '</button><span class="studio-crumb-sep">›</span>' +
+      '<span class="studio-crumb-now">' + esc(label) + '</span>';
+  } else {
+    html += '<span class="studio-crumb-now">' + esc(game) + '</span>';
+  }
+  return html + '</nav>';
 }
 
 /* YOUR REELS. It used to be the newest ten and nothing else: an eleventh reel
@@ -1145,17 +1344,24 @@ function studio_renderReels() {
 function studio_renderLib() {
   const lib = studio.lib;
   if (!lib) return;
+  /* A run deleted, or a game whose last clip has gone, since the page was
+     last read: fall back to the level above rather than to an empty pane. */
+  if (studio.run && !studio_runOf(studio.run)) studio.run = '';
+  if (studio.game !== 'all' && studio.game !== 'fav' &&
+      !lib.games.some(g => g.game === studio.game)) { studio.game = 'all'; studio.run = ''; }
   const games = lib.games.length;
   const runs = lib.games.reduce((n, g) => n + g.folders.length, 0);
   studio_el('studio-sub').textContent = lib.clip_count
-    ? lib.clip_count + (lib.clip_count === 1 ? ' clip' : ' clips') + ' from ' +
+    ? lib.clip_count + (lib.clip_count === 1 ? ' clip' : ' clips') + ' in ' +
       runs + (runs === 1 ? ' run' : ' runs') +
       ' across ' + games + (games === 1 ? ' game' : ' games') +
-      '. Pick any of them, from any run, and make a reel.'
+      '. Open a folder to pick from it — or search, which looks in all of them.'
     : 'No clips yet. Cut some on the Clips page and they will appear here.';
+  /* The chips are the quick way between folders: the same navigation as the
+     cards, for someone already two levels in. */
   studio_el('studio-games').innerHTML =
     '<button type="button" class="chip' + (studio.game === 'all' ? ' is-on' : '') +
-    '" data-act="studio-game" data-game="all" aria-pressed="' + (studio.game === 'all') + '">All <b>' +
+    '" data-act="studio-game" data-game="all" aria-pressed="' + (studio.game === 'all') + '">All folders <b>' +
     lib.clip_count + '</b></button>' +
     lib.games.map(g => '<button type="button" class="chip' + (studio.game === g.game ? ' is-on' : '') +
       '" data-act="studio-game" data-game="' + esc(g.game) + '" aria-pressed="' + (studio.game === g.game) +
@@ -1168,28 +1374,57 @@ function studio_renderLib() {
 
   studio_renderReels();
 
+  /* THE LIBRARY OPENS ON FOLDERS, NOT ON EVERY CLIP. It used to write a
+     heading per game and a tile per clip in one pane: 339 clips in 42 runs on
+     the developer's own machine, which is 339 thumbnails and four buttons each
+     before the player has said what they are looking for. Now a folder opens
+     on its runs and a run opens on its clips, grouped by the match they came
+     from -- and the search still answers from the whole library. */
+  const level = studio_level();
+  const open = studio.run ? studio_runOf(studio.run) : null;
   const groups = studio_visible();
   const pos = {};
   studio.selected.forEach((id, i) => { pos[id] = i + 1; });
-  let lastGame = '';
-  let html = '';
-  groups.forEach(gr => {
-    if (gr.game !== lastGame) {
-      html += '<h3 class="studio-game-h">' + esc(gr.game) + '</h3>';
-      lastGame = gr.game;
-    }
-    const allOn = gr.clips.every(c => pos[c.id]);
-    html += '<section class="studio-folder" aria-label="' + esc(gr.folder.label) + '">' +
-      '<div class="studio-folder-h"><span class="studio-folder-name">' + esc(gr.folder.label) + '</span>' +
-      '<span class="muted">' + gr.clips.length + ' clips</span>' +
+  let html = studio_crumbs(level, studio.game, open ? open.folder.label : '');
+  if (level === 'folders') {
+    html += studio_folderCards();
+  } else if (level === 'runs') {
+    html += studio_runRows(studio.game);
+  } else if (level === 'clips' && open) {
+    const gr = groups.filter(x => x.folder.folder === studio.run)[0];
+    const kills = gr ? gr.clips.reduce((n, c) => n + (c.kill_count || 0), 0) : 0;
+    const allOn = gr && gr.clips.every(c => pos[c.id]);
+    html += '<div class="studio-folder-h studio-run-head"><h3 class="studio-game-h">' +
+      esc(open.folder.label) + '</h3><span class="muted">' + (gr ? gr.clips.length : 0) +
+      ' clips · ' + kills + ' kills</span>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-folder" data-folder="' +
-      esc(gr.folder.folder) + '">' + (allOn ? 'Unselect run' : 'Select run') + '</button></div>' +
-      '<div class="studio-grid">' + gr.clips.map(c => studio_tile(c, pos[c.id])).join('') + '</div></section>';
-  });
+      esc(studio.run) + '">' + (allOn ? 'Unselect run' : 'Select run') + '</button></div>' +
+      (gr ? studio_matchSections(gr, pos) : '');
+  } else {
+    /* Favourites, and every search result: one grid per run it came from, so
+       a hit still says which sitting it belongs to. */
+    let lastGame = '';
+    groups.forEach(gr => {
+      if (gr.game !== lastGame) {
+        html += '<h3 class="studio-game-h">' + esc(gr.game) + '</h3>';
+        lastGame = gr.game;
+      }
+      const allOn = gr.clips.every(c => pos[c.id]);
+      html += '<section class="studio-folder" aria-label="' + esc(gr.folder.label) + '">' +
+        '<div class="studio-folder-h"><span class="studio-folder-name">' + esc(gr.folder.label) + '</span>' +
+        '<span class="muted">' + gr.clips.length + ' clips</span>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-folder" data-folder="' +
+        esc(gr.folder.folder) + '">' + (allOn ? 'Unselect run' : 'Select run') + '</button></div>' +
+        '<div class="studio-grid">' + gr.clips.map(c => studio_tile(c, pos[c.id])).join('') + '</div></section>';
+    });
+  }
   studio_el('studio-lib').innerHTML = html;
-  const empty = !groups.length;
+  const empty = level !== 'folders' && !groups.length;
   studio_show('studio-empty', empty && lib.clip_count > 0);
-  if (empty && lib.clip_count) studio_el('studio-empty').textContent = 'Nothing matches that search.';
+  if (empty && lib.clip_count) studio_el('studio-empty').textContent = level === 'search'
+    ? 'Nothing matches that search.'
+    : level === 'fav' ? 'No favourites yet. Star a clip with the star on its card.'
+    : 'Nothing in this folder.';
   studio_renderTray();
 }
 
@@ -1245,9 +1480,21 @@ function studio_syncSelection() {
     const hit = el.querySelector('.studio-clip-hit');
     if (hit) hit.setAttribute('aria-pressed', String(!!n));
   });
-  studio_visible().forEach(gr => {
+  const vis = studio_visible();
+  vis.forEach(gr => {
     const btn = document.querySelector('#studio-lib [data-act="studio-folder"][data-folder="' + CSS.escape(gr.folder.folder) + '"]');
     if (btn) btn.textContent = gr.clips.every(c => pos[c.id]) ? 'Unselect run' : 'Select run';
+  });
+  /* The per-match buttons on the open run, which are the same promise over a
+     smaller set and would otherwise go on saying Select after one. */
+  const open = vis.filter(gr => gr.folder.folder === studio.run)[0];
+  if (open) document.querySelectorAll('#studio-lib [data-act="studio-match"]').forEach(btn => {
+    const i = Number(btn.getAttribute('data-match'));
+    const mine = open.clips.filter(c => (c.match === undefined ? -1 : c.match) === i);
+    if (!mine.length) return;
+    const allOn = mine.every(c => pos[c.id]);
+    btn.textContent = i < 0 ? (allOn ? 'Unselect these' : 'Select these')
+                            : (allOn ? 'Unselect match' : 'Select match');
   });
   studio_renderTray();
 }
@@ -1284,6 +1531,48 @@ function studio_pick(id, shift) {
     studio.selected.push(id);
   }
   studio.lastClick = id;
+  studio_syncSelection();
+}
+
+/* Moving between the levels. The library pane is scrolled to rather than the
+   page top: the reels sit above it, and arriving at a folder's runs with the
+   reels filling the screen reads as nothing having happened. */
+function studio_libShow() {
+  studio_renderLib();
+  const lib = studio_el('studio-lib');
+  if (lib) lib.scrollIntoView({block: 'start'});
+}
+
+function studio_goLib(to) {
+  if (to === 'folders') studio.game = 'all';
+  studio.run = '';
+  studio_libShow();
+}
+
+function studio_openFolder(game) {
+  studio.game = game;
+  studio.run = '';
+  studio_libShow();
+}
+
+function studio_openRun(folder) {
+  const hit = studio_runOf(folder);
+  if (!hit) return;
+  studio.game = hit.game;
+  studio.run = folder;
+  studio_libShow();
+}
+
+/* Every clip of one match, on or off together -- the same promise "Select
+   run" makes one level up. -1 is the clips that fall outside every match. */
+function studio_matchToggle(i) {
+  const gr = studio_visible().filter(x => x.folder.folder === studio.run)[0];
+  if (!gr) return;
+  const ids = gr.clips.filter(c => (c.match === undefined ? -1 : c.match) === i).map(c => c.id);
+  if (!ids.length) return;
+  const all = ids.every(id => studio.selected.indexOf(id) >= 0);
+  if (all) studio.selected = studio.selected.filter(id => ids.indexOf(id) < 0);
+  else ids.forEach(id => { if (studio.selected.indexOf(id) < 0) studio.selected.push(id); });
   studio_syncSelection();
 }
 
@@ -4671,9 +4960,15 @@ function studio_fxpOpen(b) {
   studio_el('studio-fxp-title').textContent = 'Choose ' + (FXP_TITLES[st.kind] || 'an effect');
   studio_el('studio-fxp-lede').textContent = st.multi
     ? 'Click as many as you like, then press Done. Point at one to see it large.'
-    : 'Point at one to see it large, click it to use it.';
+    : 'Point at one to see it large, click it to use it. It applies as you click, so try '
+      + 'as many as you like: Done keeps the last one, Cancel puts back what you had.';
   studio_el('studio-fxp-q').value = '';
-  studio_show('studio-fxp-done', st.multi);
+  /* THE DIALOG STAYS OPEN UNTIL IT IS DISMISSED, in both modes. A single
+     choice used to close it on the first click, so choosing four endings --
+     or trying four and keeping the best -- meant opening it four times.
+     Cancel still means what it says in both: for a choice that has already
+     been applied it puts back what was there when the dialog opened. */
+  studio_show('studio-fxp-done', true);
   studio_show('studio-fxp-clear', st.multi && !st.pool);
   studio_show('studio-fxp-scrim', true);
   studio_el('studio-fxp-prev').classList.add('is-empty');
@@ -4832,9 +5127,15 @@ function studio_fxpPick(id) {
   const st = studio.fxp;
   if (!st) return;
   if (!st.multi) {
-    studio_fxpClose();
+    /* Apply, and stay. `sel` follows the choice so the tick, the stage
+       button and the count all say what is in use now; `was` stays as it
+       was opened, because it is what the edit is compared against. */
+    if (id === st.sel[0]) return;
     studio_fxpRemember(st.kind, [id]);
-    if (id !== st.was[0]) studio_inspectorSet(st.target, id);
+    st.sel = [id];
+    studio_inspectorSet(st.target, id);
+    studio_fxpDraw();
+    studio_fxpStageBtn();
     return;
   }
   const at = st.sel.indexOf(id);
@@ -4846,6 +5147,7 @@ function studio_fxpPick(id) {
 function studio_fxpDone() {
   const st = studio.fxp;
   if (!st) return;
+  if (!st.multi) { studio_fxpClose(); return; }   /* already applied, click by click */
   if (st.pool && !st.sel.length) { toast('Keep at least one to choose from.', 'warn'); return; }
   studio_fxpClose();
   const added = st.sel.filter(id => st.was.indexOf(id) < 0);
@@ -4854,6 +5156,17 @@ function studio_fxpDone() {
   if (same) return;
   if (st.pool) studio_setPool(st.pool, st.sel.slice());
   else studio_setList(st.list, st.sel.slice());
+}
+
+/* Cancel. A single choice has already been applied by the time it is pressed
+   -- that is the point of the dialog staying open -- so putting the opening
+   value back is the only reading of "cancel" that is true. It goes through
+   the same path as any other edit, so the change count simply returns to
+   what it was. */
+function studio_fxpCancel() {
+  const st = studio.fxp;
+  if (st && !st.multi && st.sel[0] !== st.was[0]) studio_inspectorSet(st.target, st.was[0] || '');
+  studio_fxpClose();
 }
 
 function studio_fxpClose() {
@@ -6190,7 +6503,11 @@ function studio_wire() {
     if (act === 'studio-tab') studio_tab(b.getAttribute('data-tab'));
     else if (act === 'studio-edit-song') studio_tab('song');
     else if (act === 'studio-refresh') studio_load(true);
-    else if (act === 'studio-game') { studio.game = b.getAttribute('data-game'); studio_renderLib(); }
+    else if (act === 'studio-game') studio_openFolder(b.getAttribute('data-game'));
+    else if (act === 'studio-open-folder') studio_openFolder(b.getAttribute('data-game'));
+    else if (act === 'studio-open-run') studio_openRun(b.getAttribute('data-folder'));
+    else if (act === 'studio-crumb') studio_goLib(b.getAttribute('data-to'));
+    else if (act === 'studio-match') studio_matchToggle(Number(b.getAttribute('data-match')));
     else if (act === 'studio-reel-fmt') { studio.reelFmt = b.getAttribute('data-fmt'); studio_renderReels(); }
     else if (act === 'studio-reels-more') {
       studio.reelsAll = !studio.reelsAll;
@@ -6437,7 +6754,7 @@ function studio_wire() {
     else if (act === 'studio-fxp-pick') studio_fxpPick(b.getAttribute('data-part'));
     else if (act === 'studio-fxp-stage') { if (studio.fxp && studio.fxp.shown) studio_fxpPick(studio.fxp.shown); }
     else if (act === 'studio-fxp-done') studio_fxpDone();
-    else if (act === 'studio-fxp-cancel') studio_fxpClose();
+    else if (act === 'studio-fxp-cancel') studio_fxpCancel();
     else if (act === 'studio-fxp-clear' && studio.fxp) { studio.fxp.sel = []; studio_fxpDraw(); }
     else if (act === 'studio-fxp-drop' && p) studio_fxpDrop(b);
     else if (act === 'studio-fx-all' && p && studio.sel >= 0) {

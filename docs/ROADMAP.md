@@ -110,6 +110,13 @@ of its own) with:
 | U12 | **A new lyric style is not shown until a render** (asked 2026-10-11) | **done 2026-10-11**, v1.53.0 -- see Progress |
 | U13 | **9:16 + Fit the whole picture: blurred bands, not black** (asked 2026-10-11) | **done 2026-10-11**, v1.53.0; the render already blurred them, the preview did not -- see Progress |
 | U14 | **The effect picker: the preview big and in the middle** (asked 2026-10-11) | **done 2026-10-11**, v1.53.0 -- see Progress |
+| U15 | **The Studio opens on folders, not on every clip** (asked 2026-10-11): folders first, a folder opens on its runs, a run opens on its matches, and the clips sit under the match they came from | **done 2026-10-11**, v1.54.0 -- see Progress, and the design under [UI work](#the-studio-opens-on-folders-not-on-339-clips-asked-2026-10-11) |
+| U16 | **One registry behind every action, then Ctrl+K and a key sheet** (asked 2026-10-11): the Studio declares 147 `data-act` names and eight timeline keys and can enumerate neither, which is why it has no palette, no key sheet and no rebinding | **asked 2026-10-11, not started** -- see [UI work](#the-timeline-grows-a-hand-asked-2026-10-11) |
+| U17 | **Redo, and an undo you can step back through** (asked 2026-10-11): `studio.undo` is a pop stack behind one key, so a Ctrl+Z pressed once too often cannot be taken back | **asked 2026-10-11, not started** -- see [UI work](#the-timeline-grows-a-hand-asked-2026-10-11) |
+| U18 | **The timeline's missing hand: ripple, roll, razor and rate, more than one shot selected, markers and J/K/L** (asked 2026-10-11): `grep razor` and `grep ripple` return nothing in the package, and `sel` is a single index | **asked 2026-10-11, not started** -- see [UI work](#the-timeline-grows-a-hand-asked-2026-10-11) |
+| U19 | **Keyframes on six properties, never on speed** (asked 2026-10-11): every effect is a per-shot constant today; scale, position X and Y, rotation, volume and grade strength get a value lane, and speed stays a named ramp because the beat arithmetic inverts it | **asked 2026-10-11, not started**, and gated on a measured render time per edit -- see [UI work](#the-timeline-grows-a-hand-asked-2026-10-11) |
+| U20 | **Write the reel out as a timeline another editor can open** (asked 2026-10-11): `<name>.reel.json` is already a project file; OpenTimelineIO and FCP7 XML make it one Resolve and Premiere can read, with a sheet saying what survives the trip | **asked 2026-10-11, not started** -- see [UI work](#the-timeline-grows-a-hand-asked-2026-10-11) |
+| U21 | **The effect picker closed on every choice** (asked 2026-10-11): "to add 4 effects I have to open the page 4 times" -- a single choice applied and shut the dialog, so trying two endings against each other meant opening it twice | **done 2026-10-11**, v1.54.0 -- it applies as you click and **Done** closes it; see Progress |
 
 Follow the UI contract below (tokens, focus rings, one JS scope) and ship it
 with a browser test — UI #10, the shared player component, pairs naturally
@@ -174,7 +181,7 @@ missing features.
 
 | # | Feature | Status |
 |---|---|---|
-| C2 | Match summaries for CS2 and Valorant — both already have exact ground truth | **Counter-Strike done**; Valorant still to come. The cut rides `master_segments`, already proven by the Rivals summary |
+| C2 | Match summaries for CS2 and Valorant — both already have exact ground truth | **Counter-Strike done**; Valorant still to come. The cut rides `master_segments`, already proven by the Rivals summary. **The switch did nothing until v1.54.0**: the page sent `match_summary` and `webui.clips_run` never copied it into the job's options, so no run ever made one -- fixed, with a test on both ends |
 | C4 | Vertical live output | not started |
 | C5 | Auto title, description, chapters and thumbnail from the match result | **chapters done** — exact offsets for the montage. Chapters in the live VOD's description are **deliberately not built**; see Progress |
 | C6 | Clip ranking — a ranked shortlist of 5 beats a folder of 40 in filename order | **done** — density breaks the tie on kill count, and the best five are marked |
@@ -220,12 +227,13 @@ Do not add these back without a reason that is written down here.
 
 ## State of the tree, 2026-10-11
 
-- `__version__` is **1.53.0**, published and on `main` as `0f3d262`:
-  <https://github.com/hardikneeravsharma/AutoStream/releases/tag/v1.53.0>
-  -- the installer and the share zip were downloaded back and their sha256
-  checked, and the developer's own `dist\AutoStream` runs it.
-- **No PR is open and no branch is outstanding.** Everything in the
-  Progress table down to v1.53.0 is on `main` and in that release.
+- `__version__` is **1.54.0**, on the branch `studio-folders` and in the open
+  PR; v1.53.0 is the last published release
+  (<https://github.com/hardikneeravsharma/AutoStream/releases/tag/v1.53.0>),
+  whose installer and share zip were downloaded back and their sha256 checked.
+- **One PR is open**: `studio-folders` -- U15 (the library drill-down) and the
+  C2 switch that had never reached the server. Everything in the Progress
+  table down to v1.53.0 is on `main` and in that release.
 - Releases are built with `scripts\build.ps1 -Dist -HandOff` with the app
   left open; it closes the app only when idle (about two minutes) and
   reopens it.
@@ -260,8 +268,16 @@ Written down rather than left looking done:
   pushed to either, and Kick's sign-in came back with three of its four
   scopes, so `channel:read` has to be granted before a Kick session can
   start. That one needs the user at the keyboard.
-- **C2 is Counter-Strike only.** Valorant has the match API for it and has
-  not been done.
+- **C2 is Counter-Strike only**, and until v1.54.0 it was nothing at all:
+  the Clips page's "Also make the whole match as one video" sent a flag the
+  server dropped. The flag now reaches the job. **Valorant still has no
+  match video**, and the gap is bigger than wiring: `valorant_match.rounds_from`
+  gives the ceremonies (ACE, CLUTCH) and who won each round, but leaves
+  `score_before`/`score_after` at `(0, 0)` -- so every chapter would read
+  `0-0` -- and it derives a round's bounds from its first and last kill, so a
+  round nobody died in is dropped. The switch is also hidden for Valorant,
+  whose profile deliberately leaves `rounds` False. Those three, then the
+  video.
 - **C5 is the montage's chapters only.** Chapters in the live VOD's
   description need recording-offset to VOD-offset arithmetic that cannot be
   verified without a real stream; see the Progress row.
@@ -337,6 +353,255 @@ highlight detection) -- both bring in clips the detector is less sure about,
 which is exactly when being able to correct a mark starts to matter. If
 neither is close, S1 stands alone at about half a day.
 
+### The Studio opens on folders, not on 339 clips (asked 2026-10-11)
+
+**U15. ✅ done 2026-10-11, v1.54.0** -- built as designed below; the Progress
+row has what the three risks turned out to be.
+
+**U15.** The Studio's library is one scroll. `studio_renderLib` writes a `<h3>`
+per game and a `<section>` per run folder, and inside every one of them a tile
+per clip -- so the page the player lands on is the whole library at once.
+Measured on the developer's own machine today, through `clips.studio.library()`:
+**339 clips in 42 run folders across 4 games**, plus 90 reels above them. That
+is 339 lazily-loaded thumbnails and 4 buttons per clip in a single pane, and
+finding "the Haven match from Saturday" means scrolling past everything else.
+
+The ask is a drill-down, three levels, each one a thing the library already
+knows:
+
+1. **Folders.** One card per game (VALORANT 222 · 13 runs, Counter-Strike 2
+   53 · 7, Delta Force 44 · 2, Other 20 · 20), a four-still mosaic on each,
+   plus the ★ Favourites card, which cuts across games as the chip does now.
+   Five cards instead of 339 tiles.
+2. **Runs.** A folder opens on its runs, newest first -- the date label
+   `_folder_label()` already makes, the clip and kill counts, and **a chip per
+   match in that run**.
+3. **Clips.** A run opens on the clips it holds, **grouped under the match
+   each was cut from**: map, mode, score, the player's K/D/A, where the match
+   starts in the recording, and a `Select match` beside the existing
+   `Select run`.
+
+**Nothing in level 3 needs new detection.** Both halves are already on disk and
+were checked against each other rather than assumed: a run's `session.json`
+carries `demo.matches`, each with the match id and its `offset` into the
+recording, and the Riot record the Clips page fetched for U2 gives the map, the
+mode and the score through `valorant_match.summary()`. Assigning each clip to
+the match whose span contains its `start` on the 10 Oct 22:15 run gives
+**10 + 4 + 15 + 9 = 38 clips** -- the whole run, nothing stranded -- and the
+kills per group are **18 / 23 / 24 / 27**, exactly what Riot's record says the
+player got in Lotus, Drift, Haven and Piazza. A run with no match records (CS2,
+Delta Force, imports) simply shows one group, and CS2's rounds are already on
+each clip (`round` in `clips.json`) when that is worth a second grouping.
+
+A clickable mockup of all three levels, built from the real library, is in
+[docs/mockups/studio-folders.html](mockups/studio-folders.html).
+
+Three things to settle before building, because they are what the change can
+break:
+
+- **The sweep reaches controls by walking the rendered page.** Clip tiles
+  behind two clicks are not rendered, so `REACHED_FLOOR` (117 of 190) drops
+  unless the browser tier learns to open a folder and a run. Raise the tier
+  with the feature, in the same PR, or the floor fails for a page that is
+  working.
+- **Where the view lives.** `studio_renderLib` rebuilds the whole pane on every
+  change, and the selection tray survives that today only because it is rebuilt
+  from `studio.selected`. The open folder and open run have to be state of the
+  same kind, or coming back from making a reel drops the player at the top.
+- **Search has to keep reaching every clip**, from level 1, or the drill-down
+  has taken something away. The box filters folders and clips both.
+
+Two adjacent defects the mockup made visible, both small and neither invented
+for this entry:
+
+- **20 of the 42 folders are single imported clips in "Other"** -- all of them
+  Valorant. An import writes no `game`, so `library()` falls back to `Other`,
+  and the same ten source clips are there twice from two import runs. The game
+  is in the file name the importer already parses.
+- **A map key the table does not have shows Riot's internal name.** `Plummet`
+  is not in `MAP_NAMES`, so that run's chip reads `Plummet` rather than the
+  name on the loading screen. One line, and the fallback is working as
+  designed -- it is the table that is behind.
+
+**Where it ships:** on its own. It touches `ui/studio.py` and nothing else in
+the detector, and it pairs with **#10** (the shared player component) only if
+the clip tiles get a player at the same time.
+
+### The timeline grows a hand (asked 2026-10-11)
+
+**U16-U20.** Asked after reading the [`storytold`](https://github.com/storytold)
+organisation -- ArtCraft: 56 Apache-2.0 clean-room rewrites of Adobe's tools in
+Rust, `filmcraft` for Premiere and `effectcraft` for After Effects -- and asking
+what of it AutoStream should take. The plan, the mockups and the sources are at
+`https://claude.ai/artifact/SgB4dwSSGY5yBMDSjJWC6x`.
+
+**None of their code comes across, and none of it needs to.** They are egui on
+wgpu with their own H.264 and ProRes decoders; we are Python, ffmpeg filter
+graphs and HTML the daemon serves, and the browser tier is the only thing that
+has ever caught a real UI bug here. What is worth taking is their
+*specifications*: one command registry behind every action, a Premiere key table
+with the conflicts already reconciled, a measured hit-test rule, and
+OpenTimelineIO. Both sides are Apache-2.0, so a copied table needs a NOTICE line
+naming the file it came from; their brand licence is separate and forbids the
+names, so no "ArtCraft" or "FilmCraft" wording in our UI -- only the format
+names.
+
+**The decision that frames all five: one interface, layered -- not a Basic and
+an Advanced Studio.** The question was put as a choice between two UIs the user
+switches between and one UI with the advanced parts folded into it, and the
+second is right here for reasons this repo can point at:
+
+- **U15 is the precedent, and it shipped the same day this was asked.** The
+  library did not grow a simple copy and an advanced copy -- it grew *levels*,
+  and the search still answers from every one of them (`studio_visible`), so
+  nothing sits behind a level you did not know to open. A skill switch would be
+  a second axis on top of four panes and three library levels.
+- **Folding is already this page's mechanism, twice.** `studio_grp()` renders
+  every inspector group as a `<details>` and remembers it in `studio.grpOpen`;
+  U15's open folder and run live in `studio.game`/`studio.run` for the same
+  reason. Layering extends something that exists; a mode invents one.
+- **The trade-off is not features against simplicity, it is default state
+  against reachable state.** A folded control costs a beginner nothing and an
+  expert one click. A control in the other mode costs the expert a switch and
+  costs the beginner the knowledge that it exists.
+- **The cost U15 already paid applies to every folded lane.** The sweep reaches
+  controls by walking the rendered page, so a lane that opens folded is not a
+  reachable control. U15 answered that with two new sweep states rather than a
+  lower floor; `REACHED_FLOOR` is **132 of the 226 controls the source
+  declares** (147 of them on the Studio), and each item below raises it in its
+  own PR.
+- **Where a mode *is* right, the repo already has it:** `ui.developer_mode`,
+  which hides the 1.19-1.46x real-time Counter-Strike reader. Gate by cost,
+  never by skill. Slow, destructive or silently-wrong goes behind that flag;
+  merely advanced gets folded.
+
+**U16 · Name every action.** `{id, label, scope, keys, enabled(state),
+run(state)}`, one registry, with `/api/studio/commands` so the browser tier can
+enumerate and run them. Today the vocabulary is 147 distinct `data-act` strings
+and eight bindings in one `keydown` block, and nothing can list what the editor
+can do -- which is exactly why there is no palette, no key sheet and no
+rebinding. Then Ctrl+K (showing each command's key, and *why* a command is
+unavailable rather than greying out in silence) and a key sheet on `?` generated
+from the registry so it cannot drift. Port their two offline test rules with it:
+**no key bound twice in one scope**, and **no binding naming a command that does
+not exist**. Everything after this is cheaper, which is why it is first.
+
+> **The keydown scope order is load-bearing.** It is importer, then the effect
+> picker, then Escape, then inputs, then the song pane's `K`, then "a focused
+> button owns Space, Backspace and Enter". Lose the order and Space on a focused
+> button starts playback instead of pressing it. The registry carries an
+> explicit scope with the same precedence, and the old handler is not deleted
+> until a test replays every existing key in each pane state.
+
+**U17 · Redo, and a history.** `studio_undo()` pops the stack; there is no
+redo and `studio.undo` is emptied on load. Keep the stack as a cursor rather
+than a pop and pair each command with its inverse. **One correction to the plan
+as written:** it proposed building the history list out of labels that
+`studio_change(fn, label)` "writes and throws away" -- that stopped being true
+in v1.52.0. The labels feed `studio_touched()` and the change list the sync
+strip shows. So a history panel reads the same data rather than inventing it,
+and must never become a second list that says something different.
+
+**U18 · The six tools and a real selection.** Ripple, roll, razor and rate
+stretch on top of today's move and trim, each also reachable as a modifier on
+the drag people already know (Alt ripples, Ctrl rolls, Esc returns to Select)
+so nobody picks a tool and nobody is stranded holding one. Then in and out
+points, markers, J/K/L and frame-stepping -- the import marker already steps
+frames, so that behaviour is lifted, not written. Copy their hit-test rule
+verbatim: an edge is the 7px nearest the cut, a third of a narrow clip, and from
+the cut rightwards it belongs to the right clip's In. That detail takes a week
+to get right by feel and they have measured it.
+
+Four things this must not take away, all read out of the source rather than
+remembered:
+
+- **Slip already exists** -- `data-act="studio-slip"` gives +/-0.1 s and +/-1
+  frame, the only frame-accurate and keyboard-reachable route to a kill mark.
+  A drag is an addition; the buttons stay.
+- **`sel` stays the anchor index.** It feeds the inspector, the frame handle,
+  move left/right and delete; a set goes *beside* it and is consulted only when
+  it holds more than one. Note that the Studio already has a real
+  multi-selection -- `studio.selected`, with Select run and Select match from
+  U15 -- and it selects *clips in the library*, not shots on the timeline.
+  Two selections that look alike and mean different things is the trap here.
+- **Delete refuses to go below one shot.** A ripple-delete written fresh drops
+  that guard and empties the reel; it moves into the command's `enabled()`,
+  which the palette and the key both read.
+- **The server keeps the arithmetic.** Ripple, roll and rate each post to
+  `/api/studio/check`, which clamps and returns every derived time, exactly as
+  drags do now. Two implementations of where a kill lands would disagree
+  eventually.
+
+**U19 · Keyframes, and the one property that cannot have them.** `grep -i
+keyframe` across `autostream/` returns CSS animations and ffmpeg seek points and
+nothing else: every effect is a per-shot constant. A value lane -- diamonds,
+linear/ease/hold, a velocity curve -- for scale, position X and Y, rotation,
+volume and grade strength. **Speed is deliberately not one of them:** `pieces()`,
+`_stretch_of()` and `output_at()` compute where a kill lands from the *named*
+ramp, and `stretch` already slows a run-up so the kill reaches its mark;
+keyframing speed means inverting an arbitrary time warp to keep kills on their
+beats. The page is the easy half -- the risk is that where ffmpeg takes no
+expression the shot must be segmented, and segmenting is what breaks the
+per-shot cache an edit answers from. **The gate is a measurement, not a
+review:** render time per edit on a 20-shot reel. We have no such number today;
+take it before starting, and if the lane makes it worse the lane ships
+read-only.
+
+**U20 · Interchange out.** `<name>.reel.json` already holds every shot, where
+its kill lands, its speed, its effects, the transition into it, the grade, the
+song and the offset into it -- that is a timeline, so it converts. Write OTIO
+and FCP7 XML, with an export sheet that states plainly what survives (cuts,
+order, lengths, source timecodes, speed ramps, kill marks and the beat grid as
+markers, the song as an audio track) and what is baked or named-only (our
+transitions and effects, lyrics, titles, facecam layout). A silent downgrade is
+how somebody loses an afternoon. Reading OTIO back comes later and only for
+cuts. Cheap, offline-testable, and it changes what AutoStream is -- a step in a
+pipeline rather than a box that emits an mp4.
+
+**What was dropped from the plan, and why:**
+
+- **Ctrl+K as a way to find *clips*.** U15's search already answers across the
+  whole library from any level. The palette is for commands; a second search
+  over the same clips would be two answers to one question.
+- **"Open the rendered reel on the timeline, so nothing is a dead end."**
+  Shipped in U5 -- `studio_reelCard` has Open timeline on every reel that has a
+  project, and says so plainly on the ones made before the Studio.
+- **"3 changes since you watched it."** Shipped in U8 and U9.
+- **"Render the in/out range only."** ⛔ Now a bad idea. U9 made the render
+  start by itself after an edit and U8 made the change list honest about what
+  has not reached the video; a part-render makes that strip claim the video
+  matches the timeline when it matches a slice of it. In/out stays a *play*
+  range and a navigation aid. If a range render is ever wanted it is an explicit
+  button that leaves the rest listed as pending.
+- **A Basic/Advanced mode.** See the decision above.
+- **`craft-fonts` for reel titles.** U3 already bundles five OFL faces with a
+  per-look typeface picker; a second licence-clean font set answers a question
+  nobody has.
+- **Embedding their WASM build, panel docking, plugin hosting, `.prproj` /
+  `.aep` import, our own codecs, a second UI toolkit.** All out, as the plan
+  itself concluded. AutoStream's premise is that the clips find themselves and
+  the reel builds itself; the timeline exists to fix the tenth the automation
+  got wrong, not to be where anyone starts.
+
+**Out of scope for all five, in writing:** the whole Clips pane (parts bin,
+examples, vary, restyle, favourites, the import marker, intros), the Song
+shaper, the Facecam linker, and the U15 library. Nothing above touches them,
+which is exactly how a page gets quietly re-laid-out during someone else's
+refactor. The sweep's reachable-control floor is the detector if it happens
+anyway.
+
+**Where these ship:** U16 first and on its own, because the rest are cheaper
+once actions have names; U17 with it or just after. U18 is the large one and
+wants a release to itself. U19 does not start until its render-time number
+exists. U20 is independent of all four and can go whenever there is an
+afternoon. Each lands on `main`, in a release and in the local `dist\AutoStream`
+build before the next starts, every new control enters
+[docs/UI-SCENARIOS.md](UI-SCENARIOS.md) before its test, and each tool gets one
+browser test against the built exe -- a razor wired to nothing passes every
+offline test there is. One more number nobody has taken: **clips-ticked to
+reel-rendered on the simple path.** Measure it before U16 and after each item;
+if it grows, the item is wrong.
+
 ### Standalone, when nothing is adjacent
 
 **#15** lazy-render the Studio panes. ⛔ **Not doing — the premise did not
@@ -399,6 +664,9 @@ plan**, because a roadmap that never moves was never being followed.
 
 | Date | Item | What landed | What it changed |
 |---|---|---|---|
+| 2026-10-11 | **U15** the Studio library is a drill-down, v1.54.0 ("show only folders, and upon opening the folder show the Valorant matches, and in that the clips") | The library opens on **a card per game** -- a four-still mosaic, the clip and run counts, plus ★ Favourites -- instead of every clip at once: 339 tiles in one pane on the developer's machine, 42 runs across 4 games. A folder opens on **its runs**, newest first, each with a chip per match in it; a run opens on **its clips, grouped by the match each was cut from**: map, mode, the score coloured by the result, the player's K/D/A and where the match starts in the recording, with `Select match` beside `Select run` and clips outside every match in a group of their own. Breadcrumbs walk back up, the open folder and run live in `studio.game`/`studio.run` so a rebuild of the pane keeps your place, and the search still answers from the whole library from any level. Server side: `_match_groups()` in `clips/studio.py` and `valorant_match.one()`, which reads a single record rather than parsing the 41 MB cache -- the whole library call is 0.14 s on 42 runs. 8 unit tests, 13 browser tests (scenarios 6.24-6.26). | **Nothing in it needed detecting: both halves were already on disk**, and checking them against each other is what proved it. The spans are in each run's `session.json` (`demo.matches`, written when its kills were aligned) and the map, mode and score in the record the Clips page fetched for U2 -- assigning the 10 Oct run's clips by start time gives 10 + 4 + 15 + 9 = 38, every clip placed, with 18 / 23 / 24 / 27 kills per group, exactly Riot's numbers for Lotus, Drift, Haven and Piazza. **The sweep's floor is about what is *rendered*, not what exists**: clips two clicks in stop being enumerated, so `REACHED_FLOOR` would have failed for a page that was working perfectly — the fix is two new sweep states that open a folder and a run, never a lower floor. Two things the folder view made visible and neither is fixed yet: **20 of the 42 folders are single imported clips sitting in "Other"**, all of them Valorant, because an import writes no `game` (and the same ten are there twice from two import runs); and a map key `MAP_NAMES` does not have (`Plummet`) shows Riot's internal name on the chip. Also: the control table in UI-SCENARIOS said 190 controls and 121 on the Studio; it is 226 and 147, re-counted. |
+| 2026-10-11 | **U21** the effect picker stays open until you dismiss it, v1.54.0 ("when I select any effect to include or exclude the page goes back to the timeline ... so to add 4 effects I have to open the page 4 times") | A single choice -- an ending, a transition, a speed, a colour, a camera move -- closed the dialog on the first click, by design from U1 ("one choice applies on a click"). It still applies on the click, and now the dialog stays up: the tick and the stage button move to what is in use, and **Done** is what closes it. **Cancel still means what it says** -- for a choice already applied it puts back the one that was there when the dialog opened, through the same edit path as any other, so the change count simply returns to what it was. Two browser assertions added to the U1 and stage tests. | **"One click, one choice, done" was right about the click and wrong about the dialog.** Choosing is also comparing -- the whole point of the big stage added in v1.53.0 is to tell two endings apart -- and you cannot compare two things one modal at a time. The many-at-once lists already worked this way; the single ones were the odd case, not the rule. |
+| 2026-10-11 | **C2's switch had never worked**, v1.54.0 (found while answering "was the Valorant match summary ever implemented?") | The Clips page's "Also make the whole match as one video" has sent `match_summary` since v1.41.0 and `webui.clips_run` never copied it out of the request body, so `jobs.ClipJob`'s `opt.get("match_summary")` was false on every run ever started from the UI -- for Counter-Strike too. One line in `clips_run`, and a test that pins **both ends** (the page still sends it under that name; the server still copies it into `opt`). | **A browser test that stops at the request body is half a test.** `test_ui_clip_stages` asserted the page put `match_summary: true` in the body and never asked what the server did with it, so a feature nobody could use stayed green for a year. Where a page flag crosses to the server, pin both sides. Valorant's half of C2 is still not built, and is three things rather than one: real round scores (`rounds_from` leaves them `(0, 0)`), round bounds that do not come from the first and last kill, and a switch its profile currently hides. |
 | 2026-10-11 | **The preview shows the lyrics and the 9:16 blur, and the effect picker shows the effect big**, v1.53.0 ("when I change the lyrics style it is not shown until it is re-rendered"; "with 9:16 and fit, the bands should be blurred, not black"; "put the actual preview in the centre and big so that it is easy to spot the difference") | All three were what the page shows before a render. **Lyrics**: the render's own subtitle script drawn alone into a transparent VP9 video and laid over the preview on its clock (`lyrics.overlay`, `/api/studio/lyrics/preview`); libass cannot draw alpha, so the script is drawn twice on black, as it is and all white, and divided -- 2.3-2.8 s for a 62 s reel, against a render of 20-odd. **Blur**: the render already put a fitted 9:16 over a blurred copy of itself; the preview used object-fit:contain on black, and now draws the picture onto a small canvas behind it, blurred by CSS. **Picker**: the list is a column of playing rows and the stage takes the rest, centred and 16:9, with a "Use this" / "Add it" button; and since four overlay cards (fine and coarse grain, fine and wide scanlines) were measured indistinguishable at the card's 360-480 px, the one on the stage is cut again at 1280 wide on demand (`examples.make_large`), one at a time, never while live, recording or rendering. Browser tests 6.21-6.23. | **A bigger box is not a clearer effect.** Moving the preview to the middle without a sharper file would have enlarged the same blur; measuring the cards first is what showed the file was the problem. The preview still leaves out the colour grade, the kill effects and Stamp's grey -- the tag says so. |
 | 2026-10-11 | **The preview had no play bar**, v1.53.0 ("I changed the outro, then the auto rendering applied, but in that state the on screen play back option disappeared") | From an edit until the render catches up the player is the preview -- two `<video>`s swapped at each cut -- and the rendered video, which carries the browser's bar, is hidden. So every edit took play, seek, mute and fullscreen off the picture. The preview now has a bar of its own over its foot: play/pause, time, a seek on the reel's clock (it lands on the shot the timeline has there), mute, fullscreen of the whole player (a render finishing under it stays in it); a click on the picture plays and pauses. The app's volume and speed knobs reach it too -- its players opted out of `shell_knobApply`, which wrote over the shot's own rate and the project's game level, and the choice is multiplied in instead. Browser test 6.20 presses each control. | **A second player is a second set of controls to keep.** The preview was measured for cuts and arithmetic and never pressed as a player; a hidden element's controls go with it, and no test noticed because none looked for them. |
 | 2026-10-11 | **The Studio's change count counted clicks, not changes**, v1.52.0 ("if I select and unselect a setting, the changes count increases") | The list of what is not in the video was an append log: every edit pushed a line or bumped its ×n, and only a render or an undo took one off. A switch turned on and off again was "Apply 2 changes" to a project identical to the video. Now it is a comparison: the project the video was rendered from (or opened as) is kept as `studio.base`; each line remembers the fields its edit changed (`studio_diff`, key paths such as `shots.2.camera`); after every edit, undo and server answer, a line whose fields are all back to `base` leaves. One line counts one, however many clicks -- a slider, a nudge button pressed five times, and the same field reached by two controls are each one thing. A line set back by hand and brought back by an undo returns under its own name; an undo past the render still says so. What the server does in answer to an edit (a speed that trims the shot) is pinned to that edit, so putting the speed back does not claim the video matches while the trim remains. Lines that cannot be compared -- a failed or cancelled render, a deleted reel, a camera video attached, a rebuild from the clips -- stay until a render, and while the shots are not in the rendered order no shot's line is dropped. Browser test 6.13 drives it: vignette on (1), off (0, the button stops saying Apply), two settings with one undone (1), a shot's camera move changed and put back (0) -- read off the card, the button and the badge over the player. | **A count that is put on a button has to be a fact about the video, not about the session.** Both ways it can be wrong are not equal, so the fallbacks all lean one way: when a line cannot be compared it stays, because "1 change" over a matching video costs a render and "the video matches your edits" over a stale one costs a published reel. |
