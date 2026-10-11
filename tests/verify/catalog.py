@@ -689,7 +689,6 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-sg-lane": "shows or hides one way of seeing the song",
     "studio-nosong": "clears the chosen song in the dialog",
     "studio-fmt": "chooses landscape or vertical in the dialog; sent with Build",
-    "studio-order": "chooses the clip order in the dialog; sent with Build",
     "studio-play": "plays or pauses the reel: the rendered file, or the instant preview of edits "
                    "not rendered yet (clip files the page already streams)",
     "studio-pv-mute": "mutes the instant preview's clip and song in the page; nothing is sent",

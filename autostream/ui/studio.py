@@ -593,12 +593,25 @@ STUDIO_HTML = r"""
           <button type="button" class="seg-btn is-active" data-act="studio-mk-fit" data-fit="zoom">Zoom to fill</button>
           <button type="button" class="seg-btn" data-act="studio-mk-fit" data-fit="fit">Fit the whole picture</button>
         </div>
-        <div class="seg" role="group" aria-label="Order">
-          <button type="button" class="seg-btn is-active" data-act="studio-order" data-order="chosen">As chosen</button>
-          <button type="button" class="seg-btn" data-act="studio-order" data-order="kills">Most kills first</button>
-          <button type="button" class="seg-btn" data-act="studio-order" data-order="oldest">Oldest first</button>
-        </div>
       </div>
+      <!-- THE ORDER, ASKED WHERE THE REEL IS MADE.
+
+           It used to be asked twice, in two places, with different answers.
+           Here sat three buttons -- As chosen / Most kills first / Oldest
+           first -- which only sorted the clip list in the page before it was
+           sent. The real arrangements, the ones the planner runs with the
+           song in hand, were six buttons in the drawers strip at the foot of
+           the page: Build up, As it happened, Best first, Shuffle, Best order
+           and Perfect fit. So the two that matter most -- Best order and
+           Perfect fit -- could not be reached from the dialog where somebody
+           decides how their reel is built, and "Most kills first" quietly
+           overlapped with "Best first" while meaning something weaker.
+
+           One control now, the six real ones. The old three are not lost:
+           Most kills first is Best first done by the planner, and Oldest
+           first is As it happened. -->
+      <h3 class="studio-h">Order <span class="muted studio-small">how the kills line up</span></h3>
+      <div class="studio-mk-arrange" id="studio-mk-arrange" role="group" aria-label="Order"></div>
       <!-- HOW LONG, ASKED RATHER THAN DECIDED. The style used to set the
            length as well as the feel, so a long part and twenty-five clips
            came out a 43 s Hype reel with eleven clips left out. The style
@@ -1669,6 +1682,7 @@ async function studio_openMake() {
   studio_show('studio-make-scrim', true);
   studio_show('studio-mk-fit', studio.fmt === 'vertical');
   studio_mkDefault();
+  studio_mkArrangeDraw();
   studio_fillDraw();
 }
 
@@ -2319,7 +2333,28 @@ const ARRANGES = [
    why: 'Searches the order and the song together: every kill lands on a beat and no clip with 3 or more kills loses one. Takes up to ~30 s to plan.'}
 ];
 
+/* THE SAME SIX, IN THE MAKE DIALOG, where the decision is actually taken.
+   Drawn as cards rather than a segmented row: an arrangement needs its
+   sentence to be choosable -- "Best order" and "Perfect fit" mean nothing as
+   two words on a button, which is how they went unnoticed in the strip. */
+const ARRANGE_NOTE = {hits: 'recommended', fit: '~30 s to plan'};
+
+function studio_mkArrangeDraw() {
+  const host = studio_el('studio-mk-arrange');
+  if (!host) return;
+  host.innerHTML = ARRANGES.map(function (a) {
+    const on = studio.arrange === a.k;
+    const note = ARRANGE_NOTE[a.k];
+    return '<button type="button" class="studio-mk-arr' + (on ? ' is-on' : '') +
+      '" data-act="studio-arrange" data-how="' + a.k + '" aria-pressed="' + on + '">' +
+      '<span class="studio-mk-arr-name">' + esc(a.name) +
+      (note ? '<span class="studio-mk-arr-note">' + esc(note) + '</span>' : '') + '</span>' +
+      '<span class="studio-mk-arr-why">' + esc(a.why) + '</span></button>';
+  }).join('');
+}
+
 function studio_arrangeDraw() {
+  studio_mkArrangeDraw();
   const host = studio_el('bin-arrange');
   if (!host) return;
   host.innerHTML = ARRANGES.map(function (a) {
@@ -6603,11 +6638,11 @@ function studio_wire() {
     else if (act === 'studio-reel-del') studio_reelDeleteAsk(b.getAttribute('data-path'), b.getAttribute('data-name'));
     else if (act === 'studio-rdel-cancel') { studio.reelDel = ''; studio_show('studio-rdel-scrim', false); }
     else if (act === 'studio-rdel-go') studio_reelDeleteGo();
-    else if (act === 'studio-fmt' || act === 'studio-order') {
-      const key = act === 'studio-fmt' ? 'fmt' : 'order';
-      studio[key] = b.getAttribute('data-' + key);
+    else if (act === 'studio-fmt') {
+      studio.fmt = b.getAttribute('data-fmt');
       b.parentElement.querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('is-active', x === b));
-      if (key === 'fmt') { studio_mkDefault(); studio_show('studio-mk-fit', studio.fmt === 'vertical'); }
+      studio_mkDefault();
+      studio_show('studio-mk-fit', studio.fmt === 'vertical');
     }
     else if (act === 'studio-mk-fit') {
       studio.vfit = b.getAttribute('data-fit');
