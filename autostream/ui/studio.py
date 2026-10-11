@@ -35,6 +35,15 @@ STUDIO_HTML = r"""
     <div class="seg" role="tablist" aria-label="Studio views">
       <button type="button" class="seg-btn is-active" role="tab" aria-selected="true"
               data-act="studio-tab" data-tab="clips" id="studio-tab-clips">Clips</button>
+      <!-- THREE JOBS, THREE TABS. The clips pane used to carry all of them at
+           once: picking clips, browsing every finished reel, and choosing a
+           look from nine drawers. Ninety reels and a 223-trillion counter
+           above the clips meant the first screen of the page you came to for
+           clips had no clips on it. -->
+      <button type="button" class="seg-btn" role="tab" aria-selected="false"
+              data-act="studio-tab" data-tab="reels" id="studio-tab-reels">Reels <b id="studio-tab-reels-n"></b></button>
+      <button type="button" class="seg-btn" role="tab" aria-selected="false"
+              data-act="studio-tab" data-tab="looks" id="studio-tab-looks">Looks</button>
       <button type="button" class="seg-btn" role="tab" aria-selected="false"
               data-act="studio-tab" data-tab="timeline" id="studio-tab-timeline" disabled>Timeline</button>
       <button type="button" class="seg-btn" role="tab" aria-selected="false"
@@ -45,23 +54,12 @@ STUDIO_HTML = r"""
   </header>
 
   <section id="studio-pane-clips" aria-label="Clips">
-    <!-- THE PARTS BIN, AT THE TOP. A reel is one pick from each drawer; the
-         count says how many reels those drawers can make, which is the point
-         of picking rather than taking the same style every time. -->
     <header class="bin-top">
       <div class="bin-intro">
         <p class="bin-eyebrow">Reel maker</p>
         <h1 class="bin-title">Pick your clips, then pick a look</h1>
-        <p class="bin-lede">Tick the clips you want, choose a look below, and AutoStream edits them
-          together into one video for TikTok, Reels or Shorts. Every look is shown as a short
-          example made from your own clips &mdash; so just watch them and pick the one you like.</p>
         <p class="bin-lede" id="studio-sub">Reading your clips…</p>
       </div>
-      <aside class="bin-calc" aria-label="How many templates">
-        <p class="bin-eyebrow">Mix and match</p>
-        <div class="bin-big" id="bin-total">—<small id="bin-total-note">counting the drawers</small></div>
-        <div class="bin-slots" id="bin-slots"></div>
-      </aside>
     </header>
     <div class="studio-tools">
       <input class="input studio-search" id="studio-q" type="search"
@@ -72,47 +70,9 @@ STUDIO_HTML = r"""
            friend. Added here they are clips like any other. -->
       <button type="button" class="btn btn-sm" data-act="studio-imp-add">Add your own clip…</button>
     </div>
-    <!-- EVERY REEL, NOT THE LAST TEN. The tools are markup of their own and
-         only the grid is redrawn, so typing in the search never loses focus. -->
-    <section class="studio-reels hide" id="studio-reels" aria-labelledby="studio-reels-h">
-      <div class="studio-reels-head">
-        <h3 class="studio-h" id="studio-reels-h">Your reels <b id="studio-reels-count"></b></h3>
-        <input class="input studio-search" id="studio-reel-q" type="search"
-               placeholder="Search reels by name, style or song" aria-label="Search reels">
-        <div class="studio-games" id="studio-reel-fmts" role="group" aria-label="Reel shape"></div>
-        <label class="studio-reel-sortl"><span class="muted">Sort</span>
-          <select class="select" id="studio-reel-sort" aria-label="Sort reels">
-            <option value="new">Newest first</option>
-            <option value="old">Oldest first</option>
-            <option value="name">Name A&ndash;Z</option>
-            <option value="long">Longest first</option>
-          </select></label>
-      </div>
-      <div class="studio-reel-row" id="studio-reel-grid"></div>
-      <p class="muted studio-empty hide" id="studio-reel-none"></p>
-      <button type="button" class="btn btn-sm studio-reels-more hide" data-act="studio-reels-more"
-              id="studio-reels-more" aria-expanded="false"></button>
-    </section>
     <div id="studio-lib" class="studio-lib"></div>
     <p class="muted studio-empty hide" id="studio-empty"></p>
 
-    <section class="bin-sec" id="bin" aria-label="Parts bin">
-      <div class="bin-sec-head">
-        <h2>The drawers</h2><span class="count" id="bin-count"></span>
-        <p>One example each, cut from your own clips by the same code that renders the reel — so a card
-          shows what the reel will actually do. Click one to put it in the template you are dealing.</p>
-      </div>
-      <div class="bin-build">
-        <span class="bin-arrange" id="bin-arrange"></span>
-        <span class="bin-shape" id="bin-shape"></span>
-        <button type="button" class="btn btn-sm" data-act="studio-bin-favonly" id="bin-favonly"
-                aria-pressed="false" title="Show only the parts you have kept">&#9733; Favourites</button>
-        <button type="button" class="btn btn-sm" data-act="studio-bin-build" id="bin-build">Cut the missing examples</button>
-        <button type="button" class="btn btn-sm btn-ghost hide" data-act="studio-bin-stop" id="bin-build-stop">Stop</button>
-        <span id="bin-build-msg"></span>
-      </div>
-      <div id="bin-drawers"></div>
-    </section>
     <div class="studio-tray hide" id="studio-tray" role="region" aria-label="Selection">
       <div class="studio-tray-text">
         <strong id="studio-tray-count">0 clips</strong>
@@ -128,6 +88,67 @@ STUDIO_HTML = r"""
       <button type="button" class="btn btn-ghost btn-sm studio-del-btn" data-act="studio-delete">Delete…</button>
       <button type="button" class="btn btn-primary" data-act="studio-make" id="studio-make-btn">Make a reel</button>
     </div>
+  </section>
+
+  <!-- EVERY REEL YOU HAVE MADE, with room for its own search, filters and
+       order. It used to sit between the clips and the drawers, pushing both
+       out of the first screen. -->
+  <section id="studio-pane-reels" class="hide" aria-label="Reels">
+      <!-- A TAB THAT OPENS ON NOTHING IS A DEAD END, which is the thing this
+           split exists to remove. Before the first reel there is a sentence
+           saying what to do, not a blank pane. -->
+      <p class="muted studio-empty hide" id="studio-reels-none">No reels yet. Pick some clips on
+        the Clips tab, choose a look, and the reels you make appear here.</p>
+      <!-- EVERY REEL, NOT THE LAST TEN. The tools are markup of their own and
+           only the grid is redrawn, so typing in the search never loses focus. -->
+      <section class="studio-reels hide" id="studio-reels" aria-labelledby="studio-reels-h">
+        <div class="studio-reels-head">
+          <h3 class="studio-h" id="studio-reels-h">Your reels <b id="studio-reels-count"></b></h3>
+          <input class="input studio-search" id="studio-reel-q" type="search"
+                 placeholder="Search reels by name, style or song" aria-label="Search reels">
+          <div class="studio-games" id="studio-reel-fmts" role="group" aria-label="Reel shape"></div>
+          <label class="studio-reel-sortl"><span class="muted">Sort</span>
+            <select class="select" id="studio-reel-sort" aria-label="Sort reels">
+              <option value="new">Newest first</option>
+              <option value="old">Oldest first</option>
+              <option value="name">Name A&ndash;Z</option>
+              <option value="long">Longest first</option>
+            </select></label>
+        </div>
+        <div class="studio-reel-row" id="studio-reel-grid"></div>
+        <p class="muted studio-empty hide" id="studio-reel-none"></p>
+        <button type="button" class="btn btn-sm studio-reels-more hide" data-act="studio-reels-more"
+                id="studio-reels-more" aria-expanded="false"></button>
+      </section>
+  </section>
+
+  <!-- THE LOOK, AND WHAT IT DRAWS FROM. The drawers belong beside the look
+       they fill, not above the clips: 223 trillion combinations is a fact
+       about the app, not a decision anybody has to make before picking a
+       clip. -->
+  <section id="studio-pane-looks" class="hide" aria-label="Looks">
+    <aside class="bin-calc" aria-label="How many templates">
+      <p class="bin-eyebrow">Mix and match</p>
+      <div class="bin-big" id="bin-total">—<small id="bin-total-note">counting the drawers</small></div>
+      <div class="bin-slots" id="bin-slots"></div>
+    </aside>
+      <section class="bin-sec" id="bin" aria-label="Parts bin">
+        <div class="bin-sec-head">
+          <h2>The drawers</h2><span class="count" id="bin-count"></span>
+          <p>One example each, cut from your own clips by the same code that renders the reel — so a card
+            shows what the reel will actually do. Click one to put it in the template you are dealing.</p>
+        </div>
+        <div class="bin-build">
+          <span class="bin-arrange" id="bin-arrange"></span>
+          <span class="bin-shape" id="bin-shape"></span>
+          <button type="button" class="btn btn-sm" data-act="studio-bin-favonly" id="bin-favonly"
+                  aria-pressed="false" title="Show only the parts you have kept">&#9733; Favourites</button>
+          <button type="button" class="btn btn-sm" data-act="studio-bin-build" id="bin-build">Cut the missing examples</button>
+          <button type="button" class="btn btn-sm btn-ghost hide" data-act="studio-bin-stop" id="bin-build-stop">Stop</button>
+          <span id="bin-build-msg"></span>
+        </div>
+        <div id="bin-drawers"></div>
+      </section>
   </section>
 
   <!-- THE EDITOR. One screen, no page scroll: the picture where the eyes are,
@@ -1411,6 +1432,9 @@ function studio_reelCard(r) {
 function studio_renderReels() {
   const all = (studio.lib && studio.lib.reels) || [];
   studio_show('studio-reels', all.length > 0);
+  studio_show('studio-reels-none', !all.length);
+  const tabn = studio_el('studio-tab-reels-n');
+  if (tabn) tabn.textContent = all.length || '';
   if (!all.length) return;
   studio_el('studio-reels-count').textContent = all.length;
   const counts = {all: all.length, vertical: 0, landscape: 0};
@@ -5755,12 +5779,17 @@ async function studio_open(path) {
 function studio_tab(which) {
   const view = document.getElementById('view-studio');
   if (view) view.classList.toggle('is-editing', which === 'timeline');
-  ['clips', 'timeline', 'song', 'facecam'].forEach(k => {
+  ['clips', 'reels', 'looks', 'timeline', 'song', 'facecam'].forEach(k => {
     studio_show('studio-pane-' + k, k === which);
     const b = studio_el('studio-tab-' + k);
     b.classList.toggle('is-active', k === which);
     b.setAttribute('aria-selected', String(k === which));
   });
+  /* Each pane draws itself when it is opened: the reels grid and the
+     drawers are the two heaviest things on this page, and neither should be
+     built while somebody is picking clips. */
+  if (which === 'reels') studio_renderReels();
+  if (which === 'looks') { studio_arrangeDraw(); studio_binDraw(); }
   const a = studio_el('studio-sg-audio');
   if (which !== 'song' && a && !a.paused) a.pause();
   if (which !== 'timeline' && studio.pv.playing) studio_pvPause();

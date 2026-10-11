@@ -415,3 +415,50 @@ def test_the_adding_band_names_the_reels_runs_and_opens_one(pg):
     assert got["a"]["label"] in pg.evaluate(
         "() => document.querySelector('#studio-lib .studio-crumb-now').textContent")
     pg.evaluate("() => { studio.adding = null; studio.selected = []; studio_goLib('folders'); }")
+
+
+# ------------------------------------------------- three jobs, three tabs
+
+def test_the_clips_tab_carries_only_the_clips(pg):
+    """It used to carry all three: picking clips, ninety finished reels and
+    nine drawers of parts, in one scroll. The first screen of the page you
+    came to for clips had no clips on it."""
+    pg.evaluate("() => studio_tab('clips')")
+    pg.wait_for_timeout(250)
+    assert pg.is_visible("#studio-lib")
+    assert not pg.is_visible("#studio-pane-reels")
+    assert not pg.is_visible("#studio-pane-looks")
+    # the hero no longer carries the 223-trillion counter
+    assert pg.evaluate("""() => !document.querySelector('#studio-pane-clips .bin-calc')""")
+
+
+def test_the_reels_tab_draws_the_reels_and_says_how_many(pg):
+    pg.evaluate("() => studio_tab('reels')")
+    pg.wait_for_timeout(300)
+    assert not pg.evaluate(
+        "() => studio_el('studio-pane-reels').classList.contains('hide')")
+    assert not pg.is_visible("#studio-lib")
+    # This install has made no reels, and a tab that opens on nothing is the
+    # dead end the split is meant to remove: it says what to do instead.
+    assert pg.is_visible("#studio-reels-none")
+    assert "No reels yet" in pg.inner_text("#studio-reels-none")
+    # the count rides on the tab, so it is not lost with the section
+    assert pg.inner_text("#studio-tab-reels").strip().startswith("Reels")
+
+
+def test_the_looks_tab_holds_the_drawers_and_the_counter(pg):
+    pg.evaluate("() => studio_tab('looks')")
+    pg.wait_for_timeout(300)
+    assert pg.is_visible("#studio-pane-looks")
+    assert pg.is_visible("#bin")
+    assert pg.is_visible("#bin-total")
+    assert pg.is_visible("#bin-arrange")
+    assert not pg.is_visible("#studio-lib")
+    pg.evaluate("() => studio_tab('clips')")
+
+
+def test_moving_between_the_tabs_says_nothing(pg):
+    for tab in ("reels", "looks", "clips", "looks", "reels", "clips"):
+        pg.evaluate("(t) => studio_tab(t)", tab)
+        pg.wait_for_timeout(120)
+    assert pg.trouble == []

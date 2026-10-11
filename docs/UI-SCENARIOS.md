@@ -168,7 +168,7 @@ listed so the gap is visible.
 | 5.30 | Framing marks its choice | The reported bug | yes |
 | 5.31 | Upload to YouTube | Refused safely with no account | **gap** |
 
-# 6 · Studio — 147 controls
+# 6 · Studio — 152 controls
 
 `test_ui_playwright.py` covers the two big flows and the effect picker.
 
@@ -201,6 +201,10 @@ listed so the gap is visible.
 | 6.25 | A run opens on its clips, grouped by the match each was cut from: the map, the mode, the score coloured by the result, the player's K/D/A and where the match starts in the recording; clips outside every match get their own group; Select match takes that match and nothing else; Select run still takes the sitting | Every clip in the run is on screen exactly once, under its own match; the selection is the clips of the group pressed | yes (`test_ui_studio_folders`) |
 | 6.26 | Getting back out: the crumbs walk a run up to its folder and a folder up to the grid; where you are survives the pane being rebuilt; a search typed at the folders finds a clip two levels down, and clearing it puts you back where you were | A drill-down takes nothing away: the search still answers from the whole library, and no level is a one-way door | yes (`test_ui_studio_folders`) |
 | 6.27 | The effect picker on a single choice (an ending, a speed): click one, then another, then Done | Each click applies straight away and the dialog stays up, with the tick and the stage button on what is in use; Done closes it keeping the last one, and Cancel closes it putting back the one that was there when it opened | yes (inside 6.9 and 6.23) |
+| 6.28 | The order of a reel: open Make, see six arrangements with what each does, Best order marked recommended and Perfect fit carrying its ~30 s cost; press one, then press another in the strip at the foot of the Clips tab | The dialog and the strip are one choice: pressing either shows in both, the plan request carries `arrange`, and the old As chosen / Most kills first / Oldest first row is gone | yes (`test_ui_studio_order`) |
+| 6.29 | Where the picked clips are: pick from two runs and read the folder card, the run rows and the match headings; turn on "Show only these"; read the tray | Every level that hides clips behind a click says how many of its clips are picked and nothing when none are; the filter is real, so `studio_visible()` agrees with the screen; the tray names the runs | yes (`test_ui_studio_folders`) |
+| 6.30 | Adding to a reel: press Add clips, then read the band | It names the reel, counts what is in it, carries a chip per run those clips came from, and each chip opens that run | yes (`test_ui_studio_folders`) |
+| 6.31 | Three tabs, three jobs: Clips, Reels, Looks | The clips tab holds only clips (no reels grid, no drawers, no 223-trillion counter); the reels tab draws the grid, or says what to do when there are none; the looks tab holds the drawers and the counter; moving between them says nothing in the console | yes (`test_ui_studio_folders`) |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.

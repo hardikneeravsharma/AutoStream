@@ -366,6 +366,12 @@ def swept(browser, app):
         "studio": [
             ("as opened", ""),
             ("clips tab", "studio_tab && studio_tab('clips')"),
+            # YOUR REELS AND THE DRAWERS ARE TABS OF THEIR OWN NOW. Both used
+            # to be on the clips tab, so the sweep reached them without
+            # asking; a page that renders perfectly would otherwise stop
+            # being swept because of where its controls moved to.
+            ("reels tab", "studio_tab && studio_tab('reels')"),
+            ("looks tab", "studio_tab && studio_tab('looks')"),
             # THE LIBRARY IS A DRILL-DOWN: folders, then that folder's runs,
             # then the run's clips. Every clip control -- the tile, the star,
             # Edit, the player, Select run, Select match -- lives two clicks

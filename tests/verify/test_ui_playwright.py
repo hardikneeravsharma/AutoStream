@@ -375,6 +375,8 @@ def test_every_reel_is_reachable_not_only_the_newest_ten(ui, app):
     page.click('.rail-btn[data-page="studio"]')
     page.wait_for_selector("#view-studio.is-active")
     page.click('[data-act="studio-refresh"]')
+    # Your reels have a tab of their own now, so that the clips tab is clips.
+    page.click('[data-act="studio-tab"][data-tab="reels"]')
     page.wait_for_function("document.querySelectorAll('#studio-reel-grid .studio-reel').length > 0", timeout=30_000)
 
     def names():
