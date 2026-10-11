@@ -416,7 +416,12 @@ def walk(moments_: list[Moment], *, beat: float, energy, song_start: float,
 # How the reel may be arranged. `build` is what every reel has always been and
 # stays the default; the others answer questions it cannot -- "show me what
 # actually happened", "open on the best one", "give me a different draw".
-ARRANGEMENTS = ("build", "time", "best", "shuffle")
+ARRANGEMENTS = ("build", "time", "best", "shuffle",
+                # "Perfect fit (slower)": not an order() shape at all --
+                # studio.plan() hands the whole reel to arrange_fit.plan(),
+                # which searches the order and the song together. Here it is
+                # only a name normalise() keeps; order() treats it as build.
+                "fit")
 # Where the climax sits when a reel is built rather than ordered by hand: about
 # two thirds in, which is where the reference edits put theirs.
 CLIMAX_AT = 2 / 3

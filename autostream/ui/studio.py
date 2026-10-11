@@ -1874,7 +1874,11 @@ const ARRANGES = [
   {k: 'build', name: 'Build up', why: 'A strong opener, the best one two thirds in, a strong close.'},
   {k: 'time', name: 'As it happened', why: 'The fights in the order you played them.'},
   {k: 'best', name: 'Best first', why: 'The strongest moment opens the reel.'},
-  {k: 'shuffle', name: 'Shuffle', why: 'A fresh draw. Press again for another.'}
+  {k: 'shuffle', name: 'Shuffle', why: 'A fresh draw. Press again for another.'},
+  /* Not an order but a search: every kill of every clip on a beat of the song,
+     every clip of three or more kills whole. Up to half a minute to plan. */
+  {k: 'fit', name: 'Perfect fit (slower)',
+   why: 'Searches the order and the song together: every kill lands on a beat and no clip with 3 or more kills loses one. Takes up to ~30 s to plan.'}
 ];
 
 function studio_arrangeDraw() {
@@ -1896,7 +1900,8 @@ function studio_arrangePick(how) {
   if (how === 'shuffle') studio.shuffleSeed = Math.floor(Math.random() * 2147483000) + 1;
   studio.arrange = how;
   studio_arrangeDraw();
-  toast('Make the reel again to see it.');
+  toast(how === 'fit' ? 'Make the reel again to see it. A perfect fit takes up to ~30 s to plan.'
+                      : 'Make the reel again to see it.');
 }
 
 /* PINNING A CLIP TO A SLOT. Moving a shot with the arrows moves it once; a pin
@@ -2225,7 +2230,9 @@ async function studio_build() {
      and nothing else, so the render started anyway a moment later and looked
      like a Cancel that had been ignored. */
   const gen = ++studio.buildGen;
-  studio_el('studio-make-msg').textContent = studio.song ? 'Finding the beat and planning every shot…' : 'Planning every shot…';
+  studio_el('studio-make-msg').textContent = !studio.song ? 'Planning every shot…'
+    : studio.arrange === 'fit' ? 'Finding the perfect fit of every kill to the song — this can take up to ~30 s…'
+    : 'Finding the beat and planning every shot…';
   try {
     const body = {
       clips: studio_ordered().map(c => c.path), style: studio.style, song: studio.song,
@@ -2302,6 +2309,12 @@ function studio_setProject(project, derived, notes, songShape) {
   studio_el('studio-tab-facecam').disabled = false;
   studio_el('studio-pname').value = project.name || '';
   if (studio.sel >= project.shots.length) studio.sel = project.shots.length - 1;
+  /* The reel's own arrangement, so a rebuild or a new style keeps it: a
+     perfect-fit reel restyled from a fresh session came back built up. */
+  if (project.arrange && ARRANGES.some(a => a.k === project.arrange) && project.arrange !== studio.arrange) {
+    studio.arrange = project.arrange;
+    studio_arrangeDraw();
+  }
   studio_drawAll();
 }
 

@@ -83,7 +83,7 @@ def _clips() -> list[dict]:
 def _plan(clips=None, style="hype", shape=None, **kw):
     shape = shape or _song()
     return arrange_fit.plan(clips or _clips(), style, shape=shape, song="s.mp3",
-                            iterations=kw.pop("iterations", 60), budget=20.0, **kw)
+                            iterations=kw.pop("iterations", 60), **kw)
 
 
 def _shown(proj: dict) -> tuple[list[tuple[str, float]], dict]:
@@ -124,8 +124,9 @@ def test_every_shot_kill_lands_on_a_hit_to_the_frame():
     assert d["on_marks"] == len(d["shots"])
 
 
-def test_no_footage_plays_twice():
-    proj, _ = _plan()
+@pytest.mark.parametrize("style", ["hype", "velocity", "short", "chaos"])
+def test_no_footage_plays_twice(style):
+    proj, _ = _plan(style=style)
     d = studio.derive(proj)
     rows = d["shots"]
     shots = proj["shots"]
@@ -136,8 +137,9 @@ def test_no_footage_plays_twice():
         assert overlap <= FRAME, f"shots {i} and {j} share {overlap:.3f} s of footage"
 
 
-def test_every_kill_has_a_run_up_and_plays_at_real_speed_or_slower():
-    proj, _ = _plan(style="velocity")
+@pytest.mark.parametrize("style", ["velocity", "short", "chaos", "story"])
+def test_every_kill_has_a_run_up_and_plays_at_real_speed_or_slower(style):
+    proj, _ = _plan(style=style)
     run_min = max(rulebook.MIN_RUN_BEATS * proj["beat"], rulebook.MIN_RUN_SECONDS)
     d = studio.derive(proj)
     for s, row in zip(proj["shots"], d["shots"]):
@@ -195,9 +197,11 @@ def test_the_same_clips_plan_the_same_reel():
 
 def test_without_hits_it_is_the_ordinary_planner():
     shape = Shape(seconds=120.0)
-    a, _ = arrange_fit.plan(_clips(), "hype", shape=shape, song="s.mp3")
+    a, notes = arrange_fit.plan(_clips(), "hype", shape=shape, song="s.mp3")
     b, _ = studio.plan(_clips(), "hype", shape=shape, song="s.mp3")
-    assert a == b
+    assert a["shots"] == b["shots"]
+    assert a["arrange"] == "fit", "a rebuild would forget the choice"
+    assert any("planned the usual way" in n for n in notes)
 
 
 def test_a_pinned_opener_stays_first():
@@ -206,7 +210,8 @@ def test_a_pinned_opener_stays_first():
     assert proj["shots"][0]["clip"] == pin
 
 
-def test_the_project_survives_normalise(tmp_path):
+@pytest.mark.parametrize("style", ["hype", "velocity", "chaos"])
+def test_the_project_survives_normalise(tmp_path, style):
     root = tmp_path / "clips"
     (root / "run" / "clips").mkdir(parents=True)
     clips = []
@@ -214,14 +219,105 @@ def test_the_project_survives_normalise(tmp_path):
         p = root / "run" / "clips" / (c["name"] + ".mp4")
         p.write_bytes(b"x")
         clips.append(dict(c, path=str(p), mtime=int(p.stat().st_mtime)))
-    proj, _ = arrange_fit.plan(clips, "hype", shape=_song(), song="", iterations=10)
+    proj, _ = arrange_fit.plan(clips, style, shape=_song(), song="", iterations=10)
     assert proj["shots"]                          # no song: the ordinary planner
-    proj, _ = arrange_fit.plan(clips, "hype", shape=_song(), song="s.mp3", iterations=10)
+    proj, _ = arrange_fit.plan(clips, style, shape=_song(), song="s.mp3", iterations=10)
     proj["song"] = ""                             # not on disk; the shots are the point
     got, derived, notes = studio.normalise(proj, root, probe=lambda p: 0.0)
+    # normalise() trims a shot asking for footage its clip lacks, and a trim
+    # moves every cut after it off its hit: none may be asked for, at any speed.
     assert [s["pre"] for s in got["shots"]] == [s["pre"] for s in proj["shots"]]
     assert [s["duration"] for s in got["shots"]] == [s["duration"] for s in proj["shots"]]
+    assert [s["speed"] for s in got["shots"]] == [s["speed"] for s in proj["shots"]]
     assert not [n for n in notes if "trimmed" in n]
+    assert got["arrange"] == "fit", "normalise() threw the arrangement away"
+
+
+# ------------------------------------------------------------------ at each shot's own speed
+
+@pytest.mark.parametrize("speed", ["s00", "s01", "s02", "s03", "s04", "s05", "s06"])
+def test_the_speed_tables_are_the_renderers_own_time_map(speed):
+    """The programme plans through Ramp; the render plays studio.pieces(). They
+    must be the same map, between the table's corners as well as on them."""
+    rp = arrange_fit.Ramp(speed)
+    for r in np.arange(0.0, 11.5, 0.0173):
+        want = studio.source_used(studio.pieces(speed, r + 30.0, r), r)
+        assert float(rp.pre_src(r)) == pytest.approx(want, abs=1e-9)
+        assert float(rp.pre_out(want)) == pytest.approx(r, abs=1e-6) or want == 0.0
+    for own in (0.0, 0.8, 2.4):
+        ps = studio.pieces(speed, 20.0 + 12.0, 20.0, own=own)
+        for t in np.arange(0.0, 11.5, 0.0173):
+            want = studio.source_used(ps, 20.0 + t) - studio.source_used(ps, 20.0)
+            assert float(rp.post_src(t, own)) == pytest.approx(want, abs=1e-9)
+
+
+def test_a_velocity_reel_keeps_its_ramps():
+    """Planned at real speed and ramped afterwards, most of velocity's s04s no
+    longer fitted and were taken back. Planned through them, the clips' opening
+    shots keep the speeds the style draws -- less only budget()'s rule that two
+    ramps never touch, and a clip whose first kill rides in a run-up a ramp
+    would rush."""
+    proj, notes = _plan(style="velocity")
+    ramped = [s["speed"] for s in proj["shots"] if s["speed"] != "s00"]
+    opening = {s["clip"] for s in proj["shots"]}
+    assert len(ramped) >= len(opening) * 3 // 4, f"only {ramped} of {len(opening)} clips kept a ramp"
+    assert not [n for n in notes if "changed speed" in n], notes
+
+
+def test_a_drop_reel_lands_its_fourth_kill_on_the_drop():
+    shape = _song(drop=60.0)
+    proj, notes = _plan(style="drop", shape=shape)
+    d = studio.derive(proj)
+    fourth = d["shots"][3]["kill_reel"] + proj["song_offset"]
+    near = min(shape.hits, key=lambda h: abs(h - 60.0))
+    assert fourth == pytest.approx(near, abs=FRAME), f"the fourth kill is at {fourth:.3f}, the drop's hit at {near:.3f}"
+    assert any("fourth kill lands on the song's drop" in n for n in notes)
+
+
+def test_a_quiet_intro_is_built_over_at_half_speed():
+    """studio.plan()'s build: two bars of half-speed run-up over a quiet intro,
+    the opener's kill arriving with the drums, and the intro effect for it."""
+    n = 1200
+    peaks = [0.2 if i * 120.0 / n < 16.0 else 1.0 for i in range(n)]
+    shape = _song(drums_in=16.0)
+    shape.peaks = peaks
+    proj, _ = _plan(style="story", shape=shape)
+    assert proj["intro"] == "i12"
+    assert proj["shots"][0]["speed"] == "s05"
+    first = proj["song_offset"] + proj["shots"][0]["pre"]
+    assert first >= 16.0 - 1e-6, f"the opener's kill at {first:.2f} s lands before the drums"
+    assert proj["shots"][0]["pre"] >= 3 * proj["beat"], "the build is too short to be one"
+
+
+def test_the_search_is_a_count_not_a_clock(monkeypatch):
+    """The same clips and song plan the same reel on any machine: nothing in
+    the search may look at the time."""
+    import inspect
+    import time
+
+    assert "budget" not in inspect.signature(arrange_fit.plan).parameters
+    a, _ = _plan(iterations=30)
+    ticks = iter(range(10 ** 9))
+    monkeypatch.setattr(time, "perf_counter", lambda: next(ticks) * 1000.0)
+    monkeypatch.setattr(time, "time", lambda: next(ticks) * 1000.0)
+    b, _ = _plan(iterations=30)
+    assert a == b
+
+
+def test_studio_plan_hands_a_fit_to_the_arranger():
+    proj, notes = studio.plan(_clips(), "hype", shape=_song(), song="s.mp3",
+                              shape_it={"arrange": "fit"})
+    assert proj["arrange"] == "fit"
+    assert any("Perfect fit" in n for n in notes)
+
+
+def test_a_failure_in_the_arranger_plans_the_usual_way(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("no")
+    monkeypatch.setattr(arrange_fit, "plan", boom)
+    proj, notes = studio.plan(_clips(), "hype", shape=_song(), song="s.mp3", shape_it={"arrange": "fit"})
+    assert proj["shots"] and proj["arrange"] == "fit"
+    assert any("could not plan this reel" in n for n in notes)
 
 
 # ------------------------------------------------------------------ the programme is exact
@@ -264,7 +360,7 @@ def _brute_events(fit: arrange_fit.Fitter, ev: list[tuple]) -> float:
             ok = True
             for n, (a, last) in enumerate(shots):
                 for x in range(a + 1, last + 1):
-                    sc += fit._ride(ev[x][2] - ev[a][2])[pos[n]]
+                    sc += fit._ride(arrange_fit.ramp(fit.speed(ev, a)), ev[x][2] - ev[a][2])[pos[n]]
                 if n + 1 < len(shots):
                     p, q = pos[n], pos[n + 1]
                     e = shots[n + 1][0]

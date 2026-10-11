@@ -426,6 +426,93 @@ def test_headshots_only_is_offered_for_read_clips_and_keeps_only_headshots(ui, a
     ui.clean("headshots only")
 
 
+def test_perfect_fit_keeps_every_kill_on_a_beat_and_survives_a_restyle(ui, app, tmp_path):
+    """6.13. "Perfect fit (slower)" is chosen like any arrangement, the Make
+    dialog warns that it takes longer, and the plan it returns has every kill
+    of every chosen clip in it -- the triple whole -- each shot's kill on one
+    of the song's hits. Rebuilding in another style keeps the arrangement."""
+    import json
+    import subprocess
+
+    from autostream.clips.tools import binary
+
+    ff = binary("ffmpeg")
+    if not ff:
+        pytest.skip("no ffmpeg to make clips with")
+    name = "2026-09-16_1200_VALORANT"
+    run = Path(app["home"]) / "video" / "clips" / name
+    (run / "clips").mkdir(parents=True, exist_ok=True)
+    # Three clips, 12 s each: a triple, a single and a double.
+    want = {"fit_0": [2.5, 6.0, 9.5], "fit_1": [6.0], "fit_2": [3.0, 8.5]}
+    rows, kills = [], []
+    for i, (stem, ks) in enumerate(want.items()):
+        clip = run / "clips" / f"{stem}.mp4"
+        subprocess.run([ff, "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=12",
+                        "-f", "lavfi", "-i", f"sine=frequency={300 + 100 * i}:duration=12",
+                        "-shortest", "-pix_fmt", "yuv420p", str(clip)], check=True, timeout=180,
+                       creationflags=appd.NO_WINDOW)
+        start = 100.0 * (i + 1)
+        rows.append({"rank": i + 1, "start": start, "end": start + 12.0, "duration": 12.0,
+                     "kills": len(ks), "name": stem, "master": str(clip), "vertical": "",
+                     "caption": "", "tags": [], "at": ""})
+        kills += [{"time": start + k} for k in ks]
+    (run / "clips.json").write_text(json.dumps({"game": "VALORANT", "clips": rows}))
+    (run / "session.json").write_text(json.dumps({"game": "VALORANT", "kills": kills}))
+    song = appd.click_track(tmp_path / "fit song.wav", seconds=60.0, bpm=120.0)
+
+    page = ui.page
+    page.click('.rail-btn[data-page="studio"]')
+    page.wait_for_selector("#view-studio.is-active")
+    page.click('[data-act="studio-refresh"]')
+    folder = page.locator(".studio-folder", has_text="16 Sep").first
+    folder.wait_for(timeout=30_000)
+    page.click('[data-act="studio-clear"]') if page.is_visible('[data-act="studio-clear"]') else None
+    for i in range(3):
+        folder.locator(".studio-clip-hit").nth(i).click()
+    # The bin redraws its buttons as the library loads, so the locator is
+    # resolved afresh at each step rather than held.
+    fit_btn = page.locator('[data-act="studio-arrange"][data-how="fit"]')
+    assert "30 s" in (fit_btn.get_attribute("title") or ""), "the slower arrangement does not say it is slower"
+    fit_btn.click()
+    page.wait_for_function("studio.arrange === 'fit'")
+    assert fit_btn.get_attribute("aria-pressed") == "true"
+    page.evaluate("""(path) => { const real = API.post;
+        API.post = function (u, b) {                  /* the native file dialog, answered */
+            if (u === '/api/clips/pick') return Promise.resolve({path: path});
+            return real.apply(this, arguments); }; }""", str(song))
+    page.click('[data-act="studio-make"]')
+    page.click('[data-act="studio-song"]')
+    page.wait_for_function("studio.song && studio.songShape", timeout=60_000)
+    page.click('[data-act="studio-style"][data-style="velocity"]')
+    page.fill("#studio-name", "Fit check")
+    before_job = page.evaluate("studio.jobId")
+    page.click('[data-act="studio-build"]')
+    assert "30 s" in page.inner_text("#studio-make-msg"), "planning a perfect fit gave no warning it takes longer"
+    page.wait_for_selector("#studio-pane-timeline:not(.hide)", timeout=120_000)
+    page.wait_for_function("(n) => studio.jobId && studio.jobId !== n", arg=before_job, timeout=60_000)
+    page.evaluate("API.post('/api/studio/cancel', {})")
+
+    proj = page.evaluate("studio.project")
+    derived = page.evaluate("studio.derived")
+    assert proj["arrange"] == "fit"
+    assert any("Perfect fit" in n for n in proj.get("plan_notes") or []), proj.get("plan_notes")
+    shown: dict[str, list[float]] = {}
+    for s, row in zip(proj["shots"], derived["shots"]):
+        for k in s["kills"]:
+            if row["source_in"] - 1e-6 <= k <= row["source_out"] + 1e-6:
+                shown.setdefault(Path(s["clip"]).stem, []).append(round(k, 1))
+        assert row["drift"] is not None and abs(row["drift"]) <= 1 / 60 + 1e-4, \
+            f"shot {row['index']} is {row['drift']} s off its hit"
+    assert {k: sorted(v) for k, v in shown.items()} == {k: [round(x, 1) for x in v] for k, v in want.items()}
+
+    # --- a rebuild in another style keeps the arrangement
+    page.select_option("#studio-r-style", "hype")
+    page.click("#studio-restyle-btn")
+    page.wait_for_function("studio.project.style === 'hype'", timeout=120_000)
+    assert page.evaluate("studio.project.arrange") == "fit", "the rebuild forgot the perfect fit"
+    ui.clean("a perfect-fit reel")
+
+
 def test_a_reel_is_made_edited_and_rendered_again_in_the_studio(ui, app):
     """The Studio's whole promise, in the real build: choose clips, get a reel
     that plays, change one shot on the timeline, and get the change rendered.
