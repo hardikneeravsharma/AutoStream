@@ -655,6 +655,7 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-open-folder": "opens a game's folder from its card in the library",
     "studio-open-run": "opens one run, whose clips are grouped by the match they came from",
     "studio-crumb": "walks back up the library: a run to its folder, a folder to the grid",
+    "studio-only-picked": "filters the library to the clips already picked, and back again",
     "studio-match": "selects or unselects every clip of one match in the open run",
     "studio-reel-fmt": "filters the reels to vertical or landscape; never leaves the browser",
     "studio-reels-more": "unfolds the reels from two rows to all of them",

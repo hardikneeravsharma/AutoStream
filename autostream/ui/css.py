@@ -3723,6 +3723,23 @@ STUDIO_CSS = r"""
 .studio-match-score{font-size:13px;font-weight:600;padding:2px 8px;border-radius:var(--radius-sm);
   background:var(--surface-sunken);border:var(--border-hair) solid var(--border-subtle)}
 .studio-match-btn{margin-left:auto}
+/* WHERE THE PICKED CLIPS ARE. A pill on every level that hides clips behind
+   a click, and -- while adding to a reel -- a band naming the runs they came
+   from. The complaint this answers: "I don't know from which folder, from
+   which run the current clips are selected". */
+.studio-picked{margin-left:8px;padding:1px 9px;border-radius:var(--radius-pill);
+  background:var(--accent);color:var(--text-on-accent);
+  font-family:var(--font-text);font-size:11px;font-weight:600;white-space:nowrap}
+.studio-band{display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap;
+  margin-top:var(--space-4);padding:var(--space-3) var(--space-4);
+  background:var(--surface);border:var(--border-hair) solid var(--accent);
+  border-radius:var(--radius-lg)}
+.studio-band-who{display:flex;flex-direction:column;gap:3px;min-width:160px}
+.studio-band-runs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1;min-width:200px}
+.studio-band-acts{display:flex;align-items:center;gap:var(--space-2);margin-left:auto}
+.studio-srcchip{cursor:pointer}
+.studio-srcchip b{font-family:var(--font-mono);font-weight:600;margin-left:4px;color:var(--text-primary)}
+.studio-tray-runs{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 /* THE ORDER, IN THE MAKE DIALOG. Cards, not a segmented row: "Best order"
    and "Perfect fit" are choices nobody can make from two words, which is
    why they went unseen in the strip at the foot of the page. */
