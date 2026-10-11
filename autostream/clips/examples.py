@@ -32,6 +32,8 @@ UNTIL THEN, STOCK ONES
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import shutil
 import time
@@ -49,10 +51,18 @@ TYPES = {".mp4": "video/mp4", ".webm": "video/webm", ".gif": "image/gif"}
 SHOT_SECONDS = 1.8
 # What a card is finally kept as. A reel renders at 1920x1080 and CQ 16 --
 # 5 MB for one example, 300 MB for the bin -- so each is shrunk to this once
-# it has been cut. Sixty of them then weigh about what one reel does.
-CARD_WIDTH = 480
-CARD_FPS = 24
-CARD_CRF = 30
+# it has been cut.
+#
+# These are measured, not taste. A 3.6 s card off the maintainer's own footage:
+# 480/24/CRF30 was 121 KB (68 MB for all 562) and visibly mushy -- grain and
+# scanlines turned to porridge, which is the one thing these cards exist to
+# show. 640/30/CRF26 is 353 KB (~195 MB), and 720/CRF24 was 560 KB (~315 MB)
+# for no gain anyone can see: a card is 360-480 CSS px on screen, so past 640
+# the extra bytes are thrown away by the browser's own scaler. The sharp copy
+# below is what a closer look gets.
+CARD_WIDTH = 640
+CARD_FPS = 30
+CARD_CRF = 26
 # THE ONE ON THE STAGE, SHARP. The picker shows the option under the pointer
 # large, in the middle, so the difference between two can be seen -- and at
 # card size there is none to see: fine and coarse grain, fine and wide
@@ -127,7 +137,11 @@ def manifest(root: Path) -> dict:
                      and (p not in have or have[p]["stock"]))
     return {"ok": True, "examples": have, "missing": missing,
             "nothing": sorted(p for p in parts if p in NOTHING),
-            "folder": str(folder(root))}
+            "folder": str(folder(root)),
+            # Which clips the set standing there was cut from, so a page can
+            # say so and a changed choice can be noticed. {} before a rebuild,
+            # and for a stock set, which was cut from nobody's clips here.
+            "cut_from": cut_from(root)}
 
 
 def take_from(root: Path, src: Path) -> dict:
@@ -149,16 +163,33 @@ def take_from(root: Path, src: Path) -> dict:
             log.info("examples: could not take %s: %s", f.name, e)
             continue
         taken.append(f.stem)
+    if taken:
+        # These came from somewhere else, so whatever the last rebuild noted
+        # about its source clips no longer describes what is in the folder.
+        # No note is honest; a stale one is the thing this exists to prevent.
+        (here / SOURCES_FILE).unlink(missing_ok=True)
     return {"ok": True, "taken": sorted(taken), "folder": str(here)}
 
 
 def sources(root: Path, want: int = 2, game: str = "") -> list[dict]:
-    """The clips an example is cut from: the shortest with a kill well inside.
+    """The clips an example is cut from: the player's starred ones first.
 
-    Short, because every example is re-cut from these and a 90-second clip
-    makes ffmpeg seek through it each time; a kill with footage either side,
-    because a card that opens on a body falling shows nothing. `game` keeps
-    to one game's clips -- the stock set is cut from VALORANT alone.
+    Every card in the bin is cut from these two, so they are the footage a
+    stranger judges every part by -- and the rule used to be "the two
+    shortest", which is a proxy for cheap to seek, not for good to look at.
+    The clips somebody has starred are the ones they already think are worth
+    watching, so those come first (`fav`, which the library sets from
+    studio.favourites). Whatever is left behind them is still ordered shortest
+    first, so a library with nothing starred gets exactly what it got before.
+
+    The hard requirements are unchanged either way: a kill with footage either
+    side, because a card that opens on a body falling shows nothing, and long
+    enough for two shots. `game` keeps to one game's clips -- the stock set is
+    cut from VALORANT alone.
+
+    Deterministic: ties on duration are broken by clip id, so the same library
+    always gives the same two and a rebuild does not quietly re-cut the bin
+    from other footage.
     """
     lib = studio.library(Path(root))
     pool = [c for g in lib.get("games") or [] for f in g.get("folders") or []
@@ -166,8 +197,48 @@ def sources(root: Path, want: int = 2, game: str = "") -> list[dict]:
             for c in f.get("clips") or []
             if (c.get("kills") or []) and float(c.get("duration") or 0) > 4.0
             and float(c["kills"][0]) > 1.5]
-    pool.sort(key=lambda c: float(c.get("duration") or 0))
+    pool.sort(key=lambda c: (not c.get("fav"), float(c.get("duration") or 0),
+                             str(c.get("id") or ""), str(c.get("path") or "")))
     return pool[:want]
+
+
+def sources_key(clips: list[dict]) -> str:
+    """A short key for one choice of source clips. Changes when the choice does."""
+    ids = [str(c.get("id") or c.get("path") or "") for c in clips]
+    return hashlib.sha1("|".join(ids).lower().encode("utf-8")).hexdigest()[:12]
+
+
+SOURCES_FILE = "sources.json"
+
+
+def _write_sources(root: Path, clips: list[dict]) -> None:
+    """Note beside the cards which clips they were cut from.
+
+    A bin is only honest about itself if it says what it is showing: a player
+    who stars better footage later, or deletes what these were cut from, has a
+    set that no longer matches their library, and nothing could tell. The key
+    is what a later run compares against; the names are what a page can say.
+    """
+    rec = {"key": sources_key(clips), "when": int(time.time()),
+           "clips": [Path(str(c.get("path") or "")).name or str(c.get("name") or "")
+                     for c in clips],
+           "fav": [bool(c.get("fav")) for c in clips]}
+    f = folder(root) / SOURCES_FILE
+    try:
+        tmp = f.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(rec, indent=1), encoding="utf-8")
+        tmp.replace(f)
+    except OSError as e:
+        log.info("examples: could not note the sources: %s", e)
+
+
+def cut_from(root: Path) -> dict:
+    """What the examples on disk were cut from, or {} if it was never noted."""
+    try:
+        got = json.loads((folder(root) / SOURCES_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return got if isinstance(got, dict) else {}
 
 
 def _project(part: str, kind: str, clips: list[dict]) -> dict | None:
@@ -390,6 +461,7 @@ def build(root: Path, only: list[str] | None = None, on_step=None,
         return {"ok": False, "error": "Two clips with a kill are needed to cut examples from."}
     here = folder(root)
     here.mkdir(parents=True, exist_ok=True)
+    _write_sources(root, clips)
     made: list[str] = []
     failed: dict[str, str] = {}
     for i, part in enumerate(want):
