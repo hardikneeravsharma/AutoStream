@@ -35,6 +35,15 @@ STUDIO_HTML = r"""
     <div class="seg" role="tablist" aria-label="Studio views">
       <button type="button" class="seg-btn is-active" role="tab" aria-selected="true"
               data-act="studio-tab" data-tab="clips" id="studio-tab-clips">Clips</button>
+      <!-- THREE JOBS, THREE TABS. The clips pane used to carry all of them at
+           once: picking clips, browsing every finished reel, and choosing a
+           look from nine drawers. Ninety reels and a 223-trillion counter
+           above the clips meant the first screen of the page you came to for
+           clips had no clips on it. -->
+      <button type="button" class="seg-btn" role="tab" aria-selected="false"
+              data-act="studio-tab" data-tab="reels" id="studio-tab-reels">Reels <b id="studio-tab-reels-n"></b></button>
+      <button type="button" class="seg-btn" role="tab" aria-selected="false"
+              data-act="studio-tab" data-tab="looks" id="studio-tab-looks">Looks</button>
       <button type="button" class="seg-btn" role="tab" aria-selected="false"
               data-act="studio-tab" data-tab="timeline" id="studio-tab-timeline" disabled>Timeline</button>
       <button type="button" class="seg-btn" role="tab" aria-selected="false"
@@ -45,23 +54,12 @@ STUDIO_HTML = r"""
   </header>
 
   <section id="studio-pane-clips" aria-label="Clips">
-    <!-- THE PARTS BIN, AT THE TOP. A reel is one pick from each drawer; the
-         count says how many reels those drawers can make, which is the point
-         of picking rather than taking the same style every time. -->
     <header class="bin-top">
       <div class="bin-intro">
         <p class="bin-eyebrow">Reel maker</p>
         <h1 class="bin-title">Pick your clips, then pick a look</h1>
-        <p class="bin-lede">Tick the clips you want, choose a look below, and AutoStream edits them
-          together into one video for TikTok, Reels or Shorts. Every look is shown as a short
-          example made from your own clips &mdash; so just watch them and pick the one you like.</p>
         <p class="bin-lede" id="studio-sub">Reading your clips…</p>
       </div>
-      <aside class="bin-calc" aria-label="How many templates">
-        <p class="bin-eyebrow">Mix and match</p>
-        <div class="bin-big" id="bin-total">—<small id="bin-total-note">counting the drawers</small></div>
-        <div class="bin-slots" id="bin-slots"></div>
-      </aside>
     </header>
     <div class="studio-tools">
       <input class="input studio-search" id="studio-q" type="search"
@@ -72,59 +70,85 @@ STUDIO_HTML = r"""
            friend. Added here they are clips like any other. -->
       <button type="button" class="btn btn-sm" data-act="studio-imp-add">Add your own clip…</button>
     </div>
-    <!-- EVERY REEL, NOT THE LAST TEN. The tools are markup of their own and
-         only the grid is redrawn, so typing in the search never loses focus. -->
-    <section class="studio-reels hide" id="studio-reels" aria-labelledby="studio-reels-h">
-      <div class="studio-reels-head">
-        <h3 class="studio-h" id="studio-reels-h">Your reels <b id="studio-reels-count"></b></h3>
-        <input class="input studio-search" id="studio-reel-q" type="search"
-               placeholder="Search reels by name, style or song" aria-label="Search reels">
-        <div class="studio-games" id="studio-reel-fmts" role="group" aria-label="Reel shape"></div>
-        <label class="studio-reel-sortl"><span class="muted">Sort</span>
-          <select class="select" id="studio-reel-sort" aria-label="Sort reels">
-            <option value="new">Newest first</option>
-            <option value="old">Oldest first</option>
-            <option value="name">Name A&ndash;Z</option>
-            <option value="long">Longest first</option>
-          </select></label>
-      </div>
-      <div class="studio-reel-row" id="studio-reel-grid"></div>
-      <p class="muted studio-empty hide" id="studio-reel-none"></p>
-      <button type="button" class="btn btn-sm studio-reels-more hide" data-act="studio-reels-more"
-              id="studio-reels-more" aria-expanded="false"></button>
-    </section>
     <div id="studio-lib" class="studio-lib"></div>
     <p class="muted studio-empty hide" id="studio-empty"></p>
 
-    <section class="bin-sec" id="bin" aria-label="Parts bin">
-      <div class="bin-sec-head">
-        <h2>The drawers</h2><span class="count" id="bin-count"></span>
-        <p>One example each, cut from your own clips by the same code that renders the reel — so a card
-          shows what the reel will actually do. Click one to put it in the template you are dealing.</p>
-      </div>
-      <div class="bin-build">
-        <span class="bin-arrange" id="bin-arrange"></span>
-        <span class="bin-shape" id="bin-shape"></span>
-        <button type="button" class="btn btn-sm" data-act="studio-bin-favonly" id="bin-favonly"
-                aria-pressed="false" title="Show only the parts you have kept">&#9733; Favourites</button>
-        <button type="button" class="btn btn-sm" data-act="studio-bin-build" id="bin-build">Cut the missing examples</button>
-        <button type="button" class="btn btn-sm btn-ghost hide" data-act="studio-bin-stop" id="bin-build-stop">Stop</button>
-        <span id="bin-build-msg"></span>
-      </div>
-      <div id="bin-drawers"></div>
-    </section>
     <div class="studio-tray hide" id="studio-tray" role="region" aria-label="Selection">
       <div class="studio-tray-text">
         <strong id="studio-tray-count">0 clips</strong>
         <span class="muted" id="studio-tray-facts"></span>
         <span class="studio-adding hide" id="studio-adding"></span>
       </div>
+      <!-- WHICH RUNS THE PICKS CAME FROM. A count says the selection is
+           scattered; these say where, and each one opens that run. -->
+      <div class="studio-tray-runs hide" id="studio-tray-runs"></div>
       <button type="button" class="btn btn-ghost btn-sm" data-act="studio-fav-selected" id="studio-fav-btn">★ Favourite</button>
       <button type="button" class="btn btn-ghost btn-sm" data-act="studio-clear">Clear</button>
       <button type="button" class="btn btn-ghost btn-sm hide" data-act="studio-add-cancel" id="studio-add-cancel">Stop adding</button>
       <button type="button" class="btn btn-ghost btn-sm studio-del-btn" data-act="studio-delete">Delete…</button>
       <button type="button" class="btn btn-primary" data-act="studio-make" id="studio-make-btn">Make a reel</button>
     </div>
+  </section>
+
+  <!-- EVERY REEL YOU HAVE MADE, with room for its own search, filters and
+       order. It used to sit between the clips and the drawers, pushing both
+       out of the first screen. -->
+  <section id="studio-pane-reels" class="hide" aria-label="Reels">
+      <!-- A TAB THAT OPENS ON NOTHING IS A DEAD END, which is the thing this
+           split exists to remove. Before the first reel there is a sentence
+           saying what to do, not a blank pane. -->
+      <p class="muted studio-empty hide" id="studio-reels-none">No reels yet. Pick some clips on
+        the Clips tab, choose a look, and the reels you make appear here.</p>
+      <!-- EVERY REEL, NOT THE LAST TEN. The tools are markup of their own and
+           only the grid is redrawn, so typing in the search never loses focus. -->
+      <section class="studio-reels hide" id="studio-reels" aria-labelledby="studio-reels-h">
+        <div class="studio-reels-head">
+          <h3 class="studio-h" id="studio-reels-h">Your reels <b id="studio-reels-count"></b></h3>
+          <input class="input studio-search" id="studio-reel-q" type="search"
+                 placeholder="Search reels by name, style or song" aria-label="Search reels">
+          <div class="studio-games" id="studio-reel-fmts" role="group" aria-label="Reel shape"></div>
+          <label class="studio-reel-sortl"><span class="muted">Sort</span>
+            <select class="select" id="studio-reel-sort" aria-label="Sort reels">
+              <option value="new">Newest first</option>
+              <option value="old">Oldest first</option>
+              <option value="name">Name A&ndash;Z</option>
+              <option value="long">Longest first</option>
+            </select></label>
+        </div>
+        <div class="studio-reel-row" id="studio-reel-grid"></div>
+        <p class="muted studio-empty hide" id="studio-reel-none"></p>
+        <button type="button" class="btn btn-sm studio-reels-more hide" data-act="studio-reels-more"
+                id="studio-reels-more" aria-expanded="false"></button>
+      </section>
+  </section>
+
+  <!-- THE LOOK, AND WHAT IT DRAWS FROM. The drawers belong beside the look
+       they fill, not above the clips: 223 trillion combinations is a fact
+       about the app, not a decision anybody has to make before picking a
+       clip. -->
+  <section id="studio-pane-looks" class="hide" aria-label="Looks">
+    <aside class="bin-calc" aria-label="How many templates">
+      <p class="bin-eyebrow">Mix and match</p>
+      <div class="bin-big" id="bin-total">—<small id="bin-total-note">counting the drawers</small></div>
+      <div class="bin-slots" id="bin-slots"></div>
+    </aside>
+      <section class="bin-sec" id="bin" aria-label="Parts bin">
+        <div class="bin-sec-head">
+          <h2>The drawers</h2><span class="count" id="bin-count"></span>
+          <p>One example each, cut from your own clips by the same code that renders the reel — so a card
+            shows what the reel will actually do. Click one to put it in the template you are dealing.</p>
+        </div>
+        <div class="bin-build">
+          <span class="bin-arrange" id="bin-arrange"></span>
+          <span class="bin-shape" id="bin-shape"></span>
+          <button type="button" class="btn btn-sm" data-act="studio-bin-favonly" id="bin-favonly"
+                  aria-pressed="false" title="Show only the parts you have kept">&#9733; Favourites</button>
+          <button type="button" class="btn btn-sm" data-act="studio-bin-build" id="bin-build">Cut the missing examples</button>
+          <button type="button" class="btn btn-sm btn-ghost hide" data-act="studio-bin-stop" id="bin-build-stop">Stop</button>
+          <span id="bin-build-msg"></span>
+        </div>
+        <div id="bin-drawers"></div>
+      </section>
   </section>
 
   <!-- THE EDITOR. One screen, no page scroll: the picture where the eyes are,
@@ -593,12 +617,25 @@ STUDIO_HTML = r"""
           <button type="button" class="seg-btn is-active" data-act="studio-mk-fit" data-fit="zoom">Zoom to fill</button>
           <button type="button" class="seg-btn" data-act="studio-mk-fit" data-fit="fit">Fit the whole picture</button>
         </div>
-        <div class="seg" role="group" aria-label="Order">
-          <button type="button" class="seg-btn is-active" data-act="studio-order" data-order="chosen">As chosen</button>
-          <button type="button" class="seg-btn" data-act="studio-order" data-order="kills">Most kills first</button>
-          <button type="button" class="seg-btn" data-act="studio-order" data-order="oldest">Oldest first</button>
-        </div>
       </div>
+      <!-- THE ORDER, ASKED WHERE THE REEL IS MADE.
+
+           It used to be asked twice, in two places, with different answers.
+           Here sat three buttons -- As chosen / Most kills first / Oldest
+           first -- which only sorted the clip list in the page before it was
+           sent. The real arrangements, the ones the planner runs with the
+           song in hand, were six buttons in the drawers strip at the foot of
+           the page: Build up, As it happened, Best first, Shuffle, Best order
+           and Perfect fit. So the two that matter most -- Best order and
+           Perfect fit -- could not be reached from the dialog where somebody
+           decides how their reel is built, and "Most kills first" quietly
+           overlapped with "Best first" while meaning something weaker.
+
+           One control now, the six real ones. The old three are not lost:
+           Most kills first is Best first done by the planner, and Oldest
+           first is As it happened. -->
+      <h3 class="studio-h">Order <span class="muted studio-small">how the kills line up</span></h3>
+      <div class="studio-mk-arrange" id="studio-mk-arrange" role="group" aria-label="Order"></div>
       <!-- HOW LONG, ASKED RATHER THAN DECIDED. The style used to set the
            length as well as the feel, so a long part and twenty-five clips
            came out a 43 s Hype reel with eleven clips left out. The style
@@ -915,7 +952,7 @@ const studio = {
      path. Both live here rather than in the markup because the pane is
      rebuilt on every edit -- state kept in the DOM would drop the player back
      at the top every time they came back from making a reel. */
-  game: 'all', run: '', q: '', selected: [], lastClick: null,
+  game: 'all', run: '', q: '', onlyPicked: false, selected: [], lastClick: null,
   reelQ: '', reelSort: 'new', reelFmt: 'all', reelsAll: false,
   examples: null, picks: null, binOn: null, binObs: null, binTimer: null,
   sv: null, svShow: null, svWin: 8, songList: null,
@@ -1046,7 +1083,11 @@ async function studio_load(force) {
   studio.lib = lib; studio.loadedAt = Date.now(); studio.clipIndex = {};
   studio_binLoad(force);
   lib.games.forEach(g => g.folders.forEach(f => f.clips.forEach(c => {
-    c.game = g.game; c.folderLabel = f.label; c.when = f.when; studio.clipIndex[c.id] = c;
+    c.game = g.game; c.folderLabel = f.label; c.when = f.when;
+    /* The run a clip belongs to. Without it a selection could be counted
+       but not placed, which is the whole complaint: "I don't know from
+       which folder, from which run the current clips are selected". */
+    c.folder = f.folder; studio.clipIndex[c.id] = c;
   })));
   studio.selected = studio.selected.filter(id => studio.clipIndex[id]);
   studio_renderLib();
@@ -1066,11 +1107,15 @@ function studio_visible() {
   const q = studio.q.trim().toLowerCase();
   const out = [];
   const favOnly = studio.game === 'fav';
+  /* ONLY THE PICKED ONES, from any level. A filter rather than a highlight,
+     so the tray, a shift-range and Select run all agree with what is on
+     screen -- the three places a highlight would have quietly disagreed. */
+  const only = studio.onlyPicked ? new Set(studio.selected) : null;
   (studio.lib ? studio.lib.games : []).forEach(g => {
-    if (!q && !favOnly && studio.game !== 'all' && g.game !== studio.game) return;
+    if (!q && !favOnly && !only && studio.game !== 'all' && g.game !== studio.game) return;
     g.folders.forEach(f => {
-      if (!q && studio.run && f.folder !== studio.run) return;
-      const clips = f.clips.filter(c => (!favOnly || c.fav) && (!q ||
+      if (!q && !only && studio.run && f.folder !== studio.run) return;
+      const clips = f.clips.filter(c => (!favOnly || c.fav) && (!only || only.has(c.id)) && (!q ||
         (c.name + ' ' + c.caption + ' ' + f.label + ' ' + g.game).toLowerCase().indexOf(q) >= 0));
       /* IN THE ORDER THEY ARE ON SCREEN, because this is what shift-click
          ranges over. An open run draws its clips under the match each came
@@ -1087,9 +1132,51 @@ function studio_visible() {
   return out;
 }
 
+/* WHERE THE PICKED CLIPS ARE, counted once per render.
+
+   A drill-down hides clips behind a click, so a selection made two levels in
+   -- or handed to you by "Add clips to this reel" -- is invisible from the
+   folder grid. Every level therefore says how many of its clips are picked,
+   and the tray names the runs. Counted from `studio.selected` against the
+   library the page already has; no new route. */
+function studio_picked() {
+  const on = new Set(studio.selected);
+  const byGame = {}, byFolder = {}, runs = [];
+  const seen = {};
+  studio.selected.forEach(id => {
+    const c = studio.clipIndex[id];
+    if (!c) return;
+    byGame[c.game] = (byGame[c.game] || 0) + 1;
+    byFolder[c.folder] = (byFolder[c.folder] || 0) + 1;
+    if (!seen[c.folder]) {
+      seen[c.folder] = {folder: c.folder, game: c.game, label: c.folderLabel, n: 0};
+      runs.push(seen[c.folder]);
+    }
+    seen[c.folder].n++;
+  });
+  runs.sort((a, b) => b.n - a.n);
+  return {on: on, byGame: byGame, byFolder: byFolder, runs: runs, total: on.size};
+}
+
+/* The pill that says how many of something are picked. Nothing when none
+   are: a row of zeroes is noise, and the absence is the answer. */
+function studio_pickedPill(n, word) {
+  if (!n) return '';
+  return '<span class="studio-picked">' + n + ' ' + (word || 'picked') + '</span>';
+}
+
+/* A run as a chip: the game, when it was, and how many of its clips are in.
+   Pressing it opens that run, which is the question behind the question. */
+function studio_runChip(r, word) {
+  return '<button type="button" class="chip studio-srcchip" data-act="studio-open-run" data-folder="' +
+    esc(r.folder) + '" title="Open this run">' + esc(r.game) + ' · ' + esc(r.label) +
+    ' <b>' + r.n + '</b></button>';
+}
+
 /* Which of the three levels is on screen. The search is a level of its own:
    it answers across the whole library, from wherever it was typed. */
 function studio_level() {
+  if (studio.onlyPicked) return 'picked';
   if (studio.q.trim()) return 'search';
   if (studio.game === 'all') return 'folders';
   if (studio.game === 'fav') return 'fav';
@@ -1129,6 +1216,7 @@ function studio_longDur(t) {
    as a line of text. */
 function studio_folderCards() {
   const lib = studio.lib;
+  const picked = studio_picked();
   let html = '<div class="studio-folders">';
   lib.games.forEach(g => {
     const covers = [];
@@ -1142,7 +1230,8 @@ function studio_folderCards() {
       'data-game="' + esc(g.game) + '" aria-label="Open ' + esc(g.game) + ', ' + g.clips + ' clips">' +
       '<span class="studio-folder-mosaic">' +
       covers.map(c => studio_thumbOf(c, '')).join('') + '</span>' +
-      '<span class="studio-folder-card-body"><span class="studio-folder-card-name">' + esc(g.game) + '</span>' +
+      '<span class="studio-folder-card-body"><span class="studio-folder-card-name">' + esc(g.game) +
+      studio_pickedPill(picked.byGame[g.game], studio.adding ? 'in this reel' : 'picked') + '</span>' +
       '<span class="studio-folder-card-facts">' + g.clips + ' clips · ' + runs +
       (runs === 1 ? ' run' : ' runs') + (newest ? '<br>newest ' + esc(newest) : '') + '</span>' +
       '<span class="studio-folder-go">Open →</span></span></button>';
@@ -1172,6 +1261,7 @@ function studio_matchChip(m) {
 function studio_runRows(game) {
   const g = (studio.lib.games || []).filter(x => x.game === game)[0];
   if (!g) return '';
+  const picked = studio_picked();
   const pos = {};
   studio.selected.forEach(id => { pos[id] = 1; });
   let html = '<div class="studio-runs">';
@@ -1184,7 +1274,8 @@ function studio_runRows(game) {
       '<button type="button" class="studio-run-hit" data-act="studio-open-run" data-folder="' +
       esc(f.folder) + '" aria-label="Open ' + esc(f.label) + '">' +
       (f.clips.length ? studio_thumbOf(f.clips[0], 'studio-run-shot') : '') +
-      '<span class="studio-run-who"><span class="studio-run-name">' + esc(f.label) + '</span>' +
+      '<span class="studio-run-who"><span class="studio-run-name">' + esc(f.label) +
+      studio_pickedPill(picked.byFolder[f.folder], studio.adding ? 'in this reel' : 'picked') + '</span>' +
       '<span class="studio-run-facts">' + f.clips.length +
       (f.clips.length === 1 ? ' clip · ' : ' clips · ') + kills +
       (kills === 1 ? ' kill · ' : ' kills · ') + studio_longDur(secs) + ' of footage' +
@@ -1220,6 +1311,7 @@ function studio_matchSections(gr, pos) {
     html += '<section class="studio-match" aria-label="' + esc(m.map || ('Match ' + (i + 1))) + '">' +
       '<div class="studio-match-h"><span class="studio-match-name">Match ' + (i + 1) +
       (m.map ? ' · ' + esc(m.map) : '') + '</span>' +
+      studio_pickedPill(mine.filter(c => pos[c.id]).length, studio.adding ? 'in this reel' : 'picked') +
       (m.mode ? '<span class="muted">' + esc(m.mode) + '</span>' : '') +
       (m.score ? '<span class="studio-match-score mono' + cls + '">' + m.score[0] + ' – ' + m.score[1] + '</span>' : '') +
       (m.kills === undefined ? '' : '<span class="muted">' + m.kills + ' / ' + m.deaths + ' / ' + m.assists + ' K/D/A</span>') +
@@ -1244,12 +1336,44 @@ function studio_matchSections(gr, pos) {
   return html;
 }
 
+/* ADDING CLIPS TO A REEL: WHICH ONES, AND FROM WHERE.
+
+   "Add clips" pre-selects everything already in the reel, and the library
+   opens on folder cards -- so the thirteen clips it just ticked for you were
+   invisible until you happened to open the right run. The band names the
+   reel, counts what is in it, and carries a chip per run those clips came
+   from; each chip opens that run. */
+function studio_addingBand(picked) {
+  const ad = studio.adding;
+  if (!ad) return '';
+  const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
+  const secs = sel.reduce((n, c) => n + (c.duration || 0), 0);
+  const kills = sel.reduce((n, c) => n + (c.kill_count || 1), 0);
+  return '<section class="studio-band" aria-label="Adding clips to ' + esc(ad.name) + '">' +
+    '<div class="studio-band-who"><strong>Adding to ' + esc(ad.name) + '</strong>' +
+    '<span class="muted studio-small">' + sel.length + (sel.length === 1 ? ' clip' : ' clips') +
+    ' in it · ' + studio_dur(secs) + ' · ' + kills + (kills === 1 ? ' kill' : ' kills') + '</span></div>' +
+    (picked.runs.length
+      ? '<div class="studio-band-runs"><span class="muted studio-small">from</span>' +
+        picked.runs.map(r => studio_runChip(r)).join('') +
+        '<button type="button" class="chip' + (studio.onlyPicked ? ' is-on' : '') +
+        '" data-act="studio-only-picked" aria-pressed="' + (studio.onlyPicked ? 'true' : 'false') + '">' +
+        (studio.onlyPicked ? 'Show every clip' : 'Show only these ' + picked.total) + '</button></div>'
+      : '<span class="muted studio-small">Nothing is picked yet. Tick the clips you want to add.</span>') +
+    '<span class="studio-band-acts">' +
+    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-add-cancel">Stop adding</button>' +
+    '<button type="button" class="btn btn-sm" data-act="studio-make">Rebuild ' + esc(ad.name) + '</button>' +
+    '</span></section>';
+}
+
 /* The line above the library saying where you are and how to get back. */
 function studio_crumbs(level, game, label) {
   if (level === 'folders') return '';
   const back = '<button type="button" class="studio-crumb" data-act="studio-crumb" data-to="folders">Folders</button>';
   if (level === 'search') return '<nav class="studio-crumbs" aria-label="Where you are">' + back +
     '<span class="studio-crumb-sep">›</span><span class="studio-crumb-now">Search</span></nav>';
+  if (level === 'picked') return '<nav class="studio-crumbs" aria-label="Where you are">' + back +
+    '<span class="studio-crumb-sep">›</span><span class="studio-crumb-now">The clips you have picked</span></nav>';
   if (level === 'fav') return '<nav class="studio-crumbs" aria-label="Where you are">' + back +
     '<span class="studio-crumb-sep">›</span><span class="studio-crumb-now">★ Favourites</span></nav>';
   let html = '<nav class="studio-crumbs" aria-label="Where you are">' + back + '<span class="studio-crumb-sep">›</span>';
@@ -1308,6 +1432,9 @@ function studio_reelCard(r) {
 function studio_renderReels() {
   const all = (studio.lib && studio.lib.reels) || [];
   studio_show('studio-reels', all.length > 0);
+  studio_show('studio-reels-none', !all.length);
+  const tabn = studio_el('studio-tab-reels-n');
+  if (tabn) tabn.textContent = all.length || '';
   if (!all.length) return;
   studio_el('studio-reels-count').textContent = all.length;
   const counts = {all: all.length, vertical: 0, landscape: 0};
@@ -1385,7 +1512,8 @@ function studio_renderLib() {
   const groups = studio_visible();
   const pos = {};
   studio.selected.forEach((id, i) => { pos[id] = i + 1; });
-  let html = studio_crumbs(level, studio.game, open ? open.folder.label : '');
+  const picked = studio_picked();
+  let html = studio_addingBand(picked) + studio_crumbs(level, studio.game, open ? open.folder.label : '');
   if (level === 'folders') {
     html += studio_folderCards();
   } else if (level === 'runs') {
@@ -1507,13 +1635,24 @@ function studio_renderTray() {
   const secs = sel.reduce((n, c) => n + c.duration, 0);
   const kills = sel.reduce((n, c) => n + (c.kill_count || 1), 0);
   const games = new Set(sel.map(c => c.game)).size;
+  const picked = studio_picked();
   studio_el('studio-tray-facts').textContent = sel.length
-    ? studio_dur(secs) + ' of footage · ' + kills + ' kills' + (games > 1 ? ' · ' + games + ' games' : '') : '';
+    ? studio_dur(secs) + ' of footage · ' + kills + ' kills' +
+      (games > 1 ? ' · ' + games + ' games' : '') +
+      (picked.runs.length > 1 ? ' · from ' + picked.runs.length + ' runs' : '') : '';
+  /* WHICH RUNS, not just how many. A count tells you the selection is
+     scattered; the chips tell you where, and each one opens that run. */
+  const where = studio_el('studio-tray-runs');
+  if (where) {
+    const many = picked.runs.length > 1 && !studio.adding;
+    studio_show('studio-tray-runs', many);
+    if (many) where.innerHTML = picked.runs.map(r => studio_runChip(r)).join('');
+  }
   const ad = studio.adding;
-  studio_show('studio-adding', !!ad);
+  /* The band at the top of the pane says all of this now, and says where
+     the clips are as well -- which a line in the tray could not. */
+  studio_show('studio-adding', false);
   studio_show('studio-add-cancel', !!ad);
-  if (ad) studio_el('studio-adding').textContent = 'Adding clips to ' + ad.name +
-    ': the clips already in it are selected. Pick more, then rebuild.';
   studio_el('studio-make-btn').textContent = ad ? 'Rebuild ' + ad.name : 'Make a reel';
 }
 
@@ -1546,6 +1685,9 @@ function studio_libShow() {
 function studio_goLib(to) {
   if (to === 'folders') studio.game = 'all';
   studio.run = '';
+  /* Going back up is how you get out of "only these": a crumb that left the
+     filter on would show a folder grid of one game and no way to tell why. */
+  studio.onlyPicked = false;
   studio_libShow();
 }
 
@@ -1669,6 +1811,7 @@ async function studio_openMake() {
   studio_show('studio-make-scrim', true);
   studio_show('studio-mk-fit', studio.fmt === 'vertical');
   studio_mkDefault();
+  studio_mkArrangeDraw();
   studio_fillDraw();
 }
 
@@ -2319,7 +2462,28 @@ const ARRANGES = [
    why: 'Searches the order and the song together: every kill lands on a beat and no clip with 3 or more kills loses one. Takes up to ~30 s to plan.'}
 ];
 
+/* THE SAME SIX, IN THE MAKE DIALOG, where the decision is actually taken.
+   Drawn as cards rather than a segmented row: an arrangement needs its
+   sentence to be choosable -- "Best order" and "Perfect fit" mean nothing as
+   two words on a button, which is how they went unnoticed in the strip. */
+const ARRANGE_NOTE = {hits: 'recommended', fit: '~30 s to plan'};
+
+function studio_mkArrangeDraw() {
+  const host = studio_el('studio-mk-arrange');
+  if (!host) return;
+  host.innerHTML = ARRANGES.map(function (a) {
+    const on = studio.arrange === a.k;
+    const note = ARRANGE_NOTE[a.k];
+    return '<button type="button" class="studio-mk-arr' + (on ? ' is-on' : '') +
+      '" data-act="studio-arrange" data-how="' + a.k + '" aria-pressed="' + on + '">' +
+      '<span class="studio-mk-arr-name">' + esc(a.name) +
+      (note ? '<span class="studio-mk-arr-note">' + esc(note) + '</span>' : '') + '</span>' +
+      '<span class="studio-mk-arr-why">' + esc(a.why) + '</span></button>';
+  }).join('');
+}
+
 function studio_arrangeDraw() {
+  studio_mkArrangeDraw();
   const host = studio_el('bin-arrange');
   if (!host) return;
   host.innerHTML = ARRANGES.map(function (a) {
@@ -5615,12 +5779,17 @@ async function studio_open(path) {
 function studio_tab(which) {
   const view = document.getElementById('view-studio');
   if (view) view.classList.toggle('is-editing', which === 'timeline');
-  ['clips', 'timeline', 'song', 'facecam'].forEach(k => {
+  ['clips', 'reels', 'looks', 'timeline', 'song', 'facecam'].forEach(k => {
     studio_show('studio-pane-' + k, k === which);
     const b = studio_el('studio-tab-' + k);
     b.classList.toggle('is-active', k === which);
     b.setAttribute('aria-selected', String(k === which));
   });
+  /* Each pane draws itself when it is opened: the reels grid and the
+     drawers are the two heaviest things on this page, and neither should be
+     built while somebody is picking clips. */
+  if (which === 'reels') studio_renderReels();
+  if (which === 'looks') { studio_arrangeDraw(); studio_binDraw(); }
   const a = studio_el('studio-sg-audio');
   if (which !== 'song' && a && !a.paused) a.pause();
   if (which !== 'timeline' && studio.pv.playing) studio_pvPause();
@@ -6507,6 +6676,7 @@ function studio_wire() {
     else if (act === 'studio-open-folder') studio_openFolder(b.getAttribute('data-game'));
     else if (act === 'studio-open-run') studio_openRun(b.getAttribute('data-folder'));
     else if (act === 'studio-crumb') studio_goLib(b.getAttribute('data-to'));
+    else if (act === 'studio-only-picked') { studio.onlyPicked = !studio.onlyPicked; studio_libShow(); }
     else if (act === 'studio-match') studio_matchToggle(Number(b.getAttribute('data-match')));
     else if (act === 'studio-reel-fmt') { studio.reelFmt = b.getAttribute('data-fmt'); studio_renderReels(); }
     else if (act === 'studio-reels-more') {
@@ -6603,11 +6773,11 @@ function studio_wire() {
     else if (act === 'studio-reel-del') studio_reelDeleteAsk(b.getAttribute('data-path'), b.getAttribute('data-name'));
     else if (act === 'studio-rdel-cancel') { studio.reelDel = ''; studio_show('studio-rdel-scrim', false); }
     else if (act === 'studio-rdel-go') studio_reelDeleteGo();
-    else if (act === 'studio-fmt' || act === 'studio-order') {
-      const key = act === 'studio-fmt' ? 'fmt' : 'order';
-      studio[key] = b.getAttribute('data-' + key);
+    else if (act === 'studio-fmt') {
+      studio.fmt = b.getAttribute('data-fmt');
       b.parentElement.querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('is-active', x === b));
-      if (key === 'fmt') { studio_mkDefault(); studio_show('studio-mk-fit', studio.fmt === 'vertical'); }
+      studio_mkDefault();
+      studio_show('studio-mk-fit', studio.fmt === 'vertical');
     }
     else if (act === 'studio-mk-fit') {
       studio.vfit = b.getAttribute('data-fit');

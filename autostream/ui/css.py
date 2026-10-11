@@ -3723,6 +3723,42 @@ STUDIO_CSS = r"""
 .studio-match-score{font-size:13px;font-weight:600;padding:2px 8px;border-radius:var(--radius-sm);
   background:var(--surface-sunken);border:var(--border-hair) solid var(--border-subtle)}
 .studio-match-btn{margin-left:auto}
+/* WHERE THE PICKED CLIPS ARE. A pill on every level that hides clips behind
+   a click, and -- while adding to a reel -- a band naming the runs they came
+   from. The complaint this answers: "I don't know from which folder, from
+   which run the current clips are selected". */
+.studio-picked{margin-left:8px;padding:1px 9px;border-radius:var(--radius-pill);
+  background:var(--accent);color:var(--text-on-accent);
+  font-family:var(--font-text);font-size:11px;font-weight:600;white-space:nowrap}
+.studio-band{display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap;
+  margin-top:var(--space-4);padding:var(--space-3) var(--space-4);
+  background:var(--surface);border:var(--border-hair) solid var(--accent);
+  border-radius:var(--radius-lg)}
+.studio-band-who{display:flex;flex-direction:column;gap:3px;min-width:160px}
+.studio-band-runs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1;min-width:200px}
+.studio-band-acts{display:flex;align-items:center;gap:var(--space-2);margin-left:auto}
+.studio-srcchip{cursor:pointer}
+.studio-srcchip b{font-family:var(--font-mono);font-weight:600;margin-left:4px;color:var(--text-primary)}
+.studio-tray-runs{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+/* THE ORDER, IN THE MAKE DIALOG. Cards, not a segmented row: "Best order"
+   and "Perfect fit" are choices nobody can make from two words, which is
+   why they went unseen in the strip at the foot of the page. */
+.studio-mk-arrange{display:grid;grid-template-columns:repeat(auto-fit,minmax(248px,1fr));
+  gap:var(--space-3);margin:var(--space-3) 0 var(--space-5)}
+.studio-mk-arr{display:flex;flex-direction:column;gap:5px;text-align:left;cursor:pointer;
+  padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);
+  background:var(--surface);border:var(--border-hair) solid var(--border-subtle);
+  color:inherit;font:inherit;transition:border-color var(--dur-instant),box-shadow var(--dur-instant)}
+.studio-mk-arr:hover{border-color:var(--border-strong)}
+.studio-mk-arr:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.studio-mk-arr.is-on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);
+  background:var(--surface-raised)}
+.studio-mk-arr-name{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  font-family:var(--font-display);font-size:14px;font-weight:600;color:var(--text-primary)}
+.studio-mk-arr-note{padding:1px 8px;border-radius:var(--radius-pill);
+  background:var(--surface-sunken);border:var(--border-hair) solid var(--border-subtle);
+  color:var(--text-secondary);font-family:var(--font-text);font-size:11px;font-weight:600}
+.studio-mk-arr-why{color:var(--text-tertiary);font-size:12px;line-height:1.45}
 .studio-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:var(--space-4)}
 .studio-clip{position:relative;display:flex;flex-direction:column;background:var(--surface);
   border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-md);overflow:hidden;

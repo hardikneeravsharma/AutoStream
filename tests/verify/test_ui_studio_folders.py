@@ -317,3 +317,148 @@ def test_a_shift_range_follows_what_is_on_screen(pg):
     shown = pg.evaluate("""() => [...document.querySelectorAll('#studio-lib .studio-clip')]
         .map(e => e.getAttribute('data-clip'))""")
     assert order == shown, "the range order is not the order on screen"
+
+
+# ------------------------------------------- where the picked clips are
+
+def _pick_two_runs(pg):
+    """Pick clips from two different runs, the way adding to a reel does.
+
+    -> {a, b} as {label, n}: the seeded runs' sizes are the fixture's
+    business, so the counts come back rather than being written in here.
+    """
+    return pg.evaluate("""() => {
+        const g = studio.lib.games.filter(x => x.game === 'VALORANT')[0];
+        const a = g.folders[0], b = g.folders[1];
+        const pa = a.clips.slice(0, 3), pb = b.clips.slice(0, 2);
+        studio.selected = pa.map(c => c.id).concat(pb.map(c => c.id));
+        studio_goLib('folders');
+        return {a: {label: a.label, n: pa.length}, b: {label: b.label, n: pb.length}};
+    }""")
+
+
+def test_a_folder_card_says_how_many_of_its_clips_are_picked(pg):
+    """THE REPORTED GAP: the library opens on folder cards, so a selection
+    made two levels in -- or handed over by "Add clips" -- was invisible."""
+    got = _pick_two_runs(pg)
+    pill = pg.evaluate("""() => {
+        const c = [...document.querySelectorAll('#studio-lib .studio-folder-card')]
+            .filter(e => e.getAttribute('data-game') === 'VALORANT')[0];
+        const p = c.querySelector('.studio-picked');
+        return p ? p.textContent.trim() : ''; }""")
+    assert pill == f"{got['a']['n'] + got['b']['n']} picked", pill
+    # ...and nothing at all on a folder with none of them in it.
+    other = pg.evaluate("""() => {
+        const c = [...document.querySelectorAll('#studio-lib .studio-folder-card')]
+            .filter(e => e.getAttribute('data-game') === 'Counter-Strike 2')[0];
+        return !!c.querySelector('.studio-picked'); }""")
+    assert other is False
+
+
+def test_every_run_says_its_own_count(pg):
+    got = _pick_two_runs(pg)
+    pg.click('#studio-lib .studio-folder-card[data-game="VALORANT"]')
+    pg.wait_for_timeout(250)
+    rows = pg.evaluate("""() => [...document.querySelectorAll('#studio-lib .studio-run')]
+        .map(r => ({name: r.querySelector('.studio-run-name').textContent.trim(),
+                    pill: (r.querySelector('.studio-picked') || {}).textContent || ''}))""")
+    by = {r["name"].replace((r["pill"] or "").strip(), "").strip(): (r["pill"] or "").strip() for r in rows}
+    assert by.get(got["a"]["label"]) == f"{got['a']['n']} picked", by
+    assert by.get(got["b"]["label"]) == f"{got['b']['n']} picked", by
+
+
+def test_the_picks_can_be_shown_on_their_own(pg):
+    """"Show only these" is a filter, not a highlight, so the tray, a
+    shift-range and Select run all agree with what is on screen."""
+    got = _pick_two_runs(pg)
+    n = got["a"]["n"] + got["b"]["n"]
+    pg.evaluate("() => { studio.onlyPicked = true; studio_libShow(); }")
+    pg.wait_for_timeout(250)
+    assert _count(pg, "#studio-lib .studio-clip") == n
+    assert _count(pg, "#studio-lib .studio-folder-card") == 0
+    assert pg.evaluate("() => studio_visible().reduce((n, g) => n + g.clips.length, 0)") == n
+    pg.evaluate("() => { studio.onlyPicked = false; studio_libShow(); }")
+    pg.wait_for_timeout(200)
+    assert _count(pg, "#studio-lib .studio-folder-card") >= 3
+
+
+def test_the_tray_names_the_runs_a_selection_spans(pg):
+    got = _pick_two_runs(pg)
+    pg.evaluate("() => studio_renderTray()")
+    pg.wait_for_timeout(200)
+    facts = pg.evaluate("() => studio_el('studio-tray-facts').textContent")
+    assert "from 2 runs" in facts, facts
+    chips = _texts(pg, "#studio-tray-runs .studio-srcchip")
+    assert any(got["a"]["label"] in c for c in chips), chips
+    assert any(got["b"]["label"] in c for c in chips), chips
+
+
+def test_the_adding_band_names_the_reels_runs_and_opens_one(pg):
+    """What "Add clips to this reel" could not say before: which runs the
+    clips it just ticked for you came from."""
+    got = _pick_two_runs(pg)
+    pg.evaluate("""() => { studio.adding = {name: 'SajanSHort', path: 'x.mp4'}; studio_libShow(); }""")
+    pg.wait_for_selector("#studio-lib .studio-band", timeout=5_000)
+    band = pg.evaluate("() => document.querySelector('#studio-lib .studio-band').textContent")
+    assert "Adding to SajanSHort" in band, band
+    assert f"{got['a']['n'] + got['b']['n']} clips in it" in band, band
+    chips = _texts(pg, "#studio-lib .studio-band .studio-srcchip")
+    assert any(got["a"]["label"] in c and c.rstrip().endswith(str(got["a"]["n"])) for c in chips), chips
+    assert any(got["b"]["label"] in c and c.rstrip().endswith(str(got["b"]["n"])) for c in chips), chips
+    # the chip is the way to that run
+    pg.evaluate("""(label) => {
+        const c = [...document.querySelectorAll('#studio-lib .studio-band .studio-srcchip')]
+            .filter(e => e.textContent.indexOf(label) >= 0)[0];
+        c.click(); }""", got["a"]["label"])
+    pg.wait_for_timeout(300)
+    assert _count(pg, "#studio-lib .studio-clip") > 0
+    assert got["a"]["label"] in pg.evaluate(
+        "() => document.querySelector('#studio-lib .studio-crumb-now').textContent")
+    pg.evaluate("() => { studio.adding = null; studio.selected = []; studio_goLib('folders'); }")
+
+
+# ------------------------------------------------- three jobs, three tabs
+
+def test_the_clips_tab_carries_only_the_clips(pg):
+    """It used to carry all three: picking clips, ninety finished reels and
+    nine drawers of parts, in one scroll. The first screen of the page you
+    came to for clips had no clips on it."""
+    pg.evaluate("() => studio_tab('clips')")
+    pg.wait_for_timeout(250)
+    assert pg.is_visible("#studio-lib")
+    assert not pg.is_visible("#studio-pane-reels")
+    assert not pg.is_visible("#studio-pane-looks")
+    # the hero no longer carries the 223-trillion counter
+    assert pg.evaluate("""() => !document.querySelector('#studio-pane-clips .bin-calc')""")
+
+
+def test_the_reels_tab_draws_the_reels_and_says_how_many(pg):
+    pg.evaluate("() => studio_tab('reels')")
+    pg.wait_for_timeout(300)
+    assert not pg.evaluate(
+        "() => studio_el('studio-pane-reels').classList.contains('hide')")
+    assert not pg.is_visible("#studio-lib")
+    # This install has made no reels, and a tab that opens on nothing is the
+    # dead end the split is meant to remove: it says what to do instead.
+    assert pg.is_visible("#studio-reels-none")
+    assert "No reels yet" in pg.inner_text("#studio-reels-none")
+    # the count rides on the tab, so it is not lost with the section
+    assert pg.inner_text("#studio-tab-reels").strip().startswith("Reels")
+
+
+def test_the_looks_tab_holds_the_drawers_and_the_counter(pg):
+    pg.evaluate("() => studio_tab('looks')")
+    pg.wait_for_timeout(300)
+    assert pg.is_visible("#studio-pane-looks")
+    assert pg.is_visible("#bin")
+    assert pg.is_visible("#bin-total")
+    assert pg.is_visible("#bin-arrange")
+    assert not pg.is_visible("#studio-lib")
+    pg.evaluate("() => studio_tab('clips')")
+
+
+def test_moving_between_the_tabs_says_nothing(pg):
+    for tab in ("reels", "looks", "clips", "looks", "reels", "clips"):
+        pg.evaluate("(t) => studio_tab(t)", tab)
+        pg.wait_for_timeout(120)
+    assert pg.trouble == []

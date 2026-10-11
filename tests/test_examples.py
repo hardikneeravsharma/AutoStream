@@ -121,6 +121,145 @@ def test_the_stock_set_is_cut_from_one_games_clips_only(root):
     assert [c["game"] for c in examples.sources(root, game="valorant")] == ["VALORANT"] * 2
 
 
+# ------------------------------------------- which clips a card is cut from
+
+def _library(root):
+    """Four VALORANT clips that all qualify, shortest last-but-one, plus two
+    that must never be picked however loudly they are starred."""
+    from test_studio import _clips, _run
+
+    r = root / "clips"
+    _run(r, "2026-09-01_1200_VALORANT", "VALORANT",
+         [{"start": 100.0, "end": 106.0},      # 6 s
+          {"start": 200.0, "end": 212.0},      # 12 s
+          {"start": 300.0, "end": 320.0},      # 20 s
+          {"start": 400.0, "end": 405.0},      # 5 s -- the shortest
+          {"start": 500.0, "end": 503.0},      # too short for two shots
+          {"start": 600.0, "end": 610.0}],     # kill 1.0 s in: opens on a body
+         kills=[103.0, 203.0, 303.0, 403.0, 502.0, 601.0])
+    (r / ".studio").mkdir(exist_ok=True)
+    return r, {round(c["duration"]): c for c in _clips(r)}
+
+
+def test_the_shortest_two_are_cut_from_when_nothing_is_starred(root):
+    """A new install must be unaffected: this is exactly the old rule."""
+    r, _ = _library(root)
+    assert [round(c["duration"]) for c in examples.sources(r)] == [5, 6]
+
+
+def test_a_starred_clip_is_preferred_over_a_shorter_one(root):
+    """Shortest is cheap to seek, not good to look at. The player has already
+    said which clips are worth watching."""
+    r, by_len = _library(root)
+    studio.set_favourite(r, [by_len[12]["path"], by_len[20]["path"]], on=True)
+    assert [round(c["duration"]) for c in examples.sources(r)] == [12, 20]
+
+
+def test_one_starred_clip_is_joined_by_the_shortest_unstarred_one(root):
+    """Two are needed and only one is starred: the star still leads."""
+    r, by_len = _library(root)
+    studio.set_favourite(r, [by_len[20]["path"]], on=True)
+    assert [round(c["duration"]) for c in examples.sources(r)] == [20, 5]
+
+
+def test_a_starred_clip_that_cannot_be_cut_from_is_still_skipped(root):
+    """The hard requirements outrank the star: a card that opens on a body
+    falling, or has room for one shot, shows nothing whatever its source."""
+    r, by_len = _library(root)
+    studio.set_favourite(r, [by_len[3]["path"], by_len[10]["path"]], on=True)
+    assert [round(c["duration"]) for c in examples.sources(r)] == [5, 6]
+
+
+def test_the_same_library_always_gives_the_same_two(root):
+    """Every card is cut from these, so a wobble here re-cuts the whole bin."""
+    r, by_len = _library(root)
+    studio.set_favourite(r, [by_len[12]["path"], by_len[20]["path"]], on=True)
+    first = [c["id"] for c in examples.sources(r)]
+    for _ in range(3):
+        assert [c["id"] for c in examples.sources(r)] == first
+    assert examples.sources_key(examples.sources(r)) == examples.sources_key(
+        examples.sources(r))
+
+
+def test_a_star_in_another_game_does_not_reach_a_filtered_pick(root):
+    """The stock set is cut from VALORANT alone, starred or not."""
+    _run_of(root, "cs-a", "Counter-Strike 2", 5.0)
+    _run_of(root, "val-a", "VALORANT", 8.0)
+    _run_of(root, "val-b", "VALORANT", 9.0)
+    (root / ".studio").mkdir(exist_ok=True)
+    cs = next(c for g in studio.library(root)["games"] for f in g["folders"]
+              for c in f["clips"] if c["game"].startswith("Counter"))
+    studio.set_favourite(root, [cs["path"]], on=True)
+    assert [c["game"] for c in examples.sources(root, game="valorant")] == ["VALORANT"] * 2
+
+
+# ------------------------------------------------- and saying so afterwards
+
+def _no_render(monkeypatch):
+    """build() without ffmpeg: the job writes its output and says it is done."""
+    class _Job:
+        def __init__(self, proj, derived, root, out):
+            self._out = out
+
+        def run(self):
+            self._out.write_bytes(b"not really a video")
+
+        def snapshot(self):
+            return {"state": "done"}
+
+    monkeypatch.setattr(studio, "normalise", lambda proj, root: (proj, {}, []))
+    monkeypatch.setattr(studio, "StudioJob", _Job)
+    monkeypatch.setattr(examples, "_shrink", lambda *a, **kw: None)
+
+
+def test_a_fresh_folder_says_nothing_about_what_it_was_cut_from(root, stock):
+    m = examples.manifest(root)
+    assert m["cut_from"] == {}
+    # ...and the keys the page already reads are untouched.
+    assert set(m) == {"ok", "examples", "missing", "nothing", "folder", "cut_from"}
+
+
+def test_a_built_set_records_the_clips_it_was_cut_from(root, monkeypatch):
+    r, by_len = _library(root)
+    studio.set_favourite(r, [by_len[12]["path"], by_len[20]["path"]], on=True)
+    _no_render(monkeypatch)
+    out = examples.build(r, ["k04"])
+    assert out["ok"] and out["made"] == ["k04"]
+
+    got = examples.manifest(r)["cut_from"]
+    assert got["clips"] == [Path(by_len[12]["path"]).name, Path(by_len[20]["path"]).name]
+    assert got["fav"] == [True, True]
+    assert got["key"] == examples.sources_key(examples.sources(r))
+    assert json.dumps(got)                       # it has to survive the wire
+
+
+def test_the_key_changes_when_the_choice_of_clips_does(root, monkeypatch):
+    """What makes a stale set noticeable: same key, same footage."""
+    r, by_len = _library(root)
+    _no_render(monkeypatch)
+    examples.build(r, ["k04"])
+    was = examples.manifest(r)["cut_from"]["key"]
+
+    studio.set_favourite(r, [by_len[20]["path"]], on=True)
+    assert examples.sources_key(examples.sources(r)) != was
+    examples.build(r, ["t05"])
+    assert examples.manifest(r)["cut_from"]["key"] != was
+
+
+def test_examples_taken_from_elsewhere_drop_the_note(root, tmp_path, monkeypatch):
+    """They were cut from somebody else's clips; no note beats a wrong one."""
+    r, _ = _library(root)
+    _no_render(monkeypatch)
+    examples.build(r, ["k04"])
+    assert examples.manifest(r)["cut_from"]
+
+    src = tmp_path / "elsewhere"
+    src.mkdir()
+    (src / "t05.mp4").write_bytes(b"x")
+    examples.take_from(r, src)
+    assert examples.manifest(r)["cut_from"] == {}
+
+
 def test_a_gif_and_an_mp4_are_both_playable(root):
     f = examples.folder(root)
     f.mkdir(parents=True)
