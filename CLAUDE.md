@@ -158,7 +158,7 @@ and a free port, was refused whenever the app was running. `appd` now passes
 run the checkout while working, so there is no excuse for an unexercised UI edit.
 
 [docs/UI-SCENARIOS.md](docs/UI-SCENARIOS.md) is the catalogue every browser test is
-written from: 89 scenarios across all eight pages, each marked covered, sweep-only
+written from: 90 scenarios across all eight pages, each marked covered, sweep-only
 or a gap. Add to it before adding a test, so the gaps stay countable.
 
 Three rules worth keeping:

@@ -139,11 +139,12 @@ def test_every_face_and_its_licence_ship_with_the_app():
 
 def test_settings_are_off_unless_a_known_look_is_asked_for():
     assert lyrics.settings(None) == {"look": "off", "face": "", "clean": False, "pos": None,
-                                     "shift": 0.0, "reveal": "look"}
+                                     "shift": 0.0, "reveal": "look",
+                                     "box": 1.0, "size": 1.0, "alpha": 1.0}
     assert lyrics.settings({"look": "bogus", "face": "comic"})["look"] == "off"
     assert lyrics.settings({"look": "glow", "face": "bebas", "clean": 1}) == \
         {"look": "glow", "face": "bebas", "clean": True, "pos": None, "shift": 0.0,
-         "reveal": "look"}
+         "reveal": "look", "box": 1.0, "size": 1.0, "alpha": 1.0}
 
 
 def test_a_position_is_kept_clamped_inside_the_frame_and_junk_is_dropped():
@@ -354,12 +355,12 @@ def test_a_line_too_wide_for_the_look_wraps_and_shrinks():
     """Stamp's 250px was chosen for one word. Asked for a whole line it has
     to come down, or it hangs off both edges."""
     rows = [_row(["everybody", "wants", "to", "rule", "the", "world"])]
-    wrapped = lyrics._regroup("stamp", rows, "line")
+    wrapped = lyrics._regroup("stamp", rows, "line", lyrics._budget("stamp", 1.0, 1.0))
     assert "\\N" in wrapped[0][0]["w"]
     assert all(len(part) <= lyrics.REVEAL_FIT["stamp"] + 1
                for part in wrapped[0][0]["w"].split("\\N")), wrapped[0][0]["w"]
     # ...and never so far down that it stops being that look.
-    assert lyrics._shrink("stamp", [[{"w": "a" * 60}]]) == lyrics.REVEAL_MIN_SCALE
+    assert lyrics._shrink("stamp", [[{"w": "a" * 60}]], lyrics._budget("stamp", 1.0, 1.0)) == lyrics.REVEAL_MIN_SCALE
 
 
 def test_the_looks_own_reveal_is_untouched():
@@ -368,3 +369,59 @@ def test_the_looks_own_reveal_is_untouched():
     for look in lyrics.LOOKS:
         assert lyrics.build_ass(look, rows, 1080, 1920) == \
             lyrics.build_ass(look, rows, 1080, 1920, reveal="look")
+
+
+# ------------------------- the box, the size and the opacity (U27)
+
+def test_the_box_the_size_and_the_opacity_are_clamped():
+    d = lyrics.settings({"look": "stamp"})
+    assert (d["box"], d["size"], d["alpha"]) == (1.0, 1.0, 1.0)
+    got = lyrics.settings({"look": "stamp", "box": 0.01, "size": 9, "alpha": -3})
+    assert got["box"] == lyrics.BOX_MIN
+    assert got["size"] == lyrics.SIZE_MAX
+    assert got["alpha"] == lyrics.ALPHA_MIN
+    for junk in ("x", None, float("nan"), {}):
+        j = lyrics.settings({"look": "stamp", "box": junk, "size": junk, "alpha": junk})
+        assert (j["box"], j["size"], j["alpha"]) == (1.0, 1.0, 1.0), junk
+
+
+def test_a_narrower_box_brings_the_type_down():
+    """Stamp draws a word at 250px -- most of a 1080 frame, and a wall once a
+    reveal puts a whole line in it."""
+    rows = [_row(["everybody", "wants", "to", "rule"])]
+    px = {}
+    for box in (1.0, 0.5, 0.25):
+        script = lyrics.build_ass("stamp", rows, 1920, 1080, reveal="line", box=box)
+        px[box] = int([l for l in script.splitlines() if l.startswith("Style:")][0].split(",")[2])
+    assert px[1.0] > px[0.5] > px[0.25], px
+    # ...and the words wrap inside it rather than running off the edge.
+    narrow = lyrics._regroup("stamp", rows, "line", lyrics._budget("stamp", 0.25, 1.0))
+    assert narrow[0][0]["w"].count("\\N") >= 2, narrow[0][0]["w"]
+
+
+def test_size_scales_the_type_both_ways():
+    rows = [_row(["yeah", "hell"])]
+    def px(size):
+        script = lyrics.build_ass("stamp", rows, 1920, 1080, size=size)
+        return int([l for l in script.splitlines() if l.startswith("Style:")][0].split(",")[2])
+    assert px(1.6) > px(1.0) > px(0.5)
+
+
+def test_opacity_dims_the_style_and_every_animation_that_ends_opaque():
+    """ASS carries transparency in the top byte of each colour, and the looks
+    animate alpha themselves -- Serif fades each word in. Dimming the style
+    alone would be undone the moment an animation ran to &H00&."""
+    rows = [_row(["never", "gonna", "give"])]
+    script = lyrics.build_ass("serif", rows, 1920, 1080, alpha=0.5)
+    style = [l for l in script.splitlines() if l.startswith("Style:")][0]
+    assert "&H80FFFFFF" in style or "&H7FFFFFFF" in style, style
+    assert "\\alpha&H00&" not in script, "an animation still ends fully opaque"
+    # A fade from invisible still starts invisible.
+    assert "\\alpha&HFF&" in script
+
+
+def test_full_opacity_and_a_full_box_change_nothing():
+    rows = [_row(["never", "gonna", "give"], hook=1)]
+    for look in lyrics.LOOKS:
+        assert lyrics.build_ass(look, rows, 1920, 1080) == \
+            lyrics.build_ass(look, rows, 1920, 1080, box=1.0, size=1.0, alpha=1.0)

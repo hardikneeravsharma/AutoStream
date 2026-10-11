@@ -206,6 +206,7 @@ listed so the gap is visible.
 | 6.30 | Adding to a reel: press Add clips, then read the band | It names the reel, counts what is in it, carries a chip per run those clips came from, and each chip opens that run | yes (`test_ui_studio_folders`) |
 | 6.31 | Three tabs, three jobs: Clips, Reels, Looks | The clips tab holds only clips (no reels grid, no drawers, no 223-trillion counter); the reels tab draws the grid, or says what to do when there are none; the looks tab holds the drawers and the counter; moving between them says nothing in the console | yes (`test_ui_studio_folders`) |
 | 6.32 | Lyrics: with a look and a typeface chosen, pick **How they arrive** — one word, a whole line, the line building up, a typewriter | The choice is kept on the reel and named in the change list; the preview redraws without a render; the look's own reveal draws exactly what it drew before the setting existed | yes (inside 6.2) |
+| 6.33 | Lyrics: set **Width**, **Size** and **Opacity** | Each is one edit in the change list and one press of undo; a narrower box wraps the words and brings the type down; the full box at full size and solid draws exactly what the look drew before the settings existed | yes (inside 6.2) |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.
