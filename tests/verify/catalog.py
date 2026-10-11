@@ -542,6 +542,17 @@ CONTROLS: list[Control] = [
     Control("/api/studio/facecam/sync", "POST", CALL, "line up by sound", "studio",
             body={"key": "", "clip": ""}, expect=_has("ok"), acts=("studio-fc-sync",),
             why="nothing to line up without a link and a clip in the clips folder"),
+    Control("/api/studio/example/large", "POST", CALL, "the picker's sharp copy", "studio",
+            body={"id": ""}, expect=_has("state"),
+            why="the stage plays a copy cut at 1280 wide, made on demand one at a "
+                "time; an unknown part has none, and nothing is made while live"),
+    Control("/api/studio/lyrics/preview", "POST", CALL, "lyrics over the preview", "studio",
+            body={"project": None}, expect=_has("ok"),
+            why="the render's own lyric script drawn alone, so a new look shows "
+                "before any render; a project that does not normalise is refused"),
+    Control("/api/studio/lyrics/overlay", "GET", CALL, "the drawn lyrics", "studio",
+            query="name=", status=(400,), expect=_has("error"),
+            why="a name, never a path: only a drawn overlay in the lyrics cache"),
     Control("/api/studio/examples/build", "POST", CALL, "cut the examples again", "studio",
             body={}, expect=_has("ok", "build"), acts=("studio-bin-build",),
             why="renders the missing examples from the player's own clips in "
@@ -569,7 +580,8 @@ CONTROLS: list[Control] = [
             reject={"project": None}, reject_soft=True,
             acts=("studio-beats", "studio-move", "studio-remove", "studio-slip",
                   "studio-offset", "studio-rfmt", "studio-undo", "studio-fx-all",
-                  "studio-tr-all", "studio-fxp-pick", "studio-fxp-done", "studio-fxp-drop"),
+                  "studio-tr-all", "studio-fxp-pick", "studio-fxp-done", "studio-fxp-drop",
+                  "studio-fxp-stage"),
             why="every edit is clamped and re-derived by the server, so the page "
                 "and the render can never disagree about where a kill lands"),
     Control("/api/studio/vary", "POST", CALL, "Mix kill effects / transitions", "studio",
