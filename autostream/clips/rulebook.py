@@ -523,6 +523,75 @@ def arrange_seqs(ranked: list[list[Moment]], how: str, seed: int = 0) -> list[li
     return list(ranked)
 
 
+def spread_clips(seqs: list[list[Moment]]) -> list[list[Moment]]:
+    """Keep two bursts of the SAME CLIP off each other's heels.
+
+    The strongest moments cluster: a two-minute clip with twelve kills offers
+    six of the best bursts in the pack, so an order built on strength alone
+    puts them side by side. On screen that is not a cut at all -- it is the
+    same corner of the same map twice, seconds apart in real time, and it
+    reads as a stutter. Measured on a 41-shot reel: 21 of its 40 cuts went
+    from a clip straight back to itself.
+
+    Each run of same-clip neighbours is broken by pulling the nearest later
+    sequence from another clip in front of it. Nothing is dropped, nothing is
+    reordered beyond the swap, and a burst stays whole -- a TRIPLE KILL is one
+    sequence and moves as one. Where there is nothing to swap with (a reel cut
+    from two clips) the order stands: the alternative is refusing to make a
+    reel at all.
+    """
+    out = list(seqs)
+    for i in range(1, len(out)):
+        if out[i][0].group != out[i - 1][0].group:
+            continue
+        # Bring the next sequence from a different clip in between. The two
+        # same-clip sequences keep their order relative to each other; only
+        # something else is placed between them.
+        for j in range(i + 1, len(out)):
+            if out[j][0].group != out[i - 1][0].group:
+                out.insert(i, out.pop(j))
+                break
+
+    # Anything the forward pass could not reach -- a clash in the last pair has
+    # nothing left in front of it to borrow -- is settled by a swap: find any
+    # place whose neighbours do not mind this sequence, and whose own occupant
+    # this spot does not mind either.
+    def fits(sq, at: int, skip: int) -> bool:
+        for n in (at - 1, at + 1):
+            if n == skip or not 0 <= n < len(out):
+                continue
+            if out[n][0].group == sq[0].group:
+                return False
+        return True
+
+    for i in range(1, len(out)):
+        if out[i][0].group != out[i - 1][0].group:
+            continue
+        for k in range(len(out)):
+            if k in (i, i - 1):
+                continue
+            if fits(out[i], k, i) and fits(out[k], i, k):
+                out[i], out[k] = out[k], out[i]
+                break
+
+    # AND A CLIP'S OWN BURSTS STAY IN THE ORDER THEY HAPPENED. Ranking each
+    # burst separately lets a later, stronger one outrank an earlier one --
+    # and then a shot can replay footage a shot before it already showed,
+    # which is the thing `_lengthen_run_ups` and the follow-up fold exist to
+    # prevent. The places are kept; what sits in them is put back in clip
+    # order, so the spread above survives and the invariant does too.
+    where: dict[int, list[int]] = {}
+    for i, sq in enumerate(out):
+        where.setdefault(sq[0].group, []).append(i)
+    for group, at in where.items():
+        if len(at) < 2:
+            continue
+        in_order = sorted((out[i] for i in at), key=lambda sq: sq[0].seq)
+        for i, sq in zip(at, in_order):
+            out[i] = sq
+    return out
+
+
 def pin_seqs(seq: list[list[Moment]], pins: dict) -> list[list[Moment]]:
     """Move pinned sequences to the slots they were pinned to.
 
@@ -713,15 +782,26 @@ def order(moments_: list[Moment], looks: dict[int, list[float]] | None = None,
     shape is in use. Both leave the sequences themselves whole: a TRIPLE KILL
     never shows two of its three kills, however the reel is ordered.
     """
-    seqs: dict[int, list[Moment]] = {}
+    # A SEQUENCE IS A BURST, NOT A CLIP. `group` is the clip a moment came
+    # from, and keying on it alone kept every kill of a clip together -- so a
+    # two-minute clip with twelve kills contributed six moments that played
+    # back to back, minutes of real time apart, looking like the same corner
+    # six times. Measured on a 41-shot reel: 21 of its 40 cuts went from a
+    # clip straight back to itself.
+    #
+    # `seq` is the burst within the clip, already split by proximity (kills
+    # closer than GROUP_BEATS/GROUP_SECONDS). Keying on both keeps a TRIPLE
+    # KILL whole -- which is the promise this function makes -- while letting
+    # two unrelated bursts from one clip be spread across the reel.
+    seqs: dict[tuple[int, int], list[Moment]] = {}
     for m in moments_:
-        seqs.setdefault(m.group, []).append(m)
-    ranked = sorted(seqs.values(), key=lambda s: (-_strength(s), s[0].group))
+        seqs.setdefault((m.group, m.seq), []).append(m)
+    ranked = sorted(seqs.values(), key=lambda s: (-_strength(s), s[0].group, s[0].seq))
     if arrange == "hits":
-        out = pin_seqs(best_order(ranked, slot_weights, looks, opener_ok), pins or {})
+        out = pin_seqs(spread_clips(best_order(ranked, slot_weights, looks, opener_ok)), pins or {})
         return [m for s in out for m in s]
     if arrange in ("time", "best", "shuffle"):
-        out = pin_seqs(arrange_seqs(ranked, arrange, seed), pins or {})
+        out = pin_seqs(spread_clips(arrange_seqs(ranked, arrange, seed)), pins or {})
         return [m for s in out for m in s]
     if len(ranked) <= 2:
         return [m for s in ranked[::-1] for m in s]
@@ -744,8 +824,9 @@ def order(moments_: list[Moment], looks: dict[int, list[float]] | None = None,
     if looks:
         seq = spread_looks(seq, looks)
     # Pins last: spreading the looks moves sequences about, and a pin that was
-    # applied before it would not have survived the move.
-    seq = pin_seqs(seq, pins or {})
+    # applied before it would not have survived the move. Clips are spread
+    # just before them, for the same reason.
+    seq = pin_seqs(spread_clips(seq), pins or {})
     return [m for s in seq for m in s]
 
 

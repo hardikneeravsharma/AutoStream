@@ -627,7 +627,6 @@ PARTS: tuple[Part, ...] = (
     Part("h01", "hero", "Double punch", "Two punches a sixth of a second apart."),
     Part("h02", "hero", "Freeze and push in", "Time stops while the camera pushes in."),
     Part("h03", "hero", "Spotlight", "Everything but the centre drops into darkness."),
-    Part("h05", "hero", "Text slam", "The shot's caption slams in and settles."),
 
     Part("s00", "speed", "Real speed", "Plays as recorded."),
     Part("s01", "speed", "Half speed", "The whole shot at half speed."),
@@ -896,7 +895,7 @@ STYLES: tuple[Style, ...] = (
           hero=("h01",), speed="s00", hero_speed="s02", camera="c00", grade="g02", vignette=True,
           kill_pool=("k01", "k01", "k03", "k02", "k15", "k07", "k11", "k06", "k17", "k20"),
           transition_pool=("t01", "t01", "t05", "t06", "t01", "t06", "t15"),
-          hero_pool=("h01", "h02", "h05"), camera_pool=("c00", "c00", "c01", "c04", "c05"),
+          hero_pool=("h01", "h02", "h03"), camera_pool=("c00", "c00", "c01", "c04", "c05"),
           speed_pool=("s00", "s00", "s00", "s02"), energy=0.45),
     Style("velocity", "Velocity short",
           "Built like the short edits that go viral: every kill slows on its beat, everything "
@@ -908,7 +907,7 @@ STYLES: tuple[Style, ...] = (
           overlays=("o01",),
           kill_pool=("k01", "k16", "k06", "k03", "k02", "k14", "k11", "k12", "k19", "k21"),
           transition_pool=("t06", "t05", "t01", "t06", "t02", "t12", "t13"),
-          hero_pool=("h02", "h01", "h05"), camera_pool=("c00", "c00", "c04", "c08"),
+          hero_pool=("h02", "h01", "h03"), camera_pool=("c00", "c00", "c04", "c08"),
           speed_pool=("s04", "s04", "s02", "s03"), energy=0.75),
     Style("drop", "Build and drop",
           "Long shots through the build, a kill exactly on the song's drop, then quicker shots "
@@ -929,7 +928,7 @@ STYLES: tuple[Style, ...] = (
           vignette=True, overlays=("o02",),
           kill_pool=("k01", "k02", "k11", "k06", "k08", "k16", "k12", "k03", "k19", "k22", "k18"),
           transition_pool=("t01", "t05", "t01", "t06", "t02", "t12", "t13"),
-          hero_pool=("h01", "h05", "h02"), camera_pool=("c04", "c00", "c04", "c03", "c07"),
+          hero_pool=("h01", "h02", "h03"), camera_pool=("c04", "c00", "c04", "c03", "c07"),
           speed_pool=("s00", "s00", "s02", "s03"), energy=0.7),
     # ---- five more, each grouped by what its references MEASURE, not by taste.
     Style("clean", "Clean",
@@ -948,12 +947,12 @@ STYLES: tuple[Style, ...] = (
           "40-79 flashes. Loud on purpose, and not for every song.",
           ("nqa8RP_R0cU", "xrgExBQyHBc", "66zl0-VoWbg", "oJDesm--wss"),
           intro="i08", outro="e05", cuts=("t02", "t06", "t13"), kill=("k01snap", "k03wide"),
-          hero=("h01", "h05"), speed="s04", hero_speed="s04", camera="c04hard", grade="g05",
+          hero=("h01",), speed="s04", hero_speed="s04", camera="c04hard", grade="g05",
           vignette=True, overlays=("o08",), pre_share=0.4,
           kill_pool=("k01snap", "k03wide", "k02hard", "k19hard", "k06wide", "k16hard",
                      "k21hard", "k12flash", "k22hard", "k18short"),
           transition_pool=("t02", "t06", "t13", "t12", "t05", "t01"),
-          hero_pool=("h01", "h05", "h02"),
+          hero_pool=("h01", "h02", "h03"),
           camera_pool=("c04hard", "c04slam", "c00", "c06far"),
           speed_pool=("s04", "s04", "s03", "s02"), energy=0.9),
     Style("short", "Short", 
@@ -1758,7 +1757,17 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
 
     def plan_walk(ms, fixed=None, start=offset, first_index=idx0):
         ranked_ = sorted(range(len(ms)), key=lambda i: (-ms[i].strength, i))
-        heroes_ = {i for i in ranked_[:max(1, len(ms) // 6)] if ms[i].caption}
+        # THE PEAKS, AND THEY NO LONGER DEPEND ON A CAPTION. A moment was
+        # only allowed to be a hero if it carried one, and a caption is set
+        # only on the last burst of a clip that gave up two or more kills --
+        # so a reel of single headshots had almost none. Measured on a
+        # 41-shot headshot reel: ONE hero moment in the whole thing, which is
+        # a montage with no peaks in it.
+        #
+        # The caption was there to be drawn by the Text slam, and the slam is
+        # gone, so the coupling now has nothing behind it at all: the
+        # strongest sixth of the moments are the peaks, captioned or not.
+        heroes_ = set(ranked_[:max(1, len(ms) // 6)])
         lens_ = rulebook.walk(ms, beat=step, energy=energy, song_start=start, base=shot_beats,
                               open_beats=open_beats, run_beats=run_b, pre_share=style.pre_share,
                               first_index=first_index * div, downbeat_pos=grid.downbeat_pos * div,
