@@ -239,6 +239,14 @@ STUDIO_HTML = r"""
             <span class="ed-handle" id="studio-handle-chip" title="Drag to move your handle"></span>
             <span class="ed-handle ed-lyrics" id="studio-lyrics-chip" title="Drag to move the lyrics">LYRICS</span>
           </div>
+          <!-- THE BOXES THE WORDS ARE DEALT INTO. Width and Size were two
+               numbers describing a rectangle nobody could see; this is that
+               rectangle, drawn where the words will be. Drag on the empty
+               picture to make one, drag it to move it, its corners to resize,
+               the knob above it to turn it. The number on each box is the
+               order the lines are dealt in, which is the whole feature -- so
+               it is drawn on the box rather than explained underneath. -->
+          <div class="ed-boxes hide" id="studio-lyrboxes"></div>
         </div>
       </div>
 
@@ -1097,7 +1105,12 @@ const studio = {
   /* THE COMMAND LIST (Ctrl+K) and the key sheet (?). `rows` is what the
      search last matched, in the order drawn, so Up/Down and Enter act on the
      same list the eye is reading. */
-  pal: {open: false, q: '', sel: 0, rows: [], recent: []}
+  pal: {open: false, q: '', sel: 0, rows: [], recent: []},
+  /* THE LYRIC BOXES, while they are being drawn. `on` is the mode, `sel` the
+     box being worked on, `drag` whatever the pointer is in the middle of.
+     None of it is the project: the project only learns about a box when the
+     pointer comes up, so one drag is one edit and one press of undo. */
+  lyrBox: {on: false, sel: -1, drag: null}
 };
 
 const studio_el = (id) => document.getElementById(id);
@@ -5809,21 +5822,40 @@ function studio_lyricsGroup(p) {
       (cat.reveals || []).map(r => opt(r.key, r.label, r.key === (ly.reveal || 'look'))).join('') + '</select>' +
       '<span class="muted studio-small">' + esc(((cat.reveals || [])
         .filter(r => r.key === (ly.reveal || 'look'))[0] || {}).blurb || '') + '</span>' +
-      /* HOW BIG, HOW WIDE AND HOW SOLID. Stamp draws a word at 250px --
-         most of the frame, and a wall once a reveal puts a whole line in it
-         ("it takes the whole screen space"). The width is the box the words
-         live in: they wrap inside it and come down in size until they fit,
-         so narrowing it is how the lyrics stay out of the picture rather
-         than over it. Steps rather than a slider, so one choice is one edit
-         in the change list and one press of undo. */
-      '<label class="field-label" for="studio-r-lyricbox">Width</label>' +
-      '<select class="select" id="studio-r-lyricbox">' +
-      LYR_BOXES.map(b => opt(b[0], b[1], Math.abs(b[0] - (ly.box === undefined ? 1 : ly.box)) < 0.001)).join('') +
-      '</select>' +
-      '<label class="field-label" for="studio-r-lyricsize">Size</label>' +
-      '<select class="select" id="studio-r-lyricsize">' +
-      LYR_SIZES.map(b => opt(b[0], b[1], Math.abs(b[0] - (ly.size === undefined ? 1 : ly.size)) < 0.001)).join('') +
-      '</select>' +
+      /* WHERE THE WORDS GO, DRAWN RATHER THAN DESCRIBED. Width and Size are
+         two numbers for a rectangle nobody can see; a box is that rectangle,
+         put on the picture where the words will be, and it answers "how big"
+         by itself. Several boxes deal the lines round them in turn, which is
+         why each one wears its number.
+
+         Width and Size stay, folded away, for the reels that have no boxes --
+         which is every reel made before this -- and they say plainly that the
+         boxes are in charge once there are any. */
+      '<span class="field-label">Where the words go</span>' +
+      '<div class="field-inline studio-lyrbox-bar">' +
+      '<button type="button" class="btn btn-sm" data-act="studio-lyrbox-mode" ' +
+      'aria-pressed="' + (studio.lyrBox.on ? 'true' : 'false') + '">' +
+      (studio.lyrBox.on ? 'Done with the boxes' : 'Draw boxes on the picture') + '</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-lyrbox-add">Add a box</button>' +
+      (studio_lyrBoxes(p).length
+        ? '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-lyrbox-clear">Clear</button>'
+        : '') +
+      '<span class="muted studio-small">' +
+      (studio_lyrBoxes(p).length
+        ? studio_lyrBoxes(p).length + (studio_lyrBoxes(p).length === 1 ? ' box' : ' boxes') +
+          ' — the lines go round them in order'
+        : 'None yet') + '</span></div>' +
+      (studio_lyrBoxes(p).length
+        ? '<span class="muted studio-small">Width and Size are what the boxes decide now. ' +
+          'Clear the boxes to go back to them.</span>'
+        : '<label class="field-label" for="studio-r-lyricbox">Width</label>' +
+          '<select class="select" id="studio-r-lyricbox">' +
+          LYR_BOXES.map(b => opt(b[0], b[1], Math.abs(b[0] - (ly.box === undefined ? 1 : ly.box)) < 0.001)).join('') +
+          '</select>' +
+          '<label class="field-label" for="studio-r-lyricsize">Size</label>' +
+          '<select class="select" id="studio-r-lyricsize">' +
+          LYR_SIZES.map(b => opt(b[0], b[1], Math.abs(b[0] - (ly.size === undefined ? 1 : ly.size)) < 0.001)).join('') +
+          '</select>') +
       '<label class="field-label" for="studio-r-lyricalpha">Opacity</label>' +
       '<select class="select" id="studio-r-lyricalpha">' +
       LYR_ALPHAS.map(b => opt(b[0], b[1], Math.abs(b[0] - (ly.alpha === undefined ? 1 : ly.alpha)) < 0.001)).join('') +
@@ -6268,6 +6300,9 @@ function studio_frameDraw() {
   fr.classList.toggle('hide', !on && !lyr);
   chip.classList.toggle('hide', !on);
   if (lc) lc.classList.toggle('hide', !lyr);
+  /* The boxes live on the same picture and move with it, so they are redrawn
+     wherever the stand-in is -- including on a window resize. */
+  studio_boxDraw();
   const r = studio_videoRect();
   if (!r) return;
   if (lyr && lc) {
@@ -6340,6 +6375,192 @@ function studio_lyrPointer(e) {
   if (Math.abs(pos[0] - g.start[0]) + Math.abs(pos[1] - g.start[1]) > 0.002) {
     studio_change(pr => { pr.lyrics = Object.assign({}, pr.lyrics, {pos: pos}); }, 'Lyrics · moved');
   } else studio_frameDraw();
+}
+
+/* ------------------------------------------------- the boxes the words go in
+
+   Width and Size asked for two numbers describing a rectangle nobody could
+   see. A box IS that rectangle, drawn on the picture where the words will be,
+   and it answers "how big" by itself because the type becomes whatever fits.
+
+   More than one box turns placement into an arrangement: the lines are DEALT
+   round them in the order they were drawn, so the number on each box is not
+   decoration -- it is the thing being chosen. The server does the dealing
+   (clips/lyrics.py); this is only where the rectangles are drawn.
+
+   A reel with no boxes behaves exactly as it always did. */
+
+const LYR_BOX_MIN = 0.06;                 /* clips/lyrics.py BOX_SIDE_MIN */
+const LYR_BOX_MAX = 6;                    /* clips/lyrics.py BOXES_MAX */
+
+function studio_lyrBoxes(p) {
+  const b = p && p.lyrics && p.lyrics.boxes;
+  return Array.isArray(b) ? b : [];
+}
+
+/* The boxes as the pointer has them this instant: the project's, with
+   whatever is being dragged laid over the top. Drawing reads this so a drag
+   is seen as it happens, and the project is only written on pointerup. */
+function studio_boxNow() {
+  const live = studio.lyrBox.drag && studio.lyrBox.drag.boxes;
+  return live ? live : studio_lyrBoxes(studio.project).map(b => Object.assign({}, b));
+}
+
+function studio_boxDraw() {
+  const host = studio_el('studio-lyrboxes'), p = studio.project;
+  if (!host) return;
+  const lyr = !!(p && p.lyrics && p.lyrics.look && p.lyrics.look !== 'off');
+  const on = studio.lyrBox.on && lyr && studio.sel < 0;
+  host.classList.toggle('hide', !on);
+  if (!on) { host.innerHTML = ''; return; }
+  const r = studio_videoRect();
+  if (!r) return;
+  host.style.left = r.x + 'px'; host.style.top = r.y + 'px';
+  host.style.width = r.w + 'px'; host.style.height = r.h + 'px';
+  const boxes = studio_boxNow();
+  const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+  host.innerHTML = boxes.map((b, i) => {
+    const sel = i === studio.lyrBox.sel;
+    const hs = sel ? HANDLES.map(h => '<span class="ed-box-h ed-box-' + h + '" data-bh="' + h +
+                                      '" data-bi="' + i + '"></span>').join('') +
+                     '<span class="ed-box-h ed-box-rot" data-bh="rot" data-bi="' + i + '" ' +
+                     'title="Turn this box"></span>' : '';
+    return '<div class="ed-box' + (sel ? ' is-on' : '') + '" data-bi="' + i + '" style="' +
+      'left:' + (b.x - b.w / 2) * 100 + '%;top:' + (b.y - b.h / 2) * 100 + '%;' +
+      'width:' + b.w * 100 + '%;height:' + b.h * 100 + '%;' +
+      'transform:rotate(' + (Number(b.rot) || 0) + 'deg)">' +
+      '<span class="ed-box-num">' + (i + 1) + '</span>' + hs + '</div>';
+  }).join('') + (boxes.length ? '' :
+    '<p class="ed-box-hint">Drag on the picture to draw the first box.</p>');
+}
+
+/* One drag: make a box, move it, resize it from a corner, or turn it. The
+   project is written once, on pointerup, so the change list counts one edit
+   however far the pointer travelled. */
+function studio_boxPointer(e) {
+  const host = studio_el('studio-lyrboxes'), p = studio.project;
+  if (!host || !p || !studio.lyrBox.on) return;
+  const st = studio.lyrBox;
+
+  if (e.type === 'pointerdown') {
+    const r = studio_videoRect();
+    if (!r) return;
+    const boxes = studio_lyrBoxes(p).map(b => Object.assign({}, b));
+    const h = e.target.closest ? e.target.closest('.ed-box-h') : null;
+    const inBox = e.target.closest ? e.target.closest('.ed-box') : null;
+    const fx = (e.clientX - r.x) / Math.max(1, r.w), fy = (e.clientY - r.y) / Math.max(1, r.h);
+    if (h) {
+      st.sel = Number(h.getAttribute('data-bi'));
+      st.drag = {how: h.getAttribute('data-bh'), i: st.sel, x0: fx, y0: fy,
+                 was: Object.assign({}, boxes[st.sel]), boxes: boxes, r: r, id: e.pointerId};
+    } else if (inBox) {
+      st.sel = Number(inBox.getAttribute('data-bi'));
+      st.drag = {how: 'move', i: st.sel, x0: fx, y0: fy,
+                 was: Object.assign({}, boxes[st.sel]), boxes: boxes, r: r, id: e.pointerId};
+    } else {
+      /* On the empty picture: a new box, sized by the drag. Refused rather
+         than silently ignored once there are as many as the render deals. */
+      if (boxes.length >= LYR_BOX_MAX) {
+        toast('That is as many boxes as a reel deals round. Remove one first.', 'warn');
+        return;
+      }
+      boxes.push({x: fx, y: fy, w: LYR_BOX_MIN, h: LYR_BOX_MIN, rot: 0});
+      st.sel = boxes.length - 1;
+      st.drag = {how: 'new', i: st.sel, x0: fx, y0: fy,
+                 was: {x: fx, y: fy}, boxes: boxes, r: r, id: e.pointerId};
+    }
+    try { host.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
+    e.preventDefault();
+    studio_boxDraw();
+    return;
+  }
+
+  const g = st.drag;
+  if (!g || e.pointerId !== g.id) return;
+  const fx = (e.clientX - g.r.x) / Math.max(1, g.r.w);
+  const fy = (e.clientY - g.r.y) / Math.max(1, g.r.h);
+  const dx = fx - g.x0, dy = fy - g.y0;
+  const b = g.boxes[g.i];
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+  if (g.how === 'new') {
+    b.x = (g.was.x + fx) / 2; b.y = (g.was.y + fy) / 2;
+    b.w = Math.max(LYR_BOX_MIN, Math.abs(fx - g.was.x));
+    b.h = Math.max(LYR_BOX_MIN, Math.abs(fy - g.was.y));
+  } else if (g.how === 'move') {
+    b.x = g.was.x + dx; b.y = g.was.y + dy;
+  } else if (g.how === 'rot') {
+    /* The angle from the box's centre to the pointer, measured from straight
+       up, because that is where the knob sits. */
+    const cx = g.r.x + g.r.w * b.x, cy = g.r.y + g.r.h * b.y;
+    let a = Math.atan2(e.clientX - cx, cy - e.clientY) * 180 / Math.PI;
+    if (!e.shiftKey) a = Math.round(a / 5) * 5;           /* Shift for any angle */
+    b.rot = clamp(Math.round(a * 10) / 10, -90, 90);
+  } else {
+    /* A corner or an edge. The pointer's travel is turned into the box's own
+       axes first, so a turned box resizes along ITS sides rather than the
+       frame's, and the corner opposite the one held stays where it is. */
+    const a = (Number(g.was.rot) || 0) * Math.PI / 180;
+    const cos = Math.cos(a), sin = Math.sin(a);
+    const lx = dx * cos + dy * sin, ly = -dx * sin + dy * cos;
+    const sx = g.how.indexOf('e') >= 0 ? 1 : (g.how.indexOf('w') >= 0 ? -1 : 0);
+    const sy = g.how.indexOf('s') >= 0 ? 1 : (g.how.indexOf('n') >= 0 ? -1 : 0);
+    const w = Math.max(LYR_BOX_MIN, g.was.w + sx * lx);
+    const h = Math.max(LYR_BOX_MIN, g.was.h + sy * ly);
+    /* Half of what the box grew, pushed back out along its own axes. */
+    const mx = sx * (w - g.was.w) / 2, my = sy * (h - g.was.h) / 2;
+    b.w = w; b.h = h;
+    b.x = g.was.x + mx * cos - my * sin;
+    b.y = g.was.y + mx * sin + my * cos;
+  }
+  /* Held inside the picture by its own half-width, the same rule the server
+     applies -- so what is drawn is what will be rendered. */
+  b.w = clamp(b.w, LYR_BOX_MIN, 1); b.h = clamp(b.h, LYR_BOX_MIN, 1);
+  b.x = clamp(b.x, b.w / 2, 1 - b.w / 2);
+  b.y = clamp(b.y, b.h / 2, 1 - b.h / 2);
+
+  if (e.type === 'pointermove') { studio_boxDraw(); return; }
+  studio.lyrBox.drag = null;
+  const tidy = g.boxes.map(x => ({x: Math.round(x.x * 1e4) / 1e4, y: Math.round(x.y * 1e4) / 1e4,
+                                  w: Math.round(x.w * 1e4) / 1e4, h: Math.round(x.h * 1e4) / 1e4,
+                                  rot: Number(x.rot) || 0}));
+  const name = g.how === 'new' ? 'Lyrics · box ' + (g.i + 1) + ' drawn'
+             : g.how === 'move' ? 'Lyrics · box ' + (g.i + 1) + ' moved'
+             : g.how === 'rot' ? 'Lyrics · box ' + (g.i + 1) + ' turned'
+             : 'Lyrics · box ' + (g.i + 1) + ' resized';
+  studio_boxSave(tidy, name);
+}
+
+/* Every change to the boxes goes through here: one edit, one line on the
+   change list, one undo -- and the background render takes it like any other. */
+function studio_boxSave(boxes, label) {
+  studio_change(pr => {
+    pr.lyrics = Object.assign({}, pr.lyrics, {boxes: boxes});
+  }, label);
+  studio_boxDraw();
+}
+
+function studio_boxAdd() {
+  const boxes = studio_lyrBoxes(studio.project).map(b => Object.assign({}, b));
+  if (boxes.length >= LYR_BOX_MAX) {
+    toast('That is as many boxes as a reel deals round.', 'warn');
+    return;
+  }
+  /* Stepped down the frame rather than stacked on the last one, so a second
+     box is visible the moment it appears instead of hiding under the first. */
+  const n = boxes.length;
+  boxes.push({x: 0.5, y: Math.min(0.85, 0.3 + n * 0.18), w: 0.6, h: 0.14, rot: 0});
+  studio.lyrBox.on = true;
+  studio.lyrBox.sel = boxes.length - 1;
+  studio_boxSave(boxes, 'Lyrics · box ' + boxes.length + ' added');
+}
+
+function studio_boxDel(i) {
+  const boxes = studio_lyrBoxes(studio.project).map(b => Object.assign({}, b));
+  if (i < 0 || i >= boxes.length) return;
+  boxes.splice(i, 1);
+  studio.lyrBox.sel = Math.min(i, boxes.length - 1);
+  studio_boxSave(boxes, boxes.length ? 'Lyrics · a box removed' : 'Lyrics · boxes cleared');
 }
 
 /* ------------------------------------------------------------ the facecam tab */
@@ -7281,6 +7502,20 @@ function studio_wire() {
       studio_drawInspector();
       studio_frameDraw();
     }
+    else if (act === 'studio-lyrbox-mode' && p) {
+      studio.lyrBox.on = !studio.lyrBox.on;
+      /* The stand-in and the boxes answer the same question two ways; having
+         both on the picture at once is two lots of "the words go here". */
+      if (studio.lyrBox.on) studio.lyrMove = false;
+      studio_drawInspector();
+      studio_frameDraw();
+    }
+    else if (act === 'studio-lyrbox-add' && p) studio_boxAdd();
+    else if (act === 'studio-lyrbox-clear' && p) {
+      studio.lyrBox.sel = -1;
+      studio_boxSave([], 'Lyrics · boxes cleared');
+      studio_drawInspector();
+    }
     else if (act === 'studio-lyr-pos-reset' && p) studio_change(pr => {
       pr.lyrics = Object.assign({}, pr.lyrics, {pos: null});
     }, 'Lyrics · back to the look’s place');
@@ -7378,6 +7613,8 @@ function studio_wire() {
     if (chip) chip.addEventListener(ev, studio_handlePointer);
     const lchip = studio_el('studio-lyrics-chip');
     if (lchip) lchip.addEventListener(ev, studio_lyrPointer);
+    const lbox = studio_el('studio-lyrboxes');
+    if (lbox) lbox.addEventListener(ev, studio_boxPointer);
     const st = studio_el('studio-fc-stage');
     if (st) st.addEventListener(ev, studio_fcPointer);
   });

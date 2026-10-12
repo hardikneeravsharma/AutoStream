@@ -20,7 +20,7 @@ a measured figure quietly becomes an estimate.
 
 | Page | `data-act` controls | Operable ids |
 |---|---|---|
-| studio | 151 | 17 |
+| studio | 154 | 17 |
 | clips | 47 | 10 |
 | reel | 22 | 2 |
 | settings | 7 | 10 |
@@ -28,7 +28,7 @@ a measured figure quietly becomes an estimate.
 | dashboard | 2 | 12 |
 | logs | 0 | 3 |
 | shell | 0 | 2 |
-| **total** | **230** | **57** |
+| **total** | **233** | **57** |
 
 Dashboard, logs and shell carry no `data-act`: they are wired by element id,
 which is why both columns matter.
@@ -168,7 +168,7 @@ listed so the gap is visible.
 | 5.30 | Framing marks its choice | The reported bug | yes |
 | 5.31 | Upload to YouTube | Refused safely with no account | **gap** |
 
-# 6 · Studio — 151 controls
+# 6 · Studio — 154 controls
 
 `test_ui_playwright.py` covers the two big flows and the effect picker.
 
@@ -211,6 +211,10 @@ listed so the gap is visible.
 | 6.35 | A command that cannot run says why: with a one-shot reel, find "Remove the selected shot" in the list | It is listed, not hidden, and reads "A reel keeps at least one shot, and this is the last one"; pressing Delete says the same thing rather than doing nothing in silence | **gap** |
 | 6.36 | The key sheet on **?**: press ? on the timeline, and from the list's "All the keys" | Every scope with a key is a section, in the order the page reads them; each key printed is one the page answers to; typing ? into a text field types a question mark instead of opening it | **gap** |
 | 6.37 | The browser tier asks the editor what it can do: GET `/api/studio/commands`, then run each timeline command named there | Every command either runs or gives a reason; no command names a control the page does not render | **gap** |
+| 6.38 | Draw the lyric boxes: press "Draw boxes on the picture", drag a rectangle on the preview, drag it to move, a corner to resize, the knob above it to turn | A box appears where it was drawn, wearing the number 1; each drag is ONE line on the change list and one press of undo; the box is held inside the picture by its own half-width | **gap** |
+| 6.39 | Several boxes, and the deal: draw a second and a third, then look at the preview | Each box wears its order number; the first line is drawn in box 1, the second in box 2, the third in box 3 and the fourth back in box 1, without a render | **gap** |
+| 6.40 | The box decides the size: draw one wide box and one small one | The words in the small box are drawn smaller than those in the wide one, and neither spills outside the rectangle that was drawn | **gap** |
+| 6.41 | Width and Size give way: with boxes drawn, open the Lyrics group; then Clear | Width and Size are replaced by a line saying the boxes decide; clearing the boxes brings both controls back with their old values | **gap** |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.

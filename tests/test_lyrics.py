@@ -140,11 +140,11 @@ def test_every_face_and_its_licence_ship_with_the_app():
 def test_settings_are_off_unless_a_known_look_is_asked_for():
     assert lyrics.settings(None) == {"look": "off", "face": "", "clean": False, "pos": None,
                                      "shift": 0.0, "reveal": "look",
-                                     "box": 1.0, "size": 1.0, "alpha": 1.0}
+                                     "box": 1.0, "size": 1.0, "alpha": 1.0, "boxes": []}
     assert lyrics.settings({"look": "bogus", "face": "comic"})["look"] == "off"
     assert lyrics.settings({"look": "glow", "face": "bebas", "clean": 1}) == \
         {"look": "glow", "face": "bebas", "clean": True, "pos": None, "shift": 0.0,
-         "reveal": "look", "box": 1.0, "size": 1.0, "alpha": 1.0}
+         "reveal": "look", "box": 1.0, "size": 1.0, "alpha": 1.0, "boxes": []}
 
 
 def test_a_position_is_kept_clamped_inside_the_frame_and_junk_is_dropped():
@@ -460,3 +460,106 @@ def test_full_opacity_and_a_full_box_change_nothing():
     for look in lyrics.LOOKS:
         assert lyrics.build_ass(look, rows, 1920, 1080) == \
             lyrics.build_ass(look, rows, 1920, 1080, box=1.0, size=1.0, alpha=1.0)
+
+
+# ------------------------------ the boxes the lines are dealt into (U28)
+
+def _boxes3():
+    """Three boxes of different sizes, the last one turned."""
+    return [{"x": 0.30, "y": 0.22, "w": 0.50, "h": 0.16},
+            {"x": 0.70, "y": 0.50, "w": 0.45, "h": 0.14},
+            {"x": 0.35, "y": 0.78, "w": 0.55, "h": 0.18, "rot": -8}]
+
+
+def _points(script):
+    """Every place an event is drawn or starts moving from."""
+    out = []
+    for line in script.splitlines():
+        if not line.startswith("Dialogue:"):
+            continue
+        m = re.search(r"\\pos\((\d+),(\d+)\)", line) or re.search(r"\\move\((\d+),(\d+)", line)
+        if m:
+            out.append((int(m.group(1)), int(m.group(2))))
+    return out
+
+
+def test_boxes_are_clamped_kept_in_order_and_junk_is_dropped():
+    assert lyrics.settings({"look": "stamp"})["boxes"] == []
+    assert lyrics.settings({"look": "stamp", "boxes": "nonsense"})["boxes"] == []
+    got = lyrics.settings({"look": "stamp", "boxes": [
+        {"x": 0.5, "y": 0.5, "w": 0.4, "h": 0.2},
+        "not a box",
+        {"x": 9, "y": -9, "w": 0.4, "h": 0.2},            # pushed back inside
+        {"x": 0.5, "y": 0.5, "w": 0.0001, "h": 0.0001},   # too small to hold a word
+        {"x": float("nan"), "y": 0.5, "w": 0.4, "h": 0.2},
+    ]})["boxes"]
+    assert len(got) == 3, got
+    assert got[0] == {"x": 0.5, "y": 0.5, "w": 0.4, "h": 0.2, "rot": 0.0}
+    # Inside the frame BY ITS OWN HALF-WIDTH: a box half off the picture would
+    # have its words cut in half.
+    assert got[1]["x"] == pytest.approx(1 - 0.4 / 2)
+    assert got[1]["y"] == pytest.approx(0.2 / 2)
+    assert got[2]["w"] == lyrics.BOX_SIDE_MIN and got[2]["h"] == lyrics.BOX_SIDE_MIN
+    # No more than the page offers, and the order they were drawn in is kept.
+    many = [{"x": 0.1 * i + 0.1, "y": 0.5, "w": 0.2, "h": 0.1} for i in range(lyrics.BOXES_MAX + 4)]
+    kept = lyrics.settings({"look": "stamp", "boxes": many})["boxes"]
+    assert len(kept) == lyrics.BOXES_MAX
+    assert [b["x"] for b in kept] == [round(0.1 * i + 0.1, 4) for i in range(lyrics.BOXES_MAX)]
+
+
+def test_the_lines_are_dealt_round_the_boxes_in_the_order_drawn():
+    """THE WHOLE POINT: first line in the first box, second in the second,
+    fourth back in the first. The order of the list IS the feature."""
+    boxes = _boxes3()
+    rows = [_row(["one", "two", "three"]), _row(["four", "five", "six"]),
+            _row(["seven", "eight", "nine"]), _row(["ten", "eleven", "twelve"])]
+    for look in lyrics.LOOKS:
+        script = lyrics.build_ass(look, [list(r) for r in rows], 1080, 1920,
+                                  reveal="line", boxes=boxes)
+        drawn = sorted(set(_points(script)))
+        # Every box is used, and nothing is drawn anywhere far from one of
+        # them. Caption and Scrawl whip in from a side, so a point is allowed
+        # to sit off the centre horizontally -- never vertically.
+        for b in boxes:
+            assert any(abs(y - b["y"] * 1920) < 60 for _x, y in drawn), (look, b, drawn)
+        rows_used = {y for _x, y in drawn}
+        assert len(rows_used) <= len(boxes) + 1, (look, rows_used)
+
+
+def test_the_box_decides_the_type_size_and_the_words_fit_it():
+    """A box is the answer to "how big" as well as "where": the type comes
+    down until the words fit the box that was drawn, in both directions."""
+    big = [{"x": 0.5, "y": 0.3, "w": 0.9, "h": 0.30}]
+    small = [{"x": 0.5, "y": 0.3, "w": 0.35, "h": 0.12}]
+    line = "i took her to queens gambit yeah yeah showed around".split()
+    for look in ("stamp", "glow", "scrawl"):
+        sizes = []
+        for boxes in (big, small):
+            script = lyrics.build_ass(look, [_row(line)], 1080, 1920, reveal="line", boxes=boxes)
+            ev = [x for x in script.splitlines() if x.startswith("Dialogue:")][0]
+            px = int(re.search(r"\\fs(\d+)", ev).group(1))
+            deep = ev.count("\\N") + 1
+            sizes.append(px)
+            box = boxes[0]
+            assert deep * px * lyrics.LINE_SPACING <= box["h"] * 1920 + 1, (look, deep, px)
+            assert px >= lyrics.BOX_PX_MIN * 0.9, (look, px)
+        assert sizes[0] > sizes[1], (look, sizes)
+
+
+def test_a_turned_box_turns_the_words():
+    script = lyrics.build_ass("stamp", [_row(["one", "two"])], 1080, 1920, reveal="line",
+                              boxes=[{"x": 0.5, "y": 0.5, "w": 0.6, "h": 0.2, "rot": 12}])
+    # ASS turns anticlockwise for a positive \frz, so a box turned clockwise
+    # by 12 degrees is \frz-12.
+    assert "\\frz-12" in script, script[-400:]
+
+
+def test_a_reel_with_no_boxes_is_exactly_what_it_was():
+    """Every reel that already exists has no boxes. None of them may move."""
+    rows = [_row(["never", "gonna", "give"], hook=2), _row(["you", "up"])]
+    for look in lyrics.LOOKS:
+        for reveal in lyrics.REVEALS:
+            was = lyrics.build_ass(look, [list(r) for r in rows], 1080, 1920, reveal=reveal)
+            for empty in (None, [], "junk", [{"x": "x"}]):
+                assert lyrics.build_ass(look, [list(r) for r in rows], 1080, 1920,
+                                        reveal=reveal, boxes=empty) == was, (look, reveal, empty)
