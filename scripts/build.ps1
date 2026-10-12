@@ -242,6 +242,40 @@ if (Test-Path $live) {
     Write-Ok "kept the live install's config, secrets, logs and state.json"
 }
 
+# WINDOWS LETS GO IN ITS OWN TIME, AND PYINSTALLER WILL NOT WAIT.
+#
+# The guard above waits for AutoStream.exe itself to become writable. That is
+# not the same as the install being free: the exe was released while
+# _internal\msvcp140.dll was still mapped, PyInstaller began clearing dist\,
+# hit that file, and aborted PART WAY THROUGH -- leaving 31 files where there
+# should be hundreds and an install that would not start. Retrying picked a
+# different runtime DLL each time.
+#
+# So the old install is cleared HERE, by us, with patience, and only after the
+# config, secrets, logs and state.json above have been copied out. PyInstaller
+# then writes into an empty directory and has nothing to fight over. Done in
+# this order it cannot half-delete anything: either the folder goes completely
+# or the build stops before touching it.
+$live = Join-Path $Root "dist\AutoStream"
+if (Test-Path $live) {
+    $gone = $false
+    for ($i = 0; $i -lt 40 -and -not $gone; $i++) {
+        try {
+            Remove-Item -Recurse -Force $live -ErrorAction Stop
+            $gone = $true
+        } catch {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    if (-not $gone) {
+        Write-Bad "the old install could not be cleared - something still holds a file in it"
+        Write-Host "       Close anything looking at dist\AutoStream (Explorer, a player," -ForegroundColor Red
+        Write-Host "       a second copy of the app) and run the build again." -ForegroundColor Red
+        exit 1
+    }
+    Write-Ok "cleared the old install, so the freeze has nothing to fight over"
+}
+
 # ---- 3. build --------------------------------------------------------
 Write-Step "building (2-4 minutes, output below)..."
 $code = Invoke-Native $vpy @("-m", "PyInstaller", "autostream.spec", "--noconfirm", "--log-level", "WARN") -Echo

@@ -433,10 +433,28 @@ def cmd_run(args) -> int:
     # reach: the Scheduled Task starts one at login and somebody double-clicks
     # the shortcut.
     if not single.acquire():
-        log.error("AutoStream is already running. Use the tray icon, or the "
-                  "dashboard at %s", f"http://127.0.0.1:{port}/")
-        notify.toast("AutoStream is already running",
-                     "Open it from the tray icon rather than starting a second copy.")
+        # ASK THE ONE THAT IS RUNNING TO COME FORWARD. Exiting quietly is what
+        # a double-click on the shortcut looked like from the outside: the app
+        # "opens" and nothing appears -- and the window it is pointing at may
+        # be minimised to the tray, or sitting on a monitor that is switched
+        # off. Bringing it up is what the person pressing the icon wanted.
+        shown = False
+        try:
+            import json as _json
+            import urllib.request as _url
+            req = _url.Request(f"http://127.0.0.1:{port}/api/cmd?k={token}",
+                               data=_json.dumps({"command": "show"}).encode("utf-8"),
+                               headers={"Content-Type": "application/json"})
+            with _url.urlopen(req, timeout=3) as r:
+                shown = r.status == 200
+        except Exception as e:                              # noqa: BLE001
+            log.debug("could not ask the running copy to show itself: %s", e)
+        log.error("AutoStream is already running%s. Use the tray icon, or the "
+                  "dashboard at %s", " - brought it to the front" if shown else "",
+                  f"http://127.0.0.1:{port}/")
+        if not shown:
+            notify.toast("AutoStream is already running",
+                         "Open it from the tray icon rather than starting a second copy.")
         return 1
 
     first_run = not is_configured()
