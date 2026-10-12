@@ -349,3 +349,36 @@ def test_a_mark_is_kept_on_the_reel_and_cannot_be_dropped_twice(page: str) -> No
     # Added through studio_change, so it joins the change list and one undo
     # takes it back, like every other edit.
     assert "studio_change(" in fn, fn
+
+
+def test_a_scopes_keys_sit_below_the_scopes_read_before_it(page: str) -> None:
+    """THE RULE THAT SHOULD HAVE CAUGHT IT, and did not.
+
+    U18's shuttle bound K and was wired ABOVE the song pane, which binds K to
+    "mark a kill". The handler returns on the first match, so marking a kill
+    silently stopped working -- and `test_every_declared_key_is_one_the_page
+    _reads` passed throughout, because it only asked whether the literal was
+    somewhere in the file. The browser tier found it.
+
+    Existence is not enough: a key has to be read in the scope it is declared
+    in. The timeline is the LAST scope, so every timeline key must appear
+    after the song pane's branch and after the focused-button guard.
+    """
+    song = page.index("if (song && studio.sg.shape) {")
+    guard = page.index("if (onButton && (e.key === ' '")
+    assert song < guard, "the song pane is read before the button guard"
+
+    late = []
+    for scope, key, cid in C.bindings():
+        if scope != "timeline" or key.startswith("Ctrl"):
+            continue                       # Ctrl keys are deliberately global
+        forms = _LITERALS.get(key)
+        assert forms, f"{cid} declares {key!r} with no literal in the table"
+        # The LAST place the page reads this literal is the one that counts:
+        # an earlier scope may legitimately bind the same key for itself.
+        where = max((page.rfind(f) for f in forms), default=-1)
+        if where < guard:
+            late.append((cid, key))
+    assert not late, (
+        "these are declared as timeline keys but read before the scopes above "
+        f"the timeline, so another pane's binding wins: {late}")

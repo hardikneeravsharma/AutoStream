@@ -8246,19 +8246,6 @@ function studio_wire() {
     /* '?' IS A CHARACTER SOMEBODY MIGHT BE TYPING, so unlike Ctrl+K it waits
        until after the guard above. */
     if (e.key === '?') { e.preventDefault(); studio_keysOpen(); return; }
-    /* THE TOOLS, on the keys their trade uses. Escape is already "close
-       whatever is open" above; on a timeline with nothing open it also puts
-       the tool back to Select, so nobody is left holding a razor. */
-    if (e.key === 'v' || e.key === 'V') { e.preventDefault(); studio_tool('select'); return; }
-    if (e.key === 'n' || e.key === 'N') { e.preventDefault(); studio_tool('roll'); return; }
-    if (e.key === 'c' || e.key === 'C') { e.preventDefault(); studio_tool('razor'); return; }
-    /* J K L, in, out and a mark. Navigation, not edits -- see studio.io. */
-    if (e.key === 'j' || e.key === 'J') { e.preventDefault(); studio_shuttle(-1); return; }
-    if (e.key === 'k' || e.key === 'K') { e.preventDefault(); studio.shuttle = 0; studio_shuttleApply(); return; }
-    if (e.key === 'l' || e.key === 'L') { e.preventDefault(); studio_shuttle(1); return; }
-    if (e.key === 'i' || e.key === 'I') { e.preventDefault(); studio_ioSet('a'); return; }
-    if (e.key === 'o' || e.key === 'O') { e.preventDefault(); studio_ioSet('b'); return; }
-    if (e.key === 'm' || e.key === 'M') { e.preventDefault(); studio_markAdd(); return; }
     /* A focused button owns Space and Backspace: Space presses it. */
     const onButton = tag === 'BUTTON' || (e.target.closest && e.target.closest('button,[role="tab"],a'));
     const song = !studio_el('studio-pane-song').classList.contains('hide');
@@ -8270,6 +8257,25 @@ function studio_wire() {
     if (onButton && (e.key === ' ' || e.key === 'Backspace' || e.key === 'Enter')) return;
     const tl = !studio_el('studio-pane-timeline').classList.contains('hide');
     if (!tl || !studio.project) return;
+    /* THE TOOLS AND THE NAVIGATION ARE TIMELINE KEYS, and they sit HERE for
+       a reason the browser tier found the hard way: put above, the shuttle's
+       K stole the song pane's K and marking a kill silently stopped working.
+       Every scope's keys belong below the scopes that are read before it --
+       that order is the whole contract of this block, and the registry says
+       these are `timeline`, so this is where they go.
+
+       Escape is already "close whatever is open" above; on a timeline with
+       nothing open it also puts the tool back to Select. */
+    if (e.key === 'v' || e.key === 'V') { e.preventDefault(); studio_tool('select'); return; }
+    if (e.key === 'n' || e.key === 'N') { e.preventDefault(); studio_tool('roll'); return; }
+    if (e.key === 'c' || e.key === 'C') { e.preventDefault(); studio_tool('razor'); return; }
+    /* J K L, in, out and a mark. Navigation, not edits -- see studio.io. */
+    if (e.key === 'j' || e.key === 'J') { e.preventDefault(); studio_shuttle(-1); return; }
+    if (e.key === 'k' || e.key === 'K') { e.preventDefault(); studio.shuttle = 0; studio_shuttleApply(); return; }
+    if (e.key === 'l' || e.key === 'L') { e.preventDefault(); studio_shuttle(1); return; }
+    if (e.key === 'i' || e.key === 'I') { e.preventDefault(); studio_ioSet('a'); return; }
+    if (e.key === 'o' || e.key === 'O') { e.preventDefault(); studio_ioSet('b'); return; }
+    if (e.key === 'm' || e.key === 'M') { e.preventDefault(); studio_markAdd(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
       /* Shift goes the other way. Checked here rather than as its own branch
          so the two can never be bound to different scopes by accident. */
