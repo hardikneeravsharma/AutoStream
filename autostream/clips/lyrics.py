@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import re
 import time
 import urllib.parse
@@ -132,6 +133,9 @@ ALPHA_MIN, ALPHA_MAX = 0.15, 1.0
 # A reel with no boxes is every reel that already exists, and renders through
 # `pos`/`box`/`size` exactly as it did. There is a test for that, because a
 # setting that silently restyles finished reels is worse than no setting.
+CLIP_BOX = "\\clip(0,{y1},{w},{y2})"
+CLIP_POLY = "\\clip(m {pts})"
+BREAK = "\\N"              # the hard line break ASS understands
 BOXES_MAX = 6
 BOX_SIDE_MIN = 0.06                     # smaller than this cannot hold a word
 # The smallest type a box may bring the words down to, on a 1080-wide frame.
@@ -589,6 +593,53 @@ def _ev(layer: int, a: float, b: float, style: str, text: str) -> str:
     return f"Dialogue: {layer},{_ts(a)},{_ts(b)},{style},,0,0,0,,{text}\n"
 
 
+def _turn(wd):
+    """The angle the words are drawn at, in degrees clockwise. 0 for no box."""
+    b = (wd or {}).get("_bx")
+    return float(b["rot"]) if b else 0.0
+
+
+def _band(cx, cy, y1, y2, width, turn):
+    """The clip that paints one band of Stamp's gradient.
+
+    Unturned it is the rectangle it always was, character for character, so a
+    reel with no boxes renders exactly as before.
+
+    TURNED, A RECTANGLE IS THE WRONG SHAPE. The bands are painted by clipping
+    the same word once per colour, and a rectangular clip is axis-aligned to
+    the FRAME -- so a box turned eight degrees drew its gradient in horizontal
+    stripes across tilted text. The corners are turned with the text instead
+    and emitted as a polygon, the one clip shape that can be rotated.
+    """
+    if not turn:
+        return CLIP_BOX.format(y1=int(y1), w=width, y2=int(y2))
+    rad = math.radians(turn)
+    cos, sin = math.cos(rad), math.sin(rad)
+
+    def at(x, y):
+        dx, dy = x - cx, y - cy
+        return f"{int(round(cx + dx * cos + dy * sin))} {int(round(cy - dx * sin + dy * cos))}"
+
+    # Wider than the frame both sides: a turned band still has to reach the
+    # corners the upright one covered by running edge to edge.
+    x0, x1 = -width, width * 2
+    pts = " ".join((at(x0, y1), at(x1, y1), at(x1, y2), at(x0, y2)))
+    return CLIP_POLY.format(pts=pts)
+
+
+def _lower(text: str) -> str:
+    r"""Lower case, but never the hard line break.
+
+    `str.lower()` turns the ASS break `\N` into `\n`, which is a DIFFERENT
+    tag: under WrapStyle 2 the renderer breaks on both, but under the
+    WrapStyle 0 that Serif uses `\n` is treated as a space -- so Serif
+    silently ignored every break the wrap had decided, and with it the box it
+    was told to stay inside. It escaped the vertical-column bug by accident
+    rather than by design, which is the worst way to be correct.
+    """
+    return text.lower().replace(BREAK.lower(), BREAK)
+
+
 def _wrap(text: str, budget: int) -> str:
     """Break a unit over as few lines as keep each inside `budget` characters.
 
@@ -828,7 +879,7 @@ def build_ass(look: str, rows: list[list[dict]], W: int, H: int, *, face: str = 
                 y1 = top + j * step - (200 * k if j == 0 else 0)
                 y2 = top + (j + 1) * step
                 evs.append(_ev(1, a, b, "Stamp", f"{{\\pos({wx},{yy}){kit}\\fad(40,0)\\1c{col}\\bord0\\shad0"
-                                                 f"\\clip(0,{int(y1)},{W},{int(y2)})}}{w}"))
+                                                 f"{_band(wx, yy, y1, y2, W, _turn(wd))}}}{w}"))
     elif look == "glow":
         st = style("Glow", 190, "&H00FFFFFF,&H00FFFFFF,&H00FFFFFF,&H00000000,B,0,0,0,100,100,2,0,1,0,0,5,0,0,0,1")
         for i, wd in enumerate(words):
@@ -856,10 +907,10 @@ def build_ass(look: str, rows: list[list[dict]], W: int, H: int, *, face: str = 
             wx = fit(len(" ".join(w["w"] for w in row)), size(84, wd0), 0.45, wd0)
             for i, wd in enumerate(row):
                 nxt = row[i + 1]["a"] if i + 1 < len(row) else end
-                prev = " ".join(("{\\1c" + RED + "}" + p["w"].lower() + "{\\1c&HFFFFFF&}") if p.get("hook")
-                                else p["w"].lower() for p in row[:i])
+                prev = " ".join(("{\\1c" + RED + "}" + _lower(p["w"]) + "{\\1c&HFFFFFF&}") if p.get("hook")
+                                else _lower(p["w"]) for p in row[:i])
                 col = f"\\1c{RED}" if wd.get("hook") else ""
-                new = f"{{\\alpha&HFF&\\blur4{col}\\t(0,120,\\alpha&H00&\\blur0.6)}}{wd['w'].lower()}"
+                new = f"{{\\alpha&HFF&\\blur4{col}\\t(0,120,\\alpha&H00&\\blur0.6)}}{_lower(wd['w'])}"
                 dur = int((nxt - wd["a"]) * 1000)
                 out = f"\\t({dur - 180},{dur},\\alpha&HFF&)" if i + 1 == len(row) else ""
                 evs.append(_ev(0, wd["a"], nxt, "Serif",

@@ -806,10 +806,19 @@ class _Handler(BaseHTTPRequestHandler):
             elif p == "/api/cmd":
                 c = str(b.get("command", ""))
                 if c not in ("stop", "pause", "resume", "toggle_pause",
-                             "record", "replay", "quit"):
+                             "record", "replay", "quit", "show"):
                     self._json({"error": "unknown command"}, 400)
                     return
-                if c == "quit":
+                if c == "show":
+                    # A SECOND LAUNCH ASKS THE FIRST TO COME FORWARD. Starting
+                    # the app again when it is already running used to log
+                    # "already running" and exit, which from the outside is a
+                    # double-click that does nothing at all -- and the window
+                    # it was telling you about may be minimised to the tray or
+                    # sitting on a monitor you are not looking at.
+                    if self.app.window:
+                        self.app.window.request_show()
+                elif c == "quit":
                     # Same order as the tray's Quit: tell the engine first, then
                     # the window (which owns the main thread and unblocks it).
                     if self.app.engine:

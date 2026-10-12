@@ -563,3 +563,39 @@ def test_a_reel_with_no_boxes_is_exactly_what_it_was():
             for empty in (None, [], "junk", [{"x": "x"}]):
                 assert lyrics.build_ass(look, [list(r) for r in rows], 1080, 1920,
                                         reveal=reveal, boxes=empty) == was, (look, reveal, empty)
+
+
+def test_serif_keeps_its_hard_breaks_through_lowercasing():
+    r"""`str.lower()` turns the ASS break \N into \n, a DIFFERENT tag: under
+    Serif's WrapStyle 0 the renderer treats \n as a space, so Serif silently
+    ignored every break the wrap had decided -- and with it the box it was
+    told to stay inside. It escaped the vertical-column bug by accident, not
+    by design, which is the worst way to be correct.
+    """
+    assert lyrics._lower("ONE\\NTWO") == "one\\Ntwo"
+    rows = [_row("i took her to queens gambit yeah yeah showed around".split())]
+    script = lyrics.build_ass("serif", rows, 1080, 1920, reveal="line", box=0.5)
+    drawn = [l for l in script.splitlines() if l.startswith("Dialogue:")][-1]
+    assert "\\N" in drawn, drawn
+    assert "\\n" not in drawn.replace("\\N", ""), drawn
+
+
+def test_stamps_gradient_turns_with_a_turned_box():
+    r"""The four bands are painted by clipping the same word once per colour,
+    and a rectangular clip is axis-aligned to the FRAME -- so a turned box drew
+    its gradient in horizontal stripes across tilted text. Unturned, the clip
+    must stay the rectangle it always was, character for character.
+    """
+    rows = [_row(["yeah", "hell"])]
+    flat = lyrics.build_ass("stamp", rows, 1080, 1920, reveal="line")
+    assert "\\clip(0," in flat and "\\clip(m " not in flat
+
+    turned = lyrics.build_ass("stamp", rows, 1080, 1920, reveal="line",
+                              boxes=[{"x": 0.5, "y": 0.5, "w": 0.6, "h": 0.2, "rot": 12}])
+    assert "\\clip(m " in turned, "the bands did not turn with the text"
+    assert "\\clip(0," not in turned, "a frame-aligned band survived on turned text"
+
+    # A box with no turn keeps the cheap rectangle.
+    upright = lyrics.build_ass("stamp", rows, 1080, 1920, reveal="line",
+                               boxes=[{"x": 0.5, "y": 0.5, "w": 0.6, "h": 0.2}])
+    assert "\\clip(0," in upright and "\\clip(m " not in upright
