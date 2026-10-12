@@ -20,7 +20,7 @@ a measured figure quietly becomes an estimate.
 
 | Page | `data-act` controls | Operable ids |
 |---|---|---|
-| studio | 154 | 17 |
+| studio | 158 | 17 |
 | clips | 47 | 10 |
 | reel | 22 | 2 |
 | settings | 7 | 10 |
@@ -28,7 +28,7 @@ a measured figure quietly becomes an estimate.
 | dashboard | 2 | 12 |
 | logs | 0 | 3 |
 | shell | 0 | 2 |
-| **total** | **233** | **57** |
+| **total** | **237** | **57** |
 
 Dashboard, logs and shell carry no `data-act`: they are wired by element id,
 which is why both columns matter.
@@ -168,7 +168,7 @@ listed so the gap is visible.
 | 5.30 | Framing marks its choice | The reported bug | yes |
 | 5.31 | Upload to YouTube | Refused safely with no account | **gap** |
 
-# 6 · Studio — 154 controls
+# 6 · Studio — 158 controls
 
 `test_ui_playwright.py` covers the two big flows and the effect picker.
 
@@ -215,6 +215,9 @@ listed so the gap is visible.
 | 6.39 | Several boxes, and the deal: draw a second and a third, then look at the preview | Each box wears its order number; the first line is drawn in box 1, the second in box 2, the third in box 3 and the fourth back in box 1, without a render | **gap** |
 | 6.40 | The box decides the size: draw one wide box and one small one | The words in the small box are drawn smaller than those in the wide one, and neither spills outside the rectangle that was drawn | **gap** |
 | 6.41 | Width and Size give way: with boxes drawn, open the Lyrics group; then Clear | Width and Size are replaced by a line saying the boxes decide; clearing the boxes brings both controls back with their old values | **gap** |
+| 6.42 | Undo is no longer a one-way door: make three edits, press Ctrl+Z twice, then Ctrl+Shift+Z once | The reel goes back two steps and forward one; both buttons name the step they would cross in their tooltip; neither is enabled when there is nothing on its side | **gap** |
+| 6.43 | The history panel: press History, read the list, click a step two back, then click one that was undone | Every step is listed with your place marked; undone steps stay listed and clickable; clicking walks to that step and the change list agrees afterwards | **gap** |
+| 6.44 | A fresh edit abandons the way forward: undo twice, then make a new edit | Redo goes dead and the undone steps leave the list — they are not a future of this project any more | **gap** |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.

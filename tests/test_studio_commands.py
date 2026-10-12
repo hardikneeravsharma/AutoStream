@@ -115,6 +115,7 @@ _LITERALS = {
     "K": ("'k'", "'K'"),
     "Ctrl+K": ("'k'", "'K'"),
     "Ctrl+Z": ("'z'", "'Z'"),
+    "Ctrl+Shift+Z": ("'z'", "'Z'"),
 }
 
 
@@ -179,3 +180,59 @@ def _webui_text() -> str:
     import autostream
 
     return (Path(autostream.__file__).parent / "webui.py").read_text(encoding="utf-8")
+
+
+# ------------------------------------- redo, and a history you can step back
+# through (U17)
+
+def test_undo_and_redo_are_one_key_apart_and_both_exist(page: str) -> None:
+    """THE REPORTED SHAPE OF THE BUG: `studio.undo` was a pop stack behind one
+    key, so a Ctrl+Z pressed once too often could not be taken back.
+
+    Both halves are pinned here because they are easy to half-ship: a Redo
+    command with no key, or a key bound to a command nobody registered.
+    """
+    undo = C.by_id("timeline.undo")
+    redo = C.by_id("timeline.redo")
+    assert undo and redo, "undo and redo must both be in the registry"
+    assert undo["keys"] == ["Ctrl+Z"], undo
+    assert redo["keys"] == ["Ctrl+Shift+Z"], redo
+    assert undo["scope"] == redo["scope"], "they must live in the same scope"
+    # One handler reads both, so Shift cannot end up on another scope's key.
+    assert "if (e.shiftKey) studio_redo(); else studio_undo();" in page
+
+
+def test_a_step_is_crossed_in_one_place_only(page: str) -> None:
+    """Back and forward share `studio_step`, so they cannot drift apart.
+
+    Two functions each doing half of it is how a redo ends up not reconciling
+    the change list while an undo does -- which would make the count lie after
+    going forward but not after going back.
+    """
+    assert page.count("function studio_step(") == 1
+    # The two directions are the same call with its arguments swapped.
+    assert "studio_step(studio.undo, studio.redo)" in page
+    assert "studio_step(studio.redo, studio.undo)" in page
+    # And a fresh edit abandons the way forward.
+    assert "studio.redo = [];" in page
+
+
+def test_the_history_reads_the_change_lists_own_words(page: str) -> None:
+    """The plan's one correction: the labels `studio_change` writes are real
+    and already feed the change list, so the history is a second VIEW of them
+    and never a second list. Two lists over one set of edits would disagree.
+    """
+    # Every entry on the stack carries the label its edit was given.
+    assert "studio.undo.push({snap: snapshot, label: label || " in page
+    assert "studio_pushUndo(was, label);" in page
+    # The panel is drawn from the two stacks, nothing else.
+    assert "function studio_histDraw(" in page
+    assert "const back = studio.undo, fwd = studio.redo;" in page
+
+
+def test_jumping_to_a_step_crosses_every_step_between(page: str) -> None:
+    """Restoring a state directly would leave the two stacks describing a
+    history that never happened, and the change list reconciled once instead
+    of at each step."""
+    assert "function studio_histGo(" in page
+    assert "for (let i = 0; i < back; i++) if (!studio_step(studio.undo, studio.redo)) break;" in page
