@@ -1822,6 +1822,13 @@ class Server:
             r["scan_mode"] = prof.mode if prof else None
             # Whether this game is clipped by round rather than by kill burst.
             r["rounds"] = bool(prof and getattr(prof, "rounds", False))
+            # WHETHER THE GAME KEEPS A MATCH RECORD, which is a DIFFERENT
+            # question from `rounds`: that one says the screen is read for
+            # them, down Counter-Strike's scoreboard path, while this says the
+            # rounds are already known from the game's own record. The
+            # whole-match video needs the spans, not the reader, so it is
+            # offered for either -- and Valorant has only this one.
+            r["matches"] = bool(prof and getattr(prof, "matches", False))
             # WHETHER THE GAME HAS REPLAYS AT ALL, which is not the same
             # question as `has_demo` below -- that one is whether a replay for
             # THIS session is on disk. The page needs the capability, because

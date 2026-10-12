@@ -978,9 +978,16 @@ def test_the_match_record_flag_reaches_the_page_that_gates_on_it():
     web = (Path(autostream.__file__).parent / "webui.py").read_text(encoding="utf-8")
     page = clips_ui.CLIPS_JS
 
-    # The server puts it on the row...
-    assert '"matches": bool(getattr(prof, "matches", False)),' in web, \
-        "the sessions row no longer carries the match-record flag"
+    # The server puts it on the row -- and this looks INSIDE
+    # clips_sessions, because the first version of this test grepped the
+    # whole file, matched the same line in another method, and passed
+    # while the switch was still unreachable. A test that can be
+    # satisfied by the wrong function is not testing what it names.
+    start = web.index("def clips_sessions(")
+    end = web.index("\n    def ", start + 1)
+    body = web[start:end]
+    assert 'r["matches"] =' in body, \
+        "clips_sessions does not put the match-record flag on the row"
     # ...and the page gates the switch on it.
     assert "s.matches" in page, "the page no longer reads the match-record flag"
     assert "clip-matchvid-field" in clips_ui.CLIPS_HTML, "the switch lost its own field"
