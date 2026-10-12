@@ -4815,6 +4815,13 @@ class Server:
                 "scan_rate": self._scan_rate(prof),
                 "cards_rate": self._cards_rate(prof),
                 "rounds": bool(getattr(prof, "rounds", False)),
+                # WHETHER THE GAME KEEPS A MATCH RECORD, which is a different
+                # question from `rounds`: that one says the SCREEN is read for
+                # them, down Counter-Strike's scoreboard path, while this says
+                # the rounds are already known from Riot's own record. The
+                # whole-match video needs the spans, not the reader -- so it is
+                # offered for either, and Valorant has only this one.
+                "matches": bool(getattr(prof, "matches", False)),
                 "counts_assists": bool(prof.counts_assists),
                 "blocked": why,
                 "player": prof.player or profiles.username_for(prof.key, prof.label),
