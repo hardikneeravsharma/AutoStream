@@ -21,6 +21,7 @@ point the synchronously-parsed view modules have registered their PAGE objects.
 from __future__ import annotations
 
 from .clips import CLIPS_HTML, CLIPS_JS
+from .commands import COMMANDS_JS
 from .css import CSS
 from .dashboard import DASH_HTML, DASH_JS
 from .icons import ICONS, LOGO_LOCKUP, LOGO_MARK
@@ -61,6 +62,7 @@ JS = "\n".join((
     LIBRARY_JS,
     CLIPS_JS,
     REEL_JS,
+    COMMANDS_JS,   # the Studio's command registry: STUDIO_JS reads it
     STUDIO_JS,
     SETTINGS_JS,
     LOGS_JS,

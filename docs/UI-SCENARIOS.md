@@ -20,7 +20,7 @@ a measured figure quietly becomes an estimate.
 
 | Page | `data-act` controls | Operable ids |
 |---|---|---|
-| studio | 147 | 17 |
+| studio | 151 | 17 |
 | clips | 47 | 10 |
 | reel | 22 | 2 |
 | settings | 7 | 10 |
@@ -28,7 +28,7 @@ a measured figure quietly becomes an estimate.
 | dashboard | 2 | 12 |
 | logs | 0 | 3 |
 | shell | 0 | 2 |
-| **total** | **226** | **57** |
+| **total** | **230** | **57** |
 
 Dashboard, logs and shell carry no `data-act`: they are wired by element id,
 which is why both columns matter.
@@ -168,7 +168,7 @@ listed so the gap is visible.
 | 5.30 | Framing marks its choice | The reported bug | yes |
 | 5.31 | Upload to YouTube | Refused safely with no account | **gap** |
 
-# 6 · Studio — 152 controls
+# 6 · Studio — 151 controls
 
 `test_ui_playwright.py` covers the two big flows and the effect picker.
 
@@ -207,6 +207,10 @@ listed so the gap is visible.
 | 6.31 | Three tabs, three jobs: Clips, Reels, Looks | The clips tab holds only clips (no reels grid, no drawers, no 223-trillion counter); the reels tab draws the grid, or says what to do when there are none; the looks tab holds the drawers and the counter; moving between them says nothing in the console | yes (`test_ui_studio_folders`) |
 | 6.32 | Lyrics: with a look and a typeface chosen, pick **How they arrive** — one word, a whole line, the line building up, a typewriter | The choice is kept on the reel and named in the change list; the preview redraws without a render; the look's own reveal draws exactly what it drew before the setting existed | yes (inside 6.2) |
 | 6.33 | Lyrics: set **Width**, **Size** and **Opacity** | Each is one edit in the change list and one press of undo; a narrower box wraps the words and brings the type down; the full box at full size and solid draws exactly what the look drew before the settings existed | yes (inside 6.2) |
+| 6.34 | Every action by name: press Ctrl+K from the Clips tab and from the timeline, type "ripp", move with the arrows, run one with Enter | The list opens over whatever pane is showing, the scope you are in is listed first, each row carries its key, Enter runs the same thing its button runs, and Esc closes it leaving the project untouched | **gap** |
+| 6.35 | A command that cannot run says why: with a one-shot reel, find "Remove the selected shot" in the list | It is listed, not hidden, and reads "A reel keeps at least one shot, and this is the last one"; pressing Delete says the same thing rather than doing nothing in silence | **gap** |
+| 6.36 | The key sheet on **?**: press ? on the timeline, and from the list's "All the keys" | Every scope with a key is a section, in the order the page reads them; each key printed is one the page answers to; typing ? into a text field types a question mark instead of opening it | **gap** |
+| 6.37 | The browser tier asks the editor what it can do: GET `/api/studio/commands`, then run each timeline command named there | Every command either runs or gives a reason; no command names a control the page does not render | **gap** |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.

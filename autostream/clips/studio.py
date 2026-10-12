@@ -3528,6 +3528,22 @@ def _between(a: float, b: float) -> str:
     return f"between(t,{a:.4f},{b:.4f})"
 
 
+def _clock(text: str) -> float | None:
+    """`HH:MM:SS.ffffff` as seconds, or None for anything else.
+
+    ffmpeg writes `N/A` here before the first frame lands, and keeps writing
+    the key either way, so an unparseable value is ordinary rather than wrong.
+    """
+    parts = text.strip().split(":")
+    if len(parts) != 3:
+        return None
+    try:
+        h, m, s = float(parts[0]), float(parts[1]), float(parts[2])
+    except ValueError:
+        return None
+    return h * 3600 + m * 60 + s
+
+
 def _fade_seconds(pid: str, default: float) -> float:
     """How long a generated fade runs; hand-written intros keep their own."""
     return knob(pid, "secs", default)
@@ -4196,8 +4212,22 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
                     f"boxcolor=black@0.45:boxborderw=10:alpha='{alpha}'")
     if intro == "i05":
         b = over(1.2, 0.7, 4.0)
+        # THE GATE IS 60% OF THE RENDER. The expression resolves to exactly
+        # stream A once T >= b, but a per-pixel all_expr is still evaluated on
+        # every frame of the whole reel -- 1080x1920 x 4243 frames for a 71 s
+        # reel, ~98% of it thrown away. Measured on 10 s of a finished reel,
+        # decode plus h264_nvenc each time: 2476 ms with no filter, 2532 ms
+        # for the gblur alone, 28308 ms for this blend ungated and 6019 ms
+        # gated. A 262 s render of that reel becomes about 100 s.
+        #
+        # Behaviour-preserving, not approximately: a disabled blend passes its
+        # first input through, which is what the expression already computed
+        # there. Ungated against gated over the first 4 s -- the blend window
+        # and the pass-through either side of it -- is PSNR inf on all three
+        # planes, i.e. bit-identical.
         chain_in = (f"[{acc_label}]split[bs][bb];[bb]gblur=sigma=18[bg];"
-                    f"[bs][bg]blend=all_expr='A*min(1,T/{b})+B*(1-min(1,T/{b}))'[bl]")
+                    f"[bs][bg]blend=all_expr='A*min(1,T/{b})+B*(1-min(1,T/{b}))'"
+                    f":enable='lt(t,{b})'[bl]")
         g.append(chain_in)
         acc_label = "bl"
     # THE LYRICS, LAST BUT FOR THE MARK: over the grade, the grain and the
@@ -4408,6 +4438,8 @@ class StudioJob:
         self.started = time.time()
         self.finished = 0.0
         self.cached = 0
+        # How far through the reel the join has got, 0..1. See snapshot().
+        self.join = 0.0
         self.lyrics_note = ""
         self._cancel = threading.Event()
         self._proc: subprocess.Popen | None = None
@@ -4415,7 +4447,19 @@ class StudioJob:
 
     def snapshot(self) -> dict:
         with self._lock:
-            pct = int(100 * self.done / self.total) if self.total else 0
+            # THE JOIN IS COUNTED IN ITS OWN SECONDS, not as one unit of work.
+            # Shots are units because there are dozens of them; the join is a
+            # single pass that is most of the wall clock whenever the shots
+            # come from cache, so counting it as "2 of 49" parked the bar at
+            # 95% for four minutes and a working render was indistinguishable
+            # from a hung one. `join` is how far through the reel ffmpeg says
+            # it is, which is a real fraction of a real pass.
+            pct = int(100 * (self.done + 2 * self.join) / self.total) if self.total else 0
+            # Never 100 until it is finished: the loudness pass and the intro
+            # come after the join, and a bar that reads 100% beside a spinner
+            # is the same lie in the other direction.
+            if self.state not in ("done", "error", "cancelled"):
+                pct = min(pct, 99)
             return {"id": self.id, "state": self.state, "step": self.step, "done": self.done,
                     "total": self.total,
                     "percent": max(0, min(100, pct)), "message": self.message, "error": self.error,
@@ -4438,15 +4482,18 @@ class StudioJob:
             for k, v in kw.items():
                 setattr(self, k, v)
 
-    def _run_ff(self, argv: list[str], *, capture: bool = False) -> str:
+    def _run_ff(self, argv: list[str], *, capture: bool = False, seconds: float = 0.0) -> str:
         """Run ffmpeg where Cancel can reach it. -> its stderr when `capture`.
 
         A hardware encode that fails is run again on the CPU, and the CPU is
         used for the rest of the process -- see tools.software_fallback.
+
+        `seconds` is how much reel this call produces. Pass it and the call
+        reports its progress; leave it and nothing changes.
         """
         from .tools import software_fallback
         try:
-            return self._run_ff_once(argv, capture=capture)
+            return self._run_ff_once(argv, capture=capture, seconds=seconds)
         except Cancelled:
             raise
         except RuntimeError as e:
@@ -4454,19 +4501,42 @@ class StudioJob:
             if soft is None:
                 raise
             log.warning("studio: hardware encode failed, using the CPU (%s)", str(e)[-200:])
-            return self._run_ff_once(soft, capture=capture)
+            # A second attempt starts the pass again, so the bar does too --
+            # otherwise it would carry on from where the failed one died.
+            self._set(join=0.0)
+            return self._run_ff_once(soft, capture=capture, seconds=seconds)
 
-    def _run_ff_once(self, argv: list[str], *, capture: bool = False) -> str:
+    def _run_ff_once(self, argv: list[str], *, capture: bool = False, seconds: float = 0.0) -> str:
         from .killfeed import _NO_WINDOW
         if self._cancel.is_set():
             raise Cancelled("cancelled")
-        proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                                creationflags=_NO_WINDOW)
+        # ASK FFMPEG WHERE IT HAS GOT TO. The join was one opaque call with
+        # stdout thrown away, so the longest phase of a render was also the
+        # only one nothing could report on. `-progress pipe:1` writes a block
+        # of key=value lines every second; `-nostats` drops the carriage-return
+        # status line, which is not parseable and not wanted.
+        watch = seconds > 0
+        if watch:
+            argv = [argv[0], "-progress", "pipe:1", "-nostats", *argv[1:]]
+        proc = subprocess.Popen(argv,
+                                stdout=subprocess.PIPE if watch else subprocess.DEVNULL,
+                                stderr=subprocess.PIPE, creationflags=_NO_WINDOW)
         self._proc = proc
         # Cancel may have landed between the check above and the assignment.
         if self._cancel.is_set():
             proc.terminate()
-        _, err = proc.communicate()
+        if watch:
+            # communicate() would read stdout itself, so the pipes are drained
+            # by hand: the reader thread takes the progress, this thread takes
+            # the (small, -loglevel error) stderr, and neither can fill.
+            pump = threading.Thread(target=self._watch_progress, args=(proc.stdout, seconds),
+                                    daemon=True)
+            pump.start()
+            err = proc.stderr.read()
+            proc.wait()
+            pump.join(timeout=2)
+        else:
+            _, err = proc.communicate()
         code = proc.returncode
         self._proc = None
         if self._cancel.is_set():
@@ -4475,6 +4545,28 @@ class StudioJob:
         if code != 0:
             raise RuntimeError(text[-1500:] or f"ffmpeg exited {code}")
         return text if capture else ""
+
+    def _watch_progress(self, pipe, seconds: float) -> None:
+        """Turn ffmpeg's own clock into a bar that moves.
+
+        `out_time=HH:MM:SS.ffffff` rather than `out_time_ms`, which ffmpeg
+        writes in microseconds despite its name -- a unit nobody reading the
+        code would guess, and the sort of thing that silently halves a
+        percentage. The clock is unambiguous.
+
+        Nothing here may raise: the pipe closes when ffmpeg exits, which is an
+        ordinary end to this thread, not a failed render.
+        """
+        try:
+            for raw in pipe:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("out_time="):
+                    continue
+                at = _clock(line[9:])
+                if at is not None and seconds > 0:
+                    self._set(join=max(0.0, min(1.0, at / seconds)))
+        except (OSError, ValueError):
+            pass
 
     def _loudness(self, ff: str, path: Path, target: float = rulebook.LOUDNESS) -> None:
         """Bring the finished reel to `target` LUFS with a measured second pass.
@@ -4668,9 +4760,13 @@ class StudioJob:
                         log.warning("studio: the mark could not be drawn (%s)", e)
                         mark_at = None
                     lyr = self._lyrics(ff)
+                    # The reel's own length is what this pass produces, so it
+                    # is the denominator the bar is honest against.
+                    self._set(join=0.0)
                     self._run_ff(assemble_command(self.project, self.derived, segs, files, tmp, ff,
                                                   video_codec_args("auto", cq=19), textdir,
-                                                  mark_at=mark_at, lyrics=lyr))
+                                                  mark_at=mark_at, lyrics=lyr),
+                                 seconds=float(self.derived.get("length") or 0))
                 except Cancelled:
                     raise
                 except RuntimeError as e:

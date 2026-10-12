@@ -589,7 +589,18 @@ def build_ass(look: str, rows: list[list[dict]], W: int, H: int, *, face: str = 
     """The subtitle script that draws `rows` in `look`, at W x H."""
     rows = [[dict(w, w=clean(w["w"]) if clean_words else w["w"]) for w in row] for row in rows]
     budget = _budget(look, box, size)
-    rows = _regroup(look, rows, reveal, budget)
+    # THE BOX COMES OFF THE SIZE BEFORE IT COMES OFF THE LINE. Wrapping at the
+    # box's own character count left `_shrink` below with nothing to do -- every
+    # row it was handed already fitted, so it returned 1.0 and the type never
+    # came down. Stamp kept its 250px and a sung line went DOWN the middle of
+    # the frame instead of across it: eight rows at full width, and one word a
+    # row once the box was narrowed ("the whole lyrics style is busted").
+    #
+    # So the wrap is given the characters the type fits once it HAS come down
+    # -- its floor is REVEAL_MIN_SCALE -- and `_shrink` then brings it there.
+    # The invariant it guarantees is unchanged: widest x scale <= budget, so
+    # the widest row still lands exactly inside the box.
+    rows = _regroup(look, rows, reveal, max(3, round(budget / REVEAL_MIN_SCALE)))
     fid = face if face in FACES else LOOK_FACE[look]
     fname, bold, fscale, _ = FACES[fid]
     # THE DEFAULT IS UNTOUCHED. A look asked for its own reveal in a
@@ -633,10 +644,19 @@ def build_ass(look: str, rows: list[list[dict]], W: int, H: int, *, face: str = 
         st = style("Stamp", 250, "&H00FFFFFF,&H00FFFFFF,&H00301808,&H96000000,B,0,0,0,100,100,1,0,1,3,5,5,0,0,0,1")
         px = size(250)
         bands = ["&H00FFEFD6&", "&H00F2C98E&", "&H00D99A4E&", "&H00A8642A&"]
-        top, bot = Y - 0.40 * px, Y + 0.40 * px
-        step = (bot - top) / len(bands)
         for wd in words:
             a, b, w = wd["a"], wd["b"], wd["w"].upper()
+            # THE GRADIENT HAS TO COVER WHAT IS DRAWN, not one row of it. The
+            # four bands are painted by clipping the same word four times, and
+            # the clip was a single row's height around the centre -- so a
+            # wrapped unit drew its middle row in the gradient and every other
+            # row in the base colour, the darkest of the four. One line it was
+            # measured on; a reveal that puts a whole line up makes four.
+            # 0.40 is the cap height either side of one row; each further row
+            # adds a line of 1.2, half of it above the centre and half below.
+            half = (0.40 + 0.60 * w.count("\\N")) * px
+            top, bot = Y - half, Y + half
+            step = (bot - top) / len(bands)
             wx = fit(len(w), px * (1.22 if wd.get("hook") else 1.0), 0.48)
             if wd.get("hook"):
                 evs.append(_ev(2, a, b, "Stamp", f"{{\\pos({wx},{Y})\\fad(40,0)\\1c{RED}\\3c{RED_DK}"

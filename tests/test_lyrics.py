@@ -399,6 +399,41 @@ def test_a_narrower_box_brings_the_type_down():
     assert narrow[0][0]["w"].count("\\N") >= 2, narrow[0][0]["w"]
 
 
+def test_a_whole_line_comes_down_in_size_not_down_the_frame():
+    """THE REPORTED BUG, in a screenshot: the words came DOWN THE MIDDLE of a
+    9:16 reel, a word to a row, instead of reading across it.
+
+    The two tests above both go straight to `_regroup` and `_shrink`, and both
+    pass while the page is broken, because the fault was in the ORDER the two
+    are used in -- wrapped first at the box's own character count, so the
+    shrink was handed rows that already fitted and never brought the type down.
+    This one goes through `build_ass`, which is what the preview and the render
+    both draw from, and asks the only question that matters: does the block fit
+    the frame it is drawn in.
+
+    Stamp at 250px is the worst case and the one the user had: a sung line is
+    eight rows of it, 2400px tall in a 1920px frame.
+    """
+    rows = [_row("i took her to queens gambit yeah yeah showed around my friends".split())]
+    for look in ("stamp", "glow", "scrawl"):
+        for reveal in ("line", "build", "type"):
+            for box in (1.0, 0.5, 0.25):
+                script = lyrics.build_ass(look, rows, 1080, 1920, reveal=reveal, box=box)
+                px = int([l for l in script.splitlines()
+                          if l.startswith("Style:")][0].split(",")[2])
+                deep = max(l.count("\\N") + 1 for l in script.splitlines()
+                           if l.startswith("Dialogue:"))
+                assert deep * px * 1.2 <= 1920, (look, reveal, box, deep, px)
+                # A box of half the frame or more reads as a line, not a list:
+                # more than one word to a row. This is the narrow-box shredding
+                # the height check alone would not catch.
+                if box >= 0.5:
+                    widest = max(len(part.split()) for l in script.splitlines()
+                                 if l.startswith("Dialogue:")
+                                 for part in l.split(",,")[-1].split("\\N"))
+                    assert widest > 1, (look, reveal, box, script.splitlines()[-1])
+
+
 def test_size_scales_the_type_both_ways():
     rows = [_row(["yeah", "hell"])]
     def px(size):

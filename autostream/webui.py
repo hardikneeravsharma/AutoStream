@@ -720,6 +720,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.app.studio_library())
         elif u.path == "/api/studio/catalog":
             self._json(self.app.studio_catalog())
+        elif u.path == "/api/studio/commands":
+            self._json(self.app.studio_commands())
         elif u.path == "/api/studio/songfetch/status":
             self._json(self.app.studio_songfetch_status())
         elif u.path == "/api/studio/job":
@@ -3418,6 +3420,19 @@ class Server:
         from .clips import studio
 
         return studio.catalog()
+
+    def studio_commands(self) -> dict:
+        """Every action the Studio can take, by name.
+
+        The page builds its command list and key sheet from the same table, so
+        this is not a second description of the editor -- it is the one the
+        editor uses. The browser tier asks for it rather than hunting for
+        buttons: a control wired to nothing is reachable here and visibly
+        unrunnable, which is the case an offline test cannot see.
+        """
+        from .ui import commands
+
+        return commands.payload()
 
     def studio_favourite_part(self, body: dict) -> dict:
         """Star or unstar one PART of the bin -- not a clip; see studio_favourite."""
