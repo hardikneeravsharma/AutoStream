@@ -657,7 +657,17 @@ One per line - a long session often covers several matches."></textarea>
            walking and the twenty seconds of nothing between rounds taken
            out. Only offered where the rounds are known, because the spans
            come from them. -->
-      <div class="field-inline" style="margin-top:8px">
+    </div>
+
+    <!-- THE WHOLE MATCH, AND WHY IT IS NOT INSIDE THE ROUNDS FIELD. It used to
+         live there, so it was offered only where `rounds` is on -- which means
+         where the SCREEN is read for rounds, Counter-Strike's scoreboard. But
+         the spans this needs can come from a match record instead, which is
+         how Valorant knows its rounds, and that profile deliberately leaves
+         `rounds` off so the scan never goes down CS2's path. Two different
+         questions that happened to share a field. -->
+    <div class="field hide" id="clip-matchvid-field">
+      <div class="field-inline">
         <button class="switch" type="button" role="switch" id="clip-matchvid"
                 aria-checked="false"><span class="switch-track"><span
                 class="switch-thumb"></span></span></button>
@@ -1902,6 +1912,10 @@ function clip_renderOptions() {
      a run that could not honour one of them. */
   var supports = !!(clip_state.pick && clip_state.pick.rounds) && !clip_byTally();
   clip_show('clip-rounds-field', supports);
+  /* The match video needs round SPANS, not a round reader: a game with a match
+     record (Valorant) has them without the screen being read at all. */
+  var hasMatch = !!(s && (s.rounds || s.matches));
+  clip_show('clip-matchvid-field', hasMatch && !clip_byTally());
   var roundMode = supports && clip_state.rounds !== false;
   /* SHOWN FOR ROUNDS TOO. It was hidden in round mode on the grounds that
      the round decides -- but rounds.highlights() has always cut every round

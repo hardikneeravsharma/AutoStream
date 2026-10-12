@@ -371,6 +371,11 @@ SESSION_ONLY = {
     # A starting rectangle for a game with NO profile yet. A picked file's game
     # is chosen from a list of games that have one, so this is always None.
     "seed": "only offered for an uncalibrated game",
+    # Whether the game keeps a match record -- Riot's, for Valorant -- which is
+    # where the whole-match video gets its round spans. A file somebody handed
+    # us was not recorded against a session, so there is no match to line it up
+    # with, and the switch it gates is correctly not offered.
+    "matches": "no session, so no match record to cut the whole match from",
 }
 
 
@@ -737,6 +742,9 @@ PICK_SESSION_ONLY = {
     "made_clips": "how many clips a previous run of this session produced",
     "made_folder": "where that previous run put them",
     "seed": "a starting scan-mode hint attached to a recorded session",
+    "matches": "whether the game keeps a match record to cut the whole match "
+               "from; a picked file was not recorded against a session, so "
+               "there is no match to line it up with",
 }
 
 
