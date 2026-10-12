@@ -117,6 +117,37 @@ SIZE_MIN, SIZE_MAX = 0.5, 1.6
 # faintest offered still reads over a bright frame.
 ALPHA_MIN, ALPHA_MAX = 0.15, 1.0
 
+# THE BOXES THE WORDS ARE DEALT INTO (U28).
+#
+# Width and Size above are two numbers describing a rectangle nobody can see.
+# A box IS that rectangle, drawn on the picture where the words will be, the
+# way every text editor has asked this question for forty years -- and it
+# answers "how big" by itself, because the type becomes whatever fits the box.
+#
+# More than one box turns placement into an arrangement: the lines are DEALT
+# round them in the order the boxes were drawn -- the first line in the first
+# box, the second in the second, the fourth back in the first. So the order of
+# this list is not an implementation detail, it is the feature.
+#
+# A reel with no boxes is every reel that already exists, and renders through
+# `pos`/`box`/`size` exactly as it did. There is a test for that, because a
+# setting that silently restyles finished reels is worse than no setting.
+BOXES_MAX = 6
+BOX_SIDE_MIN = 0.06                     # smaller than this cannot hold a word
+# The smallest type a box may bring the words down to, on a 1080-wide frame.
+# Not a share of the look's own size: inside a box the question is whether it
+# can still be read on a phone, and 28px is about two thirds of a caption.
+BOX_PX_MIN = 28
+ROT_MAX = 90.0
+# How wide one character is as a share of the type's size, and the size each
+# look draws at. Both were already in the code as literals beside each look's
+# `fit()` call; a box has to ask the same question of every look, so they are a
+# table now. MEASURED, not derived: glow's REVEAL_FIT of 12 does not follow
+# from 1080 / (190 * 0.75) = 7.6, so these two tables are not the same thing.
+LOOK_ADVANCE = {"stamp": 0.48, "glow": 0.75, "serif": 0.45, "caption": 0.5, "scrawl": 0.5}
+LOOK_PX = {"stamp": 250, "glow": 190, "serif": 84, "caption": 78, "scrawl": 260}
+LINE_SPACING = 1.2                      # ASS draws lines about 1.2x the type apart
+
 # WHERE THE WORDS SIT BY DEFAULT: the centre of the line, as shares of the
 # frame. Eight of the ten edits studied put the words mid-height, over the
 # crosshair; on a vertical reel that is where the kill emblem is, so the
@@ -181,7 +212,10 @@ def settings(raw) -> dict:
             "shift": shift, "reveal": reveal,
             # How wide the words may run, how big they are, and how solid.
             "box": num("box", BOX_MIN, BOX_MAX), "size": num("size", SIZE_MIN, SIZE_MAX),
-            "alpha": num("alpha", ALPHA_MIN, ALPHA_MAX)}
+            "alpha": num("alpha", ALPHA_MIN, ALPHA_MAX),
+            # Drawn on the picture, and dealt round in this order. Empty means
+            # the three numbers above still decide, as they did before U28.
+            "boxes": _boxes(raw.get("boxes"))}
 
 
 def _pos(v) -> list[float] | None:
@@ -202,6 +236,79 @@ def _pos(v) -> list[float] | None:
 
 def default_pos(fmt: str) -> list[float]:
     return list(DEFAULT_POS["vertical" if fmt == "vertical" else "landscape"])
+
+
+def _boxes(v) -> list[dict]:
+    """The boxes the lines are dealt into, made safe. [] is "no boxes drawn".
+
+    Each is a CENTRE plus a size, all as shares of the frame, so a box keeps
+    its place and its proportions when the reel is made 9:16 instead of 16:9 --
+    a box stored in pixels would be somewhere else entirely on the other shape.
+
+    Order is kept exactly as given: it is the order the lines are dealt in.
+    Anything unreadable is dropped rather than guessed at, and a list with
+    nothing left in it is no boxes at all, which is the old behaviour.
+    """
+    if not isinstance(v, (list, tuple)):
+        return []
+    out = []
+    for raw in v[:BOXES_MAX]:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            x, y = float(raw.get("x")), float(raw.get("y"))
+            w, h = float(raw.get("w")), float(raw.get("h"))
+            rot = float(raw.get("rot") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if any(n != n for n in (x, y, w, h, rot)):        # NaN
+            continue
+        w = min(1.0, max(BOX_SIDE_MIN, w))
+        h = min(1.0, max(BOX_SIDE_MIN, h))
+        # Held inside the frame by its own half-width, so a box is never
+        # partly off the picture -- its words would be cut in half there.
+        x = min(1.0 - w / 2, max(w / 2, x))
+        y = min(1.0 - h / 2, max(h / 2, y))
+        out.append({"x": round(x, 4), "y": round(y, 4), "w": round(w, 4),
+                    "h": round(h, 4), "rot": round(max(-ROT_MAX, min(ROT_MAX, rot)), 2)})
+    return out
+
+
+def _box_fit(text: str, look: str, base_px: float, box_w: float, box_h: float,
+             min_px: float) -> tuple[float, str]:
+    """How far the type comes down for `text` to fit this box, and the wrap.
+
+    Asked the other way round from `_budget`/`_shrink`, which is what makes it
+    worth having: the box is fixed and the type gives way, so there is no order
+    in which one can quietly cancel the other. (The bug that preceded this
+    feature was exactly that -- wrapped first, shrunk second, and the shrink
+    had nothing left to do.)
+
+    Scales are tried from full size down because the largest that fits is the
+    one wanted; the loop is bounded and runs once per line, not per frame.
+    """
+    adv = LOOK_ADVANCE.get(look, 0.5)
+    # THE FLOOR IS DIFFERENT INSIDE A BOX. REVEAL_MIN_SCALE exists so a look
+    # stays recognisably itself -- Stamp at 42% is still Stamp. Somebody who
+    # has DRAWN a box has already traded that away: they have said where the
+    # words go and how much room they get, and type that overflows the box
+    # they drew is the box not being honoured. So the only floor here is
+    # legibility, in pixels on the frame rather than as a share of the look.
+    floor = min(1.0, max(0.04, min_px / base_px)) if base_px > 0 else 1.0
+    s = 1.0
+    while s >= floor - 1e-9:
+        px = base_px * s
+        budget = int(box_w / (px * adv))
+        if budget >= 1:
+            wrapped = _wrap(text, max(1, budget))
+            deep = wrapped.count("\\N") + 1
+            widest = max(len(part) for part in wrapped.split("\\N"))
+            if widest * px * adv <= box_w and deep * px * LINE_SPACING <= box_h:
+                return round(s, 4), wrapped
+        s -= 0.02
+    # Smaller than this is not readable on a phone, so the words overflow the
+    # box a little rather than disappearing into it.
+    return round(floor, 4), _wrap(text, max(1, int(box_w / (base_px * floor * adv))))
 
 
 def catalog() -> dict:
@@ -585,7 +692,8 @@ def _shrink(look: str, rows: list[list[dict]], budget: int) -> float:
 
 def build_ass(look: str, rows: list[list[dict]], W: int, H: int, *, face: str = "",
               clean_words: bool = False, pos=None, reveal: str = "look",
-              box: float = 1.0, size: float = 1.0, alpha: float = 1.0) -> str:
+              box: float = 1.0, size: float = 1.0, alpha: float = 1.0,
+              boxes: list | None = None) -> str:
     """The subtitle script that draws `rows` in `look`, at W x H."""
     rows = [[dict(w, w=clean(w["w"]) if clean_words else w["w"]) for w in row] for row in rows]
     budget = _budget(look, box, size)
@@ -600,31 +708,77 @@ def build_ass(look: str, rows: list[list[dict]], W: int, H: int, *, face: str = 
     # -- its floor is REVEAL_MIN_SCALE -- and `_shrink` then brings it there.
     # The invariant it guarantees is unchanged: widest x scale <= budget, so
     # the widest row still lands exactly inside the box.
-    rows = _regroup(look, rows, reveal, max(3, round(budget / REVEAL_MIN_SCALE)))
+    drawn = _boxes(boxes)
+    if drawn:
+        # THE BOX DECIDES, so nothing is wrapped before it is asked. _regroup
+        # still joins the units a reveal wants, with a budget big enough that
+        # it never breaks a line itself.
+        rows = _regroup(look, rows, reveal, 10_000)
+    else:
+        rows = _regroup(look, rows, reveal, max(3, round(budget / REVEAL_MIN_SCALE)))
     fid = face if face in FACES else LOOK_FACE[look]
     fname, bold, fscale, _ = FACES[fid]
     # THE DEFAULT IS UNTOUCHED. A look asked for its own reveal in a
     # full-width box renders exactly as it did before any of this existed;
     # shrinking is what a narrower box or a wider unit buys.
     tight = reveal != "look" or box < 1.0 or size != 1.0
-    rel = fscale / FACES[LOOK_FACE[look]][2] * size
-    if tight:
+    relf = fscale / FACES[LOOK_FACE[look]][2]           # the typeface swap alone
+    rel = relf * size
+    if tight and not drawn:
         rel *= _shrink(look, rows, budget)
     k = min(W, H) / 1080                    # every size was measured on a 1080-wide frame
     vertical = H > W
     px, py = _pos(pos) or default_pos("vertical" if vertical else "landscape")
     cx = round(W * px)
     Y = round(H * py)
-    placed = _pos(pos) is not None
+    placed = _pos(pos) is not None or bool(drawn)
     B = -1 if bold else 0
 
-    def size(px: float) -> int:
-        return max(8, round(px * k * rel))
+    # DEAL THE LINES ROUND THE BOXES. The row's index picks the box, so the
+    # order they were drawn in is the order the lines arrive in; each unit is
+    # then wrapped and sized to the box it landed in, and carries that box with
+    # it through the look's own drawing below. `size` is not applied on top --
+    # a box the player drew already says how big the words are, and multiplying
+    # it by a second number would make the box a suggestion.
+    if drawn:
+        base = LOOK_PX.get(look, 100) * k * relf
+        for i, row in enumerate(rows):
+            b = drawn[i % len(drawn)]
+            bw, bh = b["w"] * W, b["h"] * H
+            scale = 1.0
+            for u in row:
+                s, wrapped = _box_fit(str(u["w"]), look, base, bw, bh, BOX_PX_MIN * k)
+                u["w"] = wrapped
+                scale = min(scale, s)
+            for u in row:
+                u["_bx"], u["_sc"] = b, scale
+
+    def size(px: float, wd: dict | None = None) -> int:
+        s = (wd or {}).get("_sc")
+        return max(8, round(px * k * (relf * s if s else rel)))
+
+    def ypos(wd: dict | None = None) -> int:
+        b = (wd or {}).get("_bx")
+        return round(H * b["y"]) if b else Y
+
+    def spin(wd: dict | None = None) -> str:
+        """The box's own angle. ASS turns anticlockwise for a positive \\frz."""
+        b = (wd or {}).get("_bx")
+        return f"\\frz{-b['rot']:g}" if b and b["rot"] else ""
+
+    def fs(px_value: int, wd: dict | None = None) -> str:
+        """The size this unit was brought down to, when a box decided it.
+
+        The style line carries one size for the whole script; a box gives each
+        line its own, so a boxed event overrides it and an unboxed one does
+        not -- which is what keeps a reel with no boxes byte-for-byte as it was.
+        """
+        return f"\\fs{px_value}" if (wd or {}).get("_bx") else ""
 
     def style(name: str, px: float, rest: str) -> str:
         return f"Style: {name},{fname},{size(px)},{rest.replace('B,', f'{B},', 1)}"
 
-    def fit(chars: int, font_px: float, per_char: float) -> int:
+    def fit(chars: int, font_px: float, per_char: float, wd: dict | None = None) -> int:
         """The centre, moved only as far as keeps a line this long inside the frame.
 
         Placed near an edge, a long line centred there hangs off it: measured
@@ -632,7 +786,13 @@ def build_ass(look: str, rows: list[list[dict]], W: int, H: int, *, face: str = 
         cannot be asked the width, so it is estimated from the character
         count at a per-look rate, generously. A line wider than the frame is
         centred, where it loses least.
+
+        A word in a box needs none of that: the box is inside the frame and the
+        type was already brought down to fit it, so its centre is the answer.
         """
+        b = (wd or {}).get("_bx")
+        if b:
+            return round(W * b["x"])
         half = chars * font_px * per_char / 2
         lo, hi = W * 0.03 + half, W * 0.97 - half
         return round(W / 2) if lo > hi else round(min(max(cx, lo), hi))
@@ -642,10 +802,11 @@ def build_ass(look: str, rows: list[list[dict]], W: int, H: int, *, face: str = 
     wrap = 2
     if look == "stamp":
         st = style("Stamp", 250, "&H00FFFFFF,&H00FFFFFF,&H00301808,&H96000000,B,0,0,0,100,100,1,0,1,3,5,5,0,0,0,1")
-        px = size(250)
         bands = ["&H00FFEFD6&", "&H00F2C98E&", "&H00D99A4E&", "&H00A8642A&"]
         for wd in words:
             a, b, w = wd["a"], wd["b"], wd["w"].upper()
+            px, yy = size(250, wd), ypos(wd)
+            kit = spin(wd) + fs(px, wd)        # what the box imposes, if any
             # THE GRADIENT HAS TO COVER WHAT IS DRAWN, not one row of it. The
             # four bands are painted by clipping the same word four times, and
             # the clip was a single row's height around the centre -- so a
@@ -655,41 +816,44 @@ def build_ass(look: str, rows: list[list[dict]], W: int, H: int, *, face: str = 
             # 0.40 is the cap height either side of one row; each further row
             # adds a line of 1.2, half of it above the centre and half below.
             half = (0.40 + 0.60 * w.count("\\N")) * px
-            top, bot = Y - half, Y + half
+            top, bot = yy - half, yy + half
             step = (bot - top) / len(bands)
-            wx = fit(len(w), px * (1.22 if wd.get("hook") else 1.0), 0.48)
+            wx = fit(len(w), px * (1.22 if wd.get("hook") else 1.0), 0.48, wd)
             if wd.get("hook"):
-                evs.append(_ev(2, a, b, "Stamp", f"{{\\pos({wx},{Y})\\fad(40,0)\\1c{RED}\\3c{RED_DK}"
+                evs.append(_ev(2, a, b, "Stamp", f"{{\\pos({wx},{yy}){kit}\\fad(40,0)\\1c{RED}\\3c{RED_DK}"
                                                  f"\\t(0,{int((b - a) * 1000)},\\fscx122\\fscy122)}}{w}"))
                 continue
-            evs.append(_ev(0, a, b, "Stamp", f"{{\\pos({wx},{Y})\\fad(40,0)\\1c{bands[-1]}}}{w}"))
+            evs.append(_ev(0, a, b, "Stamp", f"{{\\pos({wx},{yy}){kit}\\fad(40,0)\\1c{bands[-1]}}}{w}"))
             for j, col in enumerate(bands[:-1]):
                 y1 = top + j * step - (200 * k if j == 0 else 0)
                 y2 = top + (j + 1) * step
-                evs.append(_ev(1, a, b, "Stamp", f"{{\\pos({wx},{Y})\\fad(40,0)\\1c{col}\\bord0\\shad0"
+                evs.append(_ev(1, a, b, "Stamp", f"{{\\pos({wx},{yy}){kit}\\fad(40,0)\\1c{col}\\bord0\\shad0"
                                                  f"\\clip(0,{int(y1)},{W},{int(y2)})}}{w}"))
     elif look == "glow":
         st = style("Glow", 190, "&H00FFFFFF,&H00FFFFFF,&H00FFFFFF,&H00000000,B,0,0,0,100,100,2,0,1,0,0,5,0,0,0,1")
         for i, wd in enumerate(words):
             a, b, w = wd["a"], wd["b"], wd["w"].upper()
             hook = wd.get("hook")
+            yy, kit = ypos(wd), spin(wd) + fs(size(190, wd), wd)
             extra = "\\fscx116\\fscy116\\t(0,180,\\fscx100\\fscy100)" if hook else ""
             col = f"\\1c{RED}\\3c{RED}" if hook else ""
-            wx = fit(len(w), size(190) * (1.16 if hook else 1.0), 0.75)
-            evs.append(_ev(0, a, b, "Glow", f"{{\\pos({wx},{Y})\\bord{round(18 * k)}\\blur{round(22 * k)}"
+            wx = fit(len(w), size(190, wd) * (1.16 if hook else 1.0), 0.75, wd)
+            evs.append(_ev(0, a, b, "Glow", f"{{\\pos({wx},{yy}){kit}\\bord{round(18 * k)}\\blur{round(22 * k)}"
                                             f"\\1a&H80&\\3a&H68&\\3c&HFFFFFF&\\1c&HFFFFFF&{col}{extra}}}{w}"))
             if i % 2 and not hook:
-                evs.append(_ev(1, a, b, "Glow", f"{{\\pos({wx},{Y})\\1a&HFF&\\bord{max(1, round(4 * k))}"
+                evs.append(_ev(1, a, b, "Glow", f"{{\\pos({wx},{yy}){kit}\\1a&HFF&\\bord{max(1, round(4 * k))}"
                                                 f"\\3c&HFFFFFF&\\blur0.8{extra}}}{w}"))
             else:
-                evs.append(_ev(1, a, b, "Glow", f"{{\\pos({wx},{Y})\\bord0\\blur0.6{col}{extra}}}{w}"))
+                evs.append(_ev(1, a, b, "Glow", f"{{\\pos({wx},{yy}){kit}\\bord0\\blur0.6{col}{extra}}}{w}"))
     elif look == "serif":
         wrap = 0
         margin = round(W * 0.06)
         st = style("Serif", 84, f"&H00FFFFFF,&H00FFFFFF,&H00000000,&H50000000,B,0,0,0,100,100,0,0,1,0,3,5,{margin},{margin},0,1")
         for row in rows:
             end = row[-1]["b"]
-            wx = fit(len(" ".join(w["w"] for w in row)), size(84), 0.45)
+            wd0 = row[0]
+            yy, kit = ypos(wd0), spin(wd0) + fs(size(84, wd0), wd0)
+            wx = fit(len(" ".join(w["w"] for w in row)), size(84, wd0), 0.45, wd0)
             for i, wd in enumerate(row):
                 nxt = row[i + 1]["a"] if i + 1 < len(row) else end
                 prev = " ".join(("{\\1c" + RED + "}" + p["w"].lower() + "{\\1c&HFFFFFF&}") if p.get("hook")
@@ -699,13 +863,15 @@ def build_ass(look: str, rows: list[list[dict]], W: int, H: int, *, face: str = 
                 dur = int((nxt - wd["a"]) * 1000)
                 out = f"\\t({dur - 180},{dur},\\alpha&HFF&)" if i + 1 == len(row) else ""
                 evs.append(_ev(0, wd["a"], nxt, "Serif",
-                               f"{{\\pos({wx},{Y})\\blur0.6{out}}}" + (prev + " " if prev else "") + new))
+                               f"{{\\pos({wx},{yy}){kit}\\blur0.6{out}}}" + (prev + " " if prev else "") + new))
     elif look == "caption":
         st = style("Cap", 78, "&H00FFFFFF,&H00FFFFFF,&H00000000,&HA0000000,B,0,0,0,100,100,0,0,1,0,4,7,0,0,0,1")
 
         def sc(w: str) -> str:
             return "I" + w[1:].lower() if w.upper() == "I" or w.upper().startswith("I'") else w.lower()
         for li, row in enumerate(rows):
+            wd0 = row[0]
+            kit = spin(wd0) + fs(size(78, wd0), wd0)
             ws = [("{\\1c" + RED + "}" + sc(w["w"]) + "{\\1c&HFFFFFF&}") if w.get("hook") else sc(w["w"]) for w in row]
             if not ws[0].startswith("{"):
                 ws[0] = ws[0][:1].upper() + ws[0][1:]
@@ -717,20 +883,21 @@ def build_ass(look: str, rows: list[list[dict]], W: int, H: int, *, face: str = 
                 # Put somewhere by the player: every line centred there,
                 # still whipping in from alternate sides.
                 plain = [w["w"] for w in row]
-                x = fit(max(len(" ".join(plain[:half])), len(" ".join(plain[half:]))), size(78), 0.5)
+                x = fit(max(len(" ".join(plain[:half])), len(" ".join(plain[half:]))),
+                        size(78, wd0), 0.5, wd0)
                 an, d = 5, 1 if left else -1
-                y = Y
+                y = ypos(wd0)
             else:
                 x, an, d = (round(W * 0.065), 7, 1) if left else (round(W * 0.935), 9, -1)
                 y = Y - round(90 * k) + round(40 * k) * (li % 2)
             sx, drift = x + round(160 * k) * d, x - round(26 * k) * d
             sh = f"\\shad{max(1, round(4 * k))}\\4a&HA0&"
-            evs.append(_ev(0, a, a + .13, "Cap", f"{{\\an{an}\\move({sx},{y},{x},{y})\\blur10\\fscx118\\alpha&H60&"
+            evs.append(_ev(0, a, a + .13, "Cap", f"{{\\an{an}{kit}\\move({sx},{y},{x},{y})\\blur10\\fscx118\\alpha&H60&"
                                                  f"\\t(0,130,\\blur0.8\\fscx100\\alpha&H00&){sh}}}{text}"))
             evs.append(_ev(0, a + .13, max(a + .14, b - .12), "Cap",
-                           f"{{\\an{an}\\move({x},{y},{drift},{y})\\blur0.8{sh}}}{text}"))
+                           f"{{\\an{an}{kit}\\move({x},{y},{drift},{y})\\blur0.8{sh}}}{text}"))
             evs.append(_ev(0, max(a + .14, b - .12), b, "Cap",
-                           f"{{\\an{an}\\move({drift},{y},{drift - round(220 * k) * d},{y})\\blur0.8"
+                           f"{{\\an{an}{kit}\\move({drift},{y},{drift - round(220 * k) * d},{y})\\blur0.8"
                            f"\\t(0,120,\\blur12\\fscx120\\alpha&HFF&){sh}}}{text}"))
     elif look == "scrawl":
         st = style("Scr", 260, "&H00FFFFFF,&H00FFFFFF,&H00000000,&H78000000,B,0,0,0,100,100,0,0,1,0,12,5,0,0,0,1")
@@ -739,26 +906,32 @@ def build_ass(look: str, rows: list[list[dict]], W: int, H: int, *, face: str = 
             w = wd["w"].upper()
             if (shots and len(shots[-1]["w"]) + len(w) <= 6 and not wd.get("hook")
                     and not shots[-1].get("hook") and wd["a"] - shots[-1]["b"] < 0.05):
-                shots[-1] = {"w": shots[-1]["w"] + "\\N" + w, "a": shots[-1]["a"], "b": wd["b"]}
+                # THE BOX TRAVELS WITH THE SHOT. Two words merged into one are
+                # still that line's words and belong in that line's box; built
+                # as a fresh dict they lost it and fell back to the centre.
+                shots[-1] = dict(shots[-1], w=shots[-1]["w"] + "\\N" + w, b=wd["b"])
             else:
                 shots.append(dict(wd, w=w))
         whip, looped = .09, False
         for i, s in enumerate(shots):
-            rot = (-3, 2, -2, 3)[i % 4]
-            sz = f"\\fs{size(200)}" if "\\N" in s["w"] else ""
+            # The look's own jitter, plus whatever the box is turned to.
+            rot = (-3, 2, -2, 3)[i % 4] + (-(s["_bx"]["rot"]) if s.get("_bx") else 0)
+            yy = ypos(s)
+            sz = f"\\fs{size(200, s)}" if "\\N" in s["w"] else fs(size(260, s), s)
             col = f"\\1c{RED}" if s.get("hook") else ""
             a, b = s["a"], s["b"]
-            wx = fit(max(len(x) for x in s["w"].split("\\N")), size(200 if sz else 260), 0.5)
-            evs.append(_ev(1, a, a + whip, "Scr", f"{{\\move({wx + round(760 * k)},{Y},{wx},{Y})\\frz{rot}{sz}{col}"
+            wx = fit(max(len(x) for x in s["w"].split("\\N")),
+                     size(200 if "\\N" in s["w"] else 260, s), 0.5, s)
+            evs.append(_ev(1, a, a + whip, "Scr", f"{{\\move({wx + round(760 * k)},{yy},{wx},{yy})\\frz{rot}{sz}{col}"
                                                   f"\\blur14\\fscx135\\t(0,{int(whip * 1000)},\\blur1.2\\fscx100)}}{s['w']}"))
             evs.append(_ev(1, a + whip, max(a + whip + .01, b), "Scr",
-                           f"{{\\move({wx},{Y},{wx - round(30 * k)},{Y})\\frz{rot}{sz}{col}\\blur1.2}}{s['w']}"))
+                           f"{{\\move({wx},{yy},{wx - round(30 * k)},{yy})\\frz{rot}{sz}{col}\\blur1.2}}{s['w']}"))
             if s.get("hook") and not looped:
                 looped = True
                 path = ("m 0 0 b 160 -260 760 -300 900 -40 b 980 120 860 300 640 330 "
                         "l 640 312 b 840 282 950 115 878 -30 b 745 -275 175 -240 18 8")
                 sc_ = round(100 * k)
-                evs.append(_ev(0, a + whip, b, "Scr", f"{{\\an7\\pos({wx - round(460 * k)},{Y - round(230 * k)})"
+                evs.append(_ev(0, a + whip, b, "Scr", f"{{\\an7\\pos({wx - round(460 * k)},{yy - round(230 * k)})"
                                                       f"\\fscx{sc_}\\fscy{sc_}\\p1\\bord0\\shad8\\blur1.5"
                                                       f"\\clip(0,0,{wx - round(450 * k)},{H})\\t(0,320,\\clip(0,0,{W},{H}))}}{path}"))
     else:
@@ -852,7 +1025,7 @@ def prepare(project: dict, derived: dict, cache_dir: Path, W: int, H: int, *,
     text = build_ass(cfg["look"], rows, W, H, face=cfg["face"], clean_words=cfg["clean"],
                      pos=cfg["pos"], reveal=cfg.get("reveal") or "look",
                      box=cfg.get("box", 1.0), size=cfg.get("size", 1.0),
-                     alpha=cfg.get("alpha", 1.0))
+                     alpha=cfg.get("alpha", 1.0), boxes=cfg.get("boxes") or [])
     cache = Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
     p = cache / f"{hashlib.sha1(text.encode('utf-8')).hexdigest()[:16]}.ass"

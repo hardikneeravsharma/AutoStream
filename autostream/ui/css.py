@@ -4311,6 +4311,36 @@ EDITOR_CSS = r"""
 .ed-lyrics{font-family:var(--font-display);letter-spacing:.04em;color:#fff;background:rgba(224,38,58,.55)}
 .ed-cambox{position:absolute;border:2px dashed var(--warn);background:rgba(255,200,60,.12);pointer-events:none}
 .ed-cambox span{position:absolute;left:4px;top:2px;font:600 11px var(--font-text);color:var(--warn)}
+/* ---- the boxes the lyrics are dealt into (U28) ---------------------------
+   Drawn ON the picture, so every colour here is the on-media pair rather than
+   a theme token: a frame of gameplay is not a surface this app controls, and
+   a border in --accent is invisible over a blue sky. The number sits in a
+   scrim for the same reason. */
+.ed-boxes{position:absolute;touch-action:none;cursor:crosshair;z-index:3}
+.ed-box{position:absolute;box-sizing:border-box;border:2px dashed rgba(255,255,255,.85);
+  background:rgba(0,0,0,.18);cursor:move}
+.ed-box.is-on{border-style:solid;border-color:var(--accent);background:rgba(77,159,255,.16)}
+.ed-box-num{position:absolute;left:-1px;top:-1px;min-width:18px;height:18px;display:flex;
+  align-items:center;justify-content:center;padding:0 4px;font:700 11px var(--font-mono);
+  color:var(--on-media);background:var(--on-media-scrim);pointer-events:none}
+.ed-box.is-on .ed-box-num{background:var(--accent);color:var(--text-on-accent)}
+.ed-box-h{position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:2px;
+  background:var(--on-media);border:1px solid var(--accent);box-shadow:0 1px 3px rgba(0,0,0,.5)}
+.ed-box-nw{left:0;top:0;cursor:nwse-resize}
+.ed-box-n{left:50%;top:0;cursor:ns-resize}
+.ed-box-ne{left:100%;top:0;cursor:nesw-resize}
+.ed-box-e{left:100%;top:50%;cursor:ew-resize}
+.ed-box-se{left:100%;top:100%;cursor:nwse-resize}
+.ed-box-s{left:50%;top:100%;cursor:ns-resize}
+.ed-box-sw{left:0;top:100%;cursor:nesw-resize}
+.ed-box-w{left:0;top:50%;cursor:ew-resize}
+/* The turn knob stands off the top edge, where it cannot be mistaken for a
+   corner: a rotate that resizes is the classic confusion here. */
+.ed-box-rot{left:50%;top:-26px;border-radius:999px;cursor:grab}
+.ed-box-hint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);margin:0;
+  padding:6px 10px;border-radius:var(--radius-sm);font-size:12.5px;
+  color:var(--on-media);background:var(--on-media-scrim);pointer-events:none}
+.studio-lyrbox-bar{flex-wrap:wrap;gap:var(--space-3)}
 """
 
 CSS = CSS + EDITOR_CSS

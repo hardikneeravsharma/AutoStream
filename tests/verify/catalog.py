@@ -676,6 +676,12 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-lyr-pos": "puts the lyrics at one of nine places; sent with the next render",
     "studio-lyr-shift": "moves every lyric line earlier or later; sent with the next render",
     "studio-lyr-move": "shows the LYRICS stand-in on the picture so it can be dragged; never leaves the browser",
+    # The boxes the lyric lines are dealt into (U28). Drawn on the
+    # picture and kept on the project; they reach the server with the
+    # next render like any other lyric setting, never on their own.
+    "studio-lyrbox-mode": "turns the box editor on the picture on and off",
+    "studio-lyrbox-add": "puts another box on the picture; sent with the next render",
+    "studio-lyrbox-clear": "takes every box off; sent with the next render",
     "studio-lyr-pos-reset": "puts the lyrics back at the look's own place; sent with the next render",
     "studio-pick": "selects or unselects a clip (shift selects a range)",
     "studio-folder": "selects or unselects every clip in a run",
