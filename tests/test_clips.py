@@ -955,3 +955,40 @@ def test_valorant_rounds_carry_a_real_score_and_keep_the_quiet_ones():
     quiet = got[2]
     assert got[1].ended <= quiet.started < quiet.ended <= got[3].started + 1e-6, (
         quiet.started, quiet.ended)
+
+
+def test_the_match_record_flag_reaches_the_page_that_gates_on_it():
+    """BOTH ENDS, because one end alone shipped the feature unreachable.
+
+    v1.64.0 offered Valorant the whole-match video, the page gated the switch
+    on `s.matches`, and the server never put `matches` on a session row at
+    all -- so it read as false for every recording and the switch never
+    appeared. Every test passed: they checked the page READ it.
+
+    This is the same shape as the v1.54.0 bug where `match_summary` was sent
+    by the page and dropped by the server, and the lesson written down then
+    was exactly this: where a flag crosses between the page and the server,
+    pin both sides.
+    """
+    from pathlib import Path
+
+    import autostream
+    from autostream.ui import clips as clips_ui
+
+    web = (Path(autostream.__file__).parent / "webui.py").read_text(encoding="utf-8")
+    page = clips_ui.CLIPS_JS
+
+    # The server puts it on the row...
+    assert '"matches": bool(getattr(prof, "matches", False)),' in web, \
+        "the sessions row no longer carries the match-record flag"
+    # ...and the page gates the switch on it.
+    assert "s.matches" in page, "the page no longer reads the match-record flag"
+    assert "clip-matchvid-field" in clips_ui.CLIPS_HTML, "the switch lost its own field"
+
+    # And it is a DIFFERENT question from `rounds`: a game may have one and
+    # not the other, which is the whole reason this was hidden for Valorant.
+    from autostream.clips import profiles
+
+    val = profiles.BUILTIN["valorant-win64-shipping.exe"]
+    assert val.get("matches") is True, "Valorant should have a match record"
+    assert not val.get("rounds"), "Valorant must NOT read rounds off the screen"
