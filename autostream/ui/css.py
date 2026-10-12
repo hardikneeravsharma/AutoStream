@@ -4341,6 +4341,30 @@ EDITOR_CSS = r"""
   padding:6px 10px;border-radius:var(--radius-sm);font-size:12.5px;
   color:var(--on-media);background:var(--on-media-scrim);pointer-events:none}
 .studio-lyrbox-bar{flex-wrap:wrap;gap:var(--space-3)}
+/* ---- the history (U17) ---------------------------------------------------
+   An undone step keeps its contrast and loses its dot's fill: it is still
+   there to be clicked, and dimming it to 40% would say the opposite. */
+.studio-hist{display:flex;flex-direction:column;gap:2px;padding:var(--space-4);
+  border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-md);
+  background:var(--surface);max-height:300px;overflow:auto}
+.studio-hist-head{display:flex;align-items:baseline;justify-content:space-between;gap:var(--space-4);
+  margin-bottom:var(--space-2)}
+.studio-hist-head h3{margin:0;font-size:13px}
+.studio-hist-head .muted{font-size:11.5px}
+.studio-hist-row{display:flex;align-items:center;gap:var(--space-4);width:100%;padding:5px 6px;
+  border:0;border-radius:var(--radius-sm);background:transparent;color:var(--text-primary);
+  font:inherit;font-size:12.5px;text-align:left;cursor:pointer}
+.studio-hist-row:hover{background:var(--surface-hover)}
+.studio-hist-lab{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.studio-hist-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--border-strong)}
+.studio-hist-row.is-off .studio-hist-dot{background:transparent;
+  border:1px solid var(--border-strong)}
+/* ACCENT BUDGET: where you are standing, the one marked state in this list. */
+.studio-hist-here{display:flex;align-items:center;gap:var(--space-4);margin:var(--space-1) 0;
+  padding:5px 6px;border-radius:var(--radius-sm);background:var(--accent-muted);
+  font-size:12.5px;font-weight:600;color:var(--accent-text)}
+.studio-hist-here .studio-hist-dot{background:var(--accent)}
+.studio-hist-none,.studio-hist-note{margin:var(--space-2) 0 0}
 """
 
 CSS = CSS + EDITOR_CSS

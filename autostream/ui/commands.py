@@ -159,6 +159,14 @@ COMMANDS: list[dict] = [
        "studio-zoom", args={"data-z": "0"}, keys=("0",)),
     _c("timeline.undo", "Undo the last edit", "timeline", "studio-undo",
        keys=("Ctrl+Z",), why="There is nothing to undo."),
+    _c("timeline.redo", "Put back what you undid", "timeline", "studio-redo",
+       keys=("Ctrl+Shift+Z",), why="There is nothing to put back."),
+    _c("timeline.history", "Everything you have done to this reel", "timeline",
+       "studio-hist"),
+    _c("timeline.history-back", "Go back to a step", "timeline",
+       "studio-hist-back", palette=False),
+    _c("timeline.history-forward", "Go forward to a step", "timeline",
+       "studio-hist-fwd", palette=False),
     _c("timeline.render", "Render the reel", "timeline", "studio-render"),
     _c("timeline.cancel", "Stop the render", "timeline", "studio-cancel",
        why="Nothing is rendering."),
@@ -439,6 +447,14 @@ def ids() -> set[str]:
     return {c["id"] for c in COMMANDS}
 
 
+def by_id(cid: str) -> dict | None:
+    """One command by name, or None. The browser tier and the tests both ask."""
+    for c in COMMANDS:
+        if c["id"] == cid:
+            return c
+    return None
+
+
 def acts() -> set[str]:
     """Every `data-act` the registry stands on."""
     return {c["act"] for c in COMMANDS if c["act"]}
@@ -463,4 +479,4 @@ COMMANDS_JS: str = (
 )
 
 __all__ = ["COMMANDS", "COMMANDS_JS", "SCOPES", "SCOPE_IDS", "acts",
-           "bindings", "ids", "payload"]
+           "bindings", "by_id", "ids", "payload"]

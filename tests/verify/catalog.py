@@ -680,6 +680,12 @@ NOT_A_FLOW: dict[str, str] = {
     # picture and kept on the project; they reach the server with the
     # next render like any other lyric setting, never on their own.
     "studio-lyrbox-mode": "turns the box editor on the picture on and off",
+    # Undo, redo and the history are the page's own memory of edits
+    # already made; nothing new is asked of the server until a render.
+    "studio-redo": "puts back a step that was undone; never leaves the browser",
+    "studio-hist": "opens the list of everything done to this reel",
+    "studio-hist-back": "goes back to a step on that list",
+    "studio-hist-fwd": "goes forward to a step on that list",
     "studio-lyrbox-add": "puts another box on the picture; sent with the next render",
     "studio-lyrbox-clear": "takes every box off; sent with the next render",
     "studio-lyr-pos-reset": "puts the lyrics back at the look's own place; sent with the next render",

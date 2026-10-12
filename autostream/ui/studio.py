@@ -176,6 +176,13 @@ STUDIO_HTML = r"""
         <span class="studio-spacer"></span>
         <div class="field-inline studio-acts">
           <button type="button" class="btn btn-ghost btn-sm" data-act="studio-undo" id="studio-undo-btn" disabled>Undo</button>
+          <!-- UNDO WAS A ONE-WAY DOOR. A step popped off the stack was gone,
+               so Ctrl+Z pressed once too often could not be taken back. Both
+               buttons now say what they will do rather than only that they
+               can do something. -->
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-redo" id="studio-redo-btn" disabled>Redo</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-hist" id="studio-hist-btn"
+                  aria-expanded="false" title="Everything you have done to this reel">History</button>
           <button type="button" class="btn btn-ghost btn-sm" data-act="studio-show" id="studio-show-btn" disabled>Show file</button>
           <button type="button" class="btn btn-ghost btn-sm hide" data-act="studio-cancel" id="studio-cancel-btn">Cancel</button>
           <button type="button" class="btn btn-primary" data-act="studio-render" id="studio-render-btn">Render</button>
@@ -333,6 +340,13 @@ STUDIO_HTML = r"""
            in its own plate; the planner's account of the build is folded
            away, where it can be opened by someone who wants it. -->
       <div class="studio-why" id="studio-why"></div>
+
+      <!-- EVERYTHING DONE TO THIS REEL, and where in it you are standing.
+           The steps you have undone stay on the list rather than vanishing,
+           because the whole point of a history is that a step too far is
+           recoverable. Click any step to go there. The words are the ones the
+           change list above uses -- one set of names, two views of it. -->
+      <div class="studio-hist hide" id="studio-hist" aria-label="History"></div>
     </aside>
   </section>
 
@@ -1106,6 +1120,12 @@ const studio = {
      search last matched, in the order drawn, so Up/Down and Enter act on the
      same list the eye is reading. */
   pal: {open: false, q: '', sel: 0, rows: [], recent: []},
+  /* The states ahead of you: what Ctrl+Z has set aside and Ctrl+Shift+Z
+     puts back. Emptied by any fresh edit -- see studio_pushUndo. */
+  redo: [],
+  /* Whether the history panel is open. Not the history itself: that is the
+     two stacks, which exist whether anybody is looking or not. */
+  histOpen: false,
   /* THE LYRIC BOXES, while they are being drawn. `on` is the mode, `sel` the
      box being worked on, `drag` whatever the pointer is in the middle of.
      None of it is the project: the project only learns about a box when the
@@ -3217,7 +3237,7 @@ async function studio_build() {
     /* A rebuild renders over the reel it rebuilds rather than beside it. */
     if (ad && ad.output) r.project.output = ad.output;
     studio_setProject(r.project, r.derived, r.notes, r.song);
-    studio.output = ad && ad.output ? ad.output : ''; studio.undo = [];
+    studio.output = ad && ad.output ? ad.output : ''; studio.undo = []; studio.redo = [];
     /* A fresh reel has no video to differ from; a rebuild over an existing one
        has exactly one difference, and it is the whole reel. */
     studio.pending = []; studio.dirty = true; studio.failMsg = '';
@@ -3265,9 +3285,41 @@ function studio_setProject(project, derived, notes, songShape) {
   studio_drawAll();
 }
 
-function studio_pushUndo(snapshot) {
-  studio.undo.push(snapshot);
+/* ------------------------------------------------------- back, and forward
+
+   Undo used to be a POP: the step came off the stack and was gone, so a
+   Ctrl+Z pressed once too often could not be taken back, and there was
+   nothing anywhere to show what had been done. It is a cursor now -- two
+   stacks, which is that cursor kept simply: `undo` holds the states behind
+   you and `redo` the states ahead, and a step MOVES between them instead of
+   being destroyed.
+
+   Each entry carries the LABEL of the edit it belongs to, and that label is
+   the one studio_change already wrote for the change list. The history is a
+   second VIEW of those same words, never a second list of its own: two lists
+   describing one set of edits would eventually disagree, and then neither
+   could be believed. */
+
+function studio_pushUndo(snapshot, label) {
+  studio.undo.push({snap: snapshot, label: label || 'An edit on the timeline'});
   if (studio.undo.length > 60) studio.undo.shift();
+  /* A fresh edit abandons the way forward: what you had undone is not a
+     future of THIS project any more. */
+  studio.redo = [];
+}
+
+/* The one place a step is crossed, in either direction, so back and forward
+   cannot drift apart. */
+function studio_step(from, to) {
+  const got = from.pop();
+  if (!got) return false;
+  to.push({snap: JSON.stringify(studio.project), label: got.label});
+  studio.gen++;
+  studio.project = JSON.parse(got.snap);
+  studio_untouched();
+  studio_localDerive(); studio_drawAll();
+  studio_check();
+  return true;
 }
 
 /* ------------------------------------------------- what is not rendered yet
@@ -3453,7 +3505,7 @@ function studio_untouched() {
 function studio_change(mutate, label, shot, sticky) {
   if (!studio.project) return;
   const was = JSON.stringify(studio.project);
-  studio_pushUndo(was);
+  studio_pushUndo(was, label);
   studio.gen++;
   mutate(studio.project);
   studio_touched(label, shot, sticky ? null : studio_diff(JSON.parse(was), studio.project));
@@ -3488,14 +3540,64 @@ async function studio_check() {
   studio_drawAll();
 }
 
+/* The list, drawn from the two stacks and nothing else. Behind you, oldest
+   first; then where you are; then what you have undone, which is still here.
+   A step is numbered by how far it is from where you stand, because that is
+   what clicking it costs. */
+function studio_histDraw() {
+  const host = studio_el('studio-hist');
+  if (!host) return;
+  host.classList.toggle('hide', !studio.histOpen || !studio.project);
+  if (!studio.histOpen || !studio.project) return;
+  const back = studio.undo, fwd = studio.redo;
+  /* THE ACTION IS WRITTEN OUT, not assembled. The registry's own rule --
+     every command names an action the page renders -- reads the source as
+     text, and an action built from a variable is one nothing can find. The
+     same reason the routes are written out in full at every call. */
+  const guts = (label) => '<span class="studio-hist-dot" aria-hidden="true"></span>' +
+    '<span class="studio-hist-lab">' + esc(label) + '</span></button>';
+  const backRow = (label, n) =>
+    '<button type="button" class="studio-hist-row" data-act="studio-hist-back" data-n="' +
+    n + '">' + guts(label);
+  const fwdRow = (label, n) =>
+    '<button type="button" class="studio-hist-row is-off" data-act="studio-hist-fwd" data-n="' +
+    n + '">' + guts(label);
+  let html = '<div class="studio-hist-head"><h3>History</h3><span class="muted">' +
+    (back.length + fwd.length) + (back.length + fwd.length === 1 ? ' step' : ' steps') +
+    '</span></div>';
+  if (!back.length && !fwd.length) {
+    html += '<p class="muted studio-small studio-hist-none">Nothing done to this reel yet.</p>';
+  } else {
+    back.forEach((e, i) => { html += backRow(e.label, back.length - i); });
+    html += '<p class="studio-hist-here"><span class="studio-hist-dot" aria-hidden="true"></span>' +
+            'The reel is here</p>';
+    /* The redo stack has the NEXT step on top, so it reads backwards. */
+    for (let i = fwd.length - 1; i >= 0; i--) {
+      html += fwdRow(fwd[i].label, fwd.length - i);
+    }
+    if (fwd.length) {
+      html += '<p class="muted studio-small studio-hist-note">Undone &mdash; still here, ' +
+              'still yours to put back.</p>';
+    }
+  }
+  host.innerHTML = html;
+}
+
 function studio_undo() {
-  const last = studio.undo.pop();
-  if (!last) return;
-  studio.gen++;
-  studio.project = JSON.parse(last);
-  studio_untouched();
-  studio_localDerive(); studio_drawAll();
-  studio_check();
+  if (!studio_step(studio.undo, studio.redo)) toast('There is nothing to undo.', 'warn');
+}
+
+function studio_redo() {
+  if (!studio_step(studio.redo, studio.undo)) toast('There is nothing to put back.', 'warn');
+}
+
+/* Jump to a point in the history by crossing the steps between here and
+   there, rather than by restoring that state directly -- so the two stacks
+   stay exactly as they would after pressing the key that many times, and the
+   change list is reconciled at every step rather than once at the end. */
+function studio_histGo(back, fwd) {
+  for (let i = 0; i < back; i++) if (!studio_step(studio.undo, studio.redo)) break;
+  for (let i = 0; i < fwd; i++) if (!studio_step(studio.redo, studio.undo)) break;
 }
 
 /* A quick estimate while dragging. The server's answer replaces it. */
@@ -4322,7 +4424,21 @@ function studio_drawRenderCard() {
     Math.round(d.bpm) + ' BPM grid · ' + (st ? st.label : p.style) + ' · ' +
     (p.format === 'vertical' ? '9:16' : '16:9') + (p.song ? '' : ' · no song');
   studio_drawSync();
-  studio_el('studio-undo-btn').disabled = !studio.undo.length;
+  /* Each button names the step it would cross, so "Undo" is never a guess.
+     The title is where it goes: the strip is already crowded, and a label
+     that changes width makes the row jump on every edit. */
+  const ub = studio_el('studio-undo-btn'), rb = studio_el('studio-redo-btn');
+  if (ub) {
+    ub.disabled = !studio.undo.length;
+    const top = studio.undo[studio.undo.length - 1];
+    ub.title = top ? 'Undo: ' + top.label : 'There is nothing to undo';
+  }
+  if (rb) {
+    rb.disabled = !studio.redo.length;
+    const nxt = studio.redo[studio.redo.length - 1];
+    rb.title = nxt ? 'Put back: ' + nxt.label : 'There is nothing to put back';
+  }
+  studio_histDraw();
   studio_el('studio-show-btn').disabled = !studio.output || studio.dirty && !studio.renderedAt;
   studio_drawWhy();
   studio_pvSync();
@@ -6170,8 +6286,10 @@ function studio_pointerUp(e) {
   }
   if (!g.moved) { studio_select(g.i); return; }
   studio.gen++;
-  studio_pushUndo(g.snapshot);
-  studio_touched(studio_shotName(g.i) + (g.kind === 'trim' ? ' · trimmed' : g.kind === 'kill' ? ' · the kill moved' : ' moved'), g.i,
+  const moveName = studio_shotName(g.i) +
+    (g.kind === 'trim' ? ' · trimmed' : g.kind === 'kill' ? ' · the kill moved' : ' moved');
+  studio_pushUndo(g.snapshot, moveName);
+  studio_touched(moveName, g.i,
                  studio_diff(JSON.parse(g.snapshot), studio.project));
   studio.sel = g.i;
   studio_drawAll();
@@ -6183,7 +6301,7 @@ function studio_pointerUp(e) {
 async function studio_open(path) {
   const r = await API.get('/api/studio/project?path=' + encodeURIComponent(path));
   if (!r || !r.ok) { toast((r && r.error) || 'Could not open that reel.', 'warn'); return; }
-  studio.undo = []; studio.sel = -1;
+  studio.undo = []; studio.redo = []; studio.sel = -1;
   studio_setProject(r.project, r.derived, r.notes, r.song);
   /* `when` is the file's mtime in SECONDS; the page counts in milliseconds,
      so an opened reel read as rendered 20,000 days ago. */
@@ -7416,6 +7534,14 @@ function studio_wire() {
     else if (act === 'studio-render') studio_render();
     else if (act === 'studio-cancel') API.post('/api/studio/cancel', {}).then(studio_poll);
     else if (act === 'studio-undo') studio_undo();
+    else if (act === 'studio-redo') studio_redo();
+    else if (act === 'studio-hist') {
+      studio.histOpen = !studio.histOpen;
+      b.setAttribute('aria-expanded', studio.histOpen ? 'true' : 'false');
+      studio_histDraw();
+    }
+    else if (act === 'studio-hist-back') studio_histGo(Number(b.getAttribute('data-n')) || 0, 0);
+    else if (act === 'studio-hist-fwd') studio_histGo(0, Number(b.getAttribute('data-n')) || 0);
     else if (act === 'studio-palette') studio_palOpen();
     else if (act === 'studio-keys') studio_keysOpen();
     else if (act === 'studio-pal-close') studio_palClose();
@@ -7822,7 +7948,12 @@ function studio_wire() {
     if (onButton && (e.key === ' ' || e.key === 'Backspace' || e.key === 'Enter')) return;
     const tl = !studio_el('studio-pane-timeline').classList.contains('hide');
     if (!tl || !studio.project) return;
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); studio_undo(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      /* Shift goes the other way. Checked here rather than as its own branch
+         so the two can never be bound to different scopes by accident. */
+      e.preventDefault();
+      if (e.shiftKey) studio_redo(); else studio_undo();
+    }
     else if (e.key === 'ArrowRight') { e.preventDefault(); studio_select(Math.min(studio.project.shots.length - 1, studio.sel + 1)); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); studio_select(Math.max(0, studio.sel - 1)); }
     else if (e.key === ' ') { e.preventDefault(); studio_toggle(); }
@@ -7870,7 +8001,7 @@ async function studio_restyle() {
     }
     const r = await API.post('/api/studio/plan', body);
     if (!r || !r.ok) { toast((r && r.error) || 'Could not rebuild with that style.', 'warn'); return; }
-    studio_pushUndo(snapshot);
+    studio_pushUndo(snapshot, 'Rebuilt as ' + label);
     studio.gen++;
     r.project.output = p.output;
     /* The words belong to the song, not to the style: a new cut keeps them. */
@@ -7896,7 +8027,7 @@ async function studio_mix(what, announce, ride) {
   const r = await API.post('/api/studio/vary', {project: p, what: what});
   if (gen !== studio.gen) return;
   if (!r || !r.ok) { toast((r && r.error) || 'Could not mix the effects.', 'warn'); return; }
-  if (announce) studio_pushUndo(snapshot);
+  if (announce) studio_pushUndo(snapshot, 'Kill effects mixed');
   studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
   /* An unannounced mix rides along with the pool edit that asked for it, and
      that edit has already named itself; naming it twice would double the count.
@@ -8600,7 +8731,7 @@ async function studio_sgApply(noSong) {
     const r = await API.post('/api/studio/song', body);
     if (gen !== studio.gen) return;
     if (!r || !r.ok) { studio_el('studio-sg-msg').textContent = (r && r.error) || 'Could not use that song.'; return; }
-    studio_pushUndo(snapshot);
+    studio_pushUndo(snapshot, noSong ? 'The song taken off' : 'The part of the song');
     r.project.output = p.output;
     studio_setProject(r.project, r.derived, r.notes, r.song);
     studio_touched(noSong ? 'The song taken off'
