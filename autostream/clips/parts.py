@@ -345,8 +345,6 @@ HERO = [
      [("short", "briefly", 0.35), ("", "", 0.6), ("long", "a long beat", 1.0)]),
     ("h03", "spot", "Spotlight", "Everything but the centre drops away.", "amt",
      [("soft", "softly", 0.6), ("", "", 0.9), ("hard", "hard", 1.2)]),
-    ("h05", "slam", "Text slam", "The caption slams in and settles.", "scale",
-     [("soft", "gently", 1.4), ("", "", 1.9), ("hard", "hard", 2.6)]),
 ]
 
 

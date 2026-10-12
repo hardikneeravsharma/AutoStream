@@ -332,3 +332,47 @@ def test_a_pin_on_a_clip_that_is_not_there_changes_nothing():
     pinned = [m.clip["name"] for m in rb.order(list(ms), arrange="best",
                                                pins={"open": "C:/clips/gone.mp4"})]
     assert plain == pinned
+
+
+def test_two_bursts_of_one_clip_never_sit_next_to_each_other():
+    """THE FLAW A CONTACT SHEET SHOWED: on a 41-shot reel, 21 of its 40 cuts
+    went from a clip straight back to itself -- the same corner of the same
+    map, seconds apart in real time. It reads as a stutter, not a cut.
+
+    A two-minute clip with a dozen kills offers several of the strongest
+    bursts in the pack, so an order built on strength alone puts them side by
+    side. `spread_clips` puts something else between them.
+    """
+    # One generous clip and enough others to put between its bursts, which is
+    # the shape of a real pack: the reel this came from had 44 clips.
+    clips = [{"path": "big.mp4", "duration": 120.0,
+              "kills": [5.0, 25.0, 45.0, 65.0, 85.0]}]
+    clips += [{"path": f"c{i}.mp4", "duration": 30.0, "kills": [10.0]} for i in range(8)]
+    for how in ("hits", "best", "time", "shuffle", "build"):
+        got = rb.order(rb.moments(clips, beat=0.5), arrange=how)
+        pairs = [(got[i].group, got[i + 1].group) for i in range(len(got) - 1)]
+        same = [p for p in pairs if p[0] == p[1]]
+        assert not same, (how, same, [m.group for m in got])
+
+    # Starved of anything to interleave, it still returns every moment rather
+    # than refusing: two clips cannot be spread, and a reel is better than none.
+    thin = [{"path": "only.mp4", "duration": 90.0, "kills": [5.0, 40.0, 75.0]}]
+    got = rb.order(rb.moments(thin, beat=0.5), arrange="hits")
+    assert len(got) == 3, got
+
+
+def test_a_clips_own_bursts_stay_in_the_order_they_happened():
+    """Ranking bursts separately lets a later, stronger one outrank an earlier
+    one -- and then a shot replays footage a shot before it already showed,
+    which is what the follow-up fold exists to prevent. The spread moves the
+    PLACES about; what sits in them stays in clip order.
+    """
+    clips = [
+        {"path": "big.mp4", "duration": 120.0, "kills": [5.0, 40.0, 41.0, 80.0]},
+        {"path": "a.mp4", "duration": 30.0, "kills": [10.0]},
+        {"path": "b.mp4", "duration": 30.0, "kills": [12.0]},
+    ]
+    for how in ("hits", "best", "time", "shuffle", "build"):
+        got = rb.order(rb.moments(clips, beat=0.5), arrange=how)
+        mine = [m.kills[0] for m in got if m.clip["path"] == "big.mp4"]
+        assert mine == sorted(mine), (how, mine)

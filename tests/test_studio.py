@@ -620,9 +620,9 @@ def test_a_variant_reaches_the_renderer_the_way_its_base_does(root):
         _, _, segs = _built(root, hero=True, hero_fx=[part])
         assert [s.freeze for s in segs] == [pytest.approx(hold)] * len(segs), part
         assert all(s.freeze_push for s in segs), part
-    for part in ("h05", "h05soft", "h05hard"):
-        _, _, segs = _built(root, hero=True, hero_fx=[part], caption="ACE")
-        assert all(s.caption == "ACE" for s in segs), part
+    for part, amt in (("h03", 0.9), ("h03soft", 0.6), ("h03hard", 1.2)):
+        _, _, segs = _built(root, hero=True, hero_fx=[part])
+        assert all(s.hero_fx == [part] for s in segs), part
     for part in ("c04", "c04hair", "c04soft", "c04hard", "c04slam"):
         _, _, segs = _built(root, camera=part)
         assert all(s.beats for s in segs), part
@@ -631,15 +631,26 @@ def test_a_variant_reaches_the_renderer_the_way_its_base_does(root):
     assert not any(s.beats for s in segs)
 
 
-def test_the_text_slam_slams_in_from_its_own_scale(root):
-    sizes = []
-    for part in ("h05soft", "h05", "h05hard"):
-        _, _, segs = _built(root, hero=True, hero_fx=[part], caption="ACE")
-        argv = studio.segment_command(segs[0], Path("o.mp4"))
-        graph = argv[argv.index("-filter_complex") + 1]
-        big = int(re.search(r"fontsize='if\(lt\(t-[\d.]+,0\.1\),(\d+)-", graph).group(1))
-        sizes.append(big)
-    assert sizes[0] < sizes[1] < sizes[2], sizes
+def test_no_hero_effect_draws_the_caption_any_more(root):
+    """The Text slam is off: the user's verdict was that it looked bad, so the
+    whole h05 family -- base and both variants -- is out of the catalogue and
+    out of every style's hero pool.
+
+    The caption is only ever set for a shot whose hero effects include h05, so
+    with the family gone no shot carries one and the slam cannot be drawn.
+    Pinned here because the drawing code is still present and guarded: this is
+    what makes it unreachable rather than merely unused.
+    """
+    from autostream.clips import parts as parts_mod
+
+    assert not [p for p in studio.PARTS if p.id.startswith("h05")],         "a slam variant is still offered"
+    assert not [f for f in parts_mod.HERO if f[0] == "h05"],         "the slam family is still generating variants"
+    for style in studio.STYLES:
+        pool = tuple(style.hero) + tuple(style.hero_pool or ())
+        assert not [h for h in pool if h.startswith("h05")], style.key
+    # Nothing a style can deal sets a caption, so nothing draws the slam.
+    _, _, segs = _built(root, hero=True, hero_fx=["h01"], caption="ACE")
+    assert all(not s.caption for s in segs), "a caption reached a shot without h05"
 
 
 def test_each_transition_is_centred_on_its_cut(root):
