@@ -910,3 +910,48 @@ def test_a_game_fact_the_user_sets_is_still_theirs(tmp_path, monkeypatch):
     p = profiles.for_game("cs2.exe", "Counter-Strike 2")
     assert p.rounds is False, "an explicit false must not be overwritten"
     assert p.demos is True, "and the one they left out still falls back"
+
+
+def test_valorant_rounds_carry_a_real_score_and_keep_the_quiet_ones():
+    """C2's two data gaps, both of which made a Valorant match video useless.
+
+    Every chapter read "0-0" because score_before/score_after were hard-coded
+    zeros -- worse than no chapters, because it looks like a working feature
+    telling you nothing. And a round's bounds came from its own first and last
+    kill, so a round nobody died in vanished from the match entirely: an eco
+    nobody contested, a round won on the spike.
+    """
+    from autostream.clips import cs2_demo, valorant_match
+
+    def kill(rnd, at_ms, killer, victim):
+        return {"round": rnd, "gameTime": at_ms, "killer": killer, "victim": victim}
+
+    me, foe = "me", "them"
+    match = valorant_match.Match.__new__(valorant_match.Match)
+    match.data = {
+        "players": [{"subject": me, "teamId": "Blue"}, {"subject": foe, "teamId": "Red"}],
+        "roundResults": [
+            {"roundNum": 0, "winningTeam": "Blue"},
+            {"roundNum": 1, "winningTeam": "Red"},
+            {"roundNum": 2, "winningTeam": "Blue"},   # nobody dies in this one
+            {"roundNum": 3, "winningTeam": "Blue"},
+        ],
+    }
+    shots = [kill(0, 30_000, me, foe), kill(1, 90_000, foe, me),
+             kill(3, 210_000, me, foe)]
+    match.kills = lambda: list(shots)                       # type: ignore[method-assign]
+
+    got = valorant_match.rounds_from(match, me, cs2_demo.Sync(0.0, 1.0))
+
+    # The quiet round is still there: four results in, four rounds out.
+    assert [r.number for r in got] == [1, 2, 3, 4], [r.number for r in got]
+
+    # And the score is counted, not zero.
+    assert [r.score_before for r in got] == [(0, 0), (1, 0), (1, 1), (2, 1)]
+    assert [r.score_after for r in got] == [(1, 0), (1, 1), (2, 1), (3, 1)]
+    assert [r.won for r in got] == [True, False, True, True]
+
+    # The round nobody died in sits between its neighbours rather than nowhere.
+    quiet = got[2]
+    assert got[1].ended <= quiet.started < quiet.ended <= got[3].started + 1e-6, (
+        quiet.started, quiet.ended)

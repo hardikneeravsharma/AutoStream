@@ -594,6 +594,11 @@ def _alive_at(match: Match, kill: dict, puuid: str) -> tuple[int, int]:
     return mine, theirs
 
 
+# How much of a round is shown either side of its kills: the buy and the walk
+# in, and the moment after the last kill before the screen changes.
+RUN_IN, RUN_OUT = 20.0, 6.0
+
+
 def rounds_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list:
     """Riot's round record, as the Round objects the planner already takes."""
     teams = {str(p.get("subject")): str(p.get("teamId") or "")
@@ -604,30 +609,79 @@ def rounds_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list:
     for k in match.kills():
         by_round.setdefault(int(k.get("round") or 0), []).append(k)
 
+    # WHERE EACH ROUND SITS ON THE VIDEO, worked out before any of them is
+    # built. A round's bounds used to come from its own first and last kill,
+    # which drops any round nobody died in -- an eco nobody contested, a round
+    # won on the spike. Those rounds are part of the match and belong in a
+    # match video. One with no kills of its own is placed between the round
+    # before it and the round after, which is exactly where it happened.
+    spans: dict[int, tuple[float, float]] = {}
+    for r in results:
+        n = int(r.get("roundNum") or 0)
+        ks = by_round.get(n, [])
+        if ks:
+            ts = sorted(float(k.get("gameTime") or 0) for k in ks)
+            spans[n] = (sync.to_vod(ts[0] / 1000.0), sync.to_vod(ts[-1] / 1000.0))
+    numbers = sorted(int(r.get("roundNum") or 0) for r in results)
+    for i, n in enumerate(numbers):
+        if n in spans:
+            continue
+        before = next((spans[m][1] for m in reversed(numbers[:i]) if m in spans), None)
+        after = next((spans[m][0] for m in numbers[i + 1:] if m in spans), None)
+        # These are read as a FIRST and LAST kill: the Round below pads them
+        # by RUN_IN before and RUN_OUT after. So the gap is given back that
+        # padding here, or a quiet round would overlap the rounds either side.
+        lo = (before + RUN_IN + RUN_OUT) if before is not None else None
+        hi = (after - RUN_IN - RUN_OUT) if after is not None else None
+        if lo is not None and hi is not None and hi > lo:
+            spans[n] = (lo, hi)
+        elif lo is not None:
+            spans[n] = (lo, lo + 40.0)
+        elif hi is not None:
+            spans[n] = (max(0.0, hi - 40.0), max(0.0, hi))
+
+    # THE SCORE IS COUNTED, NOT LEFT AT ZERO. Every chapter used to read 0-0,
+    # which is worse than no chapters at all: it looks like a working feature
+    # telling you nothing. Riot gives the winner of each round, so the running
+    # score is a tally over them in order.
+    won_by: dict[int, bool | None] = {}
+    for r in results:
+        n = int(r.get("roundNum") or 0)
+        won_by[n] = (str(r.get("winningTeam") or "") == me) if me else None
+    running: dict[int, tuple[tuple[int, int], tuple[int, int]]] = {}
+    mine = theirs = 0
+    for n in numbers:
+        before = (mine, theirs)
+        got = won_by.get(n)
+        if got is True:
+            mine += 1
+        elif got is False:
+            theirs += 1
+        running[n] = (before, (mine, theirs))
+
     out = []
     for r in results:
         n = int(r.get("roundNum") or 0)
         kills = sorted(by_round.get(n, []),
                        key=lambda k: float(k.get("gameTime") or 0))
-        if not kills:
-            continue          # no timing to place the round on the video with
-        first = sync.to_vod(float(kills[0].get("gameTime") or 0) / 1000.0)
-        last = sync.to_vod(float(kills[-1].get("gameTime") or 0) / 1000.0)
+        if n not in spans:
+            continue          # nothing anywhere to place this round against
+        first, last = spans[n]
         mine_k = [k for k in kills if k.get("killer") == puuid]
         my_deaths = sum(1 for k in kills if k.get("victim") == puuid)
 
         rd = rounds_mod.Round(
             number=n + 1,
-            started=max(0.0, first - 20.0),
-            ended=last + 6.0,
-            score_before=(0, 0), score_after=(0, 0),
+            started=max(0.0, first - RUN_IN),
+            ended=last + RUN_OUT,
+            score_before=running[n][0], score_after=running[n][1],
             half=1 if n < 12 else 2)
         rd.source = "match"
         rd.my_kills = len(mine_k)
         rd.my_deaths = my_deaths
         rd.kill_times = [sync.to_vod(float(k.get("gameTime") or 0) / 1000.0)
                          for k in mine_k]
-        rd.won = (str(r.get("winningTeam") or "") == me) if me else None
+        rd.won = won_by.get(n)
 
         # The lowest my side ever got while the player was still in the round,
         # counted rather than inferred.

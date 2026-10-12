@@ -4375,6 +4375,12 @@ EDITOR_CSS = r"""
 .studio-tool.is-on{background:var(--accent);color:var(--text-on-accent);border-color:var(--accent)}
 .studio-tl.is-razor .st-shot,.studio-tl.is-razor .st-shot *{cursor:crosshair}
 .studio-marks{display:inline-flex;gap:2px;margin-left:var(--space-4)}
+/* The export sheet: what survived the trip, and what did not. Monospace
+   because it is a list to scan, not prose to read. */
+.studio-sheet{margin:0;padding:var(--space-4);border-radius:var(--radius-sm);
+  background:var(--surface-sunken);border:var(--border-hair) solid var(--border-subtle);
+  font-family:var(--font-mono);font-size:11.5px;line-height:1.55;color:var(--text-secondary);
+  white-space:pre-wrap;overflow-x:auto;max-height:280px}
 .studio-shuttle{min-width:52px;color:var(--accent-text)}
 /* In, out and the marks sit OVER the tracks rather than in a lane: they say
    where to look, and a lane of their own would read as part of the reel. */

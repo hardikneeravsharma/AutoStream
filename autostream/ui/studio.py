@@ -184,6 +184,17 @@ STUDIO_HTML = r"""
           <button type="button" class="btn btn-ghost btn-sm" data-act="studio-hist" id="studio-hist-btn"
                   aria-expanded="false" title="Everything you have done to this reel">History</button>
           <button type="button" class="btn btn-ghost btn-sm" data-act="studio-show" id="studio-show-btn" disabled>Show file</button>
+          <!-- THE REEL AS A TIMELINE SOMEBODY ELSE CAN OPEN. `.reel.json` was
+               always a project file; this writes it in a vocabulary Resolve
+               and Premiere read, with a sheet beside it saying what survived
+               the trip. A silent downgrade is how somebody loses an
+               afternoon. -->
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-export"
+                  id="studio-export-btn" data-kind="otio"
+                  title="Write this reel out as an OpenTimelineIO timeline (Resolve and most others)">Export&hellip;</button>
+          <button type="button" class="btn btn-ghost btn-sm hide" data-act="studio-export"
+                  data-kind="fcp7" id="studio-export-xml"
+                  title="Write it as Final Cut Pro 7 XML, which is what Premiere imports">Export for Premiere</button>
           <button type="button" class="btn btn-ghost btn-sm hide" data-act="studio-cancel" id="studio-cancel-btn">Cancel</button>
           <button type="button" class="btn btn-primary" data-act="studio-render" id="studio-render-btn">Render</button>
         </div>
@@ -6364,6 +6375,39 @@ function studio_razor(i, at) {
   studio_drawAll();
 }
 
+/* ---------------------------------------------------------- export
+
+   The reel written out as a timeline another editor can open. Which format
+   is asked rather than guessed: OTIO is right for Resolve and almost
+   everything else, FCP7 XML is what Premiere wants, and someone who needs
+   the other one knows which. The sheet the server returns is shown, not
+   hidden behind a success toast -- what did NOT survive is the part worth
+   reading. */
+async function studio_export(kind) {
+  if (!studio.project || studio.busy) return;
+  studio.busy = true;
+  const btn = studio_el('studio-export-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Writing\u2026'; }
+  try {
+    const r = await API.post('/api/studio/export',
+                             {project: studio.project, kind: kind || 'otio'});
+    if (!r || !r.ok) { toast((r && r.error) || 'Could not write the timeline.', 'warn'); return; }
+    toast('Written to ' + r.folder + ' \u2026 the .export.txt beside it says what survived.', 'ok');
+    /* THE SHEET IS SHOWN, NOT HIDDEN BEHIND A TOAST. What did NOT survive
+       the trip is the part worth reading, and a toast is gone in four
+       seconds. */
+    const why = studio_el('studio-why');
+    if (why) {
+      why.innerHTML = '<details open class="studio-grp">' +
+        '<summary>What the other editor will get</summary>' +
+        '<pre class="studio-sheet">' + esc(r.sheet || '') + '</pre></details>';
+    }
+  } finally {
+    studio.busy = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Export\u2026'; }
+  }
+}
+
 /* ------------------------------------------- in, out, marks and shuttle
 
    None of this changes the reel. In and out say which stretch to watch, a
@@ -7830,6 +7874,7 @@ function studio_wire() {
     else if (act === 'studio-undo') studio_undo();
     else if (act === 'studio-redo') studio_redo();
     else if (act === 'studio-tool') studio_tool(b.getAttribute('data-tool'));
+    else if (act === 'studio-export' && p) studio_export(b.getAttribute('data-kind'));
     else if (act === 'studio-mark') studio_markAdd();
     else if (act === 'studio-mark-clear') studio_markClear();
     else if (act === 'studio-in') studio_ioSet('a');

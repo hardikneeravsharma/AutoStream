@@ -925,6 +925,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_song(b))
             elif p == "/api/studio/delete":
                 self._json(self.app.studio_delete(b))
+            elif p == "/api/studio/export":
+                self._json(self.app.studio_export(b))
             elif p == "/api/studio/reel-delete":
                 self._json(self.app.studio_reel_delete(b))
             elif p == "/api/studio/intro-add":
@@ -3429,6 +3431,28 @@ class Server:
         from .clips import studio
 
         return studio.catalog()
+
+    def studio_export(self, body: dict) -> dict:
+        """Write the reel out as a timeline another editor can open (U20)."""
+        from .clips import interchange, studio
+
+        root = self._clips_dir(cfg.load())
+        kind = str(body.get("kind") or "otio")
+        if kind not in ("otio", "fcp7"):
+            return {"ok": False, "error": "Unknown format."}
+        try:
+            proj, derived, _notes = studio.normalise(body.get("project"), root)
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        if not proj.get("shots"):
+            return {"ok": False, "error": "There is nothing on the timeline to write out."}
+        try:
+            made = interchange.write(proj, derived, root / "timelines", kind)
+        except OSError as e:
+            return {"ok": False, "error": f"Could not write the timeline: {e}"}
+        log.info("studio: wrote %s as %s", proj.get("name"), kind)
+        return {"ok": True, "files": [str(f) for f in made], "folder": str(made[0].parent),
+                "sheet": interchange.sheet(proj, derived, kind)}
 
     def studio_commands(self) -> dict:
         """Every action the Studio can take, by name.

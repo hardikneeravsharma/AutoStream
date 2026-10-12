@@ -436,6 +436,9 @@ CONTROLS: list[Control] = [
             expect=_has("parts", "styles", "default_style"),
             why="the page offers every choice from this one answer, and each "
                 "style carries the reference measurements it is built on"),
+    Control("/api/studio/export", "POST", CALL, "the reel as a timeline another editor opens",
+            "studio", body={"project": {}, "kind": "otio"}, acts=("studio-export",),
+            why="refuses an empty timeline rather than writing a file with no cuts in it"),
     Control("/api/studio/commands", "GET", CALL, "every action the editor can take", "studio",
             expect=_has("ok", "scopes", "commands"),
             why="the browser tier asks what the editor can do rather than hunting "
@@ -687,6 +690,10 @@ NOT_A_FLOW: dict[str, str] = {
     # The timeline tools (U18). Picking one changes what the next drag
     # means; the edit itself goes through the same check the drags do.
     "studio-tool": "chooses Select, Roll or Razor for the next drag",
+    # Export asks the server to WRITE a file, so it is a flow with a route
+    # (/api/studio/export) rather than something that stays in the page --
+    # but the route is covered by its own Control row below.
+    "studio-export": "writes the reel out as an OTIO or Premiere timeline",
     # In, out and the marks say where to LOOK. None changes a frame, so none
     # reaches the server on its own; the marks ride on the project with the
     # next render like any other field.

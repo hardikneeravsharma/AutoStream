@@ -2245,3 +2245,45 @@ def test_the_page_lets_go_of_the_reel_before_asking_for_a_render():
     free = js[js.index("function studio_freeOutput("):]
     free = free[:free.index("\n}")]
     assert "removeAttribute('src')" in free and "v.load()" in free, free
+
+
+def test_the_reel_writes_out_as_a_timeline_another_editor_can_open(root, tmp_path):
+    """U20. `.reel.json` was always a project file; this writes it in a
+    vocabulary Resolve and Premiere read.
+
+    Both formats are parsed back here rather than eyeballed: an interchange
+    file that does not load is worse than none, because it is found at the
+    other end of somebody's afternoon.
+    """
+    import json as _json
+    import xml.etree.ElementTree as ET
+
+    from autostream.clips import interchange
+
+    proj, _ = studio.plan(_clips(root), "montage", shape=Shape(bpm=120.0))
+    got, derived, _ = studio.normalise(proj, root)
+
+    text = interchange.otio(got, derived)
+    doc = _json.loads(text)                      # it must parse
+    assert doc["OTIO_SCHEMA"].startswith("Timeline")
+    video = doc["tracks"]["children"][0]
+    assert video["kind"] == "Video"
+    assert len(video["children"]) == len(got["shots"]), "a shot went missing"
+    # Every clip points at a real file and carries its own source range.
+    for clip in video["children"]:
+        assert clip["media_reference"]["target_url"].startswith("file:")
+        assert clip["source_range"]["duration"]["value"] > 0
+
+    xml = interchange.fcp7(got, derived)
+    tree = ET.fromstring(xml)                    # it must parse
+    items = tree.findall(".//clipitem")
+    assert len(items) >= len(got["shots"]), "a shot went missing from the XML"
+
+    # The sheet names what does NOT survive, which is the point of it.
+    sheet = interchange.sheet(got, derived, "otio")
+    for owed in ("transitions", "colour grade", "lyrics", "facecam"):
+        assert owed in sheet, owed
+
+    made = interchange.write(got, derived, tmp_path, "otio")
+    assert [f.name for f in made] == [f"{got['name']}.otio", f"{got['name']}.export.txt"]
+    assert all(f.is_file() and f.stat().st_size > 0 for f in made)
