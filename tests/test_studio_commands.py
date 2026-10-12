@@ -112,6 +112,15 @@ _LITERALS = {
     "-": ("'-'",),
     "_": ("'_'",),
     "0": ("'0'",),
+    "V": ("'v'", "'V'"),
+    "N": ("'n'", "'N'"),
+    "C": ("'c'", "'C'"),
+    "J": ("'j'", "'J'"),
+    "K": ("'k'", "'K'"),
+    "L": ("'l'", "'L'"),
+    "I": ("'i'", "'I'"),
+    "O": ("'o'", "'O'"),
+    "M": ("'m'", "'M'"),
     "K": ("'k'", "'K'"),
     "Ctrl+K": ("'k'", "'K'"),
     "Ctrl+Z": ("'z'", "'Z'"),
@@ -164,7 +173,11 @@ def test_the_scope_order_is_the_handler_order(page: str) -> None:
         "import": page.index("if (studio_impKey(e)) return;"),
         "picker": page.index("if (studio_fxpKey(e)) return;"),
         "palette": page.index("if (studio_palKey(e)) return;"),
-        "escape": page.index("if (e.key === 'Escape') { studio_closeModals(); return; }"),
+        # Escape closes whatever is open AND puts the tool back to Select,
+        # so the anchor is the call rather than the whole line.
+        # Anchored on the line only this branch has: `studio_closeModals()`
+        # alone appears earlier, in its own definition.
+        "escape": page.index("if (studio.tool !== 'select') studio_tool('select');"),
         "inputs": page.index("if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;"),
         "button": page.index("if (onButton && (e.key === ' '"),
     }
@@ -236,3 +249,103 @@ def test_jumping_to_a_step_crosses_every_step_between(page: str) -> None:
     of at each step."""
     assert "function studio_histGo(" in page
     assert "for (let i = 0; i < back; i++) if (!studio_step(studio.undo, studio.redo)) break;" in page
+
+
+# ------------------------------------- the timeline's tools (U18, part one)
+
+def test_the_tools_are_named_and_each_has_a_key() -> None:
+    """Select, Roll and Razor. Ripple is deliberately NOT among them: this
+    timeline has no gaps, so shortening a shot already pulls the rest back --
+    a "ripple tool" beside the trim that already ripples would be two names
+    for one behaviour, which is how a UI starts lying about what it does.
+    """
+    for cid, key in (("timeline.tool-select", "V"),
+                     ("timeline.tool-roll", "N"),
+                     ("timeline.tool-razor", "C")):
+        c = C.by_id(cid)
+        assert c, f"{cid} is not in the registry"
+        assert c["keys"] == [key], c
+        assert c["act"] == "studio-tool", c
+        assert c["scope"] == "timeline", c
+    assert C.by_id("timeline.tool-ripple") is None, (
+        "there is no ripple tool: a trim already ripples here")
+
+
+def test_nobody_is_stranded_holding_a_tool(page: str) -> None:
+    """Escape always comes back to Select, and every tool is also reachable as
+    a modifier on the drag people already know -- so picking one is never
+    required and never a trap."""
+    assert "if (studio.tool !== 'select') studio_tool('select');" in page
+    # Ctrl rolls without picking the tool at all.
+    assert "studio.tool === 'roll' || g.roll || e.ctrlKey || e.metaKey" in page
+
+
+def test_a_roll_is_decided_on_the_press_not_read_each_frame(page: str) -> None:
+    """Letting go of Ctrl halfway through a drag must not turn a roll into a
+    trim under the hand: the reel's length would jump mid-gesture."""
+    assert "roll: studio.tool === 'roll' || e.ctrlKey || e.metaKey," in page
+
+
+def test_the_razor_acts_on_the_press_and_starts_no_drag(page: str) -> None:
+    """A cut that followed the pointer would be a trim with another name."""
+    cut = page[page.index("if (studio.tool === 'razor') {"):]
+    cut = cut[:cut.index("studio.drag = {")]
+    assert "studio_razor(" in cut and "return;" in cut, cut
+
+
+def test_the_razor_keeps_the_kill_with_the_half_it_happens_in(page: str) -> None:
+    """`pre` is how long a shot runs before its kill, so the second half's
+    kill is `at` nearer its own start -- and a kill left behind in the first
+    half is simply not in the second. Both halves keep at least a beat."""
+    fn = page[page.index("function studio_razor("):]
+    fn = fn[:fn.index("\n}")]
+    assert "b.pre = Number(Math.max(0, a.pre - at)" in fn, fn
+    assert "at < beat || s.duration - at < beat" in fn, fn
+    # A razor makes a hard cut between the halves; the transition it had
+    # belonged to the join that is now the second half's.
+    assert "a.transition = 't01'" in fn, fn
+
+
+# --------------------------- in, out, marks and the shuttle (U18, part two)
+
+def test_in_and_out_are_a_play_range_not_a_render_range(page: str) -> None:
+    """THE PLAN RULED THIS OUT IN WRITING, and the reason is the change list:
+    it says what has not reached the video yet, and a part-render would let it
+    claim the video matches the timeline when it matches a slice of it.
+
+    So nothing here may reach a render request.
+    """
+    fn = page[page.index("function studio_ioSet("):]
+    fn = fn[:fn.index("\n}")]
+    assert "/api/studio/render" not in fn, fn
+    assert "studio_change(" not in fn, "an in point is not an edit of the reel"
+    # And the range is read whichever way round the two were set.
+    rng = page[page.index("function studio_ioRange("):]
+    rng = rng[:rng.index("\n}")]
+    assert "a <= b ? [a, b] : [b, a]" in rng, rng
+
+
+def test_jkl_shuttles_rather_than_toggling(page: str) -> None:
+    """Pressed again they go faster, and the other way they slow, stop and
+    reverse -- which is what those keys do in every other editor. A toggle
+    would be a second Play button on three keys."""
+    assert "const STUDIO_SHUTTLE = [-8, -4, -2, -1, 0, 1, 2, 4, 8];" in page
+    for cid, key in (("timeline.shuttle-back", "J"), ("timeline.shuttle-stop", "K"),
+                     ("timeline.shuttle-on", "L")):
+        c = C.by_id(cid)
+        assert c and c["keys"] == [key], (cid, c)
+    # K stops outright rather than stepping down.
+    assert "studio.shuttle = 0; studio_shuttleApply();" in page
+
+
+def test_a_mark_is_kept_on_the_reel_and_cannot_be_dropped_twice(page: str) -> None:
+    """A mark is a note about the reel, not about this sitting at the screen,
+    so it lives on the project and survives a reload. Pressing M twice on one
+    frame is one mark."""
+    fn = page[page.index("function studio_markAdd("):]
+    fn = fn[:fn.index("\n}\n")]
+    assert "pr.markers" in fn, fn
+    assert "Math.abs(Number(m.t || m) - t) < 0.05" in fn, fn
+    # Added through studio_change, so it joins the change list and one undo
+    # takes it back, like every other edit.
+    assert "studio_change(" in fn, fn

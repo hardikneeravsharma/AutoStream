@@ -260,6 +260,8 @@ STUDIO_HTML = r"""
       <div class="studio-tl-bar ed-transport">
         <button type="button" class="btn btn-sm studio-transport" data-act="studio-play" id="studio-play-btn">Play</button>
         <span class="mono studio-clock" id="studio-clock">0:00.00</span>
+        <span class="mono studio-shuttle" id="studio-shuttle-lab"
+              role="status" aria-live="polite"></span>
         <span class="media-knobs" data-for="studio-video"></span>
         <label class="studio-check"><input type="checkbox" id="studio-snap" checked> Keep cuts on the beat</label>
         <!-- WHAT THE MUSIC LANE SHOWS. Loudness alone cannot say whether a kill
@@ -267,6 +269,37 @@ STUDIO_HTML = r"""
              own hit marks can, so both are on and either can be turned off. -->
         <label class="studio-check"><input type="checkbox" id="studio-tl-spec" checked> Show the music</label>
         <label class="studio-check"><input type="checkbox" id="studio-tl-marks" checked> Mark the beats</label>
+        <!-- THE TOOLS. Select is the hand that was always here; Roll and Razor
+             are the two the timeline genuinely did not have. Each is also a
+             modifier on the drag people already know -- Ctrl rolls -- so
+             nobody has to pick a tool, and Escape always comes back to Select
+             so nobody is stranded holding one. -->
+        <span class="studio-tools" role="group" aria-label="Timeline tool">
+          <button type="button" class="btn btn-sm studio-tool is-on" data-act="studio-tool"
+                  data-tool="select" aria-pressed="true"
+                  title="Select — move a shot, drag its edge to trim (V)">Select</button>
+          <button type="button" class="btn btn-sm studio-tool" data-act="studio-tool"
+                  data-tool="roll" aria-pressed="false"
+                  title="Roll — move the join between two shots, leaving the reel the same length (N, or hold Ctrl)">Roll</button>
+          <button type="button" class="btn btn-sm studio-tool" data-act="studio-tool"
+                  data-tool="razor" aria-pressed="false"
+                  title="Razor — click a shot to cut it in two (C)">Razor</button>
+        </span>
+        <!-- WHERE TO LOOK, not what the reel is. In and out pick a stretch to
+             watch and a mark says "come back to this"; neither changes a
+             frame of the video, which is why they sit apart from the tools. -->
+        <span class="studio-marks" role="group" aria-label="In, out and marks">
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-in"
+                  title="In point — start of the stretch you want to watch (I)">In</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-out"
+                  title="Out point — end of it (O)">Out</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-io-clear"
+                  title="Forget the in and out points">Clear</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mark"
+                  title="Drop a mark at the playhead (M)">Mark</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mark-clear"
+                  title="Take every mark off">No marks</button>
+        </span>
         <span class="studio-spacer"></span>
         <span class="muted studio-hint" id="studio-tl-sync" role="status" aria-live="polite"></span>
         <button type="button" class="btn btn-ghost btn-sm" data-act="studio-zoom" data-z="-1" aria-label="Zoom out">−</button>
@@ -285,6 +318,10 @@ STUDIO_HTML = r"""
           <div class="st-lab">Music</div>
         </div>
         <div class="studio-scroll" id="studio-scroll">
+          <!-- IN, OUT AND THE MARKS, over the tracks rather than in them:
+               they are about where to look, not about what the reel is,
+               and a lane of their own would make them look like an edit. -->
+          <div class="studio-io" id="studio-io" aria-hidden="true"></div>
           <div class="studio-tracks" id="studio-tracks"></div>
         </div>
       </div>
@@ -1126,6 +1163,20 @@ const studio = {
   /* Whether the history panel is open. Not the history itself: that is the
      two stacks, which exist whether anybody is looking or not. */
   histOpen: false,
+  /* WHICH TOOL THE POINTER IS HOLDING. 'select' is the hand everybody
+     already had; the rest are additions, and Escape always comes back here so
+     nobody is ever stranded holding one. A modifier on the drag does the same
+     job without picking a tool at all -- Ctrl rolls -- so the rail is a
+     convenience, never the only way in. */
+  tool: 'select',
+  /* IN AND OUT, and the shuttle. The range is a PLAY range and a place to
+     look, NEVER a render range: the change list says what has not reached
+     the video yet, and a part-render would let that strip claim the video
+     matches the timeline when it matches a slice of it. Marks live on the
+     project, because they are notes about the reel rather than about this
+     sitting at the screen. */
+  io: {a: null, b: null},
+  shuttle: 0,
   /* THE LYRIC BOXES, while they are being drawn. `on` is the mode, `sel` the
      box being worked on, `drag` whatever the pointer is in the middle of.
      None of it is the project: the project only learns about a box when the
@@ -3630,8 +3681,26 @@ function studio_snapTo(t) {
 
 /* ------------------------------------------------------------ rendering */
 
+/* LET GO OF THE OLD REEL BEFORE A NEW ONE REPLACES IT.
+   The player streams the finished mp4 through our own server, which keeps the
+   file open for the length of the response -- and Windows refuses to rename
+   over a file anything has open. So a render of the reel on screen finished
+   all its work and then died on its last line, WinError 5.
+   Nothing is lost by dropping it here: the instant preview is what is shown
+   while a render is in flight anyway, which is the whole reason it exists. */
+function studio_freeOutput() {
+  const v = studio_el('studio-video');
+  if (!v || !v.getAttribute('src')) return;
+  try {
+    v.pause();
+    v.removeAttribute('src');
+    v.load();                       /* without this the handle survives */
+  } catch (e) { /* a player that will not let go is the server's problem */ }
+}
+
 async function studio_render() {
   if (!studio.project) return;
+  studio_freeOutput();
   /* A check still waiting or in flight describes the project before the
      server allocates its output; letting it land afterwards would wipe that. */
   clearTimeout(studio.checkTimer);
@@ -4346,6 +4415,9 @@ async function studio_autoGo() {
   a.sig = sig;
   studio_autoLog('start');
   clearTimeout(studio.checkTimer);
+  /* The background render replaces the same file, so it has to let go of it
+     too -- and it is the one that runs most often. */
+  studio_freeOutput();
   const r = await API.post('/api/studio/render', {project: studio.project, auto: true}).catch(() => null);
   if (!r || !r.ok) {
     a.sig = '';
@@ -5485,6 +5557,7 @@ function studio_musicNeed() {
 }
 
 function studio_playhead() {
+  studio_ioDraw();
   const ph = studio_el('studio-ph');
   const t = studio_now();
   if (ph) ph.style.left = (t * studio.pps).toFixed(1) + 'px';
@@ -6225,6 +6298,196 @@ function studio_inspectorInput(e) {
   if (map[t.id]) map[t.id]();
 }
 
+/* ------------------------------------------------------- the tools
+
+   WHAT WAS ACTUALLY MISSING, said plainly rather than counted. This timeline
+   has no gaps: the shots are a sequence and the reel is as long as their sum.
+   So a trim ALREADY ripples -- shortening a shot pulls everything after it
+   back, because there is nowhere for a hole to be. Adding a "ripple tool"
+   beside the trim that already ripples would be two names for one behaviour.
+
+   The two the timeline genuinely did not have:
+
+     ROLL   moves the join between two shots. One grows, the next shrinks by
+            the same amount, so everything after it stays exactly where it is
+            and the reel keeps its length. That is the edit you want when the
+            cut is a beat late but the kills after it are on their marks.
+     RAZOR  cuts one shot into two, so a long shot can carry its own cut.
+
+   Both are reachable without picking a tool: Ctrl while trimming rolls.
+   Escape always returns to Select. */
+
+function studio_tool(name) {
+  studio.tool = name;
+  document.querySelectorAll('#view-studio .studio-tool').forEach(b => {
+    const on = b.getAttribute('data-tool') === name;
+    b.classList.toggle('is-on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  const tl = studio_el('studio-tl');
+  if (tl) tl.classList.toggle('is-razor', name === 'razor');
+}
+
+/* Where a shot is cut in two. Everything after the cut becomes a second shot
+   of the same clip, starting where the first one stopped.
+
+   The server owns the arithmetic, as it does for every drag: this makes the
+   obvious edit and /api/studio/check clamps it and hands back every derived
+   time. Two implementations of where a kill lands would disagree eventually. */
+function studio_razor(i, at) {
+  const p = studio.project;
+  if (!p || !p.shots[i]) return;
+  const s = p.shots[i], beat = p.beat || 0.5;
+  /* Neither half may be shorter than a beat: a frame-long shot is not a shot,
+     and the planner's own minimum is the beat. */
+  if (at < beat || s.duration - at < beat) {
+    toast('Too close to the edge — each half has to be at least a beat long.', 'warn');
+    return;
+  }
+  studio_forgetShots();
+  studio_change(pr => {
+    const a = pr.shots[i], b = JSON.parse(JSON.stringify(a));
+    a.duration = Number(at.toFixed(5));
+    /* THE KILL GOES WITH THE HALF IT HAPPENS IN. `pre` is how long the shot
+       runs before its kill, so the second half starts `at` later in the same
+       footage: its kill is that much nearer its own start, and a kill left
+       behind in the first half is simply not in the second. */
+    b.pre = Number(Math.max(0, a.pre - at).toFixed(5));
+    b.duration = Number((s.duration - at).toFixed(5));
+    if (a.pre > a.duration) a.pre = Number(a.duration.toFixed(5));
+    /* The transition belongs to the join it was chosen for, which is now the
+       SECOND half's. A hard cut between the two halves is what a razor makes. */
+    a.transition = 't01'; a.tlen = 0;
+    pr.shots.splice(i + 1, 0, b);
+  }, studio_shotName(i) + ' cut in two', i);
+  studio.sel = i + 1;
+  studio_drawAll();
+}
+
+/* ------------------------------------------- in, out, marks and shuttle
+
+   None of this changes the reel. In and out say which stretch to watch, a
+   mark says "look here", and J/K/L is how every editor in the world moves
+   through footage. They are navigation, and they are kept apart from the
+   edits for that reason -- see studio.io.
+
+   J and L SHUTTLE rather than toggle: pressed again they go faster, and
+   pressed the other way they slow down and then reverse, which is the
+   behaviour the keys have everywhere else. K stops. */
+
+const STUDIO_SHUTTLE = [-8, -4, -2, -1, 0, 1, 2, 4, 8];
+
+function studio_shuttle(by) {
+  const now = studio.shuttle;
+  const i = STUDIO_SHUTTLE.indexOf(now);
+  const at = i < 0 ? STUDIO_SHUTTLE.indexOf(0) : i;
+  const want = Math.max(0, Math.min(STUDIO_SHUTTLE.length - 1, at + by));
+  studio.shuttle = STUDIO_SHUTTLE[want];
+  studio_shuttleApply();
+}
+
+function studio_shuttleApply() {
+  const r = studio.shuttle;
+  const v = studio_el('studio-video');
+  if (r === 0) {
+    if (studio.pv.on) studio_pvPause();
+    else if (v && v.src && !v.paused) v.pause();
+  } else if (studio.pv.on) {
+    /* The preview plays its own clock, so a rate is all it needs; backwards
+       is not something two swapped <video>s can do, so it steps instead. */
+    studio.pv.rate = Math.abs(r);
+    if (r > 0) studio_pvPlay();
+    else { studio_pvPause(); studio_seekTo(Math.max(0, studio_now() - 0.5)); }
+  } else if (v && v.src) {
+    if (r > 0) { v.playbackRate = r; v.play().catch(() => {}); }
+    else { v.pause(); v.currentTime = Math.max(0, v.currentTime - 0.5); }
+  }
+  studio_ioDraw();
+}
+
+/* `a` and `b` are set independently, so an out before an in is possible for a
+   moment. Read them the way round they end up. */
+function studio_ioRange() {
+  const {a, b} = studio.io;
+  if (a === null || b === null) return null;
+  return a <= b ? [a, b] : [b, a];
+}
+
+function studio_ioSet(which) {
+  const t = Math.max(0, studio_now());
+  studio.io[which] = Number(t.toFixed(3));
+  studio_ioDraw();
+  const r = studio_ioRange();
+  toast(which === 'a' ? 'In at ' + studio_secs(t) : 'Out at ' + studio_secs(t),
+        r ? 'ok' : 'info');
+}
+
+function studio_ioClear() {
+  studio.io = {a: null, b: null};
+  studio_ioDraw();
+}
+
+/* A mark is a time on the reel with a name you can give it later. On the
+   project, so it survives a reload and can become a chapter one day. */
+function studio_markAdd() {
+  const p = studio.project;
+  if (!p) return;
+  const t = Number(Math.max(0, studio_now()).toFixed(3));
+  const have = (p.markers || []).slice();
+  /* Pressing M twice on the same frame is one mark, not two. */
+  if (have.some(m => Math.abs(Number(m.t || m) - t) < 0.05)) {
+    toast('There is already a mark there.', 'info');
+    return;
+  }
+  studio_change(pr => {
+    pr.markers = (pr.markers || []).concat([{t: t, label: ''}])
+      .sort((x, y) => Number(x.t) - Number(y.t));
+  }, 'A mark at ' + studio_secs(t));
+}
+
+function studio_markClear() {
+  if (!studio.project || !(studio.project.markers || []).length) {
+    toast('There are no marks to clear.', 'info');
+    return;
+  }
+  studio_change(pr => { pr.markers = []; }, 'The marks cleared');
+}
+
+/* The band and the marks, over the ruler. Drawn from the page's own state and
+   the project, so a redraw after any edit keeps them. */
+function studio_ioDraw() {
+  const host = studio_el('studio-io');
+  if (!host) return;
+  const p = studio.project;
+  const r = studio_ioRange();
+  const marks = (p && p.markers) || [];
+  let html = '';
+  if (r) {
+    html += '<span class="st-io-band" style="left:' + (r[0] * studio.pps).toFixed(1) +
+            'px;width:' + ((r[1] - r[0]) * studio.pps).toFixed(1) + 'px"></span>';
+  }
+  if (studio.io.a !== null) {
+    html += '<span class="st-io-edge st-io-a" style="left:' +
+            (studio.io.a * studio.pps).toFixed(1) + 'px">I</span>';
+  }
+  if (studio.io.b !== null) {
+    html += '<span class="st-io-edge st-io-b" style="left:' +
+            (studio.io.b * studio.pps).toFixed(1) + 'px">O</span>';
+  }
+  marks.forEach((m, i) => {
+    const t = Number(m.t || m) || 0;
+    html += '<button type="button" class="st-mark" data-act="studio-mark-go" data-n="' + i +
+            '" style="left:' + (t * studio.pps).toFixed(1) + 'px" title="' +
+            esc(m.label || ('Mark at ' + studio_secs(t))) + '"></button>';
+  });
+  host.innerHTML = html;
+  const lab = studio_el('studio-shuttle-lab');
+  if (lab) {
+    lab.textContent = studio.shuttle ? (studio.shuttle > 0 ? '\u25B6 ' : '\u25C0 ') +
+      Math.abs(studio.shuttle) + '\u00D7' : '';
+  }
+}
+
 /* ------------------------------------------------------------ dragging */
 
 function studio_pointerDown(e) {
@@ -6235,7 +6498,19 @@ function studio_pointerDown(e) {
   if (!trim && !kill && !shot) return;
   const i = Number((trim || kill || shot).getAttribute(trim ? 'data-trim' : kill ? 'data-kill' : 'data-shot'));
   const s = studio.project.shots[i];
+  /* THE RAZOR CUTS WHERE YOU CLICK, so it acts on the press and starts no
+     drag: a cut that followed the pointer would be a trim with a new name. */
+  if (studio.tool === 'razor') {
+    const row = (shot || trim || kill).closest('.st-shot') || shot;
+    const box = (row || e.target).getBoundingClientRect();
+    studio_razor(i, (e.clientX - box.left) / studio.pps);
+    e.preventDefault();
+    return;
+  }
   studio.drag = {kind: trim ? 'trim' : kill ? 'kill' : 'move', i: i, x0: e.clientX, moved: false,
+                 /* Decided on the press and kept: letting go of Ctrl halfway
+                    through must not turn a roll into a trim under the hand. */
+                 roll: studio.tool === 'roll' || e.ctrlKey || e.metaKey,
                  dur: s.duration, pre: s.pre, snapshot: JSON.stringify(studio.project), pointer: e.pointerId};
   /* Captured on the timeline itself, which survives the redraws a drag does. */
   try { tl.setPointerCapture(e.pointerId); } catch (err) { /* no capture, still works with a mouse */ }
@@ -6250,7 +6525,25 @@ function studio_pointerMove(e) {
   g.moved = true;
   const p = studio.project, s = p.shots[g.i], dt = dx / studio.pps, beat = p.beat || 0.5;
   if (g.kind === 'trim') {
-    s.duration = Math.max(beat, studio_snapTo(g.dur + dt));
+    /* ROLL: the join moves, the reel does not. What this shot gains the next
+       one gives up, so every kill after the join stays exactly where it was --
+       which is the whole reason to roll rather than trim. Held back at either
+       end by the beat, because a shot shorter than that is not a shot.
+       Ctrl does it without picking the tool. */
+    const roll = studio.tool === 'roll' || g.roll || e.ctrlKey || e.metaKey;
+    const nxt = p.shots[g.i + 1];
+    if (roll && nxt) {
+      if (g.nextDur === undefined) g.nextDur = nxt.duration;
+      const room = Math.min(g.nextDur - beat, Infinity);
+      const want = studio_snapTo(g.dur + dt) - g.dur;
+      const by = Math.max(beat - g.dur, Math.min(room, want));
+      s.duration = Number((g.dur + by).toFixed(5));
+      nxt.duration = Number((g.nextDur - by).toFixed(5));
+      g.rolled = true;
+      nxt.pre = Math.min(nxt.pre, nxt.duration);
+    } else {
+      s.duration = Math.max(beat, studio_snapTo(g.dur + dt));
+    }
     s.pre = Math.min(s.pre, s.duration);
   } else if (g.kind === 'kill') {
     s.pre = Math.max(0, Math.min(s.duration, studio_snapTo(g.pre + dt)));
@@ -6287,7 +6580,8 @@ function studio_pointerUp(e) {
   if (!g.moved) { studio_select(g.i); return; }
   studio.gen++;
   const moveName = studio_shotName(g.i) +
-    (g.kind === 'trim' ? ' · trimmed' : g.kind === 'kill' ? ' · the kill moved' : ' moved');
+    (g.kind === 'trim' ? (g.rolled ? ' · the join rolled' : ' · trimmed')
+     : g.kind === 'kill' ? ' · the kill moved' : ' moved');
   studio_pushUndo(g.snapshot, moveName);
   studio_touched(moveName, g.i,
                  studio_diff(JSON.parse(g.snapshot), studio.project));
@@ -7535,6 +7829,16 @@ function studio_wire() {
     else if (act === 'studio-cancel') API.post('/api/studio/cancel', {}).then(studio_poll);
     else if (act === 'studio-undo') studio_undo();
     else if (act === 'studio-redo') studio_redo();
+    else if (act === 'studio-tool') studio_tool(b.getAttribute('data-tool'));
+    else if (act === 'studio-mark') studio_markAdd();
+    else if (act === 'studio-mark-clear') studio_markClear();
+    else if (act === 'studio-in') studio_ioSet('a');
+    else if (act === 'studio-out') studio_ioSet('b');
+    else if (act === 'studio-io-clear') studio_ioClear();
+    else if (act === 'studio-mark-go' && p) {
+      const m = (p.markers || [])[Number(b.getAttribute('data-n')) || 0];
+      if (m) studio_seekTo(Number(m.t || m) || 0);
+    }
     else if (act === 'studio-hist') {
       studio.histOpen = !studio.histOpen;
       b.setAttribute('aria-expanded', studio.histOpen ? 'true' : 'false');
@@ -7926,7 +8230,12 @@ function studio_wire() {
        and it is read here, above the input guard, because its caret is in a
        search field and the guard below would hand those keys to the field. */
     if (studio_palKey(e)) return;
-    if (e.key === 'Escape') { studio_closeModals(); return; }
+    if (e.key === 'Escape') {
+      studio_closeModals();
+      /* Nobody is stranded holding a tool. */
+      if (studio.tool !== 'select') studio_tool('select');
+      return;
+    }
     /* Ctrl+K is not typing, so it is read before the input guard: the list
        opens from a reel name half-renamed as readily as from the timeline. */
     if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
@@ -7937,6 +8246,19 @@ function studio_wire() {
     /* '?' IS A CHARACTER SOMEBODY MIGHT BE TYPING, so unlike Ctrl+K it waits
        until after the guard above. */
     if (e.key === '?') { e.preventDefault(); studio_keysOpen(); return; }
+    /* THE TOOLS, on the keys their trade uses. Escape is already "close
+       whatever is open" above; on a timeline with nothing open it also puts
+       the tool back to Select, so nobody is left holding a razor. */
+    if (e.key === 'v' || e.key === 'V') { e.preventDefault(); studio_tool('select'); return; }
+    if (e.key === 'n' || e.key === 'N') { e.preventDefault(); studio_tool('roll'); return; }
+    if (e.key === 'c' || e.key === 'C') { e.preventDefault(); studio_tool('razor'); return; }
+    /* J K L, in, out and a mark. Navigation, not edits -- see studio.io. */
+    if (e.key === 'j' || e.key === 'J') { e.preventDefault(); studio_shuttle(-1); return; }
+    if (e.key === 'k' || e.key === 'K') { e.preventDefault(); studio.shuttle = 0; studio_shuttleApply(); return; }
+    if (e.key === 'l' || e.key === 'L') { e.preventDefault(); studio_shuttle(1); return; }
+    if (e.key === 'i' || e.key === 'I') { e.preventDefault(); studio_ioSet('a'); return; }
+    if (e.key === 'o' || e.key === 'O') { e.preventDefault(); studio_ioSet('b'); return; }
+    if (e.key === 'm' || e.key === 'M') { e.preventDefault(); studio_markAdd(); return; }
     /* A focused button owns Space and Backspace: Space presses it. */
     const onButton = tag === 'BUTTON' || (e.target.closest && e.target.closest('button,[role="tab"],a'));
     const song = !studio_el('studio-pane-song').classList.contains('hide');
