@@ -51,6 +51,15 @@ STUDIO_HTML = r"""
       <button type="button" class="seg-btn" role="tab" aria-selected="false"
               data-act="studio-tab" data-tab="facecam" id="studio-tab-facecam" disabled>Facecam</button>
     </div>
+    <!-- THE WAY IN TO EVERY ACTION. Ctrl+K is worth nothing to someone who
+         does not know it is there, so the shortcut is printed on a button
+         that does the same thing. It sits in the header rather than the
+         editor's toolbar because the actions it lists are not only the
+         timeline's. -->
+    <button type="button" class="btn btn-sm studio-palbtn" data-act="studio-palette"
+            id="studio-palbtn" title="Run a command (Ctrl+K)">
+      <span aria-hidden="true">&#9906;</span> Actions <kbd>Ctrl K</kbd>
+    </button>
   </header>
 
   <section id="studio-pane-clips" aria-label="Clips">
@@ -832,6 +841,59 @@ STUDIO_HTML = r"""
   </div>
   </div>
 
+  <!-- EVERY ACTION, BY NAME (Ctrl+K). The page declares 147 distinct actions
+       and could list none of them, which is why there was nothing to search.
+       Both this and the key sheet below are drawn from ui/commands.py and
+       hold no list of their own, so a command added there appears in both
+       without being typed twice.
+
+       A command that cannot run now SAYS WHY. Greying out in silence is how
+       someone presses a key three times and concludes the app is broken. -->
+  <div class="scrim hide" id="studio-pal-scrim">
+  <div class="modal studio-pal" id="studio-pal" role="dialog" aria-modal="true" aria-labelledby="studio-pal-title">
+    <h2 class="sr-only" id="studio-pal-title">Run a command</h2>
+    <div class="studio-pal-head">
+      <span class="studio-pal-ico" aria-hidden="true">&#9906;</span>
+      <label class="sr-only" for="studio-pal-q">Search commands by name</label>
+      <input class="input studio-pal-q" id="studio-pal-q" type="search" autocomplete="off"
+             placeholder="Search every action &mdash; try render, beat or ending">
+      <span class="muted studio-pal-count" id="studio-pal-count" role="status" aria-live="polite"></span>
+    </div>
+    <div class="studio-pal-list" id="studio-pal-list" role="listbox" aria-label="Commands"></div>
+    <div class="studio-pal-foot">
+      <span><kbd>&uarr;</kbd><kbd>&darr;</kbd> move</span>
+      <span><kbd>&crarr;</kbd> run</span>
+      <span><kbd>Esc</kbd> close</span>
+      <span class="studio-spacer"></span>
+      <button type="button" class="btn btn-ghost btn-sm" data-act="studio-keys" id="studio-pal-keys">All the keys</button>
+      <button type="button" class="btn btn-ghost btn-sm" data-act="studio-pal-close">Close</button>
+    </div>
+  </div>
+  </div>
+
+  <!-- THE KEY SHEET (?). Written from the registry, so it cannot drift from
+       what the keys actually do -- a sheet typed by hand is wrong the first
+       time a binding moves. The scopes print in the keydown block's own
+       precedence order, because that order is the answer to "why did Space
+       press the button instead of playing". -->
+  <div class="scrim hide" id="studio-keys-scrim">
+  <div class="modal studio-keys" id="studio-keys" role="dialog" aria-modal="true" aria-labelledby="studio-keys-title">
+    <div class="studio-keys-head">
+      <div>
+        <h2 class="modal-title" id="studio-keys-title">Keys</h2>
+        <p class="muted studio-small">Each group takes the keys while it is open, top first. A focused
+          button keeps Space, Enter and Backspace for pressing itself.</p>
+      </div>
+      <span class="muted studio-small" id="studio-keys-count"></span>
+    </div>
+    <div class="studio-keys-cols" id="studio-keys-cols"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" data-act="studio-palette">Run a command&hellip;</button>
+      <button type="button" class="btn btn-primary" data-act="studio-keys-close">Done</button>
+    </div>
+  </div>
+  </div>
+
   <!-- DELETING A REEL. Its own dialog rather than the clips one: what goes and
        what stays are the opposite way round here, and that is the whole
        question being asked. -->
@@ -1031,7 +1093,11 @@ const studio = {
      retried until it changes. */
   auto: {on: true, known: false, timer: null, dueAt: 0, armed: '', sig: '', job: 0,
          running: false, pct: 0, held: '', heldUntil: 0, failed: '', idleMs: 2500,
-         waitMs: 2500, lastMs: 0, log: []}
+         waitMs: 2500, lastMs: 0, log: []},
+  /* THE COMMAND LIST (Ctrl+K) and the key sheet (?). `rows` is what the
+     search last matched, in the order drawn, so Up/Down and Enter act on the
+     same list the eye is reading. */
+  pal: {open: false, q: '', sel: 0, rows: [], recent: []}
 };
 
 const studio_el = (id) => document.getElementById(id);
@@ -1751,6 +1817,266 @@ function studio_closeModals() {
   const iv = studio_el('studio-intro-video');
   if (iv && !iv.paused) iv.pause();
   if (!studio.yt.running) studio_show('studio-yt-scrim', false);
+  studio_palClose();
+  studio_show('studio-keys-scrim', false);
+}
+
+/* --------------------------------------------------- every action, by name
+
+   STUDIO_CMDS and STUDIO_SCOPES come from ui/commands.py. NOTHING HERE KEEPS
+   A SECOND LIST: the command list (Ctrl+K), the key sheet (?) and the browser
+   tier's /api/studio/commands all read that one, which is the whole point --
+   a sheet typed by hand is wrong the first time a binding moves.
+
+   A command RUNS by pressing the control the page already has for it, found
+   by its data-act and whatever data attributes pick it out. That is
+   deliberate: 147 actions already work, and a list that reimplemented any of
+   them would be a second answer to the same question, free to disagree. The
+   few with no control of their own (next shot, close this) name a function in
+   STUDIO_RUN instead.
+
+   WHY, NOT GREY. studio_cmdWhy returns the reason a command cannot run, in
+   words, and both the list and the key read it. A key that does nothing in
+   silence is how someone presses it three times and concludes the app is
+   broken. */
+
+const STUDIO_RUN = {
+  'studio.palette': () => studio_palOpen(),
+  'studio.keys': () => studio_keysOpen(),
+  'studio.palette-close': () => studio_palClose(),
+  'studio.keys-close': () => studio_show('studio-keys-scrim', false),
+  'studio.escape': () => studio_closeModals(),
+  'timeline.next-shot': () => studio_select(Math.min(studio.project.shots.length - 1, studio.sel + 1)),
+  'timeline.prev-shot': () => studio_select(Math.max(0, studio.sel - 1))
+};
+
+/* The guards that are about the reel rather than about the control. Delete
+   refusing to go below one shot lives HERE, so the key, the button and the
+   list all obey the one rule; it used to be a condition inside the keydown
+   block, where nothing else could see it. */
+const STUDIO_WHEN = {
+  'timeline.next-shot': () => (studio.project && studio.sel < studio.project.shots.length - 1)
+    ? '' : 'You are on the last shot.',
+  'timeline.prev-shot': () => (studio.project && studio.sel > 0) ? '' : 'You are on the first shot.',
+  'timeline.remove-shot': () => !studio.project ? 'Open a reel first.'
+    : studio.sel < 0 ? 'Select a shot first.'
+    : studio.project.shots.length < 2 ? 'A reel keeps at least one shot, and this is the last one.' : '',
+  'timeline.undo': () => studio.undo.length ? '' : 'There is nothing to undo.',
+  'make.open': () => studio.selected.length ? '' : 'Pick some clips first.',
+  'library.clear': () => studio.selected.length ? '' : 'No clips are picked.',
+  'library.favourite-picked': () => studio.selected.length ? '' : 'No clips are picked.',
+  'library.delete': () => studio.selected.length ? '' : 'No clips are picked.',
+  'studio.go-timeline': () => studio.project ? '' : 'Make or open a reel first.',
+  'studio.go-song': () => studio.project ? '' : 'Make or open a reel first.',
+  'studio.go-facecam': () => studio.project ? '' : 'Make or open a reel first.'
+};
+
+function studio_cmd(id) { return STUDIO_CMDS.filter(c => c.id === id)[0] || null; }
+
+function studio_scopeName(id) {
+  const s = STUDIO_SCOPES.filter(x => x.id === id)[0];
+  return s ? s.label : id;
+}
+
+/* The control a command stands on. A per-shot button is drawn once per shot,
+   so the visible one wins; offsetParent is null for anything inside a folded
+   or hidden pane, which is also how "not on screen just now" is known. */
+function studio_cmdEl(c) {
+  if (!c.act) return null;
+  const host = document.getElementById('view-studio');
+  if (!host) return null;
+  let q = '[data-act="' + c.act + '"]';
+  Object.keys(c.args || {}).forEach(k => { q += '[' + k + '="' + c.args[k] + '"]'; });
+  let all = [];
+  try { all = [].slice.call(host.querySelectorAll(q)); } catch (err) { return null; }
+  return all.filter(el => el.offsetParent !== null && !el.disabled)[0] || all[0] || null;
+}
+
+/* '' when it can run, otherwise why not, in the user's words. */
+function studio_cmdWhy(c) {
+  if (!c) return 'That command is gone.';
+  if (STUDIO_WHEN[c.id]) {
+    const said = STUDIO_WHEN[c.id]();
+    if (said) return said;
+  }
+  if (STUDIO_RUN[c.id]) return '';
+  const el = studio_cmdEl(c);
+  if (!el) return c.why || 'Not on this part of the page.';
+  if (el.disabled) return c.why || 'Not just now.';
+  if (el.offsetParent === null) return c.why || 'Not on screen just now.';
+  return '';
+}
+
+function studio_cmdRun(id) {
+  const c = studio_cmd(id);
+  const why = studio_cmdWhy(c);
+  if (why) { toast(why, 'warn'); return false; }
+  studio.pal.recent = [id].concat(studio.pal.recent.filter(x => x !== id)).slice(0, 8);
+  if (STUDIO_RUN[c.id]) { STUDIO_RUN[c.id](); return true; }
+  const el = studio_cmdEl(c);
+  if (!el) return false;
+  el.click();
+  return true;
+}
+
+/* Which scope's keys are in force, by the same order the keydown block reads
+   them in. The list puts this scope's commands first: the answer to "what can
+   I do" depends on where you are. */
+function studio_palScope() {
+  if (!studio_el('studio-imp-scrim').classList.contains('hide')) return 'import';
+  if (studio.fxp) return 'picker';
+  if (!studio_el('studio-pane-song').classList.contains('hide')) return 'song';
+  if (!studio_el('studio-pane-timeline').classList.contains('hide')) return 'timeline';
+  if (!studio_el('studio-pane-looks').classList.contains('hide')) return 'looks';
+  return 'library';
+}
+
+/* One key as the sheet and the list draw it. */
+function studio_keyCap(key) {
+  const named = {Space: 'Space', Escape: 'Esc', Enter: '↵', Delete: 'Del',
+                 Backspace: '⌫', ArrowLeft: '←', ArrowRight: '→',
+                 ArrowUp: '↑', ArrowDown: '↓'};
+  return String(key).split('+').map(part => {
+    const one = named[part] || part;
+    return '<kbd>' + esc(one) + '</kbd>';
+  }).join('');
+}
+
+function studio_cmdKeys(c) {
+  /* The first binding only. A command with three ways in ("+" and "=") would
+     otherwise read as three keys to learn. */
+  return c.keys.length ? studio_keyCap(c.keys[0]) : '';
+}
+
+function studio_palMatch(c, words) {
+  if (!words.length) return true;
+  const hay = (c.label + ' ' + c.id + ' ' + (c.act || '') + ' ' +
+               studio_scopeName(c.scope)).toLowerCase();
+  return words.every(w => hay.indexOf(w) >= 0);
+}
+
+function studio_palOpen() {
+  studio.pal.open = true;
+  studio.pal.q = '';
+  studio.pal.sel = 0;
+  studio_show('studio-pal-scrim', true);
+  const q = studio_el('studio-pal-q');
+  if (q) q.value = '';
+  studio_palDraw();
+  if (q) q.focus();
+}
+
+function studio_palClose() {
+  if (!studio.pal.open) return;
+  studio.pal.open = false;
+  studio_show('studio-pal-scrim', false);
+}
+
+function studio_palDraw() {
+  const host = studio_el('studio-pal-list');
+  if (!host) return;
+  const words = studio.pal.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const offered = STUDIO_CMDS.filter(c => c.palette && studio_palMatch(c, words));
+  const here = studio_palScope();
+  /* This pane first, then the rest in the order the keys are read. Recently
+     run ones lead when nothing has been typed -- the thing done last is the
+     thing most likely wanted again, and a search answers for itself. */
+  const order = [here].concat(STUDIO_SCOPES.map(s => s.id).filter(x => x !== here));
+  const groups = [];
+  if (!words.length) {
+    const recent = studio.pal.recent.map(studio_cmd)
+      .filter(c => c && c.palette && !studio_cmdWhy(c));
+    if (recent.length) groups.push({name: 'Just used', rows: recent});
+  }
+  order.forEach(sid => {
+    const rows = offered.filter(c => c.scope === sid);
+    if (rows.length) groups.push({name: studio_scopeName(sid) + (sid === here ? ' · where you are' : ''), rows: rows});
+  });
+  studio.pal.rows = [];
+  groups.forEach(g => g.rows.forEach(c => studio.pal.rows.push(c)));
+  if (studio.pal.sel >= studio.pal.rows.length) studio.pal.sel = 0;
+
+  let n = -1;
+  host.innerHTML = groups.map(g => {
+    const rows = g.rows.map(c => {
+      n += 1;
+      const why = studio_cmdWhy(c);
+      return '<button type="button" role="option" class="studio-pal-row' +
+        (n === studio.pal.sel ? ' is-on' : '') + (why ? ' is-off' : '') +
+        '" data-pal="' + esc(c.id) + '" data-n="' + n + '" aria-selected="' +
+        (n === studio.pal.sel) + '">' +
+        '<span class="studio-pal-lab">' + esc(c.label) +
+        (why ? '<span class="studio-pal-why">' + esc(why) + '</span>' : '') + '</span>' +
+        '<span class="studio-pal-keys">' + studio_cmdKeys(c) + '</span></button>';
+    }).join('');
+    return '<p class="studio-pal-grp">' + esc(g.name) + '</p>' + rows;
+  }).join('') ||
+    '<p class="studio-pal-none">Nothing by that name. The key sheet lists every action with a key.</p>';
+
+  const count = studio_el('studio-pal-count');
+  if (count) {
+    const all = STUDIO_CMDS.filter(c => c.palette).length;
+    count.textContent = studio.pal.rows.length === all
+      ? all + ' actions'
+      : studio.pal.rows.length + ' of ' + all;
+  }
+  const on = host.querySelector('.studio-pal-row.is-on');
+  if (on && on.scrollIntoView) on.scrollIntoView({block: 'nearest'});
+}
+
+function studio_palMove(by) {
+  const n = studio.pal.rows.length;
+  if (!n) return;
+  studio.pal.sel = (studio.pal.sel + by + n) % n;
+  studio_palDraw();
+}
+
+/* The list's own keys, read before anything else on the page: while it is
+   open it owns Up, Down, Enter and Escape even though the caret is in a text
+   field, which is the one case the input guard below would get wrong. */
+function studio_palKey(e) {
+  if (!studio.pal.open) return false;
+  if (e.key === 'Escape') { studio_palClose(); }
+  else if (e.key === 'ArrowDown') { studio_palMove(1); }
+  else if (e.key === 'ArrowUp') { studio_palMove(-1); }
+  else if (e.key === 'Enter') {
+    const c = studio.pal.rows[studio.pal.sel];
+    if (!c) return true;
+    studio_palClose();
+    studio_cmdRun(c.id);
+  }
+  else return false;
+  e.preventDefault();
+  return true;
+}
+
+/* ------------------------------------------------------------- the key sheet
+
+   Generated, never typed. The scopes print in the order the keydown block
+   reads them, because that order is the answer to "why did Space press the
+   button instead of playing the reel". */
+function studio_keysOpen() {
+  studio_palClose();
+  const host = studio_el('studio-keys-cols');
+  if (host) {
+    host.innerHTML = STUDIO_SCOPES.map(s => {
+      const rows = STUDIO_CMDS.filter(c => c.scope === s.id && c.keys.length);
+      if (!rows.length) return '';
+      return '<section class="studio-keys-grp"><h3>' + esc(s.label) + '</h3>' +
+        '<p class="muted studio-small">' + esc(s.blurb) + '</p>' +
+        rows.map(c => '<p class="studio-keys-row"><span>' + esc(c.label) + '</span>' +
+          c.keys.map(k => studio_keyCap(k)).join('<span class="studio-keys-or">or</span>') +
+          '</p>').join('') + '</section>';
+    }).join('');
+  }
+  const count = studio_el('studio-keys-count');
+  if (count) {
+    const bound = STUDIO_CMDS.filter(c => c.keys.length).length;
+    count.textContent = STUDIO_CMDS.length + ' actions, ' + bound + ' of them on a key';
+  }
+  studio_show('studio-keys-scrim', true);
+  const done = document.querySelector('#studio-keys [data-act="studio-keys-close"]');
+  if (done) done.focus();
 }
 
 /* ------------------------------------------------------------ make a reel */
@@ -6726,6 +7052,18 @@ function studio_impKey(e) {
 function studio_wire() {
   if (studio.wired) return;
   studio.wired = true;
+  /* A row in the command list carries the command's id, not an action of its
+     own: it runs whatever that command runs, through the one route every
+     command takes. */
+  document.addEventListener('click', e => {
+    const r = e.target.closest ? e.target.closest('[data-pal]') : null;
+    if (!r) return;
+    const id = r.getAttribute('data-pal');
+    studio.pal.sel = Number(r.getAttribute('data-n')) || 0;
+    if (studio_cmdWhy(studio_cmd(id))) { studio_palDraw(); studio_cmdRun(id); return; }
+    studio_palClose();
+    studio_cmdRun(id);
+  });
   document.addEventListener('click', e => {
     const b = e.target.closest ? e.target.closest('[data-act^="studio-"]') : null;
     if (!b || !b.closest('#view-studio')) return;
@@ -6857,6 +7195,10 @@ function studio_wire() {
     else if (act === 'studio-render') studio_render();
     else if (act === 'studio-cancel') API.post('/api/studio/cancel', {}).then(studio_poll);
     else if (act === 'studio-undo') studio_undo();
+    else if (act === 'studio-palette') studio_palOpen();
+    else if (act === 'studio-keys') studio_keysOpen();
+    else if (act === 'studio-pal-close') studio_palClose();
+    else if (act === 'studio-keys-close') studio_show('studio-keys-scrim', false);
     else if (act === 'studio-show') { if (studio.output && typeof clip_reveal === 'function') clip_reveal(studio.output); }
     else if (act === 'studio-play') studio_toggle();
     else if (act === 'studio-pv-mute') { studio.pv.muted = !studio.pv.muted; studio_pvLevels(); }
@@ -7217,9 +7559,21 @@ function studio_wire() {
     if (shell_page !== 'studio') return;
     if (studio_impKey(e)) return;
     if (studio_fxpKey(e)) return;
+    /* The command list, while it is open, owns Up, Down, Enter and Escape --
+       and it is read here, above the input guard, because its caret is in a
+       search field and the guard below would hand those keys to the field. */
+    if (studio_palKey(e)) return;
     if (e.key === 'Escape') { studio_closeModals(); return; }
+    /* Ctrl+K is not typing, so it is read before the input guard: the list
+       opens from a reel name half-renamed as readily as from the timeline. */
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault(); studio_palOpen(); return;
+    }
     const tag = (e.target.tagName || '').toUpperCase();
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    /* '?' IS A CHARACTER SOMEBODY MIGHT BE TYPING, so unlike Ctrl+K it waits
+       until after the guard above. */
+    if (e.key === '?') { e.preventDefault(); studio_keysOpen(); return; }
     /* A focused button owns Space and Backspace: Space presses it. */
     const onButton = tag === 'BUTTON' || (e.target.closest && e.target.closest('button,[role="tab"],a'));
     const song = !studio_el('studio-pane-song').classList.contains('hide');

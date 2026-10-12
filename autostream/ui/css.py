@@ -4098,6 +4098,53 @@ STUDIO_CSS = r"""
   .studio-fxp-main{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(180px,42%) minmax(0,1fr)}
   .studio-fxp-prev{order:-1}
 }
+/* ---- the command list (Ctrl+K) and the key sheet (?) ---------------------
+   Both are drawn from ui/commands.py. The list is a single column because the
+   eye runs down it while typing; the sheet is columns because it is read, not
+   searched. A row that cannot run keeps its full contrast and says why
+   underneath -- dimming it to 40% is the same silence as greying out. */
+.studio-palbtn{margin-left:auto;gap:var(--space-3)}
+.studio-palbtn kbd{font-size:10.5px}
+.studio-pal{width:min(680px,100%);max-height:min(76vh,680px);gap:0;padding:0;overflow:hidden}
+.studio-pal-head{display:flex;align-items:center;gap:var(--space-4);padding:var(--space-5) var(--space-6);
+  border-bottom:var(--border-hair) solid var(--border-subtle)}
+.studio-pal-ico{color:var(--text-tertiary);font-size:15px}
+.studio-pal-q{flex:1;min-width:0;height:34px;border:0;background:transparent;padding:0;font-size:16px}
+.studio-pal-q:focus{outline:none;box-shadow:none}
+.studio-pal-count{flex:none;font-size:11.5px;white-space:nowrap}
+.studio-pal-list{flex:1;min-height:0;overflow:auto;padding:var(--space-3) 0}
+.studio-pal-grp{margin:var(--space-4) var(--space-6) var(--space-2);font-family:var(--font-micro);
+  font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--text-tertiary)}
+.studio-pal-grp:first-child{margin-top:0}
+.studio-pal-row{display:flex;align-items:center;gap:var(--space-5);width:100%;
+  padding:var(--space-4) var(--space-6);border:0;border-left:2px solid transparent;background:transparent;
+  color:var(--text-primary);font:inherit;font-size:13.5px;text-align:left;cursor:pointer}
+.studio-pal-row:hover{background:var(--surface-hover)}
+/* ACCENT BUDGET: the "on" row of a list, same as a segmented cell. */
+.studio-pal-row.is-on{background:var(--accent-muted);border-left-color:var(--accent)}
+.studio-pal-lab{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.studio-pal-why{font-size:11.5px;color:var(--warn)}
+.studio-pal-keys{flex:none;display:flex;gap:var(--space-1)}
+.studio-pal-row.is-off .studio-pal-keys{opacity:.6}
+.studio-pal-none{margin:var(--space-6);color:var(--text-secondary);font-size:13px}
+.studio-pal-foot{display:flex;align-items:center;gap:var(--space-5);padding:var(--space-4) var(--space-6);
+  border-top:var(--border-hair) solid var(--border-subtle);background:var(--surface-sunken);
+  font-size:11.5px;color:var(--text-tertiary)}
+.studio-keys{width:min(1120px,100%);max-height:min(88vh,900px)}
+.studio-keys-head{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-5)}
+.studio-keys-head .modal-title{margin:0 0 var(--space-2)}
+.studio-keys-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--space-6);
+  overflow:auto;min-height:0}
+.studio-keys-grp h3{margin:0 0 var(--space-1);font-size:13px}
+.studio-keys-grp>.studio-small{margin:0 0 var(--space-3)}
+.studio-keys-row{display:flex;align-items:center;gap:var(--space-2);margin:0;padding:var(--space-3) 0;
+  border-bottom:var(--border-hair) solid var(--border-subtle);font-size:12.5px}
+.studio-keys-row span:first-child{flex:1;min-width:0}
+.studio-keys-or{flex:none;font-size:10.5px;color:var(--text-tertiary)}
+@media (max-width:759px){
+  .studio-palbtn{order:3;margin-left:0}
+  .studio-pal-head,.studio-pal-row,.studio-pal-foot{padding-inline:var(--space-5)}
+}
 .studio-tip{margin:0;padding:8px 10px;border-radius:var(--radius-sm);background:var(--surface-sunken);
   border:var(--border-hair) solid var(--border-subtle);font-size:12.5px;color:var(--text-secondary)}
 .studio-small{font-size:12px;margin:0}

@@ -312,7 +312,15 @@ def test_no_route_exists_that_nothing_can_reach():
     than deleting the assertion.
     """
     answers, asks = _routes()
-    deliberate: set[str] = set()
+    deliberate: set[str] = {
+        # The command registry, for the BROWSER TIER rather than the page. The
+        # page is served the same table inline (ui/commands.COMMANDS_JS), so
+        # fetching it would be a second copy of something already in the
+        # document and one more thing to go wrong offline. The route exists so
+        # a browser test can ask what the editor can do and run a command by
+        # name -- which is how a control wired to nothing gets caught.
+        "/api/studio/commands",
+    }
     orphaned = answers - asks - deliberate
     assert not orphaned, (
         f"nothing in the UI reaches: {sorted(orphaned)} -- wire it up, delete "

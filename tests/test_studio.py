@@ -1047,7 +1047,7 @@ def test_cancel_is_reported_as_cancelled_not_as_a_failure(root, tmp_path, monkey
     got, derived, _ = _built(root)
     job = studio.StudioJob(got, derived, root, root / "reels" / "x.mp4")
 
-    def fake_ff(argv, capture=False):
+    def fake_ff(argv, capture=False, seconds=0.0):
         out = Path(argv[-1])
         joining = out.name.endswith(".part.mp4") and out.parent.name == "reels"
         if (stage == "shot") or joining:
@@ -1677,7 +1677,7 @@ def test_prepend_intro_actually_runs(root, intro_home, tmp_path, monkeypatch):
     job = studio.StudioJob(got, derived, root, tmp_path / "out.mp4")
     ran: list[list[str]] = []
 
-    def fake_ff(argv, *, capture=False):
+    def fake_ff(argv, *, capture=False, seconds=0.0):
         ran.append(list(argv))
         # The head encode and the concat each write the file named last.
         Path(argv[-1]).write_bytes(b"x")
@@ -2133,3 +2133,47 @@ def test_a_render_whose_shots_are_all_cached_does_not_sit_at_zero(root):
     assert job.snapshot()["percent"] == 46
     job._set(done=len(segs) - len(todo) + 1)
     assert job.snapshot()["percent"] == 48
+
+
+def test_the_join_moves_the_bar_through_its_own_seconds(root):
+    """THE OTHER HALF OF THAT BUG: 95% is not 0%, but it is still a bar that
+    does not move for four minutes, and "stuck at 95% for so long" was the
+    next thing reported. The join is one ffmpeg pass that is most of the wall
+    clock whenever the shots are cached, so it is counted in the seconds of
+    reel it has produced rather than as one unit of work.
+
+    Also pinned here: it never reads 100 while it is still running. The
+    loudness pass and the intro come after the join, and a full bar beside a
+    spinner is the same lie the other way up.
+    """
+    job = studio.StudioJob({"name": "r"}, {}, root, root / "reels" / "r.mp4")
+    segs = list(range(47))
+    job._set(total=len(segs) + 2, done=len(segs), cached=len(segs), step="join")
+    assert job.snapshot()["percent"] == 95
+    job._set(join=0.5)
+    assert job.snapshot()["percent"] == 97
+    job._set(join=1.0)
+    assert job.snapshot()["percent"] == 99, "100% while the sound is still being matched"
+    job._set(state="done", finished=job.started)
+    assert job.snapshot()["percent"] == 100
+
+
+def test_ffmpeg_progress_is_read_from_the_clock_not_the_misnamed_ms(root):
+    """`out_time_ms` is written in MICROseconds, which is the sort of unit
+    mistake that silently divides a percentage by a thousand. The clock is
+    parsed instead, and anything else -- ffmpeg writes N/A before the first
+    frame -- leaves the bar where it was.
+    """
+    assert studio._clock("00:01:11.716000") == pytest.approx(71.716)
+    assert studio._clock("01:00:00.000000") == pytest.approx(3600)
+    assert studio._clock("N/A") is None
+    assert studio._clock("") is None
+
+    job = studio.StudioJob({"name": "r"}, {}, root, root / "reels" / "r.mp4")
+    lines = [b"frame=12\n", b"out_time=N/A\n", b"out_time=00:00:35.858000\n", b"progress=continue\n"]
+    job._watch_progress(iter(lines), 71.716)
+    assert job.join == pytest.approx(0.5, abs=0.01)
+    # Past the end -- a pass that overruns its own length does not overrun the
+    # bar.
+    job._watch_progress(iter([b"out_time=00:02:00.000000\n"]), 71.716)
+    assert job.join == 1.0

@@ -436,6 +436,11 @@ CONTROLS: list[Control] = [
             expect=_has("parts", "styles", "default_style"),
             why="the page offers every choice from this one answer, and each "
                 "style carries the reference measurements it is built on"),
+    Control("/api/studio/commands", "GET", CALL, "every action the editor can take", "studio",
+            expect=_has("ok", "scopes", "commands"),
+            why="the browser tier asks what the editor can do rather than hunting "
+                "for buttons; the page is served the same table inline, so this "
+                "route has no caller in the UI and is not meant to have one"),
     Control("/api/studio/job", "GET", CALL, "render progress", "studio",
             expect=_has("state"),
             why="idle when nothing has rendered in this process"),
@@ -651,6 +656,15 @@ COMMANDS_REFUSED = ("kill", "launch", "chat", "", "QUIT", "stop; rm -rf")
 NOT_A_FLOW: dict[str, str] = {
     # --- the Studio page: selection, layout and the timeline's own view
     "studio-tab": "switches between the clip library and the timeline",
+    # The command list and the key sheet (U16). Both are drawn from the
+    # registry the page is served inline, so neither asks the server
+    # anything -- /api/studio/commands exists for the browser tier, not
+    # for the page. What a command RUNS is whatever its own control runs,
+    # and that control has its own row here or in CONTROLS.
+    "studio-palette": "opens the list of every action, on Ctrl+K; never leaves the browser",
+    "studio-pal-close": "closes the list of actions",
+    "studio-keys": "opens the key sheet, on ?; drawn from the command registry in the page",
+    "studio-keys-close": "closes the key sheet",
     "studio-game": "opens one game's folder, or goes back to the folder grid",
     "studio-open-folder": "opens a game's folder from its card in the library",
     "studio-open-run": "opens one run, whose clips are grouped by the match they came from",
