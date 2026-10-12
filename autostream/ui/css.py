@@ -4365,6 +4365,30 @@ EDITOR_CSS = r"""
   font-size:12.5px;font-weight:600;color:var(--accent-text)}
 .studio-hist-here .studio-hist-dot{background:var(--accent)}
 .studio-hist-none,.studio-hist-note{margin:var(--space-2) 0 0}
+/* ---- the timeline tools (U18) -------------------------------------------
+   A held tool changes what the next drag means, so the one in hand is the
+   marked state -- and the cursor over the tracks changes with it, because a
+   razor that looks like an arrow cuts something somebody did not mean. */
+.studio-tools{display:inline-flex;gap:2px;margin-left:var(--space-4)}
+.studio-tool{padding-inline:var(--space-5)}
+/* ACCENT BUDGET: the "on" state of a segmented group, as elsewhere. */
+.studio-tool.is-on{background:var(--accent);color:var(--text-on-accent);border-color:var(--accent)}
+.studio-tl.is-razor .st-shot,.studio-tl.is-razor .st-shot *{cursor:crosshair}
+.studio-marks{display:inline-flex;gap:2px;margin-left:var(--space-4)}
+.studio-shuttle{min-width:52px;color:var(--accent-text)}
+/* In, out and the marks sit OVER the tracks rather than in a lane: they say
+   where to look, and a lane of their own would read as part of the reel. */
+.studio-io{position:absolute;left:0;top:0;height:16px;pointer-events:none;z-index:4}
+.studio-io>*{pointer-events:auto}
+.st-io-band{position:absolute;top:0;height:16px;background:rgba(77,159,255,.18);
+  border-left:2px solid var(--accent);border-right:2px solid var(--accent)}
+.st-io-edge{position:absolute;top:0;height:16px;padding:0 3px;font:700 10px var(--font-mono);
+  line-height:16px;color:var(--text-on-accent);background:var(--accent)}
+.st-io-b{transform:translateX(-100%)}
+.st-mark{position:absolute;top:1px;width:0;height:0;padding:0;border:0;background:transparent;
+  border-left:5px solid transparent;border-right:5px solid transparent;
+  border-top:9px solid var(--warn);margin-left:-5px;cursor:pointer}
+.st-mark:hover{border-top-color:var(--text-primary)}
 """
 
 CSS = CSS + EDITOR_CSS

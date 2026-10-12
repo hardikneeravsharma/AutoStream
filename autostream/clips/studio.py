@@ -4778,7 +4778,7 @@ class StudioJob:
                     self._prepend_intro(ff, tmp)
                 self._set(step="sound", message="Matching loudness")
                 self._loudness(ff, tmp)
-                tmp.replace(self.out)
+                _swap_in(tmp, self.out)
             finally:
                 # A cancelled or failed join leaves a headerless mp4 that would
                 # otherwise sit in the reels folder looking like a reel.
@@ -4806,6 +4806,40 @@ class StudioJob:
             log.warning("studio render failed: %s", e)
             self._set(state="failed", error=str(e)[-800:], message="The render failed",
                       finished=time.time())
+
+
+def _swap_in(tmp: Path, out: Path) -> None:
+    """Put the finished reel in place of the old one, waiting out a reader.
+
+    THE RENDER WAS FINISHING AND FAILING ON ITS LAST LINE. Windows refuses to
+    rename over a file anything still has open, and the thing holding the old
+    reel was US: the page's player streams it through our own web server, and
+    `_media` keeps the file open for the length of the response. So a render
+    of a reel you were watching died with WinError 5 after doing all the work.
+
+    It began happening when renders got FASTER. The same reel took 262 s
+    before the blur gate landed and about 60 s after, which moved the swap
+    from "long after the player finished loading" to "while it still has the
+    file". A performance fix turned a latent race into a reliable failure.
+
+    The page now drops the video before a render starts, which is the real
+    fix; this is the belt to that braces -- Explorer previewing the folder, a
+    media player someone left open, or a second page in another tab can all
+    hold the same handle, and none of them are ours to close. Seconds, not
+    minutes: a reader that has not let go by then is not about to.
+    """
+    for wait in (0.0, 0.2, 0.5, 1.0, 2.0, 3.0):
+        if wait:
+            time.sleep(wait)
+        try:
+            tmp.replace(out)
+            return
+        except PermissionError:
+            continue
+    # Out of patience: say which file, and that the render itself was fine.
+    raise RuntimeError(
+        f"The reel rendered, but {out.name} could not be replaced -- something "
+        f"still has it open. Close anything playing it and press Render again.")
 
 
 def _unlink(p: Path) -> None:

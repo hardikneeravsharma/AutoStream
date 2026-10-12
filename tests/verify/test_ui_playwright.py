@@ -1359,7 +1359,10 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     assert saved["song"] == str(song) and saved["style"] == "hype"
     assert saved["lyrics"] == {"look": "caption", "face": "gochi", "clean": False,
                                "pos": [0.25, 0.85], "shift": 0.5, "reveal": "look",
-                               "box": 1.0, "size": 1.0, "alpha": 1.0}
+                               "box": 1.0, "size": 1.0, "alpha": 1.0,
+                               # No boxes drawn: Width and Size still decide,
+                               # and the reel renders as it always did (U28).
+                               "boxes": []}
     assert not page.locator("#studio-lyrics-chip").is_visible(), "the LYRICS stand-in stayed over the rendered words"
     assert "studio song.lrc" in (saved.get("lyrics_note") or ""), saved.get("lyrics_note")
     assert "studio song.lrc" in page.inner_text('#studio-insp details[data-grp="lyrics"]')

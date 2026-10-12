@@ -79,6 +79,47 @@ gets reported twice.
 `main` is protected, so the version bump rides along in the open PR rather than going
 straight in.
 
+## Say what happened, in that shape, every time
+
+**Do not bury a question or a result in prose.** Three paragraphs with a
+question somewhere in the middle is not a report; it is something the reader
+has to mine. Every time work finishes, pauses, stalls or raises a question,
+answer in this shape and nothing else:
+
+1. **A headline, first line, stating WHY you stopped.** Done? Blocked? Waiting
+   on the user? Paused mid-way? One line. The reader must not have to deduce it.
+2. **What is done** -- facts, not narrative.
+3. **What is pending** -- named, not implied.
+4. **What is blocking** -- and who or what unblocks it. "Nothing" is a valid
+   and welcome answer; say it rather than leaving the section out.
+
+Short lines, lists, tables. No throat-clearing, no recap of the journey. Detail
+belongs in the commit message, the PR body and the roadmap row -- all three are
+read deliberately, by someone who has asked for the detail. A status update is
+read in five seconds by someone who wants to know whether to act.
+
+## Ship it; do not ask to ship it
+
+**When something is ready, merge it, release it and build it into
+`dist\AutoStream`.** All three, without being asked. Ready means: the offline
+suite passes, the browser tier passes where it covers the change, and the work
+is what was asked for. "Ready but awaiting approval" is not a state this
+project has -- see the three places above.
+
+**The one exception is the user's own app.** Rewriting `dist\AutoStream` closes
+it for about two minutes, and a build that walks into a live session costs a
+stream. So:
+
+- `/api/status` says IDLE and not recording, and `/api/studio/job` is not
+  running: **build it, do not ask.**
+- Anything else -- LIVE, recording, a clip job, a reel rendering: **ask, in one
+  line, at the top of the message.** Not in the third paragraph. The question
+  is "may I take the app for two minutes", and it is the only thing the reader
+  has to answer.
+
+Everything else -- pushing, opening the PR, merging, tagging, publishing the
+release, uploading and checking the assets -- happens without a question.
+
 ## One open PR at a time
 
 There should never be more than one open PR. Fold a new fix into the existing one — or

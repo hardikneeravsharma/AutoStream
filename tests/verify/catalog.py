@@ -684,6 +684,18 @@ NOT_A_FLOW: dict[str, str] = {
     # already made; nothing new is asked of the server until a render.
     "studio-redo": "puts back a step that was undone; never leaves the browser",
     "studio-hist": "opens the list of everything done to this reel",
+    # The timeline tools (U18). Picking one changes what the next drag
+    # means; the edit itself goes through the same check the drags do.
+    "studio-tool": "chooses Select, Roll or Razor for the next drag",
+    # In, out and the marks say where to LOOK. None changes a frame, so none
+    # reaches the server on its own; the marks ride on the project with the
+    # next render like any other field.
+    "studio-in": "sets the start of the stretch to watch",
+    "studio-out": "sets the end of it",
+    "studio-io-clear": "forgets the in and out points",
+    "studio-mark": "drops a mark at the playhead; kept on the project",
+    "studio-mark-clear": "takes every mark off",
+    "studio-mark-go": "seeks to a mark",
     "studio-hist-back": "goes back to a step on that list",
     "studio-hist-fwd": "goes forward to a step on that list",
     "studio-lyrbox-add": "puts another box on the picture; sent with the next render",

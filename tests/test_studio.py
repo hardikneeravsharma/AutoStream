@@ -10,6 +10,7 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
+from unittest import mock
 from pathlib import Path
 
 import pytest
@@ -2177,3 +2178,59 @@ def test_ffmpeg_progress_is_read_from_the_clock_not_the_misnamed_ms(root):
     # bar.
     job._watch_progress(iter([b"out_time=00:02:00.000000\n"]), 71.716)
     assert job.join == 1.0
+
+
+def test_the_finished_reel_waits_out_a_reader_before_replacing_the_old_one(tmp_path):
+    """THE REPORTED FAILURE: "[WinError 5] Access is denied: mildolbab.part.mp4
+    -> mildolbab.mp4", twice, after the render had done all its work.
+
+    Windows will not rename over a file anything has open, and the thing
+    holding the old reel was the app itself -- the page's player streams it
+    through our own server, which keeps the file open for the response. It
+    started happening when renders got FASTER: 262 s before the blur gate,
+    about 60 after, which moved the swap to while the player still had it.
+    """
+    tmp = tmp_path / "r.part.mp4"
+    out = tmp_path / "r.mp4"
+    tmp.write_bytes(b"new")
+    out.write_bytes(b"old")
+
+    # A reader that lets go after a moment: the swap waits rather than failing.
+    tries = {"n": 0}
+    real = type(tmp).replace
+
+    def flaky(self, target):
+        tries["n"] += 1
+        if tries["n"] < 3:
+            raise PermissionError(5, "Access is denied")
+        return real(self, target)
+
+    with mock.patch.object(type(tmp), "replace", flaky):
+        studio._swap_in(tmp, out)
+    assert out.read_bytes() == b"new", "the finished reel did not land"
+    assert tries["n"] == 3, tries
+
+    # One that never lets go: it gives up, and says the render itself was fine
+    # rather than reporting a render failure.
+    tmp.write_bytes(b"newer")
+    def never(self, target):
+        raise PermissionError(5, "Access is denied")
+    with mock.patch.object(type(tmp), "replace", never):
+        with pytest.raises(RuntimeError) as e:
+            studio._swap_in(tmp, out)
+    assert "rendered" in str(e.value), str(e.value)
+    assert "still has it open" in str(e.value), str(e.value)
+
+
+def test_the_page_lets_go_of_the_reel_before_asking_for_a_render():
+    """The real fix: the belt above only buys seconds, and a player holds the
+    file for as long as it is loaded. Both render paths drop it first."""
+    from autostream.ui import studio as ui
+
+    js = ui.STUDIO_JS
+    assert "function studio_freeOutput(" in js
+    assert js.count("studio_freeOutput();") >= 2, "both render paths must release it"
+    # Removing the attribute alone leaves the handle; load() is what frees it.
+    free = js[js.index("function studio_freeOutput("):]
+    free = free[:free.index("\n}")]
+    assert "removeAttribute('src')" in free and "v.load()" in free, free

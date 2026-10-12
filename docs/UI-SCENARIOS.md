@@ -20,7 +20,7 @@ a measured figure quietly becomes an estimate.
 
 | Page | `data-act` controls | Operable ids |
 |---|---|---|
-| studio | 158 | 17 |
+| studio | 165 | 17 |
 | clips | 47 | 10 |
 | reel | 22 | 2 |
 | settings | 7 | 10 |
@@ -28,7 +28,7 @@ a measured figure quietly becomes an estimate.
 | dashboard | 2 | 12 |
 | logs | 0 | 3 |
 | shell | 0 | 2 |
-| **total** | **237** | **57** |
+| **total** | **244** | **57** |
 
 Dashboard, logs and shell carry no `data-act`: they are wired by element id,
 which is why both columns matter.
@@ -168,7 +168,7 @@ listed so the gap is visible.
 | 5.30 | Framing marks its choice | The reported bug | yes |
 | 5.31 | Upload to YouTube | Refused safely with no account | **gap** |
 
-# 6 · Studio — 158 controls
+# 6 · Studio — 165 controls
 
 `test_ui_playwright.py` covers the two big flows and the effect picker.
 
@@ -218,6 +218,11 @@ listed so the gap is visible.
 | 6.42 | Undo is no longer a one-way door: make three edits, press Ctrl+Z twice, then Ctrl+Shift+Z once | The reel goes back two steps and forward one; both buttons name the step they would cross in their tooltip; neither is enabled when there is nothing on its side | **gap** |
 | 6.43 | The history panel: press History, read the list, click a step two back, then click one that was undone | Every step is listed with your place marked; undone steps stay listed and clickable; clicking walks to that step and the change list agrees afterwards | **gap** |
 | 6.44 | A fresh edit abandons the way forward: undo twice, then make a new edit | Redo goes dead and the undone steps leave the list — they are not a future of this project any more | **gap** |
+| 6.45 | Roll: hold Ctrl and drag the edge between two shots | The join moves, the first shot grows by what the second gives up, the reel's total length is unchanged, and every kill after the join stays within a frame of its mark | **gap** |
+| 6.46 | Razor: press C, click a shot a third of the way along; then press Escape | It becomes two shots; the kill stays in the half it happened in; neither half is shorter than a beat; the join between them is a hard cut; Escape puts the tool back to Select | **gap** |
+| 6.47 | A tool is never a trap: press C, then Escape; press N, drag an edge, release Ctrl mid-drag | Escape returns to Select; a roll begun with Ctrl stays a roll even after Ctrl is let go, so the reel's length does not jump mid-gesture | **gap** |
+| 6.48 | J/K/L: press L three times, then J twice, then K | The reel plays at 1x, 2x, 4x then slows back; K stops it dead; the rate is shown beside the clock | **gap** |
+| 6.49 | In, out and marks: press I, play on, press O, then M twice at different points | A band is drawn over the ruler between the two points; a mark appears at each spot and clicking one seeks there; the marks are still there after reopening the reel; nothing is sent to a render | **gap** |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.
