@@ -736,7 +736,7 @@ def test_every_generated_part_resolves_to_a_family():
     drawn = {"k01", "k02", "k03", "k06", "k07", "k08", "k11", "k12", "k14", "k15",
              "k16", "k17", "k18", "k19", "k20", "k21", "k22", "xfade", "tint",
              "c01", "c03", "c04", "c05", "c06", "c07", "c08",
-             "o01", "o04", "o05", "o08", "h01", "h02", "h03", "h05",
+             "o01", "o04", "o05", "o08", "o09", "h01", "h02", "h03", "h05",
              "fade_in", "fade_out"}
     for p in studio.PARTS:
         if p.base:
