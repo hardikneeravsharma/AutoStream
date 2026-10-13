@@ -2927,12 +2927,19 @@ class Server:
             answer = {"ok": True, "checked": True, "available": False,
                       "current": __version__, "why": str(e)}
         else:
+            newer = bool(updates.is_newer(rel.version, __version__))
             answer = {
                 "ok": True, "checked": True,
                 "current": __version__,
                 "latest": rel.version,
-                "available": bool(rel.usable
-                                  and updates.is_newer(rel.version, __version__)),
+                # A release can exist and still carry nothing to download --
+                # a tag published without its build, which is what v1.67.0
+                # was. Folding that into `available` alone made the page say
+                # "up to date" beside a higher version number, and it got
+                # reported as a bug in the updater rather than in the
+                # release. The two facts are now separate.
+                "newer": newer,
+                "available": bool(rel.usable and newer),
                 "notes": rel.notes[:4000],
                 "url": rel.url,
                 "bytes": rel.asset_bytes,
