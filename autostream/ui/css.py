@@ -3982,6 +3982,12 @@ STUDIO_CSS = r"""
   overflow:hidden;text-overflow:ellipsis;max-width:max-content}
 .st-kill{position:absolute;bottom:6px;width:12px;height:12px;margin-left:-6px;transform:rotate(45deg);
   background:#fff;border:2px solid var(--accent);cursor:ew-resize}
+/* EVERY OTHER KILL THE SHOT SHOWS. Hollow, so the shot's own kill -- the one
+   the cut is built around -- still reads as the one in charge; and smaller,
+   because a row of equal diamonds says nothing about which is which. */
+.st-kill.is-extra{width:9px;height:9px;margin-left:-4.5px;bottom:8px;
+  background:transparent;border-color:var(--text-secondary)}
+.st-kill.is-extra.is-pinned{background:var(--accent);border-color:var(--accent)}
 .st-trim{position:absolute;top:0;right:0;width:10px;height:100%;cursor:ew-resize;
   background:linear-gradient(90deg,transparent,rgba(255,255,255,.35))}
 .st-tr{position:absolute;height:22px;margin-left:0;transform:translateX(-50%);padding:0 5px;min-width:18px;

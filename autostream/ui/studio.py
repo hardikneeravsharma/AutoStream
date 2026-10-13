@@ -3669,8 +3669,22 @@ function studio_localDerive() {
   let t = 0;
   const rows = p.shots.map((s, i) => {
     const old = (d && d.shots[i]) || {};
+    /* THE OTHER KILLS ARE RE-BASED, NOT THROWN AWAY. They used to be
+       replaced by the shot's own kill for the length of a drag, so every
+       other diamond vanished the moment the hand moved and came back when
+       the server answered. They do not follow from the shots, so they are
+       carried and shifted by however far the shot moved. */
+    const was = (old.kills_reel && old.kills_reel.length) ? old.kills_reel : [old.kill_reel];
+    const shift = t - (old.start === undefined ? t : old.start);
     const row = {index: i, start: t, end: t + s.duration, kill_reel: t + s.pre,
-                 kills_reel: [t + s.pre], pieces: old.pieces || [[0, s.duration, 1]]};
+                 kills_reel: was.map(k => (k === undefined ? t + s.pre : k + shift)),
+                 /* WHICH SOURCE SECONDS THIS SHOT USES, carried like `pieces`.
+                    Dropped here, `studio_shotKills` filtered against undefined,
+                    got an empty list, and every drag after the first one
+                    anchored nothing -- found by a browser pressing the button,
+                    which is the only place it could have been found. */
+                 source_in: old.source_in, source_out: old.source_out,
+                 pieces: old.pieces || [[0, s.duration, 1]]};
     t += s.duration;
     return row;
   });
@@ -5207,6 +5221,12 @@ function studio_drawTimeline() {
       '<span class="st-shot-name">' + (i + 1) + (w > 70 ? ' · ' + esc((c && c.caption) || s.name) : '') + '</span>' +
       '<span class="st-kill" data-kill="' + i + '" style="left:' + ((r.kill_reel - r.start) * pps).toFixed(1) +
       'px" title="Kill — drag to move it"></span>' +
+      /* EVERY OTHER KILL IN THE SHOT, as a diamond of its own. Dragging one
+         does NOT move the cut: it anchors that kill to where it was dropped
+         and the shot is re-timed inside its own length to hit it. That is the
+         whole difference -- moving the cut is what pushed every later shot
+         down the timeline and knocked the kills after it off the beat. */
+      studio_extraKills(s, r, i, pps) +
       '<span class="st-trim" data-trim="' + i + '" title="Drag to change the length"></span></div>';
   });
 
@@ -6534,14 +6554,65 @@ function studio_ioDraw() {
 
 /* ------------------------------------------------------------ dragging */
 
+/* The kills of this shot that are not the one it is cut around, in the order
+   derive() reports them -- which is the order of `s.kills` filtered to the
+   footage the shot uses, so the index is the same on both sides. */
+function studio_shotKills(s, r) {
+  return (s.kills || []).filter(k => k >= r.source_in - 1e-6 && k <= r.source_out + 1e-6);
+}
+
+function studio_extraKills(s, r, i, pps) {
+  const pinned = {};
+  (s.anchors || []).forEach(a => { pinned[a[0].toFixed(3)] = true; });
+  const src = studio_shotKills(s, r);
+  return (r.kills_reel || []).map((kt, j) => {
+    if (Math.abs(kt - r.kill_reel) < 0.02) return '';
+    const on = src[j] !== undefined && pinned[src[j].toFixed(3)];
+    return '<span class="st-kill is-extra' + (on ? ' is-pinned' : '') +
+      '" data-anchor="' + i + ':' + j + '" style="left:' +
+      ((kt - r.start) * pps).toFixed(1) + 'px" title="' +
+      (on ? 'Pinned here - alt-click to let it float again' :
+            'Another kill in this shot - drag it onto a beat') + '"></span>';
+  }).join('');
+}
+
 function studio_pointerDown(e) {
   const tl = studio_el('studio-tracks');
   if (!studio.project || !tl || !tl.contains(e.target) || e.button !== 0) return;
   const trim = e.target.closest('[data-trim]'), kill = e.target.closest('[data-kill]');
+  const anchor = e.target.closest('[data-anchor]');
   const shot = e.target.closest('.st-shot');
-  if (!trim && !kill && !shot) return;
-  const i = Number((trim || kill || shot).getAttribute(trim ? 'data-trim' : kill ? 'data-kill' : 'data-shot'));
+  if (!trim && !kill && !anchor && !shot) return;
+  let aj = -1;
+  let i;
+  if (anchor) {
+    const bits = anchor.getAttribute('data-anchor').split(':');
+    i = Number(bits[0]); aj = Number(bits[1]);
+  } else {
+    i = Number((trim || kill || shot).getAttribute(trim ? 'data-trim' : kill ? 'data-kill' : 'data-shot'));
+  }
   const s = studio.project.shots[i];
+  /* ALT-CLICK LETS A PINNED KILL FLOAT AGAIN. Unpinning had to be as cheap as
+     pinning, or a mistake costs a rebuild. */
+  if (anchor && e.altKey) {
+    const r0 = studio.derived.shots[i];
+    const src0 = studio_shotKills(s, r0)[aj];
+    if (src0 !== undefined && s.anchors && s.anchors.length) {
+      const snap = JSON.stringify(studio.project);
+      s.anchors = s.anchors.filter(a => Math.abs(a[0] - src0) > 1e-3);
+      if (!s.anchors.length) delete s.anchors;
+      studio.gen++;
+      const what = studio_shotName(i) + ' · the kill floats again';
+      studio_pushUndo(snap, what);
+      studio_touched(what, i, studio_diff(JSON.parse(snap), studio.project));
+      studio.sel = i;
+      studio_localDerive();
+      studio_drawAll();
+      studio_check();
+    }
+    e.preventDefault();
+    return;
+  }
   /* THE RAZOR CUTS WHERE YOU CLICK, so it acts on the press and starts no
      drag: a cut that followed the pointer would be a trim with a new name. */
   if (studio.tool === 'razor') {
@@ -6551,7 +6622,9 @@ function studio_pointerDown(e) {
     e.preventDefault();
     return;
   }
-  studio.drag = {kind: trim ? 'trim' : kill ? 'kill' : 'move', i: i, x0: e.clientX, moved: false,
+  studio.drag = {kind: trim ? 'trim' : anchor ? 'anchor' : kill ? 'kill' : 'move',
+                 i: i, j: aj, x0: e.clientX, moved: false,
+                 at: anchor ? (studio.derived.shots[i].kills_reel || [])[aj] : 0,
                  /* Decided on the press and kept: letting go of Ctrl halfway
                     through must not turn a roll into a trim under the hand. */
                  roll: studio.tool === 'roll' || e.ctrlKey || e.metaKey,
@@ -6591,6 +6664,24 @@ function studio_pointerMove(e) {
     s.pre = Math.min(s.pre, s.duration);
   } else if (g.kind === 'kill') {
     s.pre = Math.max(0, Math.min(s.duration, studio_snapTo(g.pre + dt)));
+  } else if (g.kind === 'anchor') {
+    /* THE CUT DOES NOT MOVE. Only where this kill plays inside the shot does,
+       and the renderer bends the rate to hit it (studio.fit_pieces). Moving
+       the cut instead is what pushed every later shot down the timeline and
+       knocked the kills after it off the beat. */
+    const r = studio.derived.shots[g.i];
+    const src = studio_shotKills(s, r)[g.j];
+    if (src !== undefined) {
+      const reelT = Math.max(r.start + 0.05, Math.min(r.end - 0.05, studio_snapTo(g.at + dt)));
+      const out = reelT - r.start;
+      s.anchors = (s.anchors || []).filter(a => Math.abs(a[0] - src) > 1e-3);
+      s.anchors.push([Math.round(src * 1e4) / 1e4, Math.round(out * 1e4) / 1e4]);
+      s.anchors.sort((a, b) => a[1] - b[1]);
+      /* Drawn where it was dropped straight away: the real position comes
+         back with the server's next derive, and a diamond that springs back
+         under the hand reads as the drag having failed. */
+      r.kills_reel[g.j] = reelT;
+    }
   } else {
     const d = studio.derived, last = d.shots.length - 1;
     const mid = d.shots[g.i].start + (d.shots[g.i].end - d.shots[g.i].start) / 2 + dt;
@@ -6625,7 +6716,8 @@ function studio_pointerUp(e) {
   studio.gen++;
   const moveName = studio_shotName(g.i) +
     (g.kind === 'trim' ? (g.rolled ? ' · the join rolled' : ' · trimmed')
-     : g.kind === 'kill' ? ' · the kill moved' : ' moved');
+     : g.kind === 'kill' ? ' · the kill moved'
+     : g.kind === 'anchor' ? ' · a kill pinned to the beat' : ' moved');
   studio_pushUndo(g.snapshot, moveName);
   studio_touched(moveName, g.i,
                  studio_diff(JSON.parse(g.snapshot), studio.project));

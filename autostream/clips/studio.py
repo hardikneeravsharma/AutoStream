@@ -3366,6 +3366,22 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
             if rate < 0.999:
                 shot["stretch"] = [round(rate, 4), round(_num(st[1], 0.0, 60.0, 0.0), 4),
                                    round(_num(st[2] if len(st) > 2 else 0, 0.0, MAX_HOLD + 0.01, 0.0), 4)]
+        # WHERE THE EDITOR PUT A KILL. [[source seconds, output seconds], ...]
+        # -- a kill of this clip, and where in this shot it must play. The
+        # anchor kill itself is implied by `kill` and `pre` and is added by
+        # `segments`; these are the OTHER kills, dragged onto a beat. Empty on
+        # every reel nobody has dragged, which is how the speed part stays in
+        # charge of a shot that was never touched.
+        anchors = []
+        for a in (raw.get("anchors") or [])[:12]:
+            if not (isinstance(a, (list, tuple)) and len(a) == 2):
+                continue
+            src, out_t = _num(a[0], 0.0, cs, -1.0), _num(a[1], 0.0, 60.0, -1.0)
+            if src >= 0 and out_t >= 0:
+                anchors.append([round(src, 4), round(out_t, 4)])
+        if anchors:
+            shot["anchors"] = sorted(anchors, key=lambda a: a[1])
+
         before = (shot["pre"], shot["duration"], shot["speed"])
         _fit(shot, out["step"])
         if (shot["pre"], shot["duration"], shot["speed"]) != before:
@@ -3848,12 +3864,87 @@ class Segment:
         for k, default in (("hold", 0), ("layout", {}), ("cam_file", ""), ("cam_start", 0.0)):
             if d.get(k) == default:
                 d.pop(k, None)
+        # HOW THE RATES ARE RENDERED IS PART OF WHAT THE RENDER IS. The key is
+        # built from the Segment's own fields, and `pieces` says what the rates
+        # are but not what is done about them -- so the day smoothing arrived,
+        # every slowed shot in every cache stayed exactly as juddery as it was
+        # and the change looked like it had not worked. Added only when there
+        # is smoothing to name, so a shot at real speed keeps the cache and the
+        # render it already had.
+        if (tag := smooth_tag(self.pieces)):
+            d["smooth"] = tag
         blob = json.dumps(d, sort_keys=True, default=str)
         return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:20]
 
     @property
     def frames(self) -> int:
         return self.head + self.body + self.tail
+
+
+# PUTTING A KILL WHERE THE EDITOR WANTS IT, by bending time rather than by
+# moving the cut. Dragging a kill used to change the shot's run-up, which
+# changes the shot's length, which pushes every later shot down the timeline --
+# so fixing one kill broke every kill after it. Measured on a real hand-edited
+# reel: the kills the editor dragged landed within a frame of the beat and the
+# ones after them were up to ten frames out.
+#
+# Here the shot's start and end do not move. What changes is the rate INSIDE
+# it, so the anchored kills land on their marks and nothing downstream knows.
+#
+# HOW FAR TIME MAY BEND. Half to double speed is invisible on gameplay; beyond
+# that a correction announces itself. 0.6-1.8 is the default band, and a drag
+# that cannot be met inside it is REFUSED AND NAMED rather than quietly moving
+# the cut -- which is exactly how that reel's later kills drifted.
+RATE_MIN, RATE_MAX = 0.6, 1.8
+# Two anchors closer than this in the output cannot be told apart and the rate
+# between them is whatever rounding says. One frame is not an edit.
+ANCHOR_MIN_GAP = 0.05
+
+
+def fit_pieces(points: list[tuple[float, float]], dur: float, *,
+               band: tuple[float, float] = (RATE_MIN, RATE_MAX)
+               ) -> tuple[list[tuple[float, float, float]], list[str]]:
+    """Rate map that makes each (output, source) point land where it says.
+
+    `points` are (output seconds into the shot, source seconds), in order, and
+    need not cover the whole shot: whatever is left at either end plays at the
+    rate of the stretch beside it, so a shot does not change speed for no
+    reason at its edges.
+
+    -> (pieces, problems). `pieces` is what `_setpts_expr` wants. `problems` is
+    empty when every rate fits the band, and otherwise says which pair could
+    not be met and by how much -- the caller shows that rather than silently
+    doing something else.
+    """
+    pts = sorted(((float(o), float(s)) for o, s in points), key=lambda p: p[0])
+    kept: list[tuple[float, float]] = []
+    for o, src in pts:
+        if kept and o - kept[-1][0] < ANCHOR_MIN_GAP:
+            continue
+        kept.append((o, src))
+    if len(kept) < 2 or dur <= 0:
+        return [(0.0, max(dur, 0.0), 1.0)], []
+
+    lo, hi = band
+    spans, problems = [], []
+    for (o0, s0), (o1, s1) in zip(kept, kept[1:]):
+        out = o1 - o0
+        rate = (s1 - s0) / out if out > 1e-6 else 1.0
+        if rate < lo - 1e-9 or rate > hi + 1e-9:
+            problems.append(
+                f"{o0:.2f}s to {o1:.2f}s would have to play at {rate:.2f}x "
+                f"(the limit is {lo:g}x to {hi:g}x)")
+        spans.append((o0, o1, max(lo, min(hi, rate))))
+
+    # The ends keep the rate of the stretch beside them: a shot that opens at
+    # 1.0x and jumps to 0.6x on its first anchor reads as a stumble.
+    head = []
+    if kept[0][0] > 1e-6:
+        head = [(0.0, kept[0][0], spans[0][2])]
+    tail = []
+    if dur - kept[-1][0] > 1e-6:
+        tail = [(kept[-1][0], dur, spans[-1][2])]
+    return head + spans + tail, problems
 
 
 def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
@@ -3875,8 +3966,20 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
         speed = s["speed"]
         if i == len(shots) - 1 and project["outro"] == "e03":
             speed = "exit"
-        ps = pieces(speed, dur, min(s["pre"], dur), _stretch_of(s), _own_after(s))
-        src_body_start = s["kill"] - source_used(ps, min(s["pre"], dur))
+        pre_s = min(s["pre"], dur)
+        anchors = s.get("anchors") or []
+        if anchors:
+            # THE EDITOR'S MARKS WIN OVER THE SPEED PART. A shot nobody dragged
+            # has no anchors and takes the ordinary path, so this changes
+            # nothing for every reel that was planned rather than edited.
+            pts = [(pre_s, s["kill"])] + [(float(o), float(src)) for src, o in anchors
+                                          if 0.0 <= float(o) <= dur]
+            ps, trouble = fit_pieces(pts, dur)
+            for why in trouble:
+                log.info("shot %d (%s): %s", i, s.get("name", ""), why)
+        else:
+            ps = pieces(speed, dur, pre_s, _stretch_of(s), _own_after(s))
+        src_body_start = s["kill"] - source_used(ps, pre_s)
         hsec, tsec = head / FPS, tail / FPS
         seg_ps = []
         if head:
@@ -3886,11 +3989,11 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
             seg_ps.append((hsec + dur, hsec + dur + tsec, 1.0))
         freeze = _freeze_of(s)
         push = bool(s["hero"] and picked(s["hero_fx"], "h02"))
-        kill_at = hsec + min(s["pre"], dur)
+        kill_at = hsec + pre_s
         # Every kill this shot shows, where it plays in the segment -- through
         # the speed map, so a slowed kill is still gated at the right moment,
         # and a kill after a freeze plays that much later.
-        k_src = source_used(ps, min(s["pre"], dur))
+        k_src = source_used(ps, pre_s)
         kill_times = sorted({round(hsec + output_at(ps, max(0.0, k_src + (k - s["kill"])))
                                    + (freeze if k > s["kill"] + 1e-6 else 0.0), 4)
                              for k in s["kills"] if s["kill"] - 1e-6 <= k <= s["kill"] + dur})
@@ -4016,6 +4119,71 @@ def _setpts_expr(ps: list) -> str:
     return f"setpts='({expr})/TB'"
 
 
+# MAKING A SPEED CHANGE LOOK LIKE ONE. Until now a shot's rate was a `setpts`
+# expression and nothing else, so slow motion held the same frame several times
+# -- which reads as judder, not as slow -- and a speed-up threw frames away,
+# which reads as a strobe. Neither is what an editor means by a ramp.
+#
+# Slow is fixed by SYNTHESISING the missing frames rather than repeating one.
+# Measured on a real clip at 0.3x: 1 s plain against 4 s interpolated for the
+# same three seconds of source. Four times the cost, and only on the shots that
+# are actually slowed.
+#
+# Fast is fixed by BLURRING the frames that are about to be discarded into the
+# one that survives, which is what a camera does and what makes a fast cut read
+# as fast rather than as missing. `tmix` runs before the re-time, on source
+# frames, so the frame that survives carries the average of the ones that did
+# not.
+SMOOTH_SLOW = 0.85             # at or below this, interpolate
+SMOOTH_FAST = 1.30             # at or above this, blur
+BLUR_FRAMES_MAX = 5            # a longer mix smears rather than blurs
+
+
+def smooth_tag(pieces: list) -> str:
+    """What smoothing these rates ask for, as a short string for a cache key.
+
+    Empty when there is none, which is what keeps an unsmoothed shot's cache.
+    """
+    rates = [float(r) for _a, _b, r in pieces] or [1.0]
+    bits = []
+    if max(rates) >= SMOOTH_FAST:
+        bits.append(f"blur{max(2, min(BLUR_FRAMES_MAX, math.ceil(max(rates))))}")
+    if min(rates) <= SMOOTH_SLOW:
+        bits.append("mci")
+    return "+".join(bits)
+
+
+def rate_ops(pieces: list, fps: int = FPS) -> list[str]:
+    """The re-time, with whatever smoothing its rates ask for.
+
+    A shot's `pieces` can hold several rates -- a ramp is fast in and slow on
+    the kill -- so both treatments can apply to one shot. The blur is mild at
+    real speed (two frames at 60 fps is a sixtieth of a second) and the
+    interpolation only has work to do where the stream is below `fps`, so
+    neither hurts the stretches it was not chosen for.
+    """
+    rates = [float(r) for _a, _b, r in pieces] or [1.0]
+    pre: list[str] = []
+    if max(rates) >= SMOOTH_FAST:
+        # Ceiling, not round: at 2.5x two frames become one, and `round` gives
+        # 2 for 2.5 because Python rounds halves to even -- so the one case the
+        # threshold was chosen for got the weakest blur there is.
+        pre.append(f"tmix=frames={max(2, min(BLUR_FRAMES_MAX, math.ceil(max(rates))))}")
+    if min(rates) <= SMOOTH_SLOW:
+        # BLEND, NOT MOTION COMPENSATION. Measured on two seconds of real
+        # 1920x1080 footage at 0.3x: plain 1 s, `mi_mode=blend` 1 s, and full
+        # optical flow (`mci` with aobmc and vsbmc) **54 s** -- fifty-four
+        # times the cost, which on a sixty-second reel is half an hour of
+        # encoding for shots nobody asked to wait for. A lighter mci (obmc,
+        # epzs) is still 27 s. Blend cross-fades between the two real frames
+        # instead of holding one, which is what removes the judder; optical
+        # flow would look better again and cannot be afforded.
+        post = [f"minterpolate=fps={fps}:mi_mode=blend"]
+    else:
+        post = [f"fps={fps}"]
+    return pre + [_setpts_expr(pieces)] + post
+
+
 def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=None,
                     textdir: Path | None = None) -> list[str]:
     """ffmpeg argv that renders one shot, handles included, to `out`."""
@@ -4027,7 +4195,7 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     start = max(0.0, seg.src_start)
     lead = start - seg.src_start          # > 0 only if the clip starts late; padded below
 
-    v = [_setpts_expr(seg.pieces), f"fps={F}"]
+    v = rate_ops(seg.pieces, F)
     if lead > 1e-3:
         v.append(f"tpad=start_duration={lead:.4f}:start_mode=clone")
     if seg.freeze > 0:
