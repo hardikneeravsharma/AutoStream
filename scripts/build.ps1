@@ -30,6 +30,52 @@ function Write-Ok($msg)    { Write-Host "  [ok] $msg" -ForegroundColor Green }
 function Write-Bad($msg)   { Write-Host "  [!!] $msg" -ForegroundColor Red }
 function Write-Warn($msg)  { Write-Host "  [!!] $msg" -ForegroundColor Yellow }
 
+# ---- who is holding that file ----------------------------------------
+#
+# Windows will not say, and the loaded-modules list does not know either:
+# a mapped section survives the process that is easy to find. Restart
+# Manager does know -- it is the service an installer asks before telling
+# somebody which program to close -- and it needs no privileges.
+#
+# Used by the clear below, where "something still holds a file" sent a
+# session hunting through Explorer windows while the answer was OBS.
+function Get-FileHolders([string[]]$Paths) {
+    if (-not $Paths) { return @() }
+    if (-not ('RM' -as [type])) {
+        Add-Type -Language CSharp -TypeDefinition @'
+using System; using System.Collections.Generic; using System.Runtime.InteropServices;
+public static class RM {
+  [StructLayout(LayoutKind.Sequential)] public struct FT { public uint lo; public uint hi; }
+  [StructLayout(LayoutKind.Sequential)] public struct UP { public int pid; public FT started; }
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] public struct PI {
+    public UP Process;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string app;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string svc;
+    public int type; public uint status; public uint session;
+    [MarshalAs(UnmanagedType.Bool)] public bool restartable; }
+  [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)] static extern int RmStartSession(out uint h, int flags, string key);
+  [DllImport("rstrtmgr.dll")] static extern int RmEndSession(uint h);
+  [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)] static extern int RmRegisterResources(uint h, uint nf, string[] files, uint na, UP[] apps, uint ns, string[] svcs);
+  [DllImport("rstrtmgr.dll")] static extern int RmGetList(uint h, out uint needed, ref uint have, [In, Out] PI[] info, ref uint reasons);
+  public static List<string> Who(string[] files) {
+    var res = new List<string>(); uint h;
+    if (RmStartSession(out h, 0, Guid.NewGuid().ToString()) != 0) return res;
+    try {
+      if (RmRegisterResources(h, (uint)files.Length, files, 0, null, 0, null) != 0) return res;
+      uint have = 0, needed = 0, why = 0;
+      RmGetList(h, out needed, ref have, null, ref why);
+      if (needed == 0) return res;
+      var info = new PI[needed]; have = needed;
+      if (RmGetList(h, out needed, ref have, info, ref why) != 0) return res;
+      for (int i = 0; i < have; i++) res.Add(info[i].app + " (pid " + info[i].Process.pid + ")");
+    } finally { RmEndSession(h); }
+    return res; }
+}
+'@
+    }
+    try { return @([RM]::Who($Paths) | Sort-Object -Unique) } catch { return @() }
+}
+
 # ---- where the time went ---------------------------------------------
 #
 # A release build is tens of minutes and nobody could say which part. The
@@ -269,8 +315,39 @@ if (Test-Path $live) {
     }
     if (-not $gone) {
         Write-Bad "the old install could not be cleared - something still holds a file in it"
-        Write-Host "       Close anything looking at dist\AutoStream (Explorer, a player," -ForegroundColor Red
-        Write-Host "       a second copy of the app) and run the build again." -ForegroundColor Red
+        # NAME THE HOLDER, BECAUSE GUESSING IT COSTS A BUILD EACH TIME.
+        #
+        # "close Explorer, a player, a second copy of the app" was a list of
+        # suspects, and the actual holder was on none of them: OBS. AutoStream
+        # LAUNCHES OBS, so OBS inherits its parent's directory in the DLL
+        # search path and maps msvcp140.dll and the three other VC runtimes
+        # out of dist\AutoStream\_internal. Closing AutoStream therefore does
+        # not free the install -- obs64.exe keeps those four files for as long
+        # as it runs, and -HandOff's own wait cannot see it.
+        #
+        # Restart Manager answers the question properly and needs no
+        # privileges: it is what an MSI uses to say which program to close.
+        $held = @(Get-ChildItem $live -Recurse -Force -File -ErrorAction SilentlyContinue |
+                  Where-Object {
+                      try { $s = [IO.File]::Open($_.FullName, 'Open', 'ReadWrite', 'None')
+                            $s.Close(); $false }
+                      catch { $true } } |
+                  Select-Object -First 20 -ExpandProperty FullName)
+        $who = @()
+        if ($held) { $who = @(Get-FileHolders $held) }
+        if ($who) {
+            Write-Host "       Held by: $($who -join ', ')" -ForegroundColor Red
+            Write-Host "       Close it and run the build again. OBS in that list is the" -ForegroundColor Red
+            Write-Host "       usual answer: AutoStream starts it, so it maps the runtime" -ForegroundColor Red
+            Write-Host "       DLLs out of dist\AutoStream\_internal and keeps them after" -ForegroundColor Red
+            Write-Host "       AutoStream itself has gone." -ForegroundColor Red
+        } else {
+            Write-Host "       Close anything looking at dist\AutoStream (Explorer, a player," -ForegroundColor Red
+            Write-Host "       a second copy of the app) and run the build again." -ForegroundColor Red
+        }
+        if ($held) {
+            Write-Host "       Locked: $(($held | Split-Path -Leaf) -join ', ')" -ForegroundColor Red
+        }
         exit 1
     }
     Write-Ok "cleared the old install, so the freeze has nothing to fight over"
