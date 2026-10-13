@@ -622,19 +622,33 @@ def test_a_montage_with_no_chapters_offers_nothing(ui, app):
 
 # ----------------------------------- C2: the whole match as one video
 
-def test_the_match_video_is_offered_only_where_rounds_are_known(ui, app):
-    """The spans come from the rounds, so there is nothing to cut without
-    them. It lives inside the rounds field, which is itself shown only for a
-    game scored by the round."""
+def test_the_match_video_has_a_field_of_its_own(ui, app):
+    """IT USED TO LIVE INSIDE THE ROUNDS FIELD, and this test asserted that.
+
+    v1.64.0 moved it out, deliberately: the rounds field is shown where the
+    SCREEN is read for rounds, which is Counter-Strike's scoreboard, and the
+    spans this needs can come from a match RECORD instead -- which is how
+    Valorant knows its rounds, and why its profile leaves `rounds` off. Two
+    different questions were sharing one field, and that is what hid the
+    feature from the only other game that has match records.
+
+    The test was not moved with it. The browser tier is deselected by default,
+    so it sat red from v1.64.0 until somebody ran it -- which is the whole
+    argument for running it.
+    """
     _at_part(ui, app)
     ui.page.evaluate("() => clip_goStep('style')")
     ui.page.wait_for_timeout(400)
     where = ui.page.evaluate(
         """() => {
              const sw = document.getElementById('clip-matchvid');
-             return sw ? !!sw.closest('#clip-rounds-field') : null;
+             if (!sw) return null;
+             const own = sw.closest('#clip-matchvid-field');
+             return {own: !!own, inRounds: !!sw.closest('#clip-rounds-field')};
            }""")
-    assert where is True, "the match video is not inside the rounds field"
+    assert where is not None, "the match video switch is not on the page at all"
+    assert where["own"] is True, "the match video has no field of its own"
+    assert where["inRounds"] is False, "it is back inside the rounds field"
 
 
 def test_it_is_off_until_it_is_asked_for(ui, app):

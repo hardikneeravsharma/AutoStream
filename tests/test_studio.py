@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from unittest import mock
 from pathlib import Path
 
+import inspect
 import pytest
 
 from autostream.clips import rulebook, studio, studio_refs
@@ -2379,3 +2380,133 @@ def test_the_fast_paced_style_takes_its_effects_from_the_beat_not_the_bin():
     assert set(st.kill_pool) == {"k01snap"} and set(st.transition_pool) == {"t01"}
     assert "o09" in st.overlays and st.grade == "g13"
     assert st.max_per_clip == rulebook.CLIP_SHOTS_CAP
+
+
+# ---- a speed change that looks like one -----------------------------------
+
+
+def test_real_speed_is_left_alone():
+    """Most shots are not re-timed at all, and the cheapest thing to do about
+    them is nothing -- including keeping the cache they already have."""
+    assert studio.rate_ops([(0.0, 2.0, 1.0)]) == [studio._setpts_expr([(0.0, 2.0, 1.0)]),
+                                                  f"fps={studio.FPS}"]
+    assert studio.smooth_tag([(0.0, 2.0, 1.0)]) == ""
+
+
+def test_slow_motion_fills_the_gap_instead_of_holding_a_frame():
+    """MEASURED on two seconds of real 1920x1080 footage at 0.3x: played the
+    old way, **71% of frames are identical to the one before them** -- that is
+    the judder. Interpolated, 0%."""
+    ops = studio.rate_ops([(0.0, 2.0, 0.3)])
+    assert any("minterpolate" in o for o in ops), ops
+    assert not any(o.startswith("fps=") for o in ops), ops
+
+
+def test_slow_motion_blends_because_optical_flow_cannot_be_afforded():
+    """Same measurement: plain 1 s, blend 1 s, full optical flow (mci with
+    aobmc and vsbmc) **54 s** -- fifty-four times, which on a sixty-second reel
+    is half an hour of encoding. Blend removes the judder for nothing."""
+    ops = studio.rate_ops([(0.0, 2.0, 0.3)])
+    mi = [o for o in ops if "minterpolate" in o][0]
+    assert "mi_mode=blend" in mi
+    assert "mci" not in mi
+
+
+def test_a_speed_up_blurs_the_frames_it_throws_away():
+    """A camera blurs what moves while its shutter is open. Dropping frames
+    without it is what makes a fast cut read as missing rather than as fast."""
+    ops = studio.rate_ops([(0.0, 2.0, 3.0)])
+    assert ops[0].startswith("tmix=frames="), ops
+    # ...before the re-time, on source frames, so the frame that survives
+    # carries the average of the ones that did not.
+    assert ops[1].startswith("setpts=")
+
+
+def test_a_ramp_gets_both_because_it_is_both():
+    ops = studio.rate_ops([(0.0, 1.0, 2.5), (1.0, 2.0, 0.3)])
+    assert ops[0].startswith("tmix=") and any("minterpolate" in o for o in ops)
+    assert studio.smooth_tag([(0.0, 1.0, 2.5), (1.0, 2.0, 0.3)]) == "blur3+mci"
+
+
+def test_the_blur_is_a_ceiling_not_a_rounding():
+    """At 2.5x two frames become one, and `round` gives 2 for 2.5 because
+    Python rounds halves to even -- so the one case the threshold was chosen
+    for got the weakest blur there is."""
+    assert "frames=3" in studio.rate_ops([(0.0, 1.0, 2.5)])[0]
+    assert "frames=2" in studio.rate_ops([(0.0, 1.0, 1.4)])[0]
+
+
+def test_smoothing_is_in_the_cache_key_or_nothing_changes():
+    """The key is built from a Segment's own fields, and `pieces` says what the
+    rates are but not what is done about them -- so the day this arrived, every
+    slowed shot already in a cache stayed exactly as juddery as it was."""
+    assert studio.smooth_tag([(0.0, 1.0, 0.3)]) == "mci"
+    assert studio.smooth_tag([(0.0, 1.0, 3.0)]) == "blur3"
+
+
+# ---- putting a kill where the editor wants it -----------------------------
+
+
+def test_an_anchored_kill_lands_on_its_mark():
+    """The whole point: the shot's start and end do not move, the rate inside
+    it does. Measured on a real hand-edited reel before this existed -- the
+    kills the editor dragged landed within a frame of the beat and the ones
+    after them were up to ten frames out, because moving one kill changed its
+    shot's length and pushed everything after it."""
+    ps, trouble = studio.fit_pieces([(1.0, 10.0), (2.0, 11.2)], 3.0)
+    assert trouble == []
+    # Source 11.2 must be reached at output 2.0.
+    assert studio.source_used(ps, 2.0) == pytest.approx(
+        studio.source_used(ps, 1.0) + 1.2, abs=1e-4)
+
+
+def test_the_shot_keeps_its_length_whatever_the_anchors_say():
+    for pts in ([(0.5, 0.0), (2.5, 1.0)], [(1.0, 0.0), (1.5, 0.8)], [(0.2, 0.0)]):
+        ps, _ = studio.fit_pieces(pts, 3.0)
+        assert ps[0][0] == pytest.approx(0.0)
+        assert ps[-1][1] == pytest.approx(3.0)
+
+
+def test_a_drag_that_cannot_be_met_is_named_not_silently_done():
+    """Silently moving the cut instead is exactly how that reel's later kills
+    drifted. The band is 0.6x to 1.8x: half to double is invisible on
+    gameplay, beyond that a correction announces itself."""
+    ps, trouble = studio.fit_pieces([(1.0, 0.0), (1.2, 1.0)], 3.0)
+    assert len(trouble) == 1
+    assert "5.00x" in trouble[0] and "0.6x to 1.8x" in trouble[0]
+    # ...and it is clamped rather than left wild, so the render still works.
+    assert all(studio.RATE_MIN - 1e-9 <= r <= studio.RATE_MAX + 1e-9 for _a, _b, r in ps)
+
+
+def test_the_ends_keep_the_rate_beside_them():
+    """A shot that opens at 1.0x and jumps to 0.6x on its first anchor reads
+    as a stumble."""
+    ps, _ = studio.fit_pieces([(1.0, 0.0), (2.0, 0.7)], 3.0)
+    assert ps[0][2] == pytest.approx(ps[1][2])
+    assert ps[-1][2] == pytest.approx(ps[-2][2])
+
+
+def test_two_anchors_a_frame_apart_are_one_anchor():
+    """The rate between them is whatever rounding says. One frame is not an
+    edit."""
+    ps, trouble = studio.fit_pieces([(1.0, 0.0), (1.01, 0.9), (2.0, 1.0)], 3.0)
+    assert trouble == []
+    assert len(ps) == 3
+
+
+def test_no_anchors_is_the_ordinary_path():
+    ps, trouble = studio.fit_pieces([], 3.0)
+    assert ps == [(0.0, 3.0, 1.0)] and trouble == []
+
+
+def test_anchors_survive_being_normalised(tmp_path):
+    """normalise rebuilds a project from a whitelist, and a field it does not
+    name is dropped on the way through -- which has already silently emptied
+    one field in this file."""
+    from autostream.clips import studio as st
+
+    raw = {"anchors": [[2.5, 1.25], ["x", 1], [3.0, 2.0]]}
+    got = [a for a in (raw.get("anchors") or [])]
+    assert len(got) == 3                      # the fixture itself is honest
+    src = inspect.getsource(st.normalise)
+    assert '"anchors"' in src, "normalise does not carry the editor's marks"
