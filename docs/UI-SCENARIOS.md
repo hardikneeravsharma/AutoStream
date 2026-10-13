@@ -236,6 +236,7 @@ nothing noticed.
 | 7.3 | Bad values are refused, not 500 | A reason, not a stack trace | **gap** (HTTP tier covers it) |
 | 7.4 | Theme switch | Applies without reload | sweep |
 | 7.5 | Unsaved-changes guard | Leaving warns | **gap** |
+| 7.6 | The three answers "Check for updates" can give | Newer release with a package: offered. Newer release with **no** package attached: said out loud, never "up to date". Nothing newer: said out loud too | yes |
 
 # 8 · Logs
 

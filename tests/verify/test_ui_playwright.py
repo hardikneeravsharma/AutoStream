@@ -1419,3 +1419,46 @@ def test_the_watchdog_notices_a_dead_player(ui, tmp_path):
     assert any("/api/reel/audio" in f for f in ui.failed), \
         f"the response watchdog did not record the refusal: {ui.failed}"
     ui.failed.clear()        # the refusal was the point of this test
+
+
+def test_the_version_card_never_calls_a_newer_release_up_to_date(ui):
+    """The bug this came from: v1.67.0 was published with no assets, so the
+    card printed "1.67.0 was published on 13 October" underneath the words
+    "up to date", next to 1.66.0. Driven through the real render function in
+    the real page, because the string is assembled in three places and only
+    the browser puts them together."""
+    ui.page.click('.rail-btn[data-page="settings"]')
+    ui.page.wait_for_selector("#view-settings.is-active", timeout=15_000)
+
+    def render(answer: dict) -> tuple[str, str, bool]:
+        return tuple(ui.page.evaluate(
+            """(a) => { set_verRender(a);
+                 return [document.getElementById('set-ver-sub').textContent,
+                         document.getElementById('set-ver-msg').textContent,
+                         !document.getElementById('set-ver-get')
+                                  .classList.contains('hide')]; }""", answer))
+
+    base = {"ok": True, "checked": True, "current": "1.66.0",
+            "latest": "1.67.0", "published": "2026-10-13T15:40:57Z",
+            "notes": "", "bytes": 0, "verifiable": False,
+            "installable": False, "asset": ""}
+
+    sub, msg, offered = render(dict(base, newer=True, available=False))
+    assert "up to date" not in sub.lower(), f"subtitle still says: {sub}"
+    assert "1.67.0" in sub and "no download" in sub
+    assert "latest release" not in msg.lower(), f"message still says: {msg}"
+    assert "no package attached" in msg and "1.67.0" in msg
+    assert not offered, "nothing to download, so the Download button must hide"
+
+    sub, msg, offered = render(dict(base, newer=True, available=True,
+                                    bytes=139_000_000, installable=True,
+                                    asset="AutoStream-1.67.0-setup.exe"))
+    assert "1.67.0 is available" in sub
+    assert offered, "a release with a package must offer the download"
+
+    sub, msg, offered = render(dict(base, current="1.67.0", latest="1.67.0",
+                                    newer=False, available=False))
+    assert "up to date" in sub.lower()
+    assert "latest release" in msg.lower()
+    assert not offered
+    ui.clean("the version card")

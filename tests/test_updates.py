@@ -284,3 +284,50 @@ def test_versions_are_compared_as_numbers_in_the_page_too():
     assert "Number(" in body and "1e6" in body, (
         "set_verNum must parse the parts as numbers rather than comparing "
         "version strings")
+
+
+# -------------------------------------- a release with nothing attached
+#
+# v1.67.0 was tagged, written up and published without its build ever being
+# uploaded. The release existed, so GitHub answered with a version number
+# higher than the running one -- and because `available` folded "is newer"
+# together with "has something to download", the page printed "1.67.0 was
+# published on 13 October" directly underneath the words "up to date". The
+# updater was reported as broken. It was the release that was broken.
+
+def _assetless_release_json():
+    data = _release_json()
+    # Higher than any version this app will ship, so the test states "newer"
+    # rather than monkeypatching the comparison that is under test.
+    data["tag_name"] = "v999.0.0"
+    data["assets"] = []
+    return data
+
+
+def test_a_newer_release_with_no_package_is_newer_but_not_available(monkeypatch):
+    import json as _json
+
+    from autostream import __version__, webui
+
+    monkeypatch.setattr(updates, "_get",
+                        lambda url, accept=None:
+                        _json.dumps(_assetless_release_json()).encode())
+    answer = webui.Server(token="t").update_check(force=True)
+    assert answer["newer"] is True, (
+        "a published release that is numerically newer is newer, whether or "
+        "not anybody remembered to attach the build to it")
+    assert answer["available"] is False, (
+        "there is still nothing to download, so the button must stay hidden")
+    assert answer["current"] == __version__
+
+
+def test_the_page_does_not_call_an_empty_release_up_to_date():
+    js = _settings_js()
+    assert "function set_verStuck(" in js
+    i = js.index("function set_verRender(")
+    j = js.index("\nfunction ", i + 1)
+    body = js[i:j]
+    assert "set_verStuck(r)" in body, (
+        "set_verRender must distinguish 'nothing newer exists' from 'the "
+        "newer release has nothing attached to it'")
+    assert "no package attached" in body

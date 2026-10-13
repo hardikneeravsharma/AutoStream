@@ -1399,6 +1399,13 @@ function set_verAhead(r) {
             set_verNum(r.current) > set_verNum(r.latest));
 }
 
+/* A newer release that has nothing attached to it -- a tag published without
+   its build. There is still nothing to download, but "up to date" beside a
+   higher version number is a lie, and reads as a broken updater. */
+function set_verStuck(r) {
+  return !!(r && r.newer && !r.available);
+}
+
 /* "1.10.0" -> 1001000. Not a string compare: "1.9.1" sorts above "1.10.0"
    that way, which is exactly backwards. */
 function set_verNum(text) {
@@ -1410,11 +1417,14 @@ function set_verNum(text) {
 function set_verRender(r) {
   var sub = set_el('set-ver-sub');
   var ahead = set_verAhead(r);
+  var stuck = set_verStuck(r);
   if (sub) {
     sub.textContent = 'AutoStream ' + (r.current || '?') +
       (r.available ? '  -  ' + r.latest + ' is available'
                    : (r.latest ? (ahead ? '  -  newer than the latest release'
-                                        : '  -  up to date') : ''));
+                                        : (stuck ? '  -  ' + r.latest
+                                                   + ' has no download yet'
+                                                 : '  -  up to date')) : ''));
   }
   set_show('set-ver-get', !!r.available);
   var notes = set_el('set-ver-notes');
@@ -1440,8 +1450,14 @@ function set_verRender(r) {
          + 'release (' + r.latest + '). This is a build from source, so there '
          + 'is nothing to update to - the release will catch up when ' +
          r.current + ' is published.')
-      : ('You have the latest release. ' + r.latest + ' was published ' +
-         set_verWhen(r.published) + ', and nothing newer exists yet.'));
+      : (stuck
+         ? ('Release ' + r.latest + ' was published ' + set_verWhen(r.published)
+            + ' and is newer than this build (' + r.current + '), but it has '
+            + 'no package attached to it - no installer and no zip - so there '
+            + 'is nothing to download. The release page is the place to look.')
+         : ('You have the latest release. ' + r.latest + ' was published ' +
+            set_verWhen(r.published) + ', and nothing newer exists yet.')),
+      stuck ? 'warn' : '');
   }
 }
 
