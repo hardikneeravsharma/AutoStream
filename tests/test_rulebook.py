@@ -376,3 +376,43 @@ def test_a_clips_own_bursts_stay_in_the_order_they_happened():
         got = rb.order(rb.moments(clips, beat=0.5), arrange=how)
         mine = [m.kills[0] for m in got if m.clip["path"] == "big.mp4"]
         assert mine == sorted(mine), (how, mine)
+
+
+# ---- at most three shots from one clip ------------------------------------
+
+
+def _m(path, group, seq, strength):
+    return rb.Moment(clip={"path": path}, kills=[float(seq)], group=group,
+                           seq=seq, strength=strength)
+
+
+def test_a_clip_gives_a_reel_at_most_the_cap():
+    """Variety in a montage is the backdrop changing. Six shots from one round
+    reads as one long round however they are cut."""
+    ms = [_m("a.mp4", 0, i, 10 - i) for i in range(6)] + [_m("b.mp4", 1, 0, 1.0)]
+    got = rb.cap_per_clip(ms, 3)
+    assert sum(1 for m in got if m.group == 0) == 3
+    assert sum(1 for m in got if m.group == 1) == 1
+
+
+def test_the_strongest_stay_but_they_play_in_order():
+    """A clip's own moments cut out of sequence replay footage the shot before
+    has already shown -- the fault spread_clips was written to stop."""
+    ms = [_m("a.mp4", 0, 0, 1.0), _m("a.mp4", 0, 1, 9.0),
+          _m("a.mp4", 0, 2, 5.0), _m("a.mp4", 0, 3, 7.0)]
+    got = rb.cap_per_clip(ms, 3)
+    assert [m.seq for m in got] == [1, 2, 3]
+
+
+def test_no_cap_leaves_every_moment_alone():
+    """Off by default: a reel built from four clips genuinely needs more than
+    three shots from each, and capping that would leave it short."""
+    ms = [_m("a.mp4", 0, i, 1.0) for i in range(9)]
+    assert len(rb.cap_per_clip(ms, 0)) == 9
+
+
+def test_what_was_dropped_is_reported_so_a_row_can_say_why():
+    ms = [_m("a.mp4", 0, i, 10 - i) for i in range(5)]
+    dropped: list = []
+    rb.cap_per_clip(ms, 3, dropped)
+    assert dropped == [("a.mp4", 3.0), ("a.mp4", 4.0)]

@@ -746,7 +746,15 @@ def test_every_generated_part_resolves_to_a_family():
 def test_the_catalog_is_what_the_page_reads():
     cat = studio.catalog()
     assert cat["ok"] and cat["default_style"] in {s["key"] for s in cat["styles"]}
-    assert all(s["measured"]["edits"] >= 3 for s in cat["styles"])
+    # A STYLE IS MEASURED OR IT SAYS WHERE ITS NUMBERS CAME FROM. The point of
+    # this line is that a style cannot be invented by taste: every one is cut
+    # from three or more reels that were counted. One is measured against a
+    # reel cut by hand outside the app -- a private file with no public id --
+    # so it names the document holding those measurements instead. Never both
+    # and never neither, which is what the second assert pins.
+    for s in cat["styles"]:
+        assert s["measured"]["edits"] >= 3 or s["provenance"], s["key"]
+        assert not (s["measured"]["edits"] >= 3 and s["provenance"]), s["key"]
     assert all(s["pools"]["kill"] and s["pools"]["transition"] for s in cat["styles"])
 
 
@@ -769,6 +777,16 @@ def test_no_two_shots_running_get_the_same_kill_effect(long_run, style):
     proj, _ = studio.plan(_clips(long_run), style, shape=Shape(bpm=128.0))
     firsts = [s["fx"][0] for s in proj["shots"] if s["fx"]]
     assert len(firsts) == len(proj["shots"])
+    # AS MUCH VARIETY AS THE POOL HOLDS, which is the rule the original bug
+    # broke: a rich pool that produced one effect on every kill. A style whose
+    # pool offers one part cannot mix and must not be asked to -- "Fast-paced
+    # headshot" is deliberately one, because its effects come from the beat
+    # engine rather than from the parts bin, and stacking a per-kill effect on
+    # a per-beat one muddies both.
+    pool = {p for p in [x.kill_pool for x in studio.STYLES if x.key == style][0]}
+    if len(pool) == 1:
+        assert set(firsts) == pool, firsts
+        return
     assert all(a != b for a, b in zip(firsts, firsts[1:])), firsts
     assert len(set(firsts)) >= 3, firsts
 
@@ -777,6 +795,10 @@ def test_no_two_shots_running_get_the_same_kill_effect(long_run, style):
 def test_transitions_are_mixed_too(long_run, style):
     proj, _ = studio.plan(_clips(long_run), style, shape=Shape(bpm=128.0))
     cuts = [s["transition"] for s in proj["shots"][1:]]
+    pool = {p for p in [x.transition_pool for x in studio.STYLES if x.key == style][0]}
+    if len(pool) == 1:                 # see the kill-effect test above
+        assert set(cuts) <= pool, cuts
+        return
     assert len(set(cuts)) >= 2, cuts
     soft = [t for t in cuts if t not in ("t01", "t02")]
     assert all(a != b for a, b in zip(soft, soft[1:])) or len(set(soft)) <= 1, cuts
@@ -2321,3 +2343,39 @@ def test_g13_is_not_g07_with_more_contrast():
     with no crush. g13 is a steep S whose midsection slope is about 1.97."""
     assert "curves=" not in studio.GRADES["g07"][3]
     assert "curves=" in studio.GRADES["g13"][3]
+
+
+# ---- the same clip in two run folders -------------------------------------
+
+
+def test_two_run_folders_holding_one_clip_are_one_clip(tmp_path):
+    """A re-cut writes a second run folder beside the first holding the SAME
+    clips. Measured on a real machine: 430 clip files, 389 distinct names, 35
+    names present in more than one run -- and one name in THREE, at 101429422,
+    101309669 and 101309669 bytes, because a re-cut re-encodes. Keyed by path,
+    or by path and size, that round goes in the reel more than once."""
+    a = tmp_path / "2026-10-12_2039_VALORANT" / "clips"
+    b = tmp_path / "2026-10-12_2039_VALORANT_2" / "clips"
+    for d in (a, b):
+        d.mkdir(parents=True)
+    name = "VALORANT_01_CLUTCH-1v2_r13_50m52s_32s.mp4"
+    (a / name).write_bytes(b"x" * 100)
+    (b / name).write_bytes(b"y" * 90)          # re-encoded: a different size
+    assert studio._same_clip(a / name) == studio._same_clip(b / name)
+
+
+def test_two_different_clips_are_still_two(tmp_path):
+    (tmp_path / "one.mp4").write_bytes(b"x")
+    (tmp_path / "two.mp4").write_bytes(b"x")
+    assert studio._same_clip(tmp_path / "one.mp4") != studio._same_clip(tmp_path / "two.mp4")
+
+
+def test_the_fast_paced_style_takes_its_effects_from_the_beat_not_the_bin():
+    """energy 0 and single-entry pools are the point, not an oversight: its
+    effects come from the beat engine, and stacking a per-kill effect on a
+    per-beat one muddies both."""
+    st = [s for s in studio.STYLES if s.key == "fasthead"][0]
+    assert st.energy == 0.0
+    assert set(st.kill_pool) == {"k01snap"} and set(st.transition_pool) == {"t01"}
+    assert "o09" in st.overlays and st.grade == "g13"
+    assert st.max_per_clip == rulebook.CLIP_SHOTS_CAP
