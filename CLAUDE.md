@@ -156,6 +156,16 @@ The build fails while `AutoStream.exe` is running. Ask it to quit with
 running clips job: quitting destroys a clip job in progress and ends a live broadcast.
 Say so rather than silently killing either.
 
+**And closing AutoStream is not enough: OBS has to be closed too.** AutoStream
+launches `obs64.exe`, so OBS inherits the app's directory in its DLL search path and
+maps `msvcp140.dll`, `MSVCP140_1.dll`, `vcruntime140.dll` and `vcruntime140_1.dll`
+out of `dist\AutoStream\_internal` — and keeps them long after AutoStream itself has
+gone. The build then clears everything else in `dist\AutoStream`, fails on those
+four, and leaves a **gutted install that will not start**, with the app down until a
+build succeeds. OBS minimised to the tray has no main window, so a polite close
+request does nothing; it is quit from its tray icon. `build.ps1` now names the holder
+rather than listing suspects — if it prints `held by: obs64.exe`, that is this.
+
 **Prefer `build.ps1 -Dist -HandOff` with the app left open.** The ~17-minute test gate
 does not need it closed; only the rewrite of `dist\AutoStream` does. `-HandOff` runs the
 gate first, then `scripts\handoff.py` closes the app only once it is idle (no broadcast,
