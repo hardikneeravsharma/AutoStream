@@ -1138,6 +1138,11 @@ def _assemble(fit: Fitter, ev, path, style, grid, tw, arrangement, hs_only, fmt,
         "version": studio.VERSION, "name": name or f"{style.label} reel",
         "style": style.key, "format": fmt if fmt in studio.SIZES else "landscape",
         "song": str(song or ""), "song_offset": round(offset, 5),
+        # The song's drop, for the beat engine -- see studio.plan, which sets
+        # the same field. Two planners build this dict and a field added to one
+        # of them is a field half the reels do not have.
+        "song_drop": (round(float(grid.drop), 4)
+                      if song and getattr(grid, "drop", None) else None),
         "intro": "i12" if fit.r.build else style.intro,
         "outro": "e03" if style.outro == "e01" else style.outro,
         "grade": style.grade, "vignette": style.vignette, "overlays": list(style.overlays),

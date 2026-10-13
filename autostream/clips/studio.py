@@ -919,6 +919,20 @@ class Style:
     camera_pool: tuple[str, ...] = ("c00",)
     speed_pool: tuple[str, ...] = ("s00",)
     energy: float = 0.4            # chance a kill stacks a second effect
+    # AT MOST THIS MANY SHOTS FROM ANY ONE CLIP; 0 is no limit, which is the
+    # default because a reel built from four clips genuinely needs more than
+    # three from each and capping that would leave it short of its own length.
+    # Variety in a montage is the backdrop changing, so a style that can
+    # afford to be picky says so. See rulebook.cap_per_clip.
+    max_per_clip: int = 0
+    # WHERE THIS STYLE'S NUMBERS CAME FROM, when they did not come from `refs`.
+    # Every other style is measured against three or more public reel ids, and
+    # a test enforces that so a style cannot be invented by taste. One is
+    # measured instead against a reel cut by hand outside the app, which is a
+    # private file with no id -- so it names the document that holds the
+    # measurements. Empty means `refs` is the provenance, which is the usual
+    # case; it is never both and never neither.
+    provenance: str = ""
 
 
 STYLES: tuple[Style, ...] = (
@@ -964,6 +978,27 @@ STYLES: tuple[Style, ...] = (
           transition_pool=("t01", "t01", "t05", "t04", "t01", "t06", "t14"),
           hero_pool=("h01", "h02"), camera_pool=("c00", "c01", "c00", "c05"),
           speed_pool=("s00", "s00", "s02"), energy=0.35),
+    # FAST-PACED HEADSHOT. Reverse-engineered from an anime edit, cut by hand
+    # outside the app and measured until it matched; docs/STYLE-FAST-PACED-
+    # HEADSHOT.md is the whole specification and every number in it came off
+    # that reel.
+    #
+    # energy=0.0 AND SINGLE-ENTRY POOLS ARE THE POINT, not an oversight. This
+    # style's effects do not come from the parts bin at all -- they come from
+    # the beat engine (o09), which keys off the song's grid rather than off
+    # each kill. Leaving the pools rich would stack a per-kill effect on top of
+    # a per-beat one and muddy both.
+    Style("fasthead", "Fast-paced headshot",
+          "Headshots only, in hard black and white, snapping to negative on the beat. "
+          "Cuts at one or two beats and a real multi-kill to close. Needs a song.",
+          (),                       # the reference is a private file, not a public id
+          intro="i08", outro="e05", cuts=("t01",), kill=("k01snap",), hero=("h01",),
+          speed="s00", hero_speed="s00", camera="c00", grade="g13", vignette=True,
+          overlays=("o09",), pre_share=0.62,
+          kill_pool=("k01snap",), transition_pool=("t01",), hero_pool=("h01",),
+          camera_pool=("c00",), speed_pool=("s00",), energy=0.0,
+          max_per_clip=rulebook.CLIP_SHOTS_CAP,
+          provenance="docs/STYLE-FAST-PACED-HEADSHOT.md"),
     Style("hype", "Hype",
           "Fast and loud like the busiest montages: a cut every couple of beats, shake on every "
           "kill, crunchy colour and a kill counter.",
@@ -1076,6 +1111,7 @@ def catalog() -> dict:
         "kinds": list(KINDS), "drawers": list(DRAWERS),
         "styles": [{"key": s.key, "label": s.label, "blurb": s.blurb,
                     "measured": studio_refs.summary(s.refs),
+                    "provenance": s.provenance,
                     "defaults": {"intro": s.intro, "outro": s.outro, "cuts": list(s.cuts),
                                  "kill": list(s.kill), "hero": list(s.hero), "speed": s.speed,
                                  "hero_speed": s.hero_speed, "camera": s.camera,
@@ -1470,6 +1506,32 @@ def _arrangement(raw: dict | None) -> dict:
             "keep_all": bool(raw.get("keep_all"))}
 
 
+def _same_clip(path) -> tuple:
+    """What makes two rows the same clip. NOT the path.
+
+    A re-cut writes a second run folder beside the first -- `..._1918_VALORANT`
+    and `..._1918_VALORANT_2` -- holding the SAME clips, byte for byte.
+    Measured on this machine: 430 clip files, 389 distinct names, **35 names
+    present in more than one run**, every duplicate identical in size. Keyed by
+    path they are two clips, and a reel built from both shows the same kill
+    twice; one earlier reel showed three kills twice, two of them inside its
+    last four seconds.
+
+    THE NAME, AND ONLY THE NAME. The first attempt added the file size, on the
+    reasoning that a clip imported from somewhere else could collide. Measured
+    on this machine, that reasoning was wrong and expensive:
+    `VALORANT_01_CLUTCH-1v2_r13_50m52s_32s.mp4` exists in THREE run folders at
+    101429422, 101309669 and 101309669 bytes -- a re-cut re-encodes, so the
+    same moment of the same recording comes out a different size. Two of the
+    three merged, one did not, and the reel showed that round six times.
+
+    The name is the identity: it carries the game, the clip's index in the run,
+    the label, the round, the moment in the recording and the length. Two files
+    called that are the same moment, whatever they weigh.
+    """
+    return Path(path).name.lower()
+
+
 def _headshots_only(chosen: list[dict]) -> tuple[list[dict], list[str], int]:
     """Each clip with only its headshot kills. -> (clips, paths with none, kills dropped)
 
@@ -1648,11 +1710,11 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # asked for once were left out "to fit the reel's length". DRIPSKETCHERS1
     # came out as 23 shots of 4 clips from a selection of 20.
     offered = []
-    seen: set[str] = set()
+    seen: set[tuple] = set()
     for c in clips:
         if not c or not c.get("path"):
             continue
-        k = str(c["path"]).lower()
+        k = _same_clip(c["path"])
         if k in seen:
             continue
         seen.add(k)
@@ -1700,6 +1762,17 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     all_moments = rulebook.moments(chosen, beat, keep_short=keep_all, dropped=short)
     for key in short:
         kill_why.setdefault(key, "too little footage before it to show the fight")
+    if style.max_per_clip:
+        before_cap = list(all_moments)
+        capped: list[tuple[str, float]] = []
+        all_moments = rulebook.cap_per_clip(all_moments, style.max_per_clip, capped)
+        for key in capped:
+            kill_why.setdefault(key, f"this clip already gives the reel "
+                                     f"{style.max_per_clip} shots")
+        if len(before_cap) != len(all_moments):
+            notes.append(f"{len(before_cap) - len(all_moments)} moment(s) left out: no clip "
+                         f"gives this style more than {style.max_per_clip} shots, so the "
+                         f"weakest of a clip's own go first.")
     with_moments = {m.clip["path"] for m in all_moments}
     left_out((c["path"] for c in chosen if c["path"] not in with_moments),
              "Too little footage before its kill to show the fight.")
@@ -2045,10 +2118,15 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         "style": style.key, "format": fmt if fmt in SIZES else "landscape",
         "song": str(song or ""), "song_offset": 0.0,
         # WHERE THE BASS LANDS, in SONG seconds. Kept on the project because
-        # the beat engine needs it at assemble time, and finding it means
-        # decoding the song -- which is a thing to do once when the song is
-        # chosen, not every time a command is built.
-        "song_drop": None,
+        # the beat engine needs it at assemble time and finding it means
+        # decoding the song, which is a thing to do once. Set HERE as well as
+        # in apply_song because a reel planned with a song never goes through
+        # apply_song at all -- and a first attempt left a literal None in this
+        # dict below the computed one, so every reel's grid still started at
+        # the first frame with no build and no punctuation into the drop.
+        # Found by rendering a reel and reading the project back.
+        "song_drop": (round(float(grid.drop), 4)
+                      if song and getattr(grid, "drop", None) else None),
         "intro": "i12" if build else style.intro,
         "outro": "e03" if style.outro == "e01" else style.outro, "grade": style.grade,
         "vignette": style.vignette, "overlays": list(style.overlays),
@@ -3200,6 +3278,16 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         if sp.is_file() and sp.suffix.lower() in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".opus"):
             out["song"] = str(sp)
             out["song_offset"] = _num(project.get("song_offset"), 0.0, 36000.0, 0.0)
+            # WHERE THE BASS LANDS, carried through. normalise rebuilds the
+            # project from a whitelist, so a key it does not name is dropped --
+            # which silently emptied this one on every reel between being set
+            # and being read, and the beat engine started its grid at the first
+            # frame with no build and no punctuation into the drop. Found by
+            # rendering a reel and reading the project back, not by reading the
+            # code that sets it.
+            drop = project.get("song_drop")
+            out["song_drop"] = (round(_num(drop, 0.0, 36000.0, 0.0), 4)
+                                if drop is not None else None)
             # Where the chosen part ends, so the Song tab and a rebuild reopen
             # on the part the player picked rather than on the reel's length.
             end = _num(project.get("part_end"), 0.0, 36000.0, 0.0)

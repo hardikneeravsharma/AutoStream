@@ -1184,3 +1184,41 @@ def first_loud(energy, beats: list[float], beat: float, downbeat_pos: int = 0) -
 # The highest true peak the finished file may measure. The limiter's ceiling is
 # lowered by any overshoot and the master runs again.
 TRUE_PEAK_MAX = -0.5
+
+
+# VARIETY IN A MONTAGE IS THE BACKDROP CHANGING. Six shots from one round reads
+# as one long round however they are cut, because the map, the lighting and the
+# angle barely move. The reference reel for the fast-paced headshot style took
+# 38 shots from 41 clips and never more than three from any of them.
+#
+# Off by default: a reel built from four clips genuinely needs more than three
+# shots from each, and capping that would leave it short of its own length.
+# See docs/STYLE-FAST-PACED-HEADSHOT.md section 4.3.
+CLIP_SHOTS_CAP = 3
+
+
+def cap_per_clip(moments: list[Moment], limit: int,
+                 dropped: list[tuple[str, float]] | None = None) -> list[Moment]:
+    """At most `limit` shots from any one clip, keeping the strongest.
+
+    Order is preserved: the ones that stay play in the order they happened in
+    the clip, because a clip's own moments cut out of sequence replay footage
+    the shot before has already shown.
+    """
+    if limit <= 0:
+        return list(moments)
+    by_clip: dict[int, list[Moment]] = {}
+    for m in moments:
+        by_clip.setdefault(m.group, []).append(m)
+    keep: set[int] = set()
+    for group in by_clip.values():
+        if len(group) <= limit:
+            keep.update(id(m) for m in group)
+            continue
+        best = sorted(group, key=lambda m: (-m.strength, m.seq))[:limit]
+        keep.update(id(m) for m in best)
+        if dropped is not None:
+            for m in group:
+                if id(m) not in keep:
+                    dropped += [(m.clip["path"], k) for k in m.kills]
+    return [m for m in moments if id(m) in keep]
