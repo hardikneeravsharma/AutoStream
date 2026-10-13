@@ -167,7 +167,7 @@ def test_every_row_carries_what_the_page_draws(tmp_path, monkeypatch):
         (outdir / f"{name}.mp4").write_bytes(b"")
         return outdir / f"{name}.mp4"
 
-    def fake_render(source, shots, m, out, **kw):
+    def fake_render(source, shots, out, **kw):
         out.write_bytes(b"")
         return out
     monkeypatch.setattr(cutter, "master_segments", fake_master)

@@ -272,8 +272,18 @@ def _fit_outro(src: Path, like: Path, out: Path, encoder: str = "auto") -> float
     except Exception as e:                              # noqa: BLE001
         log.warning("outro %s could not be read: %s", src, e)
         return None
-    vf = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-          f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps:g},"
+    # A BLURRED FILL, NOT BLACK BARS. An outro is whatever the person made,
+    # and a 9:16 one -- which is what anybody who also posts Shorts has --
+    # became a 607-pixel strip with 656 pixels of black either side of it.
+    # Filling the sides with a blown-up, blurred, darkened copy of the outro
+    # itself is what every editor does with a mismatched aspect, and it costs
+    # nothing on an eight-second clip. Where the aspects already match, the
+    # foreground covers the background exactly and this is the old behaviour.
+    vf = (f"split=2[bg][fg];"
+          f"[bg]scale={w}:{h}:force_original_aspect_ratio=increase,"
+          f"crop={w}:{h},gblur=sigma=24,eq=brightness=-0.18[bgb];"
+          f"[fg]scale={w}:{h}:force_original_aspect_ratio=decrease[fgs];"
+          f"[bgb][fgs]overlay=(W-w)/2:(H-h)/2,setsar=1,fps={fps:g},"
           f"tpad=stop_mode=clone:stop_duration={OUTRO_HOLD},format=yuv420p")
     if has_audio:
         ins = ["-i", str(Path(src).resolve())]
@@ -292,25 +302,53 @@ def _fit_outro(src: Path, like: Path, out: Path, encoder: str = "auto") -> float
         return None
 
 
-def render(source: Path, shots: list[Shot], m: rivals.Match, out: Path, *,
+def render(source: Path, shots: list[Shot], out: Path, *,
+           kills: list[float], ults: list[float] | None = None,
            title: str, subtitle: str, encoder: str = "auto",
            outro: str | Path | None = None,
-           check: Callable[[], None] | None = None) -> Path:
-    """Cut the shots and join them into the finished highlight at `out`."""
+           check: Callable[[], None] | None = None,
+           progress: Callable[[int, int], None] | None = None,
+           on_durations: Callable[[list[float], list[float]], None] | None = None) -> Path:
+    """Cut the shots and join them into the finished highlight at `out`.
+
+    TAKES TIMES, NOT A MATCH. This used to be handed a `rivals.Match` and ask
+    it for the KOs and the ult casts, which tied the only themed renderer in
+    the app to the one game that had a reader for it. `graph()` below never
+    wanted the match -- it takes floats -- so the coupling bought nothing and
+    cost Valorant a recap. `kills` and `ults` are seconds on the RECORDING's
+    clock, the same clock the shots are on.
+
+    `progress(done, total)` is called before each piece and again before the
+    join, for the same reason `cutter.master_segments` has one: this is
+    minutes of encoding and a caller with nothing to report looks hung.
+    """
+    ults = list(ults or [])
     out.parent.mkdir(parents=True, exist_ok=True)
     work = out.parent / f".{out.stem}.parts"
     work.mkdir(parents=True, exist_ok=True)
     try:
         sounds = sfx.files(work)
         parts = []
+        units = len(shots) + max(1, round(len(shots) * cutter.JOIN_SHARE))
         for i, s in enumerate(shots):
             if check:
                 check()
+            if progress:
+                progress(i, units)
             # The mix track only: this is a finished export, and the mix is
             # the one with the player's voice in it.
             parts.append(cutter._cut(source, s.start, s.seconds, work / f"s{i:02d}.mp4",
                                      encoder=encoder, cq=18, keep_all_audio=False))
+        if progress:
+            progress(len(shots), units)
         durs = [float(media_info(p)["duration"]) for p in parts]
+        # The ENCODED lengths and where each shot lands, for a caller writing
+        # chapters. Asking ffmpeg for a span and getting it to the millisecond
+        # are different things, and the transitions overlap the shots on top
+        # of that, so a caller guessing from what it asked for would drift a
+        # chapter at a time down a ten-minute video.
+        if on_durations:
+            on_durations(list(durs), offsets(durs))
         have_font = _font(work)
         (work / "title1.txt").write_text(title, encoding="utf-8")
         (work / "title2.txt").write_text(subtitle, encoding="utf-8")
@@ -319,7 +357,7 @@ def render(source: Path, shots: list[Shot], m: rivals.Match, out: Path, *,
             outro_len = _fit_outro(Path(outro), parts[0], work / "outro_fit.mp4", encoder)
         elif outro:
             log.warning("the outro %s is not there any more; ending without it", outro)
-        text, total = graph(shots, durs, kos(m), m.casts, title=have_font,
+        text, total = graph(shots, durs, kills, ults, title=have_font,
                             outro=outro_len)
         (work / "graph.txt").write_text(text, encoding="utf-8")
         args = []
@@ -336,8 +374,8 @@ def render(source: Path, shots: list[Shot], m: rivals.Match, out: Path, *,
                 "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart",
                 "-y", str(tmp.resolve()))
         tmp.replace(out)
-        log.info("highlight: %d shots, %d KOs, %d ults -> %s (%.0fs)",
-                 len(shots), len(kos(m)), len(m.casts), out.name, total)
+        log.info("highlight: %d shots, %d kills, %d ults -> %s (%.0fs)",
+                 len(shots), len(kills), len(ults), out.name, total)
         return out
     finally:
         shutil.rmtree(work, ignore_errors=True)

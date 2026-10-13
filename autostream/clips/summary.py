@@ -185,7 +185,8 @@ def build(source: Path, r: rivals.Readings, outdir: Path, *, game: str,
                    "outro": bool(outro and Path(outro).is_file())}
             try:
                 hl = highlight.render(
-                    source, j.shots, m, outdir / f"{name}.mp4",
+                    source, j.shots, outdir / f"{name}.mp4",
+                    kills=highlight.kos(m), ults=m.casts,
                     title=game.upper(), subtitle=highlight.subtitle_for(m),
                     encoder=encoder, outro=outro or None, check=check)
                 row["master"] = str(hl)

@@ -230,7 +230,7 @@ def test_a_clip_job_for_marvel_rivals_makes_summaries(tmp_path, monkeypatch):
     from autostream.clips import highlight
     made = []
 
-    def fake_render(source, shots, m, out, **kw):
+    def fake_render(source, shots, out, **kw):
         made.append((shots, kw))
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(b"")
@@ -478,7 +478,8 @@ def test_a_missing_outro_file_ends_on_the_result(tmp_path, monkeypatch):
         seen["args"] = a
         tmp.write_bytes(b"")
     monkeypatch.setattr(highlight, "_in_dir", run)
-    highlight.render(tmp_path / "src.mp4", shots, m, out, title="T", subtitle="S",
+    highlight.render(tmp_path / "src.mp4", shots, out,
+                     kills=highlight.kos(m), ults=m.casts, title="T", subtitle="S",
                      outro=tmp_path / "gone.mp4")
     assert "outro_fit.mp4" not in seen["args"]
     assert out.is_file()
