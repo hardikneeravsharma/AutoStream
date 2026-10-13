@@ -304,7 +304,7 @@ def _fit_outro(src: Path, like: Path, out: Path, encoder: str = "auto") -> float
 
 def render(source: Path, shots: list[Shot], out: Path, *,
            kills: list[float], ults: list[float] | None = None,
-           title: str, subtitle: str, encoder: str = "auto",
+           title: str, subtitle: str, encoder: str = "auto", cq: int = 19,
            outro: str | Path | None = None,
            check: Callable[[], None] | None = None,
            progress: Callable[[int, int], None] | None = None,
@@ -337,6 +337,9 @@ def render(source: Path, shots: list[Shot], out: Path, *,
                 progress(i, units)
             # The mix track only: this is a finished export, and the mix is
             # the one with the player's voice in it.
+            # The PIECES stay at 18 whatever the finished file is set to:
+            # they are re-encoded once more by the join, and starting that
+            # from a coarser picture is generation loss for nothing.
             parts.append(cutter._cut(source, s.start, s.seconds, work / f"s{i:02d}.mp4",
                                      encoder=encoder, cq=18, keep_all_audio=False))
         if progress:
@@ -370,7 +373,7 @@ def render(source: Path, shots: list[Shot], out: Path, *,
         tmp = out.with_suffix(".tmp.mp4")
         _in_dir(work, *args, filter_script_flag(), "graph.txt",
                 "-map", "[vout]", "-map", "[aout]",
-                *video_codec_args(encoder, cq=19),
+                *video_codec_args(encoder, cq=cq),
                 "-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart",
                 "-y", str(tmp.resolve()))
         tmp.replace(out)

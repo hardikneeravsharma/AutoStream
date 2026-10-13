@@ -101,6 +101,24 @@ def _bursts(times: list[float], gap: float = CLUSTER) -> list[list[float]]:
     return out
 
 
+def tidy_label(label: str) -> str:
+    """One spelling for a label, whatever case it arrived in.
+
+    The first run against real footage produced "LAST ALIVE 1v3", "Last Alive",
+    "CLUTCH 1v2" and "Flawless" in the same chapter list, because the labels
+    come from three places that each shout or not as they please. A chapter
+    list that cannot agree with itself about capitals looks automatic, which
+    is the one thing it must not look.
+
+    Words are capitalised; a word with a digit in it is left exactly as it is,
+    so "1v3" does not become "1V3" and a map name keeps its own spelling.
+    """
+    out = []
+    for w in str(label).split():
+        out.append(w if any(c.isdigit() for c in w) else w.capitalize())
+    return " ".join(out)
+
+
 def name_of(rd, kills: int) -> str:
     """What to call a moment. The play, never the round number.
 
@@ -113,7 +131,7 @@ def name_of(rd, kills: int) -> str:
     labels = list(getattr(rd, "labels", None) or [])
     if labels:
         best = min(labels, key=lambda l: rounds_mod.rank_of([l]))
-        return best.title() if best.isupper() else best
+        return tidy_label(best)
     if kills >= 5:
         return "Ace"
     if kills >= 2:
@@ -246,10 +264,19 @@ def chapters(ms: list[Moment], durations: list[float],
     least three, each at least ten seconds. Break one and it shows none.
     """
     marks: list[tuple[float, str]] = []
+    seen = ""
     for m, off in zip(ms, offsets):
+        # THE MAP NAME IS A CHAPTER ONCE, WHERE THE MATCH CHANGES -- not on
+        # every moment in it. The first run against real footage produced
+        # eight chapters in a row reading "Lotus", because a moment the
+        # player got one kill in has no name of its own and the match name
+        # was standing in for it. Eight identical chapters are worse than
+        # none: they fill the list and say nothing.
+        turn = bool(m.match) and m.match != seen
         name = m.name or ""
-        if m.match:
+        if turn:
             name = f"{m.match} - {name}" if name else m.match
+            seen = m.match
         if not name:
             continue
         if marks and off - marks[-1][0] < 10.0:
@@ -262,14 +289,23 @@ def chapters(ms: list[Moment], durations: list[float],
     return marks if len(marks) >= 3 else []
 
 
-def title_of(game: str, round_list, *, when: str = "") -> tuple[str, str]:
-    """-> (title, subtitle) for the card over the opening shot."""
+def title_of(game: str, round_list, *, when: str = "",
+             matches: int = 1) -> tuple[str, str]:
+    """-> (title, subtitle) for the card over the opening shot.
+
+    `matches` is how many games the recording holds. With more than one there
+    is no scoreline to print: adding Lotus (won 13-10) to Sunset (lost 2-13)
+    gives 15-23, which is not a result either game had, and a title card is
+    the worst place in the video to put a number nobody can check.
+    """
     kills = sum(int(getattr(r, "my_kills", 0) or 0) for r in round_list)
     won = sum(1 for r in round_list if getattr(r, "won", None) is True)
     lost = sum(1 for r in round_list if getattr(r, "won", None) is False)
     head = (game or "Match").upper()
     bits = []
-    if won or lost:
+    if matches > 1:
+        bits.append(f"{matches} MATCHES")
+    elif won or lost:
         bits.append(f"{won}-{lost}")
     if kills:
         bits.append(f"{kills} KILL{'' if kills == 1 else 'S'}")

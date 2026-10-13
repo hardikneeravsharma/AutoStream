@@ -202,3 +202,38 @@ def test_the_title_says_the_score_and_the_kills():
     head, sub = recap.title_of("VALORANT", rounds)
     assert head == "VALORANT"
     assert "3-3" in sub and "12 KILLS" in sub
+
+
+def test_a_map_name_is_a_chapter_once_not_on_every_moment():
+    """The first real run produced eight chapters in a row reading "Lotus",
+    because a one-kill moment has no name of its own and the match name stood
+    in for it. Eight identical chapters fill the list and say nothing."""
+    rounds = _match(n=14, kills=1)
+    # Three rounds that earn a name of their own, so the list is long enough
+    # for YouTube to show any of it at all; the other eleven are the ones
+    # that used to be called "Lotus".
+    for i in (3, 7, 11):
+        rounds[i].kill_times = [rounds[i].started + 40.0 + j * 3.0 for j in range(3)]
+    ms = recap.moments(rounds, match_of=lambda r: "Lotus")
+    offs, t = [], 0.0
+    for m in ms:
+        offs.append(t)
+        t += m.seconds
+    marks = recap.chapters(ms, [m.seconds for m in ms], offs)
+    assert sum(1 for _t, n in marks if n.startswith("Lotus")) == 1, marks
+
+
+def test_one_spelling_for_a_label():
+    """"LAST ALIVE 1v3", "Last Alive" and "CLUTCH 1v2" in the same chapter
+    list is what automatic looks like."""
+    assert recap.tidy_label("LAST ALIVE 1v3") == "Last Alive 1v3"
+    assert recap.tidy_label("CLUTCH 1V2") == "Clutch 1V2"
+    assert recap.tidy_label("Flawless") == "Flawless"
+
+
+def test_two_matches_get_no_invented_scoreline():
+    """Lotus won 13-10 plus Sunset lost 2-13 came out as "15-23", a result
+    neither game had."""
+    _head, sub = recap.title_of("VALORANT", _match(n=10), matches=2)
+    assert "2 MATCHES" in sub
+    assert "5-5" not in sub

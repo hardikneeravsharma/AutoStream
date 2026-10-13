@@ -467,9 +467,13 @@ class ClipJob:
             self.session.get("started") or self.started_at).strftime("%Y-%m-%d")
         won = sum(1 for r in round_list if getattr(r, "won", None) is True)
         lost = sum(1 for r in round_list if getattr(r, "won", None) is False)
-        name = (f"{plan.slug(self.game)}_{when}_recap_"
-                f"{won}-{lost}_{duration_label(spent)}")
-        title, sub = recap.title_of(self.game, round_list, when=when)
+        # NO SCORELINE FOR TWO MATCHES. Summing them is how a recording of
+        # Lotus (won 13-10) and Sunset (lost 2-13) came out called 15-23, a
+        # score that never existed in either game.
+        how = (f"{won}-{lost}" if len(names) < 2 else f"{len(names)}matches")
+        name = f"{plan.slug(self.game)}_{when}_recap_{how}_{duration_label(spent)}"
+        title, sub = recap.title_of(self.game, round_list, when=when,
+                                    matches=max(1, len(names)))
 
         def tick(done: int, total: int) -> None:
             # Deliberately not self._check(): a cancel raised from inside the
@@ -485,6 +489,14 @@ class ClipJob:
         out = highlight.render(
             self.source, shots, self.folder / "match" / f"{name}.mp4",
             kills=kills, title=title, subtitle=sub, encoder=enc,
+            # MEASURED, on a minute of this very recording: cq 19 is 25 Mbps,
+            # 21 is 20, 23 is 16 and 25 is 12. The first real recap came out
+            # 1.4 GB for 6m27s, which is a slow upload and a big file for
+            # something nobody will watch at full bitrate. 23 is still a third
+            # above YouTube's own 1080p60 recommendation and takes a third off
+            # the file. The Rivals highlight keeps 19; it is two minutes long
+            # and the size was never the problem there.
+            cq=23,
             outro=str(self.options.get("outro") or "") or None,
             progress=tick, on_durations=lambda d, o: got.update(durs=d, offs=o))
 
