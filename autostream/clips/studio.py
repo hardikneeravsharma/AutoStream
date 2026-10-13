@@ -657,6 +657,9 @@ PARTS: tuple[Part, ...] = (
     Part("g10", "grade", "Radiant purple", "Valorant's own violet pushed through the shadows."),
     Part("g11", "grade", "Poster", "Colour flattened into bands, like cel shading."),
     Part("g12", "grade", "Night vision", "Everything green, blacks lifted, highlights hot."),
+    Part("g13", "grade", "Hard monochrome",
+         "Black and white with almost no middle: an S-curve steep enough that "
+         "shadows go to black and highlights run to white."),
 
     # The drawer needs its empty card too: a template picks one part from
     # every drawer, and most reels carry no overlay at all.
@@ -819,6 +822,34 @@ GRADES = {
     "g11": (1.35, 1.12, 0.0, "lutyuv=y='(floor(val/26))*26'"),
     "g12": (0.0, 1.15, 0.03, "colorchannelmixer=rr=0.18:rg=0.60:rb=0.10:"
                              "gr=0.18:gg=1.00:gb=0.10:br=0.10:bg=0.40:bb=0.10"),
+    # HARD MONOCHROME, AND NOT g07. g07 desaturates and leaves a normal tone
+    # curve, which lands around 30-35% midtones with no crush; this is a steep
+    # S whose midsection slope is about 1.97, so almost nothing survives in the
+    # middle. The numbers are MEASURED against an anime edit rather than
+    # chosen -- see docs/STYLE-FAST-PACED-HEADSHOT.md section 6, which also
+    # carries the acceptance ranges this was tuned to. g07 is left alone
+    # because existing projects reference it.
+    #
+    # The gamma of 1.005 the reference chain carries has no slot in this tuple
+    # and is within a rounding error of 1.0, so it is dropped rather than
+    # widening every row for it.
+    # THE WHOLE CHAIN IS THE STATIC STRING, and the tuple's own numbers are
+    # left neutral, because the ORDER is the grade. Measured over six samples
+    # of a real recording: desaturate, then curve, then contrast lands black at
+    # 28.9% and white at 9.8%; doing contrast first, which is what the tuple's
+    # numbers would mean, gives 21.4% and 8.6% -- a different look, not a
+    # rounding difference.
+    #
+    # And it is `hue=s=0`, not the tuple's saturation. Measured on the same
+    # samples: raw footage is 0.378 mean saturation, `eq=saturation=0` leaves
+    # 0.045 and `hue=s=0` leaves 0.000. (g07 "Monochrome" is built on the
+    # former and is therefore not quite monochrome. Left alone on purpose --
+    # existing projects reference it.)
+    "g13": (0.0, 1.0, 0.0,
+            "hue=s=0,"
+            "curves=all='0/0.0155 0.200/0.0965 0.475/0.5635 0.690/0.988 1/1',"
+            "eq=contrast=1.265:brightness=0.0195,"
+            "unsharp=3:3:0.55:3:3:0.0"),
 }
 
 

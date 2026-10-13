@@ -2287,3 +2287,37 @@ def test_the_reel_writes_out_as_a_timeline_another_editor_can_open(root, tmp_pat
     made = interchange.write(got, derived, tmp_path, "otio")
     assert [f.name for f in made] == [f"{got['name']}.otio", f"{got['name']}.export.txt"]
     assert all(f.is_file() and f.stat().st_size > 0 for f in made)
+
+
+# ---- the hard monochrome grade -------------------------------------------
+
+
+def test_g13_desaturates_with_hue_not_with_eq():
+    """MEASURED, over six samples of a real recording: raw footage is 0.378
+    mean saturation, `eq=saturation=0` leaves 0.045 and `hue=s=0` leaves
+    0.000. A grade whose whole point is black and white cannot be built on the
+    one that leaves colour behind.
+
+    (g07 "Monochrome" is built on `eq=saturation=0` and is therefore not quite
+    monochrome. Left alone deliberately -- existing projects reference it --
+    which is exactly why this guard names g13 and not the family.)
+    """
+    _sat, _con, _bri, static = studio.GRADES["g13"]
+    assert static.startswith("hue=s=0,"), static
+
+
+def test_g13_curves_before_contrast_because_the_order_is_the_grade():
+    """Desaturate, curve, THEN contrast lands black at 28.9% and white at
+    9.8%; contrast first -- which is what the tuple's own numbers would mean --
+    gives 21.4% and 8.6%. A different look, not a rounding difference. So the
+    tuple stays neutral and the whole chain lives in the static string."""
+    sat, con, bri, static = studio.GRADES["g13"]
+    assert (sat, con, bri) == (0.0, 1.0, 0.0)
+    assert static.index("curves=") < static.index("eq=contrast=")
+
+
+def test_g13_is_not_g07_with_more_contrast():
+    """g07 desaturates and leaves a normal tone curve: around 30-35% midtones
+    with no crush. g13 is a steep S whose midsection slope is about 1.97."""
+    assert "curves=" not in studio.GRADES["g07"][3]
+    assert "curves=" in studio.GRADES["g13"][3]

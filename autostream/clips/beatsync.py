@@ -873,3 +873,123 @@ def drop_slot(track: Track, slots_: list[tuple[float, float]]) -> int | None:
         if s <= track.drop < s + d:
             return i
     return min(range(len(slots_)), key=lambda i: abs(slots_[i][0] - track.drop))
+
+
+# ---------------------------------------------------------------------------
+# A RIGID GRID, for a style whose effects key off the beat and not off a kill.
+#
+# Everything above serves a montage: it finds where the music actually hits and
+# snaps cuts to it, which is right when a cut has to land on a transient. A
+# beat ENGINE wants the opposite -- an even grid that never drifts, because the
+# expressions are `mod(t, BEAT)` and any wobble shows as a stutter twice a
+# second for the length of the reel.
+#
+# See docs/STYLE-FAST-PACED-HEADSHOT.md sections 3.1 to 3.3, where every number
+# here was measured.
+# ---------------------------------------------------------------------------
+
+# How close to a whole BPM counts as that whole BPM. A track produced at
+# exactly 120 or 150 gives a whole number of frames per beat at 60 fps, and a
+# measurement of 120.0081 is that track plus noise -- but 30.002 frames per
+# beat drifts a frame every eight bars, which is visible. The tolerance is on
+# the SCORE, not on the number: a candidate is accepted only if the grid it
+# implies is as salient as the measured one.
+WHOLE_TOL = 0.001              # 0.1% of the salience score
+# How far from whole is still "that whole number plus noise". Measured over 18
+# tracks: 0.6 let 73.554 snap to 74, which is 0.6% and a quarter-second of
+# drift across a forty-second reel -- half a beat, and visible. 0.2 keeps
+# 92.159 -> 92 (0.17%, under a tenth of a second) and refuses 73.554.
+WHOLE_SPAN = 0.2
+
+# THE DROP, BY LOUDNESS STEP. KORDHELL "Murder In My Mind" sits at -13.4 dB at
+# 16.0s and -1.1 dB at 17.0s, and 17.0 is the answer -- the one track in the
+# library whose drop is known, because a reel was cut to it by hand.
+RMS_WIN = 0.25
+# NOT the 10 dB the spec quotes. 10 was read off a SINGLE window against a
+# single window, and one window is noise. Against the median of the preceding
+# two seconds the real step on that track is 9.9 dB, so 10 misses the drop it
+# was derived from, and 8 lands a quarter-second late on the biggest-step
+# rule. 6, taking the FIRST sustained step, answers 17.0 exactly.
+#
+# Honest about its reach: one track has ground truth. Over the other 19 in the
+# library this fires somewhere plausible on 15 and not at all on 4 (tracks
+# that simply never step this hard). `find_drops` above is the other witness
+# and disagrees often -- it looks for the BIGGEST arrival, which on a long
+# track is usually the last chorus, not the first drop.
+RMS_STEP_DB = 6.0
+RMS_BACK = 2.0                 # compared against this much of what came before
+RMS_HOLD = 2.0                 # and it has to stay up for this long
+RMS_SKIP = 4.0                 # the first seconds are nobody's drop
+
+
+def whole_bpm(env: np.ndarray, bpm: float) -> float:
+    """`bpm` snapped to a whole number when the music does not mind.
+
+    Measured: the reference track reads 120.0081, and the whole value scores
+    within noise of it. 120.000 at 60 fps is exactly 30 frames a beat, so a
+    grid built on it is frame-exact for as long as the reel runs.
+    """
+    if bpm <= 0 or env.size == 0:
+        return bpm
+    near = float(round(bpm))
+    if near <= 0 or abs(near - bpm) > WHOLE_SPAN:
+        return bpm
+    here, there = grid_salience(env, bpm), grid_salience(env, near)
+    if here <= 0:
+        return near
+    return near if there >= here * (1.0 - WHOLE_TOL) else bpm
+
+
+def rms_drop(x: np.ndarray, duration: float) -> float | None:
+    """Where the low end slams in, by loudness step. -> seconds, or None.
+
+    The first 0.25s window whose level is RMS_STEP_DB above the two seconds
+    before it AND stays up for the two seconds after. Reported at the window's
+    own start, which is the frame the bass arrives on.
+    """
+    if x.size == 0 or duration <= 0:
+        return None
+    n = max(1, int(RMS_WIN * SR))
+    count = int(x.size // n)
+    if count < 8:
+        return None
+    frames = x[:count * n].reshape(count, n)
+    db = 20.0 * np.log10(np.sqrt((frames.astype(np.float64) ** 2).mean(axis=1)) + 1e-9)
+    back = max(1, int(RMS_BACK / RMS_WIN))
+    hold = max(1, int(RMS_HOLD / RMS_WIN))
+    first = max(back, int(RMS_SKIP / RMS_WIN))
+    for i in range(first, count - hold):
+        # The MEDIAN of what came before, not the mean: a drop is usually
+        # preceded by a riser or a crash, and one loud window in the run-up
+        # drags a mean up far enough to hide the arrival behind it.
+        before = float(np.median(db[i - back:i]))
+        rise = float(db[i]) - before
+        if rise < RMS_STEP_DB:
+            continue
+        # It has to STAY up, measured against ITS OWN rise rather than against
+        # the threshold: a crash cymbal clears 6 dB for one window and is gone,
+        # and holding 60% of a 20 dB arrival is a different thing from holding
+        # 60% of a 6 dB one.
+        if float(db[i:i + hold].mean()) - before < rise * 0.6:
+            continue
+        return round(i * RMS_WIN, 3)
+    return None
+
+
+def rigid_grid(bpm: float, anchor: float, duration: float) -> list[float]:
+    """An even grid at `bpm`, in phase with `anchor`, covering the track.
+
+    The anchor is the DROP, not the onset detector's answer. Hi-hats on the
+    off-beat pull the onset phase half a beat out: on the reference the comb
+    said offset 0.25s, which puts beats at 16.75 and 17.25 -- and the drop is
+    at 17.00. The drop wins, every time, because it is the one moment a
+    listener can point at.
+    """
+    if bpm <= 0 or duration <= 0:
+        return []
+    beat = 60.0 / bpm
+    first = anchor - beat * int(anchor // beat)
+    n = int((duration - first) / beat) + 1
+    if n < 2:
+        return []
+    return [round(first + i * beat, 6) for i in range(n)]
