@@ -310,6 +310,6 @@ def test_the_match_cut_resets_the_counts_it_inherited():
     # file: a guard that can be satisfied by another line somewhere else has
     # already shipped a fix that fixed nothing.
     run = inspect.getsource(jobs.ClipJob._run)
-    i = run.index('message=f"Cutting the match:')
+    i = run.index('message=f"Cutting the recap:')
     line = run[run.rindex("self._set", 0, i):i]
     assert "done=0" in line, "the match step keeps the clip loop's finished counts"

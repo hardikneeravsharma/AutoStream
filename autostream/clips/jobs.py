@@ -225,6 +225,10 @@ class ClipJob:
         self.montage_chapters: str = ""
         # The whole match with the dead time out, where it was asked for.
         self.summary_path: str | None = None
+        # (span, name) per match record in the recording. Empty for a game
+        # with no records; with one match there is nothing to tell apart, so
+        # the recap leaves the names off.
+        self.record_names: list[tuple[tuple[float, float], str]] = []
         self.summary_chapters: str = ""
         self.reel_path: str | None = None
         self.promo_path: str | None = None
@@ -413,42 +417,78 @@ class ClipJob:
         return self._cancel.is_set()
 
     def _cut_match(self, round_list, info, enc) -> str | None:
-        """The whole match, dead time out, with chapters. -> the file.
+        """The match as a highlight channel would cut it. -> the file.
 
-        THE CUT ITSELF IS `master_segments`, which the Marvel Rivals summary
-        already uses and which is proved against real files there. What is
-        decided here is which seconds to keep, and that lives in
-        clips/match_summary.py where it can be tested without footage.
+        WHAT CHANGED AND WHY. This used to be `cutter.master_segments` over
+        `match_summary.spans`: the whole match with the dead time out. On a
+        real recording that kept 83% of it -- 52 minutes, no transitions, no
+        sound design, no beginning and no end -- and the person who asked for
+        it said so in six words. A watch-through is not what anybody uploads.
+
+        What is decided here is nothing: `match_recap.moments` chooses the
+        seconds and the names, `highlight.render` does the cutting, the whips,
+        the whooshes, the hit flashes, the title and the outro. Both are
+        proved without footage.
         """
-        from . import match_summary as msum
+        from . import highlight, match_recap as recap
 
-        spans = msum.spans(round_list, source_duration=info["duration"])
-        if len(spans) < 2:
-            log.info("not cutting a match summary: %d span(s) is not a match",
-                     len(spans))
+        dur = float(info["duration"])
+        names = list(self.record_names)
+
+        def match_of(rd):
+            """Which match a round belongs to, when there is more than one.
+
+            One match needs no label; two in one recording do, or the chapter
+            list reads "Round 1" twice with nothing to tell them apart.
+            """
+            if len(names) < 2:
+                return ""
+            t = float(getattr(rd, "started", 0.0) or 0.0)
+            for (lo, hi), name in names:
+                if float(lo) <= t <= float(hi):
+                    return name
+            return ""
+
+        ms = recap.moments(round_list, source_duration=dur, match_of=match_of)
+        spent = sum(m.seconds for m in ms)
+        if not ms or spent < recap.FLOOR:
+            log.info("not cutting a recap: %.0fs of moments in %d round(s)",
+                     spent, len(round_list))
             return None
+
+        opening = recap.intro(round_list, source_duration=dur)
+        shown = ([opening] if opening else []) + ms
+        shots = [highlight.Shot(m.start, m.end,
+                                "intro" if m is opening else "fight")
+                 for m in shown]
+        kills = sorted(t for m in ms for t in m.kills)
 
         when = datetime.fromtimestamp(
             self.session.get("started") or self.started_at).strftime("%Y-%m-%d")
-        about = msum.describe(round_list, spans)
-        name = (f"{plan.slug(self.game)}_{when}_match_"
-                f"{about['won']}-{about['lost']}_"
-                f"{duration_label(about['duration'])}")
+        won = sum(1 for r in round_list if getattr(r, "won", None) is True)
+        lost = sum(1 for r in round_list if getattr(r, "won", None) is False)
+        name = (f"{plan.slug(self.game)}_{when}_recap_"
+                f"{won}-{lost}_{duration_label(spent)}")
+        title, sub = recap.title_of(self.game, round_list, when=when)
+
         def tick(done: int, total: int) -> None:
             # Deliberately not self._check(): a cancel raised from inside the
-            # cutter would be caught by the caller's except and logged as
+            # renderer would be caught by the caller's except and logged as
             # "could not cut the match summary", which reads like a failure.
             # Cancellation is checked where it is handled.
             self._set(done=done, total=total,
-                      message=(f"Cutting the match: round {done + 1} of "
-                               f"{len(spans)}" if done < len(spans) else
-                               f"Joining {len(spans)} pieces into the match"))
+                      message=(f"Cutting the recap: moment {done + 1} of "
+                               f"{len(shots)}" if done < len(shots) else
+                               f"Joining {len(shots)} moments into the recap"))
 
-        out = cutter.master_segments(
-            self.source, spans, name, self.folder / "match", encoder=enc,
-            progress=tick)
+        got: dict = {}
+        out = highlight.render(
+            self.source, shots, self.folder / "match" / f"{name}.mp4",
+            kills=kills, title=title, subtitle=sub, encoder=enc,
+            outro=str(self.options.get("outro") or "") or None,
+            progress=tick, on_durations=lambda d, o: got.update(durs=d, offs=o))
 
-        marks = msum.chapters(round_list, spans)
+        marks = recap.chapters(shown, got.get("durs") or [], got.get("offs") or [])
         if marks:
             from .summary import chapter_text
 
@@ -459,12 +499,14 @@ class ClipJob:
         # Through atomic, like every other manifest here: a half-written one
         # is indistinguishable from a complete one to whatever reads it next.
         atomic.write_json(Path(out).with_suffix(".json"), {
-            "title": msum.title(self.game, round_list, when),
-            "source": str(self.source), **about,
+            "title": f"{title} {sub}".strip() + f" | {when}",
+            "source": str(self.source), "rounds": len(round_list),
+            "won": won, "lost": lost, "moments": len(ms),
+            "duration": round(spent, 2),
             "chapters": [[round(t, 2), n] for t, n in marks],
         })
-        log.info("match summary: %s (%d rounds, %d chapters)",
-                 Path(out).name, about["rounds"], len(marks))
+        log.info("match recap: %s (%d moments from %d rounds, %d chapters)",
+                 Path(out).name, len(ms), len(round_list), len(marks))
         return str(out)
 
     def _write_chapters(self, out, plans, masters, opt) -> None:
@@ -868,6 +910,8 @@ class ClipJob:
 
                 kills, round_list, round_spans, outside = vmatch.merge_matches(kills, found)
                 self.record_spans = [g["span"] for g in found]
+                self.record_names = [(g["span"], str(g["about"].get("map") or ""))
+                                     for g in found]
                 use_rounds = bool(round_list)
                 first = max(found, key=lambda g: len(g["kills"]))
                 self.demo = dict(first["about"], outside=outside,
@@ -1343,7 +1387,8 @@ class ClipJob:
             # last -- which is indistinguishable from a job that has hung, and
             # was reported as one.
             self._set(step="montage", done=0, total=1,
-                      message=f"Cutting the match: {len(round_list)} rounds")
+                      message=f"Cutting the recap: {len(round_list)} rounds "
+                              f"to choose from")
             try:
                 self.summary_path = self._cut_match(round_list, info, enc)
             except Exception as e:  # noqa: BLE001
@@ -1543,7 +1588,12 @@ class ClipJob:
                 "kills": got_kills,
                 "rounds": got_rounds,
                 "span": vmatch.span_of(m, sync),
+                # The MAP, so a recording with two matches in it can name
+                # them in its chapters. "Round 1" appearing twice in one
+                # video with nothing to tell them apart is worse than no
+                # chapters at all.
                 "about": {"match": m.id, "mode": m.mode, "ranked": m.ranked,
+                          "map": vmatch.summary(m).get("map") or "",
                           "offset": round(sync.offset, 2),
                           "matched": sync.matched, "total": sync.total,
                           "how": sync.why},
@@ -1576,7 +1626,12 @@ class ClipJob:
                 "kills": got_kills,
                 "rounds": vmatch.rounds_from(m, puuid, sync),
                 "span": span,
+                # The MAP, so a recording with two matches in it can name
+                # them in its chapters. "Round 1" appearing twice in one
+                # video with nothing to tell them apart is worse than no
+                # chapters at all.
                 "about": {"match": m.id, "mode": m.mode, "ranked": m.ranked,
+                          "map": vmatch.summary(m).get("map") or "",
                           "offset": round(sync.offset, 2), "matched": sync.matched,
                           "total": sync.total, "how": "picked by you; " + sync.why},
             })

@@ -1,5 +1,14 @@
 r"""A Counter-Strike match as one video, with the dead time taken out.
 
+NOT WIRED TO ANYTHING SINCE v1.65.0, AND KEPT ON PURPOSE. The switch that
+used to call this now makes a RECAP instead (clips/match_recap.py): the
+watch-through kept 83% of a real recording -- 52 minutes, no transitions,
+no beginning and no end -- and was replaced rather than offered alongside,
+because two near-identical hour-long exports is a choice nobody wants to
+make. The arithmetic here is right and proved; if the watch-through is ever
+wanted again it is a call away, so it is kept rather than deleted. Do not
+add to it without wiring it back up first.
+
 WHAT THIS IS FOR
     A clip is thirty seconds around a fight. A match summary is the other
     thing people upload: the whole match, in order, with the buy time, the

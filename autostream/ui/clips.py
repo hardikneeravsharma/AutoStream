@@ -671,11 +671,12 @@ One per line - a long session often covers several matches."></textarea>
         <button class="switch" type="button" role="switch" id="clip-matchvid"
                 aria-checked="false"><span class="switch-track"><span
                 class="switch-thumb"></span></span></button>
-        <label for="clip-matchvid">Also make the whole match as one video</label>
+        <label for="clip-matchvid">Also make a recap of the match</label>
       </div>
-      <p class="field-help">The match in order with the dead time cut out, and
-         YouTube chapters for every round. Made beside the clips, not instead
-         of them.</p>
+      <p class="field-help">About eight minutes of the match's best moments, in
+         the order they happened, with whip cuts between them, a title and your
+         outro &mdash; and a YouTube chapter named for each one. Made beside the
+         clips, not instead of them.</p>
     </div>
 
     <div class="field" id="clip-min-field">
