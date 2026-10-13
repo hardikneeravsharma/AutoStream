@@ -670,6 +670,20 @@ PARTS: tuple[Part, ...] = (
     Part("o05", "overlay", "Scanlines", "Fine horizontal lines, like an old monitor. "
          "Costs about a second of render for every second of reel."),
     Part("o08", "overlay", "Chromatic edges", "A constant hair of colour fringing at the edges."),
+    Part("o09", "overlay", "Beat flip",
+         "The picture snaps to negative on every beat, and harder on the bar. "
+         "Needs a song: it keys off the beat grid, not off the kills.",
+         knobs=(("beat", 1.0), ("kick", 0.029))),
+    # BAR LINES ONLY, AND WHY IT IS ITS OWN PART. Over flat letterbox bands a
+    # whole-frame invert twice a second is a full-screen strobe -- 64 of them
+    # in 36 seconds -- which is punishing to watch and a photosensitivity
+    # concern. On bar lines it is 18, which still reads. Offered as a choice
+    # rather than inferred from the framing, because the two are otherwise
+    # independent and a control that changes itself is a control nobody trusts.
+    Part("o10", "overlay", "Beat flip (bars only)",
+         "The picture snaps to negative once a bar instead of every beat. "
+         "Gentler, and what a letterboxed reel wants.",
+         base="o09", knobs=(("beat", 0.0), ("kick", 0.029))),
     Part("o07", "overlay", "Handle watermark", "Your handle in the corner."),
     Part("i04", "overlay", "Now-playing card", "Names the track for the first few seconds."),
 
@@ -2030,6 +2044,11 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         "version": VERSION, "name": name or f"{style.label} reel",
         "style": style.key, "format": fmt if fmt in SIZES else "landscape",
         "song": str(song or ""), "song_offset": 0.0,
+        # WHERE THE BASS LANDS, in SONG seconds. Kept on the project because
+        # the beat engine needs it at assemble time, and finding it means
+        # decoding the song -- which is a thing to do once when the song is
+        # chosen, not every time a command is built.
+        "song_drop": None,
         "intro": "i12" if build else style.intro,
         "outro": "e03" if style.outro == "e01" else style.outro, "grade": style.grade,
         "vignette": style.vignette, "overlays": list(style.overlays),
@@ -3004,6 +3023,8 @@ def apply_song(project: dict, shape, song: str, start: float, end: float = 0.0,
     project["step"] = round(float(shape.beat) / div, 6)
     start = max(0.0, min(float(start), max(0.0, shape.seconds - 1.0)))
     project["song_offset"] = round(start, 4)
+    project["song_drop"] = (round(float(shape.drop), 4)
+                            if getattr(shape, "drop", None) else None)
     part = (min(float(end), shape.seconds) - start) if end and end > start else shape.seconds - start
     # THE PART IS KEPT. Chosen here it was used once and forgotten: part_end
     # was written only by the planner, so the Song tab reopened on the reel's
@@ -3614,6 +3635,89 @@ def _pulse(var: str, at: float, amount: float, fall: float) -> str:
     return f"{amount}*gte({var},{at:.4f})*max(0,1-({var}-{at:.4f})/{fall})"
 
 
+# THE BEAT ENGINE. Every other effect in this file keys off `kt`, the kill time
+# of the shot it is in; this keys off the SONG'S GRID, independent of where
+# kills fall, which is what lets a one-second shot carry two beats of effect.
+#
+# It lives in `assemble_command`'s post chain and not in a pass of its own. The
+# specification recommends a separate encode of the joined body -- reasonable
+# advice from outside the app, where there is no joined body to hang a filter
+# on. Inside, the post chain already runs over exactly that, in absolute v-time,
+# in the pass that was happening anyway. One encode, not two.
+#
+# Measured numbers: docs/STYLE-FAST-PACED-HEADSHOT.md section 8.
+# WINDOWS THAT SIT BETWEEN FRAMES, not on one. The specification's 0.0167 and
+# 0.0500 are exactly one and three frames at 60 fps, and a frame boundary is
+# the worst place to put a threshold: measured, 0.0167 caught TWO frames
+# (1/60 = 0.0166667, which is under it) and 0.0500 caught four, because the
+# phase offset is a large number and `mod` gives it back a few picoseconds
+# light. Half a frame either side costs nothing and cannot land on the edge.
+FLIP_BEAT = 0.012             # one frame at 60 fps: between 0 and 1/60
+FLIP_BAR = 0.045              # three: between 2/60 and 3/60
+KICK_FALL = 0.058
+# A long way back, so `mod` never sees a negative. ffmpeg's mod keeps the sign
+# of its argument, and a negative result makes every expression above read as
+# "not on the beat" for the whole of the build -- which is the half of the reel
+# the effect most needs to be ramping through.
+# 1e4 bars is twenty thousand seconds, which no reel approaches, and keeps ten
+# significant digits after the point in a double -- a nanosecond of grid
+# resolution. 1e6 would still work and throws away two of them for nothing.
+MOD_SAFE = 1e4
+# The intensity gate (section 8.1): the build runs at 45% so the drop has
+# somewhere to go, and the last act 12% hotter so the finale is not more of the
+# same. The reference's act three starts 69% of the way from the drop to the
+# end -- 26.0s of a 36.0s body whose drop is at 4.0 -- so it is taken as a
+# share rather than as the one number, which would land anywhere on a reel of
+# another length.
+GATE_BUILD = 0.45
+GATE_LAST = 1.12
+ACT3_SHARE = 0.69
+# Two frames of black immediately BEFORE the drop. The snap into the bass is
+# worth more than any flash on it.
+PUNCH = 0.034
+
+
+def beat_engine(pid: str, *, beat: float, drop: float, length: float,
+                var: str = "t") -> list[str]:
+    """Filters that put the song's grid on the picture. -> post-chain entries.
+
+    `drop` is in v-time -- where the bass lands in the finished reel, which is
+    the song's drop less the song offset. Zero is honest when the song has no
+    drop: the grid then starts at the first frame, which is what a reel with no
+    build should do.
+    """
+    if beat <= 0 or length <= 0:
+        return []
+    bar = beat * 4.0
+    drop = max(0.0, float(drop))
+    # The flip starts one bar early, so the build ramps into the drop instead
+    # of arriving with it.
+    from_t = max(0.0, drop - bar)
+    # In phase with the DROP, not with the first frame. The two coincide only
+    # when the offset happens to be a whole number of beats, and being half a
+    # beat out is the difference between an edit and a fault.
+    off = MOD_SAFE * bar - drop
+    on_beat = knob(pid, "beat", 1.0) >= 0.5
+    gate = (f"if(lt({var},{drop:.4f}),{GATE_BUILD},"
+            f"if(lt({var},{drop + (length - drop) * ACT3_SHARE:.4f}),1,{GATE_LAST}))")
+
+    out: list[str] = []
+    # SUMMING the two terms rather than using two negate filters: `enable`
+    # treats any non-zero as on, so a bar line (both terms 1) stays on through
+    # the longer window. Two filters would invert twice and cancel.
+    terms = [f"lt(mod({var}+{off:.4f},{bar:.5f}),{FLIP_BAR})"]
+    if on_beat:
+        terms.insert(0, f"lt(mod({var}+{off:.4f},{beat:.5f}),{FLIP_BEAT})")
+    out.append(f"negate=enable='gte({var},{from_t:.4f})*({'+'.join(terms)})'")
+    if (kick := knob(pid, "kick", 0.029)) > 0:
+        out.append(f"eq=brightness='({gate})*{kick:.4f}"
+                   f"*exp(-mod({var}+{off:.4f},{beat:.5f})/{KICK_FALL})':eval=frame")
+    if drop > PUNCH:
+        out.append(f"drawbox=x=0:y=0:w=iw:h=ih:color=black@1:t=fill:"
+                   f"enable='between({var},{drop - PUNCH:.4f},{drop - 0.001:.4f})'")
+    return out
+
+
 @dataclass
 class Segment:
     """Everything that decides one shot's render -- and so its cache key."""
@@ -4218,6 +4322,15 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
     if (pid := picked(ov, "o08")):
         px = int(knob(pid, "px", 2.0))
         post.append(f"rgbashift=rh={px}:bh=-{px}")
+    if (pid := picked(ov, "o09")):
+        # THE SONG'S GRID, ON THE PICTURE. In v-time, which is why it is here
+        # and not in a segment: a shot does not know where in the reel it sits.
+        drop = project.get("song_drop")
+        post += beat_engine(
+            pid, beat=float(project.get("beat") or 0.0),
+            drop=(float(drop) - float(project.get("song_offset") or 0.0)
+                  if drop is not None else 0.0),
+            length=L)
     if (pid := picked(ov, "o01")) and project["format"] == "landscape":
         bar = round(H * knob(pid, "h", 0.125))
         post.append(f"drawbox=x=0:y=0:w=iw:h={bar}:color=black:t=fill,drawbox=x=0:y=ih-{bar}:w=iw:h={bar}:color=black:t=fill")
