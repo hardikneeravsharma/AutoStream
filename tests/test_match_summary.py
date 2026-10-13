@@ -252,3 +252,64 @@ def test_no_result_invents_none():
     got = ms.title("Counter-Strike 2", rounds)
     assert "win" not in got and "loss" not in got
     assert "Counter-Strike 2" in got
+
+
+# ---- the thirteen minutes nobody could see ------------------------------
+
+
+def test_the_cut_reports_a_piece_at_a_time_and_the_join_too(tmp_path, monkeypatch):
+    """A 52-minute match is thirteen minutes of encoding. Before this it
+    reported nothing at all, so the bar sat at 100% with a blank ETA from the
+    first second to the last -- which is what a hung job looks like, and was
+    reported as one."""
+    from autostream.clips import cutter
+
+    monkeypatch.setattr(cutter, "_cut",
+                        lambda src, a, d, out, **kw: (out.write_bytes(b""), out)[1])
+    monkeypatch.setattr(cutter, "ffmpeg", lambda *a, **k: None)
+    seen = []
+    spans = [(float(i) * 10, float(i) * 10 + 5) for i in range(8)]
+    cutter.master_segments(tmp_path / "src.mp4", spans, "m", tmp_path / "out",
+                           progress=lambda d, t: seen.append((d, t)))
+
+    # One before every piece, and one more when the join starts.
+    assert [d for d, _t in seen] == list(range(len(spans) + 1))
+    total = seen[0][1]
+    assert all(t == total for _d, t in seen)
+    # THE JOIN IS NOT ONE MORE PIECE. Measured: 21 pieces took about 600
+    # seconds and the join 170, so counting it as a single unit would leave
+    # the bar at 95% for three minutes -- the exact fault being fixed.
+    assert total > len(spans) + 1
+    assert seen[-1][0] < total      # never 100% while there is work left
+
+
+def test_one_span_is_not_a_join_and_says_nothing(tmp_path, monkeypatch):
+    """A single span takes the ordinary path. Reporting a join that is not
+    happening would be a lie in the other direction."""
+    from autostream.clips import cutter
+
+    monkeypatch.setattr(cutter, "_cut",
+                        lambda src, a, d, out, **kw: (out.write_bytes(b""), out)[1])
+    seen = []
+    cutter.master_segments(tmp_path / "src.mp4", [(0.0, 5.0)], "m", tmp_path / "out",
+                           progress=lambda d, t: seen.append((d, t)))
+    assert seen == []
+
+
+def test_the_match_cut_resets_the_counts_it_inherited():
+    """The clip loop finishes on done == total. The match step used to leave
+    them there, so its own thirteen minutes read 100%."""
+    import inspect
+
+    from autostream.clips import jobs
+
+    src = inspect.getsource(jobs.ClipJob._cut_match)
+    assert "progress=tick" in src,         "_cut_match does not pass a progress callback to master_segments"
+
+    # Scoped to the ONE call that starts the step, not grepped from the whole
+    # file: a guard that can be satisfied by another line somewhere else has
+    # already shipped a fix that fixed nothing.
+    run = inspect.getsource(jobs.ClipJob._run)
+    i = run.index('message=f"Cutting the match:')
+    line = run[run.rindex("self._set", 0, i):i]
+    assert "done=0" in line, "the match step keeps the clip loop's finished counts"

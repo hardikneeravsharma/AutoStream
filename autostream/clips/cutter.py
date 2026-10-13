@@ -26,6 +26,8 @@ import logging
 import shutil
 from pathlib import Path
 
+from collections.abc import Callable
+
 from .plan import ClipPlan
 from .tools import decode_args, ffmpeg, media_info, video_codec_args
 
@@ -69,10 +71,23 @@ def master(source: Path, clip: ClipPlan, outdir: Path, *,
                 encoder=encoder, cq=cq, keep_all_audio=keep_all_audio)
 
 
+# HOW MUCH OF THE WORK THE JOIN IS. Measured on a real 52-minute Valorant
+# match: 21 encoded pieces took about 600 seconds and the stream-copy join
+# took 170, so the join is roughly another quarter on top. Counted as one
+# more piece it would leave a caller's progress bar at 95% for three minutes,
+# which is the complaint this whole callback exists to answer.
+JOIN_SHARE = 0.28
+
+
 def master_segments(source: Path, spans: list[tuple[float, float]], name: str,
                     outdir: Path, *, encoder: str = "auto", cq: int = 20,
-                    keep_all_audio: bool = True) -> Path:
+                    keep_all_audio: bool = True,
+                    progress: Callable[[int, int], None] | None = None) -> Path:
     """One clip made of several spans of the recording, joined in order.
+
+    `progress(done, total)` is called before each piece and again before the
+    join. A 52-minute match is thirteen minutes of work, and without this the
+    caller has nothing to report for the whole of it.
 
     This is what "cut the bit in the middle out" needs: the dead thirty
     seconds between two fights comes out and the two halves become one clip.
@@ -105,12 +120,17 @@ def master_segments(source: Path, spans: list[tuple[float, float]], name: str,
 
     work = outdir / f".{name}.parts"
     work.mkdir(parents=True, exist_ok=True)
+    units = len(keep) + max(1, round(len(keep) * JOIN_SHARE))
     try:
         parts = []
         for i, (a, b) in enumerate(keep):
+            if progress:
+                progress(i, units)
             parts.append(_cut(source, a, b - a, work / f"{i:03d}.mp4",
                               encoder=encoder, cq=cq,
                               keep_all_audio=keep_all_audio))
+        if progress:
+            progress(len(keep), units)
         # Relative names in the list file: the concat demuxer resolves them
         # against the list's own directory, which sidesteps every question
         # about quoting a Windows path containing spaces or an apostrophe.

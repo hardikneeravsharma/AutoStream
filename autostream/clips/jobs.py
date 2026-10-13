@@ -434,8 +434,19 @@ class ClipJob:
         name = (f"{plan.slug(self.game)}_{when}_match_"
                 f"{about['won']}-{about['lost']}_"
                 f"{duration_label(about['duration'])}")
+        def tick(done: int, total: int) -> None:
+            # Deliberately not self._check(): a cancel raised from inside the
+            # cutter would be caught by the caller's except and logged as
+            # "could not cut the match summary", which reads like a failure.
+            # Cancellation is checked where it is handled.
+            self._set(done=done, total=total,
+                      message=(f"Cutting the match: round {done + 1} of "
+                               f"{len(spans)}" if done < len(spans) else
+                               f"Joining {len(spans)} pieces into the match"))
+
         out = cutter.master_segments(
-            self.source, spans, name, self.folder / "match", encoder=enc)
+            self.source, spans, name, self.folder / "match", encoder=enc,
+            progress=tick)
 
         marks = msum.chapters(round_list, spans)
         if marks:
@@ -1277,7 +1288,11 @@ class ClipJob:
         self.diag.stage("5. montage")
         if want_montage:
             self._check()
-            self._set(step="montage",
+            # done/total RESET WITH THE STEP, for the same reason the match
+            # cut below does it: both inherit the clip loop's finished counts,
+            # and a join that reports 100% from its first second is how a
+            # running job gets mistaken for a hung one.
+            self._set(step="montage", done=0, total=1,
                       message=f"Joining {len(masters)} clips into a montage")
             when = datetime.fromtimestamp(
                 self.session.get("started") or self.started_at).strftime("%Y-%m-%d")
@@ -1322,7 +1337,12 @@ class ClipJob:
         # where a round began.
         if opt.get("match_summary") and round_list:
             self._check()
-            self._set(step="montage",
+            # done/total RESET WITH THE STEP. Without these the match cut
+            # inherited the clip loop's finished counts, so a thirteen-minute
+            # encode showed 100% and a blank ETA from its first second to its
+            # last -- which is indistinguishable from a job that has hung, and
+            # was reported as one.
+            self._set(step="montage", done=0, total=1,
                       message=f"Cutting the match: {len(round_list)} rounds")
             try:
                 self.summary_path = self._cut_match(round_list, info, enc)
