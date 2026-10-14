@@ -1578,15 +1578,20 @@ class ClipJob:
 
         vod = sorted(float(k["time"]) for k in kills)
         out: list[dict] = []
+        # A start worked out from the file's mtime is a guess (a download is
+        # dated the day it was downloaded), so the fingerprint decides alone.
+        exact = self._source_started_exact()
+        refused: list[dict] = []
         for m in found:
             puuid = vmatch.puuid_of(m, getattr(prof, "player", "") or "")
             if not puuid:
                 log.info("match %s: cannot tell which player is you, so its "
                          "record is unusable", m.id[:8])
                 continue
-            sync = vmatch.align(m, puuid, started, vod)
+            sync = vmatch.align(m, puuid, started, vod, exact=exact)
             if not sync.ok:
                 log.info("match %s does not line up: %s", m.id[:8], sync.why)
+                refused.append({"match": m.id[:8], "why": sync.why})
                 continue
             got_kills = vmatch.kills_from(m, puuid, sync)
             if not got_kills:
@@ -1610,6 +1615,13 @@ class ClipJob:
                           "matched": sync.matched, "total": sync.total,
                           "how": sync.why},
             })
+        # In the diagnostic, because a run that cut round-labelled clips from
+        # the wrong half-hour left nothing in it to say which clock placed them.
+        self.diag.note("match_record", {
+            "clock_exact": exact, "candidates": len(found),
+            "used": [{k: g["about"].get(k) for k in ("match", "map", "offset", "matched", "total", "how")}
+                     for g in out],
+            "refused": refused})
         return out
 
     def _from_picked_matches(self, kills: list[dict], prof, picked: list[str]) -> list[dict]:
@@ -2111,6 +2123,13 @@ class ClipJob:
             return self.source.stat().st_mtime - max(0.0, self.source_seconds)
         except OSError:
             return None
+
+    def _source_started_exact(self) -> bool:
+        """Whether `_source_started` is a time the file carries (OBS's filename
+        stamp) rather than its mtime less its length, which is only a guess."""
+        from .. import history
+
+        return history._started_from_name(str(self.source)) is not None  # noqa: SLF001
 
     def _from_demo(self, kills: list[dict]) -> dict | None:
         """Counter-Strike rounds and kills from Valve's own record of the match.

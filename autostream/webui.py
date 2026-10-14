@@ -679,7 +679,8 @@ class _Handler(BaseHTTPRequestHandler):
         elif u.path == "/api/clips/valorant/matches":
             q = parse_qs(u.query)
             self._json(self.app.clips_valorant_matches(
-                (q.get("started") or ["0"])[0], (q.get("seconds") or ["0"])[0]))
+                (q.get("started") or ["0"])[0], (q.get("seconds") or ["0"])[0],
+                (q.get("exact") or ["1"])[0] != "0"))
         elif u.path == "/api/clips/known-matches":
             q = parse_qs(u.query)
             self._json(self.app.clips_known_matches((q.get("path") or [""])[0]))
@@ -1574,14 +1575,17 @@ class Server:
         except (TypeError, ValueError):
             started = seconds = 0.0
         if started:
-            got = valorant_match.state(started, seconds)
+            got = valorant_match.state(started, seconds,
+                                       exact=body.get("started_exact") is not False)
             out.update(match_state=got["state"], match_count=got["matches"],
                        match_why=got.get("why", ""))
         return out
 
-    def clips_valorant_matches(self, started, seconds) -> dict:
+    def clips_valorant_matches(self, started, seconds, exact: bool = True) -> dict:
         """Every VALORANT match record saved on this PC, newest first, with
-        the ones played during the recording being looked at marked."""
+        the ones played during the recording being looked at marked -- unless
+        the recording's start is only a guess (`exact` False), when nothing is
+        marked and the user says which matches are in the video."""
         from .clips import valorant_match
 
         try:
@@ -1589,7 +1593,7 @@ class Server:
         except (TypeError, ValueError):
             started = seconds = 0.0
         try:
-            rows = valorant_match.listing(started, seconds)
+            rows = valorant_match.listing(started, seconds, exact=exact)
         except Exception as e:                              # noqa: BLE001
             log.warning("could not list the VALORANT match records: %s", e)
             return {"ok": False, "matches": [], "error": "Could not read the saved match records."}
@@ -4751,12 +4755,17 @@ class Server:
         # and every demo played during it is rejected as "written before the
         # match" -- see cs2_demo.demo_state.
         started = history._started_from_name(str(src))       # noqa: SLF001
+        # Whether the file SAYS when it began, or the start is only worked out
+        # from its mtime. A download is dated the day it was downloaded, so
+        # that guess can be wrong by any amount and still land on a saved match.
+        exact = started is not None
         if started is None:
             try:
                 started = src.stat().st_mtime - (out["duration"] or 0.0)
             except OSError:
                 started = None
         out["started"] = started
+        out["started_exact"] = exact
 
         # Only for a game that HAS replays, and only once one is chosen -- the
         # page asks again with the game once the user picks it.
@@ -4783,7 +4792,7 @@ class Server:
             if prof is not None and getattr(prof, "matches", False):
                 from .clips import valorant_match
 
-                got = valorant_match.state(started, out["duration"])
+                got = valorant_match.state(started, out["duration"], exact=exact)
                 out["match_state"] = got["state"]
                 out["match_count"] = got["matches"]
                 out["match_why"] = got.get("why", "")

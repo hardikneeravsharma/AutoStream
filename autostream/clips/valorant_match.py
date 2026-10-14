@@ -198,10 +198,21 @@ def summary(match: Match) -> dict:
     return out
 
 
-def listing(started: float = 0.0, seconds: float = 0.0) -> list[dict]:
+def listing(started: float = 0.0, seconds: float = 0.0,
+            exact: bool = True) -> list[dict]:
     """Every saved match, newest first; the ones played during a recording
-    that began at `started` carry `at`, seconds into that recording."""
-    here = {m.id for m in for_recording(started, seconds)} if started else set()
+    that began at `started` carry `at`, seconds into that recording.
+
+    `exact` is whether `started` is a time the recording CARRIES (OBS's filename
+    stamp) rather than one worked out from the file's mtime. An mtime-derived
+    start can be hours or days out -- a stream downloaded from YouTube -- yet
+    still land on a saved match by chance, and then the page showed that match
+    "at 34:56" when it was at 59:03 and cropped the scan to the wrong half-hour.
+    Nothing is marked then: the page asks the user which matches are in the
+    video, and each is found by its kills.
+    """
+    here = ({m.id for m in for_recording(started, seconds)}
+            if started and exact else set())
     out = []
     for m in cached():
         row = summary(m)
@@ -433,11 +444,20 @@ def align_free(match: Match, puuid: str, detected: list[float]) -> cs2_demo.Sync
 
 
 def align(match: Match, puuid: str, started: float,
-          detected: list[float]) -> cs2_demo.Sync:
+          detected: list[float], exact: bool = True) -> cs2_demo.Sync:
     """Where this match sits on the recording's timeline.
 
     `started` is when the recording began, in epoch seconds; `detected` are the
     kill times the pixel reader found, in seconds into the video.
+
+    `exact` says `started` is a stamp the recording carries. When it is only
+    the file's mtime less its length it is a guess -- a download is dated the
+    day it was downloaded -- so it may pick which matches to try but is never
+    the answer: a fingerprint is accepted however far the guess is from it,
+    and a match with no fingerprint is left out rather than placed by the
+    clock. Measured on a downloaded stream, the clock put a match at 34:56 that
+    was at 59:03, and was believed because the fingerprint had been refused for
+    disagreeing with it.
     """
     mine = match.my_kill_times(puuid)
     clock = match.started - started
@@ -446,6 +466,15 @@ def align(match: Match, puuid: str, started: float,
 
     fitted = cs2_demo.align(mine, detected) if len(detected) >= 3 else \
         cs2_demo.Sync(total=len(mine), why="too few detected kills to fingerprint")
+    if not exact:
+        if fitted.ok:
+            log.info("match %s: found by its kills at %+.1fs; the clock said "
+                     "%+.1fs but the file's time is only a guess",
+                     match.id[:8], fitted.offset, clock)
+            return fitted
+        return cs2_demo.Sync(total=fitted.total or len(mine),
+                             why="the file carries no recording time, and its "
+                                 f"kills could not place it: {fitted.why}")
     if fitted.ok:
         drift = abs(fitted.offset - clock)
         if drift <= DISAGREE_MAX:
@@ -749,20 +778,29 @@ def rounds_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list:
 
 
 def state(started: float, seconds: float,
-          matches: list[Match] | None = None) -> dict:
+          matches: list[Match] | None = None, exact: bool = True) -> dict:
     """Whether a match record is on hand for this recording, for the UI.
 
     `matches` is the cache, already read. Pass it when asking about more than
     one recording: reading every cached match once per recording is every
     match times every stream.
+
+    `exact`: see `align`. A guessed start still says which matches MIGHT be in
+    the video, but the page must not read that as where they are.
     """
     got = for_recording(started, seconds, matches)
     if got:
         nameless = [m for m in got if not str(m.data.get(MINE) or "")]
+        why = []
+        if not exact:
+            why.append("this file's name carries no recording time, so each "
+                       "match is found by its kills - tick the ones it contains")
+        if nameless:
+            why.append(f"{len(nameless)} of {len(got)} record(s) do not say "
+                       f"which player you are")
         return {"state": "have", "matches": len(got),
                 "ids": [m.id[:8] for m in got],
-                **({"why": f"{len(nameless)} of {len(got)} record(s) do not say "
-                            f"which player you are"} if nameless else {})}
+                **({"why": "; ".join(why)} if why else {})}
     if valorant_api.available():
         return {"state": "none", "matches": 0, "ids": [],
                 "why": "no match record was cached while this was recorded"}
