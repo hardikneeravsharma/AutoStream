@@ -5624,6 +5624,7 @@ async function clip_probeLocal() {
     if (!cur || cur.recording_path !== s.recording_path) return;  /* moved on */
     if (r.duration) cur.duration = r.duration;
     if (r.started) cur.started = r.started;
+    cur.started_exact = r.started_exact !== false;
     cur.demo_state = r.demo_state || null;
     cur.demo_file = r.demo_file || null;
     cur.has_demo = r.has_demo;
@@ -5688,6 +5689,11 @@ function clip_useLocal() {
     demos: g.demos, cards_ready: g.cards_ready, needs_ocr: g.needs_ocr,
     counts_assists: g.counts_assists, blocked: g.blocked, player: g.player,
     started: f.started || null, display_started: null, local: true,
+    /* FALSE UNTIL THE PROBE SAYS OTHERWISE. A picked file's start is worked
+       out from its mtime unless its name carries OBS's stamp, and a download
+       is dated the day it was downloaded -- so the clock may not place a match
+       in it, only the user's tick and the match's kills can. */
+    started_exact: false,
     /* NULL, AND PRESENT. A file somebody has just handed us has no earlier
        reading behind it, so there is no kill count -- and the build summary
        correctly says nothing about how many clips to expect. Carried as an
@@ -5853,6 +5859,18 @@ function clip_renderMatchLine() {
   var btn = el.querySelector('[data-act="fetch-matches"]');
   var FROM = ' Match records are read from the Riot Client on this PC and go '
     + 'only to Riot.';
+  if (st === 'have' && s.started_exact === false) {
+    /* The clock only says which matches MIGHT be here, not where. */
+    t.textContent = 'VALORANT match record: this file carries no recording time '
+      + '(a download?), so tick the matches it contains below - each is found '
+      + 'in the video by its kills, and the kills, rounds and clutches then come '
+      + 'from the game.';
+    el.classList.remove('is-warn');
+    if (btn) btn.textContent = 'Check for more matches';
+    var lb0 = clip_el('clip-matchlist');
+    if (lb0 && lb0.classList.contains('hide') && !clip_state.matchList) clip_showMatches(true);
+    return;
+  }
   if (st === 'have') {
     t.textContent = (s.match_count === 1
       ? 'VALORANT match record: 1 match found for this recording, so the '
@@ -5982,7 +6000,8 @@ async function clip_showMatches(force) {
   if (btn) { btn.setAttribute('aria-expanded', String(open)); btn.textContent = open ? 'Hide matches' : 'Show matches'; }
   if (!open) return;
   var s = clip_state.pick || {};
-  var q = '?started=' + encodeURIComponent(s.started || 0) + '&seconds=' + encodeURIComponent(s.duration || 0);
+  var q = '?started=' + encodeURIComponent(s.started || 0) + '&seconds=' + encodeURIComponent(s.duration || 0) +
+    (s.started_exact === false ? '&exact=0' : '');
   box.innerHTML = '<p class="muted">Reading the saved match records…</p>';
   var r = await API.get('/api/clips/valorant/matches' + q);
   if (!r || !r.ok) { box.innerHTML = '<p class="muted">' + esc((r && r.error) || 'Could not read the saved match records.') + '</p>'; return; }
@@ -6000,7 +6019,8 @@ async function clip_fetchMatches() {
   try {
     r = await API.post('/api/clips/valorant/fetch', {
       started: s.started || 0,
-      seconds: s.duration || 0
+      seconds: s.duration || 0,
+      started_exact: s.started_exact !== false
     });
   } catch (e) { clip_say('clip-matchmsg', ''); toast('Could not ask the Riot Client.', 'error'); return; }
   if (!r || r.error) { clip_say('clip-matchmsg', ''); toast((r && r.error) || 'Could not ask the Riot Client.', 'error'); return; }

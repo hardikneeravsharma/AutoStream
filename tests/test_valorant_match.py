@@ -144,6 +144,45 @@ def test_a_record_with_no_kills_by_this_player_cannot_line_up():
     assert not sync.ok
 
 
+# -------------------------------- a start the file does not carry is a guess
+#
+# A stream downloaded from YouTube is dated the day it was downloaded. The
+# mtime-less-length start was still believed: it put a Summit match at 34:56
+# that was at 59:03, the page cropped the scan to that half-hour, and the
+# fingerprint -- which had the right answer -- was refused for disagreeing
+# with the clock.
+
+def test_a_guessed_start_never_vetoes_the_fingerprint():
+    m = _m()
+    detected = [t + 1440.0 for t in (90.0, 155.0, 159.0)]    # 24 min from the clock
+    assert not vm.align(m, ME, REC_STARTED, detected).ok, "exact: refused, as before"
+    sync = vm.align(m, ME, REC_STARTED, detected, exact=False)
+    assert sync.ok, sync.why
+    assert sync.offset == pytest.approx(1500.0, abs=1.0), "the kills' answer, not the clock's"
+
+
+def test_a_guessed_start_never_places_a_match_alone():
+    m = _m()
+    assert vm.align(m, ME, REC_STARTED, []).ok, "an exact stamp still can"
+    sync = vm.align(m, ME, REC_STARTED, [], exact=False)
+    assert not sync.ok and "no recording time" in sync.why
+
+
+def test_the_listing_marks_nothing_from_a_guessed_start(monkeypatch):
+    recs = [_rec("here", 5000.0)]
+    monkeypatch.setattr(vm, "cached", lambda: list(recs))
+    assert vm.listing(4500.0, 2000.0)[0]["at"] == pytest.approx(500.0)
+    assert "at" not in vm.listing(4500.0, 2000.0, exact=False)[0]
+
+
+def test_the_page_is_told_when_the_clock_is_only_a_guess():
+    m = _m()
+    m.data[vm.MINE] = ME
+    assert "why" not in vm.state(REC_STARTED, 600.0, [m])
+    got = vm.state(REC_STARTED, 600.0, [m], exact=False)
+    assert got["state"] == "have" and "tick" in got["why"]
+
+
 # ------------------------------------------------------------ what it gives
 
 def _sync(m):

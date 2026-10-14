@@ -139,6 +139,29 @@ def test_without_a_stamp_the_duration_is_taken_off_the_mtime(app, tmp_path,
     assert out["started"] == pytest.approx(f.stat().st_mtime - 3600.0, abs=2)
 
 
+def test_the_probe_says_whether_the_start_is_stamped_or_guessed(app, tmp_path,
+                                                                monkeypatch):
+    """A download is dated the day it was downloaded, so a start worked out
+    from mtime can be wrong by any amount. The page must know which it has."""
+    monkeypatch.setattr("autostream.clips.tools.media_info",
+                        lambda p: {"duration": 600.0})
+    stamped = tmp_path / "2026-08-30 19-04-11.mp4"
+    guessed = tmp_path / "DAY 3 stream.mp4"
+    for f in (stamped, guessed):
+        f.write_bytes(b"x")
+    assert app.clips_probe({"path": str(stamped)})["started_exact"] is True
+    assert app.clips_probe({"path": str(guessed)})["started_exact"] is False
+
+
+def test_the_page_does_not_trust_a_guessed_start_for_where_a_match_is():
+    """The page sends match spans from each row's `at`, and the job crops the
+    scan to them -- so a guessed clock cropped a downloaded stream to the wrong
+    half-hour. A picked file is a guess until the probe says it is stamped."""
+    assert re.search(r"started_exact:\s*false", _func("clip_useLocal"))
+    assert "&exact=0" in _func("clip_showMatches")
+    assert "started_exact" in _func("clip_probeLocal")
+
+
 def test_a_file_that_cannot_be_probed_still_answers(app, tmp_path, monkeypatch):
     """ffmpeg missing, or a file it cannot read. The run probes it again
     itself, so a failure here costs the filmstrip and nothing else."""
@@ -731,6 +754,9 @@ PICK_LOCAL_ONLY = {
              "not one, and several gates key off exactly that",
     "source": "the path that marks a pick as not-from-history -- it is what "
               "the run uses instead of a history index",
+    "started_exact": "a session's start is the session's own clock, so it is "
+                     "never a guess; only a file's mtime can be, and the page "
+                     "reads an absent value as exact",
 }
 
 PICK_SESSION_ONLY = {
