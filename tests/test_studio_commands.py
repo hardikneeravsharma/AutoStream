@@ -254,10 +254,10 @@ def test_jumping_to_a_step_crosses_every_step_between(page: str) -> None:
 # ------------------------------------- the timeline's tools (U18, part one)
 
 def test_the_tools_are_named_and_each_has_a_key() -> None:
-    """Select, Roll and Razor. Ripple is deliberately NOT among them: this
-    timeline has no gaps, so shortening a shot already pulls the rest back --
-    a "ripple tool" beside the trim that already ripples would be two names
-    for one behaviour, which is how a UI starts lying about what it does.
+    """Select, Roll and Razor. Ripple is deliberately NOT among them: it is
+    Shift on an edge, the one gesture that pushes everything after it. A
+    "ripple tool" beside that would be two names for one behaviour, which is
+    how a UI starts lying about what it does.
     """
     for cid, key in (("timeline.tool-select", "V"),
                      ("timeline.tool-roll", "N"),
@@ -268,7 +268,7 @@ def test_the_tools_are_named_and_each_has_a_key() -> None:
         assert c["act"] == "studio-tool", c
         assert c["scope"] == "timeline", c
     assert C.by_id("timeline.tool-ripple") is None, (
-        "there is no ripple tool: a trim already ripples here")
+        "there is no ripple tool: Shift on an edge already ripples")
 
 
 def test_nobody_is_stranded_holding_a_tool(page: str) -> None:
@@ -276,14 +276,19 @@ def test_nobody_is_stranded_holding_a_tool(page: str) -> None:
     a modifier on the drag people already know -- so picking one is never
     required and never a trap."""
     assert "if (studio.tool !== 'select') studio_tool('select');" in page
-    # Ctrl rolls without picking the tool at all.
-    assert "studio.tool === 'roll' || g.roll || e.ctrlKey || e.metaKey" in page
+    # An edge moves the cut with no tool picked at all; Shift asks for the
+    # old push, and the Roll tool is the one place Shift cannot.
+    assert "ripple: !!trim && e.shiftKey && studio.tool !== 'roll'," in page
 
 
-def test_a_roll_is_decided_on_the_press_not_read_each_frame(page: str) -> None:
-    """Letting go of Ctrl halfway through a drag must not turn a roll into a
-    trim under the hand: the reel's length would jump mid-gesture."""
-    assert "roll: studio.tool === 'roll' || e.ctrlKey || e.metaKey," in page
+def test_a_ripple_is_decided_on_the_press_not_read_each_frame(page: str) -> None:
+    """Letting go of Shift halfway through a drag must not turn a push into a
+    cut move under the hand: the reel's length would jump mid-gesture. So the
+    move reads what the press decided, never the key as it is now."""
+    assert "ripple: !!trim && e.shiftKey && studio.tool !== 'roll'," in page
+    move = page[page.index("function studio_pointerMove("):]
+    move = move[:move.index("\nfunction ")]
+    assert "e.shiftKey" not in move
 
 
 def test_the_razor_acts_on_the_press_and_starts_no_drag(page: str) -> None:

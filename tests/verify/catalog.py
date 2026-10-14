@@ -586,7 +586,7 @@ CONTROLS: list[Control] = [
     Control("/api/studio/check", "POST", CALL, "apply a timeline edit", "studio",
             body={"project": None}, expect=_has("ok"),
             reject={"project": None}, reject_soft=True,
-            acts=("studio-beats", "studio-move", "studio-remove", "studio-slip",
+            acts=("studio-cut", "studio-move", "studio-remove", "studio-slip",
                   "studio-offset", "studio-rfmt", "studio-undo", "studio-fx-all",
                   "studio-tr-all", "studio-fxp-pick", "studio-fxp-done", "studio-fxp-drop",
                   "studio-fxp-stage"),

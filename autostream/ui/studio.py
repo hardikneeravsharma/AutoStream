@@ -288,10 +288,10 @@ STUDIO_HTML = r"""
         <span class="studio-tools" role="group" aria-label="Timeline tool">
           <button type="button" class="btn btn-sm studio-tool is-on" data-act="studio-tool"
                   data-tool="select" aria-pressed="true"
-                  title="Select — move a shot, drag its edge to trim (V)">Select</button>
+                  title="Select — move a shot; drag an edge to move that cut, Shift-drag to push everything after it (V)">Select</button>
           <button type="button" class="btn btn-sm studio-tool" data-act="studio-tool"
                   data-tool="roll" aria-pressed="false"
-                  title="Roll — move the join between two shots, leaving the reel the same length (N, or hold Ctrl)">Roll</button>
+                  title="Roll — an edge always moves the cut and never pushes the reel, even with Shift held (N)">Roll</button>
           <button type="button" class="btn btn-sm studio-tool" data-act="studio-tool"
                   data-tool="razor" aria-pressed="false"
                   title="Razor — click a shot to cut it in two (C)">Razor</button>
@@ -336,7 +336,7 @@ STUDIO_HTML = r"""
           <div class="studio-tracks" id="studio-tracks"></div>
         </div>
       </div>
-      <p class="muted studio-hint ed-hint">Drag a shot to move it, its edge to trim, its diamond to move the kill.
+      <p class="muted studio-hint ed-hint">Drag a shot to move it. Drag either edge to move that cut &mdash; the shots either side give and take, so every kill stays on its beat; Shift-drag to push everything after it. Its diamond moves the kill.
         Ctrl+wheel zooms. Arrow keys move between shots, Space plays.</p>
     </div>
 
@@ -5227,7 +5227,10 @@ function studio_drawTimeline() {
          whole difference -- moving the cut is what pushed every later shot
          down the timeline and knocked the kills after it off the beat. */
       studio_extraKills(s, r, i, pps) +
-      '<span class="st-trim" data-trim="' + i + '" title="Drag to change the length"></span></div>';
+      '<span class="st-trim-l" data-trim-l="' + i + '" title="Drag to move the cut before this shot: ' +
+      'the shot before gives or takes the time, so every kill stays on its beat"></span>' +
+      '<span class="st-trim" data-trim="' + i + '" title="Drag to move the cut after this shot: ' +
+      'the shot after gives or takes the time. Shift-drag to push everything after it instead"></span></div>';
   });
 
   /* THE INTRO CLIP, DRAWN OVER WHAT IT COVERS. It is not a shot and never
@@ -6165,14 +6168,20 @@ function studio_drawInspectorBody() {
         '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-slip" data-d="-0.0167">−1f</button>' +
         '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-slip" data-d="0.0167">+1f</button>' +
         '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-slip" data-d="0.1">+0.1s</button></span></div>' +
-        '<div class="studio-field"><span class="field-label">Run-up</span><span class="field-inline">' +
-        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-beats" data-what="pre" data-d="-1">−</button>' +
+        /* BEFORE AND AFTER THE KILL, each moving the cut on that side. Not
+           "Run-up" and "Length": those moved the kill off its beat and pushed
+           every later shot, and neither is what somebody shortening a lead-up
+           means. The kill stays where it plays; the neighbours give and take. */
+        '<div class="studio-field"><span class="field-label">Before the kill</span><span class="field-inline">' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-cut" data-end="head" data-d="-1" title="Show less before the kill">−</button>' +
         '<span class="mono">' + (s.pre / beat).toFixed(s.pre % beat < 0.01 ? 0 : 1) + ' beats · ' + s.pre.toFixed(2) + ' s</span>' +
-        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-beats" data-what="pre" data-d="1">+</button></span></div>' +
-        '<div class="studio-field"><span class="field-label">Length</span><span class="field-inline">' +
-        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-beats" data-what="duration" data-d="-1">−</button>' +
-        '<span class="mono">' + (s.duration / beat).toFixed(s.duration % beat < 0.01 ? 0 : 1) + ' beats · ' + s.duration.toFixed(2) + ' s</span>' +
-        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-beats" data-what="duration" data-d="1">+</button></span></div>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-cut" data-end="head" data-d="1" title="Show more before the kill">+</button></span></div>' +
+        '<div class="studio-field"><span class="field-label">After the kill</span><span class="field-inline">' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-cut" data-end="tail" data-d="-1" title="Cut away sooner after the kill">−</button>' +
+        '<span class="mono">' + ((s.duration - s.pre) / beat).toFixed((s.duration - s.pre) % beat < 0.01 ? 0 : 1) + ' beats · ' + (s.duration - s.pre).toFixed(2) + ' s</span>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-cut" data-end="tail" data-d="1" title="Stay longer after the kill">+</button></span></div>' +
+        '<p class="muted studio-small">The kill stays on its beat; the shots either side give and take the time. ' +
+        'A beat a press, or a quarter of one with “Keep cuts on the beat” off.</p>' +
         '<div class="studio-field"><label class="field-label" for="studio-f-speed">Speed</label>' + studio_select_html('studio-f-speed', 'speed', s.speed) +
         (s.stretch ? '<span class="muted studio-small">Run-up slowed to ' + Number(s.stretch[0]).toFixed(2) + '× so its kill reaches its mark; the last ' +
           Number(s.stretch[1]).toFixed(1) + ' s play as recorded' + (Number(s.stretch[2] || 0) > 0 ? ', after its first frame holds ' + Number(s.stretch[2]).toFixed(1) + ' s' : '') +
@@ -6554,6 +6563,102 @@ function studio_ioDraw() {
 
 /* ------------------------------------------------------------ dragging */
 
+/* MOVING A CUT, AND NOTHING ELSE.
+
+   Asked for in so many words: "the second shot cuts just before the kill and we
+   were showing the lead-up more than the actual kill, so I wanted to shorten the
+   lead-up and increase the time after -- but it shifted the whole timeline."
+   Measured off the recording that came with it: the tools within reach each moved
+   the wrong thing. Run-up and the kill diamond moved the KILL inside a shot that
+   stayed put, so it left its beat; Length and the edge drag changed the shot's
+   length and pushed every shot after it; and Roll, the one tool meant for this,
+   moved the next shot's start without trimming its head, so THAT shot's kill
+   slid off its beat by however far the cut went.
+
+   A cut belongs to two shots. Moving it lengthens one and shortens the other by
+   the same amount, and the shot that loses time loses it from the side the cut
+   is on -- its head, if the cut is before it -- so its kill plays at exactly the
+   same moment. Every kill in the reel stays on its beat. Nothing after the two
+   shots moves at all.
+
+   The start of the reel is a cut with nothing before it: trimming the first
+   shot's head moves reel zero, and the song is moved by the same amount so every
+   kill still meets the same moment of the music. */
+const STUDIO_MIN_SHOT = 0.25;        // studio.MIN_SHOT: below this a shot is a flicker
+const STUDIO_MIN_LEAD = 0.1;         // a cut this close before a kill shows nothing of it
+const STUDIO_MIN_AFTER = 0.1;        // ...or this close after
+/* Two frames short of the footage, not on it: the server measures what a ramp
+   eats more exactly than this can, and a shot cut past its footage is trimmed
+   there by a whole beat -- which pushes everything after it, the fault itself. */
+const STUDIO_ROOM_MARGIN = 2 / 60;
+
+function studio_rateAt(r, end) {
+  const ps = (r && r.pieces) || [];
+  if (!ps.length) return 1;
+  const pc = end === 'tail' ? ps[ps.length - 1] : ps[0];
+  return Math.max(0.05, Number(pc[2]) || 1);
+}
+
+/* Footage a shot has but does not use, past its tail or before its head, in
+   OUTPUT seconds -- through its speed at that end, because a ramp eats source
+   faster than it plays. */
+function studio_room(s, r, end) {
+  if (!r) return 0;
+  const src = end === 'tail' ? (Number(s.clip_seconds) || 0) - (Number(r.source_out) || 0)
+                             : (Number(r.source_in) || 0);
+  return Math.max(0, src / studio_rateAt(r, end) - STUDIO_ROOM_MARGIN);
+}
+
+/* Move the cut after shot j by `by` seconds, later being positive. j = -1 is the
+   start of the reel and j = last its end. Measured from `base` -- the project
+   and derive as they were before the gesture -- so a drag is one move from
+   where it started rather than a compound of every frame it passed through.
+   -> {by: what was applied, why: '' or the limit that stopped it}. */
+function studio_rollCut(p, base, j, by) {
+  const n = p.shots.length;
+  const a0 = j >= 0 ? base.p.shots[j] : null, b0 = j + 1 < n ? base.p.shots[j + 1] : null;
+  const ar = j >= 0 ? base.d.shots[j] : null, br = j + 1 < n ? base.d.shots[j + 1] : null;
+  let lo = -Infinity, hi = Infinity, whyLo = '', whyHi = '';
+  const tighten = (side, v, why) => {
+    if (side === 'hi' && v < hi) { hi = v; whyHi = why; }
+    if (side === 'lo' && v > lo) { lo = v; whyLo = why; }
+  };
+  if (a0) {
+    const name = studio_shotName(j);
+    tighten('hi', studio_room(a0, ar, 'tail'), name + ' has no more footage after this');
+    tighten('lo', Math.max(STUDIO_MIN_SHOT, a0.pre + STUDIO_MIN_AFTER) - a0.duration,
+            'the cut cannot go back past the kill in ' + name);
+  }
+  if (b0) {
+    const name = studio_shotName(j + 1);
+    tighten('hi', Math.min(b0.pre - STUDIO_MIN_LEAD, b0.duration - STUDIO_MIN_SHOT),
+            'the cut cannot go past the kill in ' + name);
+    tighten('lo', -studio_room(b0, br, 'head'), name + ' has no more footage before its kill');
+  }
+  if (j < 0 && base.p.song) {
+    tighten('lo', -(Number(base.p.song_offset) || 0), 'the song cannot start before its first second');
+  }
+  let got = by, why = '';
+  if (lo > hi) { got = 0; why = whyHi || whyLo; }
+  else if (by > hi) { got = hi; why = whyHi; }
+  else if (by < lo) { got = lo; why = whyLo; }
+  got = Math.round(got * 1e5) / 1e5;
+  const A = j >= 0 ? p.shots[j] : null, B = j + 1 < n ? p.shots[j + 1] : null;
+  if (A) A.duration = Math.round((a0.duration + got) * 1e5) / 1e5;
+  if (B) {
+    B.duration = Math.round((b0.duration - got) * 1e5) / 1e5;
+    B.pre = Math.round((b0.pre - got) * 1e5) / 1e5;
+  }
+  if (j < 0 && base.p.song) p.song_offset = Math.round(((Number(base.p.song_offset) || 0) + got) * 1e4) / 1e4;
+  return {by: got, why: why};
+}
+
+/* Where the cut after shot j sits on the reel: the time the next one starts. */
+function studio_cutAt(d, j) {
+  if (j < 0) return 0;
+  return j + 1 < d.shots.length ? d.shots[j + 1].start : d.length;
+}
+
 /* The kills of this shot that are not the one it is cut around, in the order
    derive() reports them -- which is the order of `s.kills` filtered to the
    footage the shot uses, so the index is the same on both sides. */
@@ -6581,13 +6686,16 @@ function studio_pointerDown(e) {
   if (!studio.project || !tl || !tl.contains(e.target) || e.button !== 0) return;
   const trim = e.target.closest('[data-trim]'), kill = e.target.closest('[data-kill]');
   const anchor = e.target.closest('[data-anchor]');
+  const trimL = e.target.closest('[data-trim-l]');
   const shot = e.target.closest('.st-shot');
-  if (!trim && !kill && !anchor && !shot) return;
+  if (!trim && !trimL && !kill && !anchor && !shot) return;
   let aj = -1;
   let i;
   if (anchor) {
     const bits = anchor.getAttribute('data-anchor').split(':');
     i = Number(bits[0]); aj = Number(bits[1]);
+  } else if (trimL) {
+    i = Number(trimL.getAttribute('data-trim-l'));
   } else {
     i = Number((trim || kill || shot).getAttribute(trim ? 'data-trim' : kill ? 'data-kill' : 'data-shot'));
   }
@@ -6622,12 +6730,18 @@ function studio_pointerDown(e) {
     e.preventDefault();
     return;
   }
-  studio.drag = {kind: trim ? 'trim' : anchor ? 'anchor' : kill ? 'kill' : 'move',
+  studio.drag = {kind: trim ? 'trim' : trimL ? 'head' : anchor ? 'anchor' : kill ? 'kill' : 'move',
                  i: i, j: aj, x0: e.clientX, moved: false,
+                 /* Shift on the press asks for the old trim: this shot changes
+                    length and everything after it moves. Decided on the press
+                    and kept -- letting go of Shift halfway through must not
+                    turn one into the other under the hand, which would make
+                    the reel's length jump mid-gesture. The Roll tool never
+                    ripples, which is all that is left for it to mean now that
+                    an edge moves the cut by default. */
+                 ripple: !!trim && e.shiftKey && studio.tool !== 'roll',
+                 derivedSnap: JSON.stringify(studio.derived),
                  at: anchor ? (studio.derived.shots[i].kills_reel || [])[aj] : 0,
-                 /* Decided on the press and kept: letting go of Ctrl halfway
-                    through must not turn a roll into a trim under the hand. */
-                 roll: studio.tool === 'roll' || e.ctrlKey || e.metaKey,
                  dur: s.duration, pre: s.pre, snapshot: JSON.stringify(studio.project), pointer: e.pointerId};
   /* Captured on the timeline itself, which survives the redraws a drag does. */
   try { tl.setPointerCapture(e.pointerId); } catch (err) { /* no capture, still works with a mouse */ }
@@ -6641,27 +6755,22 @@ function studio_pointerMove(e) {
   if (!g.moved && Math.abs(dx) < 4) return;
   g.moved = true;
   const p = studio.project, s = p.shots[g.i], dt = dx / studio.pps, beat = p.beat || 0.5;
-  if (g.kind === 'trim') {
-    /* ROLL: the join moves, the reel does not. What this shot gains the next
-       one gives up, so every kill after the join stays exactly where it was --
-       which is the whole reason to roll rather than trim. Held back at either
-       end by the beat, because a shot shorter than that is not a shot.
-       Ctrl does it without picking the tool. */
-    const roll = studio.tool === 'roll' || g.roll || e.ctrlKey || e.metaKey;
-    const nxt = p.shots[g.i + 1];
-    if (roll && nxt) {
-      if (g.nextDur === undefined) g.nextDur = nxt.duration;
-      const room = Math.min(g.nextDur - beat, Infinity);
-      const want = studio_snapTo(g.dur + dt) - g.dur;
-      const by = Math.max(beat - g.dur, Math.min(room, want));
-      s.duration = Number((g.dur + by).toFixed(5));
-      nxt.duration = Number((g.nextDur - by).toFixed(5));
-      g.rolled = true;
-      nxt.pre = Math.min(nxt.pre, nxt.duration);
-    } else {
-      s.duration = Math.max(beat, studio_snapTo(g.dur + dt));
-    }
+  if (g.kind === 'trim' && g.ripple) {
+    /* THE OLD TRIM, on Shift: this shot changes length and every shot after it
+       moves with it. Kept because it is sometimes what is meant -- but it knocks
+       every later kill off its beat, so it is no longer what an edge does. */
+    s.duration = Math.max(STUDIO_MIN_SHOT, studio_snapTo(g.dur + dt));
     s.pre = Math.min(s.pre, s.duration);
+  } else if (g.kind === 'trim' || g.kind === 'head') {
+    /* THE CUT MOVES; NOTHING ELSE DOES. See studio_rollCut. Rebuilt from the
+       state at the press every time, so the limit a drag runs into is measured
+       from where it began and a drag that comes back undoes itself exactly. */
+    if (!g.base) g.base = {p: JSON.parse(g.snapshot), d: JSON.parse(g.derivedSnap)};
+    const j = g.kind === 'head' ? g.i - 1 : g.i;
+    const at = studio_cutAt(g.base.d, j);
+    const res = studio_rollCut(p, g.base, j, studio_snapTo(at + dt) - at);
+    g.limit = res.why;
+    g.rolled = true;
   } else if (g.kind === 'kill') {
     s.pre = Math.max(0, Math.min(s.duration, studio_snapTo(g.pre + dt)));
   } else if (g.kind === 'anchor') {
@@ -6715,7 +6824,7 @@ function studio_pointerUp(e) {
   if (!g.moved) { studio_select(g.i); return; }
   studio.gen++;
   const moveName = studio_shotName(g.i) +
-    (g.kind === 'trim' ? (g.rolled ? ' · the join rolled' : ' · trimmed')
+    (g.kind === 'trim' || g.kind === 'head' ? (g.rolled ? ' · the cut moved' : ' · trimmed, and everything after it moved')
      : g.kind === 'kill' ? ' · the kill moved'
      : g.kind === 'anchor' ? ' · a kill pinned to the beat' : ' moved');
   studio_pushUndo(g.snapshot, moveName);
@@ -6724,6 +6833,9 @@ function studio_pointerUp(e) {
   studio.sel = g.i;
   studio_drawAll();
   studio_check();
+  /* SAID, NOT SWALLOWED. A cut that stopped short of where the hand let go
+     looks like a drag that did not work unless something says why. */
+  if (g.limit) toast('The cut stopped there: ' + g.limit + '.', 'info');
 }
 
 /* ------------------------------------------------------------ opening */
@@ -8022,13 +8134,21 @@ function studio_wire() {
       studio_change(pr => { const s = pr.shots[i]; s.kill = Math.max(0, Math.min(s.clip_seconds, s.kill + d)); },
                     studio_shotName(i) + ' · where the kill is', i);
     }
-    else if (act === 'studio-beats' && p) {
-      const what = b.getAttribute('data-what'), d = Number(b.getAttribute('data-d')), beat = p.beat || 0.5, i = studio.sel;
-      studio_change(pr => {
-        const s = pr.shots[i];
-        if (what === 'pre') s.pre = Math.max(0, Math.min(s.duration, s.pre + d * beat));
-        else { s.duration = Math.max(beat, s.duration + d * beat); s.pre = Math.min(s.pre, s.duration); }
-      }, studio_shotName(i) + (what === 'pre' ? ' · the run-up to the kill' : ' · length'), i);
+    else if (act === 'studio-cut' && p) {
+      const end = b.getAttribute('data-end'), d = Number(b.getAttribute('data-d')), i = studio.sel;
+      const beat = p.beat || 0.5;
+      const step = studio_el('studio-snap').checked ? beat : beat / 4;
+      /* More BEFORE the kill is the cut before it moving earlier; more AFTER is
+         the cut after it moving later. */
+      const j = end === 'head' ? i - 1 : i, by = end === 'head' ? -d * step : d * step;
+      const base = {p: JSON.parse(JSON.stringify(p)), d: JSON.parse(JSON.stringify(studio.derived))};
+      const trial = studio_rollCut(JSON.parse(JSON.stringify(p)), base, j, by);
+      if (Math.abs(trial.by) < 1e-6) { toast('That cut cannot move: ' + (trial.why || 'nothing to give') + '.', 'warn'); }
+      else {
+        studio_change(pr => { studio_rollCut(pr, base, j, by); },
+                      studio_shotName(i) + (end === 'head' ? ' · before the kill' : ' · after the kill'), i);
+        if (trial.why) toast('Moved as far as it can: ' + trial.why + '.', 'info');
+      }
     }
     else if (act === 'studio-offset' && p) {
       const d = Number(b.getAttribute('data-d')), beat = p.beat || 0.5;
