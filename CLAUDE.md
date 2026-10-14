@@ -193,7 +193,7 @@ because a re-render cleared the flag an in-flight fetch was about to set, and a
 
 ```powershell
 # the app must NOT be running - ask it to quit, do not kill it
-.\.venv\Scripts\python.exe -m pytest testserify -m ui -q -p no:randomly
+.\.venv\Scripts\python.exe -m pytest tests\verify -m ui -q -p no:randomly
 ```
 
 `-m ui` is required; these are deselected by default, so a plain `pytest -q` runs
