@@ -3988,6 +3988,10 @@ STUDIO_CSS = r"""
 .st-kill.is-extra{width:9px;height:9px;margin-left:-4.5px;bottom:8px;
   background:transparent;border-color:var(--text-secondary)}
 .st-kill.is-extra.is-pinned{background:var(--accent);border-color:var(--accent)}
+/* The cut BEFORE a shot, as a handle of its own: there was only the one after,
+   so a lead-up could not be shortened from the side it is on. */
+.st-trim-l{position:absolute;top:0;left:0;width:10px;height:100%;cursor:ew-resize;
+  background:linear-gradient(270deg,transparent,rgba(255,255,255,.35));z-index:1}
 .st-trim{position:absolute;top:0;right:0;width:10px;height:100%;cursor:ew-resize;
   background:linear-gradient(90deg,transparent,rgba(255,255,255,.35))}
 .st-tr{position:absolute;height:22px;margin-left:0;transform:translateX(-50%);padding:0 5px;min-width:18px;
