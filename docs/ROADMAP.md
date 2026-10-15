@@ -38,6 +38,70 @@ That is why the first item is Twitch and Kick.
 
 ## The order
 
+### TOP PRIORITY — kill accuracy, fast-cut rules, drops, and the Make-a-reel page (asked 2026-10-15)
+
+**Everything below was asked for, measured, and not yet built.** It outranks every
+section after it. It came from one session: a hand-edited reel (`ddddcccc`), then
+`HEADSHOT2`, then `headshot3` rebuilt four times until "every kill is perfect" by eye. The
+evidence is in each row, so nothing here needs re-deriving.
+
+**Suggested order: K1, K2, K3, then D1, D2 -- the kill and the cut first, because every
+other item sits on top of them -- then M1-M6.**
+
+#### K -- Kill accuracy and fast cuts (from the headshot3 rebuild)
+
+| # | Change | Evidence | Size | Status |
+|---|---|---|---|---|
+| K1 | **Correct each kill's time from the crosshair.** The red hit-marker X on the crosshair (gold X when the kill confirms) is the visible kill; find its onset and use it, not only the marked time | Read by eye on six clips: marked times were early by **0.4 s** in one (shot 10: marked 3.505, hit at 3.9) and **late by 0.3 s** in another (shot 16), 0 to 0.15 s in three more. A blanket shift made it worse. `studio.kill_marks` (the emblem check) gave 4.27 s for the 3.9 s hit | Large | **not started** |
+| K2 | **Fast-cut rules for Hype, Chaos, Headshot, Fast-paced headshot**, on the high-BPM part only: ONE transition (hard cut), ONE kill effect, real speed only (no ramps), no mixing from a large pool | The "missed kills" were a 0.22 s aftermath under a crossfade (shots 10, 11, 12, 23) and speed ramps that made the hit arrive late (16, 20). v2 applied this by hand and the user said it "looks pretty ok" | Medium | **not started** (done by hand in a script) |
+| K3 | **At least 0.4 s after every kill**, taken from the NEXT shot's lead-up so every kill stays on its beat | The planner gives the next shot everything except 0.22 s of the gap (`studio.apply_marks`, the `max(0.22, ...)` floor): **14 of 30** shots had exactly 0.22 s. Kills 0.8 s apart split 0.58 / 0.22 | Small | **not started** |
+| K4 | **Kill-centred fast pacing**: slow simple cuts in the build, fast one-kill-per-beat cuts from the drop, the first kill exactly on the drop | Today shots average 1.68 s before the drop and 1.25 s after (too mild). A kill landed 0.36 s after the drop, not on it | Large | **not started** |
+| K5 | **Pass the kill-emblem, still-footage and spectator checks (`confirm`, `measure`, `theirs`) to `studio.plan` from every caller**, not only the web page | `webui.studio_plan` passes them; scripts and tests pass `None`, so a reel built outside the page uses raw times | Small | **not started** |
+
+#### D -- Drops (the new detector, scored against hand-marked songs)
+
+| # | Change | Evidence | Size | Status |
+|---|---|---|---|---|
+| D1 | **New drop detector: the bass enters AND the beat comes with it**, entrances at least **14 s apart** (`beatsync.find_entrances`) | Blade x Into The Void, drops marked by ear at 32.2, 108.8, 172.4, 271.1, 326.7 s: the old detector found 4 of 5, each up to 2.5 s late, and **missed 172.4 entirely** (overall loudness rises only 3 dB). New: 5 of 5 within 1 s. A bass entrance with no treble after it is a build starting (83.2 s) or a calm vocal (216.8 s): 31 dB of treble against 46-48 on real drops. On 6 hand-flagged songs: 25/33 found and precision 47% at a 6 s gap; 14 s gives 64% / 82% recall | Medium | **prototype only**, uncommitted on `feat-drop-detector`; not in the app |
+| D2 | **Suggest, then the user confirms**: detected drops shown on the song, fixed with x and double-click, **saved per song** | The best simple rule tops out near 64-70%, and no single feature separated kept from removed drops (steady 7.5-7.75 s bass in Believer and "no!" was removed; Cradles' 8-10 s drops were kept) | Medium | **not started** |
+| D3 | **The planner uses the confirmed drop for the stretch of song it plays**, not the biggest one in the whole song | headshot3 plays 2:29-3:31 but `shape.drop` was 4:33 (273.5 s): the reel never reached it, so it had no build and no drop | Small | **not started** |
+| D4 | **Unconfirmed song**: fall back to the strongest drop, or to none (decide) | A wrong auto drop puts the speed-up in the wrong place | Small | **needs a decision** |
+
+#### M -- The Make-a-reel dialog becomes a page
+
+| # | Change | Detail | Size | Status |
+|---|---|---|---|---|
+| M1 | A **proper page**, not a popup | Sections: Clips, Style, Look, Kills, Order | Large | **not started** |
+| M2 | **Effects chosen from a list** | Clicking a slot (Opening, Kill, Camera...) opens a searchable list with a live preview; today it cycles to the next effect | Medium | **not started** |
+| M3 | **Mix and match per slot** | Each slot is a set with weights, so the page shows what the timeline will actually draw from (it shows one pick per drawer today; a reel draws per shot from a pool) | Medium | **not started** |
+| M4 | **Editable kill markers on the page**, like the Song tab | Fix kills before the build | Medium | **not started** |
+| M5 | **Plain wording for Best order vs Perfect fit** | Best order: biggest moments on the song's biggest hits, near-instant. Perfect fit: every kill exactly on a beat, up to ~30 s. Two near-identical sentences today | Small | **not started** |
+| M6 | **Style cards as a 20 s sample cut from the SAME kills** | Replaces the wall of statistics text; about 4 minutes of one-time rendering for 11 styles, cached | Medium | **not started** |
+
+#### S -- Smaller items found on the way
+
+| # | Item | Detail | Status |
+|---|---|---|---|
+| S1 | **"Pin to the drop"** as a named command, and a **"let earlier kills float"** switch | The two small pieces left over from the kill-diamond work in v1.69.0 | not started |
+| S2 | The headshot style's **three framings and blurred backdrop** | `docs/STYLE-FAST-PACED-HEADSHOT.md` section 7 | not started |
+| S3 | **The v1.67.0 GitHub release has no files** | Published with no assets before the updater was fixed; delete it or leave it | **needs a decision** |
+| S4 | **17 GB of another session's temp files** in `%TEMP%\claude` | Not deleted, because it is not this session's | **needs a decision** |
+
+#### Not in this table because it already shipped
+
+v1.65.x the match video as a recap; v1.66.0 hard-mono grade and rigid beat grid; v1.67.0 beat
+engine; v1.68.0 the Fast-paced headshot style; v1.69.0 every kill a diamond plus slow-motion
+frame blending and speed-up blur; v1.70.0 an edge moves only that cut. All have Progress rows.
+
+#### Two local pages exist and are NOT in the repo
+
+`mark-the-song.html` (mark a song's sections by ear) and `drop-detector-all-songs.html` (the
+old and new detector side by side across the song library, with x / + / double-click
+corrections that copy out as JSON) were written on the maintainer's desktop. If D2 is built,
+the second is its prototype.
+
+---
+
 ### Now — the CS2 card tally fails for an outside user (2026-10-06)
 
 **Ahead of everything below, because a real user is blocked today.** A
