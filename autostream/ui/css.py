@@ -3613,6 +3613,17 @@ STUDIO_CSS = r"""
 .bin-dealer{display:flex;flex-wrap:wrap;gap:var(--space-3);align-items:center}
 .bin-code{font:500 12px var(--font-mono);color:var(--text-tertiary);letter-spacing:.08em}
 .bin-hand{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:var(--space-3)}
+/* A drawer's SET, under its card: the effects a reel draws from, each with how often. */
+.studio-set{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
+.studio-set-chip{display:inline-flex;align-items:center;gap:2px;border:var(--border-hair) solid var(--border-strong);
+  border-radius:999px;padding:2px 4px 2px 10px;background:var(--surface-2,var(--surface));font-size:12px}
+.studio-set-name{margin-right:4px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.studio-set-w,.studio-set-x{border:0;background:transparent;color:var(--text-secondary);cursor:pointer;
+  width:20px;height:20px;border-radius:50%;line-height:1;font-size:14px}
+.studio-set-w:hover:not(:disabled),.studio-set-x:hover{background:var(--surface-3,rgba(255,255,255,.08));color:var(--text-primary)}
+.studio-set-w:disabled{opacity:.3;cursor:default}
+.studio-set-n{min-width:14px;text-align:center;font:600 12px var(--font-mono)}
+.studio-set-sum{margin:4px 0 0}
 .bin-drawer-label{font:500 10.5px var(--font-mono);letter-spacing:.1em;text-transform:uppercase;
   color:var(--text-tertiary)}
 .bin-build{display:flex;flex-wrap:wrap;gap:var(--space-3);align-items:center;font-size:12.5px;
@@ -3797,6 +3808,52 @@ STUDIO_CSS = r"""
   background:var(--surface);color:var(--text-secondary);border:var(--border-hair) solid var(--border-subtle);
   border-radius:var(--radius-md);font:inherit}
 .studio-style:hover{border-color:var(--border-strong)}
+/* THE MAKE PAGE: a page in the Studio's own flow, not a dialog over it. While it is open the rest of
+   the Studio steps aside. */
+.scrim.studio-page{position:static;display:block;padding:0;background:none;animation:none;z-index:auto}
+.scrim.studio-page.hide{display:none}
+#view-studio.is-making .studio > :not(.scrim){display:none}
+.studio-page-card{display:flex;flex-direction:column;gap:var(--space-5);width:100%;max-width:1180px;margin:0 auto}
+.mk-head{display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap}
+.mk-title{margin:0;font-size:22px}
+.mk-layout{display:grid;grid-template-columns:150px minmax(0,1fr);gap:var(--space-6);align-items:start}
+.mk-nav{position:sticky;top:var(--space-4);display:flex;flex-direction:column;gap:4px}
+.mk-nav-b{text-align:left;padding:8px 12px;border:0;border-left:2px solid var(--border-subtle);background:transparent;
+  color:var(--text-secondary);font:inherit;cursor:pointer}
+.mk-nav-b:hover{color:var(--text-primary)}
+.mk-nav-b.is-on{border-left-color:var(--accent);color:var(--text-primary);font-weight:600}
+.mk-body{display:flex;flex-direction:column;gap:var(--space-7,40px);min-width:0}
+.mk-sec{scroll-margin-top:var(--space-4);display:flex;flex-direction:column;gap:var(--space-3)}
+.mk-bar{position:sticky;bottom:0;display:flex;align-items:center;justify-content:flex-end;gap:var(--space-3);
+  padding:var(--space-3) var(--space-4);background:var(--surface);border-top:var(--border-hair) solid var(--border-subtle);
+  z-index:2}
+.mk-bar .muted{margin-right:auto}
+@media (max-width:759px){.mk-layout{grid-template-columns:minmax(0,1fr)}
+  .mk-nav{position:static;flex-direction:row;flex-wrap:wrap}
+  .mk-nav-b{border-left:0;border-bottom:2px solid var(--border-subtle)}
+  .mk-nav-b.is-on{border-bottom-color:var(--accent)}}
+/* STYLE CARDS: each plays about twenty seconds cut from the player's own kills. */
+.studio-samples-bar{display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap}
+.studio-style-card{display:flex;flex-direction:column;gap:var(--space-2);border:var(--border-hair) solid var(--border-subtle);
+  border-radius:var(--radius-md);background:var(--surface);overflow:hidden}
+.studio-style-card.is-on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.studio-style-card .studio-style{border:0;border-radius:0;background:transparent;box-shadow:none}
+.studio-style-media{aspect-ratio:16/9;background:var(--surface-sunken);display:flex;align-items:center;justify-content:center}
+.studio-style-media video{width:100%;height:100%;object-fit:cover;display:block}
+.studio-style-none{font-size:12px;color:var(--text-tertiary);padding:var(--space-3);text-align:center}
+.studio-style-tag{font-size:10px;font-weight:500;padding:1px 6px;border-radius:99px;border:var(--border-hair) solid var(--border-strong);
+  color:var(--text-secondary);vertical-align:middle}
+.studio-style-more{padding:0 var(--space-4) var(--space-3);font-size:11px;color:var(--text-tertiary)}
+.studio-style-more summary{cursor:pointer}
+/* THE KILLS ON THE SONG */
+.studio-mk-kills{display:flex;flex-direction:column;gap:var(--space-3)}
+.studio-mk-kills canvas{touch-action:none;cursor:crosshair}
+.studio-mk-marklist{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:4px 16px}
+.studio-mk-markrow{display:flex;align-items:center;gap:var(--space-3);font-size:12.5px;min-width:0}
+.studio-mk-markrow.is-hand .mono:first-child{color:var(--accent)}
+.studio-mk-markname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.studio-mk-marktools{display:inline-flex;gap:2px}
+
 .studio-style.is-on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .studio-style-name{font-weight:600;color:var(--text-primary)}
 .studio-style-blurb{font-size:12.5px;line-height:1.45}

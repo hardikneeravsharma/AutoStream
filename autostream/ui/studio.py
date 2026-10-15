@@ -599,13 +599,36 @@ STUDIO_HTML = r"""
     </div>
   </section>
 
-  <div class="scrim hide" id="studio-make-scrim">
-  <div class="modal studio-modal" id="studio-make" role="dialog" aria-modal="true" aria-labelledby="studio-make-title">
-    <h2 class="modal-title" id="studio-make-title">Make a reel</h2>
-    <div class="modal-body">
-      <p class="muted" id="studio-make-facts"></p>
-      <h3 class="studio-h">Style</h3>
+  <div class="scrim studio-page hide" id="studio-make-scrim">
+  <div class="studio-page-card" id="studio-make" role="region" aria-labelledby="studio-make-title">
+    <header class="mk-head">
+      <button type="button" class="btn btn-ghost" data-act="studio-make-cancel" id="studio-make-back">&larr; Back to the clips</button>
+      <div class="mk-head-text">
+        <h2 class="mk-title" id="studio-make-title">Make a reel</h2>
+        <p class="muted" id="studio-make-facts"></p>
+      </div>
+    </header>
+    <div class="mk-layout">
+      <nav class="mk-nav" id="studio-mk-nav" aria-label="Sections of this page">
+        <button type="button" class="mk-nav-b is-on" data-act="studio-mk-jump" data-sec="style">Style</button>
+        <button type="button" class="mk-nav-b" data-act="studio-mk-jump" data-sec="look">Look</button>
+        <button type="button" class="mk-nav-b" data-act="studio-mk-jump" data-sec="song">Song &amp; part</button>
+        <button type="button" class="mk-nav-b" data-act="studio-mk-jump" data-sec="kills">Kills</button>
+        <button type="button" class="mk-nav-b" data-act="studio-mk-jump" data-sec="shape">Shape &amp; order</button>
+      </nav>
+      <div class="mk-body">
+        <section class="mk-sec" id="mk-sec-style">
+      <h3 class="studio-h">Style <span class="muted studio-small" id="studio-style-count"></span></h3>
+      <!-- EVERY STYLE ON THE SAME KILLS. Each card plays about twenty seconds cut from the SAME
+           clips, so the only thing that differs between two of them is the style. -->
+      <div class="studio-samples-bar" id="studio-samples-bar">
+        <button type="button" class="btn btn-sm" data-act="studio-samples-start" id="studio-samples-btn">Show every style on my kills</button>
+        <button type="button" class="btn btn-ghost btn-sm hide" data-act="studio-samples-stop" id="studio-samples-stop">Stop</button>
+        <span class="muted studio-small" id="studio-samples-msg" role="status" aria-live="polite"></span>
+      </div>
       <div class="studio-styles" id="studio-styles" role="radiogroup" aria-label="Style"></div>
+        </section>
+        <section class="mk-sec" id="mk-sec-look">
       <!-- THE TEMPLATE: what the style picked, shown part by part with its
            example, and changeable one drawer at a time. -->
       <h3 class="studio-h">Template</h3>
@@ -614,7 +637,10 @@ STUDIO_HTML = r"""
         <button type="button" class="btn btn-ghost btn-sm" data-act="studio-deal-reset">Back to the style's own</button>
         <span class="bin-code" id="studio-deal-code"></span>
       </div>
+      <p class="muted studio-small hide" id="studio-fast-note" role="note"></p>
       <div class="bin-hand" id="studio-hand"></div>
+        </section>
+        <section class="mk-sec" id="mk-sec-song">
       <h3 class="studio-h">Song</h3>
       <div class="field-inline">
         <button type="button" class="btn" data-act="studio-song">Choose a song…</button>
@@ -684,6 +710,27 @@ STUDIO_HTML = r"""
         </div>
         <p class="muted" id="studio-mk-intronote"></p>
       </div>
+        </section>
+        <section class="mk-sec" id="mk-sec-kills">
+      <!-- M4: THE KILLS, EDITABLE HERE. The Song tab lets you mark where each kill lands; this
+           is the same thing before the reel exists. "Show where the kills will land" plans the
+           reel the way Build would and draws every kill on the song; touch one and it becomes
+           yours, and Build puts the rest around it. -->
+      <div class="studio-mk-kills hide" id="studio-mk-killsbox">
+        <h3 class="studio-h">Kills <span class="muted studio-small">where each one lands on the song</span></h3>
+        <p class="muted studio-small" id="studio-mk-killnote"></p>
+        <div class="field-inline">
+          <button type="button" class="btn btn-sm" data-act="studio-mk-plan" id="studio-mk-plan">Show where the kills will land</button>
+          <button type="button" class="btn btn-sm" data-act="studio-mk-addmark" title="Drops a kill at the playhead (K)">Mark a kill here <kbd>K</kbd></button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-clearmarks" id="studio-mk-clearmarks">Back to automatic</button>
+          <span class="muted studio-small" id="studio-mk-killmsg" role="status" aria-live="polite"></span>
+        </div>
+        <canvas class="studio-sg-wave" id="studio-mk-kills" height="120"
+                aria-label="The part of the song, with every kill on it: drag one to move it, double-click to add or remove"></canvas>
+        <ol class="studio-mk-marklist" id="studio-mk-marklist"></ol>
+      </div>
+        </section>
+        <section class="mk-sec" id="mk-sec-shape">
       <h3 class="studio-h">Shape</h3>
       <div class="field-inline studio-shape">
         <div class="seg" role="group" aria-label="Format">
@@ -734,8 +781,10 @@ STUDIO_HTML = r"""
       <!-- Valorant clips carry a headshot reading per kill; shown only when some do. -->
       <label class="studio-check hide" id="studio-hs-row"><input type="checkbox" id="studio-hs-only">
         Headshot kills only <span class="muted studio-small" id="studio-hs-note"></span></label>
+        </section>
+      </div>
     </div>
-    <div class="modal-actions">
+    <div class="mk-bar">
       <span class="muted" id="studio-make-msg"></span>
       <button type="button" class="btn btn-ghost" data-act="studio-make-cancel">Cancel</button>
       <button type="button" class="btn btn-primary" data-act="studio-build" id="studio-build-btn">Build and render</button>
@@ -1121,7 +1170,13 @@ const studio = {
   sg: {song: '', shape: null, start: 0, end: 0, marks: [], drag: null, ticked: {}, ac: null,
        sel: -1, seeded: ''},
   /* The part of the song chosen on the Make dialog, in song seconds. */
-  mk: {mode: 'part', start: 0, end: 0, touched: false, drag: null, seekTo: null, ticking: false},
+  mk: {mode: 'part', start: 0, end: 0, touched: false, drag: null, seekTo: null, ticking: false,
+       /* THE KILLS, as the player has them: `planned` is where a plan put them (song seconds, with the
+          clip each belongs to), `hand` is what they have placed or moved, and only `edited` marks are
+          sent -- an untouched preview must not turn into marks the next plan is forced to keep. */
+       hand: [], edited: false, planned: null, killDrag: null},
+  /* Styles shown on the player's own kills: {key, ready: {style: file}, running, state}. */
+  samples: {key: '', ready: {}, running: false, state: null, timer: null, held: ''},
   /* A song being downloaded from a YouTube link, and which picker asked for it. */
   yt: {target: 'make', timer: null, running: false},
   /* Set while clips are being added to an existing reel: what to rebuild. */
@@ -1908,6 +1963,7 @@ function studio_closeModals() {
   if (a && !a.paused) a.pause();
   ['studio-preview-scrim', 'studio-make-scrim', 'studio-del-scrim',
    'studio-rdel-scrim', 'studio-intro-scrim'].forEach(id => studio_show(id, false));
+  studio_makePage(false);
   if (!studio_el('studio-imp-scrim').classList.contains('hide')) studio_impClose(false);
   const iv = studio_el('studio-intro-video');
   if (iv && !iv.paused) iv.pause();
@@ -2231,29 +2287,151 @@ async function studio_openMake() {
   studio_renderStyles();
   studio_hand();
   studio_show('studio-make-scrim', true);
+  studio_makePage(true);
   studio_show('studio-mk-fit', studio.fmt === 'vertical');
   studio_mkDefault();
   studio_mkArrangeDraw();
   studio_fillDraw();
+  studio_samplesCheck();
+  studio_mkKillsDraw();
+}
+
+/* THE MAKE PAGE IS A PAGE. It used to be a dialog over the Clips tab -- centred, narrow, closed by
+   clicking the dark around it -- which is a poor place to choose a style, a song, forty effects and
+   where every kill lands. While it is open the rest of the Studio steps aside, and it scrolls with
+   the app like any other page. */
+function studio_makePage(on) {
+  const v = document.getElementById('view-studio');
+  if (v) v.classList.toggle('is-making', !!on);
+  const sc = document.getElementById('views');
+  if (on && sc) sc.scrollTop = 0;
+}
+
+function studio_mkJump(sec) {
+  const el = document.getElementById('mk-sec-' + sec);
+  if (!el) return;
+  el.scrollIntoView({behavior: 'smooth', block: 'start'});
+  studio_mkNavMark(sec);
+}
+
+function studio_mkNavMark(sec) {
+  document.querySelectorAll('#studio-mk-nav .mk-nav-b').forEach(b =>
+    b.classList.toggle('is-on', b.getAttribute('data-sec') === sec));
+}
+
+/* The section nearest the top is the one the nav says you are in. */
+function studio_mkSpy() {
+  const sc = document.getElementById('views');
+  if (!sc || document.getElementById('studio-make-scrim').classList.contains('hide')) return;
+  let best = 'style', gap = 1e9;
+  ['style', 'look', 'song', 'kills', 'shape'].forEach(sec => {
+    const el = document.getElementById('mk-sec-' + sec);
+    if (!el) return;
+    const d = Math.abs(el.getBoundingClientRect().top - 140);
+    if (d < gap && el.getBoundingClientRect().top < 260) { gap = d; best = sec; }
+  });
+  studio_mkNavMark(best);
+}
+
+/* STYLES ARE SHOWN, NOT DESCRIBED. Each card plays about twenty seconds of that style cut from the same
+   kills as every other card; the statistics it used to carry are one click away, folded. */
+function studio_sampleUrl(style) {
+  const sm = studio.samples;
+  return sm.ready && sm.ready[style] ? '/api/studio/sample?k=' + encodeURIComponent(SHELL_K) + '&key=' + encodeURIComponent(sm.key) + '&style=' + encodeURIComponent(style) : '';
 }
 
 function studio_renderStyles() {
   const cat = studio.catalog;
   if (!cat) return;
+  const sm = studio.samples;
   studio_el('studio-styles').innerHTML = cat.styles.map(s => {
     const m = s.measured || {};
     const on = s.key === studio.style;
-    return '<button type="button" class="studio-style' + (on ? ' is-on' : '') + '" role="radio" aria-checked="' + on +
-      '" data-act="studio-style" data-style="' + esc(s.key) + '">' +
-      '<span class="studio-style-name">' + esc(s.label) + '</span>' +
-      '<span class="studio-style-blurb">' + esc(s.blurb) + '</span>' +
-      (m.edits ? '<span class="studio-style-data mono">Measured on ' + m.edits + (m.edits === 1 ? ' edit' : ' edits') + ': ' +
-        m.cuts_per_min + ' cuts/min · ' + m.flashes_per_min + ' flashes/min · first shot ' + m.first_shot + ' s</span>' : '') +
-      '</button>';
+    const url = studio_sampleUrl(s.key);
+    const cutting = sm.running && sm.state && sm.state.style === s.key;
+    const failed = sm.state && sm.state.failed && sm.state.failed[s.key];
+    return '<div class="studio-style-card' + (on ? ' is-on' : '') + '" data-style="' + esc(s.key) + '">' +
+      '<div class="studio-style-media">' +
+      (url ? '<video muted loop playsinline preload="metadata" src="' + esc(url) + '" aria-label="' + esc(s.label) + ' on your kills"></video>'
+           : '<span class="studio-style-none">' + (cutting ? 'Cutting this one now&hellip;' : failed ? 'Could not be cut.' : 'Not shown yet') + '</span>') +
+      '</div>' +
+      '<button type="button" class="studio-style" role="radio" aria-checked="' + on + '" data-act="studio-style" data-style="' + esc(s.key) + '">' +
+      '<span class="studio-style-name">' + esc(s.label) + (s.fast_cuts ? ' <span class="studio-style-tag">fast cuts</span>' : '') + '</span>' +
+      '<span class="studio-style-blurb">' + esc(s.blurb) + '</span></button>' +
+      (m.edits ? '<details class="studio-style-more"><summary>Measured on ' + m.edits + (m.edits === 1 ? ' edit' : ' edits') + '</summary>' +
+        '<span class="mono">' + m.cuts_per_min + ' cuts/min · ' + m.flashes_per_min + ' flashes/min · first shot ' + m.first_shot + ' s</span></details>' : '') +
+      '</div>';
   }).join('');
+  const have = Object.keys(sm.ready || {}).length;
+  const cnt = studio_el('studio-style-count');
+  if (cnt) cnt.textContent = cat.styles.length + ' styles' + (have ? ' · ' + have + ' shown on your kills' : '');
   const st = cat.styles.find(s => s.key === studio.style);
   studio_el('studio-name').placeholder = (st ? st.label : 'My') + ' reel';
+  studio_samplesBar();
   studio_fillDraw();                       /* its note names the style */
+}
+
+/* ----- the samples: ask what is already cut, cut the rest in the background, watch it ----- */
+
+function studio_samplesBody() {
+  const b = {clips: studio_ordered().map(c => c.path), format: studio.fmt, song: studio.song || ''};
+  if (studio_mkHasPart()) { b.part_start = studio.mk.start; b.part_end = studio.mk.end; }
+  return b;
+}
+
+function studio_samplesBar() {
+  const sm = studio.samples, st = studio.catalog ? studio.catalog.styles.length : 0;
+  const have = Object.keys(sm.ready || {}).length;
+  const btn = studio_el('studio-samples-btn'), stop = studio_el('studio-samples-stop'), msg = studio_el('studio-samples-msg');
+  if (!btn) return;
+  btn.disabled = sm.running || !studio.selected.length;
+  btn.textContent = have >= st && st ? 'Cut them again' : have ? 'Show the rest on my kills' : 'Show every style on my kills';
+  stop.classList.toggle('hide', !sm.running);
+  msg.textContent = sm.running && sm.state ? (sm.state.message || 'Cutting...')
+    : sm.held ? sm.held
+    : have ? have + ' of ' + st + ' shown. The same clips and kills in each one, so the difference is the style.'
+    : 'Each style plays about 20 s cut from the clips you picked, so you compare the look and not the footage.';
+}
+
+async function studio_samplesCheck() {
+  if (!studio.selected.length) return;
+  const r = await API.post('/api/studio/samples/check', studio_samplesBody());
+  if (!r || !r.ok) return;
+  const sm = studio.samples;
+  if (sm.key !== r.key) sm.state = null;
+  sm.key = r.key; sm.ready = r.ready || {}; sm.running = !!r.running; sm.held = '';
+  studio_renderStyles();
+  if (sm.running) studio_samplesPoll();
+}
+
+async function studio_samplesStart() {
+  const sm = studio.samples;
+  sm.held = '';
+  const r = await API.post('/api/studio/samples/start', studio_samplesBody());
+  if (!r || !r.ok) { sm.held = (r && (r.held || r.error)) || 'Could not start.'; studio_samplesBar(); return; }
+  sm.state = r.state; sm.key = r.state.key || sm.key; sm.ready = r.state.ready || sm.ready;
+  sm.running = r.state.state === 'running';
+  studio_renderStyles();
+  if (sm.running) studio_samplesPoll();
+}
+
+function studio_samplesPoll() {
+  const sm = studio.samples;
+  clearTimeout(sm.timer);
+  sm.timer = setTimeout(async () => {
+    const r = await API.get('/api/studio/samples/status');
+    if (!r || !r.ok) return;
+    const was = Object.keys(sm.ready || {}).length;
+    sm.state = r.state;
+    if (r.state.key === sm.key) sm.ready = r.state.ready || sm.ready;
+    sm.running = r.state.state === 'running';
+    if (Object.keys(sm.ready || {}).length !== was || !sm.running) studio_renderStyles(); else studio_samplesBar();
+    if (sm.running) studio_samplesPoll();
+  }, 2000);
+}
+
+async function studio_samplesStop() {
+  await API.post('/api/studio/samples/cancel', {});
 }
 
 async function studio_pickSong() {
@@ -2278,7 +2456,9 @@ async function studio_useSong(path, label) {
     Math.round(got.song.bpm) + ' BPM · ' + studio_dur(got.song.seconds) +
     (got.song.drop ? ' · drop at ' + studio_secs(got.song.drop) : '');
   studio.mk.touched = false;
+  studio_mkStale();
   studio_mkDefault();
+  studio_samplesCheck();
   return true;
 }
 
@@ -2464,6 +2644,214 @@ function studio_mkDraw() {
     ctx.fillStyle = '#ff5c5c'; ctx.fillRect(X(a.currentTime) - 1, 0, 2, H);
   }
   studio_mkClock();
+  studio_mkKillsDraw();
+}
+
+/* ===== M4: THE KILLS, ON THE PAGE ===================================================================== */
+
+/* The kills as they stand: the player's own once they have touched one, else where the plan put them. */
+function studio_mkKillList() {
+  const mk = studio.mk;
+  if (mk.edited) return mk.hand.map((t, i) => ({t: t, hand: true, name: (mk.planned && mk.planned.names[i]) || ''}));
+  if (mk.planned) return mk.planned.marks.map((t, i) => ({t: t, hand: false, name: mk.planned.names[i] || ''}));
+  return [];
+}
+
+/* A first touch makes the plan the player's: every kill becomes a mark they can move, so moving one does
+   not discard the rest. */
+function studio_mkOwn() {
+  const mk = studio.mk;
+  if (mk.edited) return;
+  mk.hand = mk.planned ? mk.planned.marks.slice() : [];
+  mk.edited = true;
+}
+
+function studio_mkKillSpan() {
+  const sh = studio.songShape;
+  if (!sh) return {start: 0, end: 1};
+  const sp = studio_mkSpan();
+  return {start: sp.start, end: Math.max(sp.end, sp.start + 1)};
+}
+
+function studio_mkSnap(t) {
+  const snap = studio.mk.snap !== false;
+  return snap ? studio_nearestBeat(studio.songShape, t) : Math.round(t * 100) / 100;
+}
+
+function studio_mkKillsDraw() {
+  const box = studio_el('studio-mk-killsbox');
+  if (!box) return;
+  const sh = studio.songShape, mk = studio.mk;
+  box.classList.toggle('hide', !sh);
+  const note = studio_el('studio-mk-killnote');
+  if (!sh) {
+    if (note) note.textContent = '';
+    return;
+  }
+  const list = studio_mkKillList();
+  if (note) {
+    note.textContent = mk.edited
+      ? list.length + ' kill(s), placed by you. Build puts every shot around them; "Back to automatic" lets AutoStream choose again.'
+      : mk.planned
+        ? 'Where the plan puts ' + list.length + ' kills on the song. Drag one, press K at the playhead, or double-click the song to place your own.'
+        : 'AutoStream puts each kill on a hit of the song. Press "Show where the kills will land" to see them here, then move any you like.';
+  }
+  const c = studio_sgCanvas('studio-mk-kills', 120);
+  if (!c || !sh.peaks) return;
+  const {ctx, W, H} = c, span = studio_mkKillSpan(), len = span.end - span.start;
+  const X = t => (t - span.start) / len * W, mid = H * 0.5 - 6;
+  const css = getComputedStyle(document.documentElement);
+  const accent = css.getPropertyValue('--accent').trim() || '#5aa9ff';
+  const warn = css.getPropertyValue('--warn').trim() || '#e3b341';
+  const faint = css.getPropertyValue('--text-tertiary').trim() || '#8a8a8a';
+  const n = sh.peaks.length;
+  ctx.fillStyle = accent;
+  ctx.globalAlpha = 0.55;
+  for (let x = 0; x < W; x++) {
+    const t = span.start + x / W * len;
+    const amp = (sh.peaks[Math.min(n - 1, Math.max(0, Math.floor(t / sh.seconds * n)))] || 0) * (mid - 4);
+    ctx.fillRect(x, mid - amp, 1, amp * 2 || 1);
+  }
+  ctx.globalAlpha = 1;
+  studio_beatGrid(ctx, X, H - 14, sh, {width: W, alpha: 0.9});
+  /* Where kills CAN land: the song's own hits, as small ticks under the waveform. */
+  ctx.fillStyle = faint;
+  ctx.globalAlpha = 0.7;
+  (sh.hits || []).forEach(t => { if (t >= span.start && t <= span.end) ctx.fillRect(X(t) - 0.5, H - 12, 1, 8); });
+  ctx.globalAlpha = 1;
+  if (sh.drop && sh.drop >= span.start && sh.drop <= span.end) {
+    ctx.fillStyle = warn; ctx.fillRect(X(sh.drop) - 1, 0, 2, H - 14);
+    ctx.font = '10px monospace'; ctx.fillText('drop', X(sh.drop) + 4, 10);
+  }
+  /* The kills: a planned one is an outline, one that is the player's is solid. */
+  const kd = mk.killDrag;
+  list.forEach((k, i) => {
+    const t = (kd && kd.i === i) ? kd.t : k.t;
+    if (t < span.start - 0.01 || t > span.end + 0.01) return;
+    const x = X(t), y = mid;
+    ctx.beginPath();
+    ctx.moveTo(x, y - 8); ctx.lineTo(x + 8, y); ctx.lineTo(x, y + 8); ctx.lineTo(x - 8, y); ctx.closePath();
+    if (k.hand) { ctx.fillStyle = accent; ctx.fill(); }
+    else { ctx.fillStyle = css.getPropertyValue('--surface').trim() || '#111'; ctx.fill(); ctx.strokeStyle = accent; ctx.lineWidth = 1.5; ctx.stroke(); }
+    ctx.fillStyle = css.getPropertyValue('--text-primary').trim() || '#fff';
+    ctx.font = '10px monospace';
+    ctx.fillText(String(i + 1), x - 3, y - 12);
+  });
+  const a = studio_el('studio-mk-audio');
+  if (a && a.getAttribute('data-song') === studio.song && (!a.paused || a.currentTime > 0)) {
+    ctx.fillStyle = '#ff5c5c'; ctx.fillRect(X(a.currentTime) - 1, 0, 2, H);
+  }
+  /* The list under it: what lands where, and the clip it is. */
+  const ol = studio_el('studio-mk-marklist');
+  if (ol) {
+    ol.innerHTML = list.map((k, i) =>
+      '<li class="studio-mk-markrow' + (k.hand ? ' is-hand' : '') + '"><span class="mono">' + (i + 1) + '</span>' +
+      '<span class="mono">' + esc(studio_secs(k.t)) + '</span>' +
+      '<span class="muted studio-mk-markname">' + esc(k.name || (k.hand ? 'yours' : '')) + '</span>' +
+      '<span class="studio-mk-marktools">' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-nudgemark" data-i="' + i + '" data-d="-1" aria-label="Kill ' + (i + 1) + ' a tenth of a second earlier">&minus;0.1</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-nudgemark" data-i="' + i + '" data-d="1" aria-label="Kill ' + (i + 1) + ' a tenth of a second later">+0.1</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-delmark" data-i="' + i + '" aria-label="Remove kill ' + (i + 1) + '">&times;</button>' +
+      '</span></li>').join('');
+  }
+  const clear = studio_el('studio-mk-clearmarks');
+  if (clear) clear.disabled = !mk.edited;
+}
+
+function studio_mkAddMark(at) {
+  const sh = studio.songShape;
+  if (!sh) { toast('Choose a song first.', 'warn'); return; }
+  const a = studio_el('studio-mk-audio');
+  const t = at !== undefined ? at
+    : (a && a.getAttribute('data-song') === studio.song && a.readyState >= 1 ? a.currentTime : studio_mkSpan().start);
+  const sp = studio_mkKillSpan();
+  if (t < sp.start - 0.01 || t > sp.end + 0.01) { toast('That is outside the part you chose.', 'warn'); return; }
+  studio_mkOwn();
+  studio.mk.hand.push(studio_mkSnap(t));
+  studio.mk.hand.sort((x, y) => x - y);
+  studio_mkKillsDraw();
+}
+
+function studio_mkDelMark(i) {
+  studio_mkOwn();
+  studio.mk.hand.splice(i, 1);
+  studio_mkKillsDraw();
+}
+
+function studio_mkNudgeMark(i, d) {
+  studio_mkOwn();
+  if (studio.mk.hand[i] === undefined) return;
+  studio.mk.hand[i] = Math.max(0, Math.round((studio.mk.hand[i] + d * 0.1) * 1000) / 1000);
+  studio.mk.hand.sort((x, y) => x - y);
+  studio_mkKillsDraw();
+}
+
+function studio_mkClearMarks() {
+  studio.mk.hand = []; studio.mk.edited = false;
+  studio_mkKillsDraw();
+}
+
+/* A style, a part, a song or the clips changed: where a plan PLACED the kills no longer holds. Marks the
+   player placed are theirs and stay -- they are about the song, not the plan -- and the page says so. */
+function studio_mkStale() {
+  const mk = studio.mk;
+  if (!mk.planned) return;
+  mk.planned = null;
+  studio_el('studio-mk-killmsg').textContent = mk.edited ? 'Your marks are kept.' : '';
+  studio_mkKillsDraw();
+}
+
+async function studio_mkPlan() {
+  if (!studio.selected.length || !studio.song) { toast('Choose a song first: kills land on its hits.', 'warn'); return; }
+  const btn = studio_el('studio-mk-plan'), msg = studio_el('studio-mk-killmsg');
+  btn.disabled = true;
+  msg.textContent = 'Planning the reel to find where each kill lands... this is the plan Build would make' +
+    (studio.arrange === 'fit' ? ', and a perfect fit takes up to ~30 s.' : '.');
+  try {
+    const r = await API.post('/api/studio/plan', studio_planBody(false));
+    if (!r || !r.ok) { msg.textContent = (r && r.error) || 'Could not plan that reel.'; return; }
+    const p = r.project, marks = (p.song_marks || []).slice();
+    const names = (p.shots || []).map(x => (x.caption || x.name || '').replace(/\.mp4$/i, ''));
+    studio.mk.planned = {marks: marks, names: names};
+    msg.textContent = marks.length + ' kills placed on the song.';
+  } finally {
+    btn.disabled = false;
+    studio_mkKillsDraw();
+  }
+}
+
+function studio_mkKillPointer(e) {
+  const cv = studio_el('studio-mk-kills');
+  if (!cv || !studio.songShape) return;
+  const r = cv.getBoundingClientRect(), span = studio_mkKillSpan();
+  const t = span.start + (e.clientX - r.left) / r.width * (span.end - span.start);
+  const x = e.clientX - r.left, list = studio_mkKillList();
+  const near = list.findIndex(k => Math.abs((k.t - span.start) / (span.end - span.start) * r.width - x) <= 10);
+  if (e.type === 'pointerdown') {
+    if (near >= 0) {
+      studio.mk.killDrag = {i: near, t: list[near].t, moved: false};
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { /* a mouse still works */ }
+    } else {
+      studio_mkSeek(Math.max(span.start, Math.min(span.end, t)));      /* click the song: hear it from there */
+    }
+    e.preventDefault();
+  } else if (e.type === 'pointermove' && studio.mk.killDrag) {
+    const kd = studio.mk.killDrag;
+    kd.t = Math.max(span.start, Math.min(span.end, t));
+    kd.moved = true;
+    studio_mkKillsDraw();
+  } else if ((e.type === 'pointerup' || e.type === 'pointercancel') && studio.mk.killDrag) {
+    const kd = studio.mk.killDrag;
+    studio.mk.killDrag = null;
+    if (kd.moved) {
+      studio_mkOwn();
+      studio.mk.hand[kd.i] = studio_mkSnap(kd.t);
+      studio.mk.hand.sort((x, y) => x - y);
+    }
+    studio_mkKillsDraw();
+  } else if (e.type === 'dblclick') {
+    if (near >= 0) studio_mkDelMark(near); else studio_mkAddMark(Math.max(span.start, Math.min(span.end, t)));
+  }
 }
 
 function studio_mkNudge(what, how) {
@@ -2876,12 +3264,13 @@ const ARRANGES = [
   {k: 'time', name: 'As it happened', why: 'The fights in the order you played them.'},
   {k: 'best', name: 'Best first', why: 'The strongest moment opens the reel.'},
   {k: 'shuffle', name: 'Shuffle', why: 'A fresh draw. Press again for another.'},
-  {k: 'hits', name: 'Best order', why: "The biggest moments - aces, 4Ks, clutches, multi-kills - on the song's " +
-    'biggest hits, each multi-kill kept together and in order, and no two alike back to back.'},
+  {k: 'hits', name: 'Best order', why: "Puts your biggest moments - aces, clutches, multi-kills - on the song's " +
+    'biggest hits. Quick to plan, and the one to start with.'},
   /* Not an order but a search: every kill of every clip on a beat of the song,
      every clip of three or more kills whole. Up to half a minute to plan. */
   {k: 'fit', name: 'Perfect fit (slower)',
-   why: 'Searches the order and the song together: every kill lands on a beat and no clip with 3 or more kills loses one. Takes up to ~30 s to plan.'}
+   why: 'Makes EVERY kill land exactly on a beat, even the small ones, by trying many orders. ' +
+     'Slower (up to ~30 s), and the order is whatever fits best rather than the best moments first.'}
 ];
 
 /* THE SAME SIX, IN THE MAKE DIALOG, where the decision is actually taken.
@@ -3024,7 +3413,7 @@ function studio_binDraw() {
       '<span class="count">' + parts.length + ' to pick from' +
       (kept && !studio.favOnly ? ' · ' + kept + ' kept' : '') + '</span></div>' +
       '<div class="bin-grid">' +
-      parts.map(function (p) { return studio_binCard(p, picks[kind] === p.id, 'studio-bin-pick'); }).join('') +
+      parts.map(function (p) { return studio_binCard(p, studio_pickIds(picks[kind]).indexOf(p.id) >= 0, 'studio-bin-pick'); }).join('') +
       '</div></section>';
   }).join('');
   const ex = studio.examples || {};
@@ -3133,6 +3522,81 @@ function studio_binPoll() {
 
 /* ---------------------------------------------------------------- template */
 
+/* THE DRAWERS THAT CAN HOLD SEVERAL. A reel draws a kill effect, a transition, a hero
+   treatment, a camera move and a speed PER SHOT from a pool, and the Make page used to show
+   one pick per drawer -- so it said one thing and the timeline did another. An opening, an
+   ending, a colour and an overlay are one per reel and stay one. */
+const MAKE_MULTI = ['transition', 'kill', 'hero', 'camera', 'speed'];
+const MAKE_WEIGHT_MAX = 4;
+
+/* A drawer's pick as a list of ids: a string is one, an array is a set in which an id
+   listed twice is drawn about twice as often. */
+function studio_pickIds(v) {
+  const raw = Array.isArray(v) ? v : [v];
+  return raw.filter(x => typeof x === 'string' && x);
+}
+
+function studio_pickUnique(v) {
+  return studio_pickIds(v).filter((x, i, a) => a.indexOf(x) === i);
+}
+
+function studio_pickWeight(v, id) {
+  return studio_pickIds(v).filter(x => x === id).length;
+}
+
+/* Write a drawer's set back: ids in order, each repeated by its weight, and a single id
+   with weight one stored as the plain string the server always took. */
+function studio_makeStore(kind, ids, weights) {
+  const flat = [];
+  ids.forEach(id => {
+    const w = Math.max(1, Math.min(MAKE_WEIGHT_MAX, (weights && weights[id]) || 1));
+    for (let i = 0; i < w; i++) flat.push(id);
+  });
+  studio.picks = Object.assign({}, studio_template());
+  studio.picks[kind] = (flat.length === 1) ? flat[0] : flat;
+  studio_hand();
+  studio_binDraw();
+}
+
+function studio_makeWeights(kind) {
+  const w = {};
+  studio_pickIds(studio_template()[kind]).forEach(id => { w[id] = (w[id] || 0) + 1; });
+  return w;
+}
+
+function studio_makeSet(kind, ids) {
+  const was = studio_makeWeights(kind);
+  const keep = {};
+  ids.forEach(id => { keep[id] = was[id] || 1; });
+  studio_makeStore(kind, ids, keep);
+}
+
+function studio_makeWeight(kind, id, d) {
+  const w = studio_makeWeights(kind);
+  if (!w[id]) return;
+  w[id] = Math.max(1, Math.min(MAKE_WEIGHT_MAX, w[id] + d));
+  studio_makeStore(kind, studio_pickUnique(studio_template()[kind]), w);
+}
+
+function studio_makeRemove(kind, id) {
+  const ids = studio_pickUnique(studio_template()[kind]);
+  if (ids.length < 2) { toast('Keep at least one.', 'warn'); return; }
+  const w = studio_makeWeights(kind);
+  studio_makeStore(kind, ids.filter(x => x !== id), w);
+}
+
+/* What the drawer will actually draw from, in a sentence: the thing the page used to leave
+   the timeline to reveal. */
+function studio_makeSummary(kind) {
+  const ids = studio_pickUnique(studio_template()[kind]);
+  if (!ids.length) return '';
+  const label = id => (studio_part(id) || {}).label || id;
+  if (ids.length === 1) return 'Every shot: ' + label(ids[0]) + '.';
+  const w = studio_makeWeights(kind);
+  const total = ids.reduce((n, id) => n + w[id], 0);
+  return 'Each shot draws one: ' + ids.map(id => label(id) + ' ' + Math.round(100 * w[id] / total) + '%').join(' · ') + '.';
+}
+
 /* The picks in force: what the style chose, plus anything dealt or clicked. */
 function studio_template() {
   const cat = studio.catalog;
@@ -3146,13 +3610,54 @@ function studio_hand() {
   const picks = studio_template();
   const drawers = studio.catalog.drawers || [];
   box.innerHTML = drawers.map(function (kind) {
-    const p = studio_part(picks[kind]) || {id: picks[kind] || '-', label: 'Nothing', kind: kind, blurb: ''};
-    return '<div class="bin-slotcard"><span class="bin-drawer-label">' + esc(studio_binName(kind)) +
-      '</span>' + studio_binCard(p, false, 'studio-hand-next') + '</div>';
+    const ids = studio_pickUnique(picks[kind]);
+    const p = studio_part(ids[0]) || {id: ids[0] || '-', label: 'Nothing', kind: kind, blurb: ''};
+    const multi = MAKE_MULTI.indexOf(kind) >= 0;
+    /* THE CARD OPENS A LIST. It used to step to the NEXT part in the drawer, which made a
+       drawer of fifty effects something you reached by clicking fifty times. */
+    let h = '<div class="bin-slotcard" data-drawer="' + esc(kind) + '"><span class="bin-drawer-label">' +
+      esc(studio_binName(kind)) + '</span>' + studio_binCard(p, false, 'studio-hand-pick');
+    if (multi) {
+      const w = studio_makeWeights(kind);
+      h += '<div class="studio-set" data-set="' + esc(kind) + '">' + ids.map(function (id) {
+        const part = studio_part(id) || {label: id};
+        return '<span class="studio-set-chip"><span class="studio-set-name">' + esc(part.label || id) + '</span>' +
+          '<button type="button" class="studio-set-w" data-act="studio-set-weight" data-kind="' + esc(kind) +
+          '" data-part="' + esc(id) + '" data-d="-1" aria-label="Less often: ' + esc(part.label || id) + '"' +
+          (w[id] <= 1 ? ' disabled' : '') + '>&minus;</button>' +
+          '<span class="studio-set-n" title="How often it is drawn, against the others">' + w[id] + '</span>' +
+          '<button type="button" class="studio-set-w" data-act="studio-set-weight" data-kind="' + esc(kind) +
+          '" data-part="' + esc(id) + '" data-d="1" aria-label="More often: ' + esc(part.label || id) + '"' +
+          (w[id] >= MAKE_WEIGHT_MAX ? ' disabled' : '') + '>+</button>' +
+          (ids.length > 1 ? '<button type="button" class="studio-set-x" data-act="studio-set-remove" data-kind="' +
+            esc(kind) + '" data-part="' + esc(id) + '" aria-label="Remove ' + esc(part.label || id) + '">&times;</button>' : '') +
+          '</span>';
+      }).join('') +
+        '<button type="button" class="btn btn-ghost btn-sm studio-set-add" data-act="studio-hand-pick" data-kind="' +
+        esc(kind) + '" data-multi="1">Choose several&hellip;</button></div>' +
+        '<p class="muted studio-small studio-set-sum">' + esc(studio_makeSummary(kind)) + '</p>';
+    }
+    return h + '</div>';
   }).join('');
   const code = studio_el('studio-deal-code');
   if (code) {
-    code.textContent = drawers.map(function (k) { return picks[k]; }).filter(Boolean).join(' · ');
+    code.textContent = drawers.map(function (k) { return studio_pickUnique(picks[k]).join('+'); }).filter(Boolean).join(' \u00b7 ');
+  }
+  /* THE STYLE SAYS WHEN IT WILL NOT MIX, so a Hype reel that comes out with one effect on
+     every kill is the rule working, not a bug in the template. */
+  const note = studio_el('studio-fast-note');
+  if (note) {
+    const st = studio.catalog && (studio.catalog.styles || []).find(x => x.key === studio.style);
+    const bpm = studio.songShape ? studio.songShape.bpm : 0;
+    const on = !!(st && st.fast_cuts);
+    note.classList.toggle('hide', !on);
+    if (on) {
+      note.textContent = st.label + ' is a fast-cut style. ' + (bpm && bpm < 110
+        ? 'This song is ' + Math.round(bpm) + ' BPM, so it mixes effects as other styles do. '
+        : 'On a song of 110 BPM or more it keeps ONE transition, ONE kill effect and real speed, because at ' +
+          'this pace variety reads as noise and a speed ramp makes the hit arrive late. ') +
+        'Choose several in a drawer to mix them anyway.';
+    }
   }
   studio_binWatch();
 }
@@ -3187,14 +3692,15 @@ function studio_binPick(kind, part) {
   studio_binDraw();
 }
 
-/* Click the card in the hand: step to the next part in that drawer. */
-function studio_handNext(kind) {
-  const parts = studio_parts(kind);
-  if (!parts.length) return;
-  const now = studio_template()[kind];
-  let i = -1;
-  parts.forEach(function (p, j) { if (p.id === now) i = j; });
-  studio_binPick(kind, parts[(i + 1) % parts.length].id);
+/* Click the card in the hand: choose from a list. A list, because the other way to reach the
+   thirtieth effect in a drawer was twenty-nine clicks. */
+function studio_handPick(kind, multi) {
+  const b = document.createElement('button');
+  b.setAttribute('data-kind', kind);
+  b.setAttribute('data-make', kind);
+  if (multi) b.setAttribute('data-multi', '1');
+  b.id = 'studio-hand-opener-' + kind;
+  studio_fxpOpen(b);
 }
 
 /* ------------------------------------------------------------- favourites */
@@ -3245,6 +3751,45 @@ function studio_ordered() {
   return sel;
 }
 
+/* WHAT A PLAN IS ASKED FOR, once: Build sends it, and so does "Show where the kills will land", so the
+   preview is the plan Build would make and not an approximation of it. `withMarks` adds the kills the
+   player placed by hand. */
+function studio_planBody(withMarks) {
+  const body = {
+    clips: studio_ordered().map(c => c.path), style: studio.style, song: studio.song,
+    format: studio.fmt, vfit: studio.fmt === 'vertical' ? studio.vfit : 'zoom',
+    name: studio_el('studio-name').value.trim(),
+    /* Only what was DEALT or CLICKED. Sending the style's own picks back narrowed every drawer to the
+       one part the style leads with, and a montage came out with the same kill effect on all six
+       kills. A drawer's SET goes as a list, each id as many times as it is weighted. */
+    template: studio.picks || null,
+    shaping: Object.assign({}, studio.shaping, {arrange: studio.arrange,
+      pins: studio.pins, shuffle_seed: studio.shuffleSeed,
+      hs_only: !!(studio_el('studio-hs-only') && studio_el('studio-hs-only').checked &&
+                  !studio_el('studio-hs-row').classList.contains('hide')),
+      /* As chosen, '' when not: the server resolves '' exactly as studio_fillNow draws it, and the
+         project keeps what was ASKED. */
+      fill: studio.fill === 'part' && !studio_mkHasPart() ? '' : studio.fill,
+      keep_all: !!studio.keepAll})
+  };
+  /* The whole clip, cover-fitted: the trim and the fit are the timeline dialog's job, and normalise
+     clamps both anyway. What is chosen here is which intro and whether it is heard. */
+  if (studio.mkIntro.path) {
+    const got = (studio.intro.list || []).find(x => x.path === studio.mkIntro.path);
+    body.intro_clip = {path: studio.mkIntro.path, start: 0,
+                       end: got ? Number(got.seconds) : 0,
+                       audio: !!studio.mkIntro.audio, fit: 'cover'};
+  }
+  if (studio_mkHasPart()) {
+    body.part_start = studio.mk.start;
+    body.part_end = studio.mk.end;
+  }
+  if (withMarks && studio.song && studio.mk.edited && studio.mk.hand.length) {
+    body.marks = studio.mk.hand.map(t => Math.round(t * 1000) / 1000);
+  }
+  return body;
+}
+
 async function studio_build() {
   const btn = studio_el('studio-build-btn');
   btn.disabled = true;
@@ -3258,36 +3803,7 @@ async function studio_build() {
     : studio.arrange === 'fit' ? 'Finding the perfect fit of every kill to the song — this can take up to ~30 s…'
     : 'Finding the beat and planning every shot…';
   try {
-    const body = {
-      clips: studio_ordered().map(c => c.path), style: studio.style, song: studio.song,
-      format: studio.fmt, vfit: studio.fmt === 'vertical' ? studio.vfit : 'zoom',
-      name: studio_el('studio-name').value.trim(),
-      /* Only what was DEALT or CLICKED. Sending the style's own picks back
-         narrowed every drawer to the one part the style leads with, and a
-         montage came out with the same kill effect on all six kills. */
-      template: studio.picks || null,
-      shaping: Object.assign({}, studio.shaping, {arrange: studio.arrange,
-        pins: studio.pins, shuffle_seed: studio.shuffleSeed,
-        hs_only: !!(studio_el('studio-hs-only') && studio_el('studio-hs-only').checked &&
-                    !studio_el('studio-hs-row').classList.contains('hide')),
-        /* As chosen, '' when not: the server resolves '' exactly as
-           studio_fillNow draws it, and the project keeps what was ASKED. */
-        fill: studio.fill === 'part' && !studio_mkHasPart() ? '' : studio.fill,
-        keep_all: !!studio.keepAll})
-    };
-    /* The whole clip, cover-fitted: the trim and the fit are the timeline
-       dialog's job, and normalise clamps both anyway. What is chosen here is
-       which intro and whether it is heard. */
-    if (studio.mkIntro.path) {
-      const got = (studio.intro.list || []).find(x => x.path === studio.mkIntro.path);
-      body.intro_clip = {path: studio.mkIntro.path, start: 0,
-                         end: got ? Number(got.seconds) : 0,
-                         audio: !!studio.mkIntro.audio, fit: 'cover'};
-    }
-    if (studio_mkHasPart()) {
-      body.part_start = studio.mk.start;
-      body.part_end = studio.mk.end;
-    }
+    const body = studio_planBody(true);
     /* A rebuild keeps the reel's own choices -- facecam, handle, ending --
        which belong to the reel and not to the plan being redone. */
     if (studio.adding && studio.adding.keep) body.keep = studio.adding.keep;
@@ -5682,6 +6198,7 @@ function studio_fxpRemember(kind, ids) {
 
 /* What a list or pool holds right now, straight from the reel. */
 function studio_fxpCurrent(st) {
+  if (st.make) return studio_pickUnique(studio_template()[st.make]);
   const p = studio.project;
   if (!p) return [];
   if (st.pool) return ((p.pools || {})[st.pool] || []).slice();
@@ -5696,8 +6213,13 @@ function studio_fxpOpen(b) {
     list: b.getAttribute('data-list') || '', pool: b.getAttribute('data-pool') || '', q: '',
     opener: b.id || '', openerKey: b.getAttribute('data-list') || b.getAttribute('data-pool') || ''
   };
-  st.multi = !!(st.list || st.pool);
-  st.sel = st.multi ? studio_fxpCurrent(st) : [b.getAttribute('data-part') || ''];
+  /* The Make page owns it when `data-make` is set: it edits the template that is about to be
+     planned, not a reel that exists. Several at once only where a drawer can hold several. */
+  st.make = b.getAttribute('data-make') || '';
+  st.multi = st.make ? (MAKE_MULTI.indexOf(st.kind) >= 0 && b.getAttribute('data-multi') === '1')
+                     : !!(st.list || st.pool);
+  st.sel = st.make ? studio_fxpCurrent(st)
+                   : (st.multi ? studio_fxpCurrent(st) : [b.getAttribute('data-part') || '']);
   st.was = st.sel.slice();
   studio.fxp = st;
   studio_el('studio-fxp-title').textContent = 'Choose ' + (FXP_TITLES[st.kind] || 'an effect');
@@ -5712,7 +6234,7 @@ function studio_fxpOpen(b) {
      Cancel still means what it says in both: for a choice that has already
      been applied it puts back what was there when the dialog opened. */
   studio_show('studio-fxp-done', true);
-  studio_show('studio-fxp-clear', st.multi && !st.pool);
+  studio_show('studio-fxp-clear', st.multi && !st.pool && !st.make);
   studio_show('studio-fxp-scrim', true);
   studio_el('studio-fxp-prev').classList.add('is-empty');
   if (!studio.examples && !studio.exLoading) {
@@ -5876,7 +6398,7 @@ function studio_fxpPick(id) {
     if (id === st.sel[0]) return;
     studio_fxpRemember(st.kind, [id]);
     st.sel = [id];
-    studio_inspectorSet(st.target, id);
+    if (st.make) studio_binPick(st.make, id); else studio_inspectorSet(st.target, id);
     studio_fxpDraw();
     studio_fxpStageBtn();
     return;
@@ -5891,13 +6413,14 @@ function studio_fxpDone() {
   const st = studio.fxp;
   if (!st) return;
   if (!st.multi) { studio_fxpClose(); return; }   /* already applied, click by click */
-  if (st.pool && !st.sel.length) { toast('Keep at least one to choose from.', 'warn'); return; }
+  if ((st.pool || st.make) && !st.sel.length) { toast('Keep at least one to choose from.', 'warn'); return; }
   studio_fxpClose();
   const added = st.sel.filter(id => st.was.indexOf(id) < 0);
   if (added.length) studio_fxpRemember(st.kind, added);
   const same = st.sel.length === st.was.length && st.sel.every(id => st.was.indexOf(id) >= 0);
   if (same) return;
-  if (st.pool) studio_setPool(st.pool, st.sel.slice());
+  if (st.make) studio_makeSet(st.make, st.sel.slice());
+  else if (st.pool) studio_setPool(st.pool, st.sel.slice());
   else studio_setList(st.list, st.sel.slice());
 }
 
@@ -5908,7 +6431,9 @@ function studio_fxpDone() {
    what it was. */
 function studio_fxpCancel() {
   const st = studio.fxp;
-  if (st && !st.multi && st.sel[0] !== st.was[0]) studio_inspectorSet(st.target, st.was[0] || '');
+  if (st && !st.multi && st.sel[0] !== st.was[0]) {
+    if (st.make) studio_binPick(st.make, st.was[0]); else studio_inspectorSet(st.target, st.was[0] || '');
+  }
   studio_fxpClose();
 }
 
@@ -7978,6 +8503,7 @@ function studio_wire() {
       /* A style is a template: taking one drops the picks dealt over the last. */
       studio.style = b.getAttribute('data-style');
       studio.picks = null;
+      studio_mkStale();
       studio_renderStyles(); studio_hand(); studio_binDraw();
     }
     else if (act === 'studio-sg-song') studio_sgUseSong(b.getAttribute('data-path'));
@@ -7992,18 +8518,28 @@ function studio_wire() {
     else if (act === 'studio-shape-reset') studio_shapeReset();
     else if (act === 'studio-arrange') studio_arrangePick(b.getAttribute('data-how'));
     else if (act === 'studio-pin') studio_pin(b.getAttribute('data-slot'), b.getAttribute('data-clip'));
-    else if (act === 'studio-hand-next') studio_handNext(b.getAttribute('data-kind'));
+    else if (act === 'studio-hand-pick') studio_handPick(b.getAttribute('data-kind'), b.getAttribute('data-multi') === '1');
+    else if (act === 'studio-set-weight') studio_makeWeight(b.getAttribute('data-kind'), b.getAttribute('data-part'), Number(b.getAttribute('data-d')));
+    else if (act === 'studio-set-remove') studio_makeRemove(b.getAttribute('data-kind'), b.getAttribute('data-part'));
     else if (act === 'studio-deal') studio_deal();
     else if (act === 'studio-deal-reset') studio_dealReset();
     else if (act === 'studio-bin-build') studio_binBuild();
     else if (act === 'studio-bin-stop') studio_binStop();
     else if (act === 'studio-song') studio_pickSong();
     else if (act === 'studio-nosong') {
-      studio.song = ''; studio.songShape = null;
+      studio.song = ''; studio.songShape = null; studio_mkStale(); studio_mkKillsDraw(); studio_samplesCheck();
       studio_el('studio-song-name').textContent = 'No song: the clips keep their own sound, cut to a 120 BPM grid.';
       studio_mkDefault();
     }
-    else if (act === 'studio-mk-mode') { studio.mk.mode = b.getAttribute('data-mode'); studio_mkDraw(); }
+    else if (act === 'studio-mk-mode') { studio.mk.mode = b.getAttribute('data-mode'); studio_mkStale(); studio_mkDraw(); studio_samplesCheck(); }
+    else if (act === 'studio-mk-jump') studio_mkJump(b.getAttribute('data-sec'));
+    else if (act === 'studio-mk-plan') studio_mkPlan();
+    else if (act === 'studio-mk-addmark') studio_mkAddMark();
+    else if (act === 'studio-mk-clearmarks') studio_mkClearMarks();
+    else if (act === 'studio-mk-delmark') studio_mkDelMark(Number(b.getAttribute('data-i')));
+    else if (act === 'studio-mk-nudgemark') studio_mkNudgeMark(Number(b.getAttribute('data-i')), Number(b.getAttribute('data-d')));
+    else if (act === 'studio-samples-start') studio_samplesStart();
+    else if (act === 'studio-samples-stop') studio_samplesStop();
     else if (act === 'studio-fill') { studio.fill = b.getAttribute('data-fill'); studio_fillDraw(); }
     else if (act === 'studio-mk-nudge') studio_mkNudge(b.getAttribute('data-what'), b.getAttribute('data-d') === 'bar' ? 'bar' : '-bar');
     else if (act === 'studio-mk-preset') studio_mkPreset(b.getAttribute('data-preset'));
@@ -8353,6 +8889,10 @@ function studio_wire() {
   });
   const mkw = studio_el('studio-mk-wave');
   if (mkw) ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(ev => mkw.addEventListener(ev, studio_mkPointer));
+  const mkk = studio_el('studio-mk-kills');
+  if (mkk) ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'dblclick'].forEach(ev => mkk.addEventListener(ev, studio_mkKillPointer));
+  const vws = document.getElementById('views');
+  if (vws) vws.addEventListener('scroll', studio_mkSpy, {passive: true});
   const mka = studio_el('studio-mk-audio');
   if (mka) ['play', 'pause', 'timeupdate', 'loadedmetadata', 'seeked'].forEach(ev => mka.addEventListener(ev, studio_mkAudio));
   const mks = studio_el('studio-mk-seek');
@@ -8475,7 +9015,7 @@ function studio_wire() {
   document.addEventListener('change', onKnob);
   const ar = studio_el('studio-auto-render');
   if (ar) ar.addEventListener('change', () => studio_autoSet(ar.checked));
-  ['studio-make-scrim', 'studio-preview-scrim', 'studio-fxp-scrim'].forEach(id => {
+  ['studio-preview-scrim', 'studio-fxp-scrim'].forEach(id => {
     const sc = studio_el(id);
     if (sc) sc.addEventListener('click', e => { if (e.target === sc) studio_closeModals(); });
   });
@@ -8487,6 +9027,11 @@ function studio_wire() {
        and it is read here, above the input guard, because its caret is in a
        search field and the guard below would hand those keys to the field. */
     if (studio_palKey(e)) return;
+    /* K DROPS A KILL AT THE PLAYHEAD on the Make page, as it does on the Song tab. */
+    if (!studio_el('studio-make-scrim').classList.contains('hide') && !e.ctrlKey && !e.metaKey && !e.altKey
+        && (e.key || '').toLowerCase() === 'k' && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target || {}).tagName || '')) {
+      e.preventDefault(); studio_mkAddMark(); return;
+    }
     if (e.key === 'Escape') {
       studio_closeModals();
       /* Nobody is stranded holding a tool. */
