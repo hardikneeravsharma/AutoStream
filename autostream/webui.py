@@ -3719,9 +3719,7 @@ class Server:
                                   shape=shape, song=song if shape else "",
                                   fmt=str(body.get("format") or "landscape"),
                                   name=str(body.get("name") or ""), max_seconds=max_s,
-                                  measure=studio.action if clips_mod.available() else None,
-                                  confirm=studio.kill_marks if clips_mod.available() else None,
-                                  theirs=studio.spectated if clips_mod.available() else None,
+                                  checks=True,
                                   part=part,
                                   shape_it=body.get("shaping")
                                   if isinstance(body.get("shaping"), dict) else None)

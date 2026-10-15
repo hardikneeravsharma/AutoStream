@@ -993,3 +993,90 @@ def rigid_grid(bpm: float, anchor: float, duration: float) -> list[float]:
     if n < 2:
         return []
     return [round(first + i * beat, 6) for i in range(n)]
+
+
+# ---------------------------------------------------------------------------
+# DROPS, FOUND THE WAY A PERSON HEARS THEM: the bass comes in AND the beat comes
+# with it.
+#
+# Measured against a song a person marked by ear (Blade x Into The Void: drops at
+# 32.2, 108.8, 172.4, 271.1 and 326.7 s). `find_drops` above reads the onset
+# envelope and found 4 of the 5, each late -- up to 2.5 s -- and MISSED 172.4
+# entirely, because overall loudness only rises 3 dB there. A drop is not a loud
+# moment; it is the low end arriving.
+#
+# But the low end also arrives at moments that are not drops: at 83.2 s the bass
+# comes in under the START of a build (+48.7 dB, the biggest in the song) and at
+# 216.8 s under a calm vocal intro (+29.9 dB). What separates them is what comes
+# WITH it. After a real drop the treble -- hats, snares, the beat -- stays up for
+# the next eight seconds (46.0 to 48.3 dB on all five); after those two it does
+# not (31.7 and 30.9). A 14 dB gap on one song.
+# ---------------------------------------------------------------------------
+ENTRY_WIN = 0.25
+ENTRY_BACK = 4.0               # compare the bass against this much of what came before
+ENTRY_FWD = 2.0                # ...and this much after
+ENTRY_MIN_DB = 13.0            # the smallest real drop measured was +13.7
+ENTRY_GAP = 14.0               # sections are further apart than phrases: measured on 33 hand-marked drops, 6 s gave 47% precision and 14 s gave 64%
+ENTRY_SKIP = 4.0               # the first seconds are nobody's drop
+BEAT_AFTER = 8.0               # how long the treble has to hold
+BEAT_TOL_DB = 4.0              # ...within this of the song's own typical level
+
+
+def _bands(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Bass, treble and total energy per quarter-second, in dB."""
+    n = int(ENTRY_WIN * SR)
+    c = int(x.size // n)
+    f = np.abs(np.fft.rfft(x[:c * n].reshape(c, n).astype(np.float64) * np.hanning(n), axis=1))
+    fr = np.fft.rfftfreq(n, 1.0 / SR)
+
+    def band(lo, hi=None):
+        sel = (fr >= lo) & ((fr < hi) if hi else True)
+        return 10.0 * np.log10((f[:, sel] ** 2).sum(axis=1) + 1e-9)
+
+    return band(35, 120), band(3000, 10000), band(0)
+
+
+def find_entrances(x: np.ndarray) -> list[dict]:
+    """Every place the bass comes in, each judged on whether the beat came too.
+
+    -> [{t, bass_step, treble_after, ok, why}], in time order. `ok` is the drop;
+    the rest are returned too, with the reason, so a caller can show what was
+    rejected rather than only what was kept -- a detector that cannot be seen
+    being wrong cannot be corrected.
+    """
+    if x.size < int(20 * SR):
+        return []
+    bass, treble, _tot = _bands(x)
+    c = len(bass)
+    back, fwd = int(ENTRY_BACK / ENTRY_WIN), int(ENTRY_FWD / ENTRY_WIN)
+    first = max(back, int(ENTRY_SKIP / ENTRY_WIN))
+    step = np.full(c, -99.0)
+    for i in range(first, c - fwd):
+        step[i] = float(np.median(bass[i:i + fwd]) - np.median(bass[i - back:i]))
+    typical = float(np.median(treble))
+
+    picked: list[int] = []
+    for i in sorted(range(first, c - fwd), key=lambda j: -step[j]):
+        if step[i] < ENTRY_MIN_DB:
+            break
+        if all(abs(i - j) * ENTRY_WIN > ENTRY_GAP for j in picked):
+            picked.append(i)
+
+    out = []
+    for i in sorted(picked):
+        # PLACED ON THE ENTRANCE, not on the loudest frame after it: walk back
+        # from the peak to the first quarter-second whose bass is within a
+        # quarter of the rise of where it settles.
+        settle = float(np.median(bass[i:i + fwd]))
+        floor = float(np.median(bass[max(0, i - back):i]))
+        j = i
+        while j > first and bass[j - 1] > floor + 0.5 * (settle - floor):
+            j -= 1
+        hold = treble[j + 4:j + int(BEAT_AFTER / ENTRY_WIN)]
+        after = float(np.median(hold)) if hold.size else -99.0
+        ok = after >= typical - BEAT_TOL_DB
+        out.append({"t": round(j * ENTRY_WIN, 2), "bass_step": round(float(step[i]), 1),
+                    "treble_after": round(after, 1), "typical": round(typical, 1), "ok": bool(ok),
+                    "why": "" if ok else "the bass comes in but the beat does not "
+                                         "(a build starting, or a calm part)"})
+    return out

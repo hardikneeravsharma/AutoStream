@@ -784,7 +784,10 @@ def test_no_two_shots_running_get_the_same_kill_effect(long_run, style):
     # headshot" is deliberately one, because its effects come from the beat
     # engine rather than from the parts bin, and stacking a per-kill effect on
     # a per-beat one muddies both.
-    pool = {p for p in [x.kill_pool for x in studio.STYLES if x.key == style][0]}
+    st = studio.STYLE[style]
+    # A fast-cut style on a fast song keeps ONE kill effect on purpose (K2): the pool it
+    # is held to is then the one it was reduced to, not the one it was written with.
+    pool = ({st.kill[0]} if studio.fast_reel(st, 128.0) else set(st.kill_pool))
     if len(pool) == 1:
         assert set(firsts) == pool, firsts
         return
@@ -796,7 +799,8 @@ def test_no_two_shots_running_get_the_same_kill_effect(long_run, style):
 def test_transitions_are_mixed_too(long_run, style):
     proj, _ = studio.plan(_clips(long_run), style, shape=Shape(bpm=128.0))
     cuts = [s["transition"] for s in proj["shots"][1:]]
-    pool = {p for p in [x.transition_pool for x in studio.STYLES if x.key == style][0]}
+    st = studio.STYLE[style]
+    pool = ({"t01"} if studio.fast_reel(st, 128.0) else set(st.transition_pool))
     if len(pool) == 1:                 # see the kill-effect test above
         assert set(cuts) <= pool, cuts
         return

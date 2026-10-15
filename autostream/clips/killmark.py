@@ -460,3 +460,119 @@ def scan(video: Path, game: str, *, start: float = 0.0, duration: float = 0.0, f
         if not merged or o - merged[-1] > 0.6:
             merged.append(o)
     return merged
+
+
+# ---------------------------------------------------------------------------
+# THE FIRST FRAME OF THE EMBLEM, WHICH IS THE KILL AS A VIEWER SEES IT.
+#
+# `marks` above reads the emblem's RING, and the ring grows in over half a
+# second: the glyph in the middle is on screen from the first frame of the kill
+# and the ring follows. So its onsets are the ring's, which is late -- measured
+# against the first visible frame of the glyph, read by eye off six clips:
+#
+#     clip                          glyph first visible    `marks` said    late by
+#     VALORANT_15 (headshot)             3.85                  4.27         0.42
+#     VALORANT_07                        3.65                  4.00         0.35
+#     VALORANT_10                        3.55                  3.70         0.15
+#     VALORANT_02                       18.15                 18.80         0.65
+#     VALORANT_03                       31.45                 32.17         0.72
+#     VALORANT_06                       47.00                 (not found)     --
+#
+# and the time a clip was MARKED at is no better: 0.38 s before the hit in one
+# clip and 0.27 s after it in another. A reel cut 0.38 s after a mark that was
+# 0.38 s early cut away as the hit began. The glyph, on the other hand, is the
+# moment the game itself says the kill happened.
+#
+# HOW IT IS READ. At 60 fps, a small window where the glyph appears: its edge
+# energy jumps from a floor of 1-5 to 14-30 inside two frames. Scenery has edges
+# too, so a jump counts only when it is local -- much stronger in the window than
+# in the frame around it, which a camera cut or a fast turn raises everywhere --
+# and when it holds, because the emblem stays up for two seconds.
+# ---------------------------------------------------------------------------
+GLYPH_FPS = 60
+GLYPH_W = 160                  # the window, in pixels of a 1920-wide frame
+GLYPH_CX, GLYPH_CY = 0.5010, 0.7959
+GLYPH_FLOOR = 11.0             # edge energy a glyph has to reach: measured 13.7 to 22 on its first frame
+GLYPH_RISE = 2.4               # ...and this many times what was there 0.3 s before
+GLYPH_LOCAL = 2.0              # ...and this many times what the frame around it has right now
+GLYPH_HOLD = 12                # frames (0.2 s) over which it has to stay up
+# Where a marked kill's glyph may be: the marks ran from 0.9 s early to 0.7 s late.
+GLYPH_BEFORE, GLYPH_AFTER = 1.2, 1.0
+
+
+def glyph_series(frames):
+    """(window energy, surround energy) per frame, from rgb frames [n, 80, 80, 3]."""
+    import numpy as np
+
+    g = frames.mean(axis=3)
+    gx = np.abs(np.diff(g, axis=2))[:, :-1, :]
+    gy = np.abs(np.diff(g, axis=1))[:, :, :-1]
+    mag = gx + gy
+    centre = mag[:, 20:60, 20:60].mean(axis=(1, 2))
+    around = np.concatenate([mag[:, :20, :].reshape(len(g), -1),
+                             mag[:, 60:, :].reshape(len(g), -1)], axis=1).mean(axis=1)
+    return centre, around
+
+
+def glyph_onsets(centre, around, fps: float = GLYPH_FPS) -> list[float]:
+    """Seconds (from the first frame) at which the emblem's glyph appears."""
+    import numpy as np
+
+    out: list[float] = []
+    n = len(centre)
+    back0, back1 = int(0.30 * fps), int(0.05 * fps)
+    i = back0
+    while i < n - GLYPH_HOLD:
+        base = float(np.median(centre[i - back0:i - back1])) if back0 > back1 else float(centre[i - 1])
+        c = float(centre[i])
+        if (c >= GLYPH_FLOOR and c >= GLYPH_RISE * max(base, 1.0)
+                and c >= GLYPH_LOCAL * max(float(around[i]), 1.0)
+                # It HOLDS at glyph level, not merely above the old floor: a four-frame flash
+                # raised the mean of the next twelve frames past 2.4 x a baseline of 2.
+                and float(np.mean(centre[i:i + GLYPH_HOLD])) >= max(GLYPH_FLOOR, GLYPH_RISE * max(base, 1.0))):
+            out.append(round(i / fps, 4))
+            # A SHORT skip, not the emblem's two seconds. The first version skipped
+            # 1.5 s on the reasoning that an emblem is replaced rather than raised
+            # again, and on VALORANT_06 a false trigger 1.06 s before the kill
+            # (a bright edge at the centre as the scene changed) swallowed the real
+            # glyph that came 1.06 s later. A glyph that is not there at all fails
+            # the hold test below, so being generous here costs nothing.
+            i += int(0.4 * fps)
+        else:
+            i += 1
+    return out
+
+
+def appearance(video: Path, game: str, near: float, ff: str = "ffmpeg") -> float | None:
+    """When the emblem's glyph first appears closest to `near` (clip seconds), or None.
+
+    None for a game with no emblem, for a window with none in it, and for any
+    failure to read: the caller keeps the time it had, which is the old behaviour.
+    """
+    import numpy as np
+    from .killfeed import _NO_WINDOW
+
+    if spec_for(game) is None:
+        return None
+    t0 = max(0.0, float(near) - GLYPH_BEFORE)
+    secs = (float(near) + GLYPH_AFTER) - t0
+    # The 0.3 s the baseline needs, read before the window and trimmed off the answer.
+    pre = min(t0, 0.4)
+    args = [ff, "-v", "error", "-ss", f"{t0 - pre:.3f}", "-i", str(video), "-t", f"{secs + pre:.3f}",
+            "-vf", f"fps={GLYPH_FPS},crop=iw*{GLYPH_W / 1920:.5f}:ih*{GLYPH_W / 1080:.5f}:"
+                   f"iw*{GLYPH_CX - GLYPH_W / 3840:.5f}:ih*{GLYPH_CY - GLYPH_W / 2160:.5f},"
+                   f"scale=80:80,format=rgb24",
+            "-f", "rawvideo", "-"]
+    try:
+        raw = subprocess.run(args, capture_output=True, timeout=120, creationflags=_NO_WINDOW).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    n = len(raw) // (80 * 80 * 3)
+    if n < GLYPH_FPS // 2:
+        return None
+    frames = np.frombuffer(raw, np.uint8)[:n * 80 * 80 * 3].reshape(n, 80, 80, 3).astype(np.float32)
+    centre, around = glyph_series(frames)
+    hits = [(t0 - pre) + t for t in glyph_onsets(centre, around) if (t0 - pre) + t >= t0 - 1e-6]
+    if not hits:
+        return None
+    return round(min(hits, key=lambda t: abs(t - float(near))), 3)
