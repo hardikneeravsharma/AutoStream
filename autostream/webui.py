@@ -763,6 +763,17 @@ class _Handler(BaseHTTPRequestHandler):
             else:
                 cache = self.app._clips_dir(cfg.load()) / _st.CACHE_DIR / "lyrics"
                 self._media(str(cache / name), cache, (".webm",), "lyrics")
+        elif u.path == "/api/studio/samples/status":
+            from .clips import style_samples as _ss
+
+            self._json({"ok": True, "state": _ss.runner().status()})
+        elif u.path == "/api/studio/sample":
+            q = parse_qs(u.query)
+            f = self.app.studio_sample_file((q.get("key") or [""])[0], (q.get("style") or [""])[0])
+            if f is None:
+                self._json({"error": "No such sample."}, 400)
+            else:
+                self._media(str(f), f.parent, (".mp4",), "sample")
         elif u.path == "/api/studio/example":
             q = parse_qs(u.query)
             blob, ctype, err = self.app.studio_example((q.get("id") or [""])[0],
@@ -964,6 +975,14 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_facecam_sync(b))
             elif p == "/api/studio/example/large":
                 self._json(self.app.studio_example_large(b))
+            elif p == "/api/studio/samples/check":
+                self._json(self.app.studio_samples_check(b))
+            elif p == "/api/studio/samples/start":
+                self._json(self.app.studio_samples_start(b))
+            elif p == "/api/studio/samples/cancel":
+                from .clips import style_samples as _ss
+
+                self._json({"ok": True, "state": _ss.runner().cancel()})
             elif p == "/api/studio/examples/build":
                 self._json(self.app.studio_examples_build(b))
             elif p == "/api/studio/examples/cancel":
@@ -3665,18 +3684,16 @@ class Server:
             return None
         return self._reel_song({"song": song})
 
-    def studio_plan(self, body: dict) -> dict:
-        """A first timeline from chosen clips and a style. Nothing is encoded."""
+    def _studio_chosen(self, root: Path, want: list[str]) -> list[dict]:
+        """The library rows for the clips the page named, in the order it named them.
+
+        Matched by resolved path and never trusted from the request: a clip is only ever one
+        this machine's library already holds.
+        """
         from .clips import studio
 
-        c = cfg.load()
-        root = self._clips_dir(c)
-        want = [str(p) for p in (body.get("clips") or []) if isinstance(p, str)][:studio.MAX_SHOTS]
-        if not want:
-            return {"ok": False, "error": "Choose at least one clip."}
-        lib = studio.library(root)
         by_path = {}
-        for g in lib["games"]:
+        for g in studio.library(root)["games"]:
             for f in g["folders"]:
                 for clip in f["clips"]:
                     by_path[str(Path(clip["path"]).resolve()).lower()] = clip
@@ -3688,6 +3705,91 @@ class Server:
                 hit = None
             if hit:
                 chosen.append(hit)
+        return chosen
+
+    # ---- a style, shown on the player's own kills (M6) -------------------------
+
+    def _samples_args(self, body: dict):
+        """(root, clips, fmt, song, shape, part) for a samples request, or an error string."""
+        from .clips import studio
+
+        c = cfg.load()
+        root = self._clips_dir(c)
+        want = [str(p) for p in (body.get("clips") or []) if isinstance(p, str)][:studio.MAX_SHOTS]
+        chosen = self._studio_chosen(root, want)
+        if not chosen:
+            return "Choose at least one clip."
+        fmt = "vertical" if str(body.get("format") or "") == "vertical" else "landscape"
+        song = str(body.get("song") or "")
+        part = None
+        try:
+            p0, p1 = float(body.get("part_start")), float(body.get("part_end"))
+            if song and 0.0 <= p0 < p1 and p1 - p0 < 36000:
+                part = (p0, p1)
+        except (TypeError, ValueError):
+            part = None
+        return root, chosen, fmt, song, part
+
+    def studio_samples_check(self, body: dict) -> dict:
+        """What is already shown for these clips, without starting anything."""
+        from .clips import studio, style_samples as ss
+
+        got = self._samples_args(body)
+        if isinstance(got, str):
+            return {"ok": False, "error": got}
+        root, chosen, fmt, song, part = got
+        key = ss.key_of(chosen, fmt, song, part)
+        styles = [s.key for s in studio.STYLES]
+        run = ss.runner().status()
+        return {"ok": True, "key": key, "styles": styles,
+                "ready": ss.ready(root, key, styles),
+                "running": bool(ss.runner().busy() and run.get("key") == key),
+                "clips": len(ss.pick_clips(chosen))}
+
+    def studio_samples_start(self, body: dict) -> dict:
+        """Cut every missing sample, one at a time, in the background."""
+        from . import clips as clips_mod
+        from .clips import studio, style_samples as ss
+
+        got = self._samples_args(body)
+        if isinstance(got, str):
+            return {"ok": False, "error": got}
+        root, chosen, fmt, song, part = got
+        held = self.studio_encoder_held()
+        if not held and studio.runner().busy():
+            held = "Waiting for your reel to finish rendering."
+        if held:
+            return {"ok": False, "held": held, "error": held}
+        clips_mod.set_ffmpeg_path(cfg.load().clips.ffmpeg_path or None)
+        if not clips_mod.available():
+            return {"ok": False, "error": "ffmpeg is not available."}
+        known = {s.key for s in studio.STYLES}
+        want = [str(x) for x in (body.get("styles") or []) if str(x) in known] or [s.key for s in studio.STYLES]
+        try:
+            shape = self._studio_shape(song)
+        except (FileNotFoundError, OSError, RuntimeError):
+            shape, part = None, None
+        return {"ok": True, "state": ss.runner().start(root, chosen, fmt, want, song=song,
+                                                       shape=shape, part=part)}
+
+    def studio_sample_file(self, key: str, style: str) -> Path | None:
+        """One finished sample, by key and style -- names, never paths."""
+        from .clips import studio, style_samples as ss
+
+        if not re.fullmatch(r"[0-9a-f]{16}", str(key or "")) or style not in {s.key for s in studio.STYLES}:
+            return None
+        return ss.path_for(self._clips_dir(cfg.load()), key, style)
+
+    def studio_plan(self, body: dict) -> dict:
+        """A first timeline from chosen clips and a style. Nothing is encoded."""
+        from .clips import studio
+
+        c = cfg.load()
+        root = self._clips_dir(c)
+        want = [str(p) for p in (body.get("clips") or []) if isinstance(p, str)][:studio.MAX_SHOTS]
+        if not want:
+            return {"ok": False, "error": "Choose at least one clip."}
+        chosen = self._studio_chosen(root, want)
         if not chosen:
             return {"ok": False, "error": "None of those clips are in the clips folder any more."}
         song = str(body.get("song") or "")
@@ -3719,12 +3821,28 @@ class Server:
                                   shape=shape, song=song if shape else "",
                                   fmt=str(body.get("format") or "landscape"),
                                   name=str(body.get("name") or ""), max_seconds=max_s,
-                                  measure=studio.action if clips_mod.available() else None,
-                                  confirm=studio.kill_marks if clips_mod.available() else None,
-                                  theirs=studio.spectated if clips_mod.available() else None,
+                                  checks=True,
                                   part=part,
                                   shape_it=body.get("shaping")
                                   if isinstance(body.get("shaping"), dict) else None)
+        # KILLS MARKED ON THE MAKE PAGE, in song seconds: where the player wants each kill to
+        # land, edited on the song's waveform. Applied the way the Song tab applies them -- the
+        # cuts move and the marks never do -- over the part that was planned.
+        hand = body.get("marks")
+        if shape and isinstance(hand, list) and hand:
+            marks = []
+            for m in hand[:studio.MAX_SHOTS * 2]:
+                try:
+                    marks.append(float(m))
+                except (TypeError, ValueError):
+                    continue
+            marks = sorted(m for m in marks if 0.0 <= m <= (shape.seconds if hasattr(shape, "seconds")
+                                                              else 36000.0))
+            if marks:
+                start = float(proj.get("song_offset") or 0.0)
+                end = float(proj.get("part_end") or 0.0)
+                notes = list(notes) + studio.apply_song(proj, shape, song, start, end, marks)
+                notes.append(f"{len(marks)} kill(s) were placed by hand on the song; the cuts moved to meet them.")
         # The intro chosen on the Make dialog. It used to be reachable only
         # from the timeline, which meant the first render of every reel went
         # out without one and you had to render twice to open with an intro.

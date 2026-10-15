@@ -73,6 +73,9 @@ class Shape:
     phase: float                  # where beat zero sits, in seconds
     downbeat_pos: int             # which position in the bar carries the kick
     drop: float | None = None
+    # Every drop found, in song seconds -- the bass enters AND the beat comes with it.
+    # `drop` is only the biggest; a reel plays a stretch and wants the one inside it.
+    drops: list[float] = field(default_factory=list)
     drums_in: float | None = None
     beats: list[float] = field(default_factory=list)
     peaks: list[float] = field(default_factory=list)   # for drawing a waveform
@@ -252,6 +255,7 @@ def analyse(path: Path, seconds: float = 0.0, points: int = 2000) -> Shape:
         path=path, seconds=total, bpm=bpm, phase=phase,
         downbeat_pos=downbeat_position(x, beats),
         drop=bs.find_drop(x, total),
+        drops=[e["t"] for e in bs.find_entrances(x) if e["ok"]],
         drums_in=drums_in(x, phase, beat * 4),
         beats=beats,
         peaks=[round(v / top, 3) for v in raw[:points]],

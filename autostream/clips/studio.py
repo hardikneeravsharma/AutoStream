@@ -752,13 +752,30 @@ def _leads(pick: str, pool: tuple) -> tuple:
     return (pick,) * max(2, len(rest)) + rest
 
 
-def templated(style: "Style", picks: dict) -> "Style":
-    """`style` with the picks a template makes. Unknown ids are ignored."""
+def _picked(value, kind: str) -> list[str]:
+    """The ids a template names for one drawer, in order, unknown ones dropped.
+
+    A string is one pick. A LIST is a set to draw from, and an id listed twice is drawn about
+    twice as often -- which is the weight the Make page shows as a number beside it.
+    """
+    raw = value if isinstance(value, (list, tuple)) else [value]
+    known = set(ids_of(kind))
+    return [str(x).strip() for x in raw if str(x or "").strip() in known][:12]
+
+
+def templated(style: "Style", picks: dict, exact: bool = False) -> "Style":
+    """`style` with the picks a template makes. Unknown ids are ignored.
+
+    `exact`: a single pick is the ONLY one, not the first of the style's own pool -- what a
+    fast-cut reel wants, where "one kill effect" has to mean one.
+    """
     swap: dict = {}
     for kind in DRAWERS:
-        pick = str((picks or {}).get(kind) or "").strip()
-        if not pick or pick not in ids_of(kind):
+        chosen = _picked((picks or {}).get(kind), kind)
+        if not chosen:
             continue
+        pick = chosen[0]
+        many = len(chosen) > 1
         if kind == "intro":
             swap["intro"] = pick
         elif kind == "outro":
@@ -769,19 +786,20 @@ def templated(style: "Style", picks: dict) -> "Style":
             swap["overlays"] = () if pick in ("o00", "") else (pick,)
         elif kind == "transition":
             swap["cuts"] = (pick,)
-            swap["transition_pool"] = _leads(pick, style.transition_pool)
+            swap["transition_pool"] = (tuple(chosen) if (many or exact)
+                                       else _leads(pick, style.transition_pool))
         elif kind == "kill":
             swap["kill"] = (pick,)
-            swap["kill_pool"] = _leads(pick, style.kill_pool)
+            swap["kill_pool"] = tuple(chosen) if (many or exact) else _leads(pick, style.kill_pool)
         elif kind == "hero":
             swap["hero"] = (pick,)
-            swap["hero_pool"] = _leads(pick, style.hero_pool)
+            swap["hero_pool"] = tuple(chosen) if (many or exact) else _leads(pick, style.hero_pool)
         elif kind == "camera":
             swap["camera"] = pick
-            swap["camera_pool"] = (pick,)
+            swap["camera_pool"] = tuple(chosen)
         elif kind == "speed":
             swap["speed"] = pick
-            swap["speed_pool"] = (pick,)
+            swap["speed_pool"] = tuple(chosen)
     return dataclasses.replace(style, **swap) if swap else style
 
 
@@ -933,6 +951,13 @@ class Style:
     # measurements. Empty means `refs` is the provenance, which is the usual
     # case; it is never both and never neither.
     provenance: str = ""
+    # A STYLE WHOSE CUTS ARE FAST ENOUGH THAT VARIETY STOPS HELPING. On a high-BPM
+    # song at a cut every second or so, a different transition and a different kill
+    # effect on every shot reads as noise, and a speed ramp around a kill makes its
+    # hit arrive late. Such a style keeps ONE transition, ONE kill effect and real
+    # speed -- see fast_rules -- unless the player chooses otherwise on the Make
+    # page, which always wins.
+    fast_cuts: bool = False
 
 
 STYLES: tuple[Style, ...] = (
@@ -998,7 +1023,7 @@ STYLES: tuple[Style, ...] = (
           kill_pool=("k01snap",), transition_pool=("t01",), hero_pool=("h01",),
           camera_pool=("c00",), speed_pool=("s00",), energy=0.0,
           max_per_clip=rulebook.CLIP_SHOTS_CAP,
-          provenance="docs/STYLE-FAST-PACED-HEADSHOT.md"),
+          provenance="docs/STYLE-FAST-PACED-HEADSHOT.md", fast_cuts=True),
     Style("hype", "Hype",
           "Fast and loud like the busiest montages: a cut every couple of beats, shake on every "
           "kill, crunchy colour and a kill counter.",
@@ -1009,7 +1034,7 @@ STYLES: tuple[Style, ...] = (
           kill_pool=("k01", "k02", "k11", "k06", "k08", "k16", "k12", "k03", "k19", "k22", "k18"),
           transition_pool=("t01", "t05", "t01", "t06", "t02", "t12", "t13"),
           hero_pool=("h01", "h02", "h03"), camera_pool=("c04", "c00", "c04", "c03", "c07"),
-          speed_pool=("s00", "s00", "s02", "s03"), energy=0.7),
+          speed_pool=("s00", "s00", "s02", "s03"), energy=0.7, fast_cuts=True),
     # ---- five more, each grouped by what its references MEASURE, not by taste.
     Style("clean", "Clean",
           "The calm end of the shelf: long shots, almost no effects, the game's own "
@@ -1034,7 +1059,7 @@ STYLES: tuple[Style, ...] = (
           transition_pool=("t02", "t06", "t13", "t12", "t05", "t01"),
           hero_pool=("h01", "h02", "h03"),
           camera_pool=("c04hard", "c04slam", "c00", "c06far"),
-          speed_pool=("s04", "s04", "s03", "s02"), energy=0.9),
+          speed_pool=("s04", "s04", "s03", "s02"), energy=0.9, fast_cuts=True),
     Style("short", "Short", 
           "Built for a Short: under half a minute, a cut a second, and the mark of the "
           "vertical edits -- quick in, quick out, nothing held.",
@@ -1111,7 +1136,7 @@ def catalog() -> dict:
         "kinds": list(KINDS), "drawers": list(DRAWERS),
         "styles": [{"key": s.key, "label": s.label, "blurb": s.blurb,
                     "measured": studio_refs.summary(s.refs),
-                    "provenance": s.provenance,
+                    "provenance": s.provenance, "fast_cuts": s.fast_cuts,
                     "defaults": {"intro": s.intro, "outro": s.outro, "cuts": list(s.cuts),
                                  "kill": list(s.kill), "hero": list(s.hero), "speed": s.speed,
                                  "hero_speed": s.hero_speed, "camera": s.camera,
@@ -1149,6 +1174,9 @@ class Grid:
     offset: float = 0.0
     beats: list[float] = field(default_factory=list)   # song seconds
     drop: float | None = None                            # song seconds
+    # Every drop in the song, not only the biggest: a reel plays a stretch of it, and
+    # the drop that matters is the one INSIDE that stretch. See drop_in().
+    drops: list[float] = field(default_factory=list)
     drums_in: float | None = None
     seconds: float = 0.0                                  # song length; 0 = no song
     bpm: float = NO_SONG_BPM
@@ -1166,6 +1194,7 @@ class Grid:
     @classmethod
     def of(cls, shape) -> "Grid":
         return cls(beat=shape.beat, beats=list(shape.beats), drop=shape.drop,
+                   drops=list(getattr(shape, "drops", None) or []),
                    drums_in=shape.drums_in, seconds=shape.seconds, bpm=shape.bpm,
                    downbeat_pos=getattr(shape, "downbeat_pos", 0),
                    peaks=list(getattr(shape, "peaks", None) or []),
@@ -1583,14 +1612,106 @@ def _plan_fit(clips: list[dict], style_key: str, *, shape_it: dict, **kw) -> tup
         return proj, ["Perfect fit could not plan this reel, so it was planned the usual way."] + notes
 
 
+# THE FAST-CUT RULES (K2, K3, K4), all measured on one reel: headshot3, Hype, 150 BPM.
+#
+#   * The misses. Six shots the player flagged as missing their kill were read by eye:
+#     four had 0.22 s after the kill with a crossfade overlapping the last part of
+#     it (0.07-0.12 s actually seen), two had a speed ramp that made the hit arrive
+#     late. 14 of the reel's 30 shots had exactly 0.22 s after the kill.
+#   * Where 0.22 came from. apply_marks gave each shot's run-up everything in the gap
+#     between two kills except 0.22 s. With kills 0.8 s apart that is 0.58 s of
+#     lead-up and 0.22 s of the kill itself.
+FAST_BPM = 110.0           # below this a cut every second is not fast, and variety is fine
+FAST_AFTER = 0.40          # what a kill needs after it to be seen at all, hard cut, real speed
+SLOW_AFTER = 0.22          # what every other style has always been given
+BUILD_BEATS = 4            # a cut every this many beats while the song builds to its drop
+
+
+def fast_reel(style, bpm: float | None) -> bool:
+    """Whether the fast-cut rules apply: a style that asks for them, on a song fast enough."""
+    return bool(getattr(style, "fast_cuts", False)) and float(bpm or NO_SONG_BPM) >= FAST_BPM
+
+
+def fast_rules(style: "Style") -> "Style":
+    """`style` with one transition, one kill effect, one hero treatment and real speed.
+
+    Applied BEFORE the player's template, so anything they chose on the Make page
+    still wins -- including a deliberate set of several, which is the point of
+    letting them choose a set.
+    """
+    return dataclasses.replace(
+        style,
+        cuts=("t01",), transition_pool=("t01",),
+        kill=(style.kill[0],), kill_pool=(style.kill[0],),
+        hero=(style.hero[0],), hero_pool=(style.hero[0],),
+        speed="s00", hero_speed="s00", speed_pool=("s00",),
+        camera_pool=(style.camera,),
+        energy=0.0)
+
+
+def after_floor(project: dict) -> float:
+    """The least a kill may have after it in this reel, in seconds."""
+    st = STYLE.get(str(project.get("style") or ""))
+    beat = float(project.get("beat") or 0.0)
+    return FAST_AFTER if st is not None and beat > 0 and fast_reel(st, 60.0 / beat) else SLOW_AFTER
+
+
+def drop_in(grid: "Grid", lo: float, hi: float) -> float | None:
+    """The drop of the stretch of song a reel plays, or None. Song seconds.
+
+    Of the drops the detector found, the first with room for a build before it and
+    for the drop to be heard after it. NOT the biggest in the whole song: headshot3
+    plays 2:29-3:31, its song's biggest drop is at 4:33, and the reel never
+    reached it -- so it had no build and no drop at all.
+    """
+    for d in sorted(grid.drops):
+        if lo + 2 * BUILD_BEATS * grid.beat <= d <= hi - 3 * grid.beat:
+            return d
+    if grid.drop and lo + 2 * BUILD_BEATS * grid.beat <= grid.drop <= hi - 3 * grid.beat:
+        return float(grid.drop)
+    return None
+
+
+def build_then_drop(hits: list[float], strengths: list[float], *, first: float, drop: float,
+                    count: int, beat: float, gap: float, end: float) -> list[float]:
+    """Kill times (song seconds) for a reel that builds, then drops.
+
+    Slow, plain cuts -- one every BUILD_BEATS beats -- until the drop; the first kill
+    EXACTLY on it; then a cut every hit at the style's own pace. headshot3 had its
+    kill 0.36 s after the drop, nearly a beat off, because the kills were laid on the
+    song's hits and the drop is not on one.
+    """
+    step = BUILD_BEATS * beat
+
+    def on_hit(t: float) -> float:
+        near = min(hits, key=lambda h: abs(h - t)) if hits else t
+        return near if abs(near - t) <= 0.15 else t
+
+    out: list[float] = []
+    t = first
+    while t < drop - 0.75 * step and len(out) < count - 1:
+        out.append(round(on_hit(t), 4))
+        t += step
+    out.append(round(drop, 4))
+    rest = count - len(out)
+    if rest > 0:
+        out += _hit_slots(hits, strengths, first=drop + gap, end=end, gap=gap, count=rest)
+    return sorted(set(out))
+
+
 def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
          song: str = "", fmt: str = "landscape", name: str = "",
          max_seconds: float = 0.0, seed: int | None = None,
-         measure=None, confirm=None, theirs=None,
+         measure=None, confirm=None, theirs=None, refine=None, checks: bool = False,
          part: tuple[float, float] | None = None,
          template: dict | None = None,
          shape_it: dict | None = None) -> tuple[dict, list[str]]:
     """Build a project from chosen clips. -> (project, notes)
+
+    `refine(path, game, t)` -> when the game's kill emblem first shows nearest t,
+    or None (see kill_appearance). `checks=True` fills in whichever of `measure`,
+    `confirm`, `theirs` and `refine` were left None from plan_checks(), so a
+    caller that is not the web page gets the same checks the page does.
 
     `measure(path, t0, t1)` -> how much the picture moves between two clip
     times (see action()); None skips the check, which is what tests do.
@@ -1614,10 +1735,14 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     if str((shape_it or {}).get("arrange") or "") == "fit":
         return _plan_fit(clips, style_key, shape=shape, song=song, fmt=fmt, name=name,
                          max_seconds=max_seconds, seed=seed, measure=measure, confirm=confirm,
-                         theirs=theirs, part=part, template=template, shape_it=shape_it)
+                         theirs=theirs, refine=refine, checks=checks, part=part,
+                         template=template, shape_it=shape_it)
     style = STYLE.get(style_key) or STYLE[DEFAULT_STYLE]
+    fast = fast_reel(style, getattr(shape, "bpm", None))
+    if fast:
+        style = fast_rules(style)
     if template:
-        style = templated(style, template)
+        style = templated(style, template, exact=fast)
     # SHAPING THE REEL WITHOUT LEAVING THE STYLE. Each of these multiplies what
     # the style's references measured rather than replacing it, so "faster"
     # means faster than THIS style rather than a jump to another one, and a
@@ -1639,6 +1764,10 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         style = dataclasses.replace(style, energy=max(0.0, min(1.0, style.energy * tw["effects"])))
     grid = Grid.of(shape) if shape is not None else Grid.none()
     notes: list[str] = []
+    if fast:
+        notes.append(f"{STYLE[style_key].label} is a fast-cut style at {grid.bpm:.0f} BPM, so every "
+                     f"cut is a hard cut, every kill has the same effect and the footage plays at "
+                     f"real speed. Choose effects yourself on the Make page to mix them.")
     meas = studio_refs.summary(style.refs)
     beat = grid.beat
 
@@ -1701,7 +1830,9 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # The opening hold is left on the beat: it already lands inside the
     # references' band on 20 of 24 reels, so only its unit changes.
     open_beats = _pow2_beats(max(meas.get("first_shot") or 4.0, 2.0), beat, lo=2, hi=16) * div
-    flash_share = min(0.9, (meas.get("flashes_per_min") or 0.0) / max(cpm, 1.0) * tw["flash"])
+    # No flash cuts in a fast-cut reel: a white flash on a share of the cuts is a second
+    # transition, and the rule is one. (The flash is what t02 is.)
+    flash_share = 0.0 if fast else min(0.9, (meas.get("flashes_per_min") or 0.0) / max(cpm, 1.0) * tw["flash"])
 
     # ONE ENTRY PER CLIP. Rebuilding a reel in another style sent the timeline's
     # shots back as the clip list, so a clip used in nine shots arrived nine
@@ -1736,6 +1867,12 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         if not chosen:
             raise ProjectError("None of the chosen clips has a kill read as a headshot.")
 
+    if checks:
+        have = plan_checks()
+        measure = measure or have.get("measure")
+        confirm = confirm or have.get("confirm")
+        theirs = theirs or have.get("theirs")
+        refine = refine or have.get("refine")
     if confirm is not None:
         before = [c["path"] for c in chosen]
         chosen, moved, dropped, added = _confirm_kills(chosen, confirm, theirs)
@@ -1754,6 +1891,19 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         if moved or dropped or added:
             notes.append(f"Kill times checked against the game's own kill emblem: {moved} moved onto it, "
                          f"{dropped} with no emblem left out, {added} the kill feed missed added.")
+    if refine is not None:
+        # THE LAST WORD ON WHEN A KILL HAPPENS, after every check that decides WHETHER
+        # it did. Run after the headshot and emblem filters, not before: those match
+        # kills to readings by time, and moving a kill first would unmatch them.
+        chosen, got = _refine_kills(chosen, refine)
+        if got["moved"]:
+            sh = sorted(got["shifts"])
+            notes.append(
+                f"Kill times read from the first frame of the game's own kill emblem: "
+                f"{got['moved']} of {got['seen']} moved (median {sh[len(sh) // 2]:+.2f} s, "
+                f"{sh[0]:+.2f} to {sh[-1]:+.2f} s)"
+                + (f"; {got['total'] - got['seen']} had no emblem to read and kept their time."
+                   if got["total"] > got["seen"] else "."))
     # WHY EACH KILL OF A CLIP THAT WENT IN IS NOT IN IT. A clip's row said
     # nothing when one of its three kills fell out, so a missing kill looked
     # like a bug rather than a decision. (clip path, kill) -> reason.
@@ -1913,7 +2063,16 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                 return min(end_at - tail_s, first + max(span, (count - 1) * min_gap))
         return None
 
+    # THE BUILD AND THE DROP (K4), for a fast-cut reel over a part the player chose.
+    # Only with a chosen part: without one the planner picks where in the song to
+    # start for its own reasons, and the part is how somebody says "this build into
+    # this drop" -- which is also what the "Build into the drop" button sets.
+    drop_t = drop_in(grid, part_start, end_at) if (fast and song and grid.hits and part_len) else None
+
     def kill_slots(first: float, count: int, last: float | None = None) -> list[float]:
+        if drop_t is not None and drop_t - first >= 0.75 * BUILD_BEATS * grid.beat:
+            return build_then_drop(grid.hits, grid.hit_strength, first=first, drop=drop_t, count=count,
+                                   beat=grid.beat, gap=gap_style, end=end_at)
         last = spread_to(first, count) if last is None else last
         if last is None:
             return _hit_slots(grid.hits, grid.hit_strength, first=first, end=end_at,
@@ -2083,7 +2242,11 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         after = source_used(ps, shot["duration"]) - before
         return (before <= float(shot["kill"]) + 1e-6
                 and float(shot["kill"]) + after <= float(shot.get("clip_seconds") or 0.0) + 1e-6)
-    rulebook.climax(shots, [m.strength for m in picked], pools, speed_ok=speed_ok)
+    # THE CLIMAX STOPS TIME, and a fast-cut reel plays at real speed: one freeze and a
+    # velocity ramp on the best shot is a second kind of effect and a late hit. Found on
+    # headshot3, whose shot 20 came out with h02 and s04 in a reel built to have neither.
+    if not fast:
+        rulebook.climax(shots, [m.strength for m in picked], pools, speed_ok=speed_ok)
     if build and shots:
         shots[0]["speed"] = "s05"
         shots[0]["fx"] = shots[0]["fx"][:1]
@@ -2125,8 +2288,11 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         # dict below the computed one, so every reel's grid still started at
         # the first frame with no build and no punctuation into the drop.
         # Found by rendering a reel and reading the project back.
-        "song_drop": (round(float(grid.drop), 4)
-                      if song and getattr(grid, "drop", None) else None),
+        # The drop of the stretch this reel plays when it knows one (see drop_in), else the
+        # song's biggest. Both are "where the bass lands" and only the first is where THIS
+        # reel's bass lands.
+        "song_drop": (round(float(drop_t if drop_t is not None else grid.drop), 4)
+                      if song and (drop_t is not None or getattr(grid, "drop", None)) else None),
         "intro": "i12" if build else style.intro,
         "outro": "e03" if style.outro == "e01" else style.outro, "grade": style.grade,
         "vignette": style.vignette, "overlays": list(style.overlays),
@@ -2365,6 +2531,57 @@ def kill_marks(path: str, game: str) -> list[float] | None:
     return got
 
 
+_GLYPH_CACHE: dict[tuple, float | None] = {}
+
+
+def kill_appearance(path: str, game: str, near: float) -> float | None:
+    """When the game's kill emblem FIRST shows, nearest `near`, in clip seconds. Cached.
+
+    The moment a viewer sees the kill. See killmark.appearance for why this and
+    not the time a clip was marked at, and not the emblem ring's onset either.
+    None when the game draws none, there is none in reach, or it cannot be read.
+    """
+    from . import killmark
+    from .tools import binary
+
+    if killmark.spec_for(game) is None:
+        return None
+    try:
+        key = (str(path), Path(path).stat().st_mtime, round(float(near), 2))
+    except OSError:
+        return None
+    with _ACTION_LOCK:
+        if key in _GLYPH_CACHE:
+            return _GLYPH_CACHE[key]
+    ff = binary("ffmpeg")
+    got = killmark.appearance(Path(path), game, float(near), ff) if ff else None
+    with _ACTION_LOCK:
+        if len(_GLYPH_CACHE) > 4000:
+            _GLYPH_CACHE.clear()
+        _GLYPH_CACHE[key] = got
+    return got
+
+
+def plan_checks() -> dict:
+    """The four checks a plan makes of its footage, ready to hand to plan().
+
+    Every caller that builds a reel needs the SAME four -- how much moves around
+    a kill (`measure`), the game's kill emblem (`confirm`), whether it was a
+    team-mate's seen while spectating (`theirs`), and the first frame of the
+    emblem (`refine`) -- and the web page was the only one passing them. A reel
+    planned from anywhere else (a script, a test, the next feature) was cut from
+    raw times, which are early by 0.4 s in one clip and late by 0.7 s in
+    another. Without ffmpeg there is nothing to check with, and the plan is
+    made without them, as it always was.
+    """
+    from .. import clips as clips_mod
+
+    if not clips_mod.available():
+        return {}
+    return {"measure": action, "confirm": kill_marks, "theirs": spectated,
+            "refine": kill_appearance}
+
+
 def spectated(path: str, game: str, t: float) -> bool:
     """Whether the emblem at clip time t is a team-mate's, seen while spectating. See killmark.spectating."""
     from . import killmark
@@ -2372,6 +2589,56 @@ def spectated(path: str, game: str, t: float) -> bool:
 
     ff = binary("ffmpeg")
     return bool(ff and killmark.spectating(Path(path), t, game, ff))
+
+
+# A glyph further than this from the time a kill was marked at is a different kill's.
+REFINE_REACH = 1.2
+
+
+def _refine_kills(clips: list[dict], refine) -> tuple[list[dict], dict]:
+    """Every kill moved onto the first frame of its emblem, where one can be read.
+
+    -> (clips, {"seen": kills with a glyph, "total": kills asked, "moved": kills
+    that moved more than a frame, "shifts": the signed moves}). A kill with no
+    glyph in reach keeps the time it had.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    jobs = [(i, j, float(k)) for i, c in enumerate(clips)
+            for j, k in enumerate(c.get("kills") or [])]
+    if not jobs:
+        return clips, {"seen": 0, "total": 0, "moved": 0, "shifts": []}
+
+    def one(job):
+        i, _j, k = job
+        c = clips[i]
+        try:
+            return refine(c["path"], c.get("game") or "", k)
+        except Exception:                                   # noqa: BLE001
+            return None
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        found = list(pool.map(one, jobs))
+    new = {i: list(c.get("kills") or []) for i, c in enumerate(clips)}
+    seen = 0
+    shifts: list[float] = []
+    for (i, j, k), a in zip(jobs, found):
+        if a is None or abs(a - k) > REFINE_REACH:
+            continue
+        seen += 1
+        if abs(a - k) > 1.0 / FPS:
+            shifts.append(round(a - k, 3))
+        new[i][j] = round(float(a), 3)
+    out = []
+    for i, c in enumerate(clips):
+        if new[i] == list(c.get("kills") or []):
+            out.append(c)
+            continue
+        d = dict(c, kills=new[i])
+        # The headshot readings follow the kills they are about, by place.
+        if c.get("_hs_times") is not None and len(c["_hs_times"]) == len(new[i]):
+            d["_hs_times"] = list(new[i])
+        out.append(d)
+    return out, {"seen": seen, "total": len(jobs), "moved": len(shifts), "shifts": shifts}
 
 
 def _confirm_kills(clips: list[dict], confirm, theirs=None) -> tuple[list[dict], int, int, int]:
@@ -2652,7 +2919,9 @@ def _vary(shots: list[dict], pools: dict, style: "Style", seed: int, what: str =
 
     kills, trans, heroes = pool("kill"), pool("transition"), pool("hero")
     cams, speeds = pool("camera"), pool("speed")
-    flash_share = _flash_share(style)
+    # A pool that is only hard cuts is a reel that asked for one transition -- a fast-cut
+    # reel -- and a white flash on a share of its cuts would be a second.
+    flash_share = 0.0 if set(trans) <= {"t01"} else _flash_share(style)
     recent: list[str] = []
     last_cam = last_speed = last_hero = last_trans = ""
     acc = 0.0
@@ -2819,6 +3088,7 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
     marks = sorted(m for m in marks if m >= 0)
     if not marks or not shots:
         return notes
+    floor = after_floor(project)
 
     # THE MARK GETS ITS KILL, EVEN WHEN THE OPENER CANNOT REACH IT.
     #
@@ -2901,8 +3171,8 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
         # allowed everything but 0.22 s of the gap, and on ambiforcashlyrics a
         # run-up grown to 4.08 s cut the opener 0.51 s after its first kill --
         # its second was never seen.
-        keep = max(0.22, _own_tail(prev, pres[j - 1]))
-        if keep > 0.22 and gap - keep < rulebook.MIN_RUN_SECONDS:
+        keep = max(floor, _own_tail(prev, pres[j - 1]))
+        if keep > floor and gap - keep < rulebook.MIN_RUN_SECONDS:
             # ...and when the next mark comes too soon after them for this
             # shot to have any run-up at all, it takes the mark after. On
             # Aftrhrs a triple's tail needed 2.75 s and the next mark was
@@ -2978,7 +3248,7 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
         if i < done - 1:
             s["duration"] = round(cuts[i + 1] - cuts[i], 5)
         else:
-            post = max(0.22, float(s["duration"]) - float(s["pre"]) if s["duration"] > s["pre"] else 0.5)
+            post = max(floor, float(s["duration"]) - float(s["pre"]) if s["duration"] > s["pre"] else 0.5)
             post = max(post, _own_tail(s, pres[i]))
             s["duration"] = round(pres[i] + post, 5)
     return notes

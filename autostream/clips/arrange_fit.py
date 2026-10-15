@@ -779,7 +779,7 @@ def _ordinary(clips, style_key, shape_it, **kw):
 def plan(clips: list[dict], style_key: str = studio.DEFAULT_STYLE, *, shape=None,
          song: str = "", fmt: str = "landscape", name: str = "",
          max_seconds: float = 0.0, seed: int | None = None,
-         measure=None, confirm=None, theirs=None,
+         measure=None, confirm=None, theirs=None, refine=None, checks: bool = False,
          part: tuple[float, float] | None = None,
          template: dict | None = None, shape_it: dict | None = None,
          iterations: int = ITERATIONS, weights: dict | None = None,
@@ -789,15 +789,25 @@ def plan(clips: list[dict], style_key: str = studio.DEFAULT_STYLE, *, shape=None
     Without a song that has hits there is nothing to fit, and the reel is
     planned the ordinary way.
     """
+    if checks:
+        # The same four checks studio.plan() makes -- see studio.plan_checks.
+        have = studio.plan_checks()
+        measure, confirm = measure or have.get("measure"), confirm or have.get("confirm")
+        theirs, refine = theirs or have.get("theirs"), refine or have.get("refine")
     kw = dict(shape=shape, song=song, fmt=fmt, name=name, max_seconds=max_seconds, seed=seed,
-              measure=measure, confirm=confirm, theirs=theirs, part=part, template=template)
+              measure=measure, confirm=confirm, theirs=theirs, refine=refine, part=part,
+              template=template)
     if shape is None or not song or not getattr(shape, "hits", None):
         proj, notes = _ordinary(clips, style_key, shape_it, **kw)
         return proj, ["Perfect fit needs a song with beats to fit the kills to; this reel was "
                       "planned the usual way."] + notes
     style = studio.STYLE.get(style_key) or studio.STYLE[studio.DEFAULT_STYLE]
+    # One transition, one kill effect, real speed -- before the template, so a choice wins.
+    if studio.fast_reel(style, getattr(shape, "bpm", None)):
+        style = studio.fast_rules(style)
     if template:
-        style = studio.templated(style, template)
+        style = studio.templated(style, template,
+                                exact=studio.fast_reel(studio.STYLE.get(style_key), getattr(shape, "bpm", None)))
     tw = studio._shaping(shape_it)
     arrangement = studio._arrangement(shape_it)
     hs_only = arrangement.pop("hs_only")
@@ -857,6 +867,9 @@ def plan(clips: list[dict], style_key: str = studio.DEFAULT_STYLE, *, shape=None
         kept_paths = {c["path"] for c in chosen}
         left_out((p for p in before if p not in kept_paths),
                  "No kill showed on screen: the game's kill icon never appeared in this clip.")
+    if refine is not None:
+        # After every check that decides WHETHER a kill happened -- see studio.plan.
+        chosen, _got = studio._refine_kills(chosen, refine)
 
     # The same moments, action check and looks the planner uses -- so both
     # start from the same kills and only the arranging differs.
@@ -1120,7 +1133,8 @@ def _assemble(fit: Fitter, ev, path, style, grid, tw, arrangement, hs_only, fmt,
         ok = _valid(shots, index[id(shot)])
         shot["speed"] = was
         return ok
-    rulebook.climax(shots, [blocks[s["_block"]].strength for s in shots], pools, speed_ok=speed_ok)
+    if not studio.fast_reel(style, getattr(grid, "bpm", None)):     # see studio.plan: fast cuts keep real speed
+        rulebook.climax(shots, [blocks[s["_block"]].strength for s in shots], pools, speed_ok=speed_ok)
     if style.outro in ("e01", "e03", "e02") and len(shots) > 1 and speed_ok(shots[-1], "s06"):
         shots[-1]["speed"] = "s06"             # slowed as it leaves, as studio.plan() ends
     if fit.r.build and shots:
