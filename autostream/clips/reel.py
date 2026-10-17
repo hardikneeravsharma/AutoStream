@@ -208,6 +208,39 @@ def drums_in(x: np.ndarray, phase: float, bar: float) -> float | None:
     return None
 
 
+# THE TEMPO IS SEARCHED AGAIN ON THE GRID ITSELF. estimate_bpm reads the beat
+# off an autocorrelation lag, a whole number of 11.6 ms frames with a parabola
+# between them, and on a long song a few hundredths of a BPM is a grid that
+# starts on the kicks and ends a quarter-beat off them: JUST A BOY read as
+# 119.93 against its 120.00 and drifted 75 ms over three minutes, Espresso
+# 103.84 against 104.00. So the beat is searched over +-0.4% around that
+# estimate, together with the phase, by the same total onset energy the phase
+# search always used. Measured against truth this module did not tune on --
+# the player's 662 marks on 8 songs (share within 50 ms of a beat or half-beat:
+# 0.66 -> 0.71; Skechers 0.33 -> 0.70) and 245 cuts from 11 public reference
+# edits (0.49 -> 0.52). Scoring on the kick band instead did slightly better on
+# the marks and worse on the edits, so the objective stayed what it was.
+TEMPO_SPAN = 0.004
+TEMPO_STEPS = 41
+
+
+def rigid_grid(env: np.ndarray, beat: float, fps: float) -> tuple[float, float]:
+    """(beat, phase) of the rigid grid that sits on the most onset energy. Seconds."""
+    def best_phase(b: float, phases: int) -> tuple[float, float]:
+        per = b * fps
+        count = max(2, int(env.size / per))
+        steps = per * np.arange(count)
+        return max((float(env[np.clip((ph + steps).astype(int), 0, max(0, env.size - 1))].sum()), ph / fps)
+                   for ph in np.linspace(0.0, per, phases, endpoint=False))
+
+    if env.size < 8 or beat <= 0:
+        return beat, 0.0
+    tried = [(best_phase(b, 64)[0], b)
+             for b in beat * np.linspace(1 - TEMPO_SPAN, 1 + TEMPO_SPAN, TEMPO_STEPS)]
+    b = max(tried)[1]
+    return float(b), float(best_phase(b, 96)[1])
+
+
 def analyse(path: Path, seconds: float = 0.0, points: int = 2000) -> Shape:
     """Read a song and work out everything a reel needs from it."""
     from .tools import media_info
@@ -229,13 +262,8 @@ def analyse(path: Path, seconds: float = 0.0, points: int = 2000) -> Shape:
     # directions leave gaps of 0.28s and 0.58s on a 0.45s beat, and a cut
     # rhythm built on that reads as sloppy rather than as human.
     fps = bs.SR / bs.HOP
-    per = beat * fps
-    count = max(2, int(env.size / per))
-    best = max(
-        (float(env[np.clip((ph + per * np.arange(count)).astype(int),
-                           0, max(0, env.size - 1))].sum()), ph)
-        for ph in np.linspace(0.0, per, 96, endpoint=False))
-    phase = best[1] / fps
+    beat, phase = rigid_grid(env, beat, fps)
+    bpm = 60.0 / beat
     beats = [phase + i * beat for i in range(int((total - phase) / beat))]
 
     step = max(1, len(x) // points)
