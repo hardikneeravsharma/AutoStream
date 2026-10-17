@@ -134,3 +134,47 @@ def test_a_shot_after_the_drop_opens_about_half_a_beat_before_its_kill(clips_roo
     after = [s for s, k in zip(proj["shots"], kills) if k > 9.4][:6]
     for s in after:
         assert BEAT / 2 - 0.02 <= s["pre"] <= BEAT / 2 + studio.CUT_LEAD + 0.02, s["pre"]
+
+
+# ------------------------------------------------------------------ the clutch take (R9)
+
+def _shot(clip, kill, name=None):
+    return {"clip": clip, "name": name or Path(clip).stem, "kill": kill, "pre": 0.5,
+            "duration": 1.0, "transition": "t02", "tlen": 0.2}
+
+
+def test_a_clutch_gets_consecutive_slots_ending_on_the_drop_as_far_apart_as_its_kills():
+    c = "C:/x/VALORANT_04_CLUTCH-1v3_r1_56m50s_42s.mp4"
+    shots = [_shot("C:/x/a.mp4", 5.0), _shot(c, 27.87), _shot("C:/x/b.mp4", 6.0),
+             _shot(c, 30.18), _shot(c, 34.37), _shot("C:/x/d.mp4", 3.0)]
+    slots = [1.3, 3.6, 5.9, 9.375, 9.95, 10.53]
+    order, got = studio.clutch_take(shots, slots, 9.375, 0.0)
+    clutch = [k for k, i in enumerate(order) if shots[i]["clip"] == c]
+    assert clutch == [1, 2, 3], order
+    assert got[1:4] == pytest.approx([9.375 - 6.5, 9.375 - 4.19, 9.375], abs=1e-3)
+    assert got[0] == 1.3 and got[4:] == [9.95, 10.53]
+    assert all(shots[order[k]]["transition"] == "t01" for k in clutch)
+
+
+def test_kills_that_would_fall_before_the_part_starts_are_left_to_the_order():
+    c = "C:/x/VALORANT_01_CLUTCH-1v2_r13.mp4"
+    shots = [_shot(c, 3.5), _shot(c, 24.0), _shot(c, 26.0), _shot("C:/x/a.mp4", 4.0)]
+    order, got = studio.clutch_take(shots, [2.0, 9.375, 10.0, 11.0], 9.375, 0.0)
+    take = [i for i in order if shots[i]["clip"] == c][-2:]
+    assert [shots[i]["kill"] for i in take] == [24.0, 26.0]
+
+
+def test_no_clutch_no_drop_slot_no_change():
+    shots = [_shot("C:/x/a.mp4", 5.0), _shot("C:/x/a.mp4", 7.0)]
+    assert studio.clutch_take(shots, [1.0, 9.375], 9.375, 0.0) == ([0, 1], [1.0, 9.375])
+    c = "C:/x/CLUTCH.mp4"
+    shots = [_shot(c, 5.0), _shot(c, 7.0)]
+    assert studio.clutch_take(shots, [1.0, 2.0], 9.375, 0.0) == ([0, 1], [1.0, 2.0])
+
+
+def test_headshots_only_keeps_a_clutch_whole():
+    clips = [{"path": "C:/x/VALORANT_04_CLUTCH-1v3.mp4", "kills": [28.0, 30.3, 34.5], "hs": [True, True, False]},
+             {"path": "C:/x/VALORANT_05_3-KILLS.mp4", "kills": [3.0, 5.0], "hs": [True, False]}]
+    kept, none, dropped = studio._headshots_only(clips)
+    assert kept[0]["kills"] == [28.0, 30.3, 34.5]
+    assert kept[1]["kills"] == [3.0] and dropped == 1
