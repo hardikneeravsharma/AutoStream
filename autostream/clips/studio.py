@@ -1634,6 +1634,31 @@ def clutch_take(shots: list[dict], slots: list[float], drop: float, start: float
     return order, kept + [round(x, 4) for x in take] + list(slots[d + 1:])
 
 
+DEFAULT_CLIP_SHOTS = 4      # shots a clip may give a reel when its style sets no cap (R13)
+CAP_FROM_CLIPS = 5          # ...applied only from this many clips up
+
+
+def shown_kills(shot: dict) -> int:
+    """How many of a shot's clip's kills fall inside the footage the shot plays."""
+    ps = shot_pieces(shot)
+    pre, dur = float(shot["pre"]), float(shot["duration"])
+    lo = float(shot["kill"]) - source_used(ps, pre)
+    hi = float(shot["kill"]) + source_used(ps, dur) - source_used(ps, pre)
+    return sum(1 for k in shot.get("kills") or [] if lo - 0.05 <= float(k) <= hi + 0.05)
+
+
+def honest_captions(shots: list[dict]) -> None:
+    """A caption names the kills its shot SHOWS (R12). In place.
+
+    The caption came from the clip -- TRIPLE KILL on the last of the clip's shots --
+    and the shot under it often showed one kill: the JUST A BOY reel had TRIPLE KILL
+    and ACE on single-kill shots. Now it says what plays, or nothing.
+    """
+    for s in shots:
+        if s.get("caption"):
+            s["caption"] = rulebook.label_for(shown_kills(s))
+
+
 def _headshots_only(chosen: list[dict]) -> tuple[list[dict], list[str], int]:
     """Each clip with only its headshot kills. -> (clips, paths with none, kills dropped)
 
@@ -2060,16 +2085,22 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     all_moments = rulebook.moments(chosen, beat, keep_short=keep_all, dropped=short)
     for key in short:
         kill_why.setdefault(key, "too little footage before it to show the fight")
-    if style.max_per_clip:
+    # NO CLIP TAKES OVER THE REEL (R13). A style that sets no cap of its own still
+    # holds each clip to DEFAULT_CLIP_SHOTS when there are clips enough to fill the
+    # reel without it: the JUST A BOY reel put one 8-kill clip in 7 of its 36 shots
+    # and another in 6, from 29 clips. Never with "Keep every kill", which asks for
+    # all of them, and never on a handful of clips, which need every shot they have.
+    cap = style.max_per_clip or (DEFAULT_CLIP_SHOTS if (not keep_all and
+                                 len({m.group for m in all_moments}) >= CAP_FROM_CLIPS) else 0)
+    if cap:
         before_cap = list(all_moments)
         capped: list[tuple[str, float]] = []
-        all_moments = rulebook.cap_per_clip(all_moments, style.max_per_clip, capped)
+        all_moments = rulebook.cap_per_clip(all_moments, cap, capped)
         for key in capped:
-            kill_why.setdefault(key, f"this clip already gives the reel "
-                                     f"{style.max_per_clip} shots")
+            kill_why.setdefault(key, f"this clip already gives the reel {cap} shots")
         if len(before_cap) != len(all_moments):
             notes.append(f"{len(before_cap) - len(all_moments)} moment(s) left out: no clip "
-                         f"gives this style more than {style.max_per_clip} shots, so the "
+                         f"gives this reel more than {cap} shots, so the "
                          f"weakest of a clip's own go first.")
     with_moments = {m.clip["path"] for m in all_moments}
     left_out((c["path"] for c in chosen if c["path"] not in with_moments),
@@ -2596,6 +2627,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         # which is the only set worth checking a kill against.
         proj["song_marks"] = [round(t, 4) for t in slots]
         notes += got_notes
+        honest_captions(shots)
         if style.drop and drop_t is not None:
             # Which shot lands on the drop, read off where each kill really landed: a mark
             # can pass to the next shot (see apply_marks), so the slot's index is not the
@@ -3262,6 +3294,13 @@ def calm_mix(shots: list[dict], free: set[str] | tuple = ()) -> None:
                 kept = [other[0]] if other else keep[:1]
             s["fx"] = kept
             last = kept[0]
+    # A white cut straight into a bright kill is one flash on top of another; the
+    # transitions keep them apart (rulebook.transitions), and the effects changed
+    # since may have brought them together again. The cut gives way.
+    for s in shots[1:]:
+        if (s.get("transition") == "t02" and set(s.get("fx") or ()) & set(rulebook.BRIGHT_KILL)
+                and float(s.get("pre") or 0.0) < rulebook.BRIGHT_GAP):
+            s["transition"], s["tlen"] = "t01", 0.0
 
 
 # ============================================================== the song part
