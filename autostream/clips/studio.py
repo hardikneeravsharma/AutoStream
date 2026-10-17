@@ -1445,14 +1445,20 @@ def _first_kill(hits: list[float], big: list[float], *, earliest: float,
 
 
 def _hit_slots(hits: list[float], strengths: list[float], *, first: float, end: float,
-               gap: float, count: int) -> list[float]:
-    """The song times this reel's kills land on: `count` of them from `first`."""
+               gap: float, count: int, even: bool = False) -> list[float]:
+    """The song times this reel's kills land on: `count` of them from `first`.
+
+    `even`: no quick runs of a kill per hit -- every kill at least most of `gap` from the
+    one before. A drop cut one kill a beat wants that; a short run of close hits cut
+    kill-per-hit (the player's rule elsewhere) put kills 0.35 s apart at 171 BPM.
+    """
     keep = [i for i, t in enumerate(hits) if first - 1e-6 <= t <= end + 1e-6]
     if not keep:
         return [first]
     within = [hits[i] for i in keep]
     strong = [strengths[i] for i in keep] if len(strengths) == len(hits) else None
-    kills, _accents = hits_mod.choose_kills(within, strong, target_gap=gap)
+    kills, _accents = hits_mod.choose_kills(within, strong, target_gap=gap,
+                                            **({"min_shot": 0.8 * gap} if even else {}))
     # The opener is not up for grabs: choose_kills takes the loudest hit in
     # each window, and in the first window that is rarely the hit the reel was
     # aimed at -- on Skechers it moved the first kill 2.4 s past the drop.
@@ -1657,8 +1663,9 @@ def fast_reel(style, bpm: float | None) -> bool:
 # audio, cut to its length already, and the planner's own start -- the first loud
 # bass hit -- dropped Espresso's first 3 s, the build the reference edit is cut
 # over, and its last second.
-SHORT_SONG_SECONDS = 60.0
+SHORT_SONG_SECONDS = 45.0
 DROP_FLASH = "k03"          # the white flash the kill on the drop gets
+DROP_KILL_GAP = 0.55        # about how far apart the drop's kills are: the hand-cut reel's beat at 104 BPM
 DROP_LEAD_BARS = 4          # Build and drop on a long song: this much build before the drop...
 DROP_AFTER_BEATS = 32       # ...and this much after it, or up to the next drop if that is nearer
 
@@ -1730,7 +1737,7 @@ def drop_in(grid: "Grid", lo: float, hi: float) -> float | None:
 
 
 def build_then_drop(hits: list[float], strengths: list[float], *, first: float, drop: float,
-                    count: int, beat: float, gap: float, end: float) -> list[float]:
+                    count: int, beat: float, gap: float, end: float, even: bool = False) -> list[float]:
     """Kill times (song seconds) for a reel that builds, then drops.
 
     Slow, plain cuts -- one every BUILD_BEATS beats -- until the drop; the first kill
@@ -1759,7 +1766,7 @@ def build_then_drop(hits: list[float], strengths: list[float], *, first: float, 
     out.append(round(drop, 4))
     rest = count - len(out)
     if rest > 0:
-        out += _hit_slots(hits, strengths, first=drop + gap, end=end, gap=gap, count=rest)
+        out += _hit_slots(hits, strengths, first=drop + gap, end=end, gap=gap, count=rest, even=even)
     return sorted(set(out))
 
 
@@ -1844,7 +1851,9 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # the clips are short of it each kill gets a longer run-up, as far as its
     # clip has footage, before the reel is allowed to end early.
     part_start = part_len = 0.0
-    if not part and song:
+    if not part and song and not fill:
+        # Only when the player left "How long" alone: asked for the style's length,
+        # or every clip, that is what they get.
         part = auto_part(grid, style)
         if part and grid.seconds <= SHORT_SONG_SECONDS:
             notes.append(f"The song is {grid.seconds:.0f} s, so the reel plays all of it.")
@@ -2145,14 +2154,18 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # start for its own reasons, and the part is how somebody says "this build into
     # this drop" -- which is also what the "Build into the drop" button sets.
     drop_t = drop_in(grid, part_start, end_at) if (fast and song and grid.hits and part_len) else None
+    # One kill a beat after the drop -- or every other beat on a fast song: at 171 BPM a
+    # beat is 0.35 s, and a shot that short opens 0.13 s before its kill.
+    drop_gap = grid.beat * max(1, int(round(DROP_KILL_GAP / max(grid.beat, 1e-3))))
+    drop_shot = None
 
     def kill_slots(first: float, count: int, last: float | None = None) -> list[float]:
         if drop_t is not None and drop_t - first >= 0.75 * BUILD_BEATS * grid.beat:
             # Build and drop: from the drop on, a kill every beat -- the hand-cut Espresso
             # reel's 16 kills on 16 beats -- not the style's references' 1.2 s.
             return build_then_drop(grid.hits, grid.hit_strength, first=first, drop=drop_t, count=count,
-                                   beat=grid.beat, gap=grid.beat if style.drop else gap_style,
-                                   end=end_at)
+                                   beat=grid.beat, gap=drop_gap if style.drop else gap_style,
+                                   end=end_at, even=bool(style.drop))
         last = spread_to(first, count) if last is None else last
         if last is None:
             return _hit_slots(grid.hits, grid.hit_strength, first=first, end=end_at,
@@ -2489,7 +2502,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                 # on the beat. The hand-cut reel's 0.28 s / 0.30 s at 104 BPM.
                 for s, t in zip(trial["shots"], slots):
                     if t > drop_t + 1e-6:
-                        s["pre"] = round(grid.beat / 2, 5)
+                        s["pre"] = round(drop_gap / 2, 5)
             got_notes = apply_marks(trial, [t - offset for t in slots])
             over = sum(s["duration"] for s in trial["shots"]) - (end_at - offset)
             if not hard_end or over <= 0.05 or attempt == 4:
@@ -2510,12 +2523,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         proj["song_marks"] = [round(t, 4) for t in slots]
         notes += got_notes
         if style.drop and drop_t is not None:
-            # THE DROP FLASHES WHITE, as the reference edits do on theirs: on the kill
-            # that lands on it, on top of that kill's own effect.
-            for s, t in zip(shots, slots):
-                if abs(t - drop_t) < 1e-3 and DROP_FLASH not in s["fx"]:
-                    s["fx"] = list(s["fx"]) + [DROP_FLASH]
-                    notes.append(f"The kill on the drop, {drop_t:.2f} s into the song, flashes white.")
+            # Which shot lands on the drop; it flashes once the effects are settled below.
+            drop_shot = next((i for i, t in enumerate(slots) if abs(t - drop_t) < 1e-3), None)
         big_on = sum(1 for t in slots if any(abs(t - b) < 0.01 for b in grid.big))
         what = grid.pattern or "bass hits"
         every = (slots[-1] - slots[0]) / (len(slots) - 1) if len(slots) > 1 else gap_style
@@ -2551,6 +2560,12 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     rulebook.transitions(shots, starts_b, first_kill_beat=int(round(shots[0]["pre"] / step)) if shots else 0,
                          looks=clip_look, pools=pools, flash_share=flash_share, beat=step, div=div)
     calm_mix(shots, mix_free)
+    if drop_shot is not None and drop_shot < len(shots) and DROP_FLASH not in shots[drop_shot]["fx"]:
+        # THE DROP FLASHES WHITE, as the reference edits do on theirs: on the kill that
+        # lands on it, on top of that kill's own effect. After the mix is held to two
+        # kill effects, so the flash is not counted as one and spread to every other kill.
+        shots[drop_shot]["fx"] = list(shots[drop_shot]["fx"]) + [DROP_FLASH]
+        notes.append(f"The kill on the drop, {drop_t:.2f} s into the song, flashes white.")
     if style.drop and song and not grid.drop:
         notes.append("This song has no clear drop, so the reel is paced as a build without one.")
 
