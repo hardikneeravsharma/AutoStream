@@ -460,6 +460,69 @@ FADE_HEX = [c[2] for c in FADE_COLOURS]
 XFADE_NAMES = [x[0] for x in XFADES]
 
 
+# ---------------------------------------------------------------------- groups
+#
+# ONE ENTRY PER EFFECT IN A LIST, ITS VERSIONS BEHIND IT (asked 2026-10-17). The
+# drawers offered 566 parts and the player's count was "barely 20 distinct
+# effects" -- 150 crossfade lengths and directions, 104 tint shades, seven
+# strengths of every kill effect, each listed as if it were new. A group is one
+# effect: its lead is what the list shows, the rest open when it is clicked.
+#
+# Most groups are a family (every strength of the Zoom punch draws the same
+# filter). The generated crossfades are the exception: one family, fifty looks,
+# so each look is put with the hand-built transition it IS (a crossfade with a
+# 0.2 s length is the Crossfade), or with the looks it only mirrors (Wipe left,
+# right, up and down are one wipe). The tints are one group, "Colour tint".
+XFADE_GROUP = {
+    "fade": "t04", "fadefast": "t04", "fadeslow": "t04",
+    "fadewhite": "t02", "fadeblack": "t03", "fadegrays": "t17",
+    "zoomin": "t05", "hblur": "t06", "dissolve": "t16", "pixelize": "t10",
+    "radial": "t11", "circleopen": "t09", "circleclose": "t09",
+    "circlecrop": "crop", "rectcrop": "crop", "distance": "distance",
+    "wipeleft": "wipe", "wiperight": "wipe", "wipeup": "wipe", "wipedown": "wipe",
+    "slideleft": "t07", "slideright": "t07", "slideup": "t07", "slidedown": "t07",
+    "smoothleft": "t08", "smoothright": "t08", "smoothup": "t08", "smoothdown": "t08",
+    "diagtl": "t14", "diagtr": "t14", "diagbl": "t14", "diagbr": "t14",
+    "hlslice": "t12", "hrslice": "t12", "vuslice": "t12", "vdslice": "t12",
+    "squeezeh": "t13", "squeezev": "t13",
+    "coverleft": "t15", "coverright": "t15", "coverup": "t15", "coverdown": "t15",
+    "revealleft": "reveal", "revealright": "reveal", "revealup": "reveal", "revealdown": "reveal",
+    "horzopen": "split", "horzclose": "split", "vertopen": "split", "vertclose": "split",
+}
+# A group with no hand-built part shows this one first, under this name.
+GROUP_LEAD = {"tint": "gt_teal", "crop": "x11", "distance": "x13", "wipe": "x14",
+              "reveal": "x40", "split": "x44"}
+GROUP_LABEL = {"tint": "Colour tint", "crop": "Crop", "wipe": "Wipe", "reveal": "Reveal",
+               "split": "Split"}
+# Hand-built parts that are shades of another: Hard monochrome is a Monochrome.
+GROUP_ALIAS = {"g13": "g07"}
+
+
+def group_of(p: Part) -> str:
+    """The effect `p` is a version of: a hand-built id, or a shared name."""
+    if p.id in GROUP_ALIAS:
+        return GROUP_ALIAS[p.id]
+    if p.base == "xfade":
+        preset = int(dict(p.knobs or ()).get("preset", -1))
+        name = XFADE_NAMES[preset] if 0 <= preset < len(XFADE_NAMES) else ""
+        return XFADE_GROUP.get(name, p.id)
+    return p.family
+
+
+def groups(parts) -> dict[str, tuple[str, str]]:
+    """part id -> (group, lead id). The lead is the hand-built part, else GROUP_LEAD's pick,
+    else the first version listed."""
+    members: dict[tuple[str, str], list[str]] = {}
+    for p in parts:
+        members.setdefault((p.kind, group_of(p)), []).append(p.id)
+    out: dict[str, tuple[str, str]] = {}
+    for (kind, g), ids in members.items():
+        lead = g if g in ids else GROUP_LEAD.get(g) if GROUP_LEAD.get(g) in ids else ids[0]
+        for pid in ids:
+            out[pid] = (g, lead)
+    return out
+
+
 # ------------------------------------------------------------------ favourites
 #
 # WHERE THESE LIVE. In the config directory, not the clips folder: a person

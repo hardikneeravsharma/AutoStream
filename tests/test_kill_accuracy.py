@@ -225,19 +225,29 @@ def _two_kills_apart(gap: float, style: str):
     return proj["shots"]
 
 
-def test_kills_a_beat_and_a_half_apart_get_at_least_0_4_s_after_them():
-    """The gap between two kills 0.8 s apart was split 0.58 / 0.22: lead-up first, the
-    kill itself last."""
+def test_a_fast_reel_has_no_floor_of_its_own_any_more():
+    """K3's 0.4 s after every kill in a fast reel is removed (asked 2026-10-17): at one
+    kill a beat it left 0.17 s of run-up at 104 BPM. Every style has the same floor."""
+    assert studio.after_floor({"style": "hype", "beat": 0.4}) == studio.SLOW_AFTER
     shots = _two_kills_apart(0.8, "hype")
     after = [s["duration"] - s["pre"] for s in shots[:-1]]
-    assert min(after) >= studio.FAST_AFTER - 1e-3, after
-    assert studio.after_floor({"style": "hype", "beat": 0.4}) == studio.FAST_AFTER
+    assert min(after) >= studio.SLOW_AFTER - 1e-3, after
 
 
-def test_other_styles_keep_the_floor_they_always_had():
+def test_every_style_keeps_the_floor_it_always_had():
     shots = _two_kills_apart(0.8, "story")
     after = [s["duration"] - s["pre"] for s in shots[:-1]]
     assert min(after) == pytest.approx(studio.SLOW_AFTER, abs=1e-3), after
+
+
+def test_a_cut_leads_its_kill_by_three_frames_when_the_shot_before_can_spare_them():
+    """Reference editors cut a median 46 ms before the hit; the kill stays on it."""
+    shots = _two_kills_apart(1.5, "story")
+    kills = [sum(s["duration"] for s in shots[:i]) + shots[i]["pre"] for i in range(3)]
+    assert kills == pytest.approx([2.0, 3.5, 5.0], abs=1e-3)
+    after = [s["duration"] - s["pre"] for s in shots[:-1]]
+    assert min(after) >= studio.SLOW_AFTER - 1e-3
+    assert shots[1]["pre"] == pytest.approx(1.0 + studio.CUT_LEAD, abs=1e-3)
 
 
 def test_the_kills_do_not_move_when_the_aftermath_grows():

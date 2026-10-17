@@ -1165,7 +1165,8 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     shots = page.evaluate("studio.project.shots")
     firsts = [s["fx"][0] for s in shots]
     assert all(a != b for a, b in zip(firsts, firsts[1:])), f"two kills running got one effect: {firsts}"
-    assert len(set(firsts)) >= 3, f"the reel draws from too few kill effects: {firsts}"
+    # Mixed, but held to two kill effects a reel (asked 2026-10-17): alternating, never one.
+    assert len(set(firsts)) == 2, f"the reel should alternate two kill effects: {firsts}"
 
     # --- the Reel inspector: pools and the Mix buttons
     page.click('#studio-insp [data-act="studio-select"][data-shot="-1"]')

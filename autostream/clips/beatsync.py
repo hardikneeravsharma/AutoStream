@@ -1044,7 +1044,10 @@ def find_entrances(x: np.ndarray) -> list[dict]:
     rejected rather than only what was kept -- a detector that cannot be seen
     being wrong cannot be corrected.
     """
-    if x.size < int(20 * SR):
+    # Room for the skipped opening, the bass before and after, and a little
+    # more. It was 20 s, and a Short's own audio -- Espresso's edit is 21 s, a
+    # trimmed one 15 -- then had no drop at all.
+    if x.size < int((ENTRY_SKIP + ENTRY_BACK + ENTRY_FWD + 2.0) * SR):
         return []
     bass, treble, _tot = _bands(x)
     c = len(bass)

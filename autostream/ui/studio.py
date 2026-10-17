@@ -1281,6 +1281,33 @@ function studio_parts(kind) {
   return (studio.catalog && studio.catalog.parts || []).filter(p => p.kind === kind);
 }
 
+/* ONE ENTRY PER EFFECT, ITS VERSIONS BEHIND IT (asked 2026-10-17). A drawer listed
+   every strength, length and direction of an effect as a new one -- 566 cards for
+   about ninety effects -- so a list shows each effect's lead and its other versions
+   open from it. A catalog without groups (an older server) lists everything. */
+function studio_leads(kind) {
+  const all = studio_parts(kind);
+  const leads = all.filter(p => p.lead);
+  return leads.length ? leads : all;
+}
+
+function studio_versions(kind, group) {
+  return studio_parts(kind).filter(p => p.group === group);
+}
+
+/* The effect's own name on its lead card: "Wipe" for Wipe left, "Colour tint" for Teal. */
+function studio_leadName(p) {
+  return p.group_label || p.label || p.id;
+}
+
+function studio_moreChip(p, act, chosen) {
+  if (!p.versions || p.versions < 2) return '';
+  return '<span class="bin-more' + (chosen ? ' is-on' : '') + '" role="button" tabindex="0"' +
+    ' data-act="' + act + '" data-kind="' + esc(p.kind) + '" data-group="' + esc(p.group) + '"' +
+    ' title="Show every version of ' + esc(studio_leadName(p)) + '">' +
+    p.versions + ' versions' + (chosen ? ' · ' + chosen + ' in use' : '') + ' ›</span>';
+}
+
 /* ------------------------------------------------------------ loading */
 
 async function studio_load(force) {
@@ -3212,7 +3239,7 @@ function studio_binShot(id) {
   return '<span class="bin-shot">' + media + tag + sample + '</span>';
 }
 
-function studio_binCard(p, on, act) {
+function studio_binCard(p, on, act, more) {
   const fav = studio.favParts.indexOf(p.id) >= 0;
   return '<button type="button" class="bin-card' + (on ? ' is-on' : '') +
     '" data-act="' + act + '" data-kind="' + esc(p.kind) + '" data-part="' + esc(p.id) + '"' +
@@ -3222,8 +3249,8 @@ function studio_binCard(p, on, act) {
     ' aria-pressed="' + (fav ? 'true' : 'false') + '"' +
     ' title="' + (fav ? 'Remove from favourites' : 'Keep in favourites') + '">' +
     (fav ? '★' : '☆') + '</span>' +
-    '<span class="bin-meat"><span class="bin-name">' + esc(p.label || p.id) + '</span>' +
-    '<span class="bin-blurb">' + esc(p.blurb || '') + '</span></span></button>';
+    '<span class="bin-meat"><span class="bin-name">' + esc(more ? studio_leadName(p) : (p.label || p.id)) + '</span>' +
+    '<span class="bin-blurb">' + esc(p.blurb || '') + '</span>' + (more || '') + '</span></button>';
 }
 
 /* FAVOURITES FIRST, and on their own when the filter is on. With a hundred
@@ -3403,18 +3430,39 @@ function studio_binDraw() {
   if (!box || !studio.catalog) return;
   const drawers = studio.catalog.drawers || Object.keys(BIN_DRAWERS);
   const picks = studio_template();
+  const open = studio.binOpen || {};
   box.innerHTML = drawers.map(function (kind) {
     const all = studio_parts(kind);
-    const parts = studio_binSort(all);
+    const ids = studio_pickIds(picks[kind]);
+    // Favourites on their own are the versions that were starred; otherwise each effect once.
+    const parts = studio.favOnly ? studio_binSort(all) : studio_binSort(studio_leads(kind));
     if (!parts.length) return '';
     const kept = all.filter(function (x) { return studio.favParts.indexOf(x.id) >= 0; }).length;
+    const inUse = function (p) {
+      return studio_versions(kind, p.group).filter(function (v) { return ids.indexOf(v.id) >= 0; }).length;
+    };
+    const cards = parts.map(function (p) {
+      const n = studio.favOnly ? 0 : inUse(p);
+      return studio_binCard(p, ids.indexOf(p.id) >= 0 || n > 0, 'studio-bin-pick',
+                            studio.favOnly ? '' : studio_moreChip(p, 'studio-bin-group', n));
+    }).join('');
+    const g = open[kind];
+    const lead = g ? studio_leads(kind).filter(function (p) { return p.group === g; })[0] : null;
+    const versions = lead && !studio.favOnly
+      ? '<div class="bin-versions" data-kind="' + esc(kind) + '"><div class="bin-sec-head"><h3>' +
+        'Every version of ' + esc(studio_leadName(lead)) + '</h3>' +
+        '<button type="button" class="btn btn-sm" data-act="studio-bin-group" data-kind="' + esc(kind) +
+        '" data-group="">Close</button></div><div class="bin-grid">' +
+        studio_versions(kind, g).map(function (p) {
+          return studio_binCard(p, ids.indexOf(p.id) >= 0, 'studio-bin-pick');
+        }).join('') + '</div></div>'
+      : '';
     return '<section class="bin-sec bin-drawer">' +
       '<div class="bin-sec-head"><h2>' + esc(studio_binName(kind)) + '</h2>' +
-      '<span class="count">' + parts.length + ' to pick from' +
+      '<span class="count">' + parts.length + (studio.favOnly ? ' kept' : ' effects') +
+      (!studio.favOnly && all.length > parts.length ? ' · ' + all.length + ' versions in all' : '') +
       (kept && !studio.favOnly ? ' · ' + kept + ' kept' : '') + '</span></div>' +
-      '<div class="bin-grid">' +
-      parts.map(function (p) { return studio_binCard(p, studio_pickIds(picks[kind]).indexOf(p.id) >= 0, 'studio-bin-pick'); }).join('') +
-      '</div></section>';
+      '<div class="bin-grid">' + cards + '</div>' + versions + '</section>';
   }).join('');
   const ex = studio.examples || {};
   const list = ex.examples || {};
@@ -6256,14 +6304,26 @@ function studio_fxpMatches(part, q) {
   return q.split(/\s+/).every(w => hay.indexOf(w) >= 0);
 }
 
-function studio_fxpCard(part) {
+function studio_fxpCard(part, asLead) {
   const st = studio.fxp, on = st.sel.indexOf(part.id) >= 0;
-  return '<button type="button" class="bin-card studio-fxp-card' + (on ? ' is-on' : '') + '" role="option"' +
-    ' data-act="studio-fxp-pick" data-part="' + esc(part.id) + '" aria-selected="' + on + '">' +
+  // A lead card stands for its whole effect: lit when any version of it is chosen.
+  const inUse = asLead ? studio_versions(part.kind, part.group).filter(v => st.sel.indexOf(v.id) >= 0).length : 0;
+  const lit = on || inUse > 0;
+  return '<button type="button" class="bin-card studio-fxp-card' + (lit ? ' is-on' : '') + '" role="option"' +
+    ' data-act="studio-fxp-pick" data-part="' + esc(part.id) + '" aria-selected="' + lit + '">' +
     studio_binShot(part.id) +
-    (on ? '<span class="studio-fxp-tick" aria-hidden="true">✓</span>' : '') +
-    '<span class="bin-meat"><span class="bin-name">' + esc(part.label || part.id) + '</span>' +
-    '<span class="bin-blurb">' + esc(part.blurb || '') + '</span></span></button>';
+    (lit ? '<span class="studio-fxp-tick" aria-hidden="true">✓</span>' : '') +
+    '<span class="bin-meat"><span class="bin-name">' + esc(asLead ? studio_leadName(part) : (part.label || part.id)) + '</span>' +
+    '<span class="bin-blurb">' + esc(part.blurb || '') + '</span>' +
+    (asLead ? studio_moreChip(part, 'studio-fxp-group', inUse) : '') + '</span></button>';
+}
+
+/* Open one effect's versions in the picker, or ('' ) go back to every effect. */
+function studio_fxpGroup(group) {
+  if (!studio.fxp) return;
+  studio.fxp.group = group || '';
+  studio_el('studio-fxp-list').scrollTop = 0;
+  studio_fxpDraw();
 }
 
 function studio_fxpSkip(st) {
@@ -6281,20 +6341,33 @@ function studio_fxpDraw() {
   st.q = q;
   const skip = studio_fxpSkip(st);
   const all = studio_parts(st.kind).filter(part => skip.indexOf(part.id) < 0);
-  const hits = all.filter(part => studio_fxpMatches(part, q));
-  const recent = q ? [] : studio_fxpRecent(st.kind).filter(id => skip.indexOf(id) < 0).map(id => studio_part(id));
   const multi = st.multi ? 'true' : 'false';
   let h = '';
-  if (recent.length) {
-    h += '<h3 class="studio-fxp-sec">Recently used</h3>' +
-      '<div class="bin-grid studio-fxp-grid" role="listbox" aria-label="Recently used" aria-multiselectable="' + multi + '">' +
-      recent.map(studio_fxpCard).join('') + '</div>';
+  if (st.group && !q) {
+    // ONE EFFECT, EVERY VERSION OF IT -- opened from its card's "versions".
+    const vs = all.filter(p => p.group === st.group);
+    const lead = vs.filter(p => p.lead)[0] || vs[0];
+    h += '<div class="studio-fxp-back"><button type="button" class="btn btn-sm" data-act="studio-fxp-group"' +
+      ' data-group="">‹ Every effect</button></div>' +
+      '<h3 class="studio-fxp-sec">' + esc(lead ? studio_leadName(lead) : '') + ' · ' + vs.length + ' versions</h3>' +
+      '<div class="bin-grid studio-fxp-grid" role="listbox" aria-label="Versions" aria-multiselectable="' + multi + '">' +
+      vs.map(p => studio_fxpCard(p, false)).join('') + '</div>';
+  } else {
+    // A search looks through every version; the plain list shows each effect once.
+    const shown = q ? all : all.filter(p => p.lead || !all.some(x => x.lead));
+    const hits = shown.filter(part => studio_fxpMatches(part, q));
+    const recent = q ? [] : studio_fxpRecent(st.kind).filter(id => skip.indexOf(id) < 0).map(id => studio_part(id));
+    if (recent.length) {
+      h += '<h3 class="studio-fxp-sec">Recently used</h3>' +
+        '<div class="bin-grid studio-fxp-grid" role="listbox" aria-label="Recently used" aria-multiselectable="' + multi + '">' +
+        recent.map(p => studio_fxpCard(p, false)).join('') + '</div>';
+    }
+    h += '<h3 class="studio-fxp-sec">' + (q ? hits.length + ' found' : shown.length + ' effects') + '</h3>';
+    h += hits.length
+      ? '<div class="bin-grid studio-fxp-grid" role="listbox" aria-label="' + (q ? 'Search results' : 'Every option') + '"' +
+        ' aria-multiselectable="' + multi + '">' + hits.map(p => studio_fxpCard(p, !q)).join('') + '</div>'
+      : '<p class="muted studio-fxp-none">Nothing matches “' + esc(q) + '”. Try a shorter word, or a code like K04.</p>';
   }
-  h += '<h3 class="studio-fxp-sec">' + (q ? hits.length + ' found' : 'All ' + all.length) + '</h3>';
-  h += hits.length
-    ? '<div class="bin-grid studio-fxp-grid" role="listbox" aria-label="' + (q ? 'Search results' : 'Every option') + '"' +
-      ' aria-multiselectable="' + multi + '">' + hits.map(studio_fxpCard).join('') + '</div>'
-    : '<p class="muted studio-fxp-none">Nothing matches “' + esc(q) + '”. Try a shorter word, or a code like K04.</p>';
   host.innerHTML = h;
   host.scrollTop = top;
   studio_el('studio-fxp-count').textContent = st.multi
@@ -8513,6 +8586,12 @@ function studio_wire() {
     else if (act === 'studio-fav-selected') studio_favSelected();
     else if (act === 'studio-bin-pick') studio_binPick(b.getAttribute('data-kind'), b.getAttribute('data-part'));
     else if (act === 'studio-bin-fav') studio_binFav(b.getAttribute('data-part'));
+    else if (act === 'studio-bin-group') {
+      studio.binOpen = Object.assign({}, studio.binOpen || {});
+      const k = b.getAttribute('data-kind'), g = b.getAttribute('data-group') || '';
+      studio.binOpen[k] = studio.binOpen[k] === g ? '' : g;
+      studio_binDraw();
+    }
     else if (act === 'studio-bin-favonly') studio_binFavOnly();
     else if (act === 'studio-shape') studio_shapeNudge(b.getAttribute('data-dial'), Number(b.getAttribute('data-by')));
     else if (act === 'studio-shape-reset') studio_shapeReset();
@@ -8784,6 +8863,7 @@ function studio_wire() {
     else if (act === 'studio-mix' && p) studio_mix(b.getAttribute('data-what'), true);
     else if (act === 'studio-fxp-open' && p) studio_fxpOpen(b);
     else if (act === 'studio-fxp-pick') studio_fxpPick(b.getAttribute('data-part'));
+    else if (act === 'studio-fxp-group') studio_fxpGroup(b.getAttribute('data-group') || '');
     else if (act === 'studio-fxp-stage') { if (studio.fxp && studio.fxp.shown) studio_fxpPick(studio.fxp.shown); }
     else if (act === 'studio-fxp-done') studio_fxpDone();
     else if (act === 'studio-fxp-cancel') studio_fxpCancel();

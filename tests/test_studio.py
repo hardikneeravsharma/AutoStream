@@ -357,7 +357,8 @@ def test_the_reel_never_outlasts_the_song(tmp_path):
          kills=[100.0 * i + 6 for i in range(1, 25)])
     proj, notes = studio.plan(_clips(r), "story", shape=Shape(bpm=120.0, seconds=30.0), song="s.mp3")
     assert sum(s["duration"] for s in proj["shots"]) <= 30.0
-    assert any("song ends" in n for n in notes)
+    # A song this short is played whole (2026-10-17), and the reel says so.
+    assert any("song ends" in n or "plays all of it" in n for n in notes)
 
 
 # ------------------------------------------------- kills on the song's hits
@@ -792,7 +793,8 @@ def test_no_two_shots_running_get_the_same_kill_effect(long_run, style):
         assert set(firsts) == pool, firsts
         return
     assert all(a != b for a, b in zip(firsts, firsts[1:])), firsts
-    assert len(set(firsts)) >= 3, firsts
+    # Mixed, but never more than MAX_KILL_FX kinds in one reel (asked 2026-10-17).
+    assert len(set(firsts)) == min(studio.MAX_KILL_FX, len(pool)), firsts
 
 
 @pytest.mark.parametrize("style", [s.key for s in studio.STYLES])
@@ -805,6 +807,7 @@ def test_transitions_are_mixed_too(long_run, style):
         assert set(cuts) <= pool, cuts
         return
     assert len(set(cuts)) >= 2, cuts
+    assert len(set(cuts) | {"t01"}) <= studio.MAX_TRANSITIONS, cuts
     soft = [t for t in cuts if t not in ("t01", "t02")]
     assert all(a != b for a, b in zip(soft, soft[1:])) or len(set(soft)) <= 1, cuts
 

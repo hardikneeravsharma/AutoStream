@@ -738,6 +738,8 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-style": "chooses a style in the dialog; sent with Build",
     "studio-bin-pick": "puts one part of the bin in the template; sent with Build",
     "studio-bin-favonly": "shows only the parts kept as favourites; never leaves the browser",
+    "studio-bin-group": "opens or closes every version of one effect in its drawer; never leaves the browser",
+    "studio-fxp-group": "shows every version of one effect in the picker, or goes back; never leaves the browser",
     "studio-shape": "nudges one of the shaping dials; sent with the next Build",
     "studio-shape-reset": "puts every shaping dial back to what the style measured",
     "matches-all": "switches the match list between this recording and every saved match",
