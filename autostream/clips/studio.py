@@ -1576,6 +1576,64 @@ def _same_clip(path) -> tuple:
     return Path(path).name.lower()
 
 
+def is_clutch(clip: dict) -> bool:
+    """A clip whose name or labels say it was a clutch, a last-alive, a 1vN or an ace."""
+    text = " ".join([str(clip.get("caption") or ""), str(clip.get("name") or ""),
+                     Path(str(clip.get("path") or "")).stem]
+                    + [str(x) for x in (clip.get("labels") or [])]).upper()
+    return any(w in text for w in rulebook.BIG_WORDS)
+
+
+# THE CLUTCH IS THE BUILD, AS ONE TAKE (R9). The hand-cut Espresso reel played a 1v3
+# unbroken through the build and landed its last kill on the drop. The planner cut a
+# clutch into single shots wherever the order put them. Here, a Build and drop reel
+# whose clips hold one gives its kills consecutive slots ending ON the drop, each
+# slot exactly as far before the drop as the kill is before the last one in the clip
+# -- so the shots meet where the footage does and it plays as one take.
+CLUTCH_LEAD = 0.8           # s of the take before its first kill, at least
+CLUTCH_GAP = 1.0            # s kept clear between the last build kill and the take
+
+
+def clutch_take(shots: list[dict], slots: list[float], drop: float, start: float):
+    """-> (order of shot indexes, kill slots) with a clutch's kills ending on the drop.
+
+    Unchanged when there is no drop slot or no clutch clip with two or more shots in
+    the reel whose kills fit in the build.
+    """
+    d = next((i for i, x in enumerate(slots) if abs(x - drop) < 1e-3), None)
+    if d is None:
+        return list(range(len(shots))), list(slots)
+    by_clip: dict[str, list[int]] = {}
+    for i, s in enumerate(shots):
+        by_clip.setdefault(s["clip"], []).append(i)
+    best = None
+    for clip, idx in by_clip.items():
+        if len(idx) < 2 or not is_clutch({"path": clip, "name": shots[idx[0]].get("name")}):
+            continue
+        idx = sorted(idx, key=lambda i: float(shots[i]["kill"]))
+        last = float(shots[idx[-1]]["kill"])
+        run = [idx[-1]]
+        for i in reversed(idx[:-1]):
+            if drop - (last - float(shots[i]["kill"])) - CLUTCH_LEAD < start - 1e-6:
+                break
+            run.insert(0, i)
+        if len(run) >= 2 and (best is None or len(run) > len(best)):
+            best = run
+    if not best:
+        return list(range(len(shots))), list(slots)
+    last = float(shots[best[-1]]["kill"])
+    take = [drop - (last - float(shots[i]["kill"])) for i in best]
+    kept = [x for x in slots[:d] if x <= take[0] - CLUTCH_GAP + 1e-6]
+    others = [i for i in range(len(shots)) if i not in best]
+    order = others[:len(kept)] + best + others[len(kept):]
+    for k, i in enumerate(best):
+        # Every run-up as long as the slot allows: the first opens the take, each
+        # later one meets the shot before it where the footage does.
+        shots[i]["pre"] = 60.0 if k else max(float(shots[i]["pre"]), take[0] - (kept[-1] if kept else start))
+        shots[i]["transition"], shots[i]["tlen"] = "t01", 0.0
+    return order, kept + [round(x, 4) for x in take] + list(slots[d + 1:])
+
+
 def _headshots_only(chosen: list[dict]) -> tuple[list[dict], list[str], int]:
     """Each clip with only its headshot kills. -> (clips, paths with none, kills dropped)
 
@@ -1588,6 +1646,11 @@ def _headshots_only(chosen: list[dict]) -> tuple[list[dict], list[str], int]:
     for c in chosen:
         hs = list(c.get("hs") or [])
         ks = list(c.get("kills") or [])
+        if is_clutch(c) and len(ks) > 1:
+            # A CLUTCH STAYS WHOLE (asked 2026-10-17): it is the build's one take, and
+            # a 1v3 that drops its body-shot kill is a 1v2 that never happened.
+            kept.append(dict(c))
+            continue
         good = [k for k, h in zip(ks, hs) if h is True]
         dropped += len(ks) - len(good)
         if good:
@@ -2024,6 +2087,13 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             [st.get("sat") for st in stats.values() if isinstance(st, dict)], style.grade)
         before_still = list(all_moments)
         all_moments, still = rulebook.drop_still(all_moments, stats, keep_all=keep_all)
+        if style.drop:
+            # A clutch's quiet kill is still its kill: the 1v3's last one is a long
+            # shot down a lane, and leaving it out cut the take short of the drop.
+            back = [m for m in before_still if m not in all_moments and is_clutch(m.clip)]
+            if back:
+                all_moments = [m for m in before_still if m in all_moments or m in back]
+                still -= len(back)
         stayed = {id(m) for m in all_moments}
         for m in before_still:
             if id(m) not in stayed:
@@ -2494,8 +2564,12 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         floor_last = first + (len(shots) - 1) * min_gap
         hard_end = bool(part_len) and fill != "all"
         for attempt in range(5):
-            trial = {**proj, "shots": copy.deepcopy(shots)}
             slots = kill_slots(first, len(shots), last)
+            pool_shots = copy.deepcopy(shots)
+            order = list(range(len(pool_shots)))
+            if style.drop and drop_t is not None:
+                order, slots = clutch_take(pool_shots, slots, drop_t, part_start)
+            trial = {**proj, "shots": [pool_shots[i] for i in order]}
             if style.drop and drop_t is not None:
                 # AFTER THE DROP EACH SHOT OPENS HALF A BEAT BEFORE ITS KILL, so the
                 # kill has the other half after it: a cut on the off-beat, the kill
