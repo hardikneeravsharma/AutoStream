@@ -57,3 +57,27 @@ def test_a_set_the_player_picked_is_left_as_it_is(clips_root):
     trans, _ = _mix(proj)
     assert len(trans - {"t01", "t02"}) > 1, "three picked, more than one used"
     assert "transition" in proj["mix_free"]
+
+
+# ------------------------------------------------------------------ R12 / R13
+
+def test_no_clip_gives_a_reel_more_than_four_shots_when_there_are_clips_enough(tmp_path):
+    r = tmp_path / "clips"
+    # one clip with eight kills a few seconds apart, and seven single-kill clips
+    T._run(r, "2026-09-01_1200_VALORANT", "VALORANT",
+           [{"start": 100.0, "end": 160.0}] + [{"start": 300.0 + 100 * i, "end": 312.0 + 100 * i} for i in range(7)],
+           kills=[104.0 + 6.5 * k for k in range(8)] + [306.0 + 100 * i for i in range(7)])
+    proj, _ = studio.plan(T._clips(r), "hype", shape=T.Shape(bpm=120.0))
+    from collections import Counter
+    most = Counter(s["clip"] for s in proj["shots"]).most_common(1)[0][1]
+    assert most <= studio.DEFAULT_CLIP_SHOTS, most
+
+
+def test_a_caption_names_the_kills_its_shot_shows():
+    s = {"kill": 10.0, "pre": 1.0, "duration": 2.0, "speed": "s00", "kills": [10.0, 10.6, 30.0],
+         "caption": "TRIPLE KILL"}
+    studio.honest_captions([s])
+    assert s["caption"] == "DOUBLE KILL"
+    s = {"kill": 10.0, "pre": 1.0, "duration": 2.0, "speed": "s00", "kills": [10.0, 30.0], "caption": "ACE"}
+    studio.honest_captions([s])
+    assert s["caption"] == ""
