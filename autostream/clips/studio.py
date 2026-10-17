@@ -3241,7 +3241,7 @@ def vary(project: dict, what: str = "all", seed: int | None = None) -> dict:
         project["seed"] = int(seed)
         _vary(project["shots"], pools, style, seed, kind)
         rulebook.budget(project["shots"], pools, what if what in POOL_KINDS else None)
-        calm_mix(project["shots"], set(project.get("mix_free") or ()))
+        calm_mix(project["shots"], set(project.get("mix_free") or ()), keep_cuts=what == "kill")
         if mix_of(project["shots"]) != was:
             break
         seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
@@ -3268,7 +3268,7 @@ def chosen_sets(template: dict | None) -> set[str]:
     return out
 
 
-def calm_mix(shots: list[dict], free: set[str] | tuple = ()) -> None:
+def calm_mix(shots: list[dict], free: set[str] | tuple = (), keep_cuts: bool = False) -> None:
     """Hold a reel to MAX_TRANSITIONS transitions and MAX_KILL_FX kill effects. In place."""
     from collections import Counter
 
@@ -3297,10 +3297,17 @@ def calm_mix(shots: list[dict], free: set[str] | tuple = ()) -> None:
     # A white cut straight into a bright kill is one flash on top of another; the
     # transitions keep them apart (rulebook.transitions), and the effects changed
     # since may have brought them together again. The cut gives way.
+    # Mixing only the kill effects leaves the cuts as they are, so there the effect
+    # gives way instead: a kept effect that is not bright, or the plain punch.
     for s in shots[1:]:
         if (s.get("transition") == "t02" and set(s.get("fx") or ()) & set(rulebook.BRIGHT_KILL)
                 and float(s.get("pre") or 0.0) < rulebook.BRIGHT_GAP):
-            s["transition"], s["tlen"] = "t01", 0.0
+            if keep_cuts:
+                calm = [f for f in dict.fromkeys(f for x in shots for f in (x.get("fx") or []))
+                        if f not in rulebook.BRIGHT_KILL]
+                s["fx"] = [calm[0] if calm else "k01"]
+            else:
+                s["transition"], s["tlen"] = "t01", 0.0
 
 
 # ============================================================== the song part
