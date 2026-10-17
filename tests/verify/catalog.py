@@ -610,7 +610,7 @@ CONTROLS: list[Control] = [
             acts=("studio-cut", "studio-move", "studio-remove", "studio-slip",
                   "studio-offset", "studio-rfmt", "studio-undo", "studio-fx-all",
                   "studio-tr-all", "studio-fxp-pick", "studio-fxp-done", "studio-fxp-drop",
-                  "studio-fxp-stage"),
+                  "studio-fxp-stage", "studio-lock"),
             why="every edit is clamped and re-derived by the server, so the page "
                 "and the render can never disagree about where a kill lands"),
     Control("/api/studio/vary", "POST", CALL, "Mix kill effects / transitions", "studio",
@@ -740,6 +740,7 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-bin-favonly": "shows only the parts kept as favourites; never leaves the browser",
     "studio-bin-group": "opens or closes every version of one effect in its drawer; never leaves the browser",
     "studio-fxp-group": "shows every version of one effect in the picker, or goes back; never leaves the browser",
+    "studio-insp-jump": "scrolls the inspector to one of its sections; never leaves the browser",
     "studio-shape": "nudges one of the shaping dials; sent with the next Build",
     "studio-shape-reset": "puts every shaping dial back to what the style measured",
     "matches-all": "switches the match list between this recording and every saved match",
