@@ -241,6 +241,28 @@ def rigid_grid(env: np.ndarray, beat: float, fps: float) -> tuple[float, float]:
     return float(b), float(best_phase(b, 96)[1])
 
 
+# A DROP LANDS ON A HIT, NOT ON A QUARTER-SECOND WINDOW. find_entrances reads
+# the bass in 0.25 s windows and walks back to where the rise began, so its
+# answer is early: on 7 drops with known times (Blade's five marked by ear,
+# Espresso's reference flash, JUST A BOY's returning kick) it was a median
+# 0.32 s early and never within 100 ms. The song's own hit just after it is
+# the drop a listener hears: the big hit if one is there (the song coming back
+# in, see hits.big_hits), else the strongest hit. Over 23 drops matched to the
+# player's big marks: median error 450 ms -> 177 ms, within 100 ms 0 -> 9.
+DROP_SNAP_BIG = (-0.5, 1.5)    # a big hit this far before/after the entrance is its drop
+DROP_SNAP_HIT = (-0.25, 1.0)   # ...else the strongest ordinary hit in this reach
+
+
+def snap_drop(t: float, hits: list[float], strength: list[float], big: list[float]) -> float:
+    """The hit a bass entrance at `t` arrives on. Song seconds; `t` when there is none."""
+    near = [b for b in big if DROP_SNAP_BIG[0] <= b - t <= DROP_SNAP_BIG[1]]
+    if near:
+        # Nearest to a quarter-second on: the window the entrance was read in.
+        return float(min(near, key=lambda b: abs(b - t - bs.ENTRY_WIN)))
+    cand = [(s, h) for h, s in zip(hits, strength) if DROP_SNAP_HIT[0] <= h - t <= DROP_SNAP_HIT[1]]
+    return float(max(cand)[1]) if cand else float(t)
+
+
 def analyse(path: Path, seconds: float = 0.0, points: int = 2000) -> Shape:
     """Read a song and work out everything a reel needs from it."""
     from .tools import media_info
@@ -278,12 +300,21 @@ def analyse(path: Path, seconds: float = 0.0, points: int = 2000) -> Shape:
 
     found, strength, pattern = hits_mod.song_hits(x, 60.0 / bpm if bpm else 0.0, total)
     big, _rises = hits_mod.big_hits(x, found)
+    entrances = [e for e in bs.find_entrances(x) if e["ok"]]
+    drops = [snap_drop(e["t"], found, strength, big) for e in entrances]
+    # THE DROP IS THE BIGGEST BASS ENTRANCE, not the biggest rise in loudness.
+    # find_drop compares whole windows of loudness, and on a 21 s song its
+    # window is 3 s wide: Espresso's drop came out at 10.5 s, a second and two
+    # beats after the 9.33 s a reference edit flashes on, while the entrance
+    # reader had it. The loudness rise stays for a song with no entrance.
+    drop = (drops[max(range(len(entrances)), key=lambda i: entrances[i]["bass_step"])]
+            if entrances else bs.find_drop(x, total))
 
     shape = Shape(
         path=path, seconds=total, bpm=bpm, phase=phase,
         downbeat_pos=downbeat_position(x, beats),
-        drop=bs.find_drop(x, total),
-        drops=[e["t"] for e in bs.find_entrances(x) if e["ok"]],
+        drop=drop,
+        drops=drops,
         drums_in=drums_in(x, phase, beat * 4),
         beats=beats,
         peaks=[round(v / top, 3) for v in raw[:points]],

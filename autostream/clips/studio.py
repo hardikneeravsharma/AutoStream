@@ -696,6 +696,10 @@ PARTS: tuple[Part, ...] = (
 PARTS = tuple(parts_mod.distinct(
     PARTS + tuple(parts_mod.variants({p.id: p.kind for p in PARTS}))))
 PART = {p.id: p for p in PARTS}
+GROUPS = parts_mod.groups(PARTS)
+GROUP_SIZE: dict[tuple[str, str], int] = {}
+for _p in PARTS:
+    GROUP_SIZE[GROUPS[_p.id][0], _p.kind] = GROUP_SIZE.get((GROUPS[_p.id][0], _p.kind), 0) + 1
 
 
 def fam(pid: str) -> str:
@@ -1131,7 +1135,12 @@ def catalog() -> dict:
     """What the page needs to offer every choice, and why each style is what it is."""
     return {
         "ok": True,
-        "parts": [p.__dict__ for p in PARTS],
+        # Each part says which effect it is a version of, and whether it is the one a
+        # list shows for that effect -- see parts.groups.
+        "parts": [dict(p.__dict__, group=GROUPS[p.id][0], lead=GROUPS[p.id][1] == p.id,
+                       versions=GROUP_SIZE[GROUPS[p.id][0], p.kind],
+                       group_label=parts_mod.GROUP_LABEL.get(GROUPS[p.id][0], ""))
+                  for p in PARTS],
         "favourite_parts": favourite_parts(),
         "kinds": list(KINDS), "drawers": list(DRAWERS),
         "styles": [{"key": s.key, "label": s.label, "blurb": s.blurb,
@@ -1633,8 +1642,53 @@ BUILD_BEATS = 4            # a cut every this many beats while the song builds t
 
 
 def fast_reel(style, bpm: float | None) -> bool:
-    """Whether the fast-cut rules apply: a style that asks for them, on a song fast enough."""
+    """Whether the fast-cut rules apply: a style that asks for them, on a song fast enough.
+
+    Build and drop always: its build is plain cuts and its drop is one kill a beat, at any
+    tempo. Behind the 110 BPM gate its drop logic never ran -- Espresso, at 104, came out a
+    plain montage with a kill every two beats, white dissolves and slow motion on the kills.
+    """
+    if getattr(style, "drop", False):
+        return True
     return bool(getattr(style, "fast_cuts", False)) and float(bpm or NO_SONG_BPM) >= FAST_BPM
+
+
+# A SONG THIS SHORT IS PLAYED WHOLE when no part was chosen: it is a Short's own
+# audio, cut to its length already, and the planner's own start -- the first loud
+# bass hit -- dropped Espresso's first 3 s, the build the reference edit is cut
+# over, and its last second.
+SHORT_SONG_SECONDS = 60.0
+DROP_FLASH = "k03"          # the white flash the kill on the drop gets
+DROP_LEAD_BARS = 4          # Build and drop on a long song: this much build before the drop...
+DROP_AFTER_BEATS = 32       # ...and this much after it, or up to the next drop if that is nearer
+
+
+def auto_part(grid: "Grid", style: "Style") -> tuple[float, float] | None:
+    """The stretch of song a reel plays when the player chose none, or None for the planner's own.
+
+    A short song plays whole. Build and drop on a long one plays DROP_LEAD_BARS of build into
+    the first drop with room for them, and on to the next drop or DROP_AFTER_BEATS past it --
+    what the Make page's "Build into the drop" button sets, made the default for the style
+    that is about a drop.
+    """
+    if not grid.beats or not grid.seconds:
+        return None
+    if grid.seconds <= SHORT_SONG_SECONDS:
+        return 0.0, float(grid.seconds)
+    if not style.drop or not grid.hits:
+        # Without hits there is nothing to land the drop's kill on but the grid, and
+        # the planner's own drop path (the fourth kill on the drop) does that already.
+        return None
+    lead = DROP_LEAD_BARS * 4 * grid.beat
+    drops = sorted(grid.drops) or ([float(grid.drop)] if grid.drop else [])
+    for d in drops:
+        if d < lead or d > grid.seconds - 4 * grid.beat:
+            continue
+        start = min(grid.beats, key=lambda b: abs(b - (d - lead)))
+        later = [n for n in drops if d + 8 * grid.beat < n <= d + 2 * DROP_AFTER_BEATS * grid.beat]
+        end = later[0] if later else d + DROP_AFTER_BEATS * grid.beat
+        return float(start), float(min(grid.seconds, end))
+    return None
 
 
 def fast_rules(style: "Style") -> "Style":
@@ -1685,15 +1739,22 @@ def build_then_drop(hits: list[float], strengths: list[float], *, first: float, 
     song's hits and the drop is not on one.
     """
     step = BUILD_BEATS * beat
+    loud = dict(zip(hits, strengths)) if len(strengths) == len(hits) else {}
 
-    def on_hit(t: float) -> float:
-        near = min(hits, key=lambda h: abs(h - t)) if hits else t
-        return near if abs(near - t) <= 0.15 else t
+    def on_hit(t: float, after: float) -> float:
+        # THE LOUDEST HIT IN THIS KILL'S STRETCH OF THE BUILD, not the one nearest a
+        # grid point: an editor cuts the build on its accents, and the nearest hit
+        # is whichever the count happens to land by (see hits._loudest_run).
+        near = [h for h in hits if t - step / 2 <= h < t + step / 2 and h >= after + beat - 1e-6
+                and h <= drop - beat + 1e-6]
+        if not near:
+            return t
+        return max(near, key=lambda h: (loud.get(h, 0.0), -abs(h - t)))
 
     out: list[float] = []
     t = first
     while t < drop - 0.75 * step and len(out) < count - 1:
-        out.append(round(on_hit(t), 4))
+        out.append(round(on_hit(t, out[-1] if out else -1e9), 4))
         t += step
     out.append(round(drop, 4))
     rest = count - len(out)
@@ -1783,6 +1844,13 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # the clips are short of it each kill gets a longer run-up, as far as its
     # clip has footage, before the reel is allowed to end early.
     part_start = part_len = 0.0
+    if not part and song:
+        part = auto_part(grid, style)
+        if part and grid.seconds <= SHORT_SONG_SECONDS:
+            notes.append(f"The song is {grid.seconds:.0f} s, so the reel plays all of it.")
+        elif part:
+            notes.append(f"{style.label} plays {part[1] - part[0]:.0f} s of the song: the build from "
+                         f"{part[0]:.1f} s into the drop, and on from there.")
     if part and song and grid.beats and grid.seconds:
         part_start = max(0.0, min(float(part[0]), grid.seconds - 1.0))
         end = float(part[1] or 0.0)
@@ -1822,12 +1890,17 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # 9 cuts a minute against a 21-33 band -- so the target is the median the
     # reel is scored against.
     want = (meas.get("median_shot") or 0.0) / tw["pace"] or (60.0 / cpm)
+    if style.drop and part_len:
+        # Most of a Build and drop reel is the drop, one kill a beat: sized at the
+        # references' 1.2 s a shot it chose 11 of 27 moments for 21 s of Espresso and
+        # ran out of kills two seconds before the end.
+        want = beat
     # THE GRID IS AS FINE AS THE TARGET NEEDS. In whole beats the shortest shot
     # the rules allow is two of them, so a fast style on a half-time song could
     # not cut faster than 1.5 s and Hype, Velocity and Montage all came out at
     # the same three-beat shot -- measured over 19 reels. `div` is how many
     # steps make a beat, and everything from here down is counted in steps.
-    div = _grid_div(want, beat)
+    div = 1 if (style.drop and part_len) else _grid_div(want, beat)
     step = beat / div
     shot_beats = max(1, min(8 * div, int(round(want / step))))
     # The opening hold is left on the beat: it already lands inside the
@@ -1953,7 +2026,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         moving = {m.clip["path"] for m in all_moments}
         left_out((p for p in with_moments if p not in moving),
                  "Nothing moves on screen around its kill (a death camera, or standing still).")
-    est = {id(m): (rulebook.FOLLOW_UP_BEATS * div if m.seq > 0 else shot_beats) for m in all_moments}
+    est = {id(m): (rulebook.FOLLOW_UP_BEATS * div if m.seq > 0 and not (style.drop and part_len)
+                   else shot_beats) for m in all_moments}
     available = sum(est.values()) * step
     # The chosen part's end is the one length no setting may pass.
     hard = math.floor(part_len / beat + 1e-6) * beat if part_len else 0.0
@@ -2074,8 +2148,11 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
 
     def kill_slots(first: float, count: int, last: float | None = None) -> list[float]:
         if drop_t is not None and drop_t - first >= 0.75 * BUILD_BEATS * grid.beat:
+            # Build and drop: from the drop on, a kill every beat -- the hand-cut Espresso
+            # reel's 16 kills on 16 beats -- not the style's references' 1.2 s.
             return build_then_drop(grid.hits, grid.hit_strength, first=first, drop=drop_t, count=count,
-                                   beat=grid.beat, gap=gap_style, end=end_at)
+                                   beat=grid.beat, gap=grid.beat if style.drop else gap_style,
+                                   end=end_at)
         last = spread_to(first, count) if last is None else last
         if last is None:
             return _hit_slots(grid.hits, grid.hit_strength, first=first, end=end_at,
@@ -2152,13 +2229,31 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             0.4 * a + 0.6 * b + (1.0 if any(abs(t - x) < 0.01 for x in grid.big) else 0.0)
             for a, b, t in zip(ranked_or_arc(hit_s), ranked_or_arc(loud), ts)]
 
+    drop_count = 0
+    if style.drop and drop_t is not None and song and grid.hits and not keep_all:
+        # A BUILD AND DROP REEL HAS AS MANY SHOTS AS ITS SONG HAS SLOTS: a few in the
+        # build, then one a beat. The walk below sizes shots by the style's own
+        # length and settled Espresso's 21 s at 13 of 27 moments, so the drop ran
+        # out of kills; here the strongest sequences are taken, whole, until every
+        # slot has one.
+        drop_count = len(kill_slots(first0, len(all_moments)))
+        seqs: dict[int, list] = {}
+        for m in all_moments:
+            seqs.setdefault(m.group, []).append(m)
+        took: list = []
+        for s in sorted(seqs.values(), key=lambda s: (-max(x.strength for x in s), s[0].group)):
+            if len(took) >= drop_count:
+                break
+            took += s
+        pool = [m for m in all_moments if m in took]
+        spare = [m for m in all_moments if m not in pool]
     picked = rulebook.order(pool, looks, opener_ok, **arrangement)
     lens, hero_set = plan_walk(picked)
     # Settle the count: add the next-best sequence while the walk falls short
     # of the phrase, drop the weakest middle one while it runs a shot over.
     # A drop needs its build: the fourth shot is the one on the drop.
     min_groups = 5 if style.drop else 3
-    for _ in range(24 if target and not keep_all else 0):
+    for _ in range(24 if target and not keep_all and not drop_count else 0):
         total = sum(sum(x) for x in lens)
         if total < want_beats - 1 and spare:
             nxt = max(spare, key=lambda m: m.strength)
@@ -2238,6 +2333,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         ("hero", style.hero_pool), ("camera", style.camera_pool), ("speed", style.speed_pool))}
     _vary(shots, pools, style, seed, "all")
     rulebook.budget(shots, pools)
+    mix_free = chosen_sets(template)
     clip_look = {m.clip["path"]: looks.get(m.group) for m in picked}
     def speed_ok(shot, speed):
         ps = pieces(speed, shot["duration"], shot["pre"], own=_own_after(shot))
@@ -2307,7 +2403,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         # As asked, not as resolved: a rebuild with a new part should fill it
         # if the player never chose, and keep their choice if they did.
         "fill": asked_fill, "keep_all": keep_all,
-        "seed": int(seed), "pools": pools, "shots": shots,
+        "seed": int(seed), "pools": pools, "shots": shots, "mix_free": sorted(mix_free),
     }
     # Where in the song reel zero sits: chosen before the walk, so each shot's
     # length could follow the part of the song it plays over -- and settled
@@ -2387,6 +2483,13 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         for attempt in range(5):
             trial = {**proj, "shots": copy.deepcopy(shots)}
             slots = kill_slots(first, len(shots), last)
+            if style.drop and drop_t is not None:
+                # AFTER THE DROP EACH SHOT OPENS HALF A BEAT BEFORE ITS KILL, so the
+                # kill has the other half after it: a cut on the off-beat, the kill
+                # on the beat. The hand-cut reel's 0.28 s / 0.30 s at 104 BPM.
+                for s, t in zip(trial["shots"], slots):
+                    if t > drop_t + 1e-6:
+                        s["pre"] = round(grid.beat / 2, 5)
             got_notes = apply_marks(trial, [t - offset for t in slots])
             over = sum(s["duration"] for s in trial["shots"]) - (end_at - offset)
             if not hard_end or over <= 0.05 or attempt == 4:
@@ -2406,6 +2509,13 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         # which is the only set worth checking a kill against.
         proj["song_marks"] = [round(t, 4) for t in slots]
         notes += got_notes
+        if style.drop and drop_t is not None:
+            # THE DROP FLASHES WHITE, as the reference edits do on theirs: on the kill
+            # that lands on it, on top of that kill's own effect.
+            for s, t in zip(shots, slots):
+                if abs(t - drop_t) < 1e-3 and DROP_FLASH not in s["fx"]:
+                    s["fx"] = list(s["fx"]) + [DROP_FLASH]
+                    notes.append(f"The kill on the drop, {drop_t:.2f} s into the song, flashes white.")
         big_on = sum(1 for t in slots if any(abs(t - b) < 0.01 for b in grid.big))
         what = grid.pattern or "bass hits"
         every = (slots[-1] - slots[0]) / (len(slots) - 1) if len(slots) > 1 else gap_style
@@ -2440,6 +2550,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     starts_b = [int(round(t / step)) for t in _starts(shots)]
     rulebook.transitions(shots, starts_b, first_kill_beat=int(round(shots[0]["pre"] / step)) if shots else 0,
                          looks=clip_look, pools=pools, flash_share=flash_share, beat=step, div=div)
+    calm_mix(shots, mix_free)
     if style.drop and song and not grid.drop:
         notes.append("This song has no clear drop, so the reel is paced as a build without one.")
 
@@ -2986,7 +3097,56 @@ def vary(project: dict, what: str = "all", seed: int | None = None) -> dict:
     project["seed"] = int(seed)
     _vary(project["shots"], pools, style, seed, what if what in (*POOL_KINDS, "all") else "all")
     rulebook.budget(project["shots"], pools, what if what in POOL_KINDS else None)
+    calm_mix(project["shots"], set(project.get("mix_free") or ()))
     return project
+
+
+# NEVER TOO MANY KINDS OF EFFECT IN ONE REEL (asked 2026-10-17). A style's pools
+# hold seven transitions and ten kill effects so that reels differ from each
+# other; drawn shot by shot, they also made every reel a sampler -- the player's
+# words: "never use too much mixed transition effects". So a reel keeps the hard
+# cut and ONE other transition, and its TWO most used kill effects; every other
+# draw becomes one of those. A set the player picked on the Make page is theirs
+# and is left as it is.
+MAX_TRANSITIONS = 2         # the hard cut, and one other
+MAX_KILL_FX = 2
+
+
+def chosen_sets(template: dict | None) -> set[str]:
+    """The drawers a template picks more than one part for -- a mix the player asked for."""
+    out = set()
+    for kind in POOL_KINDS:
+        if len(set(_picked((template or {}).get(kind), kind))) > 1:
+            out.add(kind)
+    return out
+
+
+def calm_mix(shots: list[dict], free: set[str] | tuple = ()) -> None:
+    """Hold a reel to MAX_TRANSITIONS transitions and MAX_KILL_FX kill effects. In place."""
+    from collections import Counter
+
+    if "transition" not in free:
+        others = Counter(s.get("transition") for s in shots[1:] if s.get("transition") not in (None, "", "t01"))
+        keep = {t for t, _ in others.most_common(MAX_TRANSITIONS - 1)}
+        for s in shots[1:]:
+            if s.get("transition") not in keep:
+                s["transition"], s["tlen"] = "t01", 0.0
+    if "kill" not in free:
+        used = Counter(f for s in shots for f in (s.get("fx") or []))
+        keep = [f for f, _ in used.most_common(MAX_KILL_FX)]
+        last = ""
+        for s in shots:
+            fx = list(s.get("fx") or [])
+            if not fx:
+                continue
+            kept = list(dict.fromkeys(f for f in fx if f in keep))
+            if not kept or kept[0] == last:
+                # Still never the same effect twice running (see _vary): with two to
+                # choose from, the other one -- the reel alternates rather than repeats.
+                other = [f for f in keep if f != last]
+                kept = [other[0]] if other else keep[:1]
+            s["fx"] = kept
+            last = kept[0]
 
 
 # ============================================================== the song part
@@ -3371,7 +3531,7 @@ def fit_to_part(project: dict, seconds: float) -> list[str]:
         t += s["duration"]
     dropped = len(project["shots"]) - len(kept)
     if dropped and kept:
-        notes.append(f"The part of the song you chose holds {len(kept)} shots; "
+        notes.append(f"The part of the song the reel plays holds {len(kept)} shots; "
                      f"the last {dropped} were left out.")
         project["shots"] = kept
     return notes
@@ -3562,6 +3722,8 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
     # How long and Keep every kill ride on the project too, so a rebuild or a
     # new style keeps what was asked for -- as the arrangement does.
     out["fill"], out["keep_all"] = arranged["fill"], arranged["keep_all"]
+    # Drawers the player picked a SET for, which the mix cap leaves alone; see calm_mix.
+    out["mix_free"] = [k for k in (project.get("mix_free") or []) if k in POOL_KINDS]
     raw_pools = project.get("pools") if isinstance(project.get("pools"), dict) else {}
     for kind, part_kind in POOL_KINDS.items():
         valid = set(ids_of(part_kind))

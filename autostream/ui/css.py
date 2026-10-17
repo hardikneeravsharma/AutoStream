@@ -3468,6 +3468,14 @@ REEL_CSS = """
 .bin-card:hover .bin-star,.bin-star:focus-visible{opacity:1}
 .bin-star.is-on{opacity:1;color:var(--accent)}
 .bin-star:hover{color:var(--accent)}
+/* An effect's other versions open from its one card (asked 2026-10-17). */
+.bin-more{display:inline-block;margin-top:6px;padding:2px 8px;border:1px solid var(--border-subtle);border-radius:999px;
+  font-size:11px;color:var(--text-secondary);cursor:pointer}
+.bin-more:hover,.bin-more:focus-visible{color:var(--accent);border-color:var(--accent)}
+.bin-more.is-on{color:var(--accent);border-color:var(--accent)}
+.bin-versions{margin-top:12px;padding:12px;border:1px solid var(--border-subtle);border-radius:var(--radius-md)}
+.bin-versions h3{margin:0;font-size:13px}
+.studio-fxp-back{margin:4px 0 8px}
 
 .reel-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:var(--space-3)}
 .reel-chip{

@@ -327,7 +327,8 @@ def test_the_reel_is_built_from_the_template(root):
     assert proj["overlays"] == ["o01"]
     assert all(s["camera"] == "c04" for s in proj["shots"])
     fx = [s["fx"][0] for s in proj["shots"]]
-    assert max(set(fx), key=fx.count) == "k06", f"the dealt kill should lead: {fx}"
+    # Leads, or ties: a reel holds two kill effects and alternates them (2026-10-17).
+    assert fx.count("k06") >= max(fx.count(x) for x in set(fx)), f"the dealt kill should lead: {fx}"
     assert all(a != b for a, b in zip(fx, fx[1:])), f"two kills running share an effect: {fx}"
     # ...and the same clips without a template keep the style's own picks
     plain, _ = studio.plan(_clips(r), "story", shape=Shape(bpm=120.0), seed=7)

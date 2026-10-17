@@ -216,3 +216,32 @@ def test_a_style_card_plays_a_sample_cut_from_the_same_kills(pg, app):
     src = pg.get_attribute(".studio-style-media video >> nth=0", "src")
     assert "/api/studio/sample" in src
     assert pg.trouble == [], pg.trouble
+
+
+def test_a_list_shows_each_effect_once_and_its_versions_open_from_it(pg, app):
+    """566 parts were listed as if each were a new effect -- 104 tint shades, 150
+    crossfades. A list now shows each effect once; its versions open when clicked."""
+    _open(pg, app)
+    pg.evaluate("() => studio_handPick('grade', false)")
+    pg.wait_for_selector("#studio-fxp-scrim:not(.hide)")
+    grid = '#studio-fxp-list [aria-label="Every option"] .studio-fxp-card'
+    pg.wait_for_selector(grid)
+    leads = pg.evaluate("studio_leads('grade').length")
+    total = pg.evaluate("studio_parts('grade').length")
+    assert leads < total / 4, (leads, total)
+    assert pg.locator(grid).count() == leads
+    assert pg.locator(grid, has_text="Colour tint").count() == 1
+    assert pg.locator(grid, has_text="Neon pop").count() == 1
+    # the tint's versions open from its own card, and close again
+    pg.click('#studio-fxp-list .bin-more[data-group="tint"]')
+    pg.wait_for_selector('#studio-fxp-list [aria-label="Versions"]')
+    n = pg.locator('#studio-fxp-list [aria-label="Versions"] .studio-fxp-card').count()
+    assert n == pg.evaluate("studio_versions('grade', 'tint').length") and n > 50
+    pg.click('#studio-fxp-list [data-act="studio-fxp-group"][data-group=""]')
+    pg.wait_for_selector(grid)
+    assert pg.locator(grid).count() == leads
+    # a search still reaches every version
+    pg.fill("#studio-fxp-q", "amber")
+    pg.wait_for_timeout(300)
+    assert pg.locator('#studio-fxp-list [aria-label="Search results"] .studio-fxp-card').count() >= 4
+    assert pg.trouble == [], pg.trouble
