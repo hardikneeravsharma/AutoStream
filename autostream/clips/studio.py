@@ -3114,12 +3114,31 @@ def vary(project: dict, what: str = "all", seed: int | None = None) -> dict:
     pools = project.get("pools") or {}
     if not any(pools.get(k) for k in POOL_KINDS):
         pools = _style_pools(style)
+    asked = seed is not None
     if seed is None:
         seed = (int(project.get("seed") or 0) * 1103515245 + 12345) & 0x7FFFFFFF
-    project["seed"] = int(seed)
-    _vary(project["shots"], pools, style, seed, what if what in (*POOL_KINDS, "all") else "all")
-    rulebook.budget(project["shots"], pools, what if what in POOL_KINDS else None)
-    calm_mix(project["shots"], set(project.get("mix_free") or ()))
+    kind = what if what in (*POOL_KINDS, "all") else "all"
+
+    def mix_of(shots):
+        return [(s.get("transition"), tuple(s.get("fx") or ()), s.get("camera"), s.get("speed"),
+                 tuple(s.get("hero_fx") or ())) for s in shots]
+    was = mix_of(project["shots"])
+    start = copy.deepcopy(project["shots"])
+    # "MIX AGAIN" THAT CHANGES NOTHING READS AS A BROKEN BUTTON. Held to two kill
+    # effects and one transition beside the hard cut (calm_mix), a fresh draw can
+    # land on exactly the mix the reel already had -- the transitions above all,
+    # where the flashes sit where the music puts them. So a draw that changed
+    # nothing is drawn again with the next seed, a few times. An explicit seed is
+    # a request for that draw and is kept as it comes.
+    for _ in range(1 if asked else 6):
+        project["shots"] = copy.deepcopy(start)
+        project["seed"] = int(seed)
+        _vary(project["shots"], pools, style, seed, kind)
+        rulebook.budget(project["shots"], pools, what if what in POOL_KINDS else None)
+        calm_mix(project["shots"], set(project.get("mix_free") or ()))
+        if mix_of(project["shots"]) != was:
+            break
+        seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
     return project
 
 
@@ -3680,6 +3699,31 @@ def _probe_seconds(path: Path) -> float:
         return 0.0
 
 
+def tidy_locks(shots: list[dict]) -> None:
+    """A lock holds two or more shots side by side; anything else is not one. In place.
+
+    A shot moved out of the middle of a locked run, or a run cut down to one shot,
+    leaves a lock that no longer joins anything -- and a lock id that turns up in
+    two separate runs keeps only its first.
+    """
+    runs: dict[str, list[tuple[int, int]]] = {}
+    i = 0
+    while i < len(shots):
+        lk = shots[i].get("lock")
+        j = i
+        while lk and j + 1 < len(shots) and shots[j + 1].get("lock") == lk:
+            j += 1
+        if lk:
+            runs.setdefault(lk, []).append((i, j))
+        i = j + 1
+    for lk, spans in runs.items():
+        keep = next((sp for sp in spans if sp[1] > sp[0]), None)
+        for a, b in spans:
+            if (a, b) != keep:
+                for k in range(a, b + 1):
+                    shots[k].pop("lock", None)
+
+
 def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict, dict, list[str]]:
     """Make a project safe to render, and work out everything derived from it.
 
@@ -3859,6 +3903,12 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
                 anchors.append([round(src, 4), round(out_t, 4)])
         if anchors:
             shot["anchors"] = sorted(anchors, key=lambda a: a[1])
+        # SHOTS LOCKED TOGETHER on the timeline (asked 2026-10-17): a run of shots
+        # that move as one when the cut before them moves. Only the timeline reads
+        # it; the render does not. Tidied below once every shot is in.
+        lock = str(raw.get("lock") or "")
+        if lock and re.fullmatch(r"[A-Za-z0-9_-]{1,16}", lock):
+            shot["lock"] = lock
 
         before = (shot["pre"], shot["duration"], shot["speed"])
         _fit(shot, out["step"])
@@ -3868,6 +3918,7 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
 
     if not out["shots"]:
         raise ProjectError("There are no usable clips in this reel.")
+    tidy_locks(out["shots"])
 
     # THE FACECAM FILE FOR EACH SHOT comes from the links the Facecam tab
     # made, never from the page: a link is only ever written with a path the

@@ -4037,6 +4037,13 @@ STUDIO_CSS = r"""
 .st-shot:active{cursor:grabbing}
 .st-shot.is-hero{border-color:var(--warn)}
 .st-shot.is-sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+/* One of several shots picked together (shift- or ctrl-click). */
+.st-shot.is-multi{border-color:var(--accent);box-shadow:inset 0 0 0 999px color-mix(in srgb, var(--accent) 18%, transparent)}
+/* Shots locked together: a band under the run, a padlock on its first shot. */
+.st-lockband{position:absolute;height:6px;border-radius:3px;background:var(--warn);opacity:.85;pointer-events:none;z-index:3}
+.st-lockband-ico{position:absolute;left:2px;top:-15px;width:14px;height:14px;border-radius:3px;
+  background:var(--warn);display:flex;align-items:center;justify-content:center}
+.st-lockband-ico svg{width:10px;height:10px;fill:none;stroke:#111;stroke-width:2.4}
 /* Edited since the last render. A corner flag rather than a border, because
    the borders here are already spoken for by the selection and the hero shot,
    and this has to be readable on top of either. */
@@ -4356,6 +4363,51 @@ EDITOR_CSS = r"""
 /* Inspector groups: folded sections so a long list of options is a short
    list of headings, and the one being worked on stays open. */
 .ed-group{border-top:var(--border-hair) solid var(--border-subtle);padding-top:var(--space-3)}
+/* THE INSPECTOR'S BLOCKS: Footage / Cut in / On the kill / Camera on a shot,
+   Music / Words / Look / Start & end / You on the reel. Each is a card of its
+   own with a header that says what is set, so one kind of setting visibly ends
+   where the next begins. */
+.ed-block{border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-md);
+  background:var(--surface-sunken);padding:0 var(--space-3) var(--space-2);scroll-margin-top:var(--space-3)}
+.ed-block + .ed-block{margin-top:var(--space-2)}
+.ed-block-head{display:flex;align-items:center;gap:var(--space-2);padding:var(--space-3) 0 var(--space-2);
+  border-bottom:var(--border-hair) solid var(--border-subtle);margin-bottom:var(--space-2)}
+.ed-block-ico{width:18px;height:18px;flex:0 0 auto;fill:none;stroke:var(--accent);stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round}
+.ed-block-name{font:700 14px/1.2 var(--font-text);color:var(--text-primary);flex:0 0 auto}
+.ed-block-sum{margin-left:auto;font-size:12px;color:var(--text-tertiary);min-width:0;text-align:right}
+.ed-block-body{display:flex;flex-direction:column;gap:var(--space-3)}
+.ed-block-body > .ed-group:first-child{border-top:0;padding-top:0}
+.ed-group.is-solo{border-top:0;padding-top:0}
+.ed-group.is-solo > summary{display:none}
+.ed-group.is-solo > .ed-group-body{padding-top:0}
+.ed-blocknav{display:flex;flex-wrap:wrap;gap:6px}
+.ed-blocknav-b{border:var(--border-hair) solid var(--border-subtle);background:var(--surface);color:var(--text-secondary);
+  border-radius:999px;padding:3px 10px;font-size:12px;cursor:pointer}
+.ed-blocknav-b:hover,.ed-blocknav-b:focus-visible{color:var(--text-primary);border-color:var(--accent)}
+
+/* THE SHOT'S FOOTAGE: the part in the reel playing, over the whole clip with
+   a box on that part and a tick on each kill. */
+.studio-strip{display:flex;flex-direction:column;gap:var(--space-2)}
+.studio-strip-view{position:relative;border-radius:var(--radius-sm);overflow:hidden;background:#000;aspect-ratio:16/9}
+.studio-strip-video{display:block;width:100%;height:100%;object-fit:contain}
+.studio-strip-cap{position:absolute;left:6px;bottom:6px;padding:1px 6px;border-radius:4px;font-size:11px;
+  background:var(--on-media-scrim);color:var(--on-media)}
+.studio-strip-track{position:relative;display:flex;height:42px;border-radius:var(--radius-sm);overflow:hidden;
+  background:var(--surface);touch-action:none;user-select:none}
+.studio-strip-th{flex:1 1 0;background-size:cover;background-position:center;opacity:.9}
+.studio-strip-dim{position:absolute;top:0;bottom:0;background:rgba(0,0,0,.62);pointer-events:none}
+.studio-strip-dim.is-l{left:0}
+.studio-strip-dim.is-r{right:0}
+.studio-strip-box{position:absolute;top:0;bottom:0;box-sizing:border-box;border:2px solid var(--accent);min-width:14px;
+  border-radius:4px;cursor:grab;z-index:2}
+.studio-strip-box:active{cursor:grabbing}
+.studio-strip-h{position:absolute;top:-2px;bottom:-2px;width:10px;background:var(--accent);cursor:ew-resize}
+.studio-strip-h.is-head{left:-6px;border-radius:4px 0 0 4px}
+.studio-strip-h.is-tail{right:-6px;border-radius:0 4px 4px 0}
+.studio-strip-kill{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:rgba(255,255,255,.55);
+  pointer-events:none;z-index:3}
+.studio-strip-kill.is-main{background:var(--warn);width:3px}
 .ed-group > summary{display:flex;align-items:center;gap:var(--space-3);cursor:pointer;list-style:none;
   font:600 12px/1.3 var(--font-text);letter-spacing:.06em;text-transform:uppercase;color:var(--text-secondary);
   padding:4px 0}

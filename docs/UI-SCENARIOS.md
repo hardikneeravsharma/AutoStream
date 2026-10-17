@@ -235,6 +235,9 @@ listed so the gap is visible.
 | 6.47 | A tool is never a trap: press C, then Escape; press N, drag an edge, release Ctrl mid-drag | Escape returns to Select; a roll begun with Ctrl stays a roll even after Ctrl is let go, so the reel's length does not jump mid-gesture | **gap** |
 | 6.48 | J/K/L: press L three times, then J twice, then K | The reel plays at 1x, 2x, 4x then slows back; K stops it dead; the rate is shown beside the clock | **gap** |
 | 6.49 | In, out and marks: press I, play on, press O, then M twice at different points | A band is drawn over the ruler between the two points; a mark appears at each spot and clicking one seeks there; the marks are still there after reopening the reel; nothing is sent to a render | **gap** |
+| 6.50 | The inspector reads as blocks: select a shot, then the Reel tab | A shot is Footage / Cut in / On the kill / Camera, the reel Music / Words / Look / Start & end / You, each with a header saying what is set and a jump bar reaching each | yes (`test_ui_studio_editor`) |
+| 6.51 | The footage bar: drag the box's tail, its head, then the box itself | An edge moves that cut and every kill stays on its beat; the box uses another part of the clip with the shot's length and place unchanged, is pulled onto a kill near the beat (Alt places freely), and stops at the clip's end saying so | yes (`test_ui_studio_editor`) |
+| 6.52 | Locked shots: shift-click shots 2-4, Lock, drag shot 1's ending later; then a cut inside the run; then Unlock | The run slides without any shot shortening and the reel grows; a run in the middle is absorbed by the shot after it; a cut inside the run does not move and says why; locking is not listed as a change to the video | yes (`test_ui_studio_editor`) |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.

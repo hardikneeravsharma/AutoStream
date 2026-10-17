@@ -280,6 +280,10 @@ STUDIO_HTML = r"""
              own hit marks can, so both are on and either can be turned off. -->
         <label class="studio-check"><input type="checkbox" id="studio-tl-spec" checked> Show the music</label>
         <label class="studio-check"><input type="checkbox" id="studio-tl-marks" checked> Mark the beats</label>
+        <!-- SHOTS LOCKED TOGETHER move as one when the cut before them moves:
+             shift- or ctrl-click shots to pick several, then lock them. -->
+        <button type="button" class="btn btn-sm" data-act="studio-lock" id="studio-lock-btn" disabled
+                title="Shift-click or Ctrl-click shots on the timeline to pick several">Lock shots</button>
         <!-- THE TOOLS. Select is the hand that was always here; Roll and Razor
              are the two the timeline genuinely did not have. Each is also a
              modifier on the drag people already know -- Ctrl rolls -- so
@@ -4098,6 +4102,8 @@ function studio_forgetShots() { studio.pending.forEach(x => { x.shot = -1; }); }
 /* What a render writes about itself rather than what anyone chose: never a
    reason to render again. */
 const STUDIO_NOT_EDITS = {output: 1, plan_notes: 1, lyrics_note: 1, render: 1, version: 1};
+/* ...nor is which shots are locked together: the timeline reads it, the render does not. */
+function studio_isEdit(k) { return k.length && !STUDIO_NOT_EDITS[k[0]] && k[k.length - 1] !== 'lock'; }
 
 function studio_untouched() {
   studio_reconcile();
@@ -4118,7 +4124,7 @@ function studio_untouched() {
   const mine = [];
   studio.pending.forEach(x => (x.paths || []).forEach(k => mine.push(k)));
   const under = (a, b) => a.length <= b.length && a.every((x, i) => x === b[i]);
-  const left = studio_diff(base, p).filter(k => k.length && !STUDIO_NOT_EDITS[k[0]] &&
+  const left = studio_diff(base, p).filter(k => studio_isEdit(k) &&
     !mine.some(m => under(m, k) || under(k, m)));
   if (left.length) studio_touched('Undone past the last render', -1, left);
   studio.dirty = studio.pending.length > 0 || !studio.output;
@@ -4158,7 +4164,7 @@ async function studio_check() {
      changed and changed back only gets its old length again here. */
   const last = studio.pending[studio.pending.length - 1];
   if (last && last.paths && studio.base) {
-    const knock = studio_diff(JSON.parse(sent), r.project).filter(k => k.length && !STUDIO_NOT_EDITS[k[0]] &&
+    const knock = studio_diff(JSON.parse(sent), r.project).filter(k => studio_isEdit(k) &&
       !studio_same(studio_at(studio.base, k), studio_at(r.project, k)));
     last.paths = studio_union(last.paths, knock);
   }
@@ -4230,6 +4236,7 @@ function studio_histGo(back, fwd) {
 function studio_localDerive() {
   const p = studio.project, d = studio.derived;
   if (!p) return;
+  studio_lockTidy(p.shots);
   let t = 0;
   const rows = p.shots.map((s, i) => {
     const old = (d && d.shots[i]) || {};
@@ -4314,15 +4321,24 @@ async function studio_render() {
   studio_el('studio-meter').style.width = '0%';
   studio_state('Starting the render…');
   studio_drawRenderCard();
+  const gen = studio.gen;
   const r = await API.post('/api/studio/render', {project: studio.project});
   if (!r || !r.ok) {
     studio_busy(false);
-    studio.pending = sent; studio.base = sentBase; studio.dirty = sent.length > 0;
+    studio.pending = sent.concat(studio.pending); studio.base = sentBase; studio.dirty = studio.pending.length > 0;
     studio_state((r && r.error) || 'Could not start the render.', true);
     studio_drawRenderCard();
     return;
   }
-  studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
+  /* AN EDIT MADE WHILE THE SERVER WAS ANSWERING STAYS. The answer is the project
+     as it was when Render was pressed; taking it over an edit made since threw
+     that edit away and with it the line saying it was not rendered yet -- so it
+     never rendered. Found when the clip strip's player made the answer slower. */
+  if (gen === studio.gen) {
+    studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
+  } else {
+    studio.project.output = r.project.output;
+  }
   studio.output = r.output;
   /* What the server will render, rounded and clamped, is what later edits are
      measured against -- not what the page sent a moment before. */
@@ -5740,6 +5756,7 @@ function studio_drawTimeline() {
   const p = studio.project, d = studio.derived;
   const host = studio_el('studio-tracks');
   if (!p || !d || !host) return;
+  studio_lockBtn();
   const pps = studio.pps, L = d.length, W = Math.ceil(L * pps) + 24;
   const X = (t) => (t * pps).toFixed(1);
   let top = 0;
@@ -5779,6 +5796,8 @@ function studio_drawTimeline() {
        not only in the sidebar: "which shot did I change?" is a timeline
        question and deserves a timeline answer. */
     h += '<div class="st-shot' + (i === studio.sel ? ' is-sel' : '') + (s.hero ? ' is-hero' : '') +
+      ((studio.multi || []).length > 1 && studio.multi.indexOf(i) >= 0 ? ' is-multi' : '') +
+      (s.lock ? ' is-locked' : '') +
       (edited[i] ? ' is-edited' : '') +
       '" data-shot="' + i + '" style="left:' + X(r.start) + 'px;top:' + rows.video + 'px;width:' + w.toFixed(1) +
       'px;height:' + STUDIO_ROW.video + 'px;background-image:url(\'' + thumb + '\')" title="' + esc(s.name) + '">' +
@@ -5810,6 +5829,17 @@ function studio_drawTimeline() {
       (iw > 64 ? '<span class="st-introclip-tag">Intro · ' + icd.seconds.toFixed(1) + ' s</span>' : '') +
       '</div>';
   }
+
+  /* LOCKED SHOTS: one band under each run, a padlock on its first shot. Drawn,
+     not hit: a drag on a locked shot is a drag on the shot. */
+  studio_lockRuns(p.shots).forEach(run => {
+    const a = d.shots[run[0]], b = d.shots[run[1]];
+    if (!a || !b) return;
+    h += '<div class="st-lockband" style="left:' + X(a.start) + 'px;top:' + (rows.video + STUDIO_ROW.video - 6) +
+      'px;width:' + Math.max(4, (b.end - a.start) * pps).toFixed(1) + 'px" title="Shots ' + (run[0] + 1) + '–' + (run[1] + 1) +
+      ' are locked together"><span class="st-lockband-ico" aria-hidden="true">' +
+      '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span></div>';
+  });
 
   /* transitions: a label where there is room for one, a marker where not */
   p.shots.forEach((s, i) => {
@@ -6165,6 +6195,8 @@ function studio_playhead() {
 }
 
 function studio_select(i) {
+  if (!studio.keepMulti) studio.multi = i >= 0 ? [i] : [];
+  studio.keepMulti = false;
   studio.sel = i;
   studio_drawTimeline();
   studio_drawInspector();
@@ -6740,6 +6772,249 @@ function studio_seg(act, key, value, opts) {
 
 const STUDIO_OUTRO_LENS = [[0, 'Style’s own'], [2, '2 s'], [3, '3 s'], [4, '4 s'], [5, '5 s'], [6, '6 s'], [8, '8 s']];
 
+/* THE SHOT'S FOOTAGE, SEEN (asked 2026-10-17). The inspector said "kill 3.35 s
+   into the clip, 6.5 beats before it" and nothing showed which part of the clip
+   that was. Now the clip is a bar with a box over the part in the reel and a tick
+   on each kill, and the part plays above it.
+
+     an edge of the box   moves that cut -- the same move as Before / After the
+                          kill: the shot either side gives or takes the time,
+                          so every kill stays on its beat
+     the box itself       slides the shot along its clip: the shot keeps its
+                          length and its place, so what plays on its kill's beat
+                          is a different moment -- and a kill of the clip near
+                          the beat pulls the box onto it (Alt to place freely)
+
+   The box stops at the clip's ends and the drag says why. */
+const STUDIO_STRIP_THUMBS = 8;
+const STUDIO_STRIP_SNAP = 0.25;      // source seconds: a kill this close to the beat takes it
+
+/* Which seconds of its clip a shot plays. Read off the shot at real speed, where
+   it is exact and follows a drag frame by frame; off the server's derive for a
+   shot with a speed ramp, a stretch or a pinned kill, where only it knows. */
+function studio_stripSpan(s, r) {
+  const plain = (s.speed === 's00' || !s.speed) && !s.stretch && !(s.anchors && s.anchors.length);
+  if (plain || !r || r.source_in === undefined) {
+    return [Number(s.kill) - Number(s.pre) * studio_rateAt(r, 'head'),
+            Number(s.kill) + (Number(s.duration) - Number(s.pre)) * studio_rateAt(r, 'tail')];
+  }
+  return [Number(r.source_in), Number(r.source_out)];
+}
+
+function studio_stripSummary(s, r) {
+  const sp = studio_stripSpan(s, r);
+  return 'uses ' + sp[0].toFixed(2) + '–' + sp[1].toFixed(2) + ' s of ' + Number(s.clip_seconds).toFixed(1) + ' s';
+}
+
+function studio_stripHtml(s, r, i) {
+  const L = Math.max(0.01, Number(s.clip_seconds) || 0.01), sp = studio_stripSpan(s, r);
+  const c = studio.clipIndex[s.clip_id] || null;
+  let thumbs = '';
+  for (let k = 0; k < STUDIO_STRIP_THUMBS; k++) {
+    const at = (k + 0.5) * L / STUDIO_STRIP_THUMBS;
+    thumbs += '<span class="studio-strip-th" style="background-image:url(\'' +
+      studio_media('/api/studio/thumb', s.clip, '&t=' + at.toFixed(2) + '&v=' + ((c && c.mtime) || 0)) + '\')"></span>';
+  }
+  const pct = x => (Math.max(0, Math.min(1, x / L)) * 100).toFixed(3) + '%';
+  const ticks = (s.kills || []).map(k => '<i class="studio-strip-kill' + (Math.abs(k - s.kill) < 0.02 ? ' is-main' : '') +
+    '" style="left:' + pct(k) + '" title="Kill at ' + k.toFixed(2) + ' s"></i>').join('');
+  return '<div class="studio-strip" id="studio-strip" data-shot="' + i + '">' +
+    '<div class="studio-strip-view"><span class="studio-strip-video-slot" id="studio-strip-slot"></span>' +
+    '<span class="studio-strip-cap mono" id="studio-strip-cap">' + studio_stripSummary(s, r) + '</span></div>' +
+    '<div class="studio-strip-track" id="studio-strip-track" title="The whole clip. The box is the part in the reel.">' +
+    thumbs + '<span class="studio-strip-dim is-l" style="width:' + pct(sp[0]) + '"></span>' +
+    '<span class="studio-strip-dim is-r" style="left:' + pct(sp[1]) + '"></span>' +
+    '<span class="studio-strip-box" id="studio-strip-box" data-strip="slip" style="left:' + pct(sp[0]) +
+    ';width:calc(' + pct(sp[1]) + ' - ' + pct(sp[0]) + ')" title="Drag to use another part of the clip">' +
+    '<span class="studio-strip-h is-head" data-strip="head" title="Drag to move the cut before this shot"></span>' +
+    '<span class="studio-strip-h is-tail" data-strip="tail" title="Drag to move the cut after this shot"></span></span>' +
+    ticks + '</div>' +
+    '<p class="muted studio-small">Drag an edge to show more or less of the clip, or the box to use another part of it. ' +
+    'Ticks are kills; the bright one is on this shot\'s beat.</p></div>';
+}
+
+/* ONE PLAYER, KEPT ACROSS REDRAWS. The inspector is redrawn on every edit, and a
+   new <video> each time reloaded the clip and started it again; this one moves
+   into the new slot and keeps playing. It loops the part the box covers. */
+function studio_stripInit() {
+  const slot = studio_el('studio-strip-slot'), p = studio.project;
+  if (!slot || !p || studio.sel < 0) return;
+  const s = p.shots[studio.sel];
+  if (!s) return;
+  let v = studio.stripVideo;
+  if (!v) {
+    v = document.createElement('video');
+    v.className = 'studio-strip-video';
+    v.muted = true; v.playsInline = true; v.preload = 'auto'; v.loop = false;
+    v.setAttribute('aria-label', 'The part of the clip in the reel');
+    v.addEventListener('timeupdate', () => {
+      const span = studio.stripSpan;
+      if (span && (v.currentTime >= span[1] || v.currentTime < span[0] - 0.25)) {
+        v.currentTime = span[0];
+      }
+    });
+    studio.stripVideo = v;
+  }
+  slot.replaceWith(v);
+  const src = studio_media('/api/clips/video', s.clip);
+  const was = studio.stripSpan;
+  studio.stripSpan = studio_stripSpan(s, studio.derived && studio.derived.shots[studio.sel]);
+  if (v.getAttribute('data-clip') !== s.clip) {
+    v.setAttribute('data-clip', s.clip);
+    v.src = src;
+    v.addEventListener('loadedmetadata', () => { try { v.currentTime = studio.stripSpan[0]; } catch (e) { /* not yet */ } }, {once: true});
+  } else if (!was || Math.abs(was[0] - studio.stripSpan[0]) > 0.02) {
+    try { v.currentTime = studio.stripSpan[0]; } catch (e) { /* not seekable yet */ }
+  }
+  if (!studio.pv.playing) v.play().catch(() => {});
+}
+
+/* Redraw the box, the dimmed ends and the caption in place: during a drag the
+   inspector is not redrawn, so the player keeps playing under the hand. */
+function studio_stripPaint() {
+  const p = studio.project, i = studio.sel;
+  const box = studio_el('studio-strip-box'), track = studio_el('studio-strip-track');
+  if (!p || i < 0 || !box || !track) return;
+  const s = p.shots[i], r = studio.derived && studio.derived.shots[i];
+  const L = Math.max(0.01, Number(s.clip_seconds) || 0.01), sp = studio_stripSpan(s, r);
+  const pct = x => (Math.max(0, Math.min(1, x / L)) * 100).toFixed(3) + '%';
+  box.style.left = pct(sp[0]);
+  box.style.width = 'calc(' + pct(sp[1]) + ' - ' + pct(sp[0]) + ')';
+  const dl = track.querySelector('.studio-strip-dim.is-l'), dr = track.querySelector('.studio-strip-dim.is-r');
+  if (dl) dl.style.width = pct(sp[0]);
+  if (dr) dr.style.left = pct(sp[1]);
+  track.querySelectorAll('.studio-strip-kill').forEach((el, k) => {
+    el.classList.toggle('is-main', Math.abs((s.kills || [])[k] - s.kill) < 0.02);
+  });
+  const cap = studio_el('studio-strip-cap');
+  if (cap) cap.textContent = studio_stripSummary(s, r);
+  studio.stripSpan = sp;
+}
+
+function studio_stripDown(e) {
+  /* A gesture is never left half-held: whatever press came before is over. */
+  studio.strip = null;
+  const h = e.target.closest && e.target.closest('#studio-strip [data-strip]');
+  if (!h || !studio.project || studio.sel < 0 || e.button !== 0) return false;
+  const track = studio_el('studio-strip-track');
+  const i = studio.sel, s = studio.project.shots[i];
+  studio.strip = {kind: h.getAttribute('data-strip'), i: i, x0: e.clientX, moved: false,
+                  w: track.getBoundingClientRect().width, L: Number(s.clip_seconds) || 1,
+                  snapshot: JSON.stringify(studio.project), derivedSnap: JSON.stringify(studio.derived),
+                  free: e.altKey, pointer: e.pointerId};
+  try { track.setPointerCapture(e.pointerId); } catch (err) { /* a mouse works without it */ }
+  e.preventDefault();
+  return true;
+}
+
+function studio_stripMove(e) {
+  const g = studio.strip;
+  if (!g || (g.pointer !== undefined && e.pointerId !== g.pointer)) return false;
+  const dx = e.clientX - g.x0;
+  if (!g.moved && Math.abs(dx) < 3) return true;
+  g.moved = true;
+  if (!g.base) g.base = {p: JSON.parse(g.snapshot), d: JSON.parse(g.derivedSnap)};
+  const dsrc = dx / Math.max(1, g.w) * g.L;
+  const p = JSON.parse(g.snapshot), b0 = g.base.p.shots[g.i], r0 = g.base.d.shots[g.i];
+  g.limit = '';
+  if (g.kind === 'head' || g.kind === 'tail') {
+    /* The cut on that side, through the same roll as the timeline's edges and
+       the Before / After buttons -- so the limits are theirs too. */
+    const end = g.kind;
+    const j = end === 'head' ? g.i - 1 : g.i;
+    const by = dsrc / studio_rateAt(r0, end);
+    const at = studio_cutAt(g.base.d, j);
+    const res = studio_rollCut(p, g.base, j, studio_snapTo(at + by) - at);
+    g.limit = res.why;
+  } else {
+    const sp = studio_stripSpan(b0, r0);
+    let k = Number(b0.kill) + Math.max(-sp[0], Math.min(g.L - sp[1], dsrc));
+    if (dsrc < -sp[0] - 1e-6) g.limit = 'the clip starts there';
+    if (dsrc > g.L - sp[1] + 1e-6) g.limit = 'the clip ends there';
+    if (!g.free && !e.altKey) {
+      const near = (b0.kills || []).filter(x => Math.abs(x - k) <= STUDIO_STRIP_SNAP &&
+        x - (b0.kill - sp[0]) >= -1e-6 && x + (sp[1] - b0.kill) <= g.L + 1e-6);
+      if (near.length) k = near.reduce((a, x) => Math.abs(x - k) < Math.abs(a - k) ? x : a);
+    }
+    const s = p.shots[g.i];
+    s.kill = Math.round(k * 1000) / 1000;
+    /* A pinned kill names a moment of the footage, and the footage under it has
+       just moved: the pin would hold the wrong frame. */
+    delete s.anchors;
+  }
+  studio.project = p;
+  studio_localDerive();
+  studio_drawTimeline();
+  studio_stripPaint();
+  return true;
+}
+
+function studio_stripUp(e) {
+  const g = studio.strip;
+  if (!g) return false;
+  /* Cleared on ANY pointer coming up, not only the one that pressed: a strip
+     drag left set routes every later move through here and replays the
+     snapshot it was pressed on over whatever was edited since. */
+  studio.strip = null;
+  if (e && e.type === 'pointercancel') {
+    if (g.moved) { studio.project = JSON.parse(g.snapshot); studio_localDerive(); studio_drawAll(); }
+    return true;
+  }
+  if (!g.moved) return true;
+  studio.gen++;
+  const what = studio_shotName(g.i) + (g.kind === 'slip' ? ' · another part of its clip'
+                                        : g.kind === 'head' ? ' · before the kill' : ' · after the kill');
+  studio_pushUndo(g.snapshot, what);
+  studio_touched(what, g.i, studio_diff(JSON.parse(g.snapshot), studio.project));
+  studio_drawAll();
+  studio_check();
+  if (g.limit) toast('It stopped there: ' + g.limit + '.', 'info');
+  return true;
+}
+
+/* THE INSPECTOR IN BLOCKS (asked 2026-10-17: "no clear distinction to separate
+   different sections like songs and sound, lyrics, opening and ending"). Each
+   block has a header saying what it is and what is set in it, and a jump bar at
+   the top reaches every one. The settings inside are the same folds as before. */
+const STUDIO_SHOT_BLOCKS = [['footage', 'Footage'], ['cut', 'Cut in'], ['kill', 'On the kill'], ['camera', 'Camera']];
+const STUDIO_REEL_BLOCKS = [['music', 'Music'], ['words', 'Words'], ['look', 'Look'], ['start', 'Start & end'], ['you', 'You']];
+const STUDIO_BLOCK_ICON = {
+  footage: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18M8 5v4M16 5v4"/>',
+  cut: '<path d="M6 4v16M18 4v16M6 12h12"/>',
+  kill: '<circle cx="12" cy="12" r="7"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>',
+  camera: '<rect x="3" y="7" width="13" height="10" rx="2"/><path d="M16 11l5-3v8l-5-3z"/>',
+  music: '<path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
+  words: '<path d="M4 6h16M4 12h10M4 18h13"/>',
+  look: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z"/>',
+  start: '<path d="M5 4v16l7-8zM13 4v16l7-8z"/>',
+  you: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/>'
+};
+function studio_blockName(key) {
+  const f = STUDIO_SHOT_BLOCKS.concat(STUDIO_REEL_BLOCKS).filter(b => b[0] === key)[0];
+  return f ? f[1] : key;
+}
+function studio_block(key, summary, body) {
+  /* A block that holds one fold IS that fold: its header already names it and
+     says what is set, so the fold's own heading goes and it stays open. */
+  if (body.split('<details class="ed-group"').length === 2) {
+    body = body.replace('<details class="ed-group"', '<details open class="ed-group is-solo"');
+  }
+  return '<section class="ed-block" id="studio-blk-' + key + '" data-blk="' + key + '">' +
+    '<header class="ed-block-head"><svg class="ed-block-ico" viewBox="0 0 24 24" aria-hidden="true">' +
+    (STUDIO_BLOCK_ICON[key] || '') + '</svg><span class="ed-block-name">' + esc(studio_blockName(key)) + '</span>' +
+    '<span class="ed-block-sum truncate" title="' + esc(summary || '') + '">' + esc(summary || '') + '</span></header>' +
+    '<div class="ed-block-body">' + body + '</div></section>';
+}
+function studio_inspNav(blocks) {
+  return '<nav class="ed-blocknav" aria-label="Sections">' + blocks.map(b =>
+    '<button type="button" class="ed-blocknav-b" data-act="studio-insp-jump" data-blk="' + b[0] + '">' + esc(b[1]) + '</button>').join('') +
+    '</nav>';
+}
+function studio_partName(id) {
+  const part = id ? studio_part(id) : null;
+  return part && part.id ? (part.label || part.id) : 'none';
+}
+
 function studio_drawInspectorBody() {
   const box = studio_el('studio-insp');
   const p = studio.project;
@@ -6758,7 +7033,10 @@ function studio_drawInspectorBody() {
       '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-remove">Remove</button></span></div>' +
       '<p class="muted truncate" title="' + esc(s.name) + '">' + esc(s.name) + '</p>' +
       studio_pinRow(s.clip) +
-      '<p class="muted mono">' + studio_secs(r.start) + ' → ' + studio_secs(r.end) + ' · kill at ' + studio_secs(r.kill_reel) + '</p>' +
+      studio_inspNav(STUDIO_SHOT_BLOCKS) +
+      studio_block('footage', studio_stripSummary(s, r),
+        studio_stripHtml(s, r, i) +
+        '<p class="muted mono">' + studio_secs(r.start) + ' → ' + studio_secs(r.end) + ' · kill at ' + studio_secs(r.kill_reel) + '</p>' +
       studio_grp('timing', 'Timing',
         '<div class="studio-field"><span class="field-label">Kill</span>' +
         (s.kills.length > 1 ? '<select class="select" id="studio-f-kill">' + kills + '</select>' : '<span class="muted">' + s.kill.toFixed(2) + ' s into the clip</span>') +
@@ -6783,12 +7061,14 @@ function studio_drawInspectorBody() {
         '<div class="studio-field"><label class="field-label" for="studio-f-speed">Speed</label>' + studio_select_html('studio-f-speed', 'speed', s.speed) +
         (s.stretch ? '<span class="muted studio-small">Run-up slowed to ' + Number(s.stretch[0]).toFixed(2) + '× so its kill reaches its mark; the last ' +
           Number(s.stretch[1]).toFixed(1) + ' s play as recorded' + (Number(s.stretch[2] || 0) > 0 ? ', after its first frame holds ' + Number(s.stretch[2]).toFixed(1) + ' s' : '') +
-          '. Choosing a speed replaces it.</span>' : '') + '</div>') +
+          '. Choosing a speed replaces it.</span>' : '') + '</div>')) +
+      studio_block('cut', i ? studio_partName(s.transition) : 'opens the reel',
       studio_grp('trans', 'Transition in',
         (i ? '<div class="studio-field">' + studio_select_html('studio-f-trans', 'transition', s.transition) +
           '<input type="range" id="studio-f-tlen" min="0.1" max="1" step="0.05" value="' + (s.tlen || 0.3) + '"' + (s.transition === 't01' ? ' disabled' : '') + ' aria-label="Transition length">' +
           '<button type="button" class="btn btn-ghost btn-sm studio-add-btn" data-act="studio-tr-all">Use this transition on every cut</button></div>'
-          : '<span class="muted">The first shot opens the reel.</span>')) +
+          : '<span class="muted">The first shot opens the reel.</span>'))) +
+      studio_block('kill', (s.fx.length ? s.fx.map(studio_partName).join(' + ') : 'no effect') + (s.hero ? ' · hero' : ''),
       studio_grp('fx', 'Kill effects',
         studio_checks_html('fx', 'kill', s.fx) +
         '<button type="button" class="btn btn-ghost btn-sm studio-add-btn" data-act="studio-fx-all">Use these on every shot</button>',
@@ -6797,10 +7077,12 @@ function studio_drawInspectorBody() {
         '<label class="studio-check"><input type="checkbox" id="studio-f-hero"' + (s.hero ? ' checked' : '') + '> Make this the hero shot</label>' +
         (s.hero ? studio_checks_html('hero_fx', 'hero', s.hero_fx) +
           '<label class="field-label" for="studio-f-caption">Caption</label><input class="input" id="studio-f-caption" maxlength="40" value="' + esc(s.caption) + '">' : ''),
-        s.hero ? 'on' : '') +
+        s.hero ? 'on' : '')) +
+      studio_block('camera', studio_partName(s.camera),
       studio_grp('camera', 'Camera move',
-        studio_select_html('studio-f-camera', 'camera', s.camera)) +
+        studio_select_html('studio-f-camera', 'camera', s.camera))) +
       '</div>';
+    studio_stripInit();
     return;
   }
   const styles = (studio.catalog ? studio.catalog.styles : []);
@@ -6809,9 +7091,8 @@ function studio_drawInspectorBody() {
   const vertical = p.format === 'vertical';
   const showHandle = (p.overlays || []).indexOf('o07') >= 0;
   const outroLen = Number(p.outro_len || 0);
-  box.innerHTML = tabs + '<div class="card-body studio-insp-body">' +
-    '<p class="studio-tip">To change one shot\'s kill effects, speed or transition, click that shot on the timeline. Point at any effect to see it.</p>' +
-    studio_grp('look', 'Look and shape',
+  const G = {};
+  G.look = studio_grp('look', 'Look and shape',
       '<div class="studio-field"><span class="field-label">Format</span>' +
       studio_seg('studio-rfmt', 'fmt', p.format, [['landscape', 'Normal 16:9'], ['vertical', 'Vertical 9:16']]) + '</div>' +
       '<div class="studio-field"><span class="field-label">Framing</span>' +
@@ -6824,8 +7105,8 @@ function studio_drawInspectorBody() {
       '<button type="button" class="btn btn-sm studio-add-btn" data-act="studio-restyle" id="studio-restyle-btn"' + (studio.busy ? ' disabled' : '') + '>Rebuild with this style</button>' +
       '<span class="muted studio-small">Replans every shot. Undo brings your edits back.</span></div>' +
       '<div class="studio-field"><label class="field-label" for="studio-r-grade">Colour</label>' + studio_select_html('studio-r-grade', 'grade', p.grade) +
-      '<label class="studio-check"><input type="checkbox" id="studio-r-vignette"' + (p.vignette ? ' checked' : '') + '> Soft vignette</label></div>') +
-    studio_grp('cam', 'Facecam',
+      '<label class="studio-check"><input type="checkbox" id="studio-r-vignette"' + (p.vignette ? ' checked' : '') + '> Soft vignette</label></div>');
+  G.cam = studio_grp('cam', 'Facecam',
       '<div class="studio-field">' +
       studio_seg('studio-cam-src', 'src', cam.source || 'none', [['none', 'None'], ['inset', 'In the video'], ['file', 'Separate video']]) +
       '<span class="muted studio-small">' + (cam.source === 'inset' ? 'Cut out of a corner of the recording itself.'
@@ -6843,14 +7124,14 @@ function studio_drawInspectorBody() {
               '<input type="range" id="studio-r-camsize" min="0.12" max="0.6" step="0.01" value="' + (cam.size || 0.3) + '"></div>' +
               '<label class="studio-check"><input type="checkbox" id="studio-r-camborder"' + (cam.border !== false ? ' checked' : '') + '> Thin border</label></div>')
         : ''),
-      cam.source === 'inset' ? 'in the video' : cam.source === 'file' ? 'separate' : 'off') +
-    studio_grp('handle', 'Your handle',
+      cam.source === 'inset' ? 'in the video' : cam.source === 'file' ? 'separate' : 'off');
+  G.handle = studio_grp('handle', 'Your handle',
       '<div class="studio-field"><label class="studio-check"><input type="checkbox" id="studio-r-showhandle"' + (showHandle ? ' checked' : '') + '> Show my handle on the reel</label>' +
       '<input class="input" id="studio-r-handle" maxlength="40" placeholder="@yourhandle" value="' + esc(p.handle) + '"></div>' +
       '<div class="studio-field"><span class="field-label">Where</span><div class="ed-row">' + studio_grid9('studio-handle-pos', p.handle_pos || [1, 1]) +
       '<span class="muted studio-small">Or drag it on the picture.</span></div></div>',
-      showHandle && p.handle ? p.handle : 'off') +
-    studio_grp('ending', 'Opening and ending',
+      showHandle && p.handle ? p.handle : 'off');
+  G.ending = studio_grp('ending', 'Opening and ending',
       '<div class="studio-field"><label class="field-label" for="studio-r-intro">Intro</label>' + studio_select_html('studio-r-intro', 'intro', p.intro) +
       studio_introRow(p) + '</div>' +
       '<div class="studio-field"><label class="field-label" for="studio-r-outro">Ending</label>' + studio_select_html('studio-r-outro', 'outro', p.outro) +
@@ -6859,8 +7140,8 @@ function studio_drawInspectorBody() {
       STUDIO_OUTRO_LENS.map(o => '<option value="' + o[0] + '"' + (Math.abs(o[0] - outroLen) < 0.01 ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>' +
       '<span class="muted studio-small">' + (p.outro === 'e12' ? 'A hard cut has no length. Pick a fading ending to make it longer.'
         : outroLen ? 'The picture and the song fade together over ' + outroLen + ' s, and the last frame is held if the footage runs out, so the last kill is never faded.'
-        : 'Longer endings fade the picture and the song together, and ease rather than stop.') + '</span></div>') +
-    studio_grp('pools', 'Effects every shot draws from',
+        : 'Longer endings fade the picture and the song together, and ease rather than stop.') + '</span></div>');
+  G.pools = studio_grp('pools', 'Effects every shot draws from',
       '<p class="muted studio-small">Each kill gets its own mix from these, never the same as the shot before.</p>' +
       '<span class="field-label">Kill effects</span>' + studio_pool_html('kill', pools.kill || []) +
       '<span class="field-label">Transitions</span>' + studio_pool_html('transition', pools.transition || []) +
@@ -6868,9 +7149,9 @@ function studio_drawInspectorBody() {
       '<button type="button" class="btn btn-sm" data-act="studio-mix" data-what="kill">Mix kill effects</button>' +
       '<button type="button" class="btn btn-sm" data-act="studio-mix" data-what="transition">Mix transitions</button>' +
       '<button type="button" class="btn btn-sm" data-act="studio-mix" data-what="all">Mix everything</button></span>' +
-      '<span class="field-label">Overlays</span>' + studio_checks_html('overlays', 'overlay', (p.overlays || []).filter(o => o !== 'o07'), ['o07'])) +
-    studio_lyricsGroup(p) +
-    studio_grp('sound', 'Song and sound',
+      '<span class="field-label">Overlays</span>' + studio_checks_html('overlays', 'overlay', (p.overlays || []).filter(o => o !== 'o07'), ['o07']));
+  G.lyrics = studio_lyricsGroup(p);
+  G.sound = studio_grp('sound', 'Song and sound',
       '<div class="studio-field">' +
       '<span class="muted truncate">' + (p.song ? esc(p.song.split(/[\\/]/).pop()) : 'No song') + '</span>' +
       '<button type="button" class="btn btn-sm studio-add-btn" data-act="studio-edit-song">' + (p.song ? 'Edit the song and mark kills…' : 'Add a song…') + '</button>' +
@@ -6881,7 +7162,21 @@ function studio_drawInspectorBody() {
       '<input type="range" id="studio-r-music" min="-20" max="6" step="1" value="' + p.music_db + '"' + (p.song ? '' : ' disabled') + '>' +
       '<label class="field-label" for="studio-r-game">Game sound ' + p.game_db.toFixed(0) + ' dB</label>' +
       '<input type="range" id="studio-r-game" min="-20" max="12" step="1" value="' + p.game_db + '">' +
-      '<label class="studio-check"><input type="checkbox" id="studio-r-duck"' + (p.duck ? ' checked' : '') + '> Duck the music under gunfire</label></div>') +
+      '<label class="studio-check"><input type="checkbox" id="studio-r-duck"' + (p.duck ? ' checked' : '') + '> Duck the music under gunfire</label></div>');
+  /* IN THE ORDER A NEW EDITOR THINKS OF THEM, each its own block with a header
+     that says what is set. They used to be seven identical folds in a column,
+     and nothing said where sound ended and the opening began. */
+  const ly = (p.lyrics && p.lyrics.look && p.lyrics.look !== 'off') ? p.lyrics.look : '';
+  const song = p.song ? p.song.split(/[\\/]/).pop().replace(/\.[^.]+$/, '').replace(/\s*\[[^\]]*\]\s*$/, '') : '';
+  box.innerHTML = tabs + '<div class="card-body studio-insp-body">' +
+    '<p class="studio-tip">To change one shot\'s kill effects, speed or transition, click that shot on the timeline. Point at any effect to see it.</p>' +
+    studio_inspNav(STUDIO_REEL_BLOCKS) +
+    studio_block('music', song ? song + ' · from ' + studio_secs(p.song_offset) : 'no song', G.sound) +
+    studio_block('words', ly ? ly.charAt(0).toUpperCase() + ly.slice(1) : 'off', G.lyrics) +
+    studio_block('look', (p.format === 'vertical' ? 'Vertical' : 'Normal') + ' · ' + studio_partName(p.grade), G.look + G.pools) +
+    studio_block('start', studio_partName(p.intro) + ' → ' + studio_partName(p.outro), G.ending) +
+    studio_block('you', [showHandle && p.handle ? p.handle : '', cam.source && cam.source !== 'none' ? 'facecam' : '']
+      .filter(Boolean).join(' · ') || 'nothing of yours on it', G.handle + G.cam) +
     '</div>';
 }
 
@@ -7236,6 +7531,50 @@ function studio_rollCut(p, base, j, by) {
   if (j < 0 && base.p.song) {
     tighten('lo', -(Number(base.p.song_offset) || 0), 'the song cannot start before its first second');
   }
+  /* A CUT BETWEEN TWO LOCKED SHOTS DOES NOT MOVE: they are one piece now. */
+  if (a0 && b0 && a0.lock && a0.lock === b0.lock) {
+    return {by: 0, why: studio_shotName(j) + ' and ' + studio_shotName(j + 1).toLowerCase() +
+                        ' are locked together; unlock them to move this cut'};
+  }
+  /* A CUT JUST BEFORE A LOCKED RUN SLIDES THE RUN (asked 2026-10-17): the shot
+     before it changes length and every locked shot after it keeps its own, so
+     the reel grows or shrinks by the move. The shot after the run -- if there is
+     one -- gives or takes the time at its head, so the rest of the reel stays
+     where it was. Locked runs side by side slide together. */
+  if (a0 && b0 && b0.lock) {
+    lo = -Infinity; hi = Infinity; whyLo = ''; whyHi = '';
+    const name = studio_shotName(j);
+    tighten('hi', studio_room(a0, ar, 'tail'), name + ' has no more footage after this');
+    tighten('lo', Math.max(STUDIO_MIN_SHOT, a0.pre + STUDIO_MIN_AFTER) - a0.duration,
+            'the cut cannot go back past the kill in ' + name);
+    let e = j + 1;
+    while (e + 1 < n && base.p.shots[e + 1].lock) e++;
+    const c0 = e + 1 < n ? base.p.shots[e + 1] : null, cr = c0 ? base.d.shots[e + 1] : null;
+    if (c0) {
+      const cname = studio_shotName(e + 1);
+      tighten('hi', Math.min(c0.pre - STUDIO_MIN_LEAD, c0.duration - STUDIO_MIN_SHOT),
+              'the locked shots cannot push past the kill in ' + cname);
+      tighten('lo', -studio_room(c0, cr, 'head'), cname + ' has no more footage before its kill');
+    } else {
+      const sh = studio.songShape, songS = sh && Number(sh.seconds);
+      if (base.p.song && songS) {
+        tighten('hi', songS - (Number(base.p.song_offset) || 0) - Number(base.d.length || 0),
+                'the song ends there');
+      }
+    }
+    let got = by, why = '';
+    if (lo > hi) { got = 0; why = whyHi || whyLo; }
+    else if (by > hi) { got = hi; why = whyHi; }
+    else if (by < lo) { got = lo; why = whyLo; }
+    got = Math.round(got * 1e5) / 1e5;
+    p.shots[j].duration = Math.round((a0.duration + got) * 1e5) / 1e5;
+    if (c0) {
+      const C = p.shots[e + 1];
+      C.duration = Math.round((c0.duration - got) * 1e5) / 1e5;
+      C.pre = Math.round((c0.pre - got) * 1e5) / 1e5;
+    }
+    return {by: got, why: why, slid: true};
+  }
   let got = by, why = '';
   if (lo > hi) { got = 0; why = whyHi || whyLo; }
   else if (by > hi) { got = hi; why = whyHi; }
@@ -7249,6 +7588,115 @@ function studio_rollCut(p, base, j, by) {
   }
   if (j < 0 && base.p.song) p.song_offset = Math.round(((Number(base.p.song_offset) || 0) + got) * 1e4) / 1e4;
   return {by: got, why: why};
+}
+
+/* ------------------------------------------------------------ locked shots */
+
+/* [first, last] of every run of shots locked together, in timeline order. */
+function studio_lockRuns(shots) {
+  const out = [];
+  let i = 0;
+  while (i < shots.length) {
+    const lk = shots[i].lock;
+    let j = i;
+    while (lk && j + 1 < shots.length && shots[j + 1].lock === lk) j++;
+    if (lk && j > i) out.push([i, j]);
+    i = j + 1;
+  }
+  return out;
+}
+
+/* A lock holds two or more shots side by side. A shot moved out of the middle of
+   a run, or a run cut to one shot, no longer joins anything -- the same rule the
+   server keeps (studio.tidy_locks). In place. */
+function studio_lockTidy(shots) {
+  const seen = {};
+  let i = 0;
+  while (i < shots.length) {
+    const lk = shots[i].lock;
+    let j = i;
+    while (lk && j + 1 < shots.length && shots[j + 1].lock === lk) j++;
+    if (lk) {
+      const keep = j > i && !seen[lk];
+      if (keep) seen[lk] = true;
+      if (!keep) for (let k = i; k <= j; k++) delete shots[k].lock;
+    }
+    i = j + 1;
+  }
+}
+
+/* Click picks one shot; shift-click picks the run from the last pick; ctrl-click
+   adds or takes away one. */
+function studio_pickShot(i, shift, ctrl) {
+  const was = (studio.multi && studio.multi.length) ? studio.multi.slice() : (studio.sel >= 0 ? [studio.sel] : []);
+  let multi = [i];
+  if (shift && studio.sel >= 0) {
+    const a = Math.min(studio.sel, i), b = Math.max(studio.sel, i);
+    multi = [];
+    for (let k = a; k <= b; k++) multi.push(k);
+  } else if (ctrl) {
+    multi = was.indexOf(i) >= 0 ? was.filter(k => k !== i) : was.concat([i]);
+    if (!multi.length) multi = [i];
+  }
+  studio.multi = multi.sort((a, b) => a - b);
+  studio.keepMulti = true;
+  studio_select(i);
+}
+
+function studio_lockBtn() {
+  const b = studio_el('studio-lock-btn'), p = studio.project;
+  if (!b) return;
+  const multi = studio.multi || [];
+  const s = p && studio.sel >= 0 ? p.shots[studio.sel] : null;
+  if (multi.length > 1) {
+    const a = multi[0] + 1, z = multi[multi.length - 1] + 1;
+    b.disabled = false;
+    b.textContent = 'Lock shots ' + a + '–' + z;
+    b.setAttribute('data-mode', 'lock');
+    b.title = 'They move as one when the cut before them moves; the reel gets longer or shorter instead.';
+  } else if (s && s.lock) {
+    b.disabled = false;
+    b.textContent = 'Unlock';
+    b.setAttribute('data-mode', 'unlock');
+    b.title = 'Let these shots move on their own again';
+  } else {
+    b.disabled = true;
+    b.textContent = 'Lock shots';
+    b.setAttribute('data-mode', '');
+    b.title = 'Shift-click or Ctrl-click shots on the timeline to pick several';
+  }
+}
+
+/* Locking is not an edit of the video: nothing renders differently. So it goes
+   on the undo list but not on the list of what the video does not show yet. */
+function studio_lockAct() {
+  const p = studio.project, b = studio_el('studio-lock-btn');
+  if (!p || !b) return;
+  const mode = b.getAttribute('data-mode');
+  const snap = JSON.stringify(p);
+  let what = '';
+  if (mode === 'lock') {
+    const multi = studio.multi || [];
+    const a = multi[0], z = multi[multi.length - 1];
+    const id = 'L' + Date.now().toString(36).slice(-6);
+    for (let k = a; k <= z; k++) p.shots[k].lock = id;
+    what = 'Shots ' + (a + 1) + '–' + (z + 1) + ' locked together';
+  } else if (mode === 'unlock') {
+    const lk = p.shots[studio.sel].lock;
+    p.shots.forEach(s => { if (s.lock === lk) delete s.lock; });
+    what = 'Shots unlocked';
+  } else {
+    return;
+  }
+  studio_lockTidy(p.shots);
+  studio_pushUndo(snap, what);
+  studio.gen++;
+  studio.multi = studio.sel >= 0 ? [studio.sel] : [];
+  studio_localDerive();
+  studio_drawAll();
+  clearTimeout(studio.checkTimer);
+  studio.checkTimer = setTimeout(studio_check, 250);
+  toast(what + '.', 'info');
 }
 
 /* Where the cut after shot j sits on the reel: the time the next one starts. */
@@ -7280,6 +7728,7 @@ function studio_extraKills(s, r, i, pps) {
 }
 
 function studio_pointerDown(e) {
+  if (studio_stripDown(e)) return;
   const tl = studio_el('studio-tracks');
   if (!studio.project || !tl || !tl.contains(e.target) || e.button !== 0) return;
   const trim = e.target.closest('[data-trim]'), kill = e.target.closest('[data-kill]');
@@ -7338,6 +7787,8 @@ function studio_pointerDown(e) {
                     ripples, which is all that is left for it to mean now that
                     an edge moves the cut by default. */
                  ripple: !!trim && e.shiftKey && studio.tool !== 'roll',
+                 /* For a click that turns out not to be a drag: picking shots. */
+                 shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey,
                  derivedSnap: JSON.stringify(studio.derived),
                  at: anchor ? (studio.derived.shots[i].kills_reel || [])[aj] : 0,
                  dur: s.duration, pre: s.pre, snapshot: JSON.stringify(studio.project), pointer: e.pointerId};
@@ -7347,6 +7798,7 @@ function studio_pointerDown(e) {
 }
 
 function studio_pointerMove(e) {
+  if (studio.strip) { studio_stripMove(e); return; }
   const g = studio.drag;
   if (!g || (g.pointer !== undefined && e.pointerId !== g.pointer)) return;
   const dx = e.clientX - g.x0;
@@ -7411,6 +7863,7 @@ function studio_pointerMove(e) {
 }
 
 function studio_pointerUp(e) {
+  if (studio.strip) { studio_stripUp(e); return; }
   const g = studio.drag;
   if (!g || (e && g.pointer !== undefined && e.pointerId !== g.pointer)) return;
   studio.drag = null;
@@ -7419,7 +7872,7 @@ function studio_pointerUp(e) {
     if (g.moved) { studio.project = JSON.parse(g.snapshot); studio_localDerive(); studio_drawAll(); }
     return;
   }
-  if (!g.moved) { studio_select(g.i); return; }
+  if (!g.moved) { studio_pickShot(g.i, g.shift, g.ctrl); return; }
   studio.gen++;
   const moveName = studio_shotName(g.i) +
     (g.kind === 'trim' || g.kind === 'head' ? (g.rolled ? ' · the cut moved' : ' · trimmed, and everything after it moved')
@@ -8743,6 +9196,11 @@ function studio_wire() {
       studio_forgetShots();
       studio_change(pr => { pr.shots.splice(i, 1); }, gone + ' removed');
       studio.sel = Math.min(i, p.shots.length - 1); studio_drawAll();
+    }
+    else if (act === 'studio-lock' && p) studio_lockAct();
+    else if (act === 'studio-insp-jump') {
+      const blk = studio_el('studio-blk-' + b.getAttribute('data-blk'));
+      if (blk) blk.scrollIntoView({block: 'start', behavior: 'smooth'});
     }
     else if (act === 'studio-slip' && p) {
       const d = Number(b.getAttribute('data-d')), i = studio.sel;
