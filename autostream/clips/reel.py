@@ -307,8 +307,12 @@ def analyse(path: Path, seconds: float = 0.0, points: int = 2000) -> Shape:
     # window is 3 s wide: Espresso's drop came out at 10.5 s, a second and two
     # beats after the 9.33 s a reference edit flashes on, while the entrance
     # reader had it. The loudness rise stays for a song with no entrance.
-    drop = (drops[max(range(len(entrances)), key=lambda i: entrances[i]["bass_step"])]
-            if entrances else bs.find_drop(x, total))
+    if entrances:
+        drop = drops[max(range(len(entrances)), key=lambda i: entrances[i]["bass_step"])]
+    else:
+        # The loudness rise, read in quarter-second windows, lands on its hit the same way.
+        drop = bs.find_drop(x, total)
+        drop = snap_drop(drop, found, strength, big) if drop is not None else None
 
     shape = Shape(
         path=path, seconds=total, bpm=bpm, phase=phase,

@@ -115,6 +115,9 @@ def test_espresso_plays_whole_with_a_flashed_kill_on_the_drop_and_one_a_beat_aft
     assert at_drop, kills
     i = at_drop[0]
     assert studio.DROP_FLASH in proj["shots"][i]["fx"]
+    # Only that kill: it was once counted as one of the reel's two kill effects and
+    # spread to every other kill, and once given to the shot two along.
+    assert sum(studio.DROP_FLASH in s["fx"] for s in proj["shots"]) == 1
     after = kills[i:i + 8]
     gaps = [b - a for a, b in zip(after, after[1:])]
     assert max(gaps) < 1.5 * BEAT and min(gaps) > 0.5 * BEAT, gaps

@@ -2523,8 +2523,15 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         proj["song_marks"] = [round(t, 4) for t in slots]
         notes += got_notes
         if style.drop and drop_t is not None:
-            # Which shot lands on the drop; it flashes once the effects are settled below.
-            drop_shot = next((i for i, t in enumerate(slots) if abs(t - drop_t) < 1e-3), None)
+            # Which shot lands on the drop, read off where each kill really landed: a mark
+            # can pass to the next shot (see apply_marks), so the slot's index is not the
+            # shot's. It flashes once the effects are settled below.
+            at, landed = 0.0, []
+            for s in shots:
+                landed.append(at + float(s["pre"]) + offset)
+                at += float(s["duration"])
+            near = min(range(len(landed)), key=lambda i: abs(landed[i] - drop_t)) if landed else None
+            drop_shot = near if near is not None and abs(landed[near] - drop_t) < 0.05 else None
         big_on = sum(1 for t in slots if any(abs(t - b) < 0.01 for b in grid.big))
         what = grid.pattern or "bass hits"
         every = (slots[-1] - slots[0]) / (len(slots) - 1) if len(slots) > 1 else gap_style
