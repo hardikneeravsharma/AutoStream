@@ -207,6 +207,24 @@ def test_dragging_the_box_uses_another_part_of_the_clip(pg):
     assert [r["start"] for r in after] == pytest.approx([r["start"] for r in before], abs=1e-6)
 
 
+def test_the_moment_moves_by_buttons_and_by_pressing_on_the_clip_and_the_length_stays(pg):
+    before = pg.evaluate(STATE)
+    pg.click('#studio-strip [data-act="studio-strip-nudge"][data-d="0.1"]')
+    after = pg.evaluate(STATE)
+    assert after[0]["kill"] == pytest.approx(before[0]["kill"] + 0.1, abs=1e-3)
+    assert after[0]["duration"] == pytest.approx(before[0]["duration"], abs=1e-6)
+    pg.click('#studio-strip [data-act="studio-strip-nudge"][data-d="-1"]')
+    assert pg.evaluate(STATE)[0]["kill"] == pytest.approx(before[0]["kill"] - 0.9, abs=1e-3)
+    # press well outside the box: it comes to the press, same length
+    tr = pg.locator("#studio-strip-track").bounding_box()
+    pps = _px_per_clip_second(pg)
+    pg.mouse.click(tr["x"] + 25 * pps, tr["y"] + tr["height"] / 2)
+    got = pg.evaluate(STATE)
+    assert got[0]["duration"] == pytest.approx(before[0]["duration"], abs=1e-6)
+    mid = got[0]["kill"] + (got[0]["duration"] - 2 * got[0]["pre"]) / 2
+    assert abs(got[0]["kill"] - before[0]["kill"]) > 3, "pressing on the clip did not move the box"
+
+
 def test_the_box_is_pulled_onto_a_kill_near_the_beat(pg):
     pps = _px_per_clip_second(pg)
     _drag(pg, "#studio-strip-box", 5.9 * pps)                         # aims at 15.9; a kill at 16.0

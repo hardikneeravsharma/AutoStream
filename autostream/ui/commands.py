@@ -351,6 +351,8 @@ COMMANDS: list[dict] = [
        "studio-set-weight", palette=False),
     _c("make.set-remove", "Take an effect out of a slot", "make",
        "studio-set-remove", palette=False),
+    _c("shot.move-moment", "Use another part of this shot's clip, keeping its length", "timeline",
+       "studio-strip-nudge", palette=False),
     _c("make.jump", "Jump to a section of the Make page", "make",
        "studio-mk-jump", palette=False),
     _c("make.plan-kills", "Show where the kills will land on the song", "make",

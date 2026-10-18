@@ -4427,6 +4427,8 @@ EDITOR_CSS = r"""
 .studio-strip-box{position:absolute;top:0;bottom:0;box-sizing:border-box;border:2px solid var(--accent);min-width:14px;
   border-radius:4px;cursor:grab;z-index:2}
 .studio-strip-box:active{cursor:grabbing}
+.studio-strip-nudge{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px}
+.studio-strip-track{cursor:pointer}
 .studio-strip-h{position:absolute;top:-2px;bottom:-2px;width:10px;background:var(--accent);cursor:ew-resize}
 .studio-strip-h.is-head{left:-6px;border-radius:4px 0 0 4px}
 .studio-strip-h.is-tail{right:-6px;border-radius:0 4px 4px 0}
