@@ -130,6 +130,7 @@ class Shape:
             "beat": round(self.beat, 5), "bar": round(self.bar, 4),
             "phase": round(self.phase, 4), "downbeat_pos": self.downbeat_pos,
             "drop": round(self.drop, 3) if self.drop else None,
+            "drops": [round(d, 3) for d in self.drops],
             "drums_in": round(self.drums_in, 3) if self.drums_in else None,
             "beats": [round(b, 4) for b in self.beats],
             "peaks": self.peaks, "onsets": self.onsets,

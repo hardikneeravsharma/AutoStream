@@ -111,6 +111,10 @@ datas += [("autostream/clips/templates/*.npy", "autostream/clips/templates")]
 # has no clips of their own to cut examples from. Drawn, not recorded -- see
 # scripts/make_stock_examples.py.
 datas += [("autostream/clips/stock_examples/*.mp4", "autostream/clips/stock_examples")]
+# The stock style samples: fifteen seconds of every style on the same clips, so
+# the Make page's style cards play from the moment it opens -- see
+# scripts/make_stock_samples.py.
+datas += [("autostream/clips/stock_samples/*.mp4", "autostream/clips/stock_samples")]
 # The lyric typefaces, with their licence: libass reads them from this folder
 # by name, so a reel looks the same on a machine that has none of them.
 datas += [("autostream/clips/fonts/*.ttf", "autostream/clips/fonts"),

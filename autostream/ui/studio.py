@@ -577,7 +577,7 @@ STUDIO_HTML = r"""
             <button type="button" class="btn btn-ghost" data-act="studio-sg-clearmarks">Clear marks</button>
           </div>
           <div class="field-inline">
-            <label class="studio-check"><input type="checkbox" id="studio-sg-snap" checked> Snap marks to the beat</label>
+            <label class="studio-check"><input type="checkbox" id="studio-sg-snap"> Snap marks to the beat</label>
             <label class="studio-check"><input type="checkbox" id="studio-sg-click" checked> Click on each mark as it plays</label>
           </div>
           <div class="reel-chips" id="studio-sg-chips"></div>
@@ -623,10 +623,11 @@ STUDIO_HTML = r"""
       <div class="mk-body">
         <section class="mk-sec" id="mk-sec-style">
       <h3 class="studio-h">Style <span class="muted studio-small" id="studio-style-count"></span></h3>
-      <!-- EVERY STYLE ON THE SAME KILLS. Each card plays about twenty seconds cut from the SAME
-           clips, so the only thing that differs between two of them is the style. -->
+      <!-- EVERY STYLE ON THE SAME KILLS. Each card plays fifteen seconds cut from the SAME
+           clips, so the only thing that differs between two of them is the style. The set
+           ships with the app; cutting them again on the player's own kills is optional. -->
       <div class="studio-samples-bar" id="studio-samples-bar">
-        <button type="button" class="btn btn-sm" data-act="studio-samples-start" id="studio-samples-btn">Show every style on my kills</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-samples-start" id="studio-samples-btn">Show them on my own kills</button>
         <button type="button" class="btn btn-ghost btn-sm hide" data-act="studio-samples-stop" id="studio-samples-stop">Stop</button>
         <span class="muted studio-small" id="studio-samples-msg" role="status" aria-live="polite"></span>
       </div>
@@ -725,13 +726,32 @@ STUDIO_HTML = r"""
         <p class="muted studio-small" id="studio-mk-killnote"></p>
         <div class="field-inline">
           <button type="button" class="btn btn-sm" data-act="studio-mk-plan" id="studio-mk-plan">Show where the kills will land</button>
-          <button type="button" class="btn btn-sm" data-act="studio-mk-addmark" title="Drops a kill at the playhead (K)">Mark a kill here <kbd>K</kbd></button>
+          <button type="button" class="btn btn-sm" data-act="studio-mk-addmark" title="Drops a kill at the playhead, exactly where it is (K)">Mark a kill here <kbd>K</kbd></button>
+          <button type="button" class="btn btn-sm" data-act="studio-mk-adddrop" title="Marks a bass drop at the playhead (D)">Mark a drop here <kbd>D</kbd></button>
           <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-clearmarks" id="studio-mk-clearmarks">Back to automatic</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-cleardrops" id="studio-mk-cleardrops">Drops back to automatic</button>
           <span class="muted studio-small" id="studio-mk-killmsg" role="status" aria-live="polite"></span>
         </div>
-        <canvas class="studio-sg-wave" id="studio-mk-kills" height="120"
-                aria-label="The part of the song, with every kill on it: drag one to move it, double-click to add or remove"></canvas>
-        <ol class="studio-mk-marklist" id="studio-mk-marklist"></ol>
+        <!-- WHOSE EACH MARK IS, at a glance: AutoStream's hollow, the player's solid, drops on their own lane. -->
+        <div class="studio-mk-legend" aria-hidden="true">
+          <span><i class="mk-key mk-key-auto"></i>AutoStream's kill</span>
+          <span><i class="mk-key mk-key-hand"></i>Your kill</span>
+          <span><i class="mk-key mk-key-dropauto"></i>Drop found</span>
+          <span><i class="mk-key mk-key-drophand"></i>Your drop</span>
+          <label class="studio-check"><input type="checkbox" id="studio-mk-tick" checked> Sound on each mark as it plays</label>
+          <label class="studio-check"><input type="checkbox" id="studio-mk-snap"> Snap marks to the beat</label>
+        </div>
+        <canvas class="studio-sg-wave" id="studio-mk-kills" height="140"
+                aria-label="The part of the song: drops along the top, kills below. Click a mark to select it, Ctrl-click or Shift-click for several, Shift-drag to box-select, drag to move, double-click to add or remove"></canvas>
+        <!-- SEVERAL AT ONCE. Fifty marks taken out one cross at a time was the only way to clear a stretch. -->
+        <div class="field-inline studio-mk-selbar">
+          <button type="button" class="btn btn-sm" data-act="studio-mk-delsel" id="studio-mk-delsel" disabled>Delete selected</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-selall" id="studio-mk-selall">Select all</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-selnone" id="studio-mk-selnone" disabled>Select none</button>
+          <span class="muted studio-small">Tick marks below, Ctrl-click them on the song, or Shift-drag across it. <kbd>Delete</kbd> removes them.</span>
+        </div>
+        <ol class="studio-mk-marklist studio-mk-droplist" id="studio-mk-droplist" aria-label="Drops"></ol>
+        <ol class="studio-mk-marklist" id="studio-mk-marklist" aria-label="Kills"></ol>
       </div>
         </section>
         <section class="mk-sec" id="mk-sec-shape">
@@ -1178,7 +1198,11 @@ const studio = {
        /* THE KILLS, as the player has them: `planned` is where a plan put them (song seconds, with the
           clip each belongs to), `hand` is what they have placed or moved, and only `edited` marks are
           sent -- an untouched preview must not turn into marks the next plan is forced to keep. */
-       hand: [], edited: false, planned: null, killDrag: null},
+       hand: [], edited: false, planned: null,
+       /* The bass drops, null while they are the ones the song analysis found; `sel` is the marks
+          selected by id, kills and drops alike; `lastT` is where playback was a frame ago, so a mark
+          it passed can be sounded. */
+       drops: null, sel: {}, nid: 0, markDrag: null, boxSel: null, lastT: null, ac: null, listSig: ''},
   /* Styles shown on the player's own kills: {key, ready: {style: file}, running, state}. */
   samples: {key: '', ready: {}, running: false, state: null, timer: null, held: ''},
   /* A song being downloaded from a YouTube link, and which picker asked for it. */
@@ -2310,6 +2334,7 @@ async function studio_openMake() {
       studio_el('studio-song-name').textContent = 'Reading ' + ad.song.split(/[\\/]/).pop() + '…';
       const got = await API.post('/api/reel/song', {song: ad.song});
       if (got && got.ok) {
+        studio.mk.drops = null; studio.mk.sel = {};
         studio.song = ad.song; studio.songShape = got.song;
         studio_el('studio-song-name').textContent = ad.song.split(/[\\/]/).pop() + ' · ' +
           Math.round(got.song.bpm) + ' BPM · ' + studio_dur(got.song.seconds);
@@ -2372,11 +2397,40 @@ function studio_mkSpy() {
   studio_mkNavMark(best);
 }
 
-/* STYLES ARE SHOWN, NOT DESCRIBED. Each card plays about twenty seconds of that style cut from the same
-   kills as every other card; the statistics it used to carry are one click away, folded. */
+/* STYLES ARE SHOWN, NOT DESCRIBED. Each card plays fifteen seconds of that style cut from the same
+   kills as every other card; the statistics it used to carry are one click away, folded.
+
+   THE SHIPPED ONE UNTIL THE PLAYER'S OWN. Every card used to open as "Not shown yet" until somebody
+   pressed a button and waited minutes while eleven samples were cut. A set cut from the same VALORANT
+   clips ships with the app, so a card plays from the moment the page opens; one cut from the player's
+   own kills replaces it when they ask for that. */
 function studio_sampleUrl(style) {
   const sm = studio.samples;
-  return sm.ready && sm.ready[style] ? '/api/studio/sample?k=' + encodeURIComponent(SHELL_K) + '&key=' + encodeURIComponent(sm.key) + '&style=' + encodeURIComponent(style) : '';
+  const base = '/api/studio/sample?k=' + encodeURIComponent(SHELL_K) + '&style=' + encodeURIComponent(style);
+  if (sm.ready && sm.ready[style]) return base + '&key=' + encodeURIComponent(sm.key);
+  const st = studio.catalog && studio.catalog.styles.find(s => s.key === style);
+  return st && st.stock_sample ? base + '&key=stock' : '';
+}
+
+function studio_sampleOwn(style) {
+  const sm = studio.samples;
+  return !!(sm.ready && sm.ready[style]);
+}
+
+/* Play the cards on screen, pause the rest: eleven loops decoding off screen is waste. */
+function studio_stylesWatch() {
+  if (studio.styleObs) studio.styleObs.disconnect();
+  const vids = document.querySelectorAll('#studio-styles video');
+  if (!('IntersectionObserver' in window)) {
+    vids.forEach(v => { const q = v.play(); if (q && q.catch) q.catch(() => {}); });
+    return;
+  }
+  studio.styleObs = new IntersectionObserver(es => es.forEach(e => {
+    const v = e.target;
+    if (e.isIntersecting) { const q = v.play(); if (q && q.catch) q.catch(() => {}); }
+    else v.pause();
+  }), {rootMargin: '100px'});
+  vids.forEach(v => studio.styleObs.observe(v));
 }
 
 function studio_renderStyles() {
@@ -2391,7 +2445,10 @@ function studio_renderStyles() {
     const failed = sm.state && sm.state.failed && sm.state.failed[s.key];
     return '<div class="studio-style-card' + (on ? ' is-on' : '') + '" data-style="' + esc(s.key) + '">' +
       '<div class="studio-style-media">' +
-      (url ? '<video muted loop playsinline preload="metadata" src="' + esc(url) + '" aria-label="' + esc(s.label) + ' on your kills"></video>'
+      (url ? '<video muted loop playsinline autoplay preload="auto" src="' + esc(url) + '" aria-label="' + esc(s.label) +
+             (studio_sampleOwn(s.key) ? ' on your kills' : ' on sample kills') + '"></video>' +
+             (studio_sampleOwn(s.key) ? '<span class="studio-style-own">Your kills</span>' : '') +
+             (cutting ? '<span class="studio-style-own">Cutting on your kills&hellip;</span>' : '')
            : '<span class="studio-style-none">' + (cutting ? 'Cutting this one now&hellip;' : failed ? 'Could not be cut.' : 'Not shown yet') + '</span>') +
       '</div>' +
       '<button type="button" class="studio-style" role="radio" aria-checked="' + on + '" data-act="studio-style" data-style="' + esc(s.key) + '">' +
@@ -2407,6 +2464,7 @@ function studio_renderStyles() {
   const st = cat.styles.find(s => s.key === studio.style);
   studio_el('studio-name').placeholder = (st ? st.label : 'My') + ' reel';
   studio_samplesBar();
+  studio_stylesWatch();
   studio_fillDraw();                       /* its note names the style */
 }
 
@@ -2424,12 +2482,12 @@ function studio_samplesBar() {
   const btn = studio_el('studio-samples-btn'), stop = studio_el('studio-samples-stop'), msg = studio_el('studio-samples-msg');
   if (!btn) return;
   btn.disabled = sm.running || !studio.selected.length;
-  btn.textContent = have >= st && st ? 'Cut them again' : have ? 'Show the rest on my kills' : 'Show every style on my kills';
+  btn.textContent = have >= st && st ? 'Cut them again on my kills' : have ? 'Show the rest on my own kills' : 'Show them on my own kills';
   stop.classList.toggle('hide', !sm.running);
   msg.textContent = sm.running && sm.state ? (sm.state.message || 'Cutting...')
     : sm.held ? sm.held
-    : have ? have + ' of ' + st + ' shown. The same clips and kills in each one, so the difference is the style.'
-    : 'Each style plays about 20 s cut from the clips you picked, so you compare the look and not the footage.';
+    : have ? have + ' of ' + st + ' shown on your own kills. The same clips in each one, so the difference is the style.'
+    : 'Every style plays the same 15 s of kills, so you compare the look and not the footage. Optional: cut them on your own clips (a few minutes).';
 }
 
 async function studio_samplesCheck() {
@@ -2490,6 +2548,8 @@ async function studio_useSong(path, label) {
   }
   const a = studio_el('studio-mk-audio');
   if (a && !a.paused) a.pause();
+  /* A drop belongs to the song it was marked on; another song starts from the drops found in it. */
+  if (studio.song !== path) { studio.mk.drops = null; studio.mk.sel = {}; }
   studio.song = path; studio.songShape = got.song;
   studio_el('studio-song-name').textContent = name + ' · ' +
     Math.round(got.song.bpm) + ' BPM · ' + studio_dur(got.song.seconds) +
@@ -2529,7 +2589,7 @@ function studio_mkDefault() {
     mk.start = studio_nearestBeat(sh, Math.max(0, Math.min(from, sh.seconds - bar)));
     mk.end = Math.min(sh.seconds, mk.start + bars * bar);
   }
-  studio_el('studio-mk-drop').disabled = !sh.drop;
+  studio_el('studio-mk-drop').disabled = studio_mkMainDrop() == null;
   studio_mkDraw();
 }
 
@@ -2677,7 +2737,8 @@ function studio_mkDraw() {
     ctx.fillRect(X(mk.start) - 2, 0, 4, H); ctx.fillRect(X(mk.end) - 2, 0, 4, H);
   }
   ctx.globalAlpha = 1;
-  if (sh.drop) { ctx.fillStyle = warn; ctx.fillRect(X(sh.drop) - 1, 0, 2, H); }
+  ctx.fillStyle = warn;
+  studio_mkDropList().forEach(d => ctx.fillRect(X(d.t) - 1, 0, 2, H));
   const a = studio_el('studio-mk-audio');
   if (a && a.getAttribute('data-song') === studio.song && (!a.paused || a.currentTime > 0)) {
     ctx.fillStyle = '#ff5c5c'; ctx.fillRect(X(a.currentTime) - 1, 0, 2, H);
@@ -2688,21 +2749,54 @@ function studio_mkDraw() {
 
 /* ===== M4: THE KILLS, ON THE PAGE ===================================================================== */
 
+/* EVERY MARK IS AN OBJECT WITH AN ID: {id, t, auto, name}. `auto` is "AutoStream put it there", so
+   the page can draw AutoStream's kills and the player's in different colours once both are on the
+   song -- they used to become one colour the moment one was touched, and nobody could tell which of
+   fifty they had placed. The id is what a selection holds, so selecting survives a sort. */
+
 /* The kills as they stand: the player's own once they have touched one, else where the plan put them. */
 function studio_mkKillList() {
   const mk = studio.mk;
-  if (mk.edited) return mk.hand.map((t, i) => ({t: t, hand: true, name: (mk.planned && mk.planned.names[i]) || ''}));
-  if (mk.planned) return mk.planned.marks.map((t, i) => ({t: t, hand: false, name: mk.planned.names[i] || ''}));
+  if (mk.edited) return mk.hand.map(k => ({id: k.id, t: k.t, hand: !k.auto, name: k.name || ''}));
+  if (mk.planned) return mk.planned.marks.map((t, i) => ({id: 'p' + i, t: t, hand: false, name: mk.planned.names[i] || ''}));
   return [];
 }
 
 /* A first touch makes the plan the player's: every kill becomes a mark they can move, so moving one does
-   not discard the rest. */
+   not discard the rest. The ones they did not touch stay AutoStream's, and are drawn as such. */
 function studio_mkOwn() {
   const mk = studio.mk;
   if (mk.edited) return;
-  mk.hand = mk.planned ? mk.planned.marks.slice() : [];
+  mk.hand = mk.planned ? mk.planned.marks.map((t, i) => ({id: 'p' + i, t: t, auto: true, name: mk.planned.names[i] || ''})) : [];
   mk.edited = true;
+}
+
+/* THE DROPS, AS MARKS. The main bass drops the song analysis found used to be one thin line, and only
+   the biggest of them; they are now marks on the song like the kills, every one found, and the player
+   can move them, add their own and take AutoStream's away. `mk.drops` is null while they are
+   AutoStream's -- and only then is nothing sent, so the planner keeps reading the song itself. */
+function studio_mkDropList() {
+  const sh = studio.songShape, mk = studio.mk;
+  if (mk.drops) return mk.drops.map(d => ({id: d.id, t: d.t, hand: !d.auto}));
+  if (!sh) return [];
+  const found = (sh.drops && sh.drops.length) ? sh.drops : (sh.drop ? [sh.drop] : []);
+  return found.map((t, i) => ({id: 'a' + i, t: t, hand: false}));
+}
+
+function studio_mkOwnDrops() {
+  const mk = studio.mk;
+  if (mk.drops) return;
+  mk.drops = studio_mkDropList().map(d => ({id: d.id, t: d.t, auto: true}));
+}
+
+/* THE drop: the analysis's own, or -- once the player has marked theirs -- the one of theirs nearest it,
+   the same choice the server makes with the list. */
+function studio_mkMainDrop() {
+  const sh = studio.songShape, mk = studio.mk;
+  if (!mk.drops) return sh && sh.drop ? sh.drop : null;
+  if (!mk.drops.length) return null;
+  const ref = sh && sh.drop;
+  return ref ? mk.drops.reduce((b, d) => Math.abs(d.t - ref) < Math.abs(b - ref) ? d.t : b, mk.drops[0].t) : mk.drops[0].t;
 }
 
 function studio_mkKillSpan() {
@@ -2712,10 +2806,21 @@ function studio_mkKillSpan() {
   return {start: sp.start, end: Math.max(sp.end, sp.start + 1)};
 }
 
+/* EXACT, UNLESS ASKED. A mark is where the player pressed K or let go of it, to the millisecond: it used
+   to be pulled to the nearest beat, so a kill marked on an off-beat hit landed somewhere they had not
+   put it. Snapping is a choice on the page now, off until it is ticked. */
 function studio_mkSnap(t) {
-  const snap = studio.mk.snap !== false;
-  return snap ? studio_nearestBeat(studio.songShape, t) : Math.round(t * 100) / 100;
+  const box = studio_el('studio-mk-snap');
+  return box && box.checked ? studio_nearestBeat(studio.songShape, t) : Math.round(t * 1000) / 1000;
 }
+
+function studio_mkSelCount() {
+  return Object.keys(studio.mk.sel || {}).length;
+}
+
+/* Where the lanes sit on the canvas: drops along the top, kills through the middle. */
+const MK_DROP_LANE = 26;
+const MK_KILLS_H = 140;
 
 function studio_mkKillsDraw() {
   const box = studio_el('studio-mk-killsbox');
@@ -2727,107 +2832,236 @@ function studio_mkKillsDraw() {
     if (note) note.textContent = '';
     return;
   }
-  const list = studio_mkKillList();
+  mk.sel = mk.sel || {};
+  const list = studio_mkKillList(), drops = studio_mkDropList();
+  const mine = list.filter(k => k.hand).length;
   if (note) {
     note.textContent = mk.edited
-      ? list.length + ' kill(s), placed by you. Build puts every shot around them; "Back to automatic" lets AutoStream choose again.'
+      ? list.length + ' kill(s): ' + mine + ' placed by you, ' + (list.length - mine) + ' by AutoStream. Build puts every shot around them; "Back to automatic" lets AutoStream choose again.'
       : mk.planned
         ? 'Where the plan puts ' + list.length + ' kills on the song. Drag one, press K at the playhead, or double-click the song to place your own.'
         : 'AutoStream puts each kill on a hit of the song. Press "Show where the kills will land" to see them here, then move any you like.';
   }
-  const c = studio_sgCanvas('studio-mk-kills', 120);
+  const c = studio_sgCanvas('studio-mk-kills', MK_KILLS_H);
   if (!c || !sh.peaks) return;
   const {ctx, W, H} = c, span = studio_mkKillSpan(), len = span.end - span.start;
-  const X = t => (t - span.start) / len * W, mid = H * 0.5 - 6;
+  const X = t => (t - span.start) / len * W, top = MK_DROP_LANE, mid = top + (H - top - 14) / 2;
   const css = getComputedStyle(document.documentElement);
-  const accent = css.getPropertyValue('--accent').trim() || '#5aa9ff';
-  const warn = css.getPropertyValue('--warn').trim() || '#e3b341';
-  const faint = css.getPropertyValue('--text-tertiary').trim() || '#8a8a8a';
+  const tok = (n, d) => css.getPropertyValue(n).trim() || d;
+  const accent = tok('--accent', '#5aa9ff'), auto = tok('--ok', '#4fc97a'), warn = tok('--warn', '#e3b341');
+  const faint = tok('--text-tertiary', '#8a8a8a'), text = tok('--text-primary', '#fff'), surface = tok('--surface', '#111');
   const n = sh.peaks.length;
-  ctx.fillStyle = accent;
-  ctx.globalAlpha = 0.55;
+  ctx.fillStyle = faint;
+  ctx.globalAlpha = 0.45;
   for (let x = 0; x < W; x++) {
     const t = span.start + x / W * len;
-    const amp = (sh.peaks[Math.min(n - 1, Math.max(0, Math.floor(t / sh.seconds * n)))] || 0) * (mid - 4);
+    const amp = (sh.peaks[Math.min(n - 1, Math.max(0, Math.floor(t / sh.seconds * n)))] || 0) * (mid - top - 4);
     ctx.fillRect(x, mid - amp, 1, amp * 2 || 1);
   }
   ctx.globalAlpha = 1;
-  studio_beatGrid(ctx, X, H - 14, sh, {width: W, alpha: 0.9});
+  studio_beatGrid(ctx, X, H - 14, sh, {width: W, alpha: 0.9, top: top, height: H - 14 - top});
   /* Where kills CAN land: the song's own hits, as small ticks under the waveform. */
   ctx.fillStyle = faint;
   ctx.globalAlpha = 0.7;
   (sh.hits || []).forEach(t => { if (t >= span.start && t <= span.end) ctx.fillRect(X(t) - 0.5, H - 12, 1, 8); });
   ctx.globalAlpha = 1;
-  if (sh.drop && sh.drop >= span.start && sh.drop <= span.end) {
-    ctx.fillStyle = warn; ctx.fillRect(X(sh.drop) - 1, 0, 2, H - 14);
-    ctx.font = '10px monospace'; ctx.fillText('drop', X(sh.drop) + 4, 10);
-  }
-  /* The kills: a planned one is an outline, one that is the player's is solid. */
-  const kd = mk.killDrag;
-  list.forEach((k, i) => {
-    const t = (kd && kd.i === i) ? kd.t : k.t;
+  /* The drop lane. */
+  ctx.fillStyle = tok('--surface-sunken', '#080b10');
+  ctx.fillRect(0, 0, W, top - 2);
+  const md = mk.markDrag, dt = md && md.moved ? md.dt : 0;
+  const at = (id, t) => (md && md.moved && md.ids[id]) ? t + dt : t;
+  drops.forEach(d => {
+    const t = at(d.id, d.t);
     if (t < span.start - 0.01 || t > span.end + 0.01) return;
-    const x = X(t), y = mid;
+    const x = X(t), on = !!mk.sel[d.id];
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = warn;
+    ctx.fillRect(x - 0.75, top, 1.5, H - 14 - top);
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.moveTo(x - 8, 5); ctx.lineTo(x + 8, 5); ctx.lineTo(x, 20); ctx.closePath();
+    if (d.hand) { ctx.fillStyle = warn; ctx.fill(); }
+    else { ctx.fillStyle = surface; ctx.fill(); ctx.strokeStyle = warn; ctx.lineWidth = 1.5; ctx.stroke(); }
+    if (on) { ctx.strokeStyle = text; ctx.lineWidth = 2; ctx.stroke(); }
+    ctx.fillStyle = warn; ctx.font = '10px monospace';
+    ctx.fillText('drop', x + 10, 15);
+  });
+  /* The kills: AutoStream's are hollow and green, the player's solid in the accent, a selected one ringed. */
+  list.forEach((k, i) => {
+    const t = at(k.id, k.t);
+    if (t < span.start - 0.01 || t > span.end + 0.01) return;
+    const x = X(t), y = mid, on = !!mk.sel[k.id], col = k.hand ? accent : auto;
     ctx.beginPath();
     ctx.moveTo(x, y - 8); ctx.lineTo(x + 8, y); ctx.lineTo(x, y + 8); ctx.lineTo(x - 8, y); ctx.closePath();
-    if (k.hand) { ctx.fillStyle = accent; ctx.fill(); }
-    else { ctx.fillStyle = css.getPropertyValue('--surface').trim() || '#111'; ctx.fill(); ctx.strokeStyle = accent; ctx.lineWidth = 1.5; ctx.stroke(); }
-    ctx.fillStyle = css.getPropertyValue('--text-primary').trim() || '#fff';
+    if (k.hand) { ctx.fillStyle = col; ctx.fill(); }
+    else { ctx.fillStyle = surface; ctx.fill(); ctx.strokeStyle = col; ctx.lineWidth = 1.75; ctx.stroke(); }
+    if (on) {
+      ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2);
+      ctx.strokeStyle = text; ctx.lineWidth = 2; ctx.stroke();
+    }
+    ctx.fillStyle = col;
     ctx.font = '10px monospace';
-    ctx.fillText(String(i + 1), x - 3, y - 12);
+    ctx.fillText(String(i + 1), x - 3, y - 13);
   });
+  /* A box being dragged out to select. */
+  const bs = mk.boxSel;
+  if (bs) {
+    ctx.fillStyle = accent; ctx.globalAlpha = 0.15;
+    ctx.fillRect(Math.min(X(bs.t0), X(bs.t1)), 0, Math.abs(X(bs.t1) - X(bs.t0)), H);
+    ctx.globalAlpha = 1;
+  }
   const a = studio_el('studio-mk-audio');
   if (a && a.getAttribute('data-song') === studio.song && (!a.paused || a.currentTime > 0)) {
     ctx.fillStyle = '#ff5c5c'; ctx.fillRect(X(a.currentTime) - 1, 0, 2, H);
   }
-  /* The list under it: what lands where, and the clip it is. */
-  const ol = studio_el('studio-mk-marklist');
-  if (ol) {
-    ol.innerHTML = list.map((k, i) =>
-      '<li class="studio-mk-markrow' + (k.hand ? ' is-hand' : '') + '"><span class="mono">' + (i + 1) + '</span>' +
-      '<span class="mono">' + esc(studio_secs(k.t)) + '</span>' +
-      '<span class="muted studio-mk-markname">' + esc(k.name || (k.hand ? 'yours' : '')) + '</span>' +
-      '<span class="studio-mk-marktools">' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-nudgemark" data-i="' + i + '" data-d="-1" aria-label="Kill ' + (i + 1) + ' a tenth of a second earlier">&minus;0.1</button>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-nudgemark" data-i="' + i + '" data-d="1" aria-label="Kill ' + (i + 1) + ' a tenth of a second later">+0.1</button>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-delmark" data-i="' + i + '" aria-label="Remove kill ' + (i + 1) + '">&times;</button>' +
-      '</span></li>').join('');
+  studio_mkListDraw(list, drops);
+}
+
+/* The lists under the song: what lands where, whose each one is, and a box to pick several.
+   Rebuilt only when something in them changed -- the playhead redraws the canvas sixty times a
+   second, and a list rebuilt that often eats the click that was meant for one of its boxes. */
+function studio_mkListDraw(list, drops) {
+  const mk = studio.mk;
+  const sig = JSON.stringify([list, drops, mk.sel]);
+  if (sig !== mk.listSig) {
+    mk.listSig = sig;
+    const row = (k, i, what) => {
+      const name = (what === 'drop' ? 'drop ' : 'kill ') + (i + 1);
+      return '<li class="studio-mk-markrow' + (k.hand ? ' is-hand' : ' is-auto') + (mk.sel[k.id] ? ' is-sel' : '') + (what === 'drop' ? ' is-drop' : '') + '">' +
+        '<label class="studio-mk-markpick"><input type="checkbox" data-act="studio-mk-pick" data-id="' + esc(k.id) + '"' + (mk.sel[k.id] ? ' checked' : '') +
+        ' aria-label="Select ' + name + '"><span class="mono">' + (what === 'drop' ? 'D' : '') + (i + 1) + '</span></label>' +
+        '<span class="mono">' + esc(studio_secs(k.t)) + '</span>' +
+        '<span class="studio-mk-who">' + (k.hand ? 'yours' : 'auto') + '</span>' +
+        '<span class="muted studio-mk-markname">' + esc(k.name || '') + '</span>' +
+        '<span class="studio-mk-marktools">' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-nudgemark" data-id="' + esc(k.id) + '" data-d="-1" aria-label="Move ' + name + ' a tenth of a second earlier">&minus;0.1</button>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-nudgemark" data-id="' + esc(k.id) + '" data-d="1" aria-label="Move ' + name + ' a tenth of a second later">+0.1</button>' +
+        '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-delmark" data-id="' + esc(k.id) + '" aria-label="Remove ' + name + '">&times;</button>' +
+        '</span></li>';
+    };
+    const dl = studio_el('studio-mk-droplist');
+    if (dl) dl.innerHTML = drops.map((d, i) => row(d, i, 'drop')).join('');
+    const ol = studio_el('studio-mk-marklist');
+    if (ol) ol.innerHTML = list.map((k, i) => row(k, i, 'kill')).join('');
   }
+  const n = studio_mkSelCount();
+  const del = studio_el('studio-mk-delsel');
+  if (del) { del.disabled = !n; del.textContent = n ? 'Delete ' + n + ' selected' : 'Delete selected'; }
+  const none = studio_el('studio-mk-selnone');
+  if (none) none.disabled = !n;
+  const all = studio_el('studio-mk-selall');
+  if (all) all.disabled = !(list.length + drops.length);
   const clear = studio_el('studio-mk-clearmarks');
   if (clear) clear.disabled = !mk.edited;
+  const dclear = studio_el('studio-mk-cleardrops');
+  if (dclear) dclear.disabled = !mk.drops;
+}
+
+/* Which kind an id is: kills are p# (planned) or h# (placed), drops a# (found) or u# (placed). */
+function studio_mkIsDrop(id) { return /^[au]/.test(String(id)); }
+
+/* Where the playhead is, or the start of the part before anything has played. */
+function studio_mkHead() {
+  const a = studio_el('studio-mk-audio');
+  return a && a.getAttribute('data-song') === studio.song && a.readyState >= 1 ? a.currentTime : studio_mkSpan().start;
 }
 
 function studio_mkAddMark(at) {
   const sh = studio.songShape;
   if (!sh) { toast('Choose a song first.', 'warn'); return; }
-  const a = studio_el('studio-mk-audio');
-  const t = at !== undefined ? at
-    : (a && a.getAttribute('data-song') === studio.song && a.readyState >= 1 ? a.currentTime : studio_mkSpan().start);
+  const t = at !== undefined ? at : studio_mkHead();
   const sp = studio_mkKillSpan();
   if (t < sp.start - 0.01 || t > sp.end + 0.01) { toast('That is outside the part you chose.', 'warn'); return; }
+  const mk = studio.mk;
   studio_mkOwn();
-  studio.mk.hand.push(studio_mkSnap(t));
-  studio.mk.hand.sort((x, y) => x - y);
+  mk.nid = (mk.nid || 0) + 1;
+  mk.hand.push({id: 'h' + mk.nid, t: studio_mkSnap(t), auto: false, name: ''});
+  mk.hand.sort((x, y) => x.t - y.t);
   studio_mkKillsDraw();
 }
 
-function studio_mkDelMark(i) {
-  studio_mkOwn();
-  studio.mk.hand.splice(i, 1);
+/* A DROP MARKED BY THE PLAYER: where the bass comes in, as they hear it. Build and drop builds into
+   it, and the drop flash goes on the kill that lands on it. */
+function studio_mkAddDrop(at) {
+  const sh = studio.songShape;
+  if (!sh) { toast('Choose a song first.', 'warn'); return; }
+  const t = at !== undefined ? at : studio_mkHead();
+  const sp = studio_mkKillSpan();
+  if (t < sp.start - 0.01 || t > sp.end + 0.01) { toast('That is outside the part you chose.', 'warn'); return; }
+  const mk = studio.mk;
+  studio_mkOwnDrops();
+  mk.nid = (mk.nid || 0) + 1;
+  mk.drops.push({id: 'u' + mk.nid, t: studio_mkSnap(t), auto: false});
+  mk.drops.sort((x, y) => x.t - y.t);
+  studio_mkDropsChanged();
+}
+
+function studio_mkDropsChanged() {
+  if (studio.mk.planned) studio_el('studio-mk-killmsg').textContent = 'The drops changed: "Show where the kills will land" plans again around them.';
+  studio_mkDraw();
+}
+
+/* Remove marks by id, kills and drops alike -- one, or everything selected. */
+function studio_mkDelIds(ids) {
+  const mk = studio.mk, kill = ids.filter(id => !studio_mkIsDrop(id)), drop = ids.filter(studio_mkIsDrop);
+  if (kill.length) {
+    studio_mkOwn();
+    mk.hand = mk.hand.filter(k => kill.indexOf(k.id) < 0);
+  }
+  if (drop.length) {
+    studio_mkOwnDrops();
+    mk.drops = mk.drops.filter(d => drop.indexOf(d.id) < 0);
+  }
+  ids.forEach(id => { delete mk.sel[id]; });
+  if (drop.length) studio_mkDropsChanged(); else studio_mkKillsDraw();
+}
+
+function studio_mkDelMark(id) { studio_mkDelIds([id]); }
+
+function studio_mkDelSelected() {
+  const ids = Object.keys(studio.mk.sel || {});
+  if (!ids.length) return;
+  studio_mkDelIds(ids);
+  studio_el('studio-mk-killmsg').textContent = ids.length + (ids.length === 1 ? ' mark' : ' marks') + ' removed.';
+}
+
+function studio_mkPick(id, on) {
+  const mk = studio.mk;
+  mk.sel = mk.sel || {};
+  if (on) mk.sel[id] = true; else delete mk.sel[id];
   studio_mkKillsDraw();
 }
 
-function studio_mkNudgeMark(i, d) {
-  studio_mkOwn();
-  if (studio.mk.hand[i] === undefined) return;
-  studio.mk.hand[i] = Math.max(0, Math.round((studio.mk.hand[i] + d * 0.1) * 1000) / 1000);
-  studio.mk.hand.sort((x, y) => x - y);
+function studio_mkSelAll(on) {
+  const mk = studio.mk;
+  mk.sel = {};
+  if (on) studio_mkKillList().concat(studio_mkDropList()).forEach(k => { mk.sel[k.id] = true; });
   studio_mkKillsDraw();
+}
+
+function studio_mkNudgeMark(id, d) {
+  const mk = studio.mk, drop = studio_mkIsDrop(id);
+  if (drop) studio_mkOwnDrops(); else studio_mkOwn();
+  const m = (drop ? mk.drops : mk.hand).find(x => x.id === id);
+  if (!m) return;
+  m.t = Math.max(0, Math.round((m.t + d * 0.1) * 1000) / 1000);
+  m.auto = false;
+  (drop ? mk.drops : mk.hand).sort((x, y) => x.t - y.t);
+  if (drop) studio_mkDropsChanged(); else studio_mkKillsDraw();
 }
 
 function studio_mkClearMarks() {
-  studio.mk.hand = []; studio.mk.edited = false;
+  const mk = studio.mk;
+  mk.hand = []; mk.edited = false;
+  Object.keys(mk.sel || {}).forEach(id => { if (!studio_mkIsDrop(id)) delete mk.sel[id]; });
   studio_mkKillsDraw();
+}
+
+function studio_mkClearDrops() {
+  const mk = studio.mk;
+  mk.drops = null;
+  Object.keys(mk.sel || {}).forEach(id => { if (studio_mkIsDrop(id)) delete mk.sel[id]; });
+  studio_mkDropsChanged();
 }
 
 /* A style, a part, a song or the clips changed: where a plan PLACED the kills no longer holds. Marks the
@@ -2859,38 +3093,120 @@ async function studio_mkPlan() {
   }
 }
 
+/* THE CANVAS. Click a mark to select it (Ctrl or Shift adds to the selection), drag to move it -- and
+   everything selected with it -- Shift-drag the empty song to box-select, click the empty song to hear
+   it from there, double-click to add or remove. The top lane is the drops, the rest the kills. */
 function studio_mkKillPointer(e) {
-  const cv = studio_el('studio-mk-kills');
+  const cv = studio_el('studio-mk-kills'), mk = studio.mk;
   if (!cv || !studio.songShape) return;
-  const r = cv.getBoundingClientRect(), span = studio_mkKillSpan();
-  const t = span.start + (e.clientX - r.left) / r.width * (span.end - span.start);
-  const x = e.clientX - r.left, list = studio_mkKillList();
-  const near = list.findIndex(k => Math.abs((k.t - span.start) / (span.end - span.start) * r.width - x) <= 10);
+  mk.sel = mk.sel || {};
+  const r = cv.getBoundingClientRect(), span = studio_mkKillSpan(), len = span.end - span.start;
+  const x = Math.max(0, Math.min(r.width, e.clientX - r.left)), y = e.clientY - r.top;
+  const t = span.start + x / r.width * len;
+  const inDrops = y < MK_DROP_LANE * r.height / MK_KILLS_H;
+  const pool = inDrops ? studio_mkDropList() : studio_mkKillList();
+  let near = -1, gap = 11;
+  pool.forEach((k, i) => { const d = Math.abs((k.t - span.start) / len * r.width - x); if (d < gap) { gap = d; near = i; } });
+  const hit = near >= 0 ? pool[near] : null;
   if (e.type === 'pointerdown') {
-    if (near >= 0) {
-      studio.mk.killDrag = {i: near, t: list[near].t, moved: false};
+    if (e.button !== undefined && e.button !== 0) return;
+    if (hit) {
+      if (e.ctrlKey || e.metaKey || e.shiftKey) {
+        if (mk.sel[hit.id]) delete mk.sel[hit.id]; else mk.sel[hit.id] = true;
+        studio_mkKillsDraw();
+      } else {
+        if (!mk.sel[hit.id]) mk.sel = {[hit.id]: true};
+        const ids = {};
+        Object.keys(mk.sel).forEach(id => { ids[id] = true; });
+        mk.markDrag = {t0: t, dt: 0, ids: ids, moved: false};
+        try { cv.setPointerCapture(e.pointerId); } catch (err) { /* a mouse still works */ }
+        studio_mkKillsDraw();
+      }
+    } else if (e.shiftKey) {
+      mk.boxSel = {t0: t, t1: t, add: e.ctrlKey || e.metaKey};
       try { cv.setPointerCapture(e.pointerId); } catch (err) { /* a mouse still works */ }
     } else {
+      mk.sel = {};
       studio_mkSeek(Math.max(span.start, Math.min(span.end, t)));      /* click the song: hear it from there */
     }
     e.preventDefault();
-  } else if (e.type === 'pointermove' && studio.mk.killDrag) {
-    const kd = studio.mk.killDrag;
-    kd.t = Math.max(span.start, Math.min(span.end, t));
-    kd.moved = true;
+  } else if (e.type === 'pointermove' && mk.markDrag) {
+    const md = mk.markDrag;
+    md.dt = t - md.t0;
+    md.moved = md.moved || Math.abs(md.dt) * r.width / len > 2;
     studio_mkKillsDraw();
-  } else if ((e.type === 'pointerup' || e.type === 'pointercancel') && studio.mk.killDrag) {
-    const kd = studio.mk.killDrag;
-    studio.mk.killDrag = null;
-    if (kd.moved) {
-      studio_mkOwn();
-      studio.mk.hand[kd.i] = studio_mkSnap(kd.t);
-      studio.mk.hand.sort((x, y) => x - y);
-    }
+  } else if (e.type === 'pointermove' && mk.boxSel) {
+    mk.boxSel.t1 = t;
+    studio_mkKillsDraw();
+  } else if ((e.type === 'pointerup' || e.type === 'pointercancel') && mk.markDrag) {
+    const md = mk.markDrag;
+    mk.markDrag = null;
+    if (md.moved && e.type === 'pointerup') studio_mkMoveSel(md.ids, md.dt);
+    else studio_mkKillsDraw();
+  } else if ((e.type === 'pointerup' || e.type === 'pointercancel') && mk.boxSel) {
+    const bs = mk.boxSel, lo = Math.min(bs.t0, bs.t1), hi = Math.max(bs.t0, bs.t1);
+    mk.boxSel = null;
+    if (!bs.add) mk.sel = {};
+    studio_mkKillList().concat(studio_mkDropList()).forEach(k => { if (k.t >= lo && k.t <= hi) mk.sel[k.id] = true; });
     studio_mkKillsDraw();
   } else if (e.type === 'dblclick') {
-    if (near >= 0) studio_mkDelMark(near); else studio_mkAddMark(Math.max(span.start, Math.min(span.end, t)));
+    if (hit) studio_mkDelMark(hit.id);
+    else if (inDrops) studio_mkAddDrop(Math.max(span.start, Math.min(span.end, t)));
+    else studio_mkAddMark(Math.max(span.start, Math.min(span.end, t)));
   }
+}
+
+/* Move every selected mark by the same amount. One that is moved is the player's from then on. */
+function studio_mkMoveSel(ids, dt) {
+  const mk = studio.mk, span = studio_mkKillSpan();
+  const list = Object.keys(ids), kills = list.some(id => !studio_mkIsDrop(id)), drops = list.some(studio_mkIsDrop);
+  const one = list.length === 1;
+  const move = m => {
+    if (!ids[m.id]) return;
+    const to = Math.max(span.start, Math.min(span.end, m.t + dt));
+    m.t = one ? studio_mkSnap(to) : Math.round(to * 1000) / 1000;
+    m.auto = false;
+  };
+  if (kills) { studio_mkOwn(); mk.hand.forEach(move); mk.hand.sort((x, y) => x.t - y.t); }
+  if (drops) { studio_mkOwnDrops(); mk.drops.forEach(move); mk.drops.sort((x, y) => x.t - y.t); }
+  if (drops) studio_mkDropsChanged(); else studio_mkKillsDraw();
+}
+
+/* A SOUND AS THE PLAYHEAD PASSES A MARK, so a kill placed by eye can be checked by ear: a short tick
+   for a kill, a low thump for a drop. Crossings, not proximity -- a frame that skips past a mark
+   still sounds it, and a seek sounds nothing. */
+function studio_mkTickSound(kind) {
+  try {
+    const C = window.AudioContext || window.webkitAudioContext;
+    if (!C) return;
+    const mk = studio.mk;
+    mk.ac = mk.ac || new C();
+    const ac = mk.ac, o = ac.createOscillator(), g = ac.createGain(), now = ac.currentTime;
+    if (kind === 'drop') {
+      o.type = 'sine';
+      o.frequency.setValueAtTime(140, now); o.frequency.exponentialRampToValueAtTime(50, now + 0.18);
+      g.gain.setValueAtTime(0.5, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    } else {
+      o.type = 'square';
+      o.frequency.value = 1900;
+      g.gain.setValueAtTime(0.12, now); g.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+    }
+    o.connect(g); g.connect(ac.destination);
+    o.start(now);
+    o.stop(now + (kind === 'drop' ? 0.21 : 0.05));
+  } catch (err) { /* no audio context, no tick */ }
+}
+
+function studio_mkTickMarks(a) {
+  const mk = studio.mk, now = a.currentTime, last = mk.lastT;
+  mk.lastT = now;
+  const box = studio_el('studio-mk-tick');
+  if (a.paused || last == null || !(box && box.checked)) return;
+  const step = now - last;
+  if (step <= 0 || step > 0.5) return;                    /* a seek or a loop, not playback */
+  const crossed = t => t > last && t <= now;
+  if (studio_mkDropList().some(d => crossed(d.t))) studio_mkTickSound('drop');
+  else if (studio_mkKillList().some(k => crossed(k.t))) studio_mkTickSound('kill');
 }
 
 function studio_mkNudge(what, how) {
@@ -2916,9 +3232,10 @@ function studio_mkPreset(which) {
   if (which === 'whole') {
     mk.start = (sh.beats && sh.beats[0]) || 0;
     mk.end = sh.seconds;
-  } else if (which === 'drop' && sh.drop) {
-    const lead = Math.min(8 * bar, sh.drop, Math.max(bar, len / 3));
-    mk.start = Math.max(0, studio_nearestBeat(sh, sh.drop - lead));
+  } else if (which === 'drop' && studio_mkMainDrop() != null) {
+    const drop = studio_mkMainDrop();
+    const lead = Math.min(8 * bar, drop, Math.max(bar, len / 3));
+    mk.start = Math.max(0, studio_nearestBeat(sh, drop - lead));
     mk.end = Math.min(sh.seconds, mk.start + len);
   } else {
     mk.start = studio_nearestBeat(sh, Math.max(0, Math.min(sh.drums_in || 0, sh.seconds - bar)));
@@ -2944,6 +3261,7 @@ function studio_mkSeek(t) {
   const a = studio_mkLoad(), mk = studio.mk, span = studio_mkSpan();
   if (!a) return;
   t = Math.max(span.start, Math.min(span.end, t));
+  mk.lastT = null;                                  /* a seek passes no marks */
   if (a.readyState >= 1) a.currentTime = t; else mk.seekTo = t;
   studio_mkDraw();
 }
@@ -2993,6 +3311,7 @@ function studio_mkAudio(e) {
     if (studio_el('studio-mk-loop').checked) a.currentTime = span.start;
     else { a.pause(); a.currentTime = span.start; }
   }
+  if (e.type === 'play') mk.lastT = a.currentTime;
   if (e.type === 'play' && !mk.ticking) { mk.ticking = true; requestAnimationFrame(studio_mkTick); }
   studio_mkDraw();
 }
@@ -3001,6 +3320,7 @@ function studio_mkAudio(e) {
 function studio_mkTick() {
   const a = studio_el('studio-mk-audio'), mk = studio.mk;
   if (!a || a.paused || studio_el('studio-make-scrim').classList.contains('hide')) { mk.ticking = false; return; }
+  studio_mkTickMarks(a);
   if (a.currentTime >= studio_mkSpan().end - 0.02) studio_mkAudio({type: 'timeupdate'});
   studio_mkDraw();
   requestAnimationFrame(studio_mkTick);
@@ -3845,7 +4165,12 @@ function studio_planBody(withMarks) {
     body.part_end = studio.mk.end;
   }
   if (withMarks && studio.song && studio.mk.edited && studio.mk.hand.length) {
-    body.marks = studio.mk.hand.map(t => Math.round(t * 1000) / 1000);
+    body.marks = studio.mk.hand.map(k => Math.round(k.t * 1000) / 1000);
+  }
+  /* THE DROPS, once the player has touched them -- every plan, the preview's as well as Build's, so
+     the kills it shows are the ones it will build around them. An empty list is "no drop at all". */
+  if (studio.song && studio.mk.drops) {
+    body.drops = studio.mk.drops.map(d => Math.round(d.t * 1000) / 1000);
   }
   return body;
 }
@@ -9076,8 +9401,14 @@ function studio_wire() {
     else if (act === 'studio-mk-plan') studio_mkPlan();
     else if (act === 'studio-mk-addmark') studio_mkAddMark();
     else if (act === 'studio-mk-clearmarks') studio_mkClearMarks();
-    else if (act === 'studio-mk-delmark') studio_mkDelMark(Number(b.getAttribute('data-i')));
-    else if (act === 'studio-mk-nudgemark') studio_mkNudgeMark(Number(b.getAttribute('data-i')), Number(b.getAttribute('data-d')));
+    else if (act === 'studio-mk-delmark') studio_mkDelMark(b.getAttribute('data-id'));
+    else if (act === 'studio-mk-nudgemark') studio_mkNudgeMark(b.getAttribute('data-id'), Number(b.getAttribute('data-d')));
+    else if (act === 'studio-mk-adddrop') studio_mkAddDrop();
+    else if (act === 'studio-mk-cleardrops') studio_mkClearDrops();
+    else if (act === 'studio-mk-delsel') studio_mkDelSelected();
+    else if (act === 'studio-mk-selall') studio_mkSelAll(true);
+    else if (act === 'studio-mk-selnone') studio_mkSelAll(false);
+    else if (act === 'studio-mk-pick') studio_mkPick(b.getAttribute('data-id'), !!b.checked);
     else if (act === 'studio-samples-start') studio_samplesStart();
     else if (act === 'studio-samples-stop') studio_samplesStop();
     else if (act === 'studio-fill') { studio.fill = b.getAttribute('data-fill'); studio_fillDraw(); }
@@ -9577,6 +9908,14 @@ function studio_wire() {
     if (!studio_el('studio-make-scrim').classList.contains('hide') && !e.ctrlKey && !e.metaKey && !e.altKey
         && (e.key || '').toLowerCase() === 'k' && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target || {}).tagName || '')) {
       e.preventDefault(); studio_mkAddMark(); return;
+    }
+    /* D MARKS A DROP, and Delete takes away every selected mark -- on the Make page only, and never
+       while something is being typed. Delete is read only with a selection, so it falls through to
+       the timeline otherwise. */
+    if (!studio_el('studio-make-scrim').classList.contains('hide') && !e.ctrlKey && !e.metaKey && !e.altKey
+        && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target || {}).tagName || '')) {
+      if (e.key === 'd' || e.key === 'D') { e.preventDefault(); studio_mkAddDrop(); return; }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && studio_mkSelCount()) { e.preventDefault(); studio_mkDelSelected(); return; }
     }
     if (e.key === 'Escape') {
       studio_closeModals();

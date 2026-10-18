@@ -69,3 +69,54 @@ def test_build_then_drop_puts_the_first_kill_exactly_on_the_drop():
 
 def test_entrances_are_empty_on_a_short_signal():
     assert beatsync.find_entrances(np.zeros(1000, dtype=np.float32)) == []
+
+
+# ---- the shipped samples, and drops marked by hand (v1.76.0) ----------------------------------
+
+def test_every_style_ships_a_sample():
+    """Every card plays from the moment the page opens: none may open as "Not shown yet"."""
+    keys = [s.key for s in studio.STYLES]
+    assert ss.stock(keys) == keys, set(keys) - set(ss.stock(keys))
+    # card-sized: the whole set rides inside every download
+    assert sum(ss.stock_path(k).stat().st_size for k in keys) < 12_000_000
+
+
+def test_the_catalog_says_which_styles_ship_a_sample():
+    from autostream.webui import Server as App
+
+    cat = App.studio_catalog(object.__new__(App))
+    assert all(s["stock_sample"] for s in cat["styles"])
+
+
+def test_a_stock_sample_is_served_by_name_and_nothing_else_is():
+    from autostream.webui import Server as App
+
+    app = object.__new__(App)
+    assert app.studio_sample_file("stock", "hype") == ss.stock_path("hype")
+    assert app.studio_sample_file("stock", "../hype") is None
+    assert app.studio_sample_file("stock", "nope") is None
+
+
+def _shape():
+    from pathlib import Path
+
+    from autostream.clips import reel
+
+    return reel.Shape(path=Path("song.wav"), seconds=120.0, bpm=120.0, phase=0.0, downbeat_pos=0,
+                      drop=30.0, drops=[30.0, 70.0])
+
+
+def test_drops_marked_by_hand_replace_the_found_ones_on_a_copy():
+    from autostream.webui import Server as App
+
+    sh = _shape()
+    got = App._studio_drops(sh, [71.2, "29.5", 500, "x", -1])
+    assert got.drops == [29.5, 71.2] and got.drop == 29.5      # the one nearest the found drop
+    assert sh.drops == [30.0, 70.0] and sh.drop == 30.0         # the cached analysis is untouched
+    assert App._studio_drops(sh, None) is sh                     # nothing sent: the song as read
+    none = App._studio_drops(sh, [])
+    assert none.drops == [] and none.drop is None                # an empty list is "no drop"
+
+
+def test_the_page_is_told_every_drop_found():
+    assert _shape().as_dict()["drops"] == [30.0, 70.0]

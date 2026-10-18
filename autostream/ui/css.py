@@ -3811,7 +3811,7 @@ STUDIO_CSS = r"""
   border-top:var(--border-hair) solid var(--border-subtle);align-items:center}
 .studio-modal .modal-actions .muted{margin-right:auto}
 .studio-modal video{width:100%;max-height:60vh;background:#000;border-radius:var(--radius-sm)}
-.studio-styles{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:var(--space-3)}
+.studio-styles{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:var(--space-4)}
 .studio-style{display:flex;flex-direction:column;gap:6px;text-align:left;padding:var(--space-4);cursor:pointer;
   background:var(--surface);color:var(--text-secondary);border:var(--border-hair) solid var(--border-subtle);
   border-radius:var(--radius-md);font:inherit}
@@ -3821,10 +3821,16 @@ STUDIO_CSS = r"""
 .scrim.studio-page{position:static;display:block;padding:0;background:none;animation:none;z-index:auto}
 .scrim.studio-page.hide{display:none}
 #view-studio.is-making .studio > :not(.scrim){display:none}
-.studio-page-card{display:flex;flex-direction:column;gap:var(--space-5);width:100%;max-width:1180px;margin:0 auto}
+/* AS WIDE AS THE WINDOW. The page sat in a 1180 px column inside the app's 1280 px reading width, so
+   on a 2560 px screen a third of it was empty on either side while eleven style cards wrapped onto
+   three rows and fifty kill marks crowded one short waveform. A page of pictures and timelines is not
+   a page of prose: it takes the width, with a ceiling only where a line would get too long to follow. */
+#view-studio.is-making{max-width:none}
+.studio-page-card{display:flex;flex-direction:column;gap:var(--space-5);width:100%;max-width:2200px;margin:0 auto}
 .mk-head{display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap}
 .mk-title{margin:0;font-size:22px}
-.mk-layout{display:grid;grid-template-columns:150px minmax(0,1fr);gap:var(--space-6);align-items:start}
+.mk-layout{display:grid;grid-template-columns:160px minmax(0,1fr);gap:var(--space-7,40px);align-items:start}
+.mk-head-text .muted{max-width:90ch}
 .mk-nav{position:sticky;top:var(--space-4);display:flex;flex-direction:column;gap:4px}
 .mk-nav-b{text-align:left;padding:8px 12px;border:0;border-left:2px solid var(--border-subtle);background:transparent;
   color:var(--text-secondary);font:inherit;cursor:pointer}
@@ -3846,7 +3852,9 @@ STUDIO_CSS = r"""
   border-radius:var(--radius-md);background:var(--surface);overflow:hidden}
 .studio-style-card.is-on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .studio-style-card .studio-style{border:0;border-radius:0;background:transparent;box-shadow:none}
-.studio-style-media{aspect-ratio:16/9;background:var(--surface-sunken);display:flex;align-items:center;justify-content:center}
+.studio-style-media{position:relative;aspect-ratio:16/9;background:var(--surface-sunken);display:flex;align-items:center;justify-content:center}
+.studio-style-own{position:absolute;left:8px;top:8px;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:99px;
+  background:var(--on-media-scrim);color:var(--on-media)}
 .studio-style-media video{width:100%;height:100%;object-fit:cover;display:block}
 .studio-style-none{font-size:12px;color:var(--text-tertiary);padding:var(--space-3);text-align:center}
 .studio-style-tag{font-size:10px;font-weight:500;padding:1px 6px;border-radius:99px;border:var(--border-hair) solid var(--border-strong);
@@ -3856,9 +3864,26 @@ STUDIO_CSS = r"""
 /* THE KILLS ON THE SONG */
 .studio-mk-kills{display:flex;flex-direction:column;gap:var(--space-3)}
 .studio-mk-kills canvas{touch-action:none;cursor:crosshair}
-.studio-mk-marklist{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:4px 16px}
+.studio-mk-marklist{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:4px 16px}
 .studio-mk-markrow{display:flex;align-items:center;gap:var(--space-3);font-size:12.5px;min-width:0}
-.studio-mk-markrow.is-hand .mono:first-child{color:var(--accent)}
+.studio-mk-markrow.is-hand .studio-mk-markpick .mono{color:var(--accent)}
+.studio-mk-markrow.is-auto .studio-mk-markpick .mono{color:var(--ok)}
+.studio-mk-markrow.is-drop .studio-mk-markpick .mono{color:var(--warn)}
+.studio-mk-markrow.is-sel{background:var(--surface-active);border-radius:var(--radius-sm)}
+.studio-mk-markpick{display:inline-flex;align-items:center;gap:6px;cursor:pointer;min-width:52px}
+.studio-mk-who{font-size:11px;color:var(--text-tertiary);min-width:34px}
+.studio-mk-droplist:empty{display:none}
+.studio-mk-droplist{padding-bottom:var(--space-2);border-bottom:var(--border-hair) solid var(--border-subtle)}
+.studio-mk-selbar{gap:var(--space-3)}
+.studio-mk-legend{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2) var(--space-5);font-size:12px;color:var(--text-secondary)}
+.studio-mk-legend > span{display:inline-flex;align-items:center;gap:6px}
+.studio-mk-legend .studio-check:first-of-type{margin-left:auto}
+.mk-key{display:inline-block;width:10px;height:10px;transform:rotate(45deg);box-sizing:border-box}
+.mk-key-auto{border:1.5px solid var(--ok);background:var(--surface)}
+.mk-key-hand{background:var(--accent)}
+.mk-key-dropauto,.mk-key-drophand{transform:none;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;
+  border-top:10px solid var(--warn)}
+.mk-key-dropauto{opacity:.55}
 .studio-mk-markname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
 .studio-mk-marktools{display:inline-flex;gap:2px}
 
