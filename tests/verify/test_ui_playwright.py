@@ -405,6 +405,32 @@ def test_every_reel_is_reachable_not_only_the_newest_ten(ui, app):
     ui.clean("browsing every reel")
 
 
+def test_a_clip_with_no_kills_says_so_and_counts_none(ui, app):
+    """A round cut for a team label alone has no kill of the player's. Its card
+    used to read "1 kill" and add one to every total (26 kills shown as 34 on a
+    Corrode replay with eight such rounds)."""
+    import json
+
+    _studio_run(app, "2026-10-18_1300_VALORANT", 3)
+    man_p = Path(app["home"]) / "video" / "clips" / "2026-10-18_1300_VALORANT" / "clips.json"
+    man = json.loads(man_p.read_text())
+    man["clips"][2]["kills"] = 0
+    man_p.write_text(json.dumps(man))
+    page = ui.page
+    page.click('.rail-btn[data-page="studio"]')
+    page.wait_for_selector("#view-studio.is-active")
+    page.click('[data-act="studio-refresh"]')
+    _studio_open_run(page, "13:00")
+    kills = page.locator("#studio-lib .studio-clip-kills")
+    assert [kills.nth(i).inner_text().strip() for i in range(3)] == ["1 kill", "1 kill", "no kills"]
+    total = page.evaluate("""() => { let n = 0;
+        for (const g of studio.lib.games) for (const f of g.folders)
+            if (f.label.indexOf('13:00') >= 0) for (const c of f.clips) n += studio_killsOf(c);
+        return n; }""")
+    assert total == 2
+    ui.clean("a clip with no kills")
+
+
 def test_headshots_only_is_offered_for_read_clips_and_keeps_only_headshots(ui, app):
     """Valorant clips carry a headshot reading per kill. The tiles count them,
     the Make dialog offers "Headshot kills only" with what it would keep, and

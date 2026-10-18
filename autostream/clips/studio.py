@@ -304,7 +304,13 @@ def library(root: Path) -> dict:
             hs = [hs_at.get(round(k, 3)) for k in inside]
             from_record = bool(offs) and len(offs) == sum(
                 1 for k in recorded if start - 0.05 <= k <= end + 0.05)
-            if not offs:
+            # A CLIP THE MANIFEST SAYS HAS NO KILLS HAS NONE. The guess below
+            # used to give it one, so a round cut for a team label alone showed
+            # as "1 kill", added one to its match's total (26 kills read as 34
+            # on a Corrode with eight such rounds), and gave a song edit a kill
+            # to land a drop on where nobody died.
+            no_kills = c.get("kills") == 0
+            if not offs and not no_kills:
                 # No per-kill times for this run: the kill is where the cutter
                 # was told to put it, the pre-roll into the clip.
                 offs = [round(min(pre, dur * 0.6), 3)]
@@ -324,7 +330,7 @@ def library(root: Path) -> dict:
                 "vertical": str(vert) if vert.is_file() else "",
                 "duration": round(dur, 3),
                 "kills": offs,
-                "kill_count": int(c.get("kills") or len(offs)),
+                "kill_count": 0 if no_kills else int(c.get("kills") or len(offs)),
                 # Per kill, beside `kills`: True a headshot, False not, None unread.
                 **({"hs": hs} if any(v is not None for v in hs) else {}),
                 "caption": str(c.get("caption") or ""),

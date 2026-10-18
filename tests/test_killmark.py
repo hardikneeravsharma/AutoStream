@@ -212,6 +212,25 @@ def test_the_library_marks_clips_cut_from_the_record(tmp_path):
     assert clips[0].get("recorded") is True and not clips[1].get("recorded")
 
 
+def test_a_clip_with_no_kills_is_not_given_one(tmp_path):
+    """kills: 0 in the manifest is zero -- not a guessed kill at the pre-roll.
+
+    It used to show as "1 kill", add one to its match's total and give a song
+    edit a drop to land where nobody died."""
+    import json
+    run = tmp_path / "2026-10-18_VALORANT"
+    (run / "clips").mkdir(parents=True)
+    for n in ("a", "b"):
+        (run / "clips" / f"{n}.mp4").write_bytes(b"x")
+    (run / "clips.json").write_text(json.dumps({"game": "VALORANT", "clips": [
+        {"rank": 1, "start": 100.0, "end": 120.0, "kills": 1, "master": str(run / "clips" / "a.mp4")},
+        {"rank": 2, "start": 500.0, "end": 580.0, "kills": 0, "master": str(run / "clips" / "b.mp4")}]}))
+    (run / "session.json").write_text(json.dumps({"kills": [{"time": 105.0}]}))
+    a, b = studio.library(tmp_path)["games"][0]["folders"][0]["clips"]
+    assert a["kill_count"] == 1 and a["kills"] == [5.0]
+    assert b["kill_count"] == 0 and b["kills"] == []
+
+
 # ------------------------------------------- dead, with a facecam over the card
 
 def _report(panel: bool, edges_elsewhere: bool = False, seed: int = 5):

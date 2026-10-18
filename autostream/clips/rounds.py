@@ -666,9 +666,16 @@ def highlights(rounds: list[Round], min_kills: int = 0) -> list[Round]:
     earned a label, so three quarters of the player's good rounds were
     unreachable. Ranking still puts the labelled rounds first, so what changes
     is how far down the list the cutting goes, not which round leads it.
+
+    NO KILL OF THE PLAYER'S, NO CLIP -- whatever the label says. Several labels
+    are the TEAM's: Valorant's FLAWLESS, THRIFTY and TEAM ACE need only the
+    round won, and OVERTIME is every round from the 25th. A replay of a 19-17
+    Corrode cut eight overtime rounds and a thrifty in which the player killed
+    nobody, and each one was then shown as "1 kill". The label still rides on
+    a round the player did score in; it just cannot carry one on its own.
     """
-    keep = [r for r in rounds
-            if r.labels or (min_kills > 0 and r.my_kills >= min_kills)]
+    keep = [r for r in rounds if r.my_kills > 0
+            and (r.labels or (min_kills > 0 and r.my_kills >= min_kills))]
     keep.sort(key=lambda r: (rank_of(r.labels), -r.my_kills, r.started))
     return keep
 
