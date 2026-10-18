@@ -1596,7 +1596,7 @@ function studio_addingBand(picked) {
   if (!ad) return '';
   const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
   const secs = sel.reduce((n, c) => n + (c.duration || 0), 0);
-  const kills = sel.reduce((n, c) => n + (c.kill_count || 1), 0);
+  const kills = sel.reduce((n, c) => n + studio_killsOf(c), 0);
   return '<section class="studio-band" aria-label="Adding clips to ' + esc(ad.name) + '">' +
     '<div class="studio-band-who"><strong>Adding to ' + esc(ad.name) + '</strong>' +
     '<span class="muted studio-small">' + sel.length + (sel.length === 1 ? ' clip' : ' clips') +
@@ -1804,6 +1804,13 @@ function studio_renderLib() {
   studio_renderTray();
 }
 
+/* How many kills a clip carries. A clip with no count at all is one kill, as
+   it always was; a count of ZERO is zero. `kill_count || 1` read both as one,
+   so a round cut for a team label showed as "1 kill" and added to every total. */
+function studio_killsOf(c) {
+  return typeof c.kill_count === 'number' ? c.kill_count : 1;
+}
+
 function studio_tile(c, n) {
   const kill = (c.kills && c.kills.length ? c.kills[0] : 0);
   const at = Math.max(0, kill - 0.3).toFixed(2);
@@ -1813,7 +1820,8 @@ function studio_tile(c, n) {
     '<img loading="lazy" alt="" width="320" height="180" src="' + studio_media('/api/studio/thumb', c.path, '&t=' + at + '&v=' + (c.mtime || 0)) + '">' +
     '<span class="studio-clip-n">' + (n || '') + '</span>' +
     '<span class="studio-clip-dur mono">' + studio_dur(c.duration) + '</span>' +
-    '<span class="studio-clip-kills">' + (c.unmarked ? 'no kills marked' : c.kill_count > 1 ? c.kill_count + ' kills' : '1 kill') +
+    '<span class="studio-clip-kills">' + (c.unmarked ? 'no kills marked' : studio_killsOf(c) === 0 ? 'no kills'
+      : studio_killsOf(c) > 1 ? studio_killsOf(c) + ' kills' : '1 kill') +
       /* Valorant: how many of them were read as headshots. */
       (c.hs && c.hs.length ? ' · ' + c.hs.filter(h => h === true).length + ' HS' : '') + '</span>' +
     '</button>' +
@@ -1881,7 +1889,7 @@ function studio_renderTray() {
   studio_show('studio-tray', sel.length > 0);
   studio_el('studio-tray-count').textContent = sel.length + (sel.length === 1 ? ' clip' : ' clips');
   const secs = sel.reduce((n, c) => n + c.duration, 0);
-  const kills = sel.reduce((n, c) => n + (c.kill_count || 1), 0);
+  const kills = sel.reduce((n, c) => n + studio_killsOf(c), 0);
   const games = new Set(sel.map(c => c.game)).size;
   const picked = studio_picked();
   studio_el('studio-tray-facts').textContent = sel.length
@@ -2268,7 +2276,7 @@ async function studio_openMake() {
   const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
   const ad = studio.adding;
   studio_el('studio-make-facts').textContent = sel.length + ' clips, ' +
-    sel.reduce((n, c) => n + (c.kill_count || 1), 0) + ' kills. Every cut and kill lands on the beat; ' +
+    sel.reduce((n, c) => n + studio_killsOf(c), 0) + ' kills. Every cut and kill lands on the beat; ' +
     'you can change anything on the timeline afterwards.' +
     (ad ? ' Rebuilding ' + ad.name + ' plans every shot again' +
       (ad.edited ? ', so the changes you made on its timeline will be replaced.' : '.') : '');
@@ -3798,7 +3806,7 @@ function studio_favSelected() {
 
 function studio_ordered() {
   const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
-  if (studio.order === 'kills') return sel.slice().sort((a, b) => (b.kill_count || 1) - (a.kill_count || 1));
+  if (studio.order === 'kills') return sel.slice().sort((a, b) => studio_killsOf(b) - studio_killsOf(a));
   if (studio.order === 'oldest') return sel.slice().sort((a, b) => (a.when - b.when) || (a.rank - b.rank));
   return sel;
 }

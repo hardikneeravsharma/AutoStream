@@ -367,6 +367,25 @@ def test_rounds_with_nothing_to_show_are_not_offered():
     assert rounds.highlights([_labelled(my_kills=1)]) == []
 
 
+@pytest.mark.parametrize("label", ["THRIFTY", "FLAWLESS", "TEAM ACE", "OVERTIME"])
+def test_a_team_label_alone_is_not_a_clip(label):
+    """The team's label, none of the player's kills: nothing to cut.
+
+    A Corrode replay cut eight overtime rounds and a thrifty in which the
+    player killed nobody, at "Minimum kills 1+".
+    """
+    r = _labelled(my_kills=0)
+    r.labels = [label]
+    assert rounds.highlights([r]) == []
+    assert rounds.highlights([r], min_kills=1) == []
+
+
+def test_a_team_label_still_rides_on_a_round_the_player_scored_in():
+    r = _labelled(my_kills=1)
+    r.labels = ["THRIFTY"]
+    assert rounds.highlights([r], min_kills=2) == [r]
+
+
 # ------------------------------------------------------- turning rounds into clips
 
 def _hl(**kw):
@@ -894,8 +913,9 @@ def _round(number, kills, labels=()):
 
 
 def test_a_labelled_round_is_always_worth_cutting():
-    rds = [_round(1, 0, ["MATCH POINT"]), _round(2, 0)]
-    assert [r.number for r in rounds.highlights(rds)] == [1]
+    # One kill is under any minimum, and the label still earns the round.
+    rds = [_round(1, 1, ["MATCH POINT"]), _round(2, 1)]
+    assert [r.number for r in rounds.highlights(rds, min_kills=2)] == [1]
 
 
 def test_min_kills_keeps_a_good_round_that_earned_no_label():
@@ -912,7 +932,7 @@ def test_the_labelled_round_still_leads_the_list():
 
 
 def test_min_kills_of_zero_keeps_the_old_labels_only_behaviour():
-    rds = [_round(1, 4), _round(2, 0, ["MATCH POINT"])]
+    rds = [_round(1, 4), _round(2, 1, ["MATCH POINT"])]
     assert [r.number for r in rounds.highlights(rds)] == [2]
 
 
