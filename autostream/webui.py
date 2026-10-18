@@ -3465,9 +3465,15 @@ class Server:
         return studio.library(self._clips_dir(cfg.load()))
 
     def studio_catalog(self) -> dict:
-        from .clips import studio
+        from .clips import studio, style_samples as ss
 
-        return studio.catalog()
+        cat = studio.catalog()
+        # Which styles a shipped sample exists for: the cards play it from the moment the
+        # page opens, before -- or instead of -- one cut from the player's own kills.
+        have = set(ss.stock([s["key"] for s in cat["styles"]]))
+        for s in cat["styles"]:
+            s["stock_sample"] = s["key"] in have
+        return cat
 
     def studio_export(self, body: dict) -> dict:
         """Write the reel out as a timeline another editor can open (U20)."""
@@ -3684,6 +3690,40 @@ class Server:
             return None
         return self._reel_song({"song": song})
 
+    @staticmethod
+    def _studio_drops(shape, drops):
+        """The song with the player's own drops, when the Make page sent any. -> shape
+
+        DROPS MARKED BY HAND, in song seconds. The analysis finds every bass entrance it
+        can and calls the biggest THE drop; the player hears the song and may disagree --
+        a drop it missed, one it found that is not one, or one a beat off. Their list
+        replaces the found one for this plan only: the cached analysis is shared by every
+        later request, so it is copied, never edited. An empty list is "this part has no
+        drop", which is an answer too. Without the key the song is read as it always was.
+        """
+        if shape is None or not isinstance(drops, list):
+            return shape
+        import dataclasses
+
+        got = []
+        for d in drops[:64]:
+            try:
+                f = float(d)
+            except (TypeError, ValueError):
+                continue
+            if f == f and 0.0 <= f <= float(getattr(shape, "seconds", 36000.0) or 36000.0):
+                got.append(round(f, 4))
+        got = sorted(set(got))
+        # THE drop is the one nearest where the analysis put its own -- the player moved
+        # it, most likely -- else their first.
+        main = None
+        if got:
+            main = min(got, key=lambda t: abs(t - shape.drop)) if shape.drop else got[0]
+        try:
+            return dataclasses.replace(shape, drops=got, drop=main)
+        except TypeError:
+            return shape
+
     def _studio_chosen(self, root: Path, want: list[str]) -> list[dict]:
         """The library rows for the clips the page named, in the order it named them.
 
@@ -3773,10 +3813,14 @@ class Server:
                                                        shape=shape, part=part)}
 
     def studio_sample_file(self, key: str, style: str) -> Path | None:
-        """One finished sample, by key and style -- names, never paths."""
+        """One finished sample, by key and style -- names, never paths. Key "stock" is the shipped one."""
         from .clips import studio, style_samples as ss
 
-        if not re.fullmatch(r"[0-9a-f]{16}", str(key or "")) or style not in {s.key for s in studio.STYLES}:
+        if style not in {s.key for s in studio.STYLES}:
+            return None
+        if key == "stock":
+            return ss.stock_path(style)
+        if not re.fullmatch(r"[0-9a-f]{16}", str(key or "")):
             return None
         return ss.path_for(self._clips_dir(cfg.load()), key, style)
 
@@ -3810,6 +3854,7 @@ class Server:
                 part = (p0, p1)
         except (TypeError, ValueError):
             part = None
+        shape = self._studio_drops(shape, body.get("drops"))
         from . import clips as clips_mod
 
         clips_mod.set_ffmpeg_path(c.clips.ffmpeg_path or None)

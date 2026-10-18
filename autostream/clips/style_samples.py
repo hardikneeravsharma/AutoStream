@@ -7,9 +7,16 @@ WHY THIS EXISTS
     watching them, and watching two styles on DIFFERENT footage tells you about the
     footage.
 
-    So each style is cut, about twenty seconds of it, from the SAME clips and the same
+    So each style is cut, fifteen seconds of it, from the SAME clips and the same
     kills, and the page plays them side by side. The only thing that differs between two
     samples is the style.
+
+STOCK SAMPLES SHIP WITH THE APP
+    Cutting all eleven takes several minutes, and until somebody pressed the button the
+    page was a wall of "Not shown yet" -- on the one screen where a look is chosen. So a
+    set cut from the maintainer's own VALORANT clips ships in clips/stock_samples (made by
+    scripts/make_stock_samples.py), and every card plays one from the moment the page
+    opens. One cut from the player's own kills replaces it on that card when they ask.
 
 WHAT IS AND IS NOT SHARED
     Same clips (the first SAMPLE_CLIPS the player chose, in their order), same format,
@@ -36,10 +43,15 @@ from pathlib import Path
 
 log = logging.getLogger("autostream.clips.style_samples")
 
-SAMPLE_SECONDS = 20.0
+SAMPLE_SECONDS = 15.0
+SAMPLE_SLACK = 6.0             # planned this much longer, then cut to SAMPLE_SECONDS
 SAMPLE_CLIPS = 8
-SAMPLE_VERSION = 1
+SAMPLE_VERSION = 2
 FOLDER = ".style_samples"
+STOCK = Path(__file__).resolve().parent / "stock_samples"
+# A stock sample rides inside every download, so it is smaller than one cut on the
+# player's machine -- a card is about 280 CSS px wide on a wide window.
+STOCK_WIDTH, STOCK_FPS, STOCK_CRF = 480, 24, 28
 
 
 def pick_clips(clips: list[dict]) -> list[dict]:
@@ -80,21 +92,38 @@ def path_for(root: Path, key: str, style: str) -> Path | None:
         return None
 
 
+def stock_path(style: str) -> Path | None:
+    """The shipped sample for a style, or None."""
+    f = STOCK / f"{style}.mp4"
+    return f if f.is_file() else None
+
+
+def stock(styles: list[str]) -> list[str]:
+    """The styles a shipped sample exists for."""
+    return [s for s in styles if stock_path(s)]
+
+
 def ready(root: Path, key: str, styles: list[str]) -> dict[str, str]:
     """{style: file name} for every sample already made."""
     return {s: f"{s}.mp4" for s in styles if path_for(root, key, s)}
 
 
 def make(root: Path, clips: list[dict], style: str, fmt: str, out: Path, *,
-         song: str = "", shape=None, part: tuple[float, float] | None = None) -> Path:
+         song: str = "", shape=None, part: tuple[float, float] | None = None,
+         stock: bool = False) -> Path:
     """Plan and render ONE sample. Raises on failure; the caller records it."""
-    from . import examples, studio
+    from . import studio
 
     chosen = pick_clips(clips)
     if not chosen:
         raise ValueError("There are no clips to cut a sample from.")
+    # Planned a little LONGER than a sample and cut to length after. A plan capped at
+    # exactly fifteen seconds stops at the last whole shot that fits, so the eleven
+    # samples came out anywhere from 10.7 to 13.8 s -- and a card that loops sooner
+    # than its neighbours reads as a faster style when it is only a shorter one.
     proj, _notes = studio.plan(chosen, style, shape=shape, song=song if shape else "", fmt=fmt,
-                               max_seconds=SAMPLE_SECONDS, part=part, name=f"{style} sample")
+                               max_seconds=SAMPLE_SECONDS + SAMPLE_SLACK, part=part,
+                               name=f"{style} sample")
     proj, derived, _ = studio.normalise(proj, root)
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_suffix(".part.mp4")
@@ -104,9 +133,40 @@ def make(root: Path, clips: list[dict], style: str, fmt: str, out: Path, *,
     if snap["state"] != "done" or not tmp.is_file():
         tmp.unlink(missing_ok=True)
         raise RuntimeError(snap.get("error") or "The render failed.")
-    examples._shrink(tmp, width=480 if fmt != "vertical" else 270, fps=24, crf=30)
+    if stock:
+        _card(tmp, STOCK_WIDTH, STOCK_FPS, STOCK_CRF)
+    else:
+        _card(tmp, 480 if fmt != "vertical" else 270, 24, 30)
     tmp.replace(out)
     return out
+
+
+def _card(out: Path, width: int, fps: int, crf: int) -> None:
+    """Card-sized, silent and exactly SAMPLE_SECONDS long, in place.
+
+    A plan that still came out short holds its last frame rather than looping early.
+    A failed shrink keeps the big file: a card that plays is better than none.
+    """
+    import subprocess
+
+    from .tools import _NO_WINDOW, binary
+
+    small = out.with_name(out.stem + ".card.mp4")
+    vf = (f"fps={fps},scale={width}:-2:flags=lanczos,"
+          f"tpad=stop_mode=clone:stop_duration={SAMPLE_SECONDS:g}")
+    argv = [binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+            "-i", str(out), "-an", "-vf", vf, "-t", f"{SAMPLE_SECONDS:g}",
+            "-c:v", "libx264", "-preset", "slow", "-crf", str(crf),
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(small)]
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, creationflags=_NO_WINDOW)
+        if r.returncode == 0 and small.is_file() and small.stat().st_size:
+            small.replace(out)
+            return
+        log.info("style sample: could not shrink %s: %s", out.name, (r.stderr or "")[-200:])
+    except OSError as e:
+        log.info("style sample: could not shrink %s: %s", out.name, e)
+    small.unlink(missing_ok=True)
 
 
 class _Runner:

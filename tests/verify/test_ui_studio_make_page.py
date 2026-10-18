@@ -4,8 +4,11 @@ It used to be a dialog. This drives the page itself:
 
     page        a page in the Studio's flow, not an overlay; the rest of the Studio steps aside
     effects     a slot opens a LIST; a set can hold several, each weighted
-    kills       planned kills drawn on the song, editable, and sent as `marks` with Build
-    styles      a card shows the style cut from the player's own kills
+    kills       planned kills drawn on the song, editable, and sent as `marks` with Build;
+                AutoStream's and the player's told apart; several selected and deleted at once;
+                a mark lands exactly at the playhead; drops marked and sent as `drops`
+    styles      every card plays the shipped sample from the start; one cut from the
+                player's own kills replaces it
 """
 from __future__ import annotations
 
@@ -189,17 +192,96 @@ def test_kills_are_drawn_edited_and_sent_with_build(pg, app):
     pg.wait_for_function("studio.mk.planned && studio.mk.planned.marks.length > 0", timeout=120_000)
     n = pg.evaluate("studio.mk.planned.marks.length")
     assert pg.locator("#studio-mk-marklist li").count() == n
-    # touching one makes them all the player's
-    pg.click('[data-act="studio-mk-nudgemark"][data-i="0"][data-d="1"]')
+    assert pg.locator("#studio-mk-marklist li.is-auto").count() == n
+    # touching one makes the plan the player's -- but only the touched one is drawn as theirs
+    pg.click('[data-act="studio-mk-nudgemark"][data-id="p0"][data-d="1"]')
     assert pg.evaluate("studio.mk.edited") is True
-    assert pg.locator("#studio-mk-marklist li.is-hand").count() == n
-    pg.click('[data-act="studio-mk-delmark"][data-i="0"]')
+    assert pg.locator("#studio-mk-marklist li.is-hand").count() == 1
+    assert pg.locator("#studio-mk-marklist li.is-auto").count() == n - 1
+    pg.click('[data-act="studio-mk-delmark"][data-id="p0"]')
     assert pg.locator("#studio-mk-marklist li").count() == n - 1
-    marks = pg.evaluate("studio.mk.hand")
+    marks = pg.evaluate("studio.mk.hand.map(k => k.t)")
     body = pg.evaluate("studio_planBody(true)")
     assert body["marks"] == pytest.approx(marks, abs=0.001)
     pg.click('[data-act="studio-mk-clearmarks"]')
     assert "marks" not in pg.evaluate("studio_planBody(true)")
+    assert pg.trouble == [], pg.trouble
+
+
+def test_several_marks_are_selected_and_deleted_at_once(pg, app):
+    """Fifty marks used to come off one cross at a time."""
+    _open(pg, app)
+    pg.click('[data-act="studio-song"]')
+    pg.wait_for_selector("#studio-mk-killsbox:not(.hide)", timeout=60_000)
+    pg.click('[data-act="studio-mk-plan"]')
+    pg.wait_for_function("studio.mk.planned && studio.mk.planned.marks.length > 2", timeout=120_000)
+    n = pg.evaluate("studio.mk.planned.marks.length")
+    assert pg.is_disabled("#studio-mk-delsel")
+    pg.click('#studio-mk-marklist [data-act="studio-mk-pick"][data-id="p0"]')
+    pg.click('#studio-mk-marklist [data-act="studio-mk-pick"][data-id="p1"]')
+    assert pg.evaluate("studio_mkSelCount()") == 2
+    assert pg.inner_text("#studio-mk-delsel") == "Delete 2 selected"
+    pg.click("#studio-mk-delsel")
+    assert pg.locator("#studio-mk-marklist li").count() == n - 2
+    # Delete on the keyboard takes the selection too
+    pg.click('#studio-mk-marklist [data-act="studio-mk-pick"] >> nth=0')
+    pg.locator("#studio-make-title").click()
+    pg.keyboard.press("Delete")
+    assert pg.locator("#studio-mk-marklist li").count() == n - 3
+    assert pg.evaluate("studio_mkSelCount()") == 0
+    assert pg.trouble == [], pg.trouble
+
+
+def test_a_mark_lands_exactly_where_it_was_placed(pg, app):
+    """K used to pull the mark to the nearest beat; it is where the playhead was now."""
+    _open(pg, app)
+    pg.click('[data-act="studio-song"]')
+    pg.wait_for_selector("#studio-mk-killsbox:not(.hide)", timeout=60_000)
+    span = pg.evaluate("studio_mkSpan()")
+    beat = pg.evaluate("studio.songShape.beat")
+    off = span["start"] + 1.5 * beat + 0.037          # between two beats, deliberately
+    pg.evaluate("(t) => studio_mkAddMark(t)", off)
+    got = pg.evaluate("studio.mk.hand.filter(k => !k.auto).map(k => k.t)")
+    assert got == [pytest.approx(off, abs=0.0011)]
+    # snapping is still there, as a choice
+    pg.check("#studio-mk-snap")
+    pg.evaluate("(t) => studio_mkAddMark(t)", off + 2 * beat)
+    snapped = pg.evaluate("studio.mk.hand.filter(k => !k.auto).map(k => k.t)")[-1]
+    assert snapped == pytest.approx(pg.evaluate("(t) => studio_nearestBeat(studio.songShape, t)", off + 2 * beat), abs=1e-6)
+    assert pg.trouble == [], pg.trouble
+
+
+def test_drops_are_marks_and_reach_the_plan(pg, app):
+    _open(pg, app)
+    pg.click('[data-act="studio-song"]')
+    pg.wait_for_selector("#studio-mk-killsbox:not(.hide)", timeout=60_000)
+    assert "drops" not in pg.evaluate("studio_planBody(false)"), "untouched drops are the song's own"
+    found = pg.evaluate("studio_mkDropList().length")
+    span = pg.evaluate("studio_mkSpan()")
+    at = round(span["start"] + 2.345, 3)
+    pg.evaluate("(t) => studio_mkAddDrop(t)", at)
+    assert pg.locator("#studio-mk-droplist li").count() == found + 1
+    assert pg.locator("#studio-mk-droplist li.is-hand").count() == 1
+    body = pg.evaluate("studio_planBody(false)")
+    assert at in body["drops"]
+    pg.click('[data-act="studio-mk-cleardrops"]')
+    assert "drops" not in pg.evaluate("studio_planBody(false)")
+    assert pg.is_checked("#studio-mk-tick"), "a mark sounds as it plays unless switched off"
+    assert pg.trouble == [], pg.trouble
+
+
+def test_every_style_card_plays_from_the_start(pg, app):
+    """The cards used to open as "Not shown yet" until eleven samples had been cut."""
+    _open(pg, app)
+    pg.wait_for_selector(".studio-style-media video", timeout=30_000)
+    n = pg.evaluate("studio.catalog.styles.length")
+    assert pg.locator(".studio-style-media video").count() == n
+    assert pg.locator(".studio-style-none").count() == 0
+    src = pg.get_attribute(".studio-style-media video >> nth=0", "src")
+    assert "key=stock" in src
+    pg.wait_for_function("(() => { const v = document.querySelector('.studio-style-media video');"
+                         " return v && v.readyState >= 2 && v.duration > 14.5 && v.duration < 15.5; })()",
+                         timeout=30_000)
     assert pg.trouble == [], pg.trouble
 
 
@@ -212,9 +294,9 @@ def test_a_style_card_plays_a_sample_cut_from_the_same_kills(pg, app):
     if held:                       # the page refuses, correctly, while a session or recording holds the encoder
         pytest.skip(f"the encoder is held on this machine: {held}")
     pg.click('[data-act="studio-samples-stop"]') if pg.is_visible('[data-act="studio-samples-stop"]') else None
-    pg.wait_for_selector(".studio-style-media video", timeout=30_000)
-    src = pg.get_attribute(".studio-style-media video >> nth=0", "src")
-    assert "/api/studio/sample" in src
+    own = pg.evaluate("Object.keys(studio.samples.ready)[0]")
+    src = pg.get_attribute(f'.studio-style-card[data-style="{own}"] video', "src")
+    assert "/api/studio/sample" in src and "key=stock" not in src
     assert pg.trouble == [], pg.trouble
 
 

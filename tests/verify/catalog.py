@@ -569,8 +569,8 @@ CONTROLS: list[Control] = [
     Control("/api/studio/samples/start", "POST", CALL, "show every style on my kills", "studio",
             body={"clips": []}, expect=_has("ok"),
             reject={"clips": []}, reject_soft=True, acts=("studio-samples-start",),
-            why="cuts about twenty seconds of each style from the SAME clips, one at a time, in "
-                "the background; refused while a broadcast, a recording, a clip job or the "
+            why="cuts fifteen seconds of each style from the player's own clips, one at a time, in "
+                "the background, replacing the shipped sample on each card; refused while a broadcast, a recording, a clip job or the "
                 "player's own reel holds the encoder"),
     Control("/api/studio/samples/status", "GET", CALL, "how far the style samples are", "studio",
             expect=_has("ok", "state"),
@@ -758,8 +758,14 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-mk-plan": "plans the reel the way Build would, only to show where each kill lands; nothing is built",
     "studio-mk-addmark": "adds a kill mark at the playhead; sent with the next Build",
     "studio-mk-clearmarks": "drops the hand-placed kill marks; the next Build chooses again",
-    "studio-mk-delmark": "removes one kill mark; sent with the next Build",
-    "studio-mk-nudgemark": "moves one kill mark a tenth of a second; sent with the next Build",
+    "studio-mk-delmark": "removes one kill or drop mark; sent with the next Build",
+    "studio-mk-nudgemark": "moves one kill or drop mark a tenth of a second; sent with the next Build",
+    "studio-mk-adddrop": "adds a bass-drop mark at the playhead; sent with the next Build",
+    "studio-mk-cleardrops": "puts the drops back to the ones AutoStream found; nothing is sent",
+    "studio-mk-delsel": "removes every selected kill and drop mark at once; sent with the next Build",
+    "studio-mk-selall": "selects every kill and drop mark on the song",
+    "studio-mk-selnone": "clears the selection of marks",
+    "studio-mk-pick": "ticks one mark in or out of the selection",
     "studio-deal": "deals a random part from every drawer; sent with Build",
     "studio-deal-reset": "drops the dealt parts back to the style's own",
     "studio-bin-slot": "ticks a drawer in and out of the how-many-reels count",
