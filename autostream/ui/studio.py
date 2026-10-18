@@ -7154,7 +7154,7 @@ function studio_stripHtml(s, r, i) {
   return '<div class="studio-strip" id="studio-strip" data-shot="' + i + '">' +
     '<div class="studio-strip-view"><span class="studio-strip-video-slot" id="studio-strip-slot"></span>' +
     '<span class="studio-strip-cap mono" id="studio-strip-cap">' + studio_stripSummary(s, r) + '</span></div>' +
-    '<div class="studio-strip-track" id="studio-strip-track" title="The whole clip. The box is the part in the reel.">' +
+    '<div class="studio-strip-track" id="studio-strip-track" data-strip="seek" title="The whole clip. The box is the part in the reel: press anywhere on the clip to bring the box there.">' +
     thumbs + '<span class="studio-strip-dim is-l" style="width:' + pct(sp[0]) + '"></span>' +
     '<span class="studio-strip-dim is-r" style="left:' + pct(sp[1]) + '"></span>' +
     '<span class="studio-strip-box" id="studio-strip-box" data-strip="slip" style="left:' + pct(sp[0]) +
@@ -7162,8 +7162,13 @@ function studio_stripHtml(s, r, i) {
     '<span class="studio-strip-h is-head" data-strip="head" title="Drag to move the cut before this shot"></span>' +
     '<span class="studio-strip-h is-tail" data-strip="tail" title="Drag to move the cut after this shot"></span></span>' +
     ticks + '</div>' +
-    '<p class="muted studio-small">Drag an edge to show more or less of the clip, or the box to use another part of it. ' +
-    'Ticks are kills; the bright one is on this shot\'s beat.</p></div>';
+    '<div class="studio-strip-nudge" role="group" aria-label="Move the moment, keeping the length">' +
+    '<span class="muted studio-small">Move the moment</span>' +
+    [['-1', '&minus;1 s'], ['-0.1', '&minus;0.1'], ['0.1', '+0.1'], ['1', '+1 s']].map(x =>
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-strip-nudge" data-d="' + x[0] + '">' + x[1] + '</button>').join('') +
+    '</div>' +
+    '<p class="muted studio-small">The length stays the same. Press anywhere on the clip, or drag the box, to use another part of it; ' +
+    'drag an edge to show more or less. Ticks are kills; the bright one is on this shot\'s beat.</p></div>';
 }
 
 /* ONE PLAYER, KEPT ACROSS REDRAWS. The inspector is redrawn on every edit, and a
@@ -7231,12 +7236,22 @@ function studio_stripDown(e) {
   if (!h || !studio.project || studio.sel < 0 || e.button !== 0) return false;
   const track = studio_el('studio-strip-track');
   const i = studio.sel, s = studio.project.shots[i];
-  studio.strip = {kind: h.getAttribute('data-strip'), i: i, x0: e.clientX, moved: false,
+  let kind = h.getAttribute('data-strip'), jump = 0;
+  if (kind === 'seek') {
+    /* Anywhere on the clip: the box comes to the press, and a drag carries on from there. */
+    const r0 = studio.derived && studio.derived.shots ? studio.derived.shots[i] : null;
+    const sp0 = studio_stripSpan(s, r0), tr = track.getBoundingClientRect();
+    kind = 'slip';
+    jump = (e.clientX - tr.left) / Math.max(1, tr.width) * (Number(s.clip_seconds) || 1) - (sp0[0] + sp0[1]) / 2;
+  }
+  studio.strip = {kind: kind, jump: jump, i: i, x0: e.clientX, moved: false,
                   w: track.getBoundingClientRect().width, L: Number(s.clip_seconds) || 1,
                   snapshot: JSON.stringify(studio.project), derivedSnap: JSON.stringify(studio.derived),
                   free: e.altKey, pointer: e.pointerId};
   try { track.setPointerCapture(e.pointerId); } catch (err) { /* a mouse works without it */ }
   e.preventDefault();
+  /* A press on the bare clip brings the box there at once, before any drag. */
+  if (jump) studio_stripMove({clientX: e.clientX, pointerId: e.pointerId, altKey: e.altKey});
   return true;
 }
 
@@ -7244,10 +7259,10 @@ function studio_stripMove(e) {
   const g = studio.strip;
   if (!g || (g.pointer !== undefined && e.pointerId !== g.pointer)) return false;
   const dx = e.clientX - g.x0;
-  if (!g.moved && Math.abs(dx) < 3) return true;
+  if (!g.moved && Math.abs(dx) < 3 && !g.jump) return true;
   g.moved = true;
   if (!g.base) g.base = {p: JSON.parse(g.snapshot), d: JSON.parse(g.derivedSnap)};
-  const dsrc = dx / Math.max(1, g.w) * g.L;
+  const dsrc = dx / Math.max(1, g.w) * g.L + (g.kind === 'slip' ? (g.jump || 0) : 0);
   const p = JSON.parse(g.snapshot), b0 = g.base.p.shots[g.i], r0 = g.base.d.shots[g.i];
   g.limit = '';
   if (g.kind === 'head' || g.kind === 'tail') {
@@ -7280,6 +7295,27 @@ function studio_stripMove(e) {
   studio_drawTimeline();
   studio_stripPaint();
   return true;
+}
+
+/* The same slip as the drag, by a set amount: the length stays and the footage under it moves. */
+function studio_stripNudge(d) {
+  const p0 = studio.project, i = studio.sel;
+  if (!p0 || i < 0 || !p0.shots[i] || !isFinite(d)) return;
+  const snap = JSON.stringify(p0), r = studio.derived && studio.derived.shots ? studio.derived.shots[i] : null;
+  const p = JSON.parse(snap), s = p.shots[i], L = Number(s.clip_seconds) || 1;
+  const sp = studio_stripSpan(s, r);
+  const by = Math.max(-sp[0], Math.min(L - sp[1], d));
+  if (Math.abs(by) < 1e-6) { toast(d < 0 ? 'The clip starts there.' : 'The clip ends there.', 'info'); return; }
+  s.kill = Math.round((Number(s.kill) + by) * 1000) / 1000;
+  delete s.anchors;
+  studio.project = p;
+  studio.gen++;
+  studio_localDerive();
+  const what = studio_shotName(i) + ' · another part of its clip';
+  studio_pushUndo(snap, what);
+  studio_touched(what, i, studio_diff(JSON.parse(snap), studio.project));
+  studio_drawAll();
+  studio_check();
 }
 
 function studio_stripUp(e) {
@@ -9397,6 +9433,7 @@ function studio_wire() {
       studio_mkDefault();
     }
     else if (act === 'studio-mk-mode') { studio.mk.mode = b.getAttribute('data-mode'); studio_mkStale(); studio_mkDraw(); studio_samplesCheck(); }
+    else if (act === 'studio-strip-nudge') studio_stripNudge(Number(b.getAttribute('data-d')));
     else if (act === 'studio-mk-jump') studio_mkJump(b.getAttribute('data-sec'));
     else if (act === 'studio-mk-plan') studio_mkPlan();
     else if (act === 'studio-mk-addmark') studio_mkAddMark();

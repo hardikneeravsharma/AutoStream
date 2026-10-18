@@ -754,6 +754,7 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-hand-pick": "opens the list of parts for one drawer of the template; nothing changes until one is chosen",
     "studio-set-weight": "makes one part of a drawer's set drawn more or less often; sent with Build",
     "studio-set-remove": "takes one part out of a drawer's set; sent with Build",
+    "studio-strip-nudge": "moves the footage a shot plays by a set amount, keeping its length; undoable",
     "studio-mk-jump": "scrolls the Make page to one of its sections",
     "studio-mk-plan": "plans the reel the way Build would, only to show where each kill lands; nothing is built",
     "studio-mk-addmark": "adds a kill mark at the playhead; sent with the next Build",
