@@ -2568,3 +2568,30 @@ def test_anchors_survive_being_normalised(tmp_path):
     assert len(got) == 3                      # the fixture itself is honest
     src = inspect.getsource(st.normalise)
     assert '"anchors"' in src, "normalise does not carry the editor's marks"
+
+
+def test_a_shot_that_will_not_render_leaves_what_it_was_given(tmp_path):
+    """wsdhkwqbsd: a shot failed five times and the timeline that caused it
+    lived only in the page. The project and the exact command are kept."""
+    class Seg:
+        index = 6
+        def key(self):
+            return "abc"
+    project = {"name": "wsd/hk", "shots": [{"clip": "a.mp4"}]}
+    for _ in range(studio.FAILED_KEPT + 3):
+        studio._keep_failure(tmp_path, project, Seg(), ["ffmpeg", "-i", "a.mp4"], RuntimeError("Invalid data"))
+    kept = sorted((tmp_path / studio.CACHE_DIR / "failed").glob("*.json"))
+    assert 1 <= len(kept) <= studio.FAILED_KEPT
+    got = json.loads(kept[-1].read_text(encoding="utf-8"))
+    assert got["shot"] == 7 and got["argv"][-1] == "a.mp4" and got["project"] == project
+    assert "Invalid data" in got["error"] and "shot7" in kept[-1].name
+
+
+def test_keeping_a_failure_never_hides_the_failure(tmp_path):
+    blocked = tmp_path / "file"
+    blocked.write_text("not a folder")
+    class Seg:
+        index = 0
+        def key(self):
+            return "k"
+    studio._keep_failure(blocked, {"name": "x"}, Seg(), [], RuntimeError("e"))   # must not raise
