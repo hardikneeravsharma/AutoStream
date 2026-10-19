@@ -411,7 +411,7 @@ def cmd_run(args) -> int:
 
     from .engine import Engine
     from .tray import Tray
-    from .webui import Server, is_configured
+    from .webui import Server, is_configured, remember_setup_done
     from .window import MainWindow, available as window_available
 
     config = cfg.load()
@@ -458,6 +458,8 @@ def cmd_run(args) -> int:
         return 1
 
     first_run = not is_configured()
+    if not first_run:
+        remember_setup_done()
     engine = None if first_run else Engine(config)
 
     server = Server(token, port, engine,

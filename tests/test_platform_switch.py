@@ -446,3 +446,29 @@ def test_turning_the_flag_off_is_how_you_run_setup_again(no_creds):
     # The legacy fallback is YouTube's, and this install says Twitch -- so a
     # stream id left over from a YouTube setup must not quietly count.
     assert webui.is_configured() is False
+
+
+def test_an_install_from_before_the_flag_survives_switching_to_twitch(no_creds, monkeypatch):
+    """2026-10-20: an install set up on YouTube before `setup_done` existed was
+    switched to Twitch on the dashboard, and the next start -- a build's
+    restart -- opened the first-run wizard. Starting configured writes the flag,
+    so the switch no longer decides it."""
+    from autostream import cfg as _cfg
+    from autostream import paths as _paths
+
+    token = no_creds / "token.json"
+    token.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(_paths, "TOKEN_FILE", token)
+    (no_creds / "config" / "config.yaml").write_text(
+        yaml.safe_dump({"youtube": {"enabled": True, "platform": "youtube", "stream_id": "s1"}}),
+        encoding="utf-8")
+    assert webui.is_configured() is True
+    webui.remember_setup_done()                       # what a configured start does
+    _cfg.save_field("youtube", "platform", "twitch")  # the dashboard switch
+    assert webui.is_configured() is True
+
+
+def test_an_unconfigured_install_is_not_marked_done_by_starting(no_creds):
+    (no_creds / "config" / "config.yaml").write_text(
+        yaml.safe_dump({"youtube": {"enabled": True, "platform": "twitch"}}), encoding="utf-8")
+    assert webui.is_configured() is False   # __main__ only calls remember_setup_done when configured
