@@ -91,6 +91,27 @@ def is_configured() -> bool:
         return False
 
 
+
+def remember_setup_done() -> None:
+    """Write the flag for an install that is configured without it. Never raises.
+
+    AN INSTALL THAT STARTS CONFIGURED HAS FINISHED SETUP, SO SAY SO. One from
+    before the flag counts as set up only while it is on YouTube (see
+    is_configured), so switching it to Twitch on the dashboard threw it back
+    into first-run setup on its next start -- found on 2026-10-20, when a
+    build's restart opened the wizard on an install that had streamed for
+    weeks. Written at start, the answer survives a later switch, and it changes
+    nothing about when the wizard appears today: it is only written when
+    is_configured() already says yes.
+    """
+    try:
+        if bool(getattr(cfg.load().rules, "setup_done", False)):
+            return
+        cfg.save_field("rules", "setup_done", True)
+        log.info("setup: recorded that first-run setup has finished")
+    except Exception as e:                                  # noqa: BLE001
+        log.warning("could not record that setup is done: %s", e)
+
 def platform_for(config):
     """The Platform this config goes live on, built without an engine.
 
