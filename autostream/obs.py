@@ -872,7 +872,9 @@ class Obs:
     # OBS scenes holding one looping media source each, and AutoStream builds
     # them rather than asking the user to. Everything here is idempotent: it
     # creates what is missing and updates what is there, so pointing a setting
-    # at a different file just changes the file.
+    # at a different file just changes the file. Switching between a page and a
+    # file changes the kind of source, which no setting can, so that one source
+    # is replaced.
 
     MEDIA_KIND = "ffmpeg_source"
     BROWSER_KIND = "browser_source"
@@ -961,8 +963,29 @@ class Obs:
             if scene not in self.scene_names():
                 self.ws.create_scene(scene)
                 log.info("created OBS scene %r", scene)
-            names = {i["inputName"] for i in self.ws.get_input_list().inputs}
-            if source in names:
+            kinds = self._input_kinds()
+            if source in kinds and kinds[source] != kind:
+                # A screen pointed at a page, then at a file (or back). Settings
+                # cannot change a source's kind: writing a file's settings onto a
+                # browser source leaves the old page on screen and reports
+                # success. The kind decides, so the old source goes and the new
+                # one is built fresh -- its hand-made transform belonged to
+                # something that rendered differently anyway.
+                #
+                # Renamed before it is removed: RemoveInput answers at once but
+                # OBS (32) keeps the source, name and all, for as long as a
+                # scene still holds it -- measured, it was there ten seconds
+                # later -- and a new source cannot take a name that is in use.
+                # Numbered, in case an earlier one is somehow still about.
+                n = 1
+                while f"{source} (replaced {n})" in kinds:
+                    n += 1
+                old = f"{source} (replaced {n})"
+                self.ws.set_input_name(source, old)
+                self._drop_input(old)
+                log.info("replacing %r: it is a %s, the setting now needs a %s",
+                         source, kinds.pop(source), kind)
+            if source in kinds:
                 self.ws.set_input_settings(source, settings, True)
             else:
                 self.ws.create_input(scene, source, kind, settings, True)
@@ -973,6 +996,29 @@ class Obs:
         except Exception as e:  # noqa: BLE001
             log.warning("could not build the %r scene: %s", scene, e)
             return False
+
+    def _input_kinds(self) -> dict[str, str]:
+        """{input name: input kind} for every input OBS has."""
+        return {i["inputName"]: i.get("inputKind", "")
+                for i in self.ws.get_input_list().inputs}
+
+    def _drop_input(self, name: str) -> None:
+        """Take `name` out of every scene, then out of OBS.
+
+        RemoveInput alone leaves the source in place while any scene item
+        still points at it; taking the last item out is what releases it, a
+        moment later. So RemoveInput is only for a source no scene held --
+        sent after the items go, it races that release, and when it loses, the
+        client library logs an error for a source that is gone, as it should be.
+        """
+        held = False
+        for scene in self.scene_names():
+            for item in self.ws.get_scene_item_list(scene).scene_items:
+                if item.get("sourceName") == name:
+                    self.ws.remove_scene_item(scene, item["sceneItemId"])
+                    held = True
+        if not held:
+            self.ws.remove_input(name)
 
     def _fit_to_canvas(self, scene: str, source: str) -> None:
         """Scale the source to fill the frame without distorting it."""
