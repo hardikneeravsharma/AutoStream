@@ -5824,6 +5824,7 @@ class StudioJob:
                     # the user pressed was reported as a failed render.
                     raise
                 except RuntimeError as e:
+                    _keep_failure(self.root, self.project, s, segment_command(s, tmp, ff, enc_seg, textdir), e)
                     raise RuntimeError(f"Shot {s.index + 1} ({Path(s.clip).name}): {e}") from e
                 finally:
                     if not tmp.is_file() or self._cancel.is_set():
@@ -5898,6 +5899,35 @@ class StudioJob:
             log.warning("studio render failed: %s", e)
             self._set(state="failed", error=str(e)[-800:], message="The render failed",
                       finished=time.time())
+
+
+FAILED_KEPT = 10
+
+
+def _keep_failure(root: Path, project: dict, seg: "Segment", argv: list[str], error: Exception) -> None:
+    """Write down what a shot that would not render was given. Never raises.
+
+    A FAILED RENDER LEFT NOTHING BEHIND. The project lives in the page until a
+    render succeeds, so on wsdhkwqbsd a shot failed five times running with
+    "Invalid data found when processing input" and the timeline that caused it
+    could not be read back: rebuilt from an export, the same shot rendered fine,
+    because the export carries timing and not everything else. The project, the
+    shot and the exact ffmpeg command, kept here, make the next one reproducible.
+    """
+    try:
+        folder = root / CACHE_DIR / "failed"
+        folder.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        name = re.sub(r"[^A-Za-z0-9_-]+", "-", str(project.get("name") or "reel"))[:40] or "reel"
+        path = folder / f"{stamp}-{name}-shot{seg.index + 1}.json"
+        path.write_text(json.dumps({"shot": seg.index + 1, "key": seg.key(), "error": str(error)[-2000:],
+                                    "argv": [str(a) for a in argv], "project": project},
+                                   indent=1, default=str), encoding="utf-8")
+        log.warning("studio: what the failed shot was given is in %s", path)
+        for old in sorted(folder.glob("*.json"))[:-FAILED_KEPT]:
+            _unlink(old)
+    except Exception:                                       # noqa: BLE001
+        log.exception("studio: could not keep the failed render's project")
 
 
 def _swap_in(tmp: Path, out: Path) -> None:
