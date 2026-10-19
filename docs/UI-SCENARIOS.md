@@ -244,6 +244,7 @@ listed so the gap is visible.
 | 6.56 | AutoStream's kills and yours: plan, then move one | Planned kills are hollow and green, a moved or added one solid in the accent; the list says auto or yours on each | yes (`test_ui_studio_make_page`) |
 | 6.57 | Drops: read the drops found on the song's top lane, press D at the playhead, drag one, then Drops back to automatic | Every drop found is a mark, not only the biggest as a line; a placed one is solid; `drops` reaches the plan only once touched, and the reset sends nothing | yes (`test_ui_studio_make_page`) |
 | 6.58 | Play the part with marks on it | A tick sounds as the playhead passes each kill and a low thump at each drop; a seek sounds nothing; unticking Sound on each mark silences both | **gap** (sound is not observable from the page) |
+| 6.59 | A shot out of a reel cut to its song's hits: remove the first shot (button or Delete), then move one with the arrows or by dragging it | Every shot after the change moves up one hit and its kill stays on a hit; the last hit goes unused; a reel with no hits is not re-timed, and no other edit re-times it | yes (`test_ui_studio_remark`; the re-timing itself offline in `test_studio`) |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.
