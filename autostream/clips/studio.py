@@ -3441,8 +3441,16 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
     # WHICH kill lands on the drop matters far less than that one does.
     lead = 0
     slack = max(0.25, float(project.get("beat") or 0.5))
+    led: set[int] = set()
     for s in shots:
         s.pop("stretch", None)              # the marks decide every stretch afresh
+        # A RUN-UP LED ONCE IS NOT LED AGAIN. The CUT_LEAD below is added to
+        # the run-up the shot came in with, so laying the marks on twice -- a
+        # shot removed, then another -- led every cut a second time and the
+        # run-ups crept 50 ms per edit. Measured on 4Raws-X-valorant-B: 38 of
+        # 39 shots moved when marks it was already on were laid on again.
+        if s.pop("led", False):
+            led.add(id(s))
     if len(shots) > 1 and max_pre(shots[0], marks[0]) < marks[0] - slack             and not stretch_to(dict(shots[0]), marks[0]):
         lead = 1
     if len(shots) - lead <= 0:
@@ -3516,7 +3524,8 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
                 skipped += 1
                 continue
             break                                      # no mark left: it follows at its own length
-        want = min(float(s["pre"]) if s["pre"] > 0 else gap / 2, max(0.0, gap - keep))
+        asked = float(s["pre"]) - (CUT_LEAD if id(s) in led else 0.0)
+        want = min(asked if asked > 0 else gap / 2, max(0.0, gap - keep))
         pre = max_pre(s, want)
         cut = k - pre
         need = cut - (cuts[j - 1] + pres[j - 1])       # time after the previous kill
@@ -3576,6 +3585,7 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
             continue
         cuts[i] -= CUT_LEAD
         pres[i] = want
+        s["led"] = True
     if mi < len(marks):
         notes.append(f"{len(marks)} kills were marked but the reel has {len(shots) - lead} shots to "
                      f"put on them; the last {len(marks) - mi} marks were not used.")
@@ -3593,6 +3603,9 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
         s.pop("lead_in", None)
     if lead:
         shots[0]["lead_in"] = True
+    for s in shots[done:]:
+        if id(s) in led:
+            s["led"] = True                 # not placed, so its run-up is still the led one
     for i in range(done):
         s = shots[i]
         s["pre"] = round(pres[i], 5)
@@ -4035,6 +4048,8 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         lock = str(raw.get("lock") or "")
         if lock and re.fullmatch(r"[A-Za-z0-9_-]{1,16}", lock):
             shot["lock"] = lock
+        if raw.get("led") is True:
+            shot["led"] = True                  # see apply_marks: its cut was led
 
         before = (shot["pre"], shot["duration"], shot["speed"])
         _fit(shot, out["step"])
@@ -4045,6 +4060,19 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
     if not out["shots"]:
         raise ProjectError("There are no usable clips in this reel.")
     tidy_locks(out["shots"])
+
+    # A SHOT TAKEN OUT OR MOVED CLOSES UP ON THE SONG'S HITS (chosen 2026-10-19).
+    # The page only splices the list, so every shot after the change slid by
+    # the length of the one that went: on 4Raws X valorant, removing a 1.90 s
+    # opener left 2 of 40 kills on a hit. With `remark` the marks are laid back
+    # on -- shot N takes mark N, so everything after moves up one hit and the
+    # last hit goes unused. Asked for by that edit only: re-timing on every
+    # check would undo every cut moved by hand.
+    if project.get("remark") and out.get("song_marks"):
+        offset = out["song_offset"]
+        notes += apply_marks(out, [m - offset for m in out["song_marks"]])
+        if out.get("part_end"):
+            notes += fit_to_part(out, out["part_end"] - offset)
 
     # THE FACECAM FILE FOR EACH SHOT comes from the links the Facecam tab
     # made, never from the page: a link is only ever written with a path the

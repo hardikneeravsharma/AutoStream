@@ -418,6 +418,57 @@ def test_the_timeline_is_told_how_far_each_kill_sits_from_its_hit(root, tmp_path
     assert all(row["drift"] == pytest.approx(0.4, abs=0.02) for row in moved["shots"])
 
 
+def _marked(root, tmp_path):
+    song = tmp_path / "s.mp3"
+    song.write_bytes(b"not really a song")
+    proj, _ = studio.plan(_clips(root), "montage", shape=_song(), song=str(song))
+    proj, derived, _ = studio.normalise(proj, root)
+    assert len(derived["shots"]) >= 3 and derived["on_marks"] == len(derived["shots"])
+    return proj, derived
+
+
+def test_a_shot_taken_out_closes_up_on_the_hits(root, tmp_path):
+    """4Raws X valorant: removing the 1.90 s opener slid every shot after it
+    1.90 s early and left 2 of 40 kills on a hit. Chosen 2026-10-19: each shot
+    after the gap moves up one hit and the last hit goes unused."""
+    proj, before = _marked(root, tmp_path)
+    marks = before["marks"]
+    gone = dict(proj, shots=proj["shots"][1:])
+    _, slid, _ = studio.normalise(gone, root)
+    assert slid["on_marks"] < len(slid["shots"]), "nothing to fix: the reel did not slide"
+    _, closed, _ = studio.normalise(dict(gone, remark=True), root)
+    assert closed["on_marks"] == len(closed["shots"])
+    for i, row in enumerate(closed["shots"]):
+        assert row["kill_reel"] == pytest.approx(marks[i], abs=studio.ON_MARK), i
+
+
+def test_shots_swapped_take_each_others_hits(root, tmp_path):
+    proj, before = _marked(root, tmp_path)
+    shots = list(proj["shots"])
+    shots[1], shots[2] = shots[2], shots[1]
+    _, got, _ = studio.normalise(dict(proj, shots=shots, remark=True), root)
+    assert got["on_marks"] == len(got["shots"])
+
+
+def test_only_the_edit_that_asks_lays_the_marks_on_again(root, tmp_path):
+    """A cut moved by hand must survive the next check: the marks are laid on
+    for a shot removed or moved, never on every answer."""
+    proj, _ = _marked(root, tmp_path)
+    proj["shots"][1]["duration"] = round(proj["shots"][1]["duration"] + 0.3, 5)
+    got, _, _ = studio.normalise(proj, root)
+    assert got["shots"][1]["duration"] == pytest.approx(proj["shots"][1]["duration"], abs=1e-4)
+    assert "remark" not in got, "the request was kept, so every later check would re-time"
+
+
+def test_laying_the_marks_on_twice_moves_nothing(root, tmp_path):
+    """The cut's lead was added to the run-up it came in with, so every
+    removal led every cut again and the run-ups crept 50 ms an edit."""
+    proj, derived = _marked(root, tmp_path)
+    once, _, _ = studio.normalise(dict(proj, remark=True), root)
+    twice, _, _ = studio.normalise(dict(once, remark=True), root)
+    assert [(s["pre"], s["duration"]) for s in twice["shots"]] ==         [(s["pre"], s["duration"]) for s in once["shots"]]
+
+
 def test_a_reel_without_a_song_has_no_marks_to_miss(root):
     proj, derived, _ = studio.normalise(_project(root), root)
     assert derived["marks"] == [] and derived["on_marks"] == 0

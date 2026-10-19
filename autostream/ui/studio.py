@@ -4432,9 +4432,17 @@ function studio_lyrPending() {
    claiming to know which shot they were. */
 function studio_forgetShots() { studio.pending.forEach(x => { x.shot = -1; }); }
 
+/* A SHOT TAKEN OUT OR MOVED CLOSES UP ON THE SONG'S HITS (chosen 2026-10-19).
+   Splicing the list slid every shot after it by the length of the one that
+   went, so a reel cut to its song's hits was off every one of them. This asks
+   the server to lay the marks back on (studio.normalise): each shot after the
+   change moves up one hit. Said once, with the edit -- the answer comes back
+   without it. */
+function studio_remark(p) { if ((p.song_marks || []).length) p.remark = true; }
+
 /* What a render writes about itself rather than what anyone chose: never a
    reason to render again. */
-const STUDIO_NOT_EDITS = {output: 1, plan_notes: 1, lyrics_note: 1, render: 1, version: 1};
+const STUDIO_NOT_EDITS = {output: 1, plan_notes: 1, lyrics_note: 1, render: 1, version: 1, remark: 1};
 /* ...nor is which shots are locked together: the timeline reads it, the render does not. */
 function studio_isEdit(k) { return k.length && !STUDIO_NOT_EDITS[k[0]] && k[k.length - 1] !== 'lock'; }
 
@@ -8220,7 +8228,7 @@ function studio_pointerMove(e) {
       const before = d.shots[g.i].start;
       const [moved] = p.shots.splice(g.i, 1);
       p.shots.splice(to, 0, moved);
-      g.i = to; studio.sel = to;
+      g.i = to; studio.sel = to; g.reordered = true;
       /* Where the moved shot now starts, from the new order -- not where the
          shot it swapped with used to start, which differs by their lengths. */
       studio_localDerive();
@@ -8242,6 +8250,7 @@ function studio_pointerUp(e) {
     return;
   }
   if (!g.moved) { studio_pickShot(g.i, g.shift, g.ctrl); return; }
+  if (g.reordered) studio_remark(studio.project);
   studio.gen++;
   const moveName = studio_shotName(g.i) +
     (g.kind === 'trim' || g.kind === 'head' ? (g.rolled ? ' · the cut moved' : ' · trimmed, and everything after it moved')
@@ -9561,7 +9570,7 @@ function studio_wire() {
       const d = Number(b.getAttribute('data-d')), i = studio.sel, j = i + d;
       if (j < 0 || j >= p.shots.length) return;
       studio_forgetShots();
-      studio_change(pr => { const t = pr.shots[i]; pr.shots[i] = pr.shots[j]; pr.shots[j] = t; },
+      studio_change(pr => { const t = pr.shots[i]; pr.shots[i] = pr.shots[j]; pr.shots[j] = t; studio_remark(pr); },
                     'Shots reordered');
       studio.sel = j; studio_drawAll();
     }
@@ -9570,7 +9579,7 @@ function studio_wire() {
       const i = studio.sel;
       const gone = studio_shotName(i);
       studio_forgetShots();
-      studio_change(pr => { pr.shots.splice(i, 1); }, gone + ' removed');
+      studio_change(pr => { pr.shots.splice(i, 1); studio_remark(pr); }, gone + ' removed');
       studio.sel = Math.min(i, p.shots.length - 1); studio_drawAll();
     }
     else if (act === 'studio-lock' && p) studio_lockAct();
@@ -10016,7 +10025,7 @@ function studio_wire() {
       e.preventDefault();
       const i = studio.sel, gone = studio_shotName(i);
       studio_forgetShots();
-      studio_change(pr => { pr.shots.splice(i, 1); }, gone + ' removed');
+      studio_change(pr => { pr.shots.splice(i, 1); studio_remark(pr); }, gone + ' removed');
       studio.sel = Math.min(i, studio.project.shots.length - 1); studio_drawAll();
     }
   });
