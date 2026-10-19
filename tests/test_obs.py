@@ -343,3 +343,170 @@ def test_the_split_never_raises(monkeypatch):
             raise OSError("obs went away")
 
     _obs_with(Boom()).split_audio_tracks()      # no exception
+
+
+# ------------------------------------------- screens: a page becomes a file
+
+class _ScreensWs:
+    """obs-websocket as the screen savers see it, with OBS 32's habit that was
+    the whole bug: RemoveInput answers at once, but the source -- name and
+    all -- stays for as long as a scene item still holds it (measured: still
+    there ten seconds later). Taking its last item out is what releases it."""
+
+    def __init__(self, inputs=None, items=()):
+        self.scenes = {"AutoStream Starting", "Gaming"}
+        self.inputs = dict(inputs or {})          # name -> {"kind", "settings"}
+        self.items = {}                           # (scene, name) -> id
+        self.removed = set()                      # asked to go, still held
+        self.calls = []
+        for scene, name in items:
+            self._add_item(scene, name)
+
+    def _add_item(self, scene, name):
+        self.items[(scene, name)] = len(self.items) + 100
+
+    def get_version(self):
+        return type("V", (), {"obs_version": "32", "rpc_version": 1})()
+
+    def get_scene_list(self):
+        return type("R", (), {"scenes": [{"sceneName": s} for s in sorted(self.scenes)]})()
+
+    def create_scene(self, name):
+        self.scenes.add(name)
+
+    def get_input_list(self):
+        return type("R", (), {"inputs": [{"inputName": n, "inputKind": v["kind"]}
+                                         for n, v in self.inputs.items()]})()
+
+    def get_scene_item_list(self, scene):
+        return type("R", (), {"scene_items": [{"sourceName": n, "sceneItemId": i}
+                                              for (s, n), i in self.items.items() if s == scene]})()
+
+    def remove_scene_item(self, scene, item):
+        name = next(n for (s, n), i in self.items.items() if s == scene and i == item)
+        self.calls.append(("unplace", scene, name))
+        del self.items[(scene, name)]
+        if not any(n == name for (_, n) in self.items):
+            self.inputs.pop(name, None)           # its last holder went: released
+            self.removed.discard(name)
+
+    def set_input_name(self, name, new):
+        assert new not in self.inputs, "OBS refuses a name that is in use"
+        self.calls.append(("rename", name, new))
+        self.inputs[new] = self.inputs.pop(name)
+        for key in [k for k in self.items if k[1] == name]:
+            self.items[(key[0], new)] = self.items.pop(key)
+
+    def remove_input(self, name):
+        if name not in self.inputs:
+            raise RuntimeError("No source was found by the name of " + name)
+        self.calls.append(("remove", name))
+        if any(n == name for (_, n) in self.items):
+            self.removed.add(name)                # ...and it stays
+        else:
+            self.inputs.pop(name)
+
+    def set_input_settings(self, name, settings, overlay):
+        self.calls.append(("settings", name, self.inputs[name]["kind"]))
+        self.inputs[name]["settings"].update(settings)
+
+    def create_input(self, scene, name, kind, settings, enabled):
+        assert name not in self.inputs, "OBS refuses a name that is in use"
+        self.calls.append(("create", name, kind))
+        self.inputs[name] = {"kind": kind, "settings": dict(settings)}
+        self._add_item(scene, name)
+
+    def get_video_settings(self):
+        return type("R", (), {"base_width": 2560, "base_height": 1440})()
+
+    def get_scene_item_id(self, scene, name):
+        return type("R", (), {"scene_item_id": self.items[(scene, name)]})()
+
+    def set_scene_item_transform(self, scene, item, transform):
+        self.calls.append(("fit", scene))
+
+    def live(self, name):
+        """The source a viewer would see under this name, if any."""
+        return None if name in self.removed else self.inputs.get(name)
+
+
+SCENE, SOURCE = "AutoStream Starting", "AutoStream Starting media"
+
+
+def _page_screen(also_in=()):
+    return _ScreensWs({SOURCE: {"kind": "browser_source",
+                                "settings": {"url": "https://overlay.example/start"}}},
+                      items=[(SCENE, SOURCE)] + [(s, SOURCE) for s in also_in])
+
+
+def test_a_screen_moved_from_a_page_to_a_file_shows_the_file(no_sleep):
+    """The reported bug: Settings said starting_file was an MP4, OBS kept the
+    old overlay page, and the build said it had worked. A browser source given
+    a local_file is still a browser source."""
+    ws = _page_screen()
+    assert _obs_with(ws).ensure_media_scene(SCENE, SOURCE, r"C:\screens\start.mp4")
+
+    now = ws.live(SOURCE)
+    assert now["kind"] == "ffmpeg_source"
+    assert now["settings"]["local_file"] == r"C:\screens\start.mp4"
+    assert ("fit", SCENE) in ws.calls, "the new source was not fitted to the canvas"
+    assert not any(c[0] == "settings" and c[2] == "browser_source" for c in ws.calls), \
+        "a file's settings were written onto the browser source"
+    assert no_sleep == [], "the engine tick waited on OBS"
+
+
+def test_the_old_page_is_really_gone():
+    """RemoveInput on its own left the page in OBS -- and in the scene -- with
+    the name still taken. Renamed, taken out of its scenes, then removed, it
+    is released at once and nothing named '(replaced ...)' stays behind."""
+    ws = _page_screen()
+    _obs_with(ws).ensure_media_scene(SCENE, SOURCE, "start.mp4")
+    assert [n for n in ws.inputs if "replaced" in n] == []
+    assert [n for (_, n) in ws.items] == [SOURCE]
+    order = [c[0] for c in ws.calls]
+    assert order.index("rename") < order.index("unplace") < order.index("create")
+
+
+def test_the_old_page_leaves_every_scene_it_was_put_in():
+    """A user who also dropped the card into their own scene must not keep a
+    stale '(replaced 1)' page there."""
+    ws = _page_screen(also_in=["Gaming"])
+    _obs_with(ws).ensure_media_scene(SCENE, SOURCE, "start.mp4")
+    assert ("Gaming", SOURCE + " (replaced 1)") not in ws.items
+    assert [n for n in ws.inputs if "replaced" in n] == []
+
+
+def test_switching_back_and_forth_leaves_nothing_behind():
+    ws = _page_screen()
+    o = _obs_with(ws)
+    assert o.ensure_media_scene(SCENE, SOURCE, "start.mp4")
+    assert o.ensure_browser_scene(SCENE, SOURCE, "https://overlay.example/start")
+    assert ws.live(SOURCE)["kind"] == "browser_source"
+    assert sorted(ws.inputs) == [SOURCE]
+
+
+def test_and_back_from_a_file_to_a_page():
+    ws = _ScreensWs({SOURCE: {"kind": "ffmpeg_source", "settings": {"local_file": "a.mp4"}}},
+                    items=[(SCENE, SOURCE)])
+    assert _obs_with(ws).ensure_browser_scene(SCENE, SOURCE, "https://overlay.example/start")
+    assert ws.live(SOURCE)["kind"] == "browser_source"
+    assert ws.live(SOURCE)["settings"]["url"] == "https://overlay.example/start"
+
+
+def test_a_new_file_of_the_same_kind_is_still_an_edit_in_place():
+    """Kept on purpose: the source may have been moved or filtered by hand,
+    and changing the file must not throw that away."""
+    ws = _ScreensWs({SOURCE: {"kind": "ffmpeg_source", "settings": {"local_file": "old.mp4"}}},
+                    items=[(SCENE, SOURCE)])
+    assert _obs_with(ws).ensure_media_scene(SCENE, SOURCE, "new.mp4")
+    assert [c[0] for c in ws.calls] == ["settings"]
+    assert ws.live(SOURCE)["settings"]["local_file"] == "new.mp4"
+
+
+def test_a_page_no_scene_held_is_removed_outright():
+    """Taking items out releases a held source; one that sat in no scene has
+    nothing to release it, so that one is asked to go directly."""
+    ws = _ScreensWs({SOURCE: {"kind": "browser_source", "settings": {}}})
+    assert _obs_with(ws).ensure_media_scene(SCENE, SOURCE, "start.mp4")
+    assert ("remove", SOURCE + " (replaced 1)") in ws.calls
+    assert sorted(ws.inputs) == [SOURCE]
