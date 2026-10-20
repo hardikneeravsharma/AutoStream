@@ -1149,6 +1149,7 @@ def test_cancel_is_reported_as_cancelled_not_as_a_failure(root, tmp_path, monkey
         out.write_bytes(b"x")
         return ""
     monkeypatch.setattr(job, "_run_ff", fake_ff)
+    monkeypatch.setattr(job, "_retime", lambda seg, out, ff: out)
     job.run()
     snap = job.snapshot()
     assert snap["state"] == "cancelled", snap
@@ -2441,65 +2442,61 @@ def test_the_fast_paced_style_takes_its_effects_from_the_beat_not_the_bin():
 
 
 # ---- a speed change that looks like one -----------------------------------
+# The re-time itself is clips/retime.py, tested in test_retime.py; these are
+# the graph's side of it.
 
 
-def test_real_speed_is_left_alone():
+def test_real_speed_is_left_alone(root):
     """Most shots are not re-timed at all, and the cheapest thing to do about
     them is nothing -- including keeping the cache they already have."""
-    assert studio.rate_ops([(0.0, 2.0, 1.0)]) == [studio._setpts_expr([(0.0, 2.0, 1.0)]),
-                                                  f"fps={studio.FPS}"]
-    assert studio.smooth_tag([(0.0, 2.0, 1.0)]) == ""
+    _, _, segs = _built(root, speed="s00")
+    seg = segs[0]
+    assert not studio.retime.needed(seg.pieces)
+    argv = studio.segment_command(seg, Path("o.mp4"))
+    graph = argv[argv.index("-filter_complex") + 1]
+    assert graph.startswith("[0:v]setpts=") and argv.count("-i") == 1
+    assert "smooth" not in json.dumps(seg.__dict__) and "flow" not in seg.key()
 
 
-def test_slow_motion_fills_the_gap_instead_of_holding_a_frame():
-    """MEASURED on two seconds of real 1920x1080 footage at 0.3x: played the
-    old way, **71% of frames are identical to the one before them** -- that is
-    the judder. Interpolated, 0%."""
-    ops = studio.rate_ops([(0.0, 2.0, 0.3)])
-    assert any("minterpolate" in o for o in ops), ops
-    assert not any(o.startswith("fps=") for o in ops), ops
+def test_a_slowed_shot_is_drawn_from_its_retimed_clip_and_nothing_else(root):
+    """The re-timed clip is frame for frame what the shot shows, so the graph
+    takes it as it is: no setpts, and none of what the old path used to fake
+    smoothness -- `minterpolate=blend` ghosted and `tmix` smeared real speed."""
+    _, _, segs = _built(root, speed="s02")
+    seg = next(s for s in segs if studio.retime.needed(s.pieces))
+    argv = studio.segment_command(seg, Path("o.mp4"), retimed=Path("rt.mp4"))
+    graph = argv[argv.index("-filter_complex") + 1]
+    vchain = graph.split(";")[0]
+    assert vchain.startswith("[1:v]fps=60")
+    for gone in ("setpts='(", "minterpolate", "tmix"):
+        assert gone not in vchain, gone
+    assert argv[argv.index("rt.mp4") - 1] == "-i"
+    # the sound still comes from the clip itself, at real speed only
+    assert "[0:a:0]" in graph
 
 
-def test_slow_motion_blends_because_optical_flow_cannot_be_afforded():
-    """Same measurement: plain 1 s, blend 1 s, full optical flow (mci with
-    aobmc and vsbmc) **54 s** -- fifty-four times, which on a sixty-second reel
-    is half an hour of encoding. Blend removes the judder for nothing."""
-    ops = studio.rate_ops([(0.0, 2.0, 0.3)])
-    mi = [o for o in ops if "minterpolate" in o][0]
-    assert "mi_mode=blend" in mi
-    assert "mci" not in mi
-
-
-def test_a_speed_up_blurs_the_frames_it_throws_away():
-    """A camera blurs what moves while its shutter is open. Dropping frames
-    without it is what makes a fast cut read as missing rather than as fast."""
-    ops = studio.rate_ops([(0.0, 2.0, 3.0)])
-    assert ops[0].startswith("tmix=frames="), ops
-    # ...before the re-time, on source frames, so the frame that survives
-    # carries the average of the ones that did not.
-    assert ops[1].startswith("setpts=")
-
-
-def test_a_ramp_gets_both_because_it_is_both():
-    ops = studio.rate_ops([(0.0, 1.0, 2.5), (1.0, 2.0, 0.3)])
-    assert ops[0].startswith("tmix=") and any("minterpolate" in o for o in ops)
-    assert studio.smooth_tag([(0.0, 1.0, 2.5), (1.0, 2.0, 0.3)]) == "blur3+mci"
-
-
-def test_the_blur_is_a_ceiling_not_a_rounding():
-    """At 2.5x two frames become one, and `round` gives 2 for 2.5 because
-    Python rounds halves to even -- so the one case the threshold was chosen
-    for got the weakest blur there is."""
-    assert "frames=3" in studio.rate_ops([(0.0, 1.0, 2.5)])[0]
-    assert "frames=2" in studio.rate_ops([(0.0, 1.0, 1.4)])[0]
-
-
-def test_smoothing_is_in_the_cache_key_or_nothing_changes():
+def test_the_retime_is_in_the_cache_key_or_nothing_changes(root):
     """The key is built from a Segment's own fields, and `pieces` says what the
-    rates are but not what is done about them -- so the day this arrived, every
-    slowed shot already in a cache stayed exactly as juddery as it was."""
-    assert studio.smooth_tag([(0.0, 1.0, 0.3)]) == "mci"
-    assert studio.smooth_tag([(0.0, 1.0, 3.0)]) == "blur3"
+    rates are but not what is done about them -- so the day smoothing arrived,
+    every slowed shot already in a cache stayed exactly as it was."""
+    _, _, segs = _built(root, speed="s02")
+    seg = next(s for s in segs if studio.retime.needed(s.pieces))
+    before = seg.key()
+    plain = dict(seg.__dict__)
+    assert studio.retime.TAG in json.dumps(
+        {**plain, "smooth": studio.retime.TAG}) and before != studio.Segment(**{
+            **plain, "pieces": [[0.0, seg.frames / 60, 1.0]]}).key()
+
+
+def test_a_letterboxed_game_is_retimed_at_the_size_it_is_shown():
+    seg = studio.Segment(index=0, clip="c.mp4", clip_mtime=0, width=1080, height=1920, fmt="vertical",
+                         head=0, body=60, tail=0, src_start=0.0, pieces=[[0, 1, 0.5]], kill_at=0.5,
+                         fx=[], hero_fx=[], camera="c00", grade="g01", vignette=False, caption="",
+                         beats=[], freeze=0.0, freeze_push=False, has_audio=True,
+                         layout={"fit": "fit", "game": [0, 0, 1080, 1920]})
+    assert studio.retime_height(seg) == 720
+    seg.layout = {}
+    assert studio.retime_height(seg) == 1080
 
 
 # ---- putting a kill where the editor wants it -----------------------------

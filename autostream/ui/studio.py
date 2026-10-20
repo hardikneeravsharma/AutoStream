@@ -3629,14 +3629,19 @@ const ARRANGES = [
      every clip of three or more kills whole. Up to half a minute to plan. */
   {k: 'fit', name: 'Perfect fit (slower)',
    why: 'Makes EVERY kill land exactly on a beat, even the small ones, by trying many orders. ' +
-     'Slower (up to ~30 s), and the order is whatever fits best rather than the best moments first.'}
+     'Slower (up to ~30 s), and the order is whatever fits best rather than the best moments first.'},
+  /* clips/director.py: the clips by what they are, the song by its parts. */
+  {k: 'sections', name: 'Follow the song',
+   why: 'Your best clutch, ace or multi-kill plays as one take through the build and lands its last kill ' +
+     'on the drop. After the drop the reel cuts on the drums: doubles as quick runs, your cleanest ' +
+     'headshots on the biggest hits. Needs a song with a drop.'}
 ];
 
 /* THE SAME SIX, IN THE MAKE DIALOG, where the decision is actually taken.
    Drawn as cards rather than a segmented row: an arrangement needs its
    sentence to be choosable -- "Best order" and "Perfect fit" mean nothing as
    two words on a button, which is how they went unnoticed in the strip. */
-const ARRANGE_NOTE = {hits: 'recommended', fit: '~30 s to plan'};
+const ARRANGE_NOTE = {hits: 'recommended', fit: '~30 s to plan', sections: 'new'};
 
 function studio_mkArrangeDraw() {
   const host = studio_el('studio-mk-arrange');
@@ -10120,6 +10125,7 @@ async function studio_mix(what, announce, ride) {
    tells somebody deciding where to put a kill precisely nothing. */
 const SG_LANES = [
   {id: 'wave', h: 74, name: 'Loudness \u2014 where the song gets big'},
+  {id: 'hits', h: 92, name: 'Hits \u2014 every kick, snare and hat, and the song\u2019s parts'},
   {id: 'bands', h: 96, name: 'Drums \u2014 kick, snare and hi-hat, separately'},
   {id: 'flux', h: 70, name: 'New sounds \u2014 spikes are good places for a kill'},
   {id: 'spec', h: 128, name: 'Everything at once \u2014 bass low, cymbals high'}
@@ -10178,7 +10184,8 @@ function studio_svBuild() {
   const box = studio_el('studio-sg-lanes');
   if (!box) return;
   if (!studio.sv || !studio.sv.meta) { box.innerHTML = ''; studio_el('studio-sg-toggles').innerHTML = ''; return; }
-  studio.svShow = studio.svShow || {wave: true, bands: true, flux: false, spec: true};
+  studio.svShow = studio.svShow || {wave: true, hits: true, bands: true, flux: false, spec: true};
+  if (!studio.svShow.hasOwnProperty('hits')) studio.svShow.hits = true;
   studio_el('studio-sg-toggles').innerHTML = SG_LANES.map(l =>
     '<button type="button" class="studio-sg-toggle" data-act="studio-sg-lane" data-lane="' + l.id +
     '" aria-pressed="' + !!studio.svShow[l.id] + '">' + esc(l.name.split(' \u2014 ')[0]) + '</button>').join('');
@@ -10234,6 +10241,7 @@ function studio_svLaneDraw(id, c, v) {
     if (!fill) x.stroke();
   };
   if (id === 'wave') curve(studio_svLane('rms'), studio_tok('--accent'), true);
+  else if (id === 'hits') studio_svHits(x, m.rhythm, v, W, H, pad, X);
   else if (id === 'flux') curve(studio_svLane('flux'), studio_tok('--ok'), true);
   else if (id === 'bands') {
     curve(studio_svLane('low'), '#ff8a5c', false);
@@ -10301,6 +10309,51 @@ function studio_svLaneDraw(id, c, v) {
     x.fillStyle = studio_tok('--bad');
     x.fillRect(X(studio_svNow()) - 1, 0, 2, H);
   }
+}
+
+/* THE HITS LANE. clips/rhythm.py reads the song as layers -- the kick that
+   kills land on, the snare cuts land on, the hats the camera moves to -- and
+   the parts a reel is paced by. One row per layer, a tick per hit, as tall as
+   the hit is loud; the parts as a strip along the top, named. A curve shows a
+   band getting louder; it does not show where the hits ARE, which is what an
+   edit is timed to. */
+const SG_HIT_ROWS = [['kick', '#ff8a5c'], ['snare', '--accent'], ['hats', '#c98bff']];
+const SG_PARTS = {intro: 'Intro', verse: 'Verse', build: 'Build', riser: 'Rise', drop: 'Drop',
+                  groove: 'Groove', 'break': 'Break', outro: 'Outro'};
+
+function studio_svHits(x, r, v, W, H, pad, X) {
+  if (!r) {
+    x.fillStyle = studio_tok('--text-tertiary');
+    x.font = '12px system-ui, sans-serif';
+    x.fillText('The hits could not be read for this song.', 8, pad + 16);
+    return;
+  }
+  /* the parts: a band per section, the loud ones stronger */
+  (r.sections || []).forEach(s => {
+    if (s.end < v.t0 || s.start > v.t1) return;
+    const a = Math.max(0, X(s.start)), b = Math.min(W, X(s.end));
+    const hot = s.kind === 'drop' || s.kind === 'riser';
+    x.fillStyle = hot ? studio_tok('--warn') : studio_tok('--border-subtle');
+    x.globalAlpha = hot ? 0.45 : 0.6;
+    x.fillRect(a, 1, Math.max(1, b - a - 1), pad - 4);
+    x.globalAlpha = 1;
+    x.fillStyle = studio_tok('--text-secondary');
+    x.font = '11px system-ui, sans-serif';
+    if (b - a > 34) x.fillText(SG_PARTS[s.kind] || s.kind, a + 4, pad - 6);
+  });
+  const rowH = (H - pad - 4) / SG_HIT_ROWS.length;
+  SG_HIT_ROWS.forEach(([name, colour], i) => {
+    const L = r.layers && r.layers[name];
+    if (!L) return;
+    const base = pad + 2 + (i + 1) * rowH;
+    x.fillStyle = colour.startsWith('--') ? studio_tok(colour) : colour;
+    for (let k = 0; k < L.times.length; k++) {
+      const t = L.times[k];
+      if (t < v.t0 || t > v.t1) continue;
+      const h = Math.max(3, L.strength[k] * (rowH - 3));
+      x.fillRect(X(t) - 1, base - h, 2, h);
+    }
+  });
 }
 
 /* The songs already downloaded, so one can be picked without a file dialog. */
