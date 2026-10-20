@@ -70,6 +70,9 @@ def tesseract() -> str:
     failure message tells you to install ffmpeg, which would be actively
     misleading here.
     """
+    if sys.platform == "darwin":
+        from ..macos import deps as _mac
+        return _mac.tesseract()
     found = shutil.which("tesseract")
     if found:
         return found
@@ -189,7 +192,7 @@ def state() -> dict:
         path = _found(t["key"])
         tools.append({**t, "found": bool(path), "path": path})
     missing = [t["key"] for t in tools if not t["found"]]
-    return {
+    out = {
         "ok": "ffmpeg" not in missing,
         "tools": tools,
         "missing": missing,
@@ -198,6 +201,11 @@ def state() -> dict:
         "can_install": bool(winget()) and sys.platform == "win32",
         "installing": installer().running,
     }
+    # Homebrew's commands and wording in place of winget's -- macos/deps.py.
+    if sys.platform == "darwin":
+        from ..macos import deps as _mac
+        return _mac.decorate(out)
+    return out
 
 
 def forget() -> None:
@@ -346,5 +354,9 @@ _installer: Installer | None = None
 def installer() -> Installer:
     global _installer
     if _installer is None:
-        _installer = Installer()
+        if sys.platform == "darwin":
+            from ..macos import deps as _mac
+            _installer = _mac.BrewInstaller()
+        else:
+            _installer = Installer()
     return _installer

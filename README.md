@@ -9,6 +9,7 @@
 [![Latest release](https://img.shields.io/github/v/release/hardikneeravsharma/AutoStream?label=release)](https://github.com/hardikneeravsharma/AutoStream/releases/latest)
 [![Licence](https://img.shields.io/github/license/hardikneeravsharma/AutoStream)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![macOS](https://img.shields.io/badge/macOS-clips%20%26%20Studio-lightgrey)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 
 <img src="docs/img/dashboard.png" width="600" alt="The AutoStream dashboard while live: session timer, watching/likes/views counters, a viewer graph, OBS ingest health, and live chat">
@@ -40,6 +41,7 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
 - [Install](#install-the-easy-way)
 - [Your first week](#your-first-week)
 - [**Clipping a recording**](docs/CLIPPING.md) — the walkthrough, if clips are all you want
+- [**On a Mac**](#on-a-mac) — the clipper and the Studio, without streaming
 - [Install from source](#install-from-source)
 - [How it works](#how-it-works)
 - [Troubleshooting](#troubleshooting)
@@ -417,6 +419,24 @@ sessions, confirm it detects your games correctly, then switch to public in
 | **Quiet hours** | Optional window where it never auto-starts. Off by default; set it in Settings → Safety. |
 | **Veto list** | If a password manager or banking app is running, the entire session is vetoed and nothing streams. |
 | **Battery / disk / quota** | Won't start on battery, with under 25 GB free, or when your API quota is nearly spent. |
+
+---
+
+## On a Mac
+
+The clipper and the Studio also run on macOS (Apple Silicon or Intel, macOS 11+). Record
+on your Windows PC, copy the recording across, and cut it into clips, verticals, montages
+and reels on the Mac. The Mac build does not stream, and it never needs a game
+installed. The Dashboard, Library, OBS, YouTube and tray are not part of it.
+
+```bash
+brew install python ffmpeg-full      # ffmpeg-full: the plain formula cannot draw captions
+scripts/macos/install.sh
+.venv/bin/python -m autostream run   # or build the .app: scripts/macos/build.sh
+```
+
+**[docs/MACOS.md](docs/MACOS.md)** covers what works and what does not, where the app
+keeps its files, how the build works, and how the port is laid out.
 
 ---
 
@@ -941,6 +961,7 @@ Clips page shows what is missing and the rest of AutoStream is unaffected.
 | [`webui.py`](autostream/webui.py) | Local HTTP server and JSON API. |
 | [`ui/`](autostream/ui/) | The six-page web app: `shell`, `dashboard`, `library`, `clips`, `studio`, `settings`, `logs`, `setup`. |
 | [`window.py`](autostream/window.py) | Native window via pywebview (Edge WebView2). |
+| [`macos/`](autostream/macos/) | The macOS build: the clips-only launch, the window, paths, ffmpeg/VideoToolbox/fonts, Homebrew, the file picker. Reached only from behind `sys.platform == "darwin"`; see [docs/MACOS.md](docs/MACOS.md). |
 | [`cfg.py`](autostream/cfg.py) | Config load/merge with defaults, atomic writes. |
 
 ### Threading

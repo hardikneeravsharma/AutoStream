@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -144,7 +145,13 @@ def timeline(t: float) -> tuple[float, float]:
 def _font_file() -> str:
     """A bold sans that exists on the machine. The mark is a wordmark, so the
     face matters less than it being bold, wide and actually present."""
-    here = Path(os.environ.get("WINDIR") or "C:/Windows") / "Fonts"
+    if sys.platform == "darwin":
+        from ..macos import fonts as _mac
+        found = _mac.first(("arialbd.ttf", "segoeuib.ttf"))
+        if found:
+            return found
+        raise FileNotFoundError("no bold font to draw the mark with")
+    here =Path(os.environ.get("WINDIR") or "C:/Windows") / "Fonts"
     for name in ("arialbd.ttf", "segoeuib.ttf", "calibrib.ttf", "tahomabd.ttf", "verdanab.ttf"):
         f = here / name
         if f.is_file():

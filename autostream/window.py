@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import threading
 import time
 import webbrowser
@@ -91,6 +92,11 @@ def _screen() -> tuple[int, int, int, int]:
             return (m(76), m(77), m(78), m(79))
         except Exception:                               # noqa: BLE001
             pass
+    # Displays above or left of the main one are reachable on a Mac too, and
+    # a 1920x1080 guess calls them off screen -- macos/window.py.
+    if sys.platform == "darwin":
+        from .macos import window as _mac
+        return _mac.screen()
     return (0, 0, 1920, 1080)
 
 

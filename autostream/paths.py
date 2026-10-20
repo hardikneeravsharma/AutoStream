@@ -57,6 +57,11 @@ def _default_data_home() -> Path:
     base = os.environ.get("LOCALAPPDATA")
     if base:
         return Path(base) / "AutoStream"
+    # A Mac has a place for this, and it is not ~/.local -- see macos/paths.py.
+    # After LOCALAPPDATA, so a Windows run is decided before this is reached.
+    if sys.platform == "darwin":
+        from .macos import paths as _mac
+        return _mac.data_home()
     # Not Windows, or a stripped environment. XDG-ish, and still not ROOT.
     return Path(os.environ.get("XDG_DATA_HOME",
                                Path.home() / ".local" / "share")) / "autostream"
@@ -92,8 +97,16 @@ LOG_FILE = LOGS_DIR / "autostream.log"
 # it duly did, taking a stream's history and every clip cut from it. Video and
 # its metadata outlive any particular installation, so they live beside the
 # recordings instead.
+def _default_video_home() -> Path:
+    # ~/Movies is the Mac's ~/Videos; macos/paths.py says why it matters.
+    if sys.platform == "darwin":
+        from .macos import paths as _mac
+        return _mac.video_home()
+    return Path.home() / "Videos" / "AutoStream"
+
+
 VIDEO_HOME = Path(os.environ.get("AUTOSTREAM_VIDEO_HOME",
-                                 Path.home() / "Videos" / "AutoStream"))
+                                 _default_video_home()))
 
 # One line per finished session. state.json only ever holds the CURRENT
 # session and is wiped when it ends, so without this nothing survives to say

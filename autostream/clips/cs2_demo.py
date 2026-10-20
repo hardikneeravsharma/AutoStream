@@ -817,6 +817,11 @@ def request_download(code: str, steamid: str = "") -> bool:
     try:
         if sys.platform == "win32":
             os.startfile(link)  # noqa: S606 - a steam: protocol link, not a file
+        elif sys.platform == "darwin":
+            # The link asks the GAME to fetch the demo, and the Mac build is
+            # for footage recorded elsewhere: no game to ask (issue #193).
+            log.info("not asking for %s: Counter-Strike does not run here", code)
+            return False
         else:
             subprocess.Popen(["xdg-open", link])
         log.info("asked Counter-Strike to download %s", code)

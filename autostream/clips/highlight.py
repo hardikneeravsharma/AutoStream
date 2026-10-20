@@ -248,6 +248,13 @@ def _font(work: Path) -> bool:
     a path -- a Windows drive colon inside a filter graph needs escaping that
     differs between ffmpeg builds, and a missing fontconfig crashes drawtext."""
     import os
+    import sys
+    if sys.platform == "darwin":
+        from ..macos import fonts as _mac
+        found = _mac.first(FONTS)
+        if found:
+            shutil.copyfile(found, work / "title.ttf")
+        return bool(found)
     fonts = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
     for name in FONTS:
         if (fonts / name).is_file():

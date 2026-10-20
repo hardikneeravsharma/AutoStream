@@ -351,7 +351,7 @@ function shell_doc_title() {
 }
 
 function go(page) {
-  if (SHELL_PAGES.indexOf(page) < 0) page = 'dash';
+  if (SHELL_PAGES.indexOf(page) < 0) page = SHELL_BOOT.home || 'dash';
   shell_page = page;
   const views = document.querySelectorAll('.view');
   for (let i = 0; i < views.length; i++) {
@@ -568,6 +568,21 @@ function shell_bind() {
 
 /* ---------------- boot ---------------- */
 
+/* Pages this build cannot serve -- the Dashboard and Library on the macOS
+   clipper, which has no engine to drive them (issue #193). Taken out of the
+   rail and out of SHELL_PAGES, so go() sends a stale sessionStorage page to
+   SHELL_BOOT.home instead. Their views stay in the document, unshown; nothing
+   calls onShow on a page that cannot be reached. On Windows the list is
+   empty and this does nothing. */
+function shell_dropPages(pages) {
+  for (let i = 0; i < pages.length; i++) {
+    const at = SHELL_PAGES.indexOf(pages[i]);
+    if (at >= 0) SHELL_PAGES.splice(at, 1);
+    const btn = document.querySelector('.rail-btn[data-page="' + pages[i] + '"]');
+    if (btn) btn.remove();
+  }
+}
+
 async function shell_boot() {
   if (shell_booted) return;
   shell_booted = true;
@@ -583,6 +598,7 @@ async function shell_boot() {
   SHELL_BOOT = b || {};
   window.BOOT = SHELL_BOOT;      /* window property, not a lexical global, so a
                                     page declaring its own BOOT cannot clash */
+  shell_dropPages(SHELL_BOOT.hide_pages || []);
 
   if (SHELL_BOOT.mode === 'setup') {
     const app = document.querySelector('.app');
@@ -593,8 +609,8 @@ async function shell_boot() {
     return;
   }
 
-  let start = 'dash';
-  try { start = sessionStorage.getItem(SHELL_STORE_KEY) || 'dash'; } catch (e) { /* ok */ }
+  let start = SHELL_BOOT.home || 'dash';
+  try { start = sessionStorage.getItem(SHELL_STORE_KEY) || start; } catch (e) { /* ok */ }
   go(start);
   shell_loop();
 }

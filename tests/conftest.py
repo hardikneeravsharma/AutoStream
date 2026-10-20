@@ -32,6 +32,33 @@ for p in (str(REPO), str(HERE)):
         sys.path.insert(0, p)
 
 
+# ON A MAC, A SECOND DOOR SHUT. The Mac build reveals files with `open` and
+# picks them with AppleScript, both of which put a real window on the screen;
+# both refuse when this is set (macos/shell.py, webui.clips_pick). Windows
+# runs are untouched -- the harness there sets it per run, as it always has.
+if sys.platform == "darwin":
+    os.environ.setdefault("AUTOSTREAM_NO_DIALOGS", "1")
+
+
+def pytest_collection_modifyitems(config, items):              # noqa: ARG001
+    """On a Mac, skip the tests that pin Windows behaviour, each with its
+    reason -- see tests/macos/windows_only.py. A no-op anywhere else."""
+    if sys.platform != "darwin":
+        return
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_windows_only", HERE / "macos" / "windows_only.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    import pytest as _pytest
+
+    for item in items:
+        why = mod.reason_for(item.nodeid)
+        if why:
+            item.add_marker(_pytest.mark.skip(reason=f"Windows only: {why}"))
+
+
 import shutil                                                    # noqa: E402
 from collections import namedtuple                               # noqa: E402
 

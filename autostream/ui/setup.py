@@ -375,7 +375,7 @@ function setup_draw(){
         '<span class="pick-meta">A minute on Twitch or Kick, longer on YouTube</span>' +
       '</button>' +
     '</div>' +
-    '<div class="note"><b>Streaming needs</b> OBS Studio installed, and an ' +
+    '<div class="note" id="setup-streamnote"><b>Streaming needs</b> OBS Studio installed, and an ' +
     'account on whichever service you pick. On YouTube that account also ' +
     'needs live streaming already enabled, which can take 24 hours on a new ' +
     'channel - do that first at youtube.com.</div>' +
@@ -674,8 +674,22 @@ function setup_draw(){
      after the innerHTML, because the element it writes into does not exist
      until then. */
   if (at === 'connect') setup_connState();
+  setup_dropStreaming();
 
   setup_bar();
+}
+
+/* A build that cannot stream at all -- the macOS clipper, issue #193 -- says
+   so in /api/bootstrap, and the wizard then offers only the clipper. Removed
+   after drawing rather than branched into every card, so the Windows cards
+   stay exactly as written. */
+function setup_dropStreaming(){
+  const b = window.BOOT || {};
+  if ((b.unavailable || []).indexOf('streaming') < 0) return;
+  ['[data-act="wantStream"]', '#setup-streamnote', '#setup-golive'].forEach(sel => {
+    const el = document.querySelector('#setup-stepcard ' + sel);
+    if (el) el.remove();
+  });
 }
 
 /* ---------------- actions ---------------- */
@@ -922,7 +936,7 @@ async function setup_wantClips(){
     'Pick the video, pick the game, and it cuts the highlights.</div>' +
     '<div class="nav"><button type="button" class="btn btn-primary" ' +
     'data-act="openApp">Open AutoStream</button></div>' +
-    '<div class="note">Want it to go live later? Settings &rarr; Stream ' +
+    '<div class="note" id="setup-golive">Want it to go live later? Settings &rarr; Stream ' +
     '&rarr; <b>Go live</b>, and this wizard comes back to ask which ' +
     'service.</div>');
   const bar = setup_$('setup-stepbar');
@@ -931,6 +945,7 @@ async function setup_wantClips(){
   if (n) n.textContent = 'Done';
   const cnt = setup_$('setup-stepcount');
   if (cnt) cnt.textContent = 'Clips only';
+  setup_dropStreaming();
   setup_checkTools();
 }
 
@@ -974,18 +989,18 @@ async function setup_checkTools(){
     '</b>' +
     '<ul class="steps-list">' + rows + '</ul>' +
     (busy
-      ? '<p class="muted">' + esc(job.message || '') + ' Windows may ask for ' +
-        'permission &mdash; say yes.</p>'
+      ? '<p class="muted">' + esc(job.message || '') + (r.install_note ? '' : ' Windows may ask for ' +
+        'permission &mdash; say yes.') + '</p>'
       : (r.can_install
           ? '<button type="button" class="btn btn-block" data-act="installTools">' +
             'Install ' + (gaps.length === 1 ? 'it' : 'them') + ' now</button>' +
-            '<p class="muted">AutoStream installs ' +
+            '<p class="muted">' + esc(r.install_note || 'AutoStream installs ' +
             (gaps.length === 1 ? 'it' : 'them') + ' with winget. Windows will ' +
-            'ask for permission.</p>'
-          : '<p class="muted">winget is not on this PC, so install ' +
-            (gaps.length === 1 ? 'it' : 'them') + ' by hand:</p>' +
+            'ask for permission.') + '</p>'
+          : '<p class="muted">' + esc(r.manual_note || 'winget is not on this PC, so install ' +
+            (gaps.length === 1 ? 'it' : 'them') + ' by hand:') + '</p>' +
             '<pre class="mono">' + gaps.map(t =>
-              'winget install --id ' + esc(t.winget)).join('\n') + '</pre>')) +
+              esc(t.install || 'winget install --id ' + t.winget)).join('\n') + '</pre>')) +
     '<p class="muted" id="setup-toolmsg" role="status" aria-live="polite">' +
       esc((job && job.state === 'failed' && job.error) || '') + '</p>' +
     '</div>';
