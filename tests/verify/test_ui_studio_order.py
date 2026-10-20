@@ -25,7 +25,7 @@ import pytest
 pytestmark = pytest.mark.ui
 
 # Every arrangement the page offers, and what each sends as `arrange`.
-WANT = ["build", "time", "best", "shuffle", "hits", "fit"]
+WANT = ["build", "time", "best", "shuffle", "hits", "fit", "sections"]
 
 
 def _run(root, name, game, clips):
@@ -131,6 +131,23 @@ def test_the_two_that_cost_something_say_so(pg):
         return out; }""")
     assert notes.get("hits") == "recommended", notes
     assert "30 s" in (notes.get("fit") or ""), notes
+    assert notes.get("sections") == "new", notes
+
+
+def test_follow_the_song_takes_and_reaches_the_plan(pg):
+    """The arrangement clips/director.py plans: offered with what it does, and sent."""
+    _open_make(pg)
+    why = pg.inner_text('#studio-mk-arrange [data-how="sections"] .studio-mk-arr-why')
+    assert "drop" in why and "headshots" in why, why
+    pg.click('#studio-mk-arrange [data-how="sections"]')
+    pg.wait_for_function("() => studio.arrange === 'sections'")
+    sent = pg.evaluate("""() => { let body = null; const real = API.post;
+        API.post = function (u, b) {
+            if (u === '/api/studio/plan') { body = b; return Promise.resolve({ok: false}); }
+            return real.apply(this, arguments); };
+        studio_build();
+        API.post = real; return body; }""")
+    assert (sent or {}).get("shaping", {}).get("arrange") == "sections", sent
 
 
 def test_the_old_three_way_is_gone(pg):

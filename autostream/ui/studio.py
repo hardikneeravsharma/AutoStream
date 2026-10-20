@@ -3629,14 +3629,19 @@ const ARRANGES = [
      every clip of three or more kills whole. Up to half a minute to plan. */
   {k: 'fit', name: 'Perfect fit (slower)',
    why: 'Makes EVERY kill land exactly on a beat, even the small ones, by trying many orders. ' +
-     'Slower (up to ~30 s), and the order is whatever fits best rather than the best moments first.'}
+     'Slower (up to ~30 s), and the order is whatever fits best rather than the best moments first.'},
+  /* clips/director.py: the clips by what they are, the song by its parts. */
+  {k: 'sections', name: 'Follow the song',
+   why: 'Your best clutch, ace or multi-kill plays as one take through the build and lands its last kill ' +
+     'on the drop. After the drop the reel cuts on the drums: doubles as quick runs, your cleanest ' +
+     'headshots on the biggest hits. Needs a song with a drop.'}
 ];
 
 /* THE SAME SIX, IN THE MAKE DIALOG, where the decision is actually taken.
    Drawn as cards rather than a segmented row: an arrangement needs its
    sentence to be choosable -- "Best order" and "Perfect fit" mean nothing as
    two words on a button, which is how they went unnoticed in the strip. */
-const ARRANGE_NOTE = {hits: 'recommended', fit: '~30 s to plan'};
+const ARRANGE_NOTE = {hits: 'recommended', fit: '~30 s to plan', sections: 'new'};
 
 function studio_mkArrangeDraw() {
   const host = studio_el('studio-mk-arrange');

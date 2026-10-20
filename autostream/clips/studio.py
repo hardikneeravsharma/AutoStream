@@ -73,7 +73,7 @@ from pathlib import Path
 from typing import Any
 
 from . import (facecam, hits as hits_mod, lyrics as lyrics_mod, mark as mark_mod,
-               parts as parts_mod, rulebook, studio_refs, valorant_match)
+               fx_schedule, parts as parts_mod, retime, rulebook, studio_refs, valorant_match)
 
 log = logging.getLogger(__name__)
 
@@ -1330,9 +1330,19 @@ def pieces(speed: str, dur: float, pre: float,
 
 def shot_pieces(shot: dict, dur: float | None = None, pre: float | None = None,
                 speed: str | None = None) -> list[tuple[float, float, float]]:
-    """pieces() for a shot as it stands, stretch and its own later kills included."""
-    return pieces(speed or shot["speed"], shot["duration"] if dur is None else dur,
-                  shot["pre"] if pre is None else pre, _stretch_of(shot), _own_after(shot))
+    """pieces() for a shot as it stands, stretch and its own later kills included.
+
+    A shot with `anchors` is timed by them, as segments() renders it: derive()
+    and the preview used the speed part instead, so a dragged kill -- or a
+    double the director put on two hits -- previewed and drew where it was not.
+    """
+    d = shot["duration"] if dur is None else dur
+    p = shot["pre"] if pre is None else pre
+    if shot.get("anchors") and speed is None:
+        pts = [(min(p, d), float(shot["kill"]))] + [(float(o), float(src)) for src, o in shot["anchors"]
+                                                    if 0.0 <= float(o) <= d]
+        return fit_pieces(pts, d)[0]
+    return pieces(speed or shot["speed"], d, p, _stretch_of(shot), _own_after(shot))
 
 
 def _own_after(shot: dict) -> float:
@@ -1721,6 +1731,88 @@ def _plan_fit(clips: list[dict], style_key: str, *, shape_it: dict, **kw) -> tup
         return proj, ["Perfect fit could not plan this reel, so it was planned the usual way."] + notes
 
 
+def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part, seed,
+                   checks: bool, confirm, theirs, refine, shape_it: dict, **kw) -> tuple[dict, list[str]]:
+    """FOLLOW THE SONG: the set-up builds into the drop, the drums cut the rest -- see director.
+
+    The project around the shots -- look, sound, overlays, lyrics -- is the
+    style's, from an ordinary plan of the same clips; the shots, the part and
+    the marks are the director's. Without a song, or with nothing in the clips
+    to build with, it plans Best order and says why.
+    """
+    from . import director, rhythm
+
+    base_it = dict(shape_it, arrange="hits")
+    if not song or shape is None or not getattr(shape, "beats", None):
+        proj, notes = plan(clips, style_key, shape=shape, song=song, part=part, seed=seed, checks=checks,
+                           confirm=confirm, theirs=theirs, refine=refine, shape_it=base_it, **kw)
+        proj["arrange"] = "sections"
+        return proj, ["Follow the song needs a song; this reel was planned in Best order."] + notes
+    # The project around the shots only: no kill checks, which decode every clip.
+    proj, notes = plan(clips, style_key, shape=shape, song=song, part=part, seed=seed,
+                       shape_it=base_it, **{k: v for k, v in kw.items() if k != "measure"})
+    proj["arrange"] = "sections"
+    chosen = {c["path"]: dict(c) for c in clips if c and c.get("path")}
+    hs_at = {(p, round(float(k), 3)): bool(h) for p, c in chosen.items()
+             for k, h in zip(c.get("kills") or [], list(c.get("hs") or []) + [False] * 99)}
+    if checks:
+        have = plan_checks()
+        confirm, theirs, refine = (confirm or have.get("confirm"), theirs or have.get("theirs"),
+                                   refine or have.get("refine"))
+    # THE KILL CHECKS ON THE CLIPS IT USES, NOT ALL OF THEM. The ordinary plan reads
+    # every chosen clip's kill emblem; asked to make a reel from 150 favourites that
+    # took 13 minutes, for the 25 that went in. So: plan, check the clips used, plan
+    # again with what the checks said, until the clips used have all been checked.
+    checked: set[str] = set()
+    seed_n = int(seed if seed is not None else proj.get("seed") or 0)
+    rh = rhythm.for_song(shape)
+    got = None
+    for _ in range(4):
+        try:
+            got = director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n)
+        except ValueError as e:
+            return proj, [f"{e} This reel was planned in Best order."] + notes
+        todo = [chosen[s["clip"]] for s in got.shots if s["clip"] not in checked and s["clip"] in chosen]
+        todo = list({c["path"]: c for c in todo}.values())
+        if not todo or (confirm is None and refine is None):
+            break
+        fixed = todo
+        if confirm is not None:
+            fixed = _confirm_kills(fixed, confirm, theirs)[0]
+        if refine is not None:
+            fixed = _refine_kills(fixed, refine)[0]
+        for c in todo:
+            checked.add(c["path"])
+            chosen.pop(c["path"], None)       # an emblem check that found no kill drops the clip
+        for c in fixed:
+            own = [(k, h) for (p, k), h in hs_at.items() if p == c["path"]]
+            c["hs"] = [any(h for k0, h in own if abs(k0 - float(k)) <= SNAP_AFTER + 0.05)
+                       for k in c.get("kills") or []]
+            chosen[c["path"]] = c
+    else:
+        try:
+            got = director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n)
+        except ValueError as e:
+            return proj, [f"{e} This reel was planned in Best order."] + notes
+    proj["shots"] = got.shots
+    proj["song_offset"] = round(got.part[0], 5)
+    proj["song_marks"] = [round(t, 4) for t in got.marks]
+    proj["part_end"] = round(got.part[1], 5)
+    proj["song_drop"] = round(got.drop, 4)
+    proj["intro"] = "i00"                    # the take is the opening; nothing is laid over it
+    # the other layers drive the camera and the light; the beat engine's flips would fight them
+    proj["groove"] = fx_schedule.schedule(rh, got.part[0], got.part[1], got.marks, got.drop)
+    proj["overlays"] = [o for o in proj.get("overlays") or [] if fam(o) != "o09"]
+    used = {s["clip"] for s in got.shots}
+    proj["selection"] = [{"clip": c["path"], "name": str(c.get("name") or Path(c["path"]).stem),
+                          "why": "" if c["path"] in used else
+                          "Not needed: the set-up and the hits after the drop were filled by other clips."
+                          if c["path"] in chosen else
+                          "No kill showed on screen: the game's kill icon never appeared in this clip."}
+                         for c in clips if c and c.get("path")]
+    return proj, got.notes
+
+
 # THE FAST-CUT RULES (K2, K3, K4), all measured on one reel: headshot3, Hype, 150 BPM.
 #
 #   * The misses. Six shots the player flagged as missing their kill were read by eye:
@@ -1902,6 +1994,11 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                          max_seconds=max_seconds, seed=seed, measure=measure, confirm=confirm,
                          theirs=theirs, refine=refine, checks=checks, part=part,
                          template=template, shape_it=shape_it)
+    if str((shape_it or {}).get("arrange") or "") == "sections":
+        return _plan_sections(clips, style_key, shape=shape, song=song, fmt=fmt, name=name,
+                              max_seconds=max_seconds, seed=seed, measure=measure, confirm=confirm,
+                              theirs=theirs, refine=refine, checks=checks, part=part,
+                              template=template, shape_it=shape_it)
     style = STYLE.get(style_key) or STYLE[DEFAULT_STYLE]
     fast = fast_reel(style, getattr(shape, "bpm", None))
     if fast:
@@ -3949,6 +4046,9 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
             drop = project.get("song_drop")
             out["song_drop"] = (round(_num(drop, 0.0, 36000.0, 0.0), 4)
                                 if drop is not None else None)
+            # The groove the song's layers drive (fx_schedule), in song seconds.
+            if (groove := fx_schedule.clamp(project.get("groove"))):
+                out["groove"] = groove
             # Where the chosen part ends, so the Song tab and a rebuild reopen
             # on the part the player picked rather than on the reel's length.
             end = _num(project.get("part_end"), 0.0, 36000.0, 0.0)
@@ -4552,10 +4652,10 @@ class Segment:
         # are but not what is done about them -- so the day smoothing arrived,
         # every slowed shot in every cache stayed exactly as juddery as it was
         # and the change looked like it had not worked. Added only when there
-        # is smoothing to name, so a shot at real speed keeps the cache and the
+        # is re-timing to name, so a shot at real speed keeps the cache and the
         # render it already had.
-        if (tag := smooth_tag(self.pieces)):
-            d["smooth"] = tag
+        if retime.needed(self.pieces):
+            d["smooth"] = retime.TAG
         blob = json.dumps(d, sort_keys=True, default=str)
         return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:20]
 
@@ -4730,7 +4830,7 @@ def _cam_input(seg: Segment, src_len: float) -> list[str]:
 
 
 def _layout_graph(seg: Segment, time_ops: list[str], effects: list[str], end: str,
-                  FW: int, FH: int) -> str:
+                  FW: int, FH: int, vin: int = 0) -> str:
     """The video graph for a shot with a layout: the game framed into its area
     with its effects, the camera cut out and placed, one frame out.
 
@@ -4745,9 +4845,9 @@ def _layout_graph(seg: Segment, time_ops: list[str], effects: list[str], end: st
     camb = lay.get("cam")
     g = []
     if camb and not seg.cam_file:
-        g.append("[0:v]" + ",".join(time_ops) + ",split[gt][ct]")
+        g.append(f"[{vin}:v]" + ",".join(time_ops) + ",split[gt][ct]")
     else:
-        g.append("[0:v]" + ",".join(time_ops) + "[gt]")
+        g.append(f"[{vin}:v]" + ",".join(time_ops) + "[gt]")
     if camb and seg.cam_file:
         cam_ops = [_setpts_expr(seg.pieces), f"fps={FPS}"]
         if seg.cam_start < 0:
@@ -4802,74 +4902,47 @@ def _setpts_expr(ps: list) -> str:
     return f"setpts='({expr})/TB'"
 
 
-# MAKING A SPEED CHANGE LOOK LIKE ONE. Until now a shot's rate was a `setpts`
-# expression and nothing else, so slow motion held the same frame several times
-# -- which reads as judder, not as slow -- and a speed-up threw frames away,
-# which reads as a strobe. Neither is what an editor means by a ramp.
-#
-# Slow is fixed by SYNTHESISING the missing frames rather than repeating one.
-# Measured on a real clip at 0.3x: 1 s plain against 4 s interpolated for the
-# same three seconds of source. Four times the cost, and only on the shots that
-# are actually slowed.
-#
-# Fast is fixed by BLURRING the frames that are about to be discarded into the
-# one that survives, which is what a camera does and what makes a fast cut read
-# as fast rather than as missing. `tmix` runs before the re-time, on source
-# frames, so the frame that survives carries the average of the ones that did
-# not.
-SMOOTH_SLOW = 0.85             # at or below this, interpolate
-SMOOTH_FAST = 1.30             # at or above this, blur
-BLUR_FRAMES_MAX = 5            # a longer mix smears rather than blurs
+# MAKING A SPEED CHANGE LOOK LIKE ONE. A shot whose rate ever leaves real speed
+# is re-timed before its graph runs (clips/retime.py): the speed eased through
+# every change, slow motion from optical flow, speed-ups through a shutter. The
+# graph then takes that clip frame for frame. What it replaced -- the rates as
+# one stepped setpts, `minterpolate=blend` under the slow parts and a `tmix`
+# over the whole clip -- was measured against the same reels cut by hand and
+# called "blended and fast-forwarded"; it is gone, not kept as a fallback.
 
 
-def smooth_tag(pieces: list) -> str:
-    """What smoothing these rates ask for, as a short string for a cache key.
+def retime_height(seg: Segment) -> int:
+    """Rows of source a re-timed shot needs: what the reel actually shows of it.
 
-    Empty when there is none, which is what keeps an unsmoothed shot's cache.
+    Optical flow costs twice as much at 1080 rows as at 720 (15 s against 7 s
+    for 0.6 s of source), so a game letterboxed into a vertical reel -- 608
+    rows on screen -- is re-timed at 720, and anything cropped from the full
+    height at 1080.
     """
-    rates = [float(r) for _a, _b, r in pieces] or [1.0]
-    bits = []
-    if max(rates) >= SMOOTH_FAST:
-        bits.append(f"blur{max(2, min(BLUR_FRAMES_MAX, math.ceil(max(rates))))}")
-    if min(rates) <= SMOOTH_SLOW:
-        bits.append("mci")
-    return "+".join(bits)
+    lay = seg.layout or {}
+    if lay.get("fit") == "fit":
+        GW, GH = float(lay["game"][2]), float(lay["game"][3])
+        return 720 if min(GH, GW * 9 / 16) <= 720 else 1080
+    return 1080
 
 
-def rate_ops(pieces: list, fps: int = FPS) -> list[str]:
-    """The re-time, with whatever smoothing its rates ask for.
-
-    A shot's `pieces` can hold several rates -- a ramp is fast in and slow on
-    the kill -- so both treatments can apply to one shot. The blur is mild at
-    real speed (two frames at 60 fps is a sixtieth of a second) and the
-    interpolation only has work to do where the stream is below `fps`, so
-    neither hurts the stretches it was not chosen for.
-    """
-    rates = [float(r) for _a, _b, r in pieces] or [1.0]
-    pre: list[str] = []
-    if max(rates) >= SMOOTH_FAST:
-        # Ceiling, not round: at 2.5x two frames become one, and `round` gives
-        # 2 for 2.5 because Python rounds halves to even -- so the one case the
-        # threshold was chosen for got the weakest blur there is.
-        pre.append(f"tmix=frames={max(2, min(BLUR_FRAMES_MAX, math.ceil(max(rates))))}")
-    if min(rates) <= SMOOTH_SLOW:
-        # BLEND, NOT MOTION COMPENSATION. Measured on two seconds of real
-        # 1920x1080 footage at 0.3x: plain 1 s, `mi_mode=blend` 1 s, and full
-        # optical flow (`mci` with aobmc and vsbmc) **54 s** -- fifty-four
-        # times the cost, which on a sixty-second reel is half an hour of
-        # encoding for shots nobody asked to wait for. A lighter mci (obmc,
-        # epzs) is still 27 s. Blend cross-fades between the two real frames
-        # instead of holding one, which is what removes the judder; optical
-        # flow would look better again and cannot be afforded.
-        post = [f"minterpolate=fps={fps}:mi_mode=blend"]
-    else:
-        post = [f"fps={fps}"]
-    return pre + [_setpts_expr(pieces)] + post
+def _time_ops(seg: Segment, retimed: bool, lead: float) -> list[str]:
+    """The re-time in the graph: none for a re-timed clip, the plain map at real speed."""
+    if retimed:
+        return [f"fps={FPS}"]
+    v = [_setpts_expr(seg.pieces), f"fps={FPS}"]
+    if lead > 1e-3:
+        v.append(f"tpad=start_duration={lead:.4f}:start_mode=clone")
+    return v
 
 
 def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=None,
-                    textdir: Path | None = None) -> list[str]:
-    """ffmpeg argv that renders one shot, handles included, to `out`."""
+                    textdir: Path | None = None, retimed: Path | None = None) -> list[str]:
+    """ffmpeg argv that renders one shot, handles included, to `out`.
+
+    `retimed` is the shot's footage from retime.render(), one frame per output
+    frame; a shot whose pieces leave real speed is rendered from it.
+    """
     W, H, F = seg.width, seg.height, FPS
     total = seg.frames                  # a freeze replaces footage; it never lengthens a shot
     total_s = total / F
@@ -4877,10 +4950,10 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     src_len = sum((b - a) * r for a, b, r in seg.pieces)
     start = max(0.0, seg.src_start)
     lead = start - seg.src_start          # > 0 only if the clip starts late; padded below
+    # the picture's input: the re-timed clip after the clip itself and any camera file
+    vin = (2 if seg.cam_file else 1) if retimed else 0
 
-    v = rate_ops(seg.pieces, F)
-    if lead > 1e-3:
-        v.append(f"tpad=start_duration={lead:.4f}:start_mode=clone")
+    v = _time_ops(seg, bool(retimed), lead)
     if seg.freeze > 0:
         v.append(f"loop=loop={round(seg.freeze * F)}:size=1:start={round(kt * F)}")
         v.append(f"setpts=N/{F}/TB")
@@ -5083,9 +5156,9 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
                  f"x=(w-tw)/2:y=h*0.68:enable='{_between(kt, kt + 1.4)}'")
     end = f"format=yuv420p,trim=end_frame={total},setpts=PTS-STARTPTS"
     if not lay:
-        vchain = "[0:v]" + ",".join(v + [end]) + "[v]"
+        vchain = f"[{vin}:v]" + ",".join(v + [end]) + "[v]"
     else:
-        vchain = _layout_graph(seg, time_ops, v, end, FW, FH)
+        vchain = _layout_graph(seg, time_ops, v, end, FW, FH, vin)
 
     # Game audio: the clip's own sound at real speed; silence where the
     # footage is slowed or sped (a stretched gunshot sounds broken, and the
@@ -5135,6 +5208,7 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     return [ff, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
             "-ss", f"{start:.4f}", "-t", f"{src_len + 0.5:.4f}", "-i", seg.clip,
             *_cam_input(seg, src_len),
+            *(["-i", str(retimed)] if retimed else []),
             "-filter_complex", vchain + ";" + achain,
             "-map", "[v]", "-map", "[a]", "-r", str(F), *enc,
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
@@ -5201,6 +5275,16 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         acc_label = lab
 
     post = []
+    # THE GROOVE (clips/fx_schedule.py): the camera's bounce on the kicks and
+    # hats, the push into the drop, a pop on the snares -- on the reel's own
+    # clock, which is why it is here and not in a shot: it runs on across every
+    # cut. First, so nothing drawn over the picture later bounces with it.
+    if (groove := project.get("groove")):
+        off = float(project.get("song_offset") or 0.0)
+        if (z := fx_schedule.zoom_expr(groove, off, L)):
+            post.append(f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={F}")
+        if (b := fx_schedule.pop_expr(groove, off, L)):
+            post.append(f"eq=brightness='{b}':eval=frame")
     intro, outro = project["intro"], project["outro"]
     # AN INTRO AS LONG AS WHAT IT HAS TO COVER. Normally its own length: a
     # second of fade, a third of a second of flash, over an opener that reaches
@@ -5787,6 +5871,22 @@ class StudioJob:
             _unlink(listing)
             _unlink(joined)
 
+    def _retime(self, seg: "Segment", out: Path, ff: str) -> Path:
+        """The shot's footage re-timed (clips/retime.py), for its graph to take as it is."""
+        from .tools import media_info
+
+        info = media_info(seg.clip)
+        try:
+            return retime.render(
+                seg.clip, seg.src_start, seg.pieces, seg.frames, out,
+                kills=[seg.kill_at, *seg.kill_times],
+                size=retime.work_size(info.get("width", 0), info.get("height", 0), retime_height(seg)),
+                ff=ff, work=out.parent, cancelled=self._cancel.is_set)
+        except RuntimeError:
+            if self._cancel.is_set():
+                raise Cancelled("cancelled")
+            raise
+
     def run(self) -> None:
         from .tools import binary, media_info, video_codec_args
         self._set(state="running")
@@ -5814,21 +5914,28 @@ class StudioJob:
                       cached=len(segs) - len(todo),
                       message=f"Rendering {len(todo)} of {len(segs)} shots")
             enc_seg = video_codec_args("auto", cq=16)
+            retimes = self.root / CACHE_DIR / "retime"
             for j, (s, f) in enumerate(todo):
                 self._set(step="shots", message=f"Shot {s.index + 1} of {len(segs)}")
                 tmp = f.with_suffix(".part.mp4")
+                rt = None
+                rt_file = retimes / f"{s.key()}.mp4"
                 try:
-                    self._run_ff(segment_command(s, tmp, ff, enc_seg, textdir))
+                    if retime.needed(s.pieces):
+                        self._set(message=f"Shot {s.index + 1} of {len(segs)}: smoothing its speed")
+                        rt = self._retime(s, rt_file, ff)
+                    self._run_ff(segment_command(s, tmp, ff, enc_seg, textdir, rt))
                 except Cancelled:
                     # A subclass of RuntimeError: re-wrapped below, a Cancel
                     # the user pressed was reported as a failed render.
                     raise
                 except RuntimeError as e:
-                    _keep_failure(self.root, self.project, s, segment_command(s, tmp, ff, enc_seg, textdir), e)
+                    _keep_failure(self.root, self.project, s, segment_command(s, tmp, ff, enc_seg, textdir, rt), e)
                     raise RuntimeError(f"Shot {s.index + 1} ({Path(s.clip).name}): {e}") from e
                 finally:
                     if not tmp.is_file() or self._cancel.is_set():
                         _unlink(tmp)
+                    _unlink(rt_file)
                 tmp.replace(f)
                 self._set(done=len(segs) - len(todo) + j + 1)
             # THE JOIN IS THE LONG PART when the shots are cached -- 258 s of a

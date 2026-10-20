@@ -435,18 +435,24 @@ def analyse_signal(x: np.ndarray, *, beat: float, phase: float, downbeat_pos: in
                   layers=layers, cues=cluster(layers), energy=energy, sections=secs)
 
 
+_MEMO: dict[str, Rhythm] = {}
+
+
 def for_song(shape, cache_dir: Path | None = None) -> Rhythm:
-    """The rhythm of the song a reel.Shape was read from, cached when a directory is given."""
+    """The rhythm of the song a reel.Shape was read from: kept in memory for the
+    process, and on disk when a directory is given."""
     path = Path(shape.path)
-    key = None
+    st = path.stat()
+    key = hashlib.sha1(f"{SCHEMA}|{path.resolve()}|{st.st_size}|{int(st.st_mtime)}|"
+                       f"{shape.seconds:.2f}|{shape.beat:.6f}|{shape.phase:.4f}".encode()).hexdigest()[:16]
+    if key in _MEMO:
+        return _MEMO[key]
     if cache_dir is not None:
-        st = path.stat()
-        key = hashlib.sha1(f"{SCHEMA}|{path.resolve()}|{st.st_size}|{int(st.st_mtime)}|"
-                           f"{shape.seconds:.2f}|{shape.beat:.6f}|{shape.phase:.4f}".encode()).hexdigest()[:16]
         f = Path(cache_dir) / f"rhythm-{key}.json"
         if f.is_file():
             try:
-                return Rhythm.from_dict(json.loads(f.read_text(encoding="utf-8")))
+                r = Rhythm.from_dict(json.loads(f.read_text(encoding="utf-8")))
+                return _remember(key, r)
             except (OSError, ValueError, KeyError, TypeError):
                 pass
     from . import beatsync as bs
@@ -460,10 +466,17 @@ def for_song(shape, cache_dir: Path | None = None) -> Rhythm:
              path.name, r.layers["kick"].median_gap(), r.layers["snare"].median_gap(),
              r.layers["hats"].median_gap(), r.kick_offset,
              ", ".join(f"{s.kind}@{s.start:.1f}" for s in r.sections))
-    if cache_dir is not None and key:
+    if cache_dir is not None:
         try:
             Path(cache_dir).mkdir(parents=True, exist_ok=True)
             (Path(cache_dir) / f"rhythm-{key}.json").write_text(json.dumps(r.as_dict()), encoding="utf-8")
         except OSError as e:
             log.info("rhythm: could not cache (%s)", e)
+    return _remember(key, r)
+
+
+def _remember(key: str, r: Rhythm) -> Rhythm:
+    while len(_MEMO) >= 6:
+        _MEMO.pop(next(iter(_MEMO)))
+    _MEMO[key] = r
     return r

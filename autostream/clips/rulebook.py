@@ -476,7 +476,10 @@ ARRANGEMENTS = ("build", "time", "best", "shuffle", "hits",
                 # studio.plan() hands the whole reel to arrange_fit.plan(),
                 # which searches the order and the song together. Here it is
                 # only a name normalise() keeps; order() treats it as build.
-                "fit")
+                "fit",
+                # "Follow the song": the same, handed to director.plan() --
+                # a set-up take into the drop, the drums after it.
+                "sections")
 # Where the climax sits when a reel is built rather than ordered by hand: about
 # two thirds in, which is where the reference edits put theirs.
 CLIMAX_AT = 2 / 3
