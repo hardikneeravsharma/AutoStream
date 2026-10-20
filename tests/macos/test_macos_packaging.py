@@ -6,6 +6,7 @@ import glob
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -78,7 +79,8 @@ def test_the_dmg_keeps_the_bundle_whole_and_its_name_stable():
     assert 'DMG="$OUT/AutoStream-macos-$ARCH.dmg"' in src
 
 
-@pytest.mark.skipif(not shutil.which("bash"), reason="no bash on this machine")
+@pytest.mark.skipif(sys.platform != "darwin" or not shutil.which("bash"),
+                    reason="the Mac's own bash is the one these scripts run under")
 @pytest.mark.parametrize("script", [BUILD, INSTALL], ids=lambda p: p.name)
 def test_the_scripts_parse(script):
     assert subprocess.run(["bash", "-n", str(script)]).returncode == 0

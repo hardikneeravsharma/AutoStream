@@ -36,16 +36,19 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 # ---------------------------------------------------------------- 1. Python
-PY=""
-for cand in python3.14 python3.13 python3.12 python3; do
-  for dir in "" /opt/homebrew/bin/ /usr/local/bin/; do
-    exe="${dir}${cand}"
-    if command -v "$exe" >/dev/null 2>&1 && \
-       "$exe" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null; then
-      PY="$(command -v "$exe")"; break 2
-    fi
+# $PYTHON wins when set (CI points it at the interpreter it installed).
+PY="${PYTHON:+$(command -v "$PYTHON")}"
+if [[ -z "$PY" ]]; then
+  for cand in python3.14 python3.13 python3.12 python3; do
+    for dir in "" /opt/homebrew/bin/ /usr/local/bin/; do
+      exe="${dir}${cand}"
+      if command -v "$exe" >/dev/null 2>&1 && \
+         "$exe" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null; then
+        PY="$(command -v "$exe")"; break 2
+      fi
+    done
   done
-done
+fi
 if [[ -z "$PY" ]]; then
   warn "no Python 3.12 or newer found. Install one with:  brew install python"
   exit 1

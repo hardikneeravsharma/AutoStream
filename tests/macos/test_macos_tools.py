@@ -38,7 +38,7 @@ def test_a_prefix_is_found_without_it_being_on_path(monkeypatch, tmp_path):
 
 
 def test_extend_path_appends_and_never_duplicates(monkeypatch, tmp_path):
-    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("PATH", os.pathsep.join(["/usr/bin", "/bin"]))
     monkeypatch.setattr(mac, "PREFIXES", (tmp_path / "a", tmp_path / "b"))
     mac.extend_path()
     mac.extend_path()

@@ -12,6 +12,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:          # run both on any branch, from the Actions tab
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -63,5 +64,6 @@ jobs:
           python-version: "3.13"
       # The full build: the plain formula has no drawtext or ass (docs/MACOS.md).
       - run: brew install ffmpeg-full
-      - run: scripts/macos/install.sh --dev
+      # The interpreter setup-python installed: Homebrew's has no tkinter.
+      - run: PYTHON=python scripts/macos/install.sh --dev
       - run: .venv/bin/python -m pytest -q

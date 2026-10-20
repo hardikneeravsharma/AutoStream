@@ -20,6 +20,10 @@ def home(monkeypatch, tmp_path):
     launch.release()
 
 
+_FLOCK = pytest.mark.skipif(sys.platform == "win32", reason="flock is Unix; the Mac lock never runs on Windows")
+
+
+@_FLOCK
 def test_one_at_a_time(home):
     assert launch.acquire() is True
     # flock is per open file, so a second open in this process is refused --
@@ -35,6 +39,7 @@ def test_the_lock_is_in_the_data_folder_not_the_program_folder(home):
     assert launch._lock_path().parent == home
 
 
+@_FLOCK
 def test_a_test_instance_takes_its_own_lock(home, monkeypatch):
     assert launch.acquire() is True
     monkeypatch.setenv("AUTOSTREAM_INSTANCE", "verify-1234")

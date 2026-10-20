@@ -93,7 +93,7 @@ def test_the_mac_answer_matches_the_windows_answer(server, tmp_path, monkeypatch
     server._picked = set()
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.delenv("AUTOSTREAM_NO_DIALOGS", raising=False)
-    import tkinter
+    tkinter = pytest.importorskip("tkinter")    # Windows' picker is the comparison
     from tkinter import filedialog
 
     monkeypatch.setattr(tkinter, "Tk", lambda: types.SimpleNamespace(

@@ -19,6 +19,8 @@ is asserted from the source instead, in test_surface.py.
 """
 from __future__ import annotations
 
+import urllib.error
+
 import catalog
 import pytest
 from catalog import CALL, CONTROLS
@@ -242,7 +244,13 @@ def test_no_post_route_crashes_on_a_json_array(server, c):
 
 
 def test_an_oversized_body_is_refused_rather_than_read_into_memory(server):
-    r = server.post("/api/chat", raw=b'{"text":"' + b"x" * (2 * 1024 * 1024) + b'"}')
+    try:
+        r = server.post("/api/chat", raw=b'{"text":"' + b"x" * (2 * 1024 * 1024) + b'"}')
+    except urllib.error.URLError as e:
+        # The server answered and closed before the upload finished, so the
+        # client's own write broke (macOS says EPIPE): refused, unread.
+        assert isinstance(e.reason, (BrokenPipeError, ConnectionResetError)), e
+        return
     assert r.status in (400, 413, 403), f"a 2 MiB body answered {r.status}"
 
 
