@@ -17,6 +17,8 @@ No ffmpeg is needed -- subprocess is faked, so this runs on any machine.
 from __future__ import annotations
 
 import subprocess
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -59,6 +61,9 @@ def ffmpeg(monkeypatch, tmp_path):
         # The probe itself: the step that needs a real card.
         joined = " ".join(args)
         if "libx264" in joined:                                   # the sample file
+            # Written, as a real run would. Without it the AMD path only passed
+            # on a machine where a real run had left one in the temp folder.
+            Path(args[-1]).write_bytes(b"\0")
             return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
         if "-hwaccel" in args and "h264_amf" in args and state.amf_on_other_card:
             return SimpleNamespace(returncode=1, stdout=b"",
@@ -76,6 +81,9 @@ def ffmpeg(monkeypatch, tmp_path):
     monkeypatch.setattr(tools, "binary", lambda name: name)
     monkeypatch.setattr(tools.subprocess, "run", fake_run)
     monkeypatch.setattr(tools, "_HW_ENCODE_FAILED", False)
+    # Never the real temp folder: a fake sample there would be handed to the
+    # real hardware probes of a later run.
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     _clear()
     yield state
     _clear()
