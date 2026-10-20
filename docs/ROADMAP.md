@@ -38,7 +38,73 @@ That is why the first item is Twitch and Kick.
 
 ## The order
 
-### TOP PRIORITY — the app makes the hand-cut Espresso reel itself (asked 2026-10-17)
+### TOP PRIORITY — the best reel by default, one step at a time (agreed 2026-10-21)
+
+**Why first.** The reel maker has piled up 11 styles, 7 orders, 3 lengths, 4 dials, effect
+sets, pins and switches on one page. A new user who touches nothing gets Montage + Build up,
+the weakest pair; and Build and drop only got the new planner when "Follow the song" was
+ALSO picked under Order -- the exact trap of a wrong combination with no warning. Build and
+drop is now the best style the app makes (the four v1.77.0 reels: every kill on its beat,
+no blurred kill, no repeated clip), and the next job is to make that the default path and
+take every other style through the same loop.
+
+Decided by the player on 2026-10-21:
+- the maker becomes **one question per screen** (style, song, clips by role, look, check);
+- every screen shows a **match chip** (works / will work, but / won't work) with a measured
+  reason and a **Fix it**;
+- today's page stays as **All settings**;
+- **which style a song with no drop gets is decided only after every style has had its
+  review pass** -- do not ask before then.
+
+Mock-up of the flow: `https://claude.ai/artifact/H1i4nAC8X8snSVs5LnVNgg` (example data,
+not the app). Anything below that changes how a control behaves on screen (F1, F5, F6-F13)
+is described to the player and waits for a yes before it is built.
+
+#### Phase A -- foundations (nothing on screen changes)
+
+| # | Change | Why / evidence | Status |
+|---|---|---|---|
+| F1 | **Fold Follow the song into Build and drop**: the style uses `director.plan` itself; the separate order goes; reels already made with `arrange: sections` still open and render | Picking Build and drop alone gave the old drop logic | not started |
+| F2 | **The general fixes for every style**: smooth re-time (already global), the flash/smoke kill check, no blur or white-out effect on a kill in any style's pool, the ending fade never over the last kill, one clip per reel | Only Follow the song has the last four today; k21's blur covered 3 kills of the first That Acid render | not started |
+| F3 | **Every render checked before it is shown**: each kill on its mark, every kill frame sharp (under 35 % of the reel's median sharpness fails), no clip twice; a failure is said on the reel card | The sharpness check caught the k21 blur and two faded last kills -- but only when run by hand | not started |
+
+#### Phase B -- the check engine
+
+| # | Change | Why / evidence | Status |
+|---|---|---|---|
+| F4 | **One call that judges style + song + clips without rendering** -> level, one sentence, a fix. Checks: the style needs a drop the song lacks; the song too slow for the style; nothing to build with; too few clips for the part; kills through a flash; the wrong shape for the platform | A dry run of the planner takes about a second; the warnings must be about what the app will actually do | not started |
+| F5 | **The chips on today's Make page first** | Warnings work before the new flow exists | not started |
+
+#### Phase C -- the step-by-step maker
+
+| # | Change | Status |
+|---|---|---|
+| F6 | Step 1 **Style**: cards with samples, and "give us a song and we'll pick the style" | not started |
+| F7 | Step 2 **Song**: pick or paste; the best part chosen and shown on the Hits lane, draggable | not started |
+| F8 | Step 3 **Clips by role**: for Build and drop a build slot (1) and an after-the-drop slot (about 25, counted); **Pick for me** from favourites; unusable clips greyed with the reason | not started |
+| F9 | Step 4 **Look**: shape (9:16 default), framing, lyrics | not started |
+| F10 | Step 5 **Check & make**: summary and checklist, then Make | not started |
+| F11 | **All settings** on every step, opening today's page | not started |
+| F12 | **Remember the last choices** ("same as last time?") | not started |
+| F13 | **The steps become the default** way in | not started |
+
+#### Phase D -- Build and drop, what its review left open
+
+| # | Change | Why / evidence | Status |
+|---|---|---|---|
+| F14 | **Sequence-aware clip choice** (look ahead a few shots; enemy visibility in the cost) | ChatGPT review: greedy picking, no visibility ranking | not started |
+| F15 | **Transitions on strong phrase moments**, at most one per 2.5-4 s, never on a kill | Every cut is a hard cut today | not started |
+| F16 | **A vertical crop that follows the crosshair** where the action stays in frame | The fit layout shows the game a third of the 9:16 height | not started |
+| F17 | **An ending that loops** back to the start | The reels end on a short fade | not started |
+
+#### Phase E -- every other style
+
+| # | Change | Status |
+|---|---|---|
+| F18 | **Each style through the Build-and-drop loop** (spec -> render -> ChatGPT review -> measure -> fix), then its own clip slots for step 3. One style at a time | not started |
+| F19 | **Choose the shortcut's style for a song with no drop** -- only after F18 | waiting on F18 |
+
+### PREVIOUS TOP PRIORITY — the app makes the hand-cut Espresso reel itself (asked 2026-10-17)
 
 A headshot reel was cut by hand outside the app to a Short's own audio (Sabrina
 Carpenter, Espresso, 21.3 s, 104 BPM): a 1v3 clutch as one take through the build,
@@ -61,8 +127,8 @@ stays whole under Headshots only. Fonts come from the player's KM Mustahin pack.
 | R7 | **One card per effect; its versions open from it** | 566 parts are 93 effects (104 tint shades -> "Colour tint", 150 crossfades into their 22 transitions) | **done** (v1.72.0) |
 | R8 | **Kill timed to the headshot burst**, not the kill icon | Up to 0.1 s apart; a prototype reader matched 12 of 22 eye-read bursts within a frame -- not enough | next |
 | R9 | **A clutch / multi-kill clip is the build as one take**, its last kill on the drop | Espresso replanned: the 1v3's kills at 2.88 / 5.19 / 9.375 s, one continuous take from 1.52 s into the drop (the shots meet where the footage does). Kept whole under Headshots only, and its quiet long-range kill is not dropped as still footage. The hidden cut that moved the hand-cut reel's kills onto accents is not built: the take plays as it happened | **done** (v1.74.0) |
-| R10 | **Shot-quality filter**: tiny or no enemy, death/respawn screens, black frames, flat ability walls | 9 of 36 shots in the JUST A BOY reel | next |
-| R11 | **Open on action, end on a section boundary** | Both app reels opened on black; JUST A BOY ended mid-section | next |
+| R10 | **Shot-quality filter**: tiny or no enemy, death/respawn screens, black frames, flat ability walls | 9 of 36 shots in the JUST A BOY reel | **partly** (v1.77.0): a kill filmed through a flash or smoke is left out (`studio.kill_clarity`), in Follow the song only -- F2 takes it to every style, F14 adds enemy visibility |
+| R11 | **Open on action, end on a section boundary** | Both app reels opened on black; JUST A BOY ended mid-section | **partly** (v1.77.0): Follow the song opens on its set-up take and never fades its last kill; section-boundary endings are F17 |
 | R12 | **A multi-kill caption only on a shot that shows those kills** | TRIPLE KILL / ACE on single-kill shots. Now the caption counts the kills inside the footage the shot plays (`studio.honest_captions`): JUST A BOY replanned has two DOUBLE KILLs, each on a shot showing two | **done** (v1.75.0) |
 | R13 | **Cap how often one clip is reused** | One clip in 7 of 36 shots. Now no clip gives more than 4 shots when a style sets no cap of its own and there are 5+ clips, never with Keep every kill: JUST A BOY replanned has at most 4 from any clip | **done** (v1.75.0) |
 | R14 | **Beat phase on the off-beat for ~10 of 49 songs** (KORDHELL, Sky, No Lie...) -- needs a ground truth before it is touched | Kick-onset score doubles at a half-beat shift on those songs | open |
@@ -93,7 +159,7 @@ other item sits on top of them -- then M1-M6.**
 |---|---|---|---|---|
 | D1 | **New drop detector: the bass enters AND the beat comes with it**, entrances at least **14 s apart** (`beatsync.find_entrances`) | Blade x Into The Void, drops marked by ear at 32.2, 108.8, 172.4, 271.1, 326.7 s: the old detector found 4 of 5, each up to 2.5 s late, and **missed 172.4 entirely** (overall loudness rises only 3 dB). New: 5 of 5 within 1 s. A bass entrance with no treble after it is a build starting (83.2 s) or a calm vocal (216.8 s): 31 dB of treble against 46-48 on real drops. On 6 hand-flagged songs: 25/33 found and precision 47% at a 6 s gap; 14 s gives 64% / 82% recall | Medium | **in the code, not yet suggested to the player**: `beatsync.find_entrances` ships and its drops reach the planner (v1.71.0, K4); the confirm-on-the-song page is D2 |
 | D2 | **Suggest, then the user confirms**: detected drops shown on the song, fixed with x and double-click, **saved per song** | The best simple rule tops out near 64-70%, and no single feature separated kept from removed drops (steady 7.5-7.75 s bass in Believer and "no!" was removed; Cradles' 8-10 s drops were kept) | Medium | **not started** |
-| D3 | **The planner uses the confirmed drop for the stretch of song it plays**, not the biggest one in the whole song | headshot3 plays 2:29-3:31 but `shape.drop` was 4:33 (273.5 s): the reel never reached it, so it had no build and no drop | Small | **not started** |
+| D3 | **The planner uses the confirmed drop for the stretch of song it plays**, not the biggest one in the whole song | headshot3 plays 2:29-3:31 but `shape.drop` was 4:33 (273.5 s): the reel never reached it, so it had no build and no drop | Small | **done for the detected drop** (v1.71.0, `studio.drop_in`); a *confirmed* drop waits on D2 |
 | D4 | **Unconfirmed song**: fall back to the strongest drop, or to none (decide) | A wrong auto drop puts the speed-up in the wrong place | Small | **needs a decision** |
 
 #### M -- The Make-a-reel dialog becomes a page
@@ -346,36 +412,24 @@ Do not add these back without a reason that is written down here.
 
 ---
 
-## State of the tree, 2026-10-12
+## State of the tree, 2026-10-21
 
-- `__version__` is **1.58.0**, unreleased, on branch `studio-u16`.
-- **v1.57.0 is published and on `main` as `c166dcc`**
-  (<https://github.com/hardikneeravsharma/AutoStream/releases/tag/v1.57.0>).
-  It carries v1.56.0 as well, which was on `main` as `62106ff` but never
-  released -- its build was killed mid-flight rather than freeze uncommitted
-  work into artifacts labelled 1.56.0.
-- **One PR will be open**: `studio-u16`, off `c166dcc`. It carries U16 (the
-  command registry, Ctrl+K and the key sheet), the blur-gate that takes ~60%
-  off a render with the i05 opener, and a join that reports its own progress.
-- **THREE SESSIONS SHARE THIS WORKING TREE.** `C:\autostream` is worked by
-  more than one agent at a time and `C:\autostream-tempo` is a second
-  worktree holding `main`. Stage explicit paths, never `git add -A`; say so
-  before switching branches or stashing; and remember a build freezes
-  whatever is in the tree, including somebody else's uncommitted work.
-- **THE BROWSER TIER HAS NOT RUN IN FULL SINCE v1.54.0**, at the user's
-  instruction to skip unnecessary tests. Tier 7 against the built exe has not
-  run since v1.53.0: it needs the app closed, and it has been in use. U16 adds
-  four controls and two keys to a page, and scenarios 6.34-6.37 are written
-  but have no test yet -- **run the browser tier before the release after
-  this one**, or those four controls are shipping on unit tests alone.
-- The sweep's `REACHED_FLOOR` is still **132**; the Studio now declares
-  **151** controls rather than 147 (the command list and the key sheet), and
-  the whole surface **230** rather than 226.
-- Releases are built with `scripts\build.ps1 -Dist -HandOff` with the app
-  left open; it closes the app only when idle (about two minutes) and
-  reopens it. **Do not run it while the user is editing a reel** -- HandOff
-  asks the app to quit the moment it goes idle, and a session was lost to
-  exactly that.
+- `__version__` is **1.77.0**, **released**
+  (<https://github.com/hardikneeravsharma/AutoStream/releases/tag/v1.77.0>; the installer and
+  the share zip downloaded back and hash-checked) and built into the local `dist\AutoStream`.
+  `main` is `3aad4e9`.
+- **One PR is open, from the other session**: #196, the clipper and Studio on macOS
+  (v1.78.0). It predates v1.77.0 and needs bringing up to date with it.
+- **Several sessions share this machine.** `C:\autostream` is worked by more than one agent
+  and `C:\autostream-tempo` holds `main` as a second worktree. Stage explicit paths, never
+  `git add -A`. A build freezes whatever is in the tree: the eight untracked fonts in
+  `autostream/clips/fonts/` (another session's) fail `test_lyrics` and are moved aside for a
+  build, then put back.
+- Releases are built with `scripts\build.ps1 -Dist -HandOff` with the app left open; it
+  closes the app only when idle (about two minutes) and reopens it.
+- The four Follow-the-song reels of 2026-10-21 (That Acid, THE LAST RIDE, Sunflower,
+  Notorious) are in the clips folder's `reels`, each with its timeline; the batch scripts and
+  the ChatGPT reviews are in `Videos\AutoStream\projects\batch12\tempo`.
 
 ### What is not finished
 
@@ -799,6 +853,7 @@ plan**, because a roadmap that never moves was never being followed.
 
 | Date | Item | What landed | What it changed |
 |---|---|---|---|
+| 2026-10-21 | **v1.77.0 released, four Follow-the-song reels in the Studio, and the step-by-step maker agreed** | v1.77.0 published with the installer and the share zip, both downloaded back and hash-checked; the local `dist\AutoStream` rebuilt with the app handed off while idle and reopened. Four reels made through the app's own pipeline from the 150 favourites -- That Acid, THE LAST RIDE, Sunflower, Notorious -- each in the reels folder with a timeline that opens in the Studio: 29/29, 29/29, 35/35 and 28/28 kills on their marks, no kill frame blurred, no clip twice, two kills through a flash left out of each. | **The order changed**: the reel maker's options were reviewed with the player and a new TOP PRIORITY (F1-F19) put above everything -- fold Follow the song into Build and drop, the general fixes for every style, a check on every render, a check engine with one-tap fixes, the five-step maker, then every other style through the same review. Mock-up: `https://claude.ai/artifact/H1i4nAC8X8snSVs5LnVNgg` |
 | 2026-10-21 | **Follow the song: a drop with no hit in its hold still gets its flurry, and the last kill is never faded**, v1.77.0 (found making three more reels for the release) | Notorious's first cue came 4 ms before the hold's window opened and the next 1.36 s later, so no run of targets started and the opening take played on for twenty seconds; `director.targets` now retries with a wider first step (0.9-2.5 gaps) and steps up to 2 gaps, and a song with no hits after its drop is planned in Best order with a note rather than as one long shot. The style's 1.2-2.2 s fade ran over the last kill of two reels (sharpness 17 % of median at the kill); Follow the song now ends with a 0.6 s fade that `derive()` holds back until after the last kill, and holds that kill 1.2 s. | Measuring every render's kill frames (the sharpness check used for the review) caught both; it should run on every render, not by hand |
 | 2026-10-20 | **Follow the song, after its first review** (the first That Acid sample, rated 6/10 by ChatGPT against our own spec; ships in v1.77.0 with it) | The groove moved off the finished frame onto each shot's game picture, sub-pixel, damped to 30 % in the 350 ms before every kill. No blur or inversion on a kill: punch+blur (k21) had covered the 21.2 s kill for seven frames and the 5-second inversion whited out the one at 17.4 s. The drop's kill held 1.3-1.6 gaps (was 1.34 s), no gap after it over 1 s, a double's own two kills included. One clip, one place, by file. A kill filmed through a flash is left out (`studio.kill_clarity`: 27 and 115 on the two washed-out kills of the second render, 190-1380 on the rest). Re-rendered: 31 of 31 kills on their marks, the drop held 0.82 s, no gap after it over 0.69 s, no clip twice, and no kill frame under 35 % of the reel's median sharpness (the first render had three, all k21). | Two of the review's readings were wrong and are not fixed: the 1.55-1.73 s gaps it measured were the brief leaving out the doubles' second kills (the real gaps were 1.0-1.2 s, now 1.0 at most), and the "duplicated AUTOSTREAM" is the app's own mark. The Client FPS / packet-loss text and "Show Replay UI" prompt are in the recordings -- Valorant's own settings. Still open from it: a beam search with visibility and motion direction in its cost, transitions on strong phrase boundaries (at most one per 2.5-4 s, never a quota), a crosshair-aware vertical crop, a loop-aware ending, and a render-time check that measures sharpness around every kill |
 | 2026-10-20 | **Follow the song: the song read as layers, speed changes rendered smoothly, a planner that uses each clip for what it is, and a groove on the drums** (asked after the batch-3 reels: "the velocity ramp has no smoothness"; "after the drop the style should switch to fast-paced multi kills"; "use the other beats for transitions and screen bounce, not only kills"; "ace, clutch and multi kills for set-up, single headshots more thoughtfully"; the plan agreed with ChatGPT is `projects/batch12/tempo/plan.md`) | `clips/rhythm.py` (kick / snare / hats hit lists, cues, sections; the Song tab's Hits lane), `clips/retime.py` (every re-timed shot eased, optical-flow slow motion, shuttered speed-ups; `rate_ops`, `tmix` and `minterpolate=blend` removed), `clips/director.py` + `studio._plan_sections` (arrangement **Follow the song**), `clips/fx_schedule.py` (kick / hat bounce, snare pops, the push into the drop, drawn on the reel's clock). `shot_pieces` now honours `anchors`, so a dragged kill previews where it renders | v1.77.0. Phases 1-4 of the plan landed together, not one release each: a lane nobody can act on is not worth a release on its own, and the planner was what made the renderer and the groove visible. What is left of the plan: Phase 5 (the rules in `reel_rules.yaml`, Make-page dials for after-the-drop pace and bounce strength, a speed curve drawn on each shot) and transitions chosen on the snares -- every cut is still a hard cut. The media tier passed unchanged through the new re-time: every kill still lands on its planned frame |
