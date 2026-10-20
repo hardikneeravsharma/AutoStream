@@ -52,14 +52,23 @@ FAST_PRE = 0.15            # run-up of a fast cut
 ANCHOR_PRE = 0.20          # ...and of a strong one
 GAP_PREF = 0.52            # s: the flurry's gap, as near as the beat allows
 GAP_RANGE = (0.42, 0.75)
-DROP_AFTER = 2.0           # the drop's kill owns about this many gaps after it
+# THE DROP'S KILL IS HELD, BUT NOT FOR A BAR. The first cut left 1.34 s after it on
+# That Acid -- reviewed: it "costs momentum" on a drop that is already driving.
+# The next kill comes 1.3-1.6 gaps on (0.67-1.0 s at 174 BPM), and no later than
+# MAX_GAP unless one gap is longer than that.
+DROP_HOLD = (1.3, 1.6)
+MAX_GAP = 1.0              # s: no two kills after the drop further apart, a double's own two included
 TAIL = 0.9                 # s the last kill is held for
 REEL_SECONDS = 28.0        # how long a reel runs when nothing else says
 WEIGHTS = {"kick": 0.45, "snare": 0.30, "hats": 0.10, "grid": 0.15}
 ON_BEAT = 0.025            # s: a cue this near a beat is on it
-FX_CYCLE = ("k01", "k02", "k21", "k01", "k02", "")      # zoom punch, shake, punch+blur, none
+# NOTHING THAT BLURS OR WHITES OUT THE KILL ITSELF. The first cut rotated
+# punch+blur (k21) in, and its gaussian blur covered the whole picture for the
+# seven frames of the kill at 21.2 s; an inversion every 5 s turned the kill at
+# 17.4 s into a white frame. Both read in review as the footage failing. A zoom
+# punch or a shake leaves the hit visible; the inversion is kept for one moment.
+FX_CYCLE = ("k01", "k02", "", "k01", "", "k02")         # zoom punch, shake, none
 INVERT = "k12"
-INVERT_EVERY = 5.0         # s between inverted frames, at least
 BIG_WORDS = ("CLUTCH", "LAST-ALIVE", "LAST ALIVE", "1V", "ACE", "KILLS")
 
 
@@ -92,6 +101,7 @@ class Plan:
     drop: float
     shots: list[dict]
     marks: list[float]                 # each shot's kill, song seconds
+    kills: list[float] = field(default_factory=list)   # every kill shown, song seconds
     notes: list[str] = field(default_factory=list)
 
 
@@ -154,10 +164,10 @@ def targets(cues: list[tuple[float, float]], drop: float, end: float, gap: float
     how far it is from one gap, so the run keeps the pace and takes the
     strong hits, and an occasional longer step (an anchor) is allowed where a
     strong hit is worth waiting for. The first step after the drop is at least
-    DROP_AFTER gaps: the drop's kill is held -- for as long as the set-up's clip
+    DROP_HOLD gaps: the drop's kill is held -- for as long as the set-up's clip
     has footage after it (`first_max`), and no less than one gap.
     """
-    first = (DROP_AFTER * gap * 0.9, DROP_AFTER * gap * 1.7)
+    first = (DROP_HOLD[0] * gap, max(MAX_GAP, DROP_HOLD[1] * gap))
     if first_max < first[1]:
         first = (min(first[0], max(0.8 * gap, first_max - 0.3 * gap)), first_max)
     pts = [(t, s) for t, s in cues if drop + first[0] <= t <= end]
@@ -320,6 +330,9 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
     cues = cue_scores(rhythm, list(shape.beats))
     T = targets(cues, D, end - TAIL, gap, first_max=best.seconds - ks[-1] - 0.02 + FAST_PRE)
     used = {id(best)}
+    # ONE CLIP, ONE PLACE. Ids kept two kills of one file apart -- the same
+    # LAST-ALIVE clip played at 17.4 s and again at 21.2 s. By path, it cannot.
+    paths = {best.path}
     rest = [b for b in all_b if b.path != best.path]          # the take's clip is the take's
     pairs = [b for b in rest if len(b.kills) == 2]
     singles = sorted((b for b in rest if len(b.kills) == 1), key=lambda b: (single_score(b), rng.random()),
@@ -343,7 +356,7 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
         placed = False
         if pair_room <= 0 and j + 1 < len(T):
             for b in pairs + others:
-                if id(b) in used or b.path == last_path:
+                if id(b) in used or b.path in paths:
                     continue
                 k0, k1 = b.kills[-2], b.kills[-1]
                 sg = k1 - k0
@@ -352,10 +365,13 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
                         continue
                     og = T[j + step] - t
                     rate = sg / og
+                    if og > max(MAX_GAP, 1.6 * gap) + 1e-6:
+                        continue
                     if sg >= PAIR_TOGETHER and PAIR_RATE[0] <= rate <= PAIR_RATE[1] \
                             and fits(b, k0, ANCHOR_PRE * rate, sg + after(j + step) * rate):
                         flurry.append((b, [k0, k1], [t, T[j + step]]))
                         used.add(id(b))
+                        paths.add(b.path)
                         last_path = b.path
                         j += step + 1
                         placed = True
@@ -365,14 +381,16 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
                     break
         if placed:
             continue
-        pick = next((b for b in singles if id(b) not in used and b.path != last_path
+        pick = next((b for b in singles if b.path not in paths
                      and fits(b, b.kills[0], ANCHOR_PRE, after(j))), None)
         if pick is None:
-            pick = next((b for b in singles if id(b) not in used and fits(b, b.kills[0], FAST_PRE, after(j))), None)
+            pick = next((b for b in singles if b.path not in paths
+                         and fits(b, b.kills[0], FAST_PRE, after(j))), None)
         if pick is None:
             break                          # out of clips: the reel ends here
         flurry.append((pick, [pick.kills[0]], [t]))
         used.add(id(pick))
+        paths.add(pick.path)
         last_path = pick.path
         pair_room -= 1
         j += 1
@@ -433,7 +451,11 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
     shots[-1]["fx"] = ["k01"]                                     # the drop: one primary, the punch
 
     fx_i = rng.randrange(len(FX_CYCLE))
-    last_invert = -1e9
+    # the inversion: once, on the strongest hit well inside the flurry, if one is strong enough
+    inner = [i for i in range(2, len(flurry) - 2) if len(flurry[i][1]) == 1]
+    invert_at = max(inner, key=lambda i: strength.get(flurry[i][2][0], 0.0)) if inner else None
+    if invert_at is not None and strength.get(flurry[invert_at][2][0], 0.0) < 0.7:
+        invert_at = None
     for i, (b, ks, ts) in enumerate(flurry):
         p = pres[i]
         nxt = (impacts[i + 2] - pres[i + 1]) if i + 1 < len(flurry) else None
@@ -456,11 +478,11 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
         dur = min(dur, p + span_out + after_out)
         fx = FX_CYCLE[fx_i % len(FX_CYCLE)]
         fx_i += 1
-        if strength.get(ts[0], 0.0) >= 0.7 and here - last_invert >= INVERT_EVERY and i not in (0, len(flurry) - 1):
+        if i == invert_at:
             fx = INVERT
-            last_invert = here
         anchors = [(ks[1], p + span_out)] if len(ks) == 2 else None
         shots.append(_shot(b, ks[0], ks, p, max(0.1, dur), fx=[fx] if fx else [], anchors=anchors))
         marks.append(round(ts[0], 4))
+    kills = sorted(set(marks) | {round(ts[1], 4) for _b, _ks, ts in flurry if len(ts) > 1})
     return Plan(part=(round(start, 4), round(start + sum(s["duration"] for s in shots), 4)), drop=D,
-                shots=shots, marks=marks, notes=notes)
+                shots=shots, marks=marks, notes=notes, kills=kills)

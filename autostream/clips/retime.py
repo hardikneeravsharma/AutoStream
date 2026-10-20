@@ -216,12 +216,18 @@ def work_size(src_w: int, src_h: int, height: int) -> tuple[int, int]:
 
 def render(clip: str, src_start: float, pieces: list, frames: int, out: Path, *,
            kills: list[float] = (), size: tuple[int, int], ff: str = "ffmpeg", work: Path,
-           cancelled: Callable[[], bool] = lambda: False) -> Path:
+           cancelled: Callable[[], bool] = lambda: False,
+           zoom: Callable[[float], float] | None = None) -> Path:
     """Write the shot's footage, re-timed, as a 60 fps clip of exactly `frames` frames.
 
     `src_start` is the clip's second at the segment's first frame (it may be
     negative: a clip that starts late is held on its first frame, as the tpad
     of the plain path did).
+
+    `zoom(t)` is a scale about the centre at segment second t -- the groove's
+    bounce (fx_schedule) -- drawn here, sub-pixel, because this is where the
+    game picture exists on its own. zoompan in the graph rounds to whole
+    pixels, and a 0.4 % bounce is three of them.
     """
     rel, rate = frame_map(pieces, frames, kills)
     src = rel + src_start
@@ -246,7 +252,10 @@ def render(clip: str, src_start: float, pieces: list, frames: int, out: Path, *,
             for j in range(frames):
                 if cancelled():
                     raise RuntimeError("cancelled")
-                enc.stdin.write(np.ascontiguousarray(_frame_at(float(src[j]), float(rate[j]), a, main, flows)).tobytes())
+                img = _frame_at(float(src[j]), float(rate[j]), a, main, flows)
+                if zoom is not None:
+                    img = scaled(img, zoom(j / FPS))
+                enc.stdin.write(np.ascontiguousarray(img).tobytes())
             enc.stdin.close()
             err = enc.stderr.read().decode(errors="replace")
             if enc.wait():
@@ -290,3 +299,16 @@ def _frame_at(s: float, r: float, base: float, main: Frames, flows: list) -> np.
             acc = f if acc is None else acc + f
             wsum += wk
     return (acc / max(wsum, 1e-6)).astype(np.uint8)
+
+
+def scaled(img: np.ndarray, z: float) -> np.ndarray:
+    """img scaled by z about its centre, cropped back to its size, sub-pixel."""
+    if abs(z - 1.0) < 1e-5:
+        return img
+    from PIL import Image
+
+    h, w = img.shape[:2]
+    a = 1.0 / z
+    out = Image.fromarray(img).transform((w, h), Image.AFFINE, (a, 0, w / 2 * (1 - a), 0, a, h / 2 * (1 - a)),
+                                         resample=Image.BILINEAR)
+    return np.asarray(out)

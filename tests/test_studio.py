@@ -2592,3 +2592,25 @@ def test_keeping_a_failure_never_hides_the_failure(tmp_path):
         def key(self):
             return "k"
     studio._keep_failure(blocked, {"name": "x"}, Seg(), [], RuntimeError("e"))   # must not raise
+
+
+def test_the_groove_is_drawn_on_each_shot_not_on_the_whole_frame(root):
+    """Reviewed: bouncing the finished 9:16 frame moved the blurred fill too, in
+    whole-pixel steps. Each shot now carries its own stretch of the groove (the
+    re-time draws the bounce sub-pixel on the game picture), the pops go into
+    the shot's brightness, and the join has no zoompan of its own."""
+    got, derived, _ = _built(root)
+    got["song_offset"] = 10.0
+    t0 = 10.0 + derived["shots"][1]["start"]
+    got["groove"] = {"zoom": [[t0 + 0.2, 0.008]], "pops": [[t0 + 0.3, 0.03]], "push": []}
+    segs = studio.segments(got, derived)
+    g = segs[1].groove
+    assert g["zoom"] == [[pytest.approx(0.2 + segs[1].head / 60, abs=1e-3), 0.008]]
+    assert studio._moves(segs[1]) and not studio._moves(segs[2])
+    graph = " ".join(studio.segment_command(segs[1], Path("o.mp4"), retimed=Path("rt.mp4")))
+    assert "0.0300*between(t," in graph
+    assert segs[1].key() != studio.segments(dict(got, groove={}), derived)[1].key()
+    assert segs[2].key() == studio.segments(dict(got, groove={}), derived)[2].key()
+    files = [Path(f"{i}.mp4") for i in range(len(segs))]
+    join = studio.assemble_command(got, derived, segs, files, Path("r.mp4"))
+    assert "zoompan" not in join[join.index("-filter_complex") + 1]
