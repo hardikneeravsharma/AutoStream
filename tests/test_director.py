@@ -174,6 +174,9 @@ def test_studio_plans_it_and_the_timeline_agrees(tmp_path):
     assert proj["song_drop"] == pytest.approx(DROP)
     got, derived, _ = studio.normalise(proj, tmp_path, probe=lambda p: 12.0)
     assert derived["on_marks"] == len(got["shots"])
+    # the ending's fade starts after the last kill, never over it
+    last_kill = max(derived["kills"])
+    assert derived["length"] - derived["outro_fade"] >= last_kill + studio.OUTRO_AFTER_KILL - 1e-3
 
 
 def test_a_kill_through_a_flash_is_not_cut_to(tmp_path, monkeypatch):
@@ -197,3 +200,15 @@ def test_a_kill_through_a_flash_is_not_cut_to(tmp_path, monkeypatch):
     used = {s["clip"] for s in proj["shots"]}
     assert used and not (used & flashed)
     assert any("washed out" in n for n in notes)
+
+
+def test_a_hole_after_the_drop_widens_the_first_step_rather_than_stopping():
+    """Notorious: the first cue came 4 ms before the hold's window opened and the
+    next 1.36 s on, so the run never started and the take played on for twenty
+    seconds. A wider first step is taken instead."""
+    gap = 0.5357
+    cues = [(57.861, 0.8), (58.561, 0.5), (59.289, 0.8), (60.0, 0.7)] + \
+        [(60.0 + 0.5357 * k, 0.6) for k in range(1, 20)]
+    got = director.targets(cues, 57.2023, 70.0, gap)
+    assert got and got[0] == 57.861
+    assert director.targets([], 57.2, 70.0, gap) == []
