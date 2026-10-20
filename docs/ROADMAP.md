@@ -289,7 +289,7 @@ Follow the UI contract below (tokens, focus rings, one JS scope) and ship it
 with a browser test — UI #10, the shared player component, pairs naturally
 with the previews.
 
-### A new style, "Fast-paced headshot" (asked 2026-10-13) — specified, not started
+### A new style, "Fast-paced headshot" (asked 2026-10-13) — shipped in v1.68.0; S2 (its three framings and blurred backdrop) still open
 
 Headshots only, hard monochrome, flipping to photographic negative on the beat.
 Reverse-engineered from an anime edit the user supplied, then cut by hand with
