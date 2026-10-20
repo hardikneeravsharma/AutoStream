@@ -108,3 +108,21 @@ def settings_schema(schema: list[dict]) -> list[dict]:
             sec["fields"] = fields
             out.append(sec)
     return out
+
+
+# ------------------------------------------------------------ the updater
+# Every GitHub release asset the updater knows is a Windows installer or zip;
+# downloading one to a Mac costs 70 MB it cannot run. Mac builds come from the
+# .dmg on the release page instead (.github/workflows/macos-release.yml).
+UPDATE_WHY = ("Updates are not installed from inside the Mac app: download the "
+              "newest AutoStream-macos .dmg from the GitHub release page.")
+
+
+def update_check(current: str) -> dict:
+    """What webui.update_check answers on a Mac, in the shape Settings reads."""
+    return {"ok": True, "checked": True, "available": False, "newer": False,
+            "current": current, "why": UPDATE_WHY, "cached": False}
+
+
+def update_refused() -> dict:
+    return {"error": UPDATE_WHY}

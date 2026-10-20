@@ -8,8 +8,7 @@
 
 [![Latest release](https://img.shields.io/github/v/release/hardikneeravsharma/AutoStream?label=release)](https://github.com/hardikneeravsharma/AutoStream/releases/latest)
 [![Licence](https://img.shields.io/github/license/hardikneeravsharma/AutoStream)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Windows-blue)
-![macOS](https://img.shields.io/badge/macOS-clips%20%26%20Studio-lightgrey)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%28clips%20%26%20Studio%29-blue)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 
 <img src="docs/img/dashboard.png" width="600" alt="The AutoStream dashboard while live: session timer, watching/likes/views counters, a viewer graph, OBS ingest health, and live chat">
@@ -23,6 +22,10 @@ it rewrites the title. Quit the game and it ends the broadcast and tidies up.
 
 It can also record locally while you stream, then find your kills in that recording and
 cut them into clips, vertical exports and a montage — without you opening an editor.
+
+**On a Mac**, AutoStream is the clipper and the Studio on their own: copy a recording
+over from your PC and cut it into clips, verticals and reels. Streaming stays a Windows
+feature. See [On a Mac](#on-a-mac).
 
 You set it up once. After that you never open it again unless you want to.
 
@@ -342,6 +345,10 @@ Closing the window does not quit — it keeps running in the tray so it can dete
 
 ## Before you start
 
+*This section is for streaming, which is Windows only. If you only want clips, on
+Windows or a Mac, skip it: the setup wizard's **Just make clips** needs nothing but
+ffmpeg.*
+
 You need three things. The first one can take a day, so start it now:
 
 1. **A YouTube channel with live streaming enabled.**
@@ -645,7 +652,7 @@ minutes of footage — and it needs Tesseract, which is **not** part of AutoStre
 
 You do not have to go and get it. The Clips page names what is missing and installs it
 for you, and so does the last step of the clips-only setup; Windows asks for permission
-and that is the whole of it. Counter-Strike is greyed out with that reason until it is
+and that is the whole of it (on a Mac it uses Homebrew, and asks for nothing). Counter-Strike is greyed out with that reason until it is
 there, rather than failing four minutes into a scan the way it used to. By hand, if you
 would rather:
 
@@ -653,6 +660,8 @@ would rather:
 winget install --id UB-Mannheim.TesseractOCR
 pip install pytesseract
 ```
+
+On a Mac: `brew install tesseract` (already there if you installed `ffmpeg-full`).
 
 CS2 ships with the feed area already set; you only have to supply your name.
 
@@ -936,7 +945,7 @@ twenty-second clip. Longer clips therefore find more of them:
 
 *(measured on one real two-hour session with 219 kills)*
 
-Needs **ffmpeg** (`winget install --id Gyan.FFmpeg`) and **numpy**. Without either, the
+Needs **ffmpeg** (`winget install --id Gyan.FFmpeg`; on a Mac `brew install ffmpeg-full`) and **numpy**. Without either, the
 Clips page shows what is missing and the rest of AutoStream is unaffected.
 
 ### Module map

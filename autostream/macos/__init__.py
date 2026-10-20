@@ -17,10 +17,3 @@ WHAT IS NOT HERE, AND WHY
     page can explain an absence rather than show a button that does nothing.
 """
 from __future__ import annotations
-
-import sys
-
-
-def active() -> bool:
-    """Is this the macOS build? Read at call time so tests can pretend."""
-    return sys.platform == "darwin"

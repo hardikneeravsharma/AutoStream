@@ -96,13 +96,12 @@ files. Shared code reaches it only from behind `sys.platform == "darwin"`.
 | `autostream/macos/deps.py` | Homebrew install commands, the in-app Homebrew installer, and the text-filter warning. |
 | `autostream/macos/dialogs.py` | The file picker: pywebview's sheet, or AppleScript when there is no window. Never Tk. |
 | `autostream/macos/shell.py` | `open` / `open -R`, for *Reveal* and *Open log*. |
-| `autostream/macos/features.py` | What is unavailable and why; the pages and settings that are hidden. |
-| `autostream/macos/updates.py` | The in-app updater says it is not available, rather than downloading a Windows build. |
+| `autostream/macos/features.py` | What is unavailable and why; the pages and settings that are hidden; the updater pointing at the `.dmg` instead of downloading a Windows build. |
 | `packaging/macos/` | `autostream-macos.spec`, `launcher.py`, `make_icns.py`. |
 | `scripts/macos/` | `install.sh`, `build.sh`. |
 | `.github/workflows/macos-release.yml` | Builds both `.dmg`s on GitHub's Mac runners and attaches them to each published release. Can also be run by hand for an existing tag. |
 | `requirements-macos.txt` | The packages the Mac build needs, without the streaming half. |
-| `tests/macos/` | Tests for all of the above. They run on every platform by pretending `sys.platform`. `windows_only.py` lists the Windows-behaviour tests that are skipped on a Mac, each with its reason. |
+| `tests/macos/` | Tests for all of the above. They run on every platform by pretending `sys.platform`. `mac_skips.py` lists the Windows-behaviour tests that are skipped on a Mac, each with its reason. |
 
 The shared files that gained a `darwin` branch are `paths.py`, `window.py`,
 `__main__.py`, `webui.py`, `setup_flow.py`, `clips/tools.py`, `clips/deps.py`,

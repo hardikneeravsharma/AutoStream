@@ -11,7 +11,7 @@ import pytest
 
 from autostream import schema
 from autostream.clips import cs2_demo
-from autostream.macos import features, updates
+from autostream.macos import features
 
 
 def test_bootstrap_names_what_is_missing_and_where_to_start():
@@ -61,10 +61,10 @@ def test_the_mac_encoder_menu_only_offers_values_windows_accepts():
 
 
 def test_the_updater_says_why_rather_than_offering_a_windows_build():
-    got = updates.check("9.9.9")
+    got = features.update_check("9.9.9")
     assert got["ok"] and got["available"] is False and got["current"] == "9.9.9"
-    assert "Windows" in got["why"]
-    assert "error" in updates.refuse()
+    assert ".dmg" in got["why"]
+    assert "error" in features.update_refused()
 
 
 def test_a_demo_is_never_fetched_through_the_game_on_a_mac(monkeypatch):

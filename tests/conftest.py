@@ -42,13 +42,13 @@ if sys.platform == "darwin":
 
 def pytest_collection_modifyitems(config, items):              # noqa: ARG001
     """On a Mac, skip the tests that pin Windows behaviour, each with its
-    reason -- see tests/macos/windows_only.py. A no-op anywhere else."""
+    reason -- see tests/macos/mac_skips.py. A no-op anywhere else."""
     if sys.platform != "darwin":
         return
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
-        "_windows_only", HERE / "macos" / "windows_only.py")
+        "_mac_skips", HERE / "macos" / "mac_skips.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     import pytest as _pytest
@@ -56,7 +56,7 @@ def pytest_collection_modifyitems(config, items):              # noqa: ARG001
     for item in items:
         why = mod.reason_for(item.nodeid)
         if why:
-            item.add_marker(_pytest.mark.skip(reason=f"Windows only: {why}"))
+            item.add_marker(_pytest.mark.skip(reason=f"not on a Mac: {why}"))
 
 
 import shutil                                                    # noqa: E402
