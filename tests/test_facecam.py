@@ -123,7 +123,7 @@ def test_a_plain_reel_renders_and_caches_exactly_as_before(root):
     seg = studio.segments(got, derived)[0]
     assert seg.layout == {} and seg.hold == 0 and seg.cam_file == ""
     d = dict(seg.__dict__)
-    for k in ("hold", "layout", "cam_file", "cam_start"):
+    for k in ("hold", "layout", "cam_file", "cam_start", "groove"):
         d.pop(k)
     d.pop("index")
     assert seg.key() == hashlib.sha1(json.dumps(d, sort_keys=True, default=str)

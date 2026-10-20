@@ -1763,6 +1763,8 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
     # every chosen clip's kill emblem; asked to make a reel from 150 favourites that
     # took 13 minutes, for the 25 that went in. So: plan, check the clips used, plan
     # again with what the checks said, until the clips used have all been checked.
+    clarity = kill_clarity if checks else None
+    hidden = 0
     checked: set[str] = set()
     seed_n = int(seed if seed is not None else proj.get("seed") or 0)
     rh = rhythm.for_song(shape)
@@ -1774,13 +1776,21 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
             return proj, [f"{e} This reel was planned in Best order."] + notes
         todo = [chosen[s["clip"]] for s in got.shots if s["clip"] not in checked and s["clip"] in chosen]
         todo = list({c["path"]: c for c in todo}.values())
-        if not todo or (confirm is None and refine is None):
+        if not todo or (confirm is None and refine is None and clarity is None):
             break
         fixed = todo
         if confirm is not None:
             fixed = _confirm_kills(fixed, confirm, theirs)[0]
         if refine is not None:
             fixed = _refine_kills(fixed, refine)[0]
+        if clarity is not None:
+            # a kill taken through a flash is not one to cut to (see CLEAR_MIN)
+            for c in fixed:
+                clear = [k for k in c.get("kills") or []
+                         if (q := clarity(c["path"], float(k))) is None or q >= CLEAR_MIN]
+                hidden += len(c.get("kills") or []) - len(clear)
+                c["kills"] = clear
+            fixed = [c for c in fixed if c.get("kills")]
         for c in todo:
             checked.add(c["path"])
             chosen.pop(c["path"], None)       # an emblem check that found no kill drops the clip
@@ -1801,7 +1811,7 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
     proj["song_drop"] = round(got.drop, 4)
     proj["intro"] = "i00"                    # the take is the opening; nothing is laid over it
     # the other layers drive the camera and the light; the beat engine's flips would fight them
-    proj["groove"] = fx_schedule.schedule(rh, got.part[0], got.part[1], got.marks, got.drop)
+    proj["groove"] = fx_schedule.schedule(rh, got.part[0], got.part[1], got.kills, got.drop)
     proj["overlays"] = [o for o in proj.get("overlays") or [] if fam(o) != "o09"]
     used = {s["clip"] for s in got.shots}
     proj["selection"] = [{"clip": c["path"], "name": str(c.get("name") or Path(c["path"]).stem),
@@ -1810,6 +1820,9 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
                           if c["path"] in chosen else
                           "No kill showed on screen: the game's kill icon never appeared in this clip."}
                          for c in clips if c and c.get("path")]
+    if hidden:
+        got.notes.append(f"{hidden} kill(s) were left out because the screen was washed out at the kill "
+                         f"(a flash or smoke): it could not be seen.")
     return proj, got.notes
 
 
@@ -2925,6 +2938,50 @@ def plan_checks() -> dict:
         return {}
     return {"measure": action, "confirm": kill_marks, "theirs": spectated,
             "refine": kill_appearance}
+
+
+# CAN THE KILL BE SEEN. A kill label says a kill happened, not that the picture
+# shows it: two kills in the reviewed That Acid render were taken through a
+# flash -- the whole screen one flat beige or green -- and read as the edit
+# blurring them. The middle of the picture's detail (the variance of its
+# Laplacian, the middle 60 % at 480x270, median of the six frames from just
+# before the kill) measured 27 and 115 on those two and 190-1380 on the 29 other
+# kills of the reel. Under CLEAR_MIN the kill is not one to cut to.
+CLEAR_MIN = 150.0
+_CLEAR_CACHE: dict[tuple, float | None] = {}
+
+
+def kill_clarity(path: str, t: float) -> float | None:
+    """How much detail the picture has at a kill (see CLEAR_MIN); None if it cannot be read. Cached."""
+    import numpy as np
+    from .tools import binary
+
+    try:
+        key = (str(path), Path(path).stat().st_mtime, round(float(t), 3))
+    except OSError:
+        return None
+    with _ACTION_LOCK:
+        if key in _CLEAR_CACHE:
+            return _CLEAR_CACHE[key]
+    got = None
+    try:
+        raw = subprocess.run(
+            [binary("ffmpeg"), "-v", "error", "-nostdin", "-ss", f"{max(0.0, t - 0.05):.3f}", "-i", str(path),
+             "-frames:v", "6", "-vf", "scale=480:270,crop=288:162:96:54,format=gray", "-f", "rawvideo", "-"],
+            capture_output=True, timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+        v = np.frombuffer(raw, np.uint8)
+        if v.size >= 162 * 288:
+            v = v[:v.size // (162 * 288) * 162 * 288].reshape(-1, 162, 288).astype(np.float32)
+            lap = [float(np.var(f[1:-1, 1:-1] * 4 - f[:-2, 1:-1] - f[2:, 1:-1] - f[1:-1, :-2] - f[1:-1, 2:]))
+                   for f in v]
+            got = float(np.median(lap))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        got = None
+    with _ACTION_LOCK:
+        if len(_CLEAR_CACHE) > 4000:
+            _CLEAR_CACHE.clear()
+        _CLEAR_CACHE[key] = got
+    return got
 
 
 def spectated(path: str, game: str, t: float) -> bool:
@@ -4638,13 +4695,14 @@ class Segment:
     layout: dict = field(default_factory=dict)       # facecam.layout(): where game and camera go
     cam_file: str = ""                               # a separate facecam video, if any
     cam_start: float = 0.0                           # its seconds at the segment's first source frame
+    groove: dict = field(default_factory=dict)       # fx_schedule.for_shot(): bounce, pops, push
 
     def key(self) -> str:
         d = dict(self.__dict__)
         d.pop("index", None)
         # Left out at their defaults, so a shot that uses none of them keeps
         # the cache key -- and the render -- it had before they existed.
-        for k, default in (("hold", 0), ("layout", {}), ("cam_file", ""), ("cam_start", 0.0)):
+        for k, default in (("hold", 0), ("layout", {}), ("cam_file", ""), ("cam_start", 0.0), ("groove", {})):
             if d.get(k) == default:
                 d.pop(k, None)
         # HOW THE RATES ARE RENDERED IS PART OF WHAT THE RENDER IS. The key is
@@ -4739,6 +4797,8 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
     ends = starts[1:] + [round(derived["length"] * FPS)]
     hold_f = round(float(derived.get("outro_hold") or 0.0) * FPS)
     cam = project.get("cam") or facecam.settings(None)
+    groove = project.get("groove") or {}
+    offset = float(project.get("song_offset") or 0.0)
     out = []
     for i, s in enumerate(shots):
         head = round(s["tlen"] / 2 * FPS) if i > 0 else 0
@@ -4805,8 +4865,17 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
             layout=_layout_for(project, s, W, H, cam),
             cam_file=str(s.get("cam_file") or "") if cam["source"] == "file" else "",
             cam_start=round(float(s.get("cam_offset") or 0.0) + src_body_start - hsec, 4)
-            if cam["source"] == "file" and s.get("cam_file") else 0.0))
+            if cam["source"] == "file" and s.get("cam_file") else 0.0,
+            groove=_shot_groove(groove, offset + starts[i] / FPS - hsec, (head + body + tail) / FPS)))
     return out
+
+
+def _shot_groove(groove: dict, song_at_zero: float, length: float) -> dict:
+    """The stretch of the reel's groove this shot plays, or {} for none (so its key is unchanged)."""
+    if not groove:
+        return {}
+    g = fx_schedule.for_shot(groove, song_at_zero, length)
+    return g if (g["zoom"] or g["pops"] or g["push"]) else {}
 
 
 def _layout_for(project: dict, shot: dict, W: int, H: int, cam: dict) -> dict:
@@ -4909,6 +4978,11 @@ def _setpts_expr(ps: list) -> str:
 # one stepped setpts, `minterpolate=blend` under the slow parts and a `tmix`
 # over the whole clip -- was measured against the same reels cut by hand and
 # called "blended and fast-forwarded"; it is gone, not kept as a fallback.
+
+
+def _moves(seg: Segment) -> bool:
+    """Whether the groove bounces or pushes this shot (drawn as it is re-timed)."""
+    return bool(seg.groove.get("zoom") or seg.groove.get("push"))
 
 
 def retime_height(seg: Segment) -> int:
@@ -5081,6 +5155,8 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     if (pid := picked(seg.fx, "k03")):
         b_terms.append(f"{knob(pid, 'amt', 0.55)}*gte(t,{kt:.4f})"
                        f"*max(0,1-(t-{kt:.4f})/{knob(pid, 'fall', 0.12):.3f})")
+    if (pops := fx_schedule.pop_expr(seg.groove)):
+        b_terms.append(pops)                    # the snare pops, on the game picture only
     if (pid := picked(seg.fx, "k16")):
         per = max(2.0, knob(pid, "period", 4.0))
         b_terms.append(f"{knob(pid, 'amt', 0.35)}*{_between(kt, kt + knob(pid, 'dur', 0.25))}"
@@ -5275,16 +5351,6 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         acc_label = lab
 
     post = []
-    # THE GROOVE (clips/fx_schedule.py): the camera's bounce on the kicks and
-    # hats, the push into the drop, a pop on the snares -- on the reel's own
-    # clock, which is why it is here and not in a shot: it runs on across every
-    # cut. First, so nothing drawn over the picture later bounces with it.
-    if (groove := project.get("groove")):
-        off = float(project.get("song_offset") or 0.0)
-        if (z := fx_schedule.zoom_expr(groove, off, L)):
-            post.append(f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={F}")
-        if (b := fx_schedule.pop_expr(groove, off, L)):
-            post.append(f"eq=brightness='{b}':eval=frame")
     intro, outro = project["intro"], project["outro"]
     # AN INTRO AS LONG AS WHAT IT HAS TO COVER. Normally its own length: a
     # second of fade, a third of a second of flash, over an opener that reaches
@@ -5881,7 +5947,8 @@ class StudioJob:
                 seg.clip, seg.src_start, seg.pieces, seg.frames, out,
                 kills=[seg.kill_at, *seg.kill_times],
                 size=retime.work_size(info.get("width", 0), info.get("height", 0), retime_height(seg)),
-                ff=ff, work=out.parent, cancelled=self._cancel.is_set)
+                ff=ff, work=out.parent, cancelled=self._cancel.is_set,
+                zoom=(lambda t: fx_schedule.zoom_at(seg.groove, t)) if _moves(seg) else None)
         except RuntimeError:
             if self._cancel.is_set():
                 raise Cancelled("cancelled")
@@ -5921,8 +5988,9 @@ class StudioJob:
                 rt = None
                 rt_file = retimes / f"{s.key()}.mp4"
                 try:
-                    if retime.needed(s.pieces):
-                        self._set(message=f"Shot {s.index + 1} of {len(segs)}: smoothing its speed")
+                    if retime.needed(s.pieces) or _moves(s):
+                        self._set(message=f"Shot {s.index + 1} of {len(segs)}: smoothing its speed"
+                                  if retime.needed(s.pieces) else f"Shot {s.index + 1} of {len(segs)}")
                         rt = self._retime(s, rt_file, ff)
                     self._run_ff(segment_command(s, tmp, ff, enc_seg, textdir, rt))
                 except Cancelled:

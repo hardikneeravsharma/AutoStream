@@ -64,12 +64,29 @@ def test_the_push_ends_before_the_drop():
     assert 0.015 <= amt <= 0.025
 
 
-def test_the_expressions_are_on_the_reels_clock():
-    g = {"zoom": [[12.0, 0.008]], "pops": [[13.0, 0.03]], "push": [18.0, 19.85, 0.02]}
-    z = fx.zoom_expr(g, offset=10.0, length=20.0)
-    assert z.startswith("1+") and "2.0000" in z and "between(in_time,8.0000,9.8500)" in z
-    assert "between(t,2.9960,3.0125)" in fx.pop_expr(g, offset=10.0, length=20.0)
-    assert fx.zoom_expr({"zoom": [[50.0, 0.01]]}, offset=0.0, length=20.0) == ""
+def test_a_bounce_is_damped_while_the_player_aims():
+    plain = fx.schedule(song(), 0.0, 40.0, kills=[], drop=20.0)
+    aimed = fx.schedule(song(), 0.0, 40.0, kills=[25.2], drop=20.0)
+    before = {t: a for t, a in plain["zoom"]}
+    for t, a in aimed["zoom"]:
+        if 0 < 25.2 - t <= fx.AIM_BEFORE:
+            assert a == pytest.approx(before[t] * fx.AIM_KEEP, abs=1e-5)
+
+
+def test_a_shot_gets_its_own_stretch_of_the_groove_on_its_own_clock():
+    g = {"zoom": [[12.0, 0.008], [30.0, 0.008]], "pops": [[13.0, 0.03]], "push": [18.0, 19.85, 0.02]}
+    shot = fx.for_shot(g, song_at_zero=11.5, length=8.0)
+    assert shot["zoom"] == [[0.5, 0.008]] and shot["pops"] == [[1.5, 0.03]]
+    assert shot["push"] == [6.5, 8.35, 0.02]
+    # peaks on the hit, two frames up, gone in a few more
+    assert fx.zoom_at(shot, 0.5) == pytest.approx(1.008)
+    assert 1.0 < fx.zoom_at(shot, 0.5 - 1 / 60) < 1.008
+    assert fx.zoom_at(shot, 0.5 + 0.25) < 1.0001
+    # the push climbs to its 2 % and lets go on the drop
+    assert 1.015 < fx.zoom_at(shot, 8.0) < 1.02
+    assert fx.zoom_at(shot, 8.4) == 1.0
+    assert "between(t,1.4960,1.5125)" in fx.pop_expr(shot)
+    assert fx.for_shot(g, 100.0, 2.0) == {"zoom": [], "pops": [], "push": []}
 
 
 def test_clamp_keeps_what_is_sane():
