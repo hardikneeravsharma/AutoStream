@@ -58,7 +58,8 @@ GAP_RANGE = (0.42, 0.75)
 # MAX_GAP unless one gap is longer than that.
 DROP_HOLD = (1.3, 1.6)
 MAX_GAP = 1.0              # s: no two kills after the drop further apart, a double's own two included
-TAIL = 0.9                 # s the last kill is held for
+TAIL = 1.2                 # s the last kill is held for: OUTRO_FADE after it, then the fade
+OUTRO_FADE = 0.6           # s: the ending's fade, which never starts before TAIL - OUTRO_FADE after the last kill
 REEL_SECONDS = 28.0        # how long a reel runs when nothing else says
 WEIGHTS = {"kick": 0.45, "snare": 0.30, "hats": 0.10, "grid": 0.15}
 ON_BEAT = 0.025            # s: a cue this near a beat is on it
@@ -170,6 +171,18 @@ def targets(cues: list[tuple[float, float]], drop: float, end: float, gap: float
     first = (DROP_HOLD[0] * gap, max(MAX_GAP, DROP_HOLD[1] * gap))
     if first_max < first[1]:
         first = (min(first[0], max(0.8 * gap, first_max - 0.3 * gap)), first_max)
+    got = _run(cues, drop, end, gap, first, 1.6)
+    if not got:
+        # NO HIT IN THE HOLD'S WINDOW. Notorious's first cue after its drop came
+        # 0.66 s on, 4 ms before the window opened, and the next was 1.36 s on:
+        # the run never started and the take played on for twenty seconds. A
+        # wider first step, and longer steps where the song leaves a hole,
+        # rather than no flurry at all.
+        got = _run(cues, drop, end, gap, (0.9 * gap, max(first[1], 2.5 * gap)), 2.0)
+    return got
+
+
+def _run(cues, drop: float, end: float, gap: float, first: tuple[float, float], longest: float) -> list[float]:
     pts = [(t, s) for t, s in cues if drop + first[0] <= t <= end]
     if not pts:
         return []
@@ -182,12 +195,13 @@ def targets(cues: list[tuple[float, float]], drop: float, end: float, gap: float
     for j in range(1, n):
         for i in range(j - 1, -1, -1):
             d = T[j] - T[i]
-            if i > 0 and d > 1.6 * gap + 1e-9:
+            if i > 0 and d > longest * gap + 1e-9:
                 continue                      # too far back; the drop itself may still reach
-            ok = (first[0] <= d <= first[1]) if i == 0 else (0.8 * gap <= d <= 1.6 * gap)
+            ok = (first[0] <= d <= first[1]) if i == 0 else (0.8 * gap <= d <= longest * gap)
             if not ok or best[i] == -np.inf:
                 continue
-            cost = 0.0 if i == 0 else 0.35 * abs(d - gap) / gap + (0.15 if d > 1.25 * gap else 0.0)
+            cost = 0.0 if i == 0 else (0.35 * abs(d - gap) / gap + (0.15 if d > 1.25 * gap else 0.0)
+                                       + (0.6 if d > 1.6 * gap else 0.0))
             v = best[i] + S[j] - cost
             if v > best[j]:
                 best[j], prev[j] = v, i
@@ -329,6 +343,8 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
     # ---- after the drop: targets, then who hits them
     cues = cue_scores(rhythm, list(shape.beats))
     T = targets(cues, D, end - TAIL, gap, first_max=best.seconds - ks[-1] - 0.02 + FAST_PRE)
+    if not T:
+        raise ValueError("The song has no drum hits after this drop to cut the kills to.")
     used = {id(best)}
     # ONE CLIP, ONE PLACE. Ids kept two kills of one file apart -- the same
     # LAST-ALIVE clip played at 17.4 s and again at 21.2 s. By path, it cannot.

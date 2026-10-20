@@ -1810,6 +1810,10 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
     proj["part_end"] = round(got.part[1], 5)
     proj["song_drop"] = round(got.drop, 4)
     proj["intro"] = "i00"                    # the take is the opening; nothing is laid over it
+    # THE LAST KILL IS NOT FADED. The style's fade is most of a bar (1.2-2.2 s) and
+    # ran over the last kill of two of the first four reels; a short one, which
+    # derive() holds back until OUTRO_AFTER_KILL after the kill, does not.
+    proj["outro_len"] = director.OUTRO_FADE
     # the other layers drive the camera and the light; the beat engine's flips would fight them
     proj["groove"] = fx_schedule.schedule(rh, got.part[0], got.part[1], got.kills, got.drop)
     proj["overlays"] = [o for o in proj.get("overlays") or [] if fam(o) != "o09"]
