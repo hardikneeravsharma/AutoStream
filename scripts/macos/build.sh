@@ -2,7 +2,7 @@
 # Build AutoStream.app -- the macOS clipper and Studio.
 #
 #   scripts/macos/build.sh             test, then build dist/macos/AutoStream.app
-#   scripts/macos/build.sh --dist      and zip it for sharing, with a .sha256
+#   scripts/macos/build.sh --dist      and AutoStream-macos-<arch>.dmg, with a .sha256
 #   scripts/macos/build.sh --no-tests  skip the offline suite (iterating only)
 #
 # The macOS twin of scripts/build.ps1, which is left alone (issue #193).
@@ -17,8 +17,8 @@
 #   5. the .icns, from the same mark as the Windows .ico
 #   6. PyInstaller with packaging/macos/autostream-macos.spec
 #   7. a credential scan of the bundle
-#   8. --dist: a zip made with ditto (keeps the symlinks and the executable
-#      bit a .app depends on -- scripts/make_zip.py keeps neither) and its hash
+#   8. --dist: a drag-to-Applications .dmg (hdiutil; ditto copies the app,
+#      keeping the symlinks a .app depends on -- make_zip.py keeps none)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -120,15 +120,21 @@ if [[ -n "$LEAKS" ]]; then
 fi
 ok "no credentials or personal config in the bundle"
 
-# ---- 8. --dist: zip and hash ----------------------------------------
+# ---- 8. --dist: disk image and hash ---------------------------------
+# No version in the name, like AutoStream-share.zip: releases/latest/download/
+# then always serves the newest one under the same link.
 if [[ "$DIST" == 1 ]]; then
-  ZIP="$OUT/AutoStream-$VERSION-macos-$ARCH.zip"
-  rm -f "$ZIP" "$ZIP.sha256"
-  ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
-  (cd "$OUT" && shasum -a 256 "$(basename "$ZIP")" > "$(basename "$ZIP").sha256")
-  ok "wrote $ZIP ($(du -h "$ZIP" | cut -f1))"
-  ok "wrote $ZIP.sha256"
-  warn "the app is ad-hoc signed, not notarised: the first open is right-click > Open"
+  DMG="$OUT/AutoStream-macos-$ARCH.dmg"
+  STAGE="$WORK/dmg"
+  rm -rf "$STAGE" "$DMG" "$DMG.sha256"
+  mkdir -p "$STAGE"
+  ditto "$APP" "$STAGE/AutoStream.app"         # ditto keeps the bundle's symlinks
+  ln -s /Applications "$STAGE/Applications"     # the drag-to-install target
+  hdiutil create -quiet -volname "AutoStream" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+  (cd "$OUT" && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256")
+  ok "wrote $DMG ($(du -h "$DMG" | cut -f1))"
+  ok "wrote $DMG.sha256"
+  warn "not notarised: the first open is System Settings > Privacy & Security > Open Anyway"
 fi
 
 echo

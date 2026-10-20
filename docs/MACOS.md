@@ -24,6 +24,17 @@ sections that mean something on a Mac. The first-run wizard offers only *Just ma
 clips*. Closing the window quits the app, because there is no tray to hide in. If a clip
 job or a reel render is still running, it asks you first.
 
+## Download
+
+From the [latest release](https://github.com/hardikneeravsharma/AutoStream/releases/latest):
+**`AutoStream-macos-arm64.dmg`** for Apple Silicon (M1 and later), or
+**`AutoStream-macos-x86_64.dmg`** for an Intel Mac. Open it and drag AutoStream to
+Applications. You still need ffmpeg: `brew install ffmpeg-full`.
+
+The app is not notarised by Apple yet, so the first time you open it macOS refuses.
+Go to **System Settings > Privacy & Security**, scroll down to the message about
+AutoStream, and click **Open Anyway**. You only need to do this once.
+
 ## Install from source
 
 ```bash
@@ -49,13 +60,13 @@ found cannot draw text.
 
 ```bash
 scripts/macos/build.sh            # offline suite, then dist/macos/AutoStream.app
-scripts/macos/build.sh --dist     # and AutoStream-<version>-macos-<arch>.zip + .sha256
+scripts/macos/build.sh --dist     # and AutoStream-macos-<arch>.dmg + .sha256
 ```
 
 The output goes to `dist/macos/` and `build/macos/`. The Windows build uses
 `dist/AutoStream`, so the two never overwrite each other. The app is ad-hoc signed and
-not notarised, so the first time you open a downloaded copy, right-click it and choose
-**Open**. To sign it with a real identity, set `AUTOSTREAM_CODESIGN`. To build for the
+not notarised, so a downloaded copy needs **Open Anyway** the first time (see
+Download, above). To sign it with a real identity, set `AUTOSTREAM_CODESIGN`. To build for the
 other architecture, set `AUTOSTREAM_ARCH=x86_64`.
 
 ## Where it keeps things
@@ -89,6 +100,7 @@ files. Shared code reaches it only from behind `sys.platform == "darwin"`.
 | `autostream/macos/updates.py` | The in-app updater says it is not available, rather than downloading a Windows build. |
 | `packaging/macos/` | `autostream-macos.spec`, `launcher.py`, `make_icns.py`. |
 | `scripts/macos/` | `install.sh`, `build.sh`. |
+| `.github/workflows/macos-release.yml` | Builds both `.dmg`s on GitHub's Mac runners and attaches them to each published release. Can also be run by hand for an existing tag. |
 | `requirements-macos.txt` | The packages the Mac build needs, without the streaming half. |
 | `tests/macos/` | Tests for all of the above. They run on every platform by pretending `sys.platform`. `windows_only.py` lists the Windows-behaviour tests that are skipped on a Mac, each with its reason. |
 
@@ -99,6 +111,16 @@ The shared files that gained a `darwin` branch are `paths.py`, `window.py`,
 pages and choices when `/api/bootstrap` says to, and in `ui/clips.py`, which shows the
 server's install text. On Windows the bootstrap carries none of those keys, so every
 fallback is the old value.
+
+## How a release gets its Mac build
+
+Publishing a GitHub release, which still happens from the Windows machine, starts
+`.github/workflows/macos-release.yml`. It builds on an Apple Silicon runner and an
+Intel runner, runs `tests/macos`, and uploads `AutoStream-macos-arm64.dmg` and
+`AutoStream-macos-x86_64.dmg` with their `.sha256` files. The names carry no version,
+so `releases/latest/download/AutoStream-macos-arm64.dmg` always points at the newest
+build. To give an older release its Mac build: **Actions > macOS release > Run
+workflow**, and enter the tag.
 
 ## Testing on a Mac
 

@@ -429,6 +429,13 @@ on your Windows PC, copy the recording across, and cut it into clips, verticals,
 and reels on the Mac. The Mac build does not stream, and it never needs a game
 installed. The Dashboard, Library, OBS, YouTube and tray are not part of it.
 
+**[⬇ Download the Mac app](https://github.com/hardikneeravsharma/AutoStream/releases/latest)**:
+`AutoStream-macos-arm64.dmg` (Apple Silicon) or `AutoStream-macos-x86_64.dmg` (Intel),
+plus `brew install ffmpeg-full`. It is not notarised yet, so the first open needs
+**System Settings > Privacy & Security > Open Anyway**.
+
+From source:
+
 ```bash
 brew install python ffmpeg-full      # ffmpeg-full: the plain formula cannot draw captions
 scripts/macos/install.sh

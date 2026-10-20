@@ -70,9 +70,12 @@ def test_the_build_scans_for_the_same_credentials_as_build_ps1():
         assert name in src, name
 
 
-def test_the_zip_is_made_with_ditto():
-    """make_zip.py drops symlinks and the executable bit; a .app needs both."""
-    assert "ditto -c -k" in BUILD.read_text(encoding="utf-8")
+def test_the_dmg_keeps_the_bundle_whole_and_its_name_stable():
+    """ditto, not make_zip.py, which drops the symlinks a .app needs. And no
+    version in the name, so releases/latest/download/ always finds it."""
+    src = BUILD.read_text(encoding="utf-8")
+    assert 'ditto "$APP"' in src and "hdiutil create" in src
+    assert 'DMG="$OUT/AutoStream-macos-$ARCH.dmg"' in src
 
 
 @pytest.mark.skipif(not shutil.which("bash"), reason="no bash on this machine")
