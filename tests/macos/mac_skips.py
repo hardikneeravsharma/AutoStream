@@ -58,8 +58,6 @@ SKIP_ON_MAC: dict[str, str] = {
     "tests/test_retime.py::test_a_rendered_retime_has_every_frame_and_slow_motion_is_not_repeats":
         "borderline: frame 55 differs by 0.296 against a 0.3 repeat cut-off under "
         "Homebrew's ffmpeg 9.0.2 -- blended, not repeated",
-    "tests/verify/test_flows.py::test_every_settable_path_accepts_its_own_current_value":
-        "obs.path defaults to a Windows OBS install, which is not on a Mac",
 }
 
 

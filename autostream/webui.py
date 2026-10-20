@@ -1305,6 +1305,7 @@ class Server:
 
         errors: dict[str, str] = {}
         clean: dict[str, Any] = {}
+        current = schema.flatten(cfg.load())
         for path, raw in values.items():
             key = str(path)
             field = schema.FIELDS_BY_PATH.get(key)
@@ -1314,6 +1315,13 @@ class Server:
                 continue
             if field.get("control") == "readonly":
                 errors[key] = "AutoStream writes this value; it cannot be edited here."
+                continue
+            # What is already in effect is not re-checked: saving it writes
+            # nothing (see `changed` below), and a check that reads the disk
+            # -- obs.path on a machine with no OBS -- would refuse the form's
+            # own value.
+            if key in current and raw == current[key]:
+                clean[key] = raw
                 continue
             err = schema.validate(key, raw)
             if err:
@@ -1327,7 +1335,6 @@ class Server:
         # config.yaml stays a sparse overlay on cfg.DEFAULTS: writing back a
         # value that already matches would pin it, so a later change to the
         # default would silently not reach anyone who ever pressed Save.
-        current = schema.flatten(cfg.load())
         changed = {k: v for k, v in clean.items() if current.get(k) != v}
         if changed:
             cfg.save_fields(changed)

@@ -19,7 +19,6 @@ is asserted from the source instead, in test_surface.py.
 """
 from __future__ import annotations
 
-import os
 import urllib.error
 
 import catalog
@@ -275,11 +274,6 @@ def test_an_unknown_path_is_a_json_404(server):
 
 # ------------------------------------------------------------- settings
 
-@pytest.mark.xfail(os.environ.get("GITHUB_ACTIONS") == "true",
-                   reason="known, on a machine without OBS: the default obs.path names an "
-                          "OBS install that is not there, so Settings refuses its own value. "
-                          "A real bug for a clips-only Windows user; fails the same on a clean main",
-                   strict=False)
 def test_every_settable_path_accepts_its_own_current_value(server):
     """Round-trip the whole Settings page: read the values the app reports,
     write each one back unchanged, and it must be accepted. A field that
@@ -388,3 +382,11 @@ def test_the_clips_routes_work_before_there_is_an_engine(headless, c):
     r = _send(headless, c)
     assert r.status != 500, (
         f"{_id(c)} raised with no engine: {r.text[:300]}")
+
+
+def test_a_changed_path_is_still_checked_against_the_disk(server):
+    """The unchanged-value pass above is not a way round validation: a NEW
+    obs.path that names nothing is refused, as it always was."""
+    r = server.post("/api/settings/save",
+                    {"values": {"obs.path": "C:/nowhere/at/all/obs64.exe"}}).json()
+    assert r["ok"] is False and "obs.path" in r["errors"]

@@ -34,6 +34,7 @@ from __future__ import annotations
 import logging
 import math
 import subprocess
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -267,11 +268,24 @@ def render(clip: str, src_start: float, pieces: list, frames: int, out: Path, *,
         main.close()
         for *_x, fr, f in flows:
             fr.close()
-            try:
-                f.unlink()
-            except OSError:
-                pass
+            _remove(f)
     return out
+
+
+def _remove(f: Path, tries: int = 20) -> None:
+    """Delete a flow copy, waiting out Windows' release of it.
+
+    The reader was killed a moment ago, and Windows refuses to delete a file
+    until every handle on it is gone -- which lags the kill. Tried once, the
+    delete failed silently and every slow-motion shot left its copy behind.
+    """
+    for _ in range(tries):
+        try:
+            f.unlink(missing_ok=True)
+            return
+        except OSError:
+            time.sleep(0.1)
+    log.warning("could not remove the optical-flow copy %s", f)
 
 
 def _frame_at(s: float, r: float, base: float, main: Frames, flows: list) -> np.ndarray:
