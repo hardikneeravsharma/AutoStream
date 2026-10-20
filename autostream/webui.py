@@ -3598,6 +3598,18 @@ class Server:
             out["detected"] = songview.detected(shape)
         except Exception as e:                      # noqa: BLE001
             log.info("songview analysis failed for %s: %s", p.name, e)
+            return out
+        # The layers a reel's cuts and camera are timed on, read against that
+        # same grid. The cues are the planner's; the page draws the hits.
+        try:
+            from .clips import rhythm
+
+            r = rhythm.for_song(shape, songview.folder(self._clips_dir(c)).parent / "rhythm").as_dict()
+            r.pop("cues", None)
+            r.pop("energy", None)
+            out["rhythm"] = r
+        except Exception as e:                      # noqa: BLE001
+            log.info("rhythm failed for %s: %s", p.name, e)
         return out
 
     def studio_songview_bytes(self, song: str) -> tuple[bytes, str | None]:

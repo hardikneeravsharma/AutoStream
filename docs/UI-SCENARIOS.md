@@ -246,6 +246,8 @@ listed so the gap is visible.
 | 6.58 | Play the part with marks on it | A tick sounds as the playhead passes each kill and a low thump at each drop; a seek sounds nothing; unticking Sound on each mark silences both | **gap** (sound is not observable from the page) |
 | 6.59 | A shot out of a reel cut to its song's hits: remove the first shot (button or Delete), then move one with the arrows or by dragging it | Every shot after the change moves up one hit and its kill stays on a hit; the last hit goes unused; a reel with no hits is not re-timed, and no other edit re-times it | yes (`test_ui_studio_remark`; the re-timing itself offline in `test_studio`) |
 
+| 6.60 | Song tab: the Hits lane on a drum loop with a quiet opening | Every kick, snare and hat is a tick in its own row and the song's parts are named along the top; no kick is drawn in the opening that has none; the lane hides and comes back from its toggle | yes (`test_ui_studio_hits`) |
+
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.
 
