@@ -238,3 +238,25 @@ def test_the_build_clip_chosen_is_sent_and_an_untouched_part_holds_the_drop(pg):
     # drawn by the page and never moved: sent as a length, not an end
     assert pg.evaluate("() => studio_planBody(false).shaping.part_auto") is True
     assert pg.evaluate("() => { studio.mk.touched = true; return studio_planBody(false).shaping.part_auto; }") is None
+
+
+def test_fast_paced_headshot_offers_and_picks_headshots_only(pg):
+    """Pick for me filled Fast-paced headshot's slots with body kills, which its plan then left
+    out (clips/fasthead.py is headshots only). Its clips step now offers clips with a headshot,
+    counts them against about one a second, and says whether there is a double to end on."""
+    ids = pg.evaluate("""() => { const ids = Object.keys(studio.clipIndex);
+        ids.forEach((id, i) => { const c = studio.clipIndex[id]; c.hs = (c.kills || []).map(() => i % 2 === 0); });
+        return ids.filter((id, i) => i % 2 === 0); }""")
+    pg.evaluate("() => { document.querySelector('.gd-more').open = true; }")
+    pg.click('.gd-card[data-key="fasthead"]')
+    pg.click("#studio-gd-next")
+    pg.click('.gd-card[data-gd="song"]')
+    pg.wait_for_function("() => studio.song", timeout=30_000)
+    pg.click("#studio-gd-next")
+    pg.wait_for_selector('[data-gd="pickall"]')
+    offered = pg.evaluate("() => [...document.querySelectorAll('.gd-clip')].map(b => b.getAttribute('data-id'))")
+    assert sorted(offered) == sorted(ids)
+    pg.click('[data-gd="pickall"]')
+    assert sorted(pg.evaluate("() => studio.gd.quick")) == sorted(ids)
+    text = pg.inner_text("#studio-gd-body")
+    assert "Headshots only" in text and f"{len(ids)} of " in text and "single kill" in text

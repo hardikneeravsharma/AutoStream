@@ -41,7 +41,7 @@ class Verdict:
 
 def judge(*, style, song: dict | None, clips: int, kills: int, has_setup: bool = True,
           project: dict | None = None, notes: list[str] | None = None, part: tuple[float, float] | None = None,
-          fmt: str = "vertical", error: str = "") -> Verdict:
+          fmt: str = "vertical", error: str = "", headshots: int | None = None) -> Verdict:
     """The verdict for these choices. `style` is a studio.Style (or None)."""
     name = getattr(style, "label", "This style")
     if style is None:
@@ -61,6 +61,14 @@ def judge(*, style, song: dict | None, clips: int, kills: int, has_setup: bool =
                            "Use Build and drop" if drops else "Choose another song")
     if clips <= 0:
         return Verdict(BAD, "No clips are chosen yet.", "pick-clips", "Pick for me")
+    # Fast-paced headshot is headshots only (clips/fasthead.py): body kills never fill in.
+    if getattr(style, "key", "") == "fasthead" and headshots is not None:
+        if headshots < 8:
+            return Verdict(BAD, f"{name} is headshots only, and {headshots} of these clips have a headshot; "
+                                f"it needs at least 8.", "pick-clips", "Pick for me")
+        if headshots < 20:
+            return Verdict(WARN, f"Only {headshots} of these clips have a headshot, so the reel will be about "
+                                 f"{headshots} s rather than 36.", "pick-clips", "Pick for me")
     if needs_drop and not has_setup:
         return Verdict(BAD, "Build and drop needs a clutch, an ace or three kills in one clip to build with.",
                        "pick-clips", "Pick the best")

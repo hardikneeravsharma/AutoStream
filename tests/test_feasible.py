@@ -64,3 +64,11 @@ def test_a_wrong_shape_warns_and_a_good_choice_is_ok():
 
 def test_no_style_asks_for_one():
     assert j(style=None).level == fz.WARN
+
+
+def test_fast_paced_headshot_counts_headshots_and_is_not_rushed_by_a_slow_song():
+    FH = studio.STYLE["fasthead"]
+    assert j(style=FH, headshots=5).level == fz.BAD
+    v = j(style=FH, headshots=12)
+    assert v.level == fz.WARN and "12" in v.text and v.fix == "pick-clips"
+    assert j(style=FH, headshots=40, song={"bpm": 90.0, "drops": [30.0]}).level == fz.OK
