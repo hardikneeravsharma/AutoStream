@@ -3997,6 +3997,8 @@ class Server:
 
         c = cfg.load()
         root = self._clips_dir(c)
+        # what the kill checks read is kept beside the clips, so a restart does not read it again
+        studio.use_check_cache(root / studio.CACHE_DIR / studio.KILL_CHECKS_FILE)
         want = [str(p) for p in (body.get("clips") or []) if isinstance(p, str)][:studio.MAX_SHOTS]
         if not want:
             return {"ok": False, "error": "Choose at least one clip."}
