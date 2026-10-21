@@ -130,6 +130,8 @@ listed so the gap is visible.
 | 5.12 | Drag the handles | Window updates, strip dims outside it | **gap** |
 | 5.13 | Whole video | Resets to no window | **gap** |
 | 5.14 | Save this part | A real file appears on disk | yes |
+| 5.14a | A file the player cannot decode (AV1 on a Mac before M3) | Falls back to the part, says why, and Play this part plays (WebKit) | yes |
+| 5.14b | Make a playable copy of it | The button names the cost, the copy is made, and the player shows a picture from it (WebKit) | yes |
 
 ## 5c · How to read it (Counter-Strike only)
 

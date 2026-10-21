@@ -134,3 +134,44 @@ def test_the_part_it_offers_plays_in_the_same_player(ui):
     }""")
     assert state["src"] and "/api/clips/source" not in state["src"], state
     assert not state["err"] and state["ready"] >= 1 and state["dur"] > 0, state
+
+
+def test_a_copy_can_be_stopped(ui, app):
+    """FROM A REPORT: "you didn't add a stop button to the create a copy
+    portion, now it's stuck and I don't know how to make it stop"."""
+    ui.page.wait_for_function("() => clip_state.partWhole === false", timeout=30_000)
+    ui.page.locator("#clip-part-copy").click()
+    stop = ui.page.locator("#clip-part-copystop")
+    stop.wait_for(state="visible", timeout=20_000)
+    stop.click()
+    ui.page.wait_for_function(
+        "() => !document.getElementById('clip-part-copy').disabled"
+        " && document.getElementById('clip-part-copystop').classList.contains('hide')",
+        timeout=30_000)
+    left = list((Path(app["home"]) / "video").glob("*.playable.mp4*"))
+    assert left == [], f"a stopped copy left {left}"
+
+
+def test_a_playable_copy_makes_the_whole_recording_watchable(ui):
+    """#210: the AV1 recording's own video never shows on an M1 or M2, so the
+    page offers a copy it can show -- and once made, the player plays it,
+    picture and all, and the whole recording can be marked again."""
+    ui.page.wait_for_function("() => clip_state.partWhole === false", timeout=30_000)
+    btn = ui.page.locator("#clip-part-copy")
+    assert btn.is_visible()
+    assert "GB" in btn.inner_text(), "the cost was not on the button"
+    btn.click()
+    ui.page.wait_for_function("() => clip_state.partWhole === true", timeout=300_000)
+    state = ui.page.evaluate("""async () => {
+        const v = document.getElementById('clip-part-video');
+        await new Promise(res => { if (v.readyState >= 1) return res();
+                                   v.addEventListener('loadedmetadata', res);
+                                   v.addEventListener('error', res);
+                                   setTimeout(res, 30000); });
+        return {src: v.getAttribute('src') || '', err: v.error && v.error.code,
+                width: v.videoWidth, dur: v.duration};
+    }""")
+    assert "copy=1" in state["src"], state
+    assert not state["err"] and state["width"] > 0, f"still no picture: {state}"
+    assert abs(state["dur"] - SECONDS) < 2, state
+    assert ui.page.locator("#clip-part-markin").is_visible()

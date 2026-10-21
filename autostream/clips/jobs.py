@@ -1015,12 +1015,14 @@ class ClipJob:
             self.diag.stage("1e. headshots")
             self._set(message="Checking which kills were headshots…")
             try:
-                read = headshot.annotate(self.source, kills)
+                read = headshot.annotate(self.source, kills,
+                                         cancelled=lambda: self._cancel.is_set())
                 hs = sum(1 for k in kills if k.get("hs"))
                 self.diag.note("headshots", {"read": read, "headshots": hs, "kills": len(kills)})
                 log.info("headshots: %d of %d kill(s), %d unread", hs, len(kills), len(kills) - read)
             except Exception as e:                           # noqa: BLE001
                 log.warning("headshots could not be read: %s", e)
+            self._check()
 
         # ---- 2. decide what to cut ---------------------------------------
         self.diag.stage("2. decide what to cut")

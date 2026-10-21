@@ -49,6 +49,7 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -1161,9 +1162,18 @@ def scan(video: Path, band, *, duration: float | None = None,
     log.info("reading the feed of %s in %d chunk(s), %s",
              Path(video).name, len(spans), how)
     done = 0
+    reader = _span
+    # A Mac decodes on the CPU, so the kill emblem is read from THIS decode
+    # rather than a second one -- macos/scan.py.
+    if sys.platform == "darwin" and shape and not on_gpu:
+        import functools
+
+        from ..macos import scan as _mac
+        _mac.forget(video)               # this scan's emblems, never an earlier one's
+        reader = functools.partial(_mac.span, window_end=end)
     with ThreadPoolExecutor(max_workers=SCAN_WORKERS) as pool:
-        jobs = [pool.submit(_span, (video, band, at, dur, fps, frame_height,
-                                    shape, capture is not None, cancelled, on_gpu))
+        jobs = [pool.submit(reader, (video, band, at, dur, fps, frame_height,
+                                     shape, capture is not None, cancelled, on_gpu))
                 for at, dur in spans]
         # Taken in span order, not completion order, so the rows and the
         # captured frames stay in time order however the decoders finish.
