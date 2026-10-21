@@ -39,7 +39,7 @@ def _clear():
 
 
 @pytest.fixture
-def ffmpeg(monkeypatch):
+def ffmpeg(monkeypatch, tmp_path):
     """A fake ffmpeg that lists every vendor's paths, and whose GPU runs succeed
     only for the paths `card` can run -- what Gyan's build does on each machine."""
     state = SimpleNamespace(card=None, listed=True, calls=[], amf_on_other_card=False)
@@ -68,6 +68,11 @@ def ffmpeg(monkeypatch):
         ok = wants in RUNS[state.card]
         return SimpleNamespace(returncode=0 if ok else 255, stdout=b"", stderr=b"no such device")
 
+    # The decoder probe reuses a sample file from the temp folder, and used to find the one a
+    # real run had left there -- so these passed on a machine with ffmpeg and failed on a clean
+    # one (and on this one, the day its temp folder was cleared). Their own folder, a file in it.
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path))
+    (tmp_path / "autostream-probe-h264.mp4").write_bytes(b"x")
     monkeypatch.setattr(tools, "binary", lambda name: name)
     monkeypatch.setattr(tools.subprocess, "run", fake_run)
     monkeypatch.setattr(tools, "_HW_ENCODE_FAILED", False)
