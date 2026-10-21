@@ -305,3 +305,30 @@ def test_each_imported_clip_keeps_its_own_marks(root, tmp_path, probe10):
 
     assert uploads.info(root, pa)["kills"] == [1.0, 2.0]
     assert uploads.info(root, pb)["kills"] == [5.0]
+
+
+@pytest.mark.parametrize("vfit,crop", [("fit", False), ("near", True), ("zoom", None)])
+def test_near_fit_shows_the_middle_three_quarters_over_the_blurred_copy(root, vfit, crop):
+    """F16: full fit left the game a third of the 9:16 height. Near fit keeps the middle
+    75 % of the width -- minimap and kill feed mostly stay -- a third taller."""
+    clip = _run(root, "r")
+    proj = {"format": "vertical", "vfit": vfit,
+            "shots": [{"clip": str(clip), "kills": [4.0], "kill": 4.0, "duration": 3.0, "pre": 1.5}]}
+    got, derived, _ = studio.normalise(proj, root, probe=lambda p: 10.0)
+    assert got["vfit"] == vfit
+    seg = studio.segments(got, derived)[0]
+    cmd = " ".join(studio.segment_command(seg, Path("o.mp4")))
+    if crop is None:
+        assert seg.layout == {} and "boxblur" not in cmd
+        return
+    assert seg.layout["fit"] == vfit and "boxblur" in cmd
+    assert ("crop=iw*0.75:ih:iw*0.125:0" in cmd) is crop
+    assert studio.retime_height(seg) == (1080 if crop else 720)
+
+
+def test_an_unknown_framing_is_zoom(root):
+    clip = _run(root, "r")
+    proj = {"format": "vertical", "vfit": "stretch",
+            "shots": [{"clip": str(clip), "kills": [4.0], "kill": 4.0, "duration": 3.0, "pre": 1.5}]}
+    got, _, _ = studio.normalise(proj, root, probe=lambda p: 10.0)
+    assert got["vfit"] == "zoom"
