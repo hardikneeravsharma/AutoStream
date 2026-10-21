@@ -301,3 +301,32 @@ def test_a_chosen_build_clip_works_when_nothing_else_is_a_set_up():
     lib = [clip(f"one{i}", [3.5]) for i in range(30)] + [clip("pair", [4.0, 6.0], seconds=12.0)]
     p = director.plan(lib, shape, r, seed=2, build="C:/clips/pair.mp4")
     assert p.shots[0]["name"] == "pair"
+
+
+def test_a_chosen_ace_plays_all_five_kills_with_the_wait_cut_out():
+    """Reported: "I selected the ACE clip but it still showed only 3 kills out of it". The
+    fourth kill came 13 s after the third, so the round was split in two fights."""
+    shape, r = song()
+    ace = clip("ACE", [36.0, 40.0, 42.0, 55.018, 57.352], hs=[False] * 5, seconds=69.6)
+    lib = library() + [ace]
+    p = director.plan(lib, shape, r, seed=1, build=ace["path"])
+    take = [s for s in p.shots if s["name"] == "ACE"]
+    assert [s["kill"] for s in take] == [36.0, 40.0, 42.0, 55.018, 57.352]
+    assert p.marks[len(take) - 1] == pytest.approx(DROP, abs=1e-3)
+    # every kill where its mark says, the jump included
+    t = 0.0
+    for s, m in zip(p.shots, p.marks):
+        assert p.part[0] + t + s["pre"] == pytest.approx(m, abs=1e-3)
+        t += s["duration"]
+    # the 13 s wait is shown as the jump's two ends, not played
+    gap = p.marks[3] - p.marks[2]
+    assert gap == pytest.approx(director.JUMP_AFTER + director.JUMP_BEFORE, abs=1e-3)
+    assert take[2]["kill"] - take[2]["pre"] + take[2]["duration"] == pytest.approx(42.0 + director.JUMP_AFTER, abs=1e-3)
+    assert any("cut out" in n for n in p.notes)
+
+
+def test_an_ace_named_clip_is_one_round_even_unchosen():
+    shape, r = song()
+    ace = clip("VALORANT_03_ACE_r9", [10.0, 12.0, 20.0, 22.0, 23.0], hs=[False] * 5, seconds=30.0)
+    p = director.plan(library() + [ace], shape, r, seed=0)
+    assert [s["name"] for s in p.shots].count("VALORANT_03_ACE_r9") == 5

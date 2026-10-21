@@ -45,6 +45,14 @@ log = logging.getLogger(__name__)
 BURST_GAP = 6.0            # s: kills further apart than this in a clip are separate fights
 TAKE_LEAD = (0.8, 3.0)     # s of the take before its first kill: at least, at most
 TAKE_MAX = 14.0            # s: a set-up longer than this is cut down to its last kills
+# THE WHOLE ROUND, WITH THE WAITING CUT OUT. An ACE chosen to build on played three
+# of its five kills: the fourth came 13 s after the third, past BURST_GAP, so the
+# round was split in two and the take was the first half. A chosen clip, or one
+# named ACE or CLUTCH, is one round; where it waits longer than JUMP_GAP between
+# kills the take jumps, keeping JUMP_AFTER of the one kill and JUMP_BEFORE of the next.
+JUMP_GAP = 4.5
+JUMP_AFTER = 1.0
+JUMP_BEFORE = 1.4
 SETUP_MIN_KILLS = 3        # ...or two, with a clutch / ace / last-alive name on it
 PAIR_RATE = (0.75, 1.6)    # how far a double may be sped or slowed to meet two hits
 PAIR_TOGETHER = 0.30       # s: closer than this, a double's kills share one hit
@@ -125,7 +133,7 @@ def bursts(clip: dict) -> list[Burst]:
 
 
 def setup_score(b: Burst) -> float:
-    return len(b.kills) * 2.0 + (3.0 if b.big() else 0.0) + 0.5 * sum(b.hs) - 0.15 * max(0.0, b.span - 8.0)
+    return len(b.kills) * 2.0 + (3.0 if b.big() else 0.0) + 0.5 * sum(b.hs) - 0.15 * max(0.0, take_span(b.kills) - 8.0)
 
 
 def single_score(b: Burst) -> float:
@@ -257,9 +265,27 @@ def _shot(b: Burst, kill: float, kills: list[float], pre: float, duration: float
 def take_kills(b: Burst) -> list[float]:
     """The kills a set-up plays: all of them, or its last ones when that is too long a take."""
     ks = list(b.kills)
-    while len(ks) > 2 and ks[-1] - ks[0] > TAKE_MAX:
+    while len(ks) > 2 and take_span(ks) > TAKE_MAX:
         ks = ks[1:]
     return ks
+
+
+def gap_on_screen(a: float, c: float) -> float:
+    """How long the take shows between two of its kills: all of it, or the jump's two ends."""
+    return c - a if c - a <= JUMP_GAP else JUMP_AFTER + JUMP_BEFORE
+
+
+def take_span(ks: list[float]) -> float:
+    """First kill to last as the take shows it, the waits jumped."""
+    return sum(gap_on_screen(a, c) for a, c in zip(ks, ks[1:]))
+
+
+def round_of(clip: dict) -> Burst | None:
+    """Every kill of a clip as one fight -- the round a chosen or ACE / CLUTCH clip is."""
+    whole = bursts(clip)
+    if len(whole) < 2:
+        return None
+    return Burst(clip, [k for f in whole for k in f.kills], [h for f in whole for h in f.hs])
 
 
 def take_start(D: float, span: float, room: float, beats: list[float], downbeats: set[int]) -> float:
@@ -291,15 +317,21 @@ def take(b: Burst, drop_reel: float) -> tuple[list[dict], float]:
     move by hand.
     """
     ks = take_kills(b)
-    lead = min(TAKE_LEAD[1], max(TAKE_LEAD[0], drop_reel - (ks[-1] - ks[0])), ks[0] - 0.05)
+    span = take_span(ks)
+    lead = min(TAKE_LEAD[1], max(TAKE_LEAD[0], drop_reel - span), ks[0] - 0.05)
     start_src = ks[0] - lead
-    begin = max(0.0, drop_reel - (ks[-1] - start_src))
-    cuts = [start_src] + [(a + c) / 2 for a, c in zip(ks, ks[1:])]
-    shots = []
-    for j, k in enumerate(ks):
-        a = cuts[j]
-        b_ = cuts[j + 1] if j + 1 < len(ks) else None
-        shots.append({"k": k, "a": a, "b": b_})
+    begin = max(0.0, drop_reel - (span + lead))
+    # each kill's shot: from halfway after the last kill, or the jump's far end, to the same before the next
+    ins, outs = [start_src], []
+    for a, c in zip(ks, ks[1:]):
+        if c - a <= JUMP_GAP:
+            outs.append((a + c) / 2)
+            ins.append((a + c) / 2)
+        else:
+            outs.append(a + JUMP_AFTER)
+            ins.append(c - JUMP_BEFORE)
+    outs.append(None)
+    shots = [{"k": k, "a": ins[j], "b": outs[j]} for j, k in enumerate(ks)]
     out = []
     for s in shots:
         out.append(_shot(b, s["k"], [s["k"]], s["k"] - s["a"], 0.0, fx=[]))
@@ -323,8 +355,11 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
     clips_by_path = {str(c["path"]): c for c in clips}
     setups = sorted((b for b in all_b if is_setup(b)), key=setup_score, reverse=True)
     notes: list[str] = []
-    theirs = sorted((b for b in all_b if build and b.path.lower() == str(build).lower() and len(b.kills) >= 2),
-                    key=setup_score, reverse=True)
+    rounds = [r for c in clips if (r := round_of(c)) is not None
+              and (r.big() or (build and r.path.lower() == str(build).lower()))]
+    setups = sorted(setups + [r for r in rounds if is_setup(r)], key=setup_score, reverse=True)
+    theirs = sorted((b for b in all_b + rounds if build and b.path.lower() == str(build).lower()
+                     and len(b.kills) >= 2), key=setup_score, reverse=True)
     if build and not theirs:
         notes.append(f"The clip chosen to build on has no two kills together, so the reel builds on "
                      f"{'the best one among the rest' if setups else 'nothing'} instead.")
@@ -342,7 +377,7 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
         close = [b for b in setups if setup_score(b) >= setup_score(setups[0]) - 1.0]
         best = close[rng.randrange(len(close))] if seed else setups[0]
     ks = take_kills(best)
-    span = ks[-1] - ks[0]
+    span = take_span(ks)
     D = choose_drop(shape, rhythm, part, need_before=span + TAKE_LEAD[0], need_after=4 * gap)
     if D is None:
         raise ValueError("This part of the song has no drop with room for a build before it.")
@@ -361,8 +396,10 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
     take_shots, begin = take(best, D - start)
     if begin > 1e-3:
         start += begin                     # the take could not reach back that far
-    notes.append(f"Builds on {best.clip.get('name')} ({len(ks)} kills in one take), "
-                 f"its last kill on the drop at {D:.1f} s.")
+    jumped = sum(c - a - JUMP_AFTER - JUMP_BEFORE for a, c in zip(ks, ks[1:]) if c - a > JUMP_GAP)
+    notes.append(f"Builds on {best.clip.get('name')} ({len(ks)} kills in one take"
+                 + (f", {jumped:.0f} s of waiting between them cut out" if jumped > 0.5 else "")
+                 + f"), its last kill on the drop at {D:.1f} s.")
 
     # ---- after the drop: targets, then who hits them
     cues = cue_scores(rhythm, list(shape.beats))
@@ -490,7 +527,7 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
     for n, s in enumerate(take_shots):
         a, b_ = s.pop("_src")
         k = s["kill"]
-        reel_k = rel(D) - (take_shots[-1]["kill"] - k)
+        reel_k = rel(D) - take_span([x["kill"] for x in take_shots if x["kill"] >= k - 1e-6])
         if b_ is None:
             dur = first_cut - (reel_k - s["pre"])
         else:
