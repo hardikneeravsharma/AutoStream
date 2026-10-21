@@ -113,7 +113,7 @@ def settings_schema(schema: list[dict]) -> list[dict]:
 # ------------------------------------------------------------ the updater
 # Every GitHub release asset the updater knows is a Windows installer or zip;
 # downloading one to a Mac costs 70 MB it cannot run. Mac builds come from the
-# .dmg on the release page instead (.github/workflows/macos-release.yml).
+# .dmg on the release page instead (.github/workflows/release.yml).
 UPDATE_WHY = ("Updates are not installed from inside the Mac app: download the "
               "newest AutoStream-macos .dmg from the GitHub release page.")
 

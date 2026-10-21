@@ -1,0 +1,125 @@
+# Every release carries Windows AND macOS, built on GitHub's own runners.
+#
+# Pushing a version tag IS the release:
+#
+#   git tag -a v1.79.0 -m "v1.79.0: what it is" [-m "notes, markdown"]
+#   git push origin v1.79.0
+#
+# builds, and publishes in one step with every file attached -- so "Latest"
+# is never a release with nothing to download, and never one platform short:
+#
+#   Windows   scripts\build.ps1 -Dist -NoMedia: AutoStream-share.zip and
+#             AutoStream-<version>-setup.exe, each with its .sha256. The same
+#             script and credential scan as on the PC; a runner has no
+#             credentials to leak in the first place.
+#   macOS     scripts/macos/build.sh --dist: AutoStream-macos-arm64.dmg and
+#             AutoStream-macos-x86_64.dmg, each with its .sha256.
+#
+# The tag's message is the release: its first line the title, the rest the
+# notes. The tag must match __version__, or nothing is built.
+#
+# A release that already exists for the tag (published by hand from the PC)
+# gets whatever it is missing uploaded instead. "Run workflow" on the Actions
+# tab re-runs it for a tag, e.g. after a runner failure.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and publish (already pushed, e.g. v1.78.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  windows:
+    name: Windows build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tag matches the version
+        shell: bash
+        run: |
+          v=$(python -c "import re;print(re.search(r'__version__\s*=\s*\"([^\"]+)\"',open('autostream/__init__.py',encoding='utf-8').read()).group(1))")
+          [ "v$v" = "$TAG" ] || { echo "tag $TAG but __version__ is $v"; exit 1; }
+      - run: choco install ffmpeg innosetup -y --no-progress
+      - run: |
+          python -m venv .venv
+          .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+      - run: powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Dist -NoMedia
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/AutoStream-share.zip
+            dist/AutoStream-share.zip.sha256
+            dist/AutoStream-*-setup.exe
+            dist/AutoStream-*-setup.exe.sha256
+          if-no-files-found: error
+
+  macos:
+    name: macOS build (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Two builds rather than one universal app: numpy and friends ship no
+        # universal2 wheels, so a universal Python app cannot be assembled.
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: PYTHON=python scripts/macos/install.sh --dev
+      # The Mac-specific tests only: the whole suite already ran in CI.
+      - run: .venv/bin/python -m pytest -q tests/macos
+      - run: scripts/macos/build.sh --dist --no-tests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.runner }}
+          path: |
+            dist/macos/AutoStream-macos-*.dmg
+            dist/macos/AutoStream-macos-*.dmg.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Publish, or fill in a release that already exists
+        run: |
+          ls -la assets
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" assets/* --clobber
+          else
+            git fetch -q --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            title=$(git tag -l "$TAG" --format='%(contents:subject)')
+            git tag -l "$TAG" --format='%(contents:body)' > notes.md
+            gh release create "$TAG" assets/* --verify-tag \
+              --title "${title:-$TAG}" --notes-file notes.md
+          fi
