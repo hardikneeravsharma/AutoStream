@@ -220,3 +220,11 @@ def test_for_song_reads_once_and_then_from_the_cache(tmp_path, monkeypatch):
     two = R.for_song(shape, tmp_path / "cache")
     assert len(reads) == 1
     assert two.layers["snare"].times == one.layers["snare"].times
+
+
+def test_a_grid_half_a_beat_off_its_kick_is_found_and_one_on_it_is_not():
+    """R14: the half-beat test reel.analyse uses to move a backbeat grid onto the kick."""
+    x, beat, _ = song(seconds=20.0)
+    assert not R.half_beat_off(x, beat, 0.25)
+    assert R.half_beat_off(x, beat, 0.25 + beat / 2)
+    assert not R.half_beat_off(np.zeros(SR * 10, np.float32), beat, 0.0)

@@ -287,6 +287,17 @@ def analyse(path: Path, seconds: float = 0.0, points: int = 2000) -> Shape:
     fps = bs.SR / bs.HOP
     beat, phase = rigid_grid(env, beat, fps)
     bpm = 60.0 / beat
+    # THE GRID ON THE KICK, NOT HALF A BEAT OFF IT (R14). Phased by total onset energy, the
+    # grid of a song whose snare or clap outweighs its kick lands on the backbeat: measured
+    # over the 61 songs on disk, four read about half a beat off their kick -- KORDHELL
+    # (-0.48), Y Que Fue (-0.47, heard by ear), Sky (-0.43), No Lie (-0.43) -- the same
+    # songs the half-beat search had flagged, and every other song within 0.32 of it. Only
+    # a clear, consistent offset moves the grid; anything less leaves it where it was tuned.
+    from . import rhythm
+    shift = rhythm.half_beat_off(x, beat, phase)
+    if shift:
+        phase = (phase + beat / 2) % beat
+        log.info("reel: %s grid moved half a beat onto the kick", path.name)
     beats = [phase + i * beat for i in range(int((total - phase) / beat))]
 
     step = max(1, len(x) // points)

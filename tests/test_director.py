@@ -236,3 +236,48 @@ def test_build_and_drop_plans_itself_without_asking_for_an_order(tmp_path, monke
     singles = [c for c in clips if c["name"].startswith("one")]
     proj, notes = studio.plan(singles, "drop", shape=shape, song=str(shape.path), fmt="vertical")
     assert proj["shots"] and any("usual build-and-drop way" in n for n in notes), notes
+
+
+def test_the_reel_ends_on_a_bar_line_when_the_footage_allows():
+    """F17: it stopped TAIL after its last kill, wherever in the bar that fell."""
+    shape, r = song()
+    lib = [dict(c, duration=30.0) for c in library()]
+    p = director.plan(lib, shape, r, seed=3)
+    end = p.part[1]
+    downbeats = [b for i, b in enumerate(shape.beats) if i % 4 == 0]
+    assert min(abs(end - b) for b in downbeats) < 0.01, end
+    assert end - max(p.kills) >= director.END_AFTER - 1e-6
+
+
+def test_a_file_named_2_kills_is_not_a_set_up_but_an_ace_is():
+    """Every multi-kill file is named N-KILLS; that made each double a set-up."""
+    two = director.bursts(clip("VALORANT_15_2-KILLS_r18", [3.5, 5.6]))[0]
+    ace = director.bursts(clip("ACE", [36.0, 40.0, 42.0], seconds=46.0))[0]
+    assert not director.is_setup(two) and director.is_setup(ace)
+
+
+def test_the_clip_chosen_to_build_on_is_the_take():
+    shape, r = song()
+    lib = library() + [clip("mine", [4.0, 6.5], labels=["CLUTCH"], seconds=12.0)]
+    p = director.plan(lib, shape, r, seed=3, build="C:/clips/mine.mp4")
+    assert [s["name"] for s in p.shots[:2]] == ["mine", "mine"]
+    assert p.marks[1] == pytest.approx(DROP, abs=1e-3)
+    # a chosen clip with nothing to build on is said, and the best set-up is used
+    q = director.plan(lib, shape, r, seed=3, build="C:/clips/one0.mp4")
+    assert q.shots[0]["name"] == "clutch" and any("chosen to build on" in n for n in q.notes)
+
+
+def test_doubles_too_far_apart_for_a_run_still_fill_the_hits():
+    """48 clips of mostly 2-KILLS, kills 2-4 s apart: the reel ended 13 s early."""
+    shape, r = song()
+    lib = [clip("clutch", [3.5, 5.0, 7.2], labels=["CLUTCH 1v3"])]
+    lib += [clip(f"far{i}", [3.5, 6.0 + 0.1 * i], seconds=14.0) for i in range(40)]
+    p = director.plan(lib, shape, r, seed=1)
+    assert len({s["clip"] for s in p.shots}) >= 25
+    assert not any("ran out" in n for n in p.notes)
+    # a single taken from a double never shows the other kill inside its shot
+    for s in p.shots[3:]:
+        other = [k for k in next(c for c in lib if c["path"] == s["clip"])["kills"] if abs(k - s["kill"]) > 1e-6]
+        a, b = s["kill"] - s["pre"], s["kill"] - s["pre"] + s["duration"]
+        if not s.get("anchors"):
+            assert not any(a < k < b for k in other), s

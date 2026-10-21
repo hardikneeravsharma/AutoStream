@@ -606,7 +606,7 @@ CONTROLS: list[Control] = [
             why="no clips chosen is refused here, before a song is analysed"),
     Control("/api/studio/feasible", "POST", CALL, "will these choices make a good reel", "studio",
             body={"clips": [], "style": "drop", "song": ""}, expect=_has("ok", "verdict"),
-            acts=("studio-gd", "studio-gd-open"),
+            acts=("studio-gd", "studio-gd-open", "studio-mk-chipfix"),
             why="one verdict and one fix for a style, a song and clips -- made from "
                 "a real plan without the slow footage checks, so a chip says what the "
                 "planner will do; no song or no clips is a verdict of its own, not an error"),
@@ -778,6 +778,7 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-bin-slot": "ticks a drawer in and out of the how-many-reels count",
     "studio-sg-win": "zooms the song's lanes",
     "studio-gd-open": "opens the guided maker: one question a screen",
+    "studio-mk-chipfix": "applies the Make page check's fix (9:16 for a landscape Short)",
     "studio-gd": "moves through the guided maker and answers its questions; Make hands them to the Make page's plan",
     "studio-sg-lane": "shows or hides one way of seeing the song",
     "studio-nosong": "clears the chosen song in the dialog",

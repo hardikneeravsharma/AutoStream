@@ -1651,6 +1651,7 @@ def clutch_take(shots: list[dict], slots: list[float], drop: float, start: float
     return order, kept + [round(x, 4) for x in take] + list(slots[d + 1:])
 
 
+KILL_BLURS = ("k14", "k21")  # blur snap, zoom blur hit: soft at the very frame the kill lands
 DEFAULT_CLIP_SHOTS = 4      # shots a clip may give a reel when its style sets no cap (R13)
 CAP_FROM_CLIPS = 5          # ...applied only from this many clips up
 
@@ -1774,10 +1775,12 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
     except (AttributeError, OSError) as e:           # a song that cannot be read again: the usual way
         log.info("studio: no rhythm for the song (%s)", e)
         return proj, ["The song could not be read for its drum hits; planned the usual build-and-drop way."] + notes
+    # the clip the player chose to build on, in the guided maker's build slot
+    build = str((shape_it or {}).get("build_clip") or "")
     got = None
     for _ in range(4):
         try:
-            got = director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n)
+            got = director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, build=build)
         except ValueError as e:
             return proj, [f"{e} It was planned the usual build-and-drop way instead."] + notes
         todo = [chosen[s["clip"]] for s in got.shots if s["clip"] not in checked and s["clip"] in chosen]
@@ -1807,7 +1810,7 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
             chosen[c["path"]] = c
     else:
         try:
-            got = director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n)
+            got = director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, build=build)
         except ValueError as e:
             return proj, [f"{e} It was planned the usual build-and-drop way instead."] + notes
     proj["shots"] = got.shots
@@ -2210,6 +2213,28 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                 f"{sh[0]:+.2f} to {sh[-1]:+.2f} s)"
                 + (f"; {got['total'] - got['seen']} had no emblem to read and kept their time."
                    if got["total"] > got["seen"] else "."))
+    # A KILL THROUGH A FLASH IS NOT ONE TO CUT TO (F2, every style): the same check the
+    # director runs on its clips (kill_clarity, CLEAR_MIN), here on every kill offered.
+    washed: list[tuple[str, float]] = []
+    if checks:
+        kept_clips = []
+        for c in chosen:
+            ks = list(c.get("kills") or [])
+            hs = list(c.get("hs") or [])
+            ok = [(q := kill_clarity(c["path"], float(k))) is None or q >= CLEAR_MIN for k in ks]
+            if all(ok):
+                kept_clips.append(c)
+                continue
+            washed += [(c["path"], k) for k, good in zip(ks, ok) if not good]
+            c = dict(c, kills=[k for k, good in zip(ks, ok) if good])       # a copy: the library's row stays whole
+            if hs:
+                c["hs"] = [h for h, good in zip(hs + [None] * len(ks), ok) if good]
+            if c["kills"]:
+                kept_clips.append(c)
+        chosen = kept_clips
+        if washed:
+            notes.append(f"{len(washed)} kill(s) were left out because the screen was washed out at the "
+                         f"kill (a flash or smoke): it could not be seen.")
     # WHY EACH KILL OF A CLIP THAT WENT IN IS NOT IN IT. A clip's row said
     # nothing when one of its three kills fell out, so a missing kill looked
     # like a bug rather than a decision. (clip path, kill) -> reason.
@@ -2235,6 +2260,17 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             notes.append(f"{len(before_cap) - len(all_moments)} moment(s) left out: no clip "
                          f"gives this reel more than {cap} shots, so the "
                          f"weakest of a clip's own go first.")
+    # ONE CLIP, ONE FIGHT in the fast styles (F2): at a cut every beat, two fights of one
+    # file read as the same scene twice. Not with Keep every kill, and not on a handful.
+    if fast and not keep_all and len({m.group for m in all_moments}) >= CAP_FROM_CLIPS:
+        before_fight = len(all_moments)
+        refought: list[tuple[str, float]] = []
+        all_moments = rulebook.one_fight_per_clip(all_moments, refought)
+        for key in refought:
+            kill_why.setdefault(key, "another fight of this clip is already in the reel")
+        if len(all_moments) < before_fight:
+            notes.append(f"{before_fight - len(all_moments)} moment(s) left out: a fast reel shows one "
+                         f"fight from each clip, so the same scene never comes round twice.")
     with_moments = {m.clip["path"] for m in all_moments}
     left_out((c["path"] for c in chosen if c["path"] not in with_moments),
              "Too little footage before its kill to show the fight.")
@@ -2578,6 +2614,13 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     pools = {k: list(style_pool) for k, style_pool in (
         ("kill", style.kill_pool), ("transition", style.transition_pool),
         ("hero", style.hero_pool), ("camera", style.camera_pool), ("speed", style.speed_pool))}
+    # NOTHING THAT BLURS THE KILL (F2, every style), unless the player chose it: a blur on
+    # the kill hid three kills of the first That Acid render for seven frames each.
+    if not (template and template.get("kill")):
+        kept = [p for p in pools["kill"] if fam(p) not in KILL_BLURS]
+        pools["kill"] = kept or pools["kill"]
+        for s in shots:
+            s["fx"] = [f for f in s["fx"] if fam(f) not in KILL_BLURS]
     _vary(shots, pools, style, seed, "all")
     rulebook.budget(shots, pools)
     mix_free = chosen_sets(template)
@@ -5404,16 +5447,26 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
     long_end = float(derived.get("outro_fade") or 0.0)
     if long_end:
         end_fade = min(long_end, L)
+    # THE LAST KILL IS NEVER FADED (F2, every style). A style's own fade is most of a bar
+    # and ran over the last kill of two Follow-the-song reels; derive() holds the last
+    # frame back only when an ending length was chosen. Otherwise the fade is shortened to
+    # start OUTRO_AFTER_KILL after the last kill -- never below a third of a second.
+    kills_all = derived.get("kills") or []
+    room = L - (max(kills_all) + OUTRO_AFTER_KILL) if kills_all else L
+
+    def unfaded(d: float) -> float:
+        return round(max(0.3, min(d, room)), 4)
+    end_fade = unfaded(end_fade)
     if fam(outro) == "fade_out":
-        d = end_fade if long_end else _fade_seconds(outro, 0.7)
+        d = unfaded(end_fade if long_end else _fade_seconds(outro, 0.7))
         post.append(f"fade=out:st={max(0.0, L - d):.4f}:d={d:.4f}:color={_fade_colour(outro)}")
     elif outro == "e01" or outro == "e03":
         post.append(f"fade=out:st={max(0.0, L - end_fade):.4f}:d={end_fade:.4f}")
     elif outro == "e05":
-        d = end_fade if long_end else 0.35
+        d = unfaded(end_fade if long_end else 0.35)
         post.append(f"fade=out:st={max(0.0, L - d):.4f}:d={d:.4f}:color=white")
     elif outro == "e02":
-        d = end_fade if long_end else 1.0
+        d = unfaded(end_fade if long_end else 1.0)
         post.append(f"hue=s='if(gt(t,{L - d:.4f}),max(0,1-(t-{L - d:.4f})/{d * 0.8:.4f}),1)'")
     ov = project["overlays"]
     if (pid := picked(ov, "o04")):

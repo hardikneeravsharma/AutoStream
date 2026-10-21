@@ -828,6 +828,7 @@ STUDIO_HTML = r"""
         </section>
       </div>
     </div>
+    <div class="gd-chip" id="studio-mk-chip" role="status" hidden></div>
     <div class="mk-bar">
       <span class="muted" id="studio-make-msg"></span>
       <button type="button" class="btn btn-ghost" data-act="studio-make-cancel">Cancel</button>
@@ -2378,6 +2379,29 @@ async function studio_openMake() {
   studio_fillDraw();
   studio_samplesCheck();
   studio_mkKillsDraw();
+  studio_mkChip();
+}
+
+/* THE SAME CHIP AS THE GUIDED MAKER, on the full page: one verdict for the style, the song, the
+   clips and the shape chosen here, from the same dry-run plan (clips/feasible.py). The page used to
+   say nothing until the reel came out wrong. A fix that belongs to the guided steps is offered as
+   what to do here, in words. */
+function studio_mkChip() {
+  const el = studio_el('studio-mk-chip');
+  if (!el || studio_el('studio-make-scrim').classList.contains('hide') || !studio.selected.length) return;
+  const ticket = studio.mkChipAsk = (studio.mkChipAsk || 0) + 1;
+  clearTimeout(studio.mkChipTimer);
+  studio.mkChipTimer = setTimeout(async () => {
+    const got = await API.post('/api/studio/feasible', studio_planBody(false)).catch(() => null);
+    if (ticket !== studio.mkChipAsk || !got || !got.ok) return;
+    const v = got.verdict, label = {ok: 'Works', warn: 'Will work, but', bad: "Won't work"}[v.level];
+    const act = {'pick-song': 'Choose another song above.', 'pick-clips': 'Go back and pick more clips.',
+                 'format:vertical': '', 'style:drop': 'Choose Build and drop above.'}[v.fix] || '';
+    el.className = 'gd-chip ' + v.level;
+    el.innerHTML = '<span class="gd-dot">' + label + '</span><p>' + esc(v.text) + (act ? ' ' + esc(act) : '') + '</p>' +
+      (v.fix === 'format:vertical' ? '<button type="button" class="btn btn-primary btn-sm" data-act="studio-mk-chipfix">Use 9:16</button>' : '<span></span>');
+    el.hidden = false;
+  }, 300);
 }
 
 /* THE MAKE PAGE IS A PAGE. It used to be a dialog over the Clips tab -- centred, narrow, closed by
@@ -2605,7 +2629,13 @@ function studio_mkDefault() {
     const bar = studio_mkBar();
     const want = studio.fmt === 'vertical' ? 30 : 46;
     const bars = Math.max(1, Math.round(want / bar));
-    const from = sh.drums_in || (sh.beats && sh.beats[0]) || 0;
+    let from = sh.drums_in || (sh.beats && sh.beats[0]) || 0;
+    /* BUILD AND DROP NEEDS ITS DROP INSIDE THE PART, with the build before it. From where the
+       drums come in, Lalala's 30 s part left 2 s before its first drop: the take could not fit,
+       so it went to the second drop 18 s in, and the reel was the 15 s that were left. */
+    const guided = !studio_el('studio-guide-scrim').classList.contains('hide');
+    const drop = (guided ? studio.gd.style : studio.style) === 'drop' ? studio_mkMainDrop() : null;
+    if (drop != null) from = Math.max(0, drop - Math.min(16, want / 2));
     mk.start = studio_nearestBeat(sh, Math.max(0, Math.min(from, sh.seconds - bar)));
     mk.end = Math.min(sh.seconds, mk.start + bars * bar);
   }
@@ -3088,6 +3118,7 @@ function studio_mkClearDrops() {
    player placed are theirs and stay -- they are about the song, not the plan -- and the page says so. */
 function studio_mkStale() {
   const mk = studio.mk;
+  studio_mkChip();
   if (!mk.planned) return;
   mk.planned = null;
   studio_el('studio-mk-killmsg').textContent = mk.edited ? 'Your marks are kept.' : '';
@@ -4172,6 +4203,11 @@ function studio_planBody(withMarks) {
       fill: studio.fill === 'part' && !studio_mkHasPart() ? '' : studio.fill,
       keep_all: !!studio.keepAll})
   };
+  /* THE CLIP CHOSEN TO BUILD ON, from the guided maker's build slot. It was never sent, so the
+     director built on whichever set-up scored best -- a double, with the ACE picked for it unused. */
+  const build = studio.style === 'drop' && studio.buildClip &&
+    studio.selected.some(id => (studio.clipIndex[id] || {}).path === studio.buildClip) ? studio.buildClip : '';
+  if (build) body.shaping.build_clip = build;
   /* The whole clip, cover-fitted: the trim and the fit are the timeline dialog's job, and normalise
      clamps both anyway. What is chosen here is which intro and whether it is heard. */
   if (studio.mkIntro.path) {
@@ -4195,8 +4231,11 @@ function studio_planBody(withMarks) {
   return body;
 }
 
-async function studio_build() {
-  const btn = studio_el('studio-build-btn');
+async function studio_build(opts) {
+  /* The guided maker plans from its own page: its button, its chip for the words. */
+  const o = opts || {};
+  const btn = o.btn || studio_el('studio-build-btn');
+  const say = o.say || (t => { studio_el('studio-make-msg').textContent = t; });
   btn.disabled = true;
   /* The dialog's Cancel sits beside this button and stays live while the plan
      is fetched. Pressing it bumps this counter, which is how the rest of the
@@ -4204,9 +4243,9 @@ async function studio_build() {
      and nothing else, so the render started anyway a moment later and looked
      like a Cancel that had been ignored. */
   const gen = ++studio.buildGen;
-  studio_el('studio-make-msg').textContent = !studio.song ? 'Planning every shot…'
+  say(!studio.song ? 'Planning every shot…'
     : studio.arrange === 'fit' ? 'Finding the perfect fit of every kill to the song — this can take up to ~30 s…'
-    : 'Finding the beat and planning every shot…';
+    : 'Finding the beat and planning every shot…');
   try {
     const body = studio_planBody(true);
     /* A rebuild keeps the reel's own choices -- facecam, handle, ending --
@@ -4214,7 +4253,7 @@ async function studio_build() {
     if (studio.adding && studio.adding.keep) body.keep = studio.adding.keep;
     const r = await API.post('/api/studio/plan', body);
     if (gen !== studio.buildGen) return;          /* cancelled while planning */
-    if (!r || !r.ok) { studio_el('studio-make-msg').textContent = (r && r.error) || 'Could not plan that reel.'; return; }
+    if (!r || !r.ok) { say((r && r.error) || 'Could not plan that reel.', true); return; }
     studio_closeModals();
     const ad = studio.adding;
     /* A rebuild renders over the reel it rebuilds rather than beside it. */
@@ -9424,12 +9463,17 @@ function studio_wire() {
     else if (act === 'studio-clear') { studio.selected = []; studio.adding = null; studio_syncSelection(); }
     else if (act === 'studio-make') studio_openMake();
     else if (act === 'studio-gd-open') studio_gdOpen();
+    else if (act === 'studio-mk-chipfix') {
+      const v = document.querySelector('#studio-make [data-act="studio-fmt"][data-fmt="vertical"]');
+      if (v) v.click();
+    }
     else if (act === 'studio-gd') studio_gdAct(b);
     else if (act === 'studio-style') {
       /* A style is a template: taking one drops the picks dealt over the last. */
       studio.style = b.getAttribute('data-style');
       studio.picks = null;
       studio_mkStale();
+      studio_mkDefault();                  /* an untouched part follows the style: see studio_mkDefault */
       studio_renderStyles(); studio_hand(); studio_binDraw();
     }
     else if (act === 'studio-sg-song') studio_sgUseSong(b.getAttribute('data-path'));
@@ -9534,6 +9578,7 @@ function studio_wire() {
       b.parentElement.querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('is-active', x === b));
       studio_mkDefault();
       studio_show('studio-mk-fit', studio.fmt === 'vertical');
+      studio_mkChip();
     }
     else if (act === 'studio-mk-fit') {
       studio.vfit = b.getAttribute('data-fit');
@@ -9764,6 +9809,7 @@ function studio_wire() {
   document.addEventListener('change', studio_inspectorInput);
   document.addEventListener('change', studio_camInput);
   document.addEventListener('input', studio_camInput);
+  document.addEventListener('input', e => { if (e.target && e.target.id === 'studio-gd-name') studio.gd.name = e.target.value; });
   /* The inspector's groups remember whether they are open (toggle does not
      bubble, so it is caught on the way down). */
   document.addEventListener('toggle', e => {
@@ -10918,7 +10964,7 @@ function studio_sgWire() {
    ===================================================================== */
 const GD_STEPS = ['Style', 'Song', 'Clips', 'Look', 'Check and make'];
 const GD_BEST = ['drop'];                      /* the styles that have been through the review loop */
-studio.gd = {step: 0, style: '', auto: false, setup: '', quick: [], fmt: 'vertical', fit: 'fit',
+studio.gd = {step: 0, style: '', auto: false, setup: '', quick: [], fmt: 'vertical', fit: 'fit', name: '',
              verdict: null, asked: 0, busy: false, timer: null};
 
 /* WHAT WAS CHOSEN LAST TIME, remembered as intent -- the style, the shape, the framing -- and not as
@@ -11002,6 +11048,7 @@ async function studio_gdOpen() {
   studio_gdDraw();
 }
 function studio_gdClose() {
+  if (studio.gd.busy) studio.buildGen++;   /* closing while it plans abandons the plan */
   studio_show('studio-guide-scrim', false);
   studio_makePage(false);
 }
@@ -11098,7 +11145,19 @@ function studio_gdDrawCheck() {
     '<div class="gd-facts"><span><b>Style</b> ' + esc(s ? s.label : '') + '</span><span><b>Song</b> ' + esc(song) + '</span>' +
     '<span><b>Clips</b> ' + ids.length + ' (' + studio_gdKillsIn(ids) + ' kills)</span><span><b>Shape</b> ' + (gd.fmt === 'vertical' ? '9:16' : '16:9') + '</span>' +
     (gd.verdict && gd.verdict.length ? '<span><b>Length</b> ' + Math.round(gd.verdict.length) + ' s</span>' : '') + '</div>' +
+    '<div class="gd-field"><label class="field-label" for="studio-gd-name">Name</label>' +
+    '<input class="input" id="studio-gd-name" maxlength="80" placeholder="' + esc(studio_gdDefaultName()) + '" value="' + esc(gd.name || '') + '"></div>' +
     '<p class="muted">After it is rendered we read the finished reel back and check every kill is on its beat, in focus and not repeated.</p>';
+}
+
+/* The name a reel gets when none is typed: the song's title and the style, not "Build and drop reel"
+   for every one. "Y2K, bbno$ - Lalala (Official Video) [N2Y2vQ-1m7M]" is "Lalala". */
+function studio_gdDefaultName() {
+  const s = studio_gdStyle();
+  let song = studio.song ? studio.song.split(/[\\/]/).pop().replace(/\.[^.]+$/, '') : '';
+  song = song.replace(/\s*\[[^\]]*\]/g, '').replace(/\s*\((official|lyric|audio|music)[^)]*\)/ig, '');
+  if (song.includes(' - ')) song = song.split(' - ').slice(1).join(' - ');
+  return ((song.trim() ? song.trim() + ' ' : '') + (s ? s.label.toLowerCase() : 'reel')).replace(/^./, c => c.toUpperCase());
 }
 
 /* THE CHIP: the server's verdict, or the one thing known without asking */
@@ -11183,20 +11242,44 @@ function studio_gdAllSettings() {
   if (studio.selected.length) studio_openMake();
 }
 
+/* MAKE, FROM THE GUIDE ITSELF. It used to open All settings and build from there, so the player
+   watched a page they had not asked for, its Build button greyed for the minute the plan takes,
+   with a name nobody had asked them for. Now the guide plans in place and opens the timeline. */
 async function studio_gdMake() {
   const gd = studio.gd;
+  if (gd.busy) return;
+  const nameEl = studio_el('studio-gd-name');
+  if (nameEl) gd.name = nameEl.value.trim();
   gd.busy = true;
   studio.style = gd.style; studio.picks = null; studio.fmt = gd.fmt; studio.vfit = gd.fit;
   studio.selected = studio_gdIds(); studio_syncSelection();
-  studio_gdClose();
-  await studio_openMake();
-  gd.busy = false;
-  studio_build();
+  const setup = gd.setup && studio.clipIndex[gd.setup];
+  studio.buildClip = gd.style === 'drop' && setup ? setup.path : '';
+  studio.adding = null;                    /* the guide makes a new reel; it never rebuilds one */
+  studio_el('studio-name').value = gd.name || studio_gdDefaultName();
+  const hs = studio_el('studio-hs-only');
+  if (hs) hs.checked = false;              /* headshots only is not a question the guide asks */
+  studio_mkDefault();
+  const next = studio_el('studio-gd-next');
+  next.textContent = 'Planning…';
+  const chip = (text, level) => {
+    const el = studio_el('studio-gd-chip');
+    el.className = 'gd-chip ' + level;
+    el.innerHTML = '<span class="gd-dot">' + (level === 'bad' ? "Won't work" : 'Making it') + '</span><p>' + esc(text) + '</p><span></span>';
+  };
+  try {
+    await studio_build({btn: next, say: (t, failed) => failed ? chip(t, 'bad')
+      : chip(t + ' This takes about a minute; the reel opens on the timeline when it is planned.', 'ok')});
+  } finally {
+    gd.busy = false;
+    next.textContent = 'Make the reel';
+  }
 }
 
 function studio_gdAct(b) {
   const gd = studio.gd, what = b.getAttribute('data-gd');
   if (what === 'close') return studio_gdClose();
+  if (gd.busy) return;                     /* planning: only closing it is offered */
   if (what === 'all') return studio_gdAllSettings();
   if (what === 'fix') return studio_gdFix(b.getAttribute('data-fix'));
   if (what === 'song') { studio_gdUseSong(b.getAttribute('data-path'), b.getAttribute('data-name')); return; }

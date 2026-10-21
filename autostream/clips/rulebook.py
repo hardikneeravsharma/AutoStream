@@ -1200,6 +1200,44 @@ TRUE_PEAK_MAX = -0.5
 CLIP_SHOTS_CAP = 3
 
 
+FIGHT_GAP = 6.0     # s: a clip's kills further apart than this are separate fights
+
+
+def one_fight_per_clip(moments: list[Moment], dropped: list[tuple[str, float]] | None = None,
+                       gap: float = FIGHT_GAP) -> list[Moment]:
+    """Each clip's strongest fight only -- the fast styles' repeat rule (decided 2026-10-21).
+
+    A fight is the clip's moments with no more than `gap` between one and the next. Two
+    fights of one file cut half a second apart read as the same scene twice (same map, same
+    round, same skin): the first That Acid render had one, and the review called it a repeat.
+    The slower styles keep R13's cap instead.
+    """
+    by_clip: dict[int, list[list[Moment]]] = {}
+    for m in sorted(moments, key=lambda m: (m.group, m.first)):
+        fights = by_clip.setdefault(m.group, [])
+        if fights and m.first - fights[-1][-1].last <= gap:
+            fights[-1].append(m)
+        else:
+            fights.append([m])
+    # AND THE FIGHT IS ONE SHOT. Kept as separate moments, the order dealt them round the
+    # reel: a Fast-paced headshot render showed one clip's three kills at 0:02, 1:00 and 1:04
+    # with other clips between, which is the same scene three times. Merged, the fight plays
+    # once, its kills in the order they happened -- a multi-kill as one take.
+    merged: dict[int, Moment] = {}
+    for fights in by_clip.values():
+        best = max(fights, key=lambda f: (sum(m.strength for m in f), len(f)))
+        kills = sorted(k for m in best for k in m.kills)
+        head = best[0]
+        merged[id(head)] = Moment(clip=head.clip, kills=kills, group=head.group, seq=head.seq,
+                                  seq_len=1, caption=label_for(len(kills)) if len(kills) > 1 else head.caption,
+                                  strength=sum(m.strength for m in best))
+        if dropped is not None:
+            for f in fights:
+                if f is not best:
+                    dropped += [(m.clip["path"], k) for m in f for k in m.kills]
+    return [merged[id(m)] for m in moments if id(m) in merged]
+
+
 def cap_per_clip(moments: list[Moment], limit: int,
                  dropped: list[tuple[str, float]] | None = None) -> list[Moment]:
     """At most `limit` shots from any one clip, keeping the strongest.

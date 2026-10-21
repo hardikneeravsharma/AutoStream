@@ -168,3 +168,70 @@ def test_the_last_choices_are_remembered_as_intent_and_checked_again(pg, browser
     pg.wait_for_selector("#studio-guide-scrim:not(.hide)")
     assert pg.evaluate("() => studio.gd.style") == "drop"
     assert "gone" not in pg.evaluate("() => studio.gd.quick")
+
+
+def test_the_full_make_page_carries_the_same_chip(pg):
+    """F5: the verdict is not only the guided maker's. Opened with Build and drop on a song
+    with no drop, the full page says it will not work, in words, before anything is built."""
+    pg.click('.gd-card[data-key="drop"]')
+    pg.click("#studio-gd-next")
+    pg.click('.gd-card[data-gd="song"]')
+    pg.wait_for_function("() => studio.song", timeout=30_000)
+    pg.evaluate("() => { studio_gdPickAll(); if (!studio.gd.quick.length) studio.gd.quick = Object.keys(studio.clipIndex).slice(0, 4); }")
+    pg.click('[data-gd="all"]')
+    pg.wait_for_selector("#studio-make-scrim:not(.hide)")
+    pg.wait_for_function("() => { const c = document.getElementById('studio-mk-chip'); return c && !c.hidden; }", timeout=30_000)
+    text = pg.inner_text("#studio-mk-chip")
+    assert "drop" in text.lower() and "won" in text.lower(), text
+
+
+def _to_check(pg, style="story"):
+    pg.evaluate("() => { document.querySelector('.gd-more').open = true; }")
+    pg.click(f'.gd-card[data-key="{style}"]')
+    pg.click("#studio-gd-next")
+    pg.click('.gd-card[data-gd="song"]')
+    pg.wait_for_function("() => studio.song", timeout=30_000)
+    pg.click("#studio-gd-next")
+    pg.click('[data-gd="pickall"]')
+    pg.click("#studio-gd-next")
+    pg.click("#studio-gd-next")
+    pg.wait_for_selector("#studio-gd-name")
+
+
+def test_make_asks_the_name_and_opens_the_timeline_not_all_settings(pg):
+    """Reported: the name was never asked (every reel "Build and drop reel"), and Make opened
+    All settings with its button greyed for the minute the plan took."""
+    _to_check(pg)
+    assert pg.get_attribute("#studio-gd-name", "placeholder") == "Length song story"
+    pg.fill("#studio-gd-name", "My first reel")
+    pg.evaluate("""() => { window.__plans = []; window.__make = false; const real = API.post;
+        new MutationObserver(() => { if (!document.getElementById('studio-make-scrim').classList.contains('hide')) window.__make = true; })
+          .observe(document.getElementById('studio-make-scrim'), {attributes: true});
+        API.post = function (u, b) {
+            if (u === '/api/studio/plan') window.__plans.push(JSON.parse(JSON.stringify(b)));
+            if (u === '/api/studio/render') return Promise.resolve({ok: false, error: 'not rendered in this test'});
+            return real.apply(this, arguments); }; }""")
+    pg.wait_for_function("() => !document.getElementById('studio-gd-next').disabled", timeout=30_000)
+    pg.click("#studio-gd-next")
+    pg.wait_for_function("() => document.getElementById('studio-tab-timeline').classList.contains('is-active')", timeout=120_000)
+    assert pg.evaluate("() => window.__make") is False
+    assert pg.evaluate("() => window.__plans[0].name") == "My first reel"
+    assert pg.evaluate("() => studio.project.name") == "My first reel"
+
+
+def test_the_build_clip_chosen_is_sent_and_an_untouched_part_holds_the_drop(pg):
+    """Reported: the build clip picked in the guide was not used. And Lalala's default part,
+    from where the drums come in, left no room before the first drop for the take."""
+    ids = pg.evaluate("() => Object.keys(studio.clipIndex)")
+    body = pg.evaluate("""(ids) => { studio.style = 'drop'; studio.selected = ids.slice(0, 4);
+        studio.buildClip = studio.clipIndex[ids[1]].path; return studio_planBody(false); }""", ids)
+    assert body["shaping"]["build_clip"] == pg.evaluate("(id) => studio.clipIndex[id].path", ids[1])
+    gone = pg.evaluate("""(ids) => { studio.selected = [ids[0]]; return studio_planBody(false).shaping.build_clip; }""", ids)
+    assert gone is None                       # not among the clips any more: not sent
+    pg.click('.gd-card[data-key="drop"]')
+    pg.click("#studio-gd-next")
+    pg.click('.gd-card[data-gd="song"]')
+    pg.wait_for_function("() => studio.songShape", timeout=30_000)
+    part = pg.evaluate("""() => { studio.songShape.drop = 40; studio.mk.drops = null; studio.mk.touched = false;
+        studio_mkDefault(); return [studio.mk.start, studio.mk.end]; }""")
+    assert part[0] < 40 - 10 and part[1] > 40 + 10, part

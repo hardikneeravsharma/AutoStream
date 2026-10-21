@@ -59,6 +59,7 @@ GAP_RANGE = (0.42, 0.75)
 DROP_HOLD = (1.3, 1.6)
 MAX_GAP = 1.0              # s: no two kills after the drop further apart, a double's own two included
 TAIL = 1.2                 # s the last kill is held for: OUTRO_FADE after it, then the fade
+END_AFTER = 0.9            # s: the least the reel runs on after its last kill before the bar line it ends on
 OUTRO_FADE = 0.6           # s: the ending's fade, which never starts before TAIL - OUTRO_FADE after the last kill
 REEL_SECONDS = 28.0        # how long a reel runs when nothing else says
 WEIGHTS = {"kick": 0.45, "snare": 0.30, "hats": 0.10, "grid": 0.15}
@@ -70,7 +71,9 @@ ON_BEAT = 0.025            # s: a cue this near a beat is on it
 # punch or a shake leaves the hit visible; the inversion is kept for one moment.
 FX_CYCLE = ("k01", "k02", "", "k01", "", "k02")         # zoom punch, shake, none
 INVERT = "k12"
-BIG_WORDS = ("CLUTCH", "LAST-ALIVE", "LAST ALIVE", "1V", "ACE", "KILLS")
+# Not "KILLS": every multi-kill file is named N-KILLS, so it made each double a
+# set-up, and a reel from 48 clips built on a double with an ACE left unused.
+BIG_WORDS = ("CLUTCH", "LAST-ALIVE", "LAST ALIVE", "1V", "ACE")
 
 
 @dataclass
@@ -305,20 +308,34 @@ def take(b: Burst, drop_reel: float) -> tuple[list[dict], float]:
 
 
 def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None = None,
-         seconds: float = REEL_SECONDS, seed: int = 0) -> Plan:
-    """Shots for a reel that builds on its best set-up into the drop, then cuts on the drums."""
+         seconds: float = REEL_SECONDS, seed: int = 0, build: str = "") -> Plan:
+    """Shots for a reel that builds on its best set-up into the drop, then cuts on the drums.
+
+    `build` is the clip the player chose to build on: its best fight is the
+    take whenever it has two kills or more, whatever the scores say."""
     rng = random.Random(seed)
     all_b = [b for c in clips for b in bursts(c)]
+    clips_by_path = {str(c["path"]): c for c in clips}
     setups = sorted((b for b in all_b if is_setup(b)), key=setup_score, reverse=True)
-    if not setups:
+    notes: list[str] = []
+    theirs = sorted((b for b in all_b if build and b.path.lower() == str(build).lower() and len(b.kills) >= 2),
+                    key=setup_score, reverse=True)
+    if build and not theirs:
+        notes.append(f"The clip chosen to build on has no two kills together, so the reel builds on "
+                     f"{'the best one among the rest' if setups else 'nothing'} instead.")
+    if not setups and not theirs:
         raise ValueError("None of these clips has a clutch, an ace or three kills together "
                          "to build into the drop with. Choose one that has.")
-    notes: list[str] = []
     gap = preferred_gap(shape.beat)
     # the best set-up -- or, between ones within a point of it, the seed's: "Mix them up"
     # and a rebuild should not open every reel on the same clutch
     close = [b for b in setups if setup_score(b) >= setup_score(setups[0]) - 1.0]
-    best = close[rng.randrange(len(close))] if seed else setups[0]
+    if theirs:
+        best = theirs[0]
+        if best not in setups:
+            setups.insert(0, best)
+    else:
+        best = close[rng.randrange(len(close))] if seed else setups[0]
     ks = take_kills(best)
     span = ks[-1] - ks[0]
     D = choose_drop(shape, rhythm, part, need_before=span + TAKE_LEAD[0], need_after=4 * gap)
@@ -351,13 +368,23 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
     paths = {best.path}
     rest = [b for b in all_b if b.path != best.path]          # the take's clip is the take's
     pairs = [b for b in rest if len(b.kills) == 2]
-    singles = sorted((b for b in rest if len(b.kills) == 1), key=lambda b: (single_score(b), rng.random()),
-                     reverse=True)
+    # A DOUBLE IS ALSO TWO SINGLES. Only lone kills could fill a hit, so a choice of
+    # mostly 2-KILLS clips whose kills are too far apart to be a run ran out of
+    # singles and ended the reel early. Each kill of a fight can be one, as long
+    # as the fight's other kills stay out of its shot (see fits).
+    singles = sorted([b for b in rest if len(b.kills) == 1]
+                     + [Burst(b.clip, [k], [h]) for b in rest if len(b.kills) > 1 for k, h in zip(b.kills, b.hs)],
+                     key=lambda b: (single_score(b), rng.random()), reverse=True)
     others = [b for b in setups if b.path != best.path]   # spare set-ups: their last two kills can be a run
     strength = dict(cues)
 
     def fits(b: Burst, kill: float, pre: float, after: float) -> bool:
-        return kill - pre >= 0.02 and kill + after <= b.seconds - 0.02
+        if not (kill - pre >= 0.02 and kill + after <= b.seconds - 0.02):
+            return False
+        if len(b.kills) == 1:              # a lone kill's shot shows no other kill, off its beat
+            return not any(kill - pre - 0.05 < float(k) < kill + after + 0.05 and abs(float(k) - kill) > 1e-6
+                           for k in b.clip.get("kills") or [])
+        return True
 
     def after(j: int) -> float:
         """Footage a kill on target j must have after it: up to the next shot's run-up."""
@@ -434,6 +461,8 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
     seen: set[int] = set()
     for i, (b, _ks, _ts) in enumerate(flurry):
         if id(b) in seen:                  # the swap ran out of room: end before the repeat
+            notes.append(f"The reel ends {len(flurry) - i} hits early: no other clip had the footage "
+                         f"to fill them.")
             flurry = flurry[:i]
             break
         seen.add(id(b))
@@ -500,5 +529,30 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
         shots.append(_shot(b, ks[0], ks, p, max(0.1, dur), fx=[fx] if fx else [], anchors=anchors))
         marks.append(round(ts[0], 4))
     kills = sorted(set(marks) | {round(ts[1], 4) for _b, _ks, ts in flurry if len(ts) > 1})
+    # THE ENDING ON A BAR LINE (F17). The reel stopped TAIL after its last kill, wherever in
+    # the bar that fell -- reviewed, "the black tail feels like unused runtime" and JUST A BOY
+    # "ended mid-section". The last shot now runs on to the first downbeat at least
+    # END_AFTER past the last kill, as far as its clip has footage; where it has not, it ends
+    # where the footage does (never later than the next bar but one).
+    if shots and getattr(shape, "beats", None):
+        last = shots[-1]
+        end_now = start + sum(s["duration"] for s in shots)
+        last_kill = max(kills) if kills else end_now
+        bars = [b for i, b in enumerate(shape.beats)
+                if i % 4 == getattr(shape, "downbeat_pos", 0) and b >= last_kill + END_AFTER]
+        if bars and bars[0] - end_now < 2 * 4 * shape.beat:
+            want = bars[0] - end_now
+            rate = 1.0
+            if last.get("anchors"):
+                (src, out), = last["anchors"]
+                rate = (src - last["kill"]) / max(1e-6, out - last["pre"])
+            used = (last["duration"] - last["pre"]) * rate
+            # ...and stops short of the clip's next kill, which would land off every beat
+            more = [float(k) for k in clips_by_path.get(last["clip"], {}).get("kills") or []
+                    if float(k) > max(last["kills"]) + 1e-6]
+            stop = min([float(last["clip_seconds"]) - 0.02] + [k - 0.3 for k in more])
+            room = (stop - last["kill"] - used) / rate
+            grow = max(0.0, min(want, room))
+            last["duration"] = round(last["duration"] + grow, 5)
     return Plan(part=(round(start, 4), round(start + sum(s["duration"] for s in shots), 4)), drop=D,
                 shots=shots, marks=marks, notes=notes, kills=kills)
