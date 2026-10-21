@@ -2965,6 +2965,83 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
 
 _MARK_CACHE: dict[tuple, list[float] | None] = {}
 
+# KILL CHECKS KEPT ACROSS RESTARTS. A Build and drop plan from 48 clips spent 91 of
+# its 131 s reading kill emblems (killmark.marks) and most of the rest finding when
+# each first shows -- the same answer every time the same file is read, and read
+# again after every restart, which every update is. Kept on disk once the app says
+# where (use_check_cache; nothing is written until it does, so a test or a script
+# never touches the player's folders), keyed by the file's path, size and time.
+# Bump KILL_CHECKS_VERSION whenever what killmark or kill_clarity reads changes.
+KILL_CHECKS_VERSION = 1
+KILL_CHECKS_FILE = "kill-checks.json"
+KILL_CHECKS_MAX = 20000
+
+
+class _CheckDisk:
+    def __init__(self):
+        self.path: Path | None = None
+        self.data: dict | None = None
+        self.lock = threading.Lock()
+
+    def use(self, path) -> None:
+        with self.lock:
+            p = Path(path) if path else None
+            if p != self.path:
+                self.path, self.data = p, None
+
+    def _loaded(self) -> dict:
+        if self.data is None:
+            got = {}
+            try:
+                raw = json.loads(self.path.read_text("utf-8"))
+                if raw.get("version") == KILL_CHECKS_VERSION and isinstance(raw.get("entries"), dict):
+                    got = raw["entries"]
+            except (OSError, ValueError, AttributeError):
+                pass
+            self.data = got
+        return self.data
+
+    @staticmethod
+    def key(kind: str, path: str, extra="") -> str | None:
+        try:
+            st = Path(path).stat()
+        except OSError:
+            return None
+        return f"{kind}|{Path(path).resolve()}|{st.st_size}|{st.st_mtime:.3f}|{extra}"
+
+    def get(self, key: str | None):
+        """(True, value) when this was read before, else (False, None)."""
+        with self.lock:
+            if self.path is None or key is None:
+                return False, None
+            d = self._loaded()
+            return (True, d[key]) if key in d else (False, None)
+
+    def put(self, key: str | None, value) -> None:
+        with self.lock:
+            if self.path is None or key is None or value is None:
+                return                    # an unread answer is read again next time
+            d = self._loaded()
+            d[key] = value
+            if len(d) > KILL_CHECKS_MAX:
+                for k in list(d)[:len(d) // 2]:
+                    d.pop(k, None)
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = self.path.with_name(self.path.name + ".tmp")
+                tmp.write_text(json.dumps({"version": KILL_CHECKS_VERSION, "entries": d}), "utf-8")
+                tmp.replace(self.path)
+            except OSError as e:          # a cache that cannot be written is only slower
+                log.info("studio: kill checks not kept on disk: %s", e)
+
+
+_CHECK_DISK = _CheckDisk()
+
+
+def use_check_cache(path) -> None:
+    """Keep kill checks in this file across restarts; None keeps them in memory only."""
+    _CHECK_DISK.use(path)
+
 
 def kill_marks(path: str, game: str) -> list[float] | None:
     """The game's kill emblems in a clip, in clip seconds; None when the game draws none. Cached."""
@@ -2980,8 +3057,12 @@ def kill_marks(path: str, game: str) -> list[float] | None:
     with _ACTION_LOCK:
         if key in _MARK_CACHE:
             return _MARK_CACHE[key]
-    ff = binary("ffmpeg")
-    got = killmark.marks(Path(path), game, ff) if ff else None
+    dk = _CheckDisk.key("marks", path, game)
+    hit, got = _CHECK_DISK.get(dk)
+    if not hit:
+        ff = binary("ffmpeg")
+        got = killmark.marks(Path(path), game, ff) if ff else None
+        _CHECK_DISK.put(dk, got)
     with _ACTION_LOCK:
         if len(_MARK_CACHE) > 2000:
             _MARK_CACHE.clear()
@@ -3011,8 +3092,12 @@ def kill_appearance(path: str, game: str, near: float) -> float | None:
     with _ACTION_LOCK:
         if key in _GLYPH_CACHE:
             return _GLYPH_CACHE[key]
-    ff = binary("ffmpeg")
-    got = killmark.appearance(Path(path), game, float(near), ff) if ff else None
+    dk = _CheckDisk.key("appear", path, f"{game}|{round(float(near), 2)}")
+    hit, got = _CHECK_DISK.get(dk)
+    if not hit:
+        ff = binary("ffmpeg")
+        got = killmark.appearance(Path(path), game, float(near), ff) if ff else None
+        _CHECK_DISK.put(dk, got)
     with _ACTION_LOCK:
         if len(_GLYPH_CACHE) > 4000:
             _GLYPH_CACHE.clear()
@@ -3063,6 +3148,12 @@ def kill_clarity(path: str, t: float) -> float | None:
     with _ACTION_LOCK:
         if key in _CLEAR_CACHE:
             return _CLEAR_CACHE[key]
+    dk = _CheckDisk.key("clear", path, round(float(t), 3))
+    hit, got = _CHECK_DISK.get(dk)
+    if hit:
+        with _ACTION_LOCK:
+            _CLEAR_CACHE[key] = got
+        return got
     got = None
     try:
         raw = subprocess.run(
@@ -3077,6 +3168,7 @@ def kill_clarity(path: str, t: float) -> float | None:
             got = float(np.median(lap))
     except (OSError, subprocess.SubprocessError, ValueError):
         got = None
+    _CHECK_DISK.put(dk, got)
     with _ACTION_LOCK:
         if len(_CLEAR_CACHE) > 4000:
             _CLEAR_CACHE.clear()
