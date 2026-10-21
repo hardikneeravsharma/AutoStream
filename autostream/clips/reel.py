@@ -254,6 +254,17 @@ DROP_SNAP_BIG = (-0.5, 1.5)    # a big hit this far before/after the entrance is
 DROP_SNAP_HIT = (-0.25, 1.0)   # ...else the strongest ordinary hit in this reach
 
 
+def main_entrance(entrances: list[dict]) -> int:
+    """Which bass entrance is THE drop: the biggest step among those whose bass stays.
+
+    A few bass hits in an intro step up as far as a drop does and are gone two seconds
+    later (beatsync.STAY_MIN); with none that stays, the biggest step as before.
+    """
+    from . import beatsync as bs
+    held = [i for i, e in enumerate(entrances) if e.get("stay", 1.0) >= bs.STAY_MIN] or list(range(len(entrances)))
+    return max(held, key=lambda i: entrances[i]["bass_step"])
+
+
 def snap_drop(t: float, hits: list[float], strength: list[float], big: list[float]) -> float:
     """The hit a bass entrance at `t` arrives on. Song seconds; `t` when there is none."""
     near = [b for b in big if DROP_SNAP_BIG[0] <= b - t <= DROP_SNAP_BIG[1]]
@@ -320,7 +331,7 @@ def analyse(path: Path, seconds: float = 0.0, points: int = 2000) -> Shape:
     # beats after the 9.33 s a reference edit flashes on, while the entrance
     # reader had it. The loudness rise stays for a song with no entrance.
     if entrances:
-        drop = drops[max(range(len(entrances)), key=lambda i: entrances[i]["bass_step"])]
+        drop = drops[main_entrance(entrances)]
     else:
         # The loudness rise, read in quarter-second windows, lands on its hit the same way.
         drop = bs.find_drop(x, total)
