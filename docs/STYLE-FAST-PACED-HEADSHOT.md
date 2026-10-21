@@ -1,6 +1,6 @@
 # Style spec — "Fast-paced headshot"
 
-**Status:** specified, not implemented. Nothing in `autostream/` builds this yet.
+**Status:** the structure (sections 3-5) is planned by `autostream/clips/fasthead.py` since v1.79.0, impact-locked rather than cut-locked (kills on the beat, the run-up whole beats so cuts land on beats too) and tempo-adaptive (a unit of the beat multiple nearest 1 s, not 2 beats at every tempo). Candidate grading (4.2) and the three framings (7) are still to come.
 **Written for:** the next agent or contributor who implements it. Assumes you have read
 [CLAUDE.md](../CLAUDE.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
