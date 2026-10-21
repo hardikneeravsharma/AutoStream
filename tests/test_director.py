@@ -212,3 +212,27 @@ def test_a_hole_after_the_drop_widens_the_first_step_rather_than_stopping():
     got = director.targets(cues, 57.2023, 70.0, gap)
     assert got and got[0] == 57.861
     assert director.targets([], 57.2, 70.0, gap) == []
+
+
+def test_build_and_drop_plans_itself_without_asking_for_an_order(tmp_path, monkeypatch):
+    """The style used to get the director only with "Follow the song" also chosen
+    under Order. Choose the style and nothing else, and it is what plans."""
+    shape, r = song()
+    clips = library()
+    for c in clips:
+        p = tmp_path / Path(c["path"]).name
+        p.write_bytes(b"x")
+        c["path"] = str(p)
+    shape.path = tmp_path / "song.m4a"
+    shape.path.write_bytes(b"x")
+    monkeypatch.setattr(rhythm, "for_song", lambda sh, cache_dir=None: r)
+    proj, notes = studio.plan(clips, "drop", shape=shape, song=str(shape.path), fmt="vertical")
+    assert any("Builds on" in n for n in notes), notes
+    assert proj["song_drop"] == pytest.approx(DROP)
+    # a style that is not Build and drop is not taken over
+    other, notes = studio.plan(clips, "montage", shape=shape, song=str(shape.path), fmt="vertical")
+    assert not any("Builds on" in n for n in notes)
+    # nothing to build with: it says so and plans the usual way rather than failing
+    singles = [c for c in clips if c["name"].startswith("one")]
+    proj, notes = studio.plan(singles, "drop", shape=shape, song=str(shape.path), fmt="vertical")
+    assert proj["shots"] and any("usual build-and-drop way" in n for n in notes), notes

@@ -73,7 +73,7 @@ from pathlib import Path
 from typing import Any
 
 from . import (facecam, hits as hits_mod, lyrics as lyrics_mod, mark as mark_mod,
-               fx_schedule, parts as parts_mod, retime, rulebook, studio_refs, valorant_match)
+               fx_schedule, parts as parts_mod, reelcheck, retime, rulebook, studio_refs, valorant_match)
 
 log = logging.getLogger(__name__)
 
@@ -405,7 +405,8 @@ def reels(root: Path) -> list[dict]:
                     "format": m.get("format") if m.get("format") in SIZES else "",
                     "song": Path(str(m.get("song") or "")).stem if m.get("song") else "",
                     "lyrics": ((m.get("lyrics") or {}).get("look") or "") if isinstance(m.get("lyrics"), dict) else "",
-                    "poster": round(max(0.0, poster), 2)})
+                    "poster": round(max(0.0, poster), 2),
+                    "checks": [c for c in (m.get("checks") or []) if isinstance(c, dict)]})
     out.sort(key=lambda r: -r["when"])
     return out
 
@@ -1742,16 +1743,17 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
     """
     from . import director, rhythm
 
-    base_it = dict(shape_it, arrange="hits")
+    base_it = dict(shape_it or {}, arrange="hits")
+    was = str((shape_it or {}).get("arrange") or "") or "build"
     if not song or shape is None or not getattr(shape, "beats", None):
         proj, notes = plan(clips, style_key, shape=shape, song=song, part=part, seed=seed, checks=checks,
-                           confirm=confirm, theirs=theirs, refine=refine, shape_it=base_it, **kw)
-        proj["arrange"] = "sections"
-        return proj, ["Follow the song needs a song; this reel was planned in Best order."] + notes
+                           confirm=confirm, theirs=theirs, refine=refine, shape_it=base_it, _direct=False, **kw)
+        proj["arrange"] = was
+        return proj, ["Build and drop needs a song to follow; this reel was planned without one."] + notes
     # The project around the shots only: no kill checks, which decode every clip.
     proj, notes = plan(clips, style_key, shape=shape, song=song, part=part, seed=seed,
-                       shape_it=base_it, **{k: v for k, v in kw.items() if k != "measure"})
-    proj["arrange"] = "sections"
+                       shape_it=base_it, _direct=False, **{k: v for k, v in kw.items() if k != "measure"})
+    proj["arrange"] = was
     chosen = {c["path"]: dict(c) for c in clips if c and c.get("path")}
     hs_at = {(p, round(float(k), 3)): bool(h) for p, c in chosen.items()
              for k, h in zip(c.get("kills") or [], list(c.get("hs") or []) + [False] * 99)}
@@ -1767,13 +1769,17 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
     hidden = 0
     checked: set[str] = set()
     seed_n = int(seed if seed is not None else proj.get("seed") or 0)
-    rh = rhythm.for_song(shape)
+    try:
+        rh = rhythm.for_song(shape)
+    except (AttributeError, OSError) as e:           # a song that cannot be read again: the usual way
+        log.info("studio: no rhythm for the song (%s)", e)
+        return proj, ["The song could not be read for its drum hits; planned the usual build-and-drop way."] + notes
     got = None
     for _ in range(4):
         try:
             got = director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n)
         except ValueError as e:
-            return proj, [f"{e} This reel was planned in Best order."] + notes
+            return proj, [f"{e} It was planned the usual build-and-drop way instead."] + notes
         todo = [chosen[s["clip"]] for s in got.shots if s["clip"] not in checked and s["clip"] in chosen]
         todo = list({c["path"]: c for c in todo}.values())
         if not todo or (confirm is None and refine is None and clarity is None):
@@ -1803,7 +1809,7 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
         try:
             got = director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n)
         except ValueError as e:
-            return proj, [f"{e} This reel was planned in Best order."] + notes
+            return proj, [f"{e} It was planned the usual build-and-drop way instead."] + notes
     proj["shots"] = got.shots
     proj["song_offset"] = round(got.part[0], 5)
     proj["song_marks"] = [round(t, 4) for t in got.marks]
@@ -1979,7 +1985,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
          measure=None, confirm=None, theirs=None, refine=None, checks: bool = False,
          part: tuple[float, float] | None = None,
          template: dict | None = None,
-         shape_it: dict | None = None) -> tuple[dict, list[str]]:
+         shape_it: dict | None = None, _direct: bool = True) -> tuple[dict, list[str]]:
     """Build a project from chosen clips. -> (project, notes)
 
     `refine(path, game, t)` -> when the game's kill emblem first shows nearest t,
@@ -2011,7 +2017,14 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                          max_seconds=max_seconds, seed=seed, measure=measure, confirm=confirm,
                          theirs=theirs, refine=refine, checks=checks, part=part,
                          template=template, shape_it=shape_it)
-    if str((shape_it or {}).get("arrange") or "") == "sections":
+    # BUILD AND DROP PLANS ITSELF (clips/director.py). The style used to get the
+    # new planner only when "Follow the song" was ALSO chosen under Order -- a
+    # wrong combination nothing warned about -- so the style that makes the best
+    # reels gave the old logic to anyone who touched nothing else. Now the style
+    # decides its own order; `_direct=False` is the way back for the fallbacks
+    # inside _plan_sections (no clip to build with, no drop, no song).
+    asked = str((shape_it or {}).get("arrange") or "")
+    if _direct and asked != "fit" and (asked == "sections" or (STYLE.get(style_key) and STYLE[style_key].drop)):
         return _plan_sections(clips, style_key, shape=shape, song=song, fmt=fmt, name=name,
                               max_seconds=max_seconds, seed=seed, measure=measure, confirm=confirm,
                               theirs=theirs, refine=refine, checks=checks, part=part,
@@ -5687,6 +5700,7 @@ class StudioJob:
         # How far through the reel the join has got, 0..1. See snapshot().
         self.join = 0.0
         self.lyrics_note = ""
+        self.checks: list = []                  # reelcheck findings, once the render is read back
         self._cancel = threading.Event()
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
@@ -5712,7 +5726,7 @@ class StudioJob:
                     "output": str(self.out), "project": str(self.out.with_suffix(".reel.json")),
                     "elapsed": int((self.finished or time.time()) - self.started),
                     "cached": self.cached, "name": self.project.get("name", ""),
-                    "lyrics_note": self.lyrics_note, "auto": self.auto}
+                    "lyrics_note": self.lyrics_note, "auto": self.auto, "checks": self.checks}
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -5941,6 +5955,19 @@ class StudioJob:
             _unlink(listing)
             _unlink(joined)
 
+    def _check(self, ff: str, intro: float) -> list:
+        """reelcheck's findings for the reel just written. Never raises."""
+        try:
+            st = STYLE.get(self.project.get("style") or "")
+            fast = bool(st and (st.drop or getattr(st, "fast_cuts", False)))
+            derived = dict(self.derived)
+            derived["length"] = float(derived.get("length") or 0.0) + intro
+            derived["offset"] = intro               # the intro sits in front of every kill
+            return reelcheck.check(self.project, derived, self.out, fast=fast, ff=ff)
+        except Exception as e:                              # noqa: BLE001
+            log.info("reel check failed: %s", e)
+            return [reelcheck.Finding(reelcheck.HARD, "check-failed", f"The reel could not be checked ({e}).")]
+
     def _retime(self, seg: "Segment", out: Path, ff: str) -> Path:
         """The shot's footage re-timed (clips/retime.py), for its graph to take as it is."""
         from .tools import media_info
@@ -6069,8 +6096,17 @@ class StudioJob:
                               "reel": self.derived["length"], "intro": intro,
                               "when": int(time.time()),
                               "shots": len(segs), "cached": len(segs) - len(todo)}
+            # THE GATE (clips/reelcheck.py): the finished file is read back before
+            # anyone is told it is ready. It never fails a render -- a check that
+            # cannot run is a finding of its own -- but a hard finding changes what
+            # the page says, and is kept on the project beside the reel.
+            self._set(step="check", message="Checking the finished reel")
+            findings = self._check(ff, intro)
+            meta["checks"] = [f.as_dict() for f in findings]
             self.out.with_suffix(".reel.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
-            self._set(state="done", step="done", done=self.total, message="Reel ready",
+            hard = [f for f in findings if f.level == reelcheck.HARD]
+            self._set(state="done", step="done", done=self.total, checks=meta["checks"],
+                      message="Reel ready" if not hard else "Rendered, but not ready: " + hard[0].message,
                       finished=time.time())
         except Cancelled:
             self._set(state="cancelled", message="Cancelled", finished=time.time())
