@@ -271,6 +271,28 @@ def kick_phase(times: list[float], strength: list[float], beat: float, phase: fl
     return float((phase + beat * (np.angle(z) / (2 * np.pi))) % beat)
 
 
+HALF_BEAT_OFF = 0.4        # |kick offset| in beats at which the grid is on the backbeat
+HALF_BEAT_SURE = 0.3       # ...and how consistent the kicks must be about it (0..1)
+
+
+def half_beat_off(x: np.ndarray, beat: float, phase: float) -> bool:
+    """Whether the kick sits clearly half a beat from a grid phased at `phase`."""
+    if beat <= 0 or len(x) < SR * 8:
+        return False
+    k = band_curves(np.asarray(x, np.float32)).get("kick")
+    if k is None:
+        return False
+    times, strength = peaks(*k)
+    if len(times) < 16:
+        return False
+    t, s = np.asarray(times), np.asarray(strength)
+    z = np.sum(s * np.exp(2j * np.pi * (t - phase) / beat))
+    sure = abs(z) / max(1e-9, s.sum())
+    off = (np.angle(z) / (2 * np.pi)) % 1.0
+    off = off - 1.0 if off > 0.5 else off
+    return abs(off) >= HALF_BEAT_OFF and sure >= HALF_BEAT_SURE
+
+
 def cluster(layers: dict[str, Layer]) -> list[dict]:
     """Hits in different layers within CLUSTER_S of each other become one cue."""
     ev = sorted((t, k, s) for k, L in layers.items() for t, s in zip(L.times, L.strength))

@@ -331,6 +331,8 @@ COMMANDS: list[dict] = [
     _c("make.guided", "Make a reel, step by step", "make", "studio-gd-open"),
     _c("make.guided.step", "A step of the guided maker", "make", "studio-gd",
        palette=False),
+    _c("make.chipfix", "Apply the fix the check suggests", "make", "studio-mk-chipfix",
+       palette=False),
     _c("make.build", "Build and render it", "make", "studio-build"),
     _c("make.cancel", "Close without making one", "make", "studio-make-cancel"),
     _c("make.format", "Portrait or landscape", "make", "studio-fmt",

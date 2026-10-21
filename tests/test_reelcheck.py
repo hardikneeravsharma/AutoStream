@@ -138,3 +138,35 @@ def test_a_missing_file_and_a_failed_check_are_hard_findings(tmp_path):
     bad.write_bytes(b"x" * 20_000)
     f = rc.render_findings(bad, {"format": "landscape"}, {"length": 1.0, "kills": [0.5]}, "ffmpeg-that-is-not-there")
     assert not rc.ready(f), f
+
+
+def test_every_style_leaves_out_a_kill_filmed_through_a_flash(tmp_path, monkeypatch):
+    """F2: the director's flash check now runs on any style's plan, on a copy of the clip."""
+    import json
+    from autostream.clips import studio as st
+    clips = []
+    for i in range(6):
+        p = tmp_path / f"c{i}.mp4"
+        p.write_bytes(b"x")
+        clips.append({"path": str(p), "id": f"c{i}", "name": f"c{i}", "duration": 12.0, "kills": [3.5, 8.0],
+                      "hs": [True, True], "labels": []})
+    monkeypatch.setattr(st, "kill_clarity", lambda path, t: 20.0 if t > 7 else 900.0)
+    monkeypatch.setattr(st, "plan_checks", lambda: {})
+    proj, notes = st.plan(clips, "montage", checks=True)
+    shown = {k for s in proj["shots"] for k in s["kills"]}
+    assert 8.0 not in shown and 3.5 in shown
+    assert any("washed out" in n for n in notes)
+    assert clips[0]["kills"] == [3.5, 8.0]          # the library's own row is untouched
+
+
+def test_a_fast_style_plays_each_fight_once_and_whole():
+    """One clip's kills 2-5 s apart were dealt round the reel as three shots."""
+    from autostream.clips import rulebook
+    c = {"path": "C:/c/a.mp4", "kills": [2.9, 5.3, 10.2, 30.0]}
+    ms = [rulebook.Moment(clip=c, kills=[k], group=0, seq=i, strength=1.0 + (i == 3) * 0.5) for i, k in enumerate(c["kills"])]
+    other = rulebook.Moment(clip={"path": "C:/c/b.mp4"}, kills=[3.0], group=1, strength=1.0)
+    dropped = []
+    got = rulebook.one_fight_per_clip(ms[:2] + [other] + ms[2:], dropped)
+    a = [m for m in got if m.group == 0]
+    assert len(a) == 1 and a[0].kills == [2.9, 5.3, 10.2]
+    assert dropped == [("C:/c/a.mp4", 30.0)]
