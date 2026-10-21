@@ -1032,16 +1032,19 @@ STYLES: tuple[Style, ...] = (
     #
     # energy=0.0 AND SINGLE-ENTRY POOLS ARE THE POINT, not an oversight. This
     # style's effects do not come from the parts bin at all -- they come from
-    # the beat engine (o09), which keys off the song's grid rather than off
-    # each kill. Leaving the pools rich would stack a per-kill effect on top of
-    # a per-beat one and muddy both.
+    # the beat engine, which keys off the song's grid rather than off each
+    # kill. Leaving the pools rich would stack a per-kill effect on top of a
+    # per-beat one and muddy both. ON THE BAR, NOT EVERY BEAT (o10): reviewed
+    # with the kills on the beat, a whole-frame negative on every beat "competes
+    # with the kill impact and rapidly becomes fatiguing"; and the ending fades
+    # to black -- burnt out to white, the last frame read as the reel breaking off.
     Style("fasthead", "Fast-paced headshot",
-          "Headshots only, in hard black and white, snapping to negative on the beat. "
+          "Headshots only, in hard black and white, snapping to negative on the bar. "
           "Cuts at one or two beats and a real multi-kill to close. Needs a song.",
           (),                       # the reference is a private file, not a public id
-          intro="i08", outro="e05", cuts=("t01",), kill=("k01snap",), hero=("h01",),
+          intro="i08", outro="e01", cuts=("t01",), kill=("k01snap",), hero=("h01",),
           speed="s00", hero_speed="s00", camera="c00", grade="g13", vignette=True,
-          overlays=("o09",), pre_share=0.62,
+          overlays=("o10",), pre_share=0.62,
           kill_pool=("k01snap",), transition_pool=("t01",), hero_pool=("h01",),
           camera_pool=("c00",), speed_pool=("s00",), energy=0.0,
           max_per_clip=rulebook.CLIP_SHOTS_CAP,
@@ -1849,7 +1852,7 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
     # derive() holds back until OUTRO_AFTER_KILL after the kill, does not.
     proj["outro_len"] = director.OUTRO_FADE
     if which == "fasthead":
-        # the style's look IS the beat engine (o09), keyed off the grid and the drop; no groove on top
+        # the style's look IS the beat engine (o10), keyed off the grid and the drop; no groove on top
         proj["groove"] = {}
         proj["hs_only"] = True
     else:
@@ -2402,7 +2405,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         build = part_start + rulebook.INTRO_BARS * 4 * beat <= (grid.drums_in or 0.0) + beat
     if build:
         open_beats = (rulebook.INTRO_BARS * 4 + 1) * div
-    closer_post = rulebook.ENDING_BEATS * div if style.outro in ("e01", "e03", "e02") else 0
+    # a fast-cut reel plays at real speed to the end (K2): no slowed exit on its last shot
+    closer_post = rulebook.ENDING_BEATS * div if style.outro in ("e01", "e03", "e02") and not fast else 0
     open_post = max(1, min(rulebook.MAX_TAIL_BEATS * div, open_beats // 4))
     if part_len:
         offset = part_start
@@ -4800,14 +4804,15 @@ def _pulse(var: str, at: float, amount: float, fall: float) -> str:
 FLIP_BEAT = 0.012             # one frame at 60 fps: between 0 and 1/60
 FLIP_BAR = 0.045              # three: between 2/60 and 3/60
 KICK_FALL = 0.058
-# A long way back, so `mod` never sees a negative. ffmpeg's mod keeps the sign
-# of its argument, and a negative result makes every expression above read as
-# "not on the beat" for the whole of the build -- which is the half of the reel
-# the effect most needs to be ramping through.
-# 1e4 bars is twenty thousand seconds, which no reel approaches, and keeps ten
-# significant digits after the point in a double -- a nanosecond of grid
-# resolution. 1e6 would still work and throws away two of them for nothing.
-MOD_SAFE = 1e4
+# THE PHASE IS THE DROP'S, BROUGHT INTO THE FIRST BAR. `mod` must never see a
+# negative -- ffmpeg's keeps the sign of its argument, and the whole build would
+# read as "not on the beat" -- so the offset is the drop's own position in a bar,
+# 0 <= off < bar. It was 1e4 bars back instead, and the beat written into the
+# filter is rounded to 7 places: at Murder in my Mind's 0.499966 s the 5 places it
+# had then were 4 microseconds out, which forty thousand beats on is a sixth of a
+# second -- every beat flip of a reel landed 0.167 s after its beat (ChatGPT's
+# review, 2026-10-22: "flashes land in closely spaced pairs, 2.500 and 2.667 s").
+GRID_PLACES = 7
 # The intensity gate (section 8.1): the build runs at 45% so the drop has
 # somewhere to go, and the last act 12% hotter so the finale is not more of the
 # same. The reference's act three starts 69% of the way from the drop to the
@@ -4817,9 +4822,10 @@ MOD_SAFE = 1e4
 GATE_BUILD = 0.45
 GATE_LAST = 1.12
 ACT3_SHARE = 0.69
-# Two frames of black immediately BEFORE the drop. The snap into the bass is
-# worth more than any flash on it.
-PUNCH = 0.034
+# NO BLACK BEFORE THE DROP ANY MORE. The spec's two frames of black just before it
+# (section 8.5) were a snap into the bass when the cut sat on the drop; with the
+# kill ON the drop (clips/fasthead.py) they blank its last frames of approach, and
+# ChatGPT's review called the black frame at 4.467 s the reel's worst defect.
 
 
 def beat_engine(pid: str, *, beat: float, drop: float, length: float,
@@ -4841,7 +4847,7 @@ def beat_engine(pid: str, *, beat: float, drop: float, length: float,
     # In phase with the DROP, not with the first frame. The two coincide only
     # when the offset happens to be a whole number of beats, and being half a
     # beat out is the difference between an edit and a fault.
-    off = MOD_SAFE * bar - drop
+    off = (-drop) % bar
     on_beat = knob(pid, "beat", 1.0) >= 0.5
     gate = (f"if(lt({var},{drop:.4f}),{GATE_BUILD},"
             f"if(lt({var},{drop + (length - drop) * ACT3_SHARE:.4f}),1,{GATE_LAST}))")
@@ -4850,16 +4856,14 @@ def beat_engine(pid: str, *, beat: float, drop: float, length: float,
     # SUMMING the two terms rather than using two negate filters: `enable`
     # treats any non-zero as on, so a bar line (both terms 1) stays on through
     # the longer window. Two filters would invert twice and cancel.
-    terms = [f"lt(mod({var}+{off:.4f},{bar:.5f}),{FLIP_BAR})"]
+    P = GRID_PLACES
+    terms = [f"lt(mod({var}+{off:.{P}f},{bar:.{P}f}),{FLIP_BAR})"]
     if on_beat:
-        terms.insert(0, f"lt(mod({var}+{off:.4f},{beat:.5f}),{FLIP_BEAT})")
+        terms.insert(0, f"lt(mod({var}+{off:.{P}f},{beat:.{P}f}),{FLIP_BEAT})")
     out.append(f"negate=enable='gte({var},{from_t:.4f})*({'+'.join(terms)})'")
     if (kick := knob(pid, "kick", 0.029)) > 0:
         out.append(f"eq=brightness='({gate})*{kick:.4f}"
-                   f"*exp(-mod({var}+{off:.4f},{beat:.5f})/{KICK_FALL})':eval=frame")
-    if drop > PUNCH:
-        out.append(f"drawbox=x=0:y=0:w=iw:h=ih:color=black@1:t=fill:"
-                   f"enable='between({var},{drop - PUNCH:.4f},{drop - 0.001:.4f})'")
+                   f"*exp(-mod({var}+{off:.{P}f},{beat:.{P}f})/{KICK_FALL})':eval=frame")
     return out
 
 

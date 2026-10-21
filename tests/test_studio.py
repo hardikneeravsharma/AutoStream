@@ -2456,7 +2456,7 @@ def test_the_fast_paced_style_takes_its_effects_from_the_beat_not_the_bin():
     st = [s for s in studio.STYLES if s.key == "fasthead"][0]
     assert st.energy == 0.0
     assert set(st.kill_pool) == {"k01snap"} and set(st.transition_pool) == {"t01"}
-    assert "o09" in st.overlays and st.grade == "g13"
+    assert "o10" in st.overlays and st.grade == "g13"          # the flip on the bar (reviewed 2026-10-22)
     assert st.max_per_clip == rulebook.CLIP_SHOTS_CAP
 
 
