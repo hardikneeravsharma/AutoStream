@@ -1973,6 +1973,25 @@ def test_the_emblem_check_never_drops_or_adds_a_recorded_kill():
     assert out[0]["kills"] == [3.8, 9.0] and moved == 1 and dropped == 0 and added == 0
 
 
+def test_a_clip_the_job_already_put_on_its_emblems_is_not_read_again():
+    def confirm(p, g):
+        raise AssertionError("decoded a clip whose kills were already confirmed")
+    clips = [{"path": "a.mp4", "kills": [3.5, 9.0], "emblems": True, "game": "VALORANT"}]
+    out, moved, dropped, added = studio._confirm_kills(clips, confirm)
+    assert out == clips and (moved, dropped, added) == (0, 0, 0)
+
+
+def test_the_library_says_which_clips_the_job_put_on_their_emblems(tmp_path):
+    r = tmp_path / "clips"
+    folder = _run(r, "2026-09-14_0045_VALORANT", "VALORANT",
+                  [{"start": 100.0, "end": 108.0}, {"start": 200.0, "end": 208.0}], kills=[])
+    (folder / "session.json").write_text(json.dumps({"game": "VALORANT", "kills": [
+        {"time": 103.5, "emblem": True}, {"time": 203.0, "emblem": True}, {"time": 205.0}]}))
+    got = {c["start"]: c for c in studio.library(r)["games"][0]["folders"][0]["clips"]}
+    assert got[100.0].get("emblems") is True
+    assert "emblems" not in got[200.0]                    # one kill never checked: read it
+
+
 # ------------------------------------------------------------------ how long, every kill, best order
 
 def _song_file(clips_root: Path) -> str:

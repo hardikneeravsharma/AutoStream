@@ -270,6 +270,8 @@ def library(root: Path) -> dict:
         hs_at = {round(float(k["time"]), 3): k["hs"] for k in rows_k if isinstance(k.get("hs"), bool)}
         # Riot's record, not a screen reading: the Studio must not move these.
         recorded = sorted(float(k["time"]) for k in rows_k if k.get("record"))
+        # Kills the clip job already put on the game's emblem (jobs._confirm_emblems).
+        on_emblem = {round(float(k["time"]), 3) for k in rows_k if k.get("emblem")}
         try:
             pre = float(((sess.get("options") or {}).get("pre_roll")) or 3.5)
         except (TypeError, ValueError):
@@ -344,6 +346,10 @@ def library(root: Path) -> dict:
                 # attached to the whole session up with this one clip.
                 "start": round(start, 3),
                 **({"recorded": True} if from_record else {}),
+                # EVERY KILL ALREADY ON ITS EMBLEM: the job checked them against the
+                # whole recording, so the plan need not decode the clip to check again.
+                **({"emblems": True} if inside and not from_record
+                   and all(round(k, 3) in on_emblem for k in inside) else {}),
                 # A file the player added (clips/uploads.py), and whether its
                 # kills have been marked yet -- until they are, the one "kill"
                 # above is only the clip's first frame.
@@ -3121,8 +3127,10 @@ def _confirm_kills(clips: list[dict], confirm, theirs=None) -> tuple[list[dict],
 
     from . import killmark
 
+    # A clip the job already confirmed is not decoded again: on a MacBook Air that
+    # whole-clip read was most of a minute-long plan, and it finds the same emblems.
     def one(c):
-        return confirm(c["path"], c.get("game") or "")
+        return None if c.get("emblems") else confirm(c["path"], c.get("game") or "")
     with ThreadPoolExecutor(max_workers=4) as pool:
         found = list(pool.map(one, clips))
     # RIOT'S TIME IS NOT THE MOMENT ON SCREEN. A recorded kill is the server's
@@ -3140,6 +3148,9 @@ def _confirm_kills(clips: list[dict], confirm, theirs=None) -> tuple[list[dict],
     shows = {c.get("folder") or Path(c["path"]).parent.parent.name
              for c, m in zip(clips, found) if m}
     for c, marks in zip(clips, found):
+        if c.get("emblems"):
+            out.append(c)
+            continue
         if c.get("recorded"):
             ks, n = _snap_recorded([float(k) for k in c.get("kills") or []], marks or [])
             moved += n
