@@ -69,6 +69,16 @@ not notarised, so a downloaded copy needs **Open Anyway** the first time (see
 Download, above). To sign it with a real identity, set `AUTOSTREAM_CODESIGN`. To build for the
 other architecture, set `AUTOSTREAM_ARCH=x86_64`.
 
+## Recordings the Mac window cannot play (AV1)
+
+A Mac without an AV1 hardware decoder, which means anything before an M3, cannot show AV1 video in the app's window. Streams downloaded from YouTube are often AV1. Everything else still works with them:
+
+- **Detection and cutting** read the original on the CPU (libdav1d), at about 7.5× real time for 1440p60 on an M2. Clips keep the source quality.
+- **Choose the part to clip** says the video can't be shown. **Play this part** plays a small H.264 preview of the range you pick.
+- **Make a playable copy** writes a 720p30 H.264 copy next to the recording, as `<name>.playable.mp4`. The button shows the cost first: about a fifth of the recording's length in time, and 28 MB a minute on disk. Once made, the whole recording plays and scrubs. **Stop** ends it and deletes the unfinished file.
+
+A VALORANT clip job decodes the window **once**. The kill feed and the kill-emblem check read the same decode (`macos/scan.py`), which made the two stages 1.6× faster than decoding twice. (Issues #210, #212, #214.)
+
 ## Where it keeps things
 
 | | |

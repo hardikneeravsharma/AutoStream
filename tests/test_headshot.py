@@ -66,7 +66,7 @@ def test_no_own_row_is_unread_not_a_body_shot(monkeypatch):
 
 
 def test_annotate_writes_only_what_was_read(monkeypatch):
-    monkeypatch.setattr(headshot, "read", lambda v, times: [True, None, False])
+    monkeypatch.setattr(headshot, "read", lambda v, times, cancelled=None: [True, None, False])
     kills = [{"time": 1.0}, {"time": 2.0}, {"time": 3.0}, {"note": "no time"}]
     assert headshot.annotate("v.mp4", kills) == 2
     assert kills[0]["hs"] is True and "hs" not in kills[1] and kills[2]["hs"] is False

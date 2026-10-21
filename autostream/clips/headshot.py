@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -166,8 +167,15 @@ def _one(video: str, t: float, others: list[float], size: tuple[int, int]) -> bo
     return None if best is None else best >= THRESHOLD
 
 
-def read(video: str | Path, times: list[float]) -> list[bool | None]:
-    """For each kill time (seconds into `video`): True a headshot, False not, None unread."""
+def read(video: str | Path, times: list[float],
+         cancelled: Callable[[], bool] | None = None) -> list[bool | None]:
+    """For each kill time (seconds into `video`): True a headshot, False not, None unread.
+
+    `cancelled` is asked before each kill. Every kill is a seek and a decode,
+    and on a CPU-decoded AV1 recording a long window's few hundred of them
+    took many minutes -- with Cancel pressed and "Stopping..." on screen the
+    whole time, until the app was closed instead.
+    """
     from .tools import media_info
     times = [float(t) for t in times]
     if not times:
@@ -182,6 +190,8 @@ def read(video: str | Path, times: list[float]) -> list[bool | None]:
         return [None] * len(times)
 
     def job(i: int) -> bool | None:
+        if cancelled and cancelled():
+            return None
         try:
             return _one(str(video), times[i], times[:i] + times[i + 1:], size)
         except Exception as e:                               # noqa: BLE001
@@ -195,10 +205,11 @@ def is_valorant(game: str) -> bool:
     return "valorant" in str(game or "").lower()
 
 
-def annotate(video: str | Path, kills: list[dict]) -> int:
+def annotate(video: str | Path, kills: list[dict],
+             cancelled: Callable[[], bool] | None = None) -> int:
     """Set "hs" on each kill dict that has a time. -> how many were read either way."""
     rows = [k for k in kills if isinstance(k, dict) and k.get("time") is not None]
-    got = read(video, [float(k["time"]) for k in rows])
+    got = read(video, [float(k["time"]) for k in rows], cancelled)
     n = 0
     for k, hs in zip(rows, got):
         if hs is not None:

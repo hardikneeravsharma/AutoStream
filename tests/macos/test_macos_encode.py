@@ -81,9 +81,10 @@ def test_windows_never_asks_videotoolbox(monkeypatch):
     assert tools.video_codec_args("auto")[1] == "libx264"
 
 
-def test_the_mac_decoder_hands_frames_back_to_system_memory(monkeypatch):
+def test_a_mac_decodes_on_the_cpu_whatever_the_codec(monkeypatch):
+    """-hwaccel videotoolbox made ffmpeg choose its hardware-only AV1 decoder,
+    which on an M1 or M2 decodes nothing: zero frames, zero kills (#210)."""
     monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setattr(encode, "decoder", lambda: "videotoolbox")
-    assert tools.decode_args() == ["-hwaccel", "videotoolbox"]
-    # No on-card frame dropping: that chain is CUDA's and D3D11's.
-    assert tools.gpu_frames_args() == []
+    assert encode.decoder() == ""
+    assert tools.hw_decoder() == ""
+    assert tools.decode_args() == [] and tools.gpu_frames_args() == []

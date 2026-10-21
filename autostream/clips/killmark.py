@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -433,6 +434,13 @@ def scan(video: Path, game: str, *, start: float = 0.0, duration: float = 0.0, f
     spec = spec_for(game)
     if spec is None or duration <= 0:
         return None
+    # Read during the kill-feed scan, from the same decode -- macos/scan.py.
+    if sys.platform == "darwin":
+        from ..macos import scan as _mac
+        shared = _mac.emblem_onsets(video, start, duration)
+        if shared is not None:
+            log.info("kill emblems taken from the feed scan's decode")
+            return shared
     starts = []
     t = start
     while t < start + duration - 0.05:

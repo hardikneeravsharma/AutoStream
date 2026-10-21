@@ -59,6 +59,9 @@ SKIP_ON_MAC: dict[str, str] = {
     # lands just under. _frame_at BLENDS flow frames, so no frame repeats; frame
     # 55's neighbours differ by a mean 0.296 grey levels against a 0.3 cut-off
     # on Homebrew's ffmpeg 9.0.2. Fails the same on a clean main (#194).
+    "tests/test_valorant.py::test_spans_read_in_parallel_come_back_in_time_order":
+        "fakes valorant_feed._span, which a Mac replaces with the shared decode "
+        "(macos/scan.py); tests/macos/test_macos_scan.py pins the same order",
     "tests/test_retime.py::test_a_rendered_retime_has_every_frame_and_slow_motion_is_not_repeats":
         "borderline: frame 55 differs by 0.296 against a 0.3 repeat cut-off under "
         "Homebrew's ffmpeg 9.0.2 -- blended, not repeated",

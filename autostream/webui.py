@@ -352,7 +352,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._media(path, self.app._clips_dir(cfg.load()),
                     (".mp4", ".m4v", ".webm"), "video")
 
-    def _source_video(self, path: str) -> None:
+    def _source_video(self, path: str, copy: bool = False) -> None:
         """Stream a recording the user is clipping, so it can be watched whole.
 
         Confined to recordings the app already knows about -- see
@@ -362,6 +362,17 @@ class _Handler(BaseHTTPRequestHandler):
         """
         if not self.app._known_source(path):
             self._json({"error": "That recording is not one of yours."}, 403)
+            return
+        if copy:
+            # Its playable copy, found from the recording and never named by
+            # the request -- the allowlist above is the recording's.
+            from .clips import cutter
+
+            made = cutter.playable_ready(Path(path))
+            if made is None:
+                self._json({"error": "There is no playable copy of that yet."}, 404)
+                return
+            self._media(str(made), made.parent, (".mp4",), "video")
             return
         self._media(path, Path(path).parent,
                     tuple(self.app.FRAME_TYPES), "video")
@@ -707,6 +718,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._video((q.get("path") or [""])[0])
         elif u.path == "/api/platform/status":
             self._json(self.app.platform_status())
+        elif u.path == "/api/clips/playable/status":
+            self._json(self.app.clips_playable_status())
         elif u.path == "/api/clips/part/status":
             self._json(self.app.clips_part_status())
         elif u.path == "/api/clips/source-info":
@@ -714,7 +727,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.app.clips_source_info((q.get("path") or [""])[0]))
         elif u.path == "/api/clips/source":
             q = parse_qs(u.query)
-            self._source_video((q.get("path") or [""])[0])
+            self._source_video((q.get("path") or [""])[0],
+                               copy=(q.get("copy") or [""])[0] == "1")
         elif u.path == "/api/clips/outro":
             self._json(self.app.clips_outro_info())
         elif u.path == "/api/clips/outro-video":
@@ -1183,6 +1197,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.platform_connect(b))
             elif p == "/api/clips/part/preview":
                 self._json(self.app.clips_part_preview(b))
+            elif p == "/api/clips/playable":
+                self._json(self.app.clips_playable(b))
+            elif p == "/api/clips/playable/cancel":
+                self._json(self.app.clips_playable_cancel())
             elif p == "/api/clips/part/save":
                 self._json(self.app.clips_part_save(b))
             elif p == "/api/setup/scan":
@@ -2450,7 +2468,11 @@ class Server:
         # a frame out of, which is a much longer list: .mkv, .avi and .wmv all
         # take a frame happily and none of them plays in a <video>.
         playable = src.suffix.lower() in self.WEB_VIDEO
+        from .clips import cutter
+
         return {"ok": True, "bytes": src.stat().st_size,
+                # A copy the player CAN show, made earlier on request.
+                "copy": cutter.playable_ready(src) is not None,
                 "seekable": playable and self._is_seekable(src),
                 "why": "" if playable
                        else "This format does not play in a browser, so only "
@@ -2514,6 +2536,76 @@ class Server:
         threading.Thread(target=run, name="autostream-part",
                          daemon=True).start()
         return dict(answer, building=True)
+
+    # The one playable-copy job: re-encoding hours of video is not something to
+    # run twice at once. A dict replaced on start, read by the status poll.
+    _playable: dict = {}
+
+    def clips_playable(self, body: dict) -> dict:
+        """Start making a copy of the recording the part player can show.
+
+        For a recording this machine's player cannot decode -- an AV1 stream
+        on a Mac without an AV1 decoder (#210). Asked for, never started on
+        its own: it is about a fifth of the recording's length in time and
+        28 MB a minute on disk, and both are named on the button first.
+        """
+        from .clips import cutter
+
+        path = str(body.get("path") or "")
+        src, why = self._part_source(path)
+        if src is None:
+            return {"error": why}
+        if not self._known_source(path):
+            return {"error": "That recording is not one of yours."}
+        if cutter.playable_ready(src) is not None:
+            return {"ok": True, "state": "done"}
+        if self._playable.get("state") == "running":
+            if self._playable.get("path") == path:
+                return {"ok": True, "state": "running"}
+            return {"error": "A playable copy of another recording is being made."}
+        out = cutter.playable_path(src)
+        job = {"state": "running", "path": path, "percent": 0, "error": "",
+               "started": time.time()}
+        stop = threading.Event()
+        self._playable, self._playable_stop = job, stop
+
+        def progress(f: float) -> None:
+            job["percent"] = int(f * 100)
+
+        def run():
+            try:
+                cutter.playable_copy(src, out, on_progress=progress,
+                                     cancelled=stop.is_set)
+                job.update(state="done", percent=100)
+                log.info("playable copy of %s made: %s", src.name, out)
+            except Exception as e:                      # noqa: BLE001
+                if stop.is_set():
+                    job.update(state="idle", percent=0)
+                    log.info("playable copy of %s stopped", src.name)
+                    return
+                job.update(state="failed", error=str(e)[:400])
+                log.warning("no playable copy of %s: %s", src.name, e)
+
+        threading.Thread(target=run, name="autostream-playable", daemon=True).start()
+        log.info("making a playable copy of %s", src.name)
+        return {"ok": True, "state": "running"}
+
+    def clips_playable_cancel(self) -> dict:
+        """Stop the copy. ffmpeg is killed and its unfinished file deleted, so
+        nothing is left behind that looks like a copy."""
+        if self._playable.get("state") != "running":
+            return {"ok": True, "state": self._playable.get("state", "idle")}
+        stop = getattr(self, "_playable_stop", None)
+        if stop is not None:
+            stop.set()
+        return {"ok": True, "state": "stopping"}
+
+    def clips_playable_status(self) -> dict:
+        job = dict(self._playable or {"state": "idle"})
+        if job.get("state") == "running" and job.get("percent"):
+            spent = time.time() - job["started"]
+            job["left_s"] = int(spent * (100 - job["percent"]) / job["percent"])
+        return {"ok": True, **job}
 
     def clips_part_save(self, body: dict) -> dict:
         """Write the chosen part out as a file the user keeps."""

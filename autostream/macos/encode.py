@@ -1,7 +1,8 @@
-"""VideoToolbox: the Mac's hardware encoder and decoder.
+"""VideoToolbox: the Mac's hardware encoder. (Decoding stays on the CPU --
+see decoder() for the AV1 recording that taught that.)
 
-Every Mac since 2011 has one, Apple Silicon or Intel, and ffmpeg reaches both
-through `h264_videotoolbox` and `-hwaccel videotoolbox`. None of the Windows
+Every Mac since 2011 has one, Apple Silicon or Intel, and ffmpeg reaches it
+through `h264_videotoolbox`. None of the Windows
 paths in tools.py apply -- NVENC, AMF and Quick Sync are all absent from a Mac
 ffmpeg, so without this every clip went to libx264 on the CPU.
 
@@ -81,30 +82,25 @@ def args(cq: int) -> list[str]:
     return []
 
 
-@functools.lru_cache(maxsize=1)
 def decoder() -> str:
-    """"videotoolbox" when the hardware decoder opens, else "".
+    """Always "": a Mac decodes on the CPU, and that is not a slow fallback.
 
-    Frames come back to system memory (no -hwaccel_output_format), which is
-    what the scans' CPU crop and scale expect.
+    `-hwaccel videotoolbox` is not a hint ffmpeg can ignore. Asked for it,
+    ffmpeg picks the decoder that can USE it -- for AV1, its native `av1`,
+    which has no software path -- and on a Mac without an AV1 decoder (M1, M2)
+    that decodes nothing: "Your platform doesn't support hardware accelerated
+    AV1 decoding", then every packet fails. Every scan then read zero frames
+    and found no kills, and every part preview failed (#210). The probe this
+    replaced only ever tried an H.264 sample, so it never saw it.
+
+    Without the flag ffmpeg picks libdav1d for AV1 and its own decoders for
+    the rest: measured on a 2560x1440 60 fps AV1 stream, 7.5x real time. The
+    hardware ENCODER is unaffected -- that is chosen per output, not guessed
+    for an input.
     """
-    from ..clips.tools import _gpu_probe, _tiny_h264, binary, run
-
-    try:
-        listed = run([binary("ffmpeg"), "-hide_banner", "-hwaccels"]).stdout or ""
-    except Exception:                                   # noqa: BLE001
-        return ""
-    if NAME not in listed:
-        return ""
-    sample = _tiny_h264()
-    if not sample:
-        return ""
-    ok = _gpu_probe(["-hwaccel", NAME, "-i", sample, "-frames:v", "1",
-                     "-f", "null", "-"])
-    return NAME if ok else ""
+    return ""
 
 
 def forget() -> None:
     """Drop the cached answers. For tests, and a changed ffmpeg."""
     _mode.cache_clear()
-    decoder.cache_clear()

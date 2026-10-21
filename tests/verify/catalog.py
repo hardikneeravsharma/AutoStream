@@ -325,6 +325,13 @@ CONTROLS: list[Control] = [
             why="writes a trimmed copy of the recording to disk"),
     Control("/api/clips/part/status", "GET", STATIC, "", "clips",
             why="polled while a part is being saved"),
+    Control("/api/clips/playable", "POST", STATIC, "Make a playable copy", "clips",
+            why="re-encodes the whole recording on a worker thread -- up to an "
+                "hour on a long stream; test_ui_unplayable_source drives it"),
+    Control("/api/clips/playable/cancel", "POST", STATIC, "Stop", "clips",
+            why="stops the copy started above; test_ui_unplayable_source drives it"),
+    Control("/api/clips/playable/status", "GET", STATIC, "", "clips",
+            why="polled while a playable copy is being made"),
     Control("/api/clips/source-info", "GET", STATIC, "", "clips",
             why="asks whether a recording can be played whole in the page"),
     Control("/api/clips/source", "GET", STATIC, "", "clips",
@@ -888,6 +895,9 @@ NOT_A_FLOW: dict[str, str] = {
            "leaves the browser",
     "part-mark": "sets the start or end of the part from the video playhead",
     "part-play": "plays the chosen part, whole-file or from a built preview",
+    "part-copy": "makes a playable copy of a recording the player cannot "
+                 "decode; test_ui_unplayable_source drives it",
+    "part-copy-stop": "stops that copy; test_ui_unplayable_source drives it",
     "part-save": "writes the chosen part out as its own file",
     "voice-get": "starts the voice-pack download; the button then polls "
                  "/api/clips/voices for progress",

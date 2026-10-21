@@ -416,6 +416,12 @@ CLIPS_HTML: str = (
       <div class="clip-part-empty" id="clip-part-empty">
         <p id="clip-part-emptytext">Loading the recording&hellip;</p>
         <p class="muted" id="clip-part-emptysub">Clicking a frame below moves the start there.</p>
+        <!-- For a recording this player cannot decode (#210): a copy it can. -->
+        <button class="btn btn-sm hide" type="button" data-act="part-copy"
+                id="clip-part-copy">Make a playable copy</button>
+        <button class="btn btn-sm btn-danger hide" type="button" data-act="part-copy-stop"
+                id="clip-part-copystop">Stop</button>
+        <p class="muted hide" id="clip-part-copymsg" role="status" aria-live="polite"></p>
       </div>
     </div>
 
@@ -5357,7 +5363,7 @@ async function clip_partSource() {
                         encodeURIComponent(s.recording_path));
     }
     if (clip_state.partFor !== s.recording_path) return;  /* moved on */
-    if (r && r.ok && r.seekable) {
+    if (r && r.ok && (r.seekable || r.copy)) {
       clip_state.partWhole = true;
       /* WHETHER IT PLAYS IS THE PLAYER'S CALL, NOT THE EXTENSION'S. An .mp4
          can carry AV1 and Opus, and WKWebView on a Mac without an AV1 decoder
@@ -5370,8 +5376,19 @@ async function clip_partSource() {
         clip_partUnplayable('This recording\'s video does not play in this window, ' +
                             'so only the part you choose can be shown.');
       };
+      /* NO PICTURE IS NOT PLAYING EITHER. The Mac window's own WebKit plays
+         the Opus sound of an AV1 recording and raises no error at all -- the
+         report was "all I hear is the audio" (#210). A recording always has
+         a picture, so a zero width once the file is open means there is none. */
+      v.onloadedmetadata = function () {
+        if (!clip_state.partWhole || clip_state.partFor !== s.recording_path) return;
+        if (!v.videoWidth) clip_partUnplayable('This recording\'s video does not play in this window, ' +
+                                               'so only the part you choose can be shown.');
+      };
       v.src = '/api/clips/source?k=' + encodeURIComponent(SHELL_K) +
-              '&path=' + encodeURIComponent(s.recording_path);
+              '&path=' + encodeURIComponent(s.recording_path) + (r.copy ? '&copy=1' : '');
+      clip_show('clip-part-copy', false);
+      clip_show('clip-part-copymsg', false);
       clip_show('clip-part-empty', false);
       clip_show('clip-part-markin', true);
       clip_show('clip-part-markout', true);
@@ -5392,12 +5409,75 @@ function clip_partUnplayable(why) {
   var v = clip_el('clip-part-video');
   var txt = clip_el('clip-part-emptytext'), sub = clip_el('clip-part-emptysub');
   clip_state.partWhole = false;
-  if (v) { v.onerror = null; v.removeAttribute('src'); v.load(); }
+  if (v) { v.onerror = null; v.onloadedmetadata = null; v.removeAttribute('src'); v.load(); }
   clip_show('clip-part-empty', true);
   if (txt) txt.textContent = why;
   if (sub) sub.textContent = 'Choose a part and press Play this part.';
   clip_show('clip-part-markin', false);
   clip_show('clip-part-markout', false);
+  /* THE COST IS ON THE BUTTON. Measured on an M2: about a fifth of the
+     recording's length, and 28 MB a minute (cutter.playable_copy). */
+  var b = clip_el('clip-part-copy'), dur = clip_state.strip.dur || 0;
+  if (b) {
+    b.textContent = 'Make a playable copy' + (dur
+      ? ' (about ' + clip_dur(dur / 5) + ', ' +
+        Math.max(1, Math.round(dur / 60 * 28 / 1024)) + ' GB)' : '');
+    b.disabled = false;
+  }
+  clip_show('clip-part-copy', true);
+  clip_partCopyPoll();
+}
+
+/* Start the copy, then follow it. When it is done the player is pointed at
+   it, and the whole recording can be watched and marked. */
+async function clip_partCopy() {
+  var s = clip_state.pick, b = clip_el('clip-part-copy'), stop = clip_el('clip-part-copystop');
+  if (!s) return;
+  if (b) b.disabled = true;
+  if (stop) { stop.disabled = false; stop.textContent = 'Stop'; }
+  var r = await API.post('/api/clips/playable', {path: s.recording_path});
+  if (r && r.error) {
+    toast(r.error, 'error');
+    if (b) b.disabled = false;
+    return;
+  }
+  clip_partCopyPoll();
+}
+
+async function clip_partCopyPoll() {
+  var s = clip_state.pick, msg = clip_el('clip-part-copymsg');
+  if (!s || clip_state.partCopyTimer) return;
+  var r = await API.get('/api/clips/playable/status');
+  var b = clip_el('clip-part-copy'), stop = clip_el('clip-part-copystop');
+  /* Stopped, or never started: back to the offer. */
+  if (!r || r.path !== s.recording_path || r.state === 'idle') {
+    if (b) b.disabled = false;
+    clip_show('clip-part-copystop', false);
+    clip_show('clip-part-copymsg', false);
+    return;
+  }
+  if (r.state === 'running') {
+    if (b) b.disabled = true;
+    if (stop && !stop.disabled) stop.textContent = 'Stop';
+    clip_show('clip-part-copystop', true);
+    clip_show('clip-part-copymsg', true);
+    if (msg) msg.textContent = 'Making a playable copy... ' + (r.percent || 0) + '%' +
+      (r.left_s ? ', about ' + clip_dur(r.left_s) + ' left' : '') +
+      '. Making clips at the same time slows both down.';
+    clip_state.partCopyTimer = setTimeout(function () {
+      clip_state.partCopyTimer = 0;
+      clip_partCopyPoll();
+    }, 3000);
+  } else if (r.state === 'done') {
+    clip_show('clip-part-copystop', false);
+    clip_state.partFor = null;                 /* ask again: it now has a copy */
+    clip_partSource();
+  } else if (r.state === 'failed') {
+    if (b) b.disabled = false;
+    clip_show('clip-part-copystop', false);
+    clip_show('clip-part-copymsg', true);
+    if (msg) msg.textContent = 'The copy could not be made: ' + (r.error || 'unknown error');
+  }
 }
 
 /* Set an edge from where the video is paused, which is exact -- a handle on
@@ -6846,6 +6926,12 @@ function clip_wire() {
       clip_partMark(b.getAttribute('data-edge'));
     } else if (act === 'part-play') {
       clip_partPlay();
+    } else if (act === 'part-copy') {
+      clip_partCopy();
+    } else if (act === 'part-copy-stop') {
+      b.disabled = true;
+      b.textContent = 'Stopping...';
+      API.post('/api/clips/playable/cancel', {});
     } else if (act === 'part-save') {
       clip_partSave();
     } else if (act === 'voice-get') {

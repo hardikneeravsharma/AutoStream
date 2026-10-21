@@ -22,6 +22,7 @@ ON AUDIO
 """
 from __future__ import annotations
 
+import atexit
 import logging
 import shutil
 from pathlib import Path
@@ -186,6 +187,121 @@ def preview(source: Path, start: float, end: float, out: Path, *,
         "-movflags", "+faststart",
         "-y", str(out),
     )
+    return out
+
+
+# The playable copy: what the part player shows when it cannot decode the
+# recording itself. 720p at 30 fps is enough to find a moment by eye, and it is
+# what makes the copy affordable -- measured on a 2560x1440 60 fps AV1 stream
+# on an M2: 5.7x real time and 28 MB a minute, against 2x and 113 MB at full
+# size. Detection and cutting never read it; they read the original.
+PLAYABLE_HEIGHT = 720
+PLAYABLE_FPS = 30
+PLAYABLE_SUFFIX = ".playable.mp4"
+
+
+# The copies' ffmpeg processes, killed when the app exits. A copy writes its
+# video to a FILE, so unlike a scan's piped decoder nothing breaks when the app
+# goes: it was found still running, orphaned, an hour after its app had quit.
+_COPYING: set = set()
+
+
+def _stop_copies() -> None:
+    for proc in list(_COPYING):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+atexit.register(_stop_copies)
+
+
+def playable_path(source: Path) -> Path:
+    """Where `source`'s playable copy goes: beside it, or -- when that folder
+    cannot be written -- in the app's own video folder."""
+    import hashlib
+    import os
+
+    from .. import paths
+
+    if os.access(source.parent, os.W_OK):
+        return source.with_name(source.stem + PLAYABLE_SUFFIX)
+    tag = hashlib.sha1(str(source).encode("utf-8")).hexdigest()[:8]
+    return paths.VIDEO_HOME / "playable" / f"{source.stem[:60]}.{tag}{PLAYABLE_SUFFIX}"
+
+
+def playable_ready(source: Path) -> Path | None:
+    """The finished copy of `source`, or None. A copy older than its source is
+    a copy of something else."""
+    out = playable_path(source)
+    try:
+        if out.is_file() and out.stat().st_mtime >= source.stat().st_mtime:
+            return out
+    except OSError:
+        pass
+    return None
+
+
+def playable_copy(source: Path, out: Path, *,
+                  on_progress: Callable[[float], None] | None = None,
+                  cancelled: Callable[[], bool] | None = None) -> Path:
+    """Re-encode `source` into something every player can show. -> out.
+
+    Written to a .part name and renamed when complete, so a copy that exists
+    is a copy that finished: a quit half way leaves nothing that looks done.
+    `on_progress` is told the fraction done, from ffmpeg's own -progress.
+    Raises RuntimeError on failure, with the tail of what ffmpeg said.
+    """
+    import subprocess
+
+    from .tools import _NO_WINDOW, binary, software_fallback
+
+    total = float(media_info(source).get("duration") or 0.0)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    part = out.with_name(out.name + ".part")
+    args = ["-i", str(source), "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", f"scale=-2:{PLAYABLE_HEIGHT},fps={PLAYABLE_FPS}",
+            *video_codec_args("auto", cq=26),
+            "-c:a", "aac", "-b:a", "128k", "-f", "mp4", "-y", str(part)]
+
+    def attempt(argv: list[str]) -> tuple[int, str]:
+        proc = subprocess.Popen(
+            [binary("ffmpeg"), "-hide_banner", "-nostdin", "-loglevel", "error",
+             "-progress", "pipe:1", "-nostats", *argv],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            creationflags=_NO_WINDOW)
+        _COPYING.add(proc)
+        try:
+            return _follow(proc)
+        finally:
+            _COPYING.discard(proc)
+
+    def _follow(proc) -> tuple[int, str]:
+        for line in proc.stdout:            # a line about every half second
+            if cancelled and cancelled():
+                proc.kill()
+                break
+            key, _, value = line.strip().partition("=")
+            if key == "out_time_us" and value.isdigit() and total and on_progress:
+                on_progress(min(1.0, int(value) / 1e6 / total))
+        err = proc.stderr.read()
+        return proc.wait(), err
+
+    try:
+        code, err = attempt(args)
+        if code and not (cancelled and cancelled()):
+            soft = software_fallback(args)          # a hardware encoder that gave up
+            if soft is not None:
+                code, err = attempt(soft)
+        if cancelled and cancelled():
+            raise RuntimeError("cancelled")
+        if code:
+            tail = "\n".join(err.strip().splitlines()[-4:])
+            raise RuntimeError(f"ffmpeg failed ({code}): {tail}")
+        part.replace(out)
+    finally:
+        part.unlink(missing_ok=True)
     return out
 
 
