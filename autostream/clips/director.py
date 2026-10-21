@@ -308,11 +308,16 @@ def take(b: Burst, drop_reel: float) -> tuple[list[dict], float]:
 
 
 def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None = None,
-         seconds: float = REEL_SECONDS, seed: int = 0, build: str = "") -> Plan:
+         seconds: float = REEL_SECONDS, seed: int = 0, build: str = "", loose: bool = False) -> Plan:
     """Shots for a reel that builds on its best set-up into the drop, then cuts on the drums.
 
     `build` is the clip the player chose to build on: its best fight is the
-    take whenever it has two kills or more, whatever the scores say."""
+    take whenever it has two kills or more, whatever the scores say.
+
+    `loose`: the part is the page's default, not the player's choice -- it
+    says where to look for the drop and how long the reel is, not where it
+    must end. Drawn with room for any build, it started 9 s before an ACE's
+    take did, and a 30 s part made a 22 s reel."""
     rng = random.Random(seed)
     all_b = [b for c in clips for b in bursts(c)]
     clips_by_path = {str(c["path"]): c for c in clips}
@@ -329,12 +334,12 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
     gap = preferred_gap(shape.beat)
     # the best set-up -- or, between ones within a point of it, the seed's: "Mix them up"
     # and a rebuild should not open every reel on the same clutch
-    close = [b for b in setups if setup_score(b) >= setup_score(setups[0]) - 1.0]
     if theirs:
         best = theirs[0]
         if best not in setups:
             setups.insert(0, best)
     else:
+        close = [b for b in setups if setup_score(b) >= setup_score(setups[0]) - 1.0]
         best = close[rng.randrange(len(close))] if seed else setups[0]
     ks = take_kills(best)
     span = ks[-1] - ks[0]
@@ -347,7 +352,9 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
     if part:
         start = max(start, float(part[0]))
     end_cap = float(part[1]) if part else float(shape.seconds)
-    end = min(end_cap, start + seconds)
+    if part and loose:
+        end_cap = min(float(shape.seconds), start + float(part[1]) - float(part[0]))
+    end = min(end_cap, start + max(seconds, float(part[1]) - float(part[0]) if part and loose else 0.0))
     drop_sec = next((s for s in rhythm.sections if s.kind == "drop" and s.start - 0.2 <= D < s.end), None)
     if drop_sec and not part:
         end = min(end, max(drop_sec.end, D + 6.0))

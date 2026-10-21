@@ -281,3 +281,23 @@ def test_doubles_too_far_apart_for_a_run_still_fill_the_hits():
         a, b = s["kill"] - s["pre"], s["kill"] - s["pre"] + s["duration"]
         if not s.get("anchors"):
             assert not any(a < k < b for k in other), s
+
+
+def test_an_untouched_part_is_a_length_not_an_end():
+    """The page's own 30 s part, drawn 15 s before the drop, made a 22 s reel of an ACE
+    whose take needs 9 s: the reel starts where the take does and still runs 30 s."""
+    shape, r = song()
+    part = (DROP - 15.0, DROP + 15.0)
+    fixed = director.plan(library(), shape, r, seed=3, part=part)
+    loose = director.plan(library(), shape, r, seed=3, part=part, loose=True)
+    assert fixed.part[1] <= part[1] + 2.0                     # a chosen part is where it ends
+    assert loose.part[0] > part[0] + 5.0                      # the take starts late in both
+    assert loose.part[1] - loose.part[0] == pytest.approx(30.0, abs=2.5)
+    assert loose.part[1] - loose.part[0] > fixed.part[1] - fixed.part[0] + 4.0
+
+
+def test_a_chosen_build_clip_works_when_nothing_else_is_a_set_up():
+    shape, r = song()
+    lib = [clip(f"one{i}", [3.5]) for i in range(30)] + [clip("pair", [4.0, 6.0], seconds=12.0)]
+    p = director.plan(lib, shape, r, seed=2, build="C:/clips/pair.mp4")
+    assert p.shots[0]["name"] == "pair"
