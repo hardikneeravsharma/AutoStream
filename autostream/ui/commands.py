@@ -328,6 +328,9 @@ COMMANDS: list[dict] = [
     # -- making a reel -----------------------------------------------------
     _c("make.open", "Make a reel from the clips picked", "make",
        "studio-make", why="Pick some clips first."),
+    _c("make.guided", "Make a reel, step by step", "make", "studio-gd-open"),
+    _c("make.guided.step", "A step of the guided maker", "make", "studio-gd",
+       palette=False),
     _c("make.build", "Build and render it", "make", "studio-build"),
     _c("make.cancel", "Close without making one", "make", "studio-make-cancel"),
     _c("make.format", "Portrait or landscape", "make", "studio-fmt",

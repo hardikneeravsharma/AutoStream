@@ -69,6 +69,7 @@ STUDIO_HTML = r"""
         <h1 class="bin-title">Pick your clips, then pick a look</h1>
         <p class="bin-lede" id="studio-sub">Reading your clips…</p>
       </div>
+      <button type="button" class="btn btn-primary" data-act="studio-gd-open" id="studio-gd-open">Make a reel, step by step</button>
     </header>
     <div class="studio-tools">
       <input class="input studio-search" id="studio-q" type="search"
@@ -602,6 +603,25 @@ STUDIO_HTML = r"""
       </div>
     </div>
   </section>
+
+  <div class="scrim studio-page hide" id="studio-guide-scrim">
+  <div class="studio-page-card studio-gd" id="studio-gd" role="region" aria-label="Make a reel, step by step">
+    <header class="mk-head">
+      <button type="button" class="btn btn-ghost" data-act="studio-gd" data-gd="close">&larr; Back to the clips</button>
+      <h2 class="mk-title">Make a reel</h2>
+    </header>
+    <ol class="gd-steps" id="studio-gd-steps"></ol>
+    <section class="gd-body" id="studio-gd-body" aria-live="polite"></section>
+    <div class="gd-chip" id="studio-gd-chip" role="status"></div>
+    <footer class="gd-foot">
+      <button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="all">All settings</button>
+      <span class="gd-nav">
+        <button type="button" class="btn" data-act="studio-gd" data-gd="back" id="studio-gd-back">Back</button>
+        <button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="next" id="studio-gd-next">Next</button>
+      </span>
+    </footer>
+  </div>
+  </div>
 
   <div class="scrim studio-page hide" id="studio-make-scrim">
   <div class="studio-page-card" id="studio-make" role="region" aria-labelledby="studio-make-title">
@@ -2024,7 +2044,7 @@ function studio_closeModals() {
   if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
   const a = studio_el('studio-mk-audio');
   if (a && !a.paused) a.pause();
-  ['studio-preview-scrim', 'studio-make-scrim', 'studio-del-scrim',
+  ['studio-preview-scrim', 'studio-make-scrim', 'studio-guide-scrim', 'studio-del-scrim',
    'studio-rdel-scrim', 'studio-intro-scrim'].forEach(id => studio_show(id, false));
   studio_makePage(false);
   if (!studio_el('studio-imp-scrim').classList.contains('hide')) studio_impClose(false);
@@ -9403,6 +9423,8 @@ function studio_wire() {
     else if (act === 'studio-make-cancel') studio_buildCancel();
     else if (act === 'studio-clear') { studio.selected = []; studio.adding = null; studio_syncSelection(); }
     else if (act === 'studio-make') studio_openMake();
+    else if (act === 'studio-gd-open') studio_gdOpen();
+    else if (act === 'studio-gd') studio_gdAct(b);
     else if (act === 'studio-style') {
       /* A style is a template: taking one drops the picks dealt over the last. */
       studio.style = b.getAttribute('data-style');
@@ -10883,6 +10905,327 @@ function studio_sgWire() {
   });
   window.addEventListener('resize', () => { if (shell_page === 'studio') studio_sgDrawWaves(); });
 }
+
+/* =====================================================================
+   THE GUIDED MAKER: one question per screen.
+   The Make page asks everything at once -- eleven styles, six orders, three lengths, four dials
+   -- and lets any style meet any song. A new player who touches nothing got the weakest pair.
+   This asks one thing at a time, says after each whether the choices so far work together
+   (clips/feasible.py: one verdict, one fix), and hands the answers to the Make page's own
+   machinery -- the same plan, the same render -- so there is one maker underneath and this is a
+   way of choosing, not a second engine. "All settings" opens the full page with what was chosen
+   already in it.
+   ===================================================================== */
+const GD_STEPS = ['Style', 'Song', 'Clips', 'Look', 'Check and make'];
+const GD_BEST = ['drop'];                      /* the styles that have been through the review loop */
+studio.gd = {step: 0, style: '', auto: false, setup: '', quick: [], fmt: 'vertical', fit: 'fit',
+             verdict: null, asked: 0, busy: false, timer: null};
+
+/* WHAT WAS CHOSEN LAST TIME, remembered as intent -- the style, the shape, the framing -- and not as
+   results: the song and the clips are checked again against what exists now, and the chip is asked
+   again, so a remembered answer never skips the check. */
+const GD_KEY = 'autostream.guide';
+function studio_gdRemember() {
+  const gd = studio.gd;
+  try { localStorage.setItem(GD_KEY, JSON.stringify({style: gd.style, fmt: gd.fmt, fit: gd.fit, song: studio.song || '',
+                                                      setup: gd.setup, quick: gd.quick})); } catch (e) { /* private window: nothing remembered */ }
+}
+function studio_gdRecall() {
+  let m = null;
+  try { m = JSON.parse(localStorage.getItem(GD_KEY) || 'null'); } catch (e) { m = null; }
+  if (!m || typeof m !== 'object') return false;
+  const gd = studio.gd, have = id => !!studio.clipIndex[id];
+  if (m.style && studio.catalog.styles.some(s => s.key === m.style)) gd.style = m.style;
+  if (m.fmt === 'vertical' || m.fmt === 'landscape') gd.fmt = m.fmt;
+  if (m.fit === 'fit' || m.fit === 'zoom') gd.fit = m.fit;
+  gd.setup = have(m.setup) ? m.setup : '';
+  gd.quick = (Array.isArray(m.quick) ? m.quick : []).filter(have);
+  return !!gd.style;
+}
+
+function studio_gdStyle() {
+  const cat = studio.catalog;
+  return cat ? cat.styles.find(s => s.key === studio.gd.style) : null;
+}
+
+/* every clip the library holds, of the game the player has most favourites in */
+function studio_gdClips() {
+  const all = Object.values(studio.clipIndex || {}).filter(c => (c.kills || []).length);
+  const by = {};
+  all.forEach(c => { const g = c.game || ''; by[g] = by[g] || {n: 0, fav: 0}; by[g].n++; if (c.fav) by[g].fav++; });
+  const games = Object.keys(by).sort((a, b) => (by[b].fav - by[a].fav) || (by[b].n - by[a].n));
+  return all.filter(c => (c.game || '') === games[0]);
+}
+function studio_gdHs(c) { return (c.hs || []).filter(h => h === true).length; }
+function studio_gdBig(c) { return /CLUTCH|LAST.ALIVE|1V|ACE/i.test((c.labels || []).join(' ') + ' ' + (c.name || '')); }
+function studio_gdIsSetup(c) { const k = (c.kills || []).length; return k >= 3 || (k >= 2 && studio_gdBig(c)); }
+function studio_gdSetupScore(c) {
+  return (c.kills || []).length * 2 + (studio_gdBig(c) ? 3 : 0) + (c.fav ? 2 : 0) + 0.5 * studio_gdHs(c);
+}
+function studio_gdQuickScore(c) {
+  const k = (c.kills || []).length;
+  return (c.fav ? 2 : 0) + (studio_gdHs(c) > 0 ? 1.5 : 0) + (k === 2 ? 0.5 : 0);
+}
+function studio_gdPools() {
+  const all = studio_gdClips();
+  const setups = all.filter(studio_gdIsSetup).sort((a, b) => studio_gdSetupScore(b) - studio_gdSetupScore(a));
+  const quick = all.filter(c => !studio_gdIsSetup(c) && c.id !== studio.gd.setup)
+    .sort((a, b) => studio_gdQuickScore(b) - studio_gdQuickScore(a));
+  return {setups: setups, quick: quick};
+}
+/* how many quick kills the part wants after a build of about eight seconds, half a second apart */
+function studio_gdNeed() {
+  const mk = studio.mk || {};
+  const len = (mk.end - mk.start) > 4 ? (mk.end - mk.start) : 28;
+  return Math.max(6, Math.round((len - 8.5) / 0.52));
+}
+function studio_gdKillsIn(ids) {
+  return ids.reduce((n, id) => n + (((studio.clipIndex[id] || {}).kills || []).length || 0), 0);
+}
+function studio_gdIds() {
+  const gd = studio.gd;
+  return (gd.setup ? [gd.setup] : []).concat(gd.quick.filter(id => id !== gd.setup));
+}
+
+async function studio_gdOpen() {
+  if (!studio.songList) {                  /* the songs already downloaded, for step two */
+    const r = await API.get('/api/studio/songs').catch(() => null);
+    studio.songList = (r && r.ok && r.songs) || [];
+  }
+  if (!studio.catalog || !Object.keys(studio.clipIndex || {}).length) { toast('The clips are still loading.', 'warn'); return; }
+  studio.gd.step = 0; studio.gd.verdict = null;
+  if (!studio.gd.style && !studio.gd.auto) studio_gdRecall();
+  studio_show('studio-preview-scrim', false);
+  studio_show('studio-make-scrim', false);
+  studio_show('studio-guide-scrim', true);
+  studio_makePage(true);
+  studio_gdDraw();
+}
+function studio_gdClose() {
+  studio_show('studio-guide-scrim', false);
+  studio_makePage(false);
+}
+
+function studio_gdCanGo(i) {
+  const gd = studio.gd;
+  if (i <= 0) return true;
+  if (!gd.style && !gd.auto) return false;
+  if (i >= 2 && !studio.song) return false;
+  if (i >= 3 && !gd.quick.length && !gd.setup) return false;
+  return true;
+}
+
+function studio_gdDraw() {
+  const gd = studio.gd;
+  studio_el('studio-gd-steps').innerHTML = GD_STEPS.map((n, i) =>
+    '<li><button type="button" class="gd-step' + (i === gd.step ? ' is-on' : '') + (i < gd.step ? ' is-done' : '') +
+    '" data-act="studio-gd" data-gd="step" data-i="' + i + '"' + (studio_gdCanGo(i) ? '' : ' disabled') +
+    ' aria-current="' + (i === gd.step ? 'step' : 'false') + '"><b>Step ' + (i + 1) + '</b><span>' + esc(n) + '</span></button></li>').join('');
+  const draw = [studio_gdDrawStyle, studio_gdDrawSong, studio_gdDrawClips, studio_gdDrawLook, studio_gdDrawCheck][gd.step];
+  studio_el('studio-gd-body').innerHTML = draw();
+  studio_el('studio-gd-back').disabled = gd.step === 0;
+  const next = studio_el('studio-gd-next');
+  next.textContent = gd.step === 4 ? 'Make the reel' : 'Next';
+  next.disabled = gd.step < 4 ? !studio_gdCanGo(gd.step + 1) : (gd.busy || !!(gd.verdict && gd.verdict.level === 'bad'));
+  studio_gdChip();
+  if (gd.step >= 1) studio_gdAsk();
+  studio_gdRemember();
+}
+
+function studio_gdDrawStyle() {
+  const gd = studio.gd, cat = studio.catalog;
+  const card = s => {
+    const url = studio_sampleUrl(s.key), on = gd.style === s.key, best = GD_BEST.includes(s.key);
+    return '<button type="button" class="gd-card' + (on ? ' is-on' : '') + (best ? ' is-best' : '') + '" data-act="studio-gd" data-gd="style" data-key="' + esc(s.key) + '" aria-pressed="' + on + '">' +
+      (url ? '<video muted loop playsinline autoplay preload="auto" src="' + esc(url) + '" aria-hidden="true"></video>' : '') +
+      '<span class="gd-card-name">' + esc(s.label) + (best ? '<span class="gd-best">Use this for best result</span>' : '') + '</span>' +
+      '<span class="muted">' + esc(s.blurb) + '</span></button>';
+  };
+  const best = cat.styles.filter(s => GD_BEST.includes(s.key)), rest = cat.styles.filter(s => !GD_BEST.includes(s.key));
+  return '<div class="gd-q"><h3>What kind of reel?</h3><p class="muted">Pick a style, or give us a song and we will choose one for it.</p></div>' +
+    '<button type="button" class="gd-auto' + (gd.auto ? ' is-on' : '') + '" data-act="studio-gd" data-gd="auto"><strong>Not sure? Give us a song and we will pick the style.</strong>' +
+    '<span class="muted">We read the song for its drop and tempo and choose the style that suits it.</span></button>' +
+    (gd.auto && studio.song && !gd.style ? '<p class="gd-note">That song has no clear drop, so no style is picked for you yet. Choose one below.</p>' : '') +
+    '<div class="gd-grid gd-grid-best">' + best.map(card).join('') + '</div>' +
+    '<details class="gd-more"' + (gd.style && !GD_BEST.includes(gd.style) ? ' open' : '') + '><summary>More styles <span class="muted">(not reviewed yet: they work, but are not at the standard of the one above)</span></summary>' +
+    '<div class="gd-grid">' + rest.map(card).join('') + '</div></details>';
+}
+
+function studio_gdDrawSong() {
+  const sh = studio.songShape, list = studio.songList || [], mk = studio.mk || {};
+  const drops = sh ? (sh.drops && sh.drops.length ? sh.drops : (sh.drop ? [sh.drop] : [])) : [];
+  return '<div class="gd-q"><h3>Which song?</h3><p class="muted">We pick the best part of it for ' + esc((studio_gdStyle() || {label: 'the style'}).label) + '. You can change it under All settings.</p></div>' +
+    '<div class="gd-grid">' + list.map(s => '<button type="button" class="gd-card' + (studio.song && s.path.toLowerCase() === studio.song.toLowerCase() ? ' is-on' : '') +
+      '" data-act="studio-gd" data-gd="song" data-path="' + esc(s.path) + '" data-name="' + esc(s.name) + '"><span class="gd-card-name">' + esc(s.name) + '</span></button>').join('') + '</div>' +
+    '<div><button type="button" class="btn" data-act="studio-gd" data-gd="pick-song">Choose a song file&hellip;</button> ' +
+    '<span class="muted" id="studio-gd-song-msg"></span></div>' +
+    (sh ? '<div class="gd-facts"><span><b>Tempo</b> ' + Math.round(sh.bpm) + ' BPM</span><span><b>Length</b> ' + studio_dur(sh.seconds) + '</span>' +
+      '<span><b>Drop</b> ' + (drops.length ? drops.map(d => studio_secs(d)).join(', ') : 'none found') + '</span>' +
+      (mk.end > mk.start ? '<span><b>Part used</b> ' + studio_secs(mk.start) + ' &rarr; ' + studio_secs(mk.end) + '</span>' : '') + '</div>' : '');
+}
+
+function studio_gdDrawClips() {
+  const gd = studio.gd, pools = studio_gdPools(), need = studio_gdNeed();
+  const have = gd.quick.reduce((n, id) => n + (((studio.clipIndex[id] || {}).kills || []).length >= 2 ? 2 : 1), 0);
+  const tile = (c, on, act) => '<button type="button" class="gd-clip' + (on ? ' is-on' : '') + '" data-act="studio-gd" data-gd="' + act + '" data-id="' + esc(c.id) + '" aria-pressed="' + on + '">' +
+    '<span class="gd-tags">' + (studio_gdHs(c) ? '<i class="gd-hs">Headshot</i>' : '<i>Body</i>') +
+    (c.fav ? '<i class="gd-fav">&#9733;</i>' : '') + ((c.kills || []).length > 1 ? '<i>' + c.kills.length + ' kills</i>' : '') +
+    ((c.labels || [])[0] ? '<i>' + esc(c.labels[0]) + '</i>' : '') + '</span><span class="mono">' + esc(c.name || c.id) + '</span></button>';
+  const isBD = gd.style === 'drop';
+  return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">Suggestions come from your favourites, best first.</p></div>' +
+    '<div><button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="pickall">Pick for me</button></div>' +
+    (isBD ? '<section class="gd-slot"><div class="gd-slothead"><h4>The build: a clutch, an ace or a multi-kill</h4><span class="mono">' + (gd.setup ? '1 of 1' : '0 of 1') + '</span></div>' +
+      '<div class="gd-grid">' + (pools.setups.slice(0, 8).map(c => tile(c, gd.setup === c.id, 'setup')).join('') || '<p class="muted">None of your clips has three kills or a clutch label.</p>') + '</div></section>' : '') +
+    '<section class="gd-slot"><div class="gd-slothead"><h4>' + (isBD ? 'After the drop: quick kills' : 'Your clips') + '</h4><span class="mono">' + (isBD ? have + ' of ' + need : gd.quick.length + ' chosen') + '</span></div>' +
+    (isBD ? '<div class="gd-bar" aria-hidden="true"><i style="width:' + Math.min(100, Math.round(have / Math.max(1, need) * 100)) + '%"></i></div><p class="muted" style="margin:0">Headshots first. A two-kill clip counts as two: it plays as a quick run.</p>' : '') +
+    '<div class="gd-grid">' + pools.quick.slice(0, 48).map(c => tile(c, gd.quick.includes(c.id), 'quick')).join('') + '</div></section>';
+}
+
+function studio_gdSeg(name, val, opts) {
+  return '<div class="seg" role="group">' + opts.map(o => '<button type="button" class="seg-btn' + (val === o[0] ? ' is-active' : '') + '" data-act="studio-gd" data-gd="set" data-k="' + name + '" data-v="' + o[0] + '" aria-pressed="' + (val === o[0]) + '">' + esc(o[1]) + '</button>').join('') + '</div>';
+}
+function studio_gdDrawLook() {
+  const gd = studio.gd;
+  return '<div class="gd-q"><h3>How should it look?</h3><p class="muted">Only what changes the picture. The effects come with the style; lyrics and the rest are under All settings.</p></div>' +
+    '<div class="gd-field"><h4>Shape</h4>' + studio_gdSeg('fmt', gd.fmt, [['vertical', '9:16 Short or Reel'], ['landscape', '16:9 YouTube']]) + '</div>' +
+    (gd.fmt === 'vertical' ? '<div class="gd-field"><h4>Framing</h4>' + studio_gdSeg('fit', gd.fit, [['fit', 'Fit the whole picture'], ['zoom', 'Zoom to fill']]) + '</div>' : '');
+}
+
+function studio_gdDrawCheck() {
+  const gd = studio.gd, s = studio_gdStyle(), ids = studio_gdIds();
+  const song = studio.song ? studio.song.split(/[\\/]/).pop().replace(/\.[^.]+$/, '') : '';
+  return '<div class="gd-q"><h3>Check and make</h3><p class="muted">Planned, not rendered yet. This is what the reel will be.</p></div>' +
+    '<div class="gd-facts"><span><b>Style</b> ' + esc(s ? s.label : '') + '</span><span><b>Song</b> ' + esc(song) + '</span>' +
+    '<span><b>Clips</b> ' + ids.length + ' (' + studio_gdKillsIn(ids) + ' kills)</span><span><b>Shape</b> ' + (gd.fmt === 'vertical' ? '9:16' : '16:9') + '</span>' +
+    (gd.verdict && gd.verdict.length ? '<span><b>Length</b> ' + Math.round(gd.verdict.length) + ' s</span>' : '') + '</div>' +
+    '<p class="muted">After it is rendered we read the finished reel back and check every kill is on its beat, in focus and not repeated.</p>';
+}
+
+/* THE CHIP: the server's verdict, or the one thing known without asking */
+function studio_gdChip() {
+  const gd = studio.gd, el = studio_el('studio-gd-chip');
+  let v = gd.verdict;
+  if (gd.step === 0) {
+    v = (!gd.style && !gd.auto) ? {level: 'warn', text: 'Pick a style, or pick a song and we will choose one.'}
+      : {level: 'ok', text: gd.style ? 'Good. Next: the song.' : 'Pick a song next and we will choose the style.'};
+  }
+  if (gd.step >= 1 && !v) v = {level: 'ok', text: 'Checking this against your song and clips…'};
+  const label = {ok: 'Works', warn: 'Will work, but', bad: "Won't work"}[v.level];
+  el.className = 'gd-chip ' + v.level;
+  el.innerHTML = '<span class="gd-dot">' + label + '</span><p>' + esc(v.text) + '</p>' +
+    (v.fix ? '<button type="button" class="btn btn-primary btn-sm" data-act="studio-gd" data-gd="fix" data-fix="' + esc(v.fix) + '">' + esc(v.fix_label || 'Fix it') + '</button>' : '<span></span>');
+}
+
+/* Ask the server once the last answer has settled; a newer question makes an older answer stale. */
+function studio_gdAsk() {
+  const gd = studio.gd;
+  clearTimeout(gd.timer);
+  if (!gd.style || !studio.song) { gd.verdict = null; studio_gdChip(); return; }
+  const ticket = ++gd.asked;
+  gd.timer = setTimeout(async () => {
+    studio.style = gd.style; studio.fmt = gd.fmt; studio.vfit = gd.fit;
+    const keep = studio.selected; studio.selected = studio_gdIds();
+    const body = studio_planBody(false);
+    studio.selected = keep;
+    const got = await API.post('/api/studio/feasible', body).catch(() => null);
+    if (ticket !== gd.asked) return;
+    gd.verdict = got && got.ok ? Object.assign({}, got.verdict, {length: got.length})
+                               : {level: 'warn', text: 'Could not check this against your clips just now.'};
+    studio_gdChip();
+    if (gd.step === 4) {
+      studio_el('studio-gd-body').innerHTML = studio_gdDrawCheck();
+      studio_el('studio-gd-next').disabled = gd.busy || gd.verdict.level === 'bad';
+    }
+  }, 250);
+}
+
+function studio_gdPickAll() {
+  const gd = studio.gd, need = studio_gdNeed();
+  if (gd.style === 'drop') { const s = studio_gdPools().setups[0]; gd.setup = s ? s.id : ''; }
+  gd.quick = [];
+  let n = 0;
+  for (const c of studio_gdPools().quick) { if (n >= need) break; gd.quick.push(c.id); n += (c.kills || []).length >= 2 ? 2 : 1; }
+}
+
+async function studio_gdUseSong(path, name) {
+  const msg = studio_el('studio-gd-song-msg');
+  if (msg) msg.textContent = 'Finding the beat…';
+  const ok = await studio_useSong(path, name);
+  if (!ok) { if (msg) msg.textContent = 'Could not read that song.'; return; }
+  const sh = studio.songShape, gd = studio.gd;
+  const hasDrop = !!(sh && ((sh.drops && sh.drops.length) || sh.drop));
+  if (gd.auto) {
+    gd.step = 0;
+    gd.style = hasDrop ? 'drop' : '';
+    if (hasDrop) toast('Build and drop suits this song: it has a clear drop.', 'ok');
+  }
+  gd.verdict = null;
+  studio_gdDraw();
+}
+
+function studio_gdFix(fix) {
+  const gd = studio.gd;
+  if (fix.indexOf('style:') === 0) { gd.style = fix.slice(6); gd.auto = false; }
+  else if (fix === 'pick-song') { gd.step = 1; }
+  else if (fix === 'pick-clips') { studio_gdPickAll(); gd.step = 2; }
+  else if (fix === 'format:vertical') { gd.fmt = 'vertical'; }
+  gd.verdict = null;
+  studio_gdDraw();
+}
+
+function studio_gdAllSettings() {
+  const gd = studio.gd;
+  if (gd.style) studio.style = gd.style;
+  studio.fmt = gd.fmt; studio.vfit = gd.fit;
+  const ids = studio_gdIds();
+  if (ids.length) { studio.selected = ids; studio_syncSelection(); }
+  studio_gdClose();
+  if (studio.selected.length) studio_openMake();
+}
+
+async function studio_gdMake() {
+  const gd = studio.gd;
+  gd.busy = true;
+  studio.style = gd.style; studio.picks = null; studio.fmt = gd.fmt; studio.vfit = gd.fit;
+  studio.selected = studio_gdIds(); studio_syncSelection();
+  studio_gdClose();
+  await studio_openMake();
+  gd.busy = false;
+  studio_build();
+}
+
+function studio_gdAct(b) {
+  const gd = studio.gd, what = b.getAttribute('data-gd');
+  if (what === 'close') return studio_gdClose();
+  if (what === 'all') return studio_gdAllSettings();
+  if (what === 'fix') return studio_gdFix(b.getAttribute('data-fix'));
+  if (what === 'song') { studio_gdUseSong(b.getAttribute('data-path'), b.getAttribute('data-name')); return; }
+  if (what === 'pick-song') {
+    studio_pickSong().then(() => { if (gd.auto && studio.song) studio_gdUseSong(studio.song, ''); else studio_gdDraw(); });
+    return;
+  }
+  if (what === 'step') { gd.step = Number(b.getAttribute('data-i')); }
+  else if (what === 'back') { gd.step = Math.max(0, gd.step - 1); }
+  else if (what === 'next') { if (gd.step === 4) return studio_gdMake(); gd.step++; }
+  else if (what === 'style') {
+    gd.style = b.getAttribute('data-key'); gd.auto = false;
+    if (gd.style !== 'drop') gd.setup = '';
+    gd.verdict = null;
+  }
+  else if (what === 'auto') { gd.auto = true; gd.style = ''; gd.step = 1; gd.verdict = null; }
+  else if (what === 'setup') {
+    const id = b.getAttribute('data-id');
+    gd.setup = gd.setup === id ? '' : id; gd.quick = gd.quick.filter(x => x !== gd.setup); gd.verdict = null;
+  }
+  else if (what === 'quick') {
+    const id = b.getAttribute('data-id');
+    gd.quick = gd.quick.indexOf(id) >= 0 ? gd.quick.filter(x => x !== id) : gd.quick.concat([id]); gd.verdict = null;
+  }
+  else if (what === 'pickall') { studio_gdPickAll(); gd.verdict = null; }
+  else if (what === 'set') { gd[b.getAttribute('data-k')] = b.getAttribute('data-v'); gd.verdict = null; }
+  studio_gdDraw();
+}
+
 
 window.PAGE_STUDIO = {
   onShow: function () {

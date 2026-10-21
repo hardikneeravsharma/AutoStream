@@ -63,6 +63,8 @@ DESTRUCTIVE = {
     "reel-show": "opens a file explorer window on the desktop",
 }
 
+PAGE_TAKERS = ("studio-gd-open",)
+
 # Anything whose name says it opens a native picker. Belt and braces with
 # DESTRUCTIVE above: a picker added later is unpressable the day it lands
 # rather than the day somebody remembers to list it.
@@ -578,6 +580,9 @@ def _sweep_state(page, page_id, state_name, noise, results, base) -> None:
             return [...new Set(out)];
         }""", page_id)
 
+        # A control that takes the whole page (the guided maker) is pressed last: everything after it
+        # would be hidden behind it, and the sweep would reach a third of what it does.
+        tokens.sort(key=lambda t: t in PAGE_TAKERS)
         for token in tokens:
             why = _skip_reason(token)
             if why or any(h in token for h in PICKER_HINTS):

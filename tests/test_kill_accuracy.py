@@ -151,7 +151,8 @@ def test_the_web_page_asks_for_the_checks_through_the_one_door():
     src = inspect.getsource(webui)
     i = src.index("proj, notes = studio.plan(chosen")
     call = src[i:src.index("shape_it=", i)]
-    assert "checks=True" in call, call
+    # on unless the page asked for a dry run (the guided maker's chips, which skip the slow footage checks)
+    assert "checks=not body.get(\"dry\")" in call, call
 
 
 def test_the_fit_planner_takes_the_same_arguments_as_the_ordinary_one():

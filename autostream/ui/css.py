@@ -3826,6 +3826,47 @@ STUDIO_CSS = r"""
    three rows and fifty kill marks crowded one short waveform. A page of pictures and timelines is not
    a page of prose: it takes the width, with a ceiling only where a line would get too long to follow. */
 #view-studio.is-making{max-width:none}
+
+/* THE GUIDED MAKER: one question a screen, the match chip pinned under it. */
+.studio-gd{max-width:1100px}
+.gd-steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:var(--space-2)}
+.gd-step{width:100%;display:grid;gap:2px;text-align:left;padding:var(--space-2) var(--space-3);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);cursor:pointer;min-width:0}
+.gd-step b{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-tertiary)}
+.gd-step span{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gd-step.is-on{border-color:var(--accent)}.gd-step.is-on b{color:var(--accent)}
+.gd-step.is-done span::after{content:" \2713";color:var(--ok)}
+.gd-step:disabled{opacity:.45;cursor:default}
+.gd-body{display:grid;gap:var(--space-4);min-width:0}
+.gd-q h3{margin:0 0 4px;font-size:20px}.gd-q p{margin:0}
+.gd-auto{display:grid;gap:4px;text-align:left;padding:var(--space-3) var(--space-4);border:1px dashed var(--accent);border-radius:var(--radius-md);background:var(--surface);cursor:pointer}
+.gd-auto.is-on{background:var(--surface-active)}
+.gd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:var(--space-3)}
+.gd-grid-best{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.gd-card,.gd-clip{display:grid;gap:6px;align-content:start;text-align:left;padding:var(--space-3);background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-md);cursor:pointer;min-width:0}
+.gd-card:hover,.gd-clip:hover{border-color:var(--border-strong)}
+.gd-card.is-on,.gd-clip.is-on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.gd-card video{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:var(--radius-sm);background:#000}
+.gd-card-name{font-weight:600;display:flex;flex-wrap:wrap;gap:6px 10px;align-items:baseline}
+.gd-best{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--accent)}
+.gd-more summary{cursor:pointer;font-weight:600}
+.gd-more .gd-grid{margin-top:var(--space-3)}
+.gd-note{margin:0;color:var(--warn)}
+.gd-facts{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-5)}
+.gd-facts b{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-tertiary);margin-right:6px}
+.gd-slot{display:grid;gap:var(--space-3)}
+.gd-slothead{display:flex;justify-content:space-between;gap:var(--space-3);align-items:baseline}.gd-slothead h4,.gd-field h4{margin:0}
+.gd-bar{height:8px;border-radius:4px;background:var(--surface-active);border:1px solid var(--border);overflow:hidden}.gd-bar i{display:block;height:100%;background:var(--accent)}
+.gd-tags{display:flex;flex-wrap:wrap;gap:4px}.gd-tags i{font-size:10.5px;font-weight:600;font-style:normal;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border:1px solid var(--border);border-radius:3px;color:var(--text-secondary)}
+.gd-tags .gd-hs{color:var(--warn)}.gd-tags .gd-fav{color:var(--accent)}
+.gd-field{display:grid;gap:var(--space-2)}
+.gd-chip{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)}
+.gd-chip p{margin:0;min-width:0}
+.gd-dot{font-size:12px;font-weight:700;letter-spacing:.05em;padding:3px 8px;border-radius:4px;text-transform:uppercase;white-space:nowrap}
+.gd-chip.ok .gd-dot{color:var(--ok)}.gd-chip.warn{border-color:var(--warn)}.gd-chip.warn .gd-dot{color:var(--warn)}
+.gd-chip.bad{border-color:var(--bad)}.gd-chip.bad .gd-dot{color:var(--bad)}
+.gd-foot{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:var(--space-3)}
+.gd-nav{display:flex;gap:var(--space-2)}
+@media (max-width:639px){.gd-chip{grid-template-columns:minmax(0,1fr)}}
 .studio-page-card{display:flex;flex-direction:column;gap:var(--space-5);width:100%;max-width:2200px;margin:0 auto}
 .mk-head{display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap}
 .mk-title{margin:0;font-size:22px}

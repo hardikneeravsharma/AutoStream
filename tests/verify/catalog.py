@@ -604,6 +604,12 @@ CONTROLS: list[Control] = [
             reject={"clips": []}, reject_soft=True,
             acts=("studio-build", "studio-restyle"),
             why="no clips chosen is refused here, before a song is analysed"),
+    Control("/api/studio/feasible", "POST", CALL, "will these choices make a good reel", "studio",
+            body={"clips": [], "style": "drop", "song": ""}, expect=_has("ok", "verdict"),
+            acts=("studio-gd", "studio-gd-open"),
+            why="one verdict and one fix for a style, a song and clips -- made from "
+                "a real plan without the slow footage checks, so a chip says what the "
+                "planner will do; no song or no clips is a verdict of its own, not an error"),
     Control("/api/studio/check", "POST", CALL, "apply a timeline edit", "studio",
             body={"project": None}, expect=_has("ok"),
             reject={"project": None}, reject_soft=True,
@@ -771,6 +777,8 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-deal-reset": "drops the dealt parts back to the style's own",
     "studio-bin-slot": "ticks a drawer in and out of the how-many-reels count",
     "studio-sg-win": "zooms the song's lanes",
+    "studio-gd-open": "opens the guided maker: one question a screen",
+    "studio-gd": "moves through the guided maker and answers its questions; Make hands them to the Make page's plan",
     "studio-sg-lane": "shows or hides one way of seeing the song",
     "studio-nosong": "clears the chosen song in the dialog",
     "studio-fmt": "chooses landscape or vertical in the dialog; sent with Build",
