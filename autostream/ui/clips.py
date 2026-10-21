@@ -5359,6 +5359,17 @@ async function clip_partSource() {
     if (clip_state.partFor !== s.recording_path) return;  /* moved on */
     if (r && r.ok && r.seekable) {
       clip_state.partWhole = true;
+      /* WHETHER IT PLAYS IS THE PLAYER'S CALL, NOT THE EXTENSION'S. An .mp4
+         can carry AV1 and Opus, and WKWebView on a Mac without an AV1 decoder
+         (anything before an M3) refuses it outright -- error 4, a crossed-out
+         play button over a file the filmstrip reads perfectly well (#208).
+         Then the part is built and played instead, as for a format no
+         browser plays. */
+      v.onerror = function () {
+        if (!clip_state.partWhole || clip_state.partFor !== s.recording_path) return;
+        clip_partUnplayable('This recording\'s video does not play in this window, ' +
+                            'so only the part you choose can be shown.');
+      };
       v.src = '/api/clips/source?k=' + encodeURIComponent(SHELL_K) +
               '&path=' + encodeURIComponent(s.recording_path);
       clip_show('clip-part-empty', false);
@@ -5367,18 +5378,26 @@ async function clip_partSource() {
       var pl = clip_el('clip-part-play');
       if (pl) pl.textContent = 'Play this part';
     } else {
-      if (txt) {
-        txt.textContent = (r && r.why)
-          ? r.why
-          : 'This recording cannot be played straight through here.';
-      }
-      if (sub) sub.textContent = 'Choose a part and press Play this part.';
-      clip_show('clip-part-markin', false);
-      clip_show('clip-part-markout', false);
+      clip_partUnplayable((r && r.why)
+        ? r.why
+        : 'This recording cannot be played straight through here.');
     }
   } catch (e) {
     if (txt) txt.textContent = 'Choose a part and press Play this part.';
   }
+}
+
+/* The recording cannot be played whole here: say why, and offer the part. */
+function clip_partUnplayable(why) {
+  var v = clip_el('clip-part-video');
+  var txt = clip_el('clip-part-emptytext'), sub = clip_el('clip-part-emptysub');
+  clip_state.partWhole = false;
+  if (v) { v.onerror = null; v.removeAttribute('src'); v.load(); }
+  clip_show('clip-part-empty', true);
+  if (txt) txt.textContent = why;
+  if (sub) sub.textContent = 'Choose a part and press Play this part.';
+  clip_show('clip-part-markin', false);
+  clip_show('clip-part-markout', false);
 }
 
 /* Set an edge from where the video is paused, which is exact -- a handle on
