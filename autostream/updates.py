@@ -25,6 +25,7 @@ import json
 import logging
 import re
 import ssl
+import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -43,7 +44,11 @@ ASSET = "AutoStream-share.zip"
 # person with a file and no way to apply it. The zip stays the fallback: older
 # releases have nothing else, and it is still the thing to hand somebody who
 # wants to look inside before installing.
-SETUP = re.compile(r"^AutoStream-[\d.]+-setup\.exe$", re.I)
+SETUP = re.compile(r"^AutoStream-[\d.]+-(?:windows-x64-)?setup\.exe$", re.I)
+# The names releases publish from v1.78.2 (issue #206), beside the old ones
+# above, which a release keeps carrying for a while so that installs that only
+# know those can still update -- see scripts/release_assets.py.
+ZIP = re.compile(r"^AutoStream-[\d.]+-windows-x64\.zip$", re.I)
 TIMEOUT = 30.0
 
 # GitHub allows 60 unauthenticated requests an hour per address. One check a
@@ -96,6 +101,16 @@ def parse_version(text: str) -> tuple[int, ...]:
     return tuple(int(n) for n in nums[:4]) or (0,)
 
 
+def version_of(asset: str) -> tuple[int, ...]:
+    """The version at the front of an asset's name, (0,) if it has none.
+
+    Not parse_version(name): that reads every number, and the 64 of
+    "windows-x64" or "macos-arm64" would count as part of the version.
+    """
+    m = re.match(r"AutoStream-(\d[\d.]*)-", asset)
+    return parse_version(m.group(1)) if m else (0,)
+
+
 def is_newer(candidate: str, current: str) -> bool:
     return parse_version(candidate) > parse_version(current)
 
@@ -140,8 +155,15 @@ def latest() -> Release:
     # rather than whichever the dictionary happened to yield: an asset left
     # behind by a re-upload must never win over the one being released.
     setups = [n for n in by_name if SETUP.match(n)]
-    installer = max(setups, key=lambda n: parse_version(n), default=None)
-    chosen = installer or (ASSET if ASSET in by_name else None)
+    # The new name before its compatibility copy: the same file either way.
+    installer = max(setups, key=lambda n: (version_of(n), "windows-x64" in n), default=None)
+    # A Mac takes its own .dmg, never the Windows installer -- macos/updates.py.
+    if sys.platform == "darwin":
+        from .macos import updates as _mac
+        installer = _mac.pick(by_name)
+    zips = [n for n in by_name if ZIP.match(n)]
+    archive = max(zips, key=version_of, default=None) or (ASSET if ASSET in by_name else None)
+    chosen = installer or archive
     if chosen:
         asset = by_name[chosen]
         rel.asset_url = str(asset.get("browser_download_url") or "")

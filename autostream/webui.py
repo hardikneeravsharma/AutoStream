@@ -2993,12 +2993,6 @@ class Server:
         """Is there a newer AutoStream? -> what the page needs to say so."""
         from . import __version__, updates
 
-        # Every release asset is a Windows installer or zip. Offering one to a
-        # Mac would download 70 MB it cannot run -- macos/features.py.
-        if sys.platform == "darwin":
-            from .macos import features as _mac
-            return _mac.update_check(__version__)
-
         now = time.time()
         cached = self._update_seen
         if (not force and cached.get("at")
@@ -3048,9 +3042,6 @@ class Server:
         installer's job, and this app has one -- so what a person gets is a
         verified file and a button that opens it, not a surprise restart.
         """
-        if sys.platform == "darwin":
-            from .macos import features as _mac
-            return _mac.update_refused()
         from . import __version__, updates
 
         job = self._update_job
@@ -3101,9 +3092,6 @@ class Server:
         Refused while anything is in flight: an update that interrupts a clip
         job or a live broadcast would be a worse bug than any it fixes.
         """
-        if sys.platform == "darwin":
-            from .macos import features as _mac
-            return _mac.update_refused()
         from . import clips
         from .clips import edit as edit_mod
 
@@ -3140,6 +3128,10 @@ class Server:
 
         # The zip has no installer to run; it is extracted by hand. Say so
         # rather than trying to execute an archive.
+        # A Mac has no installer to hand over to: it swaps the .app itself.
+        if sys.platform == "darwin":
+            from .macos import updates as _mac
+            return _mac.install(self, installer, job.get("version", ""))
         if installer.suffix.lower() != ".exe":
             return {"error": f"{installer.name} is a zip. Unzip it over your "
                              f"installation yourself, or download the "

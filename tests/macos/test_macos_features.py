@@ -60,13 +60,6 @@ def test_the_mac_encoder_menu_only_offers_values_windows_accepts():
     assert "VideoToolbox" in mac["help"]
 
 
-def test_the_updater_says_why_rather_than_offering_a_windows_build():
-    got = features.update_check("9.9.9")
-    assert got["ok"] and got["available"] is False and got["current"] == "9.9.9"
-    assert ".dmg" in got["why"]
-    assert "error" in features.update_refused()
-
-
 def test_a_demo_is_never_fetched_through_the_game_on_a_mac(monkeypatch):
     """No game on a Mac to ask -- and `open steam://` would launch Steam."""
     opened = []

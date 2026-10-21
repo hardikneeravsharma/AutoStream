@@ -1333,6 +1333,8 @@ function set_wireUpdates(){
   var copy = set_el('set-diag-copy');
   if (copy) copy.addEventListener('click', set_diagCopy);
   var open = set_el('set-ver-open');
+  /* A Mac swaps the app itself rather than opening an installer. */
+  if (open && SHELL_BOOT.platform === 'macos') open.querySelector('span').textContent = 'Install and restart';
   if (open) open.addEventListener('click', async function(){
     open.disabled = true;
     try {

@@ -16,16 +16,20 @@ from __future__ import annotations
 
 _GPU = ("probes NVENC, AMF, Quick Sync, CUDA and D3D11VA, which a Mac ffmpeg "
         "does not have; tests/macos/test_macos_encode.py covers VideoToolbox")
-_UPDATER = ("the in-app updater installs a Windows release and is refused on a "
-            "Mac; tests/macos/test_macos_features.py covers the refusal")
+_UPDATER = ("the Windows installer: chosen over the zip and launched silently. A "
+            "Mac takes its .dmg and swaps the app itself "
+            "(tests/macos/test_macos_updates.py)")
 _CMD = "runs `cmd /c`, which only Windows has"
 
 SKIP_ON_MAC: dict[str, str] = {
     "tests/test_gpu_probe.py": _GPU,
+    "tests/test_update_install.py::test_a_zip_says_what_to_do_with_it_instead_of_running_it": _UPDATER,
+    "tests/test_update_install.py::test_the_installer_is_started_silently_and_restarts_the_app": _UPDATER,
+    "tests/test_update_install.py::test_the_app_leaves_after_replying_not_before": _UPDATER,
+    "tests/test_update_install.py::test_a_failure_to_start_is_reported_not_raised": _UPDATER,
+    "tests/test_updates.py::test_the_installer_is_chosen_over_the_zip": _UPDATER,
+    "tests/test_updates.py::test_the_newest_installer_wins_if_a_release_carries_several": _UPDATER,
     "tests/test_webview2.py": "reads the Edge WebView2 key from the Windows registry",
-    "tests/test_update_install.py": _UPDATER,
-    "tests/test_updates.py::test_a_newer_release_with_no_package_is_newer_but_not_available": _UPDATER,
-    "tests/test_overnight_report.py::test_the_installer_waits_for_an_upload": _UPDATER,
     "tests/test_clip_diagnostics.py::test_tools_run_reports_to_whoever_is_recording": _CMD,
     "tests/test_clip_diagnostics.py::test_a_process_that_failed_is_recorded_before_the_error_is_raised": _CMD,
     "tests/test_clip_diagnostics.py::test_a_recorder_that_throws_cannot_break_a_clip_run": _CMD,
