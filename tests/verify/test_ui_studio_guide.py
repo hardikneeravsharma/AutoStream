@@ -235,3 +235,6 @@ def test_the_build_clip_chosen_is_sent_and_an_untouched_part_holds_the_drop(pg):
     part = pg.evaluate("""() => { studio.songShape.drop = 40; studio.mk.drops = null; studio.mk.touched = false;
         studio_mkDefault(); return [studio.mk.start, studio.mk.end]; }""")
     assert part[0] < 40 - 10 and part[1] > 40 + 10, part
+    # drawn by the page and never moved: sent as a length, not an end
+    assert pg.evaluate("() => studio_planBody(false).shaping.part_auto") is True
+    assert pg.evaluate("() => { studio.mk.touched = true; return studio_planBody(false).shaping.part_auto; }") is None

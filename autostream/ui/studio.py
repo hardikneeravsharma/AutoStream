@@ -4219,6 +4219,8 @@ function studio_planBody(withMarks) {
   if (studio_mkHasPart()) {
     body.part_start = studio.mk.start;
     body.part_end = studio.mk.end;
+    /* Drawn by the page, never moved: Build and drop takes it as a length, not an end. */
+    if (!studio.mk.touched) body.shaping.part_auto = true;
   }
   if (withMarks && studio.song && studio.mk.edited && studio.mk.hand.length) {
     body.marks = studio.mk.hand.map(k => Math.round(k.t * 1000) / 1000);

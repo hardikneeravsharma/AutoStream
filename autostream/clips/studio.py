@@ -1778,10 +1778,13 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
         return proj, ["The song could not be read for its drum hits; planned the usual build-and-drop way."] + notes
     # the clip the player chose to build on, in the guided maker's build slot
     build = str((shape_it or {}).get("build_clip") or "")
+    # the part the page drew by itself, which the player never touched: a length, not an end
+    loose = bool((shape_it or {}).get("part_auto"))
     got = None
     for _ in range(4):
         try:
-            got = director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, build=build)
+            got = director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, build=build,
+                                loose=loose)
         except ValueError as e:
             return proj, [f"{e} It was planned the usual build-and-drop way instead."] + notes
         todo = [chosen[s["clip"]] for s in got.shots if s["clip"] not in checked and s["clip"] in chosen]
@@ -1811,7 +1814,8 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
             chosen[c["path"]] = c
     else:
         try:
-            got = director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, build=build)
+            got = director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, build=build,
+                                loose=loose)
         except ValueError as e:
             return proj, [f"{e} It was planned the usual build-and-drop way instead."] + notes
     proj["shots"] = got.shots
