@@ -28,6 +28,7 @@ BOTH = {"windows": True, "macos": True}
     (["some/new/thing.py"], BOTH),
     # The CI definition itself is shared logic.
     ([".github/workflows/ci.yml"], BOTH),
+    ([".github/workflows/release.yml"], BOTH),
 ])
 def test_targets(files, want):
     assert targets(files) == want

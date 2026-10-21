@@ -99,7 +99,7 @@ files. Shared code reaches it only from behind `sys.platform == "darwin"`.
 | `autostream/macos/features.py` | What is unavailable and why; the pages and settings that are hidden; the updater pointing at the `.dmg` instead of downloading a Windows build. |
 | `packaging/macos/` | `autostream-macos.spec`, `launcher.py`, `make_icns.py`. |
 | `scripts/macos/` | `install.sh`, `build.sh`. |
-| `.github/workflows/macos-release.yml` | Builds both `.dmg`s on GitHub's Mac runners and attaches them to each published release. Can also be run by hand for an existing tag. |
+| `.github/workflows/release.yml` | The release: a pushed `v*` tag builds Windows and both Macs on GitHub's runners and publishes them together. |
 | `requirements-macos.txt` | The packages the Mac build needs, without the streaming half. |
 | `tests/macos/` | Tests for all of the above. They run on every platform by pretending `sys.platform`. `mac_skips.py` lists the Windows-behaviour tests that are skipped on a Mac, each with its reason. |
 
@@ -111,15 +111,28 @@ pages and choices when `/api/bootstrap` says to, and in `ui/clips.py`, which sho
 server's install text. On Windows the bootstrap carries none of those keys, so every
 fallback is the old value.
 
-## How a release gets its Mac build
+## How a release is made
 
-Publishing a GitHub release, which still happens from the Windows machine, starts
-`.github/workflows/macos-release.yml`. It builds on an Apple Silicon runner and an
-Intel runner, runs `tests/macos`, and uploads `AutoStream-macos-arm64.dmg` and
-`AutoStream-macos-x86_64.dmg` with their `.sha256` files. The names carry no version,
-so `releases/latest/download/AutoStream-macos-arm64.dmg` always points at the newest
-build. To give an older release its Mac build: **Actions > macOS release > Run
-workflow**, and enter the tag.
+Push an annotated version tag on `main`. Its first line is the title, and the rest
+becomes the notes:
+
+```bash
+git tag -a v1.79.0 -m "v1.79.0: what it is" -m "Notes, in markdown."
+git push origin v1.79.0
+```
+
+`.github/workflows/release.yml` builds everything on GitHub's runners:
+- the Windows `AutoStream-share.zip` and installer, with `build.ps1 -Dist`;
+- `AutoStream-macos-arm64.dmg` on an Apple Silicon runner, and
+  `AutoStream-macos-x86_64.dmg` on an Intel runner.
+
+It then publishes the release with every file and its `.sha256` attached at once.
+The tag must match `__version__`, or nothing is built. If a release for that tag
+already exists, for example one published from the PC, the files it is missing are
+uploaded to it instead. The `.dmg` names carry no version, so
+`releases/latest/download/AutoStream-macos-arm64.dmg` always points at the newest
+build. To retry after a runner failure: **Actions > Release > Run workflow**, and enter
+the tag.
 
 ## Testing on a Mac
 

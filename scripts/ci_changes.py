@@ -18,8 +18,7 @@ import sys
 
 # Only the Mac build reads these (issue #193).
 MAC_ONLY = ("autostream/macos/", "packaging/macos/", "scripts/macos/",
-            "tests/macos/", "requirements-macos.txt",
-            ".github/workflows/macos-release.yml")
+            "tests/macos/", "requirements-macos.txt")
 # Only the Windows build reads these. The shared Python is NOT here: the
 # streaming modules are imported and tested on both.
 WINDOWS_ONLY = ("autostream.spec", "autostream_launcher.py", "packaging/AutoStream.iss",

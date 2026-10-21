@@ -68,8 +68,11 @@ Use placeholders.
 Every fix reaches three places, without being asked:
 
 1. **`main`** — committed and pushed.
-2. **A new GitHub release** — bump `__version__`, build with `-Dist`, tag, publish, then
-   download the asset back and check its hash.
+2. **A new GitHub release** — bump `__version__` in the PR; once it is merged, push an
+   annotated tag on `main` (`git tag -a vX.Y.Z -m "vX.Y.Z: title" -m "notes"`, then
+   `git push origin vX.Y.Z`). `.github/workflows/release.yml` builds the Windows zip and
+   installer (`build.ps1 -Dist`) and both macOS `.dmg`s on GitHub's runners and publishes
+   them together. Then download the assets back and check their hashes.
 3. **The local `dist\AutoStream` build** — rebuilt and restarted, so the app in use has it.
 
 Say plainly which of the three each fix has reached. "Pushed" does not mean "shipped" —
