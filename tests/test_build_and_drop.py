@@ -178,3 +178,24 @@ def test_headshots_only_keeps_a_clutch_whole():
     kept, none, dropped = studio._headshots_only(clips)
     assert kept[0]["kills"] == [28.0, 30.3, 34.5]
     assert kept[1]["kills"] == [3.0] and dropped == 1
+
+
+def test_the_main_drop_is_the_entrance_whose_bass_stays():
+    """Ashke: a few bass hits at 20.5 s stepped up further than the drop at 58.0 s, and were
+    gone two seconds later; the reel's ACE landed on them and not on the drop."""
+    import numpy as np
+    from autostream.clips import beatsync as bs
+    sr = bs.SR
+    t = np.arange(int(70 * sr)) / sr
+    rng = np.random.default_rng(3)
+    hats = np.diff(rng.normal(0, 0.05, t.size), prepend=0)                  # the beat, all the way
+    bass = np.sin(2 * np.pi * 55 * t)
+    hits = ((t >= 20) & (t < 22.5)) * 0.9 + (t >= 45) * 0.6                  # a burst, then a drop that stays
+    x = (hats + bass * hits).astype(np.float32)
+    got = [e for e in bs.find_entrances(x) if e["ok"]]
+    near = lambda s: next(e for e in got if abs(e["t"] - s) <= 1.0)       # noqa: E731
+    burst, drop = near(20), near(45)
+    assert burst["stay"] < bs.STAY_MIN <= drop["stay"]
+    assert burst["bass_step"] > drop["bass_step"]                          # the old rule took the burst
+    assert got[reel.main_entrance(got)] is drop
+    assert reel.main_entrance([{"t": 1.0, "bass_step": 20.0}]) == 0       # an entrance read before stay was

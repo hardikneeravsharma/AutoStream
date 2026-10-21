@@ -1020,6 +1020,14 @@ ENTRY_GAP = 14.0               # sections are further apart than phrases: measur
 ENTRY_SKIP = 4.0               # the first seconds are nobody's drop
 BEAT_AFTER = 8.0               # how long the treble has to hold
 BEAT_TOL_DB = 4.0              # ...within this of the song's own typical level
+# THE MAIN DROP KEEPS ITS BASS. Ashke's biggest bass step was a few intro hits at 20.5 s
+# -- the bass gone again two seconds later -- so a reel's ACE landed there and not on the
+# drop at 58.0 s, where the bass slams back after a break and stays. Measured over the 61
+# songs on disk: the share of the next STAY_S whose bass holds at least half its rise is
+# 0.72-1.00 on every main drop but three; under STAY_MIN it is not the main one (Ashke
+# 0.62, Believer 0.44 -- its chorus at 53.8 s takes it -- and JVKE 0.69).
+STAY_S = 8.0
+STAY_MIN = 0.7
 
 
 def _bands(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -1078,8 +1086,11 @@ def find_entrances(x: np.ndarray) -> list[dict]:
         hold = treble[j + 4:j + int(BEAT_AFTER / ENTRY_WIN)]
         after = float(np.median(hold)) if hold.size else -99.0
         ok = after >= typical - BEAT_TOL_DB
+        held = bass[j:j + int(STAY_S / ENTRY_WIN)]
+        stay = float(np.mean(held > floor + 0.5 * (settle - floor))) if held.size else 0.0
         out.append({"t": round(j * ENTRY_WIN, 2), "bass_step": round(float(step[i]), 1),
                     "treble_after": round(after, 1), "typical": round(typical, 1), "ok": bool(ok),
+                    "stay": round(stay, 2),
                     "why": "" if ok else "the bass comes in but the beat does not "
                                          "(a build starting, or a calm part)"})
     return out
