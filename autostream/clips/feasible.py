@@ -54,7 +54,8 @@ def judge(*, style, song: dict | None, clips: int, kills: int, has_setup: bool =
         if needs_drop and not drops:
             return Verdict(BAD, f"{name} needs a song with a drop, and this one has none.",
                            "pick-song", "Choose another song")
-        if fast and not needs_drop and bpm and bpm < FAST_BPM:
+        # Fast-paced headshot sizes its cut to the tempo (clips/fasthead.py), so a slow song is not rushed
+        if fast and not needs_drop and getattr(style, "key", "") != "fasthead" and bpm and bpm < FAST_BPM:
             return Verdict(WARN, f"{name} cuts fast and this song is {bpm:.0f} BPM; it will feel rushed.",
                            "style:drop" if drops else "pick-song",
                            "Use Build and drop" if drops else "Choose another song")
@@ -77,8 +78,8 @@ def judge(*, style, song: dict | None, clips: int, kills: int, has_setup: bool =
                 return Verdict(WARN, f"The reel runs {length:.0f} s of the {want:.0f} s part: about {short} more quick kills would fill it.",
                                "pick-clips", "Add the best")
         for n in notes or []:
-            if "usual build-and-drop way" in n or "planned without one" in n:
-                return Verdict(WARN, "Build and drop could not follow the song here, so it was planned the usual way: " + n.split(". ")[0] + ".")
+            if "usual build-and-drop way" in n or "planned the usual way" in n or "planned without one" in n:
+                return Verdict(WARN, f"{name} could not follow the song here, so it was planned the usual way: " + n.split(". ")[0] + ".")
     if fmt != "vertical":
         return Verdict(WARN, "A Short or Reel is vertical; this shape shows black bars on a phone.", "format:vertical", "Use 9:16")
     return Verdict(OK, "This works.")

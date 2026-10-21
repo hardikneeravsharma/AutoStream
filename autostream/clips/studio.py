@@ -1741,15 +1741,22 @@ def _plan_fit(clips: list[dict], style_key: str, *, shape_it: dict, **kw) -> tup
 
 
 def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part, seed,
-                   checks: bool, confirm, theirs, refine, shape_it: dict, **kw) -> tuple[dict, list[str]]:
+                   checks: bool, confirm, theirs, refine, shape_it: dict, which: str = "drop",
+                   **kw) -> tuple[dict, list[str]]:
     """FOLLOW THE SONG: the set-up builds into the drop, the drums cut the rest -- see director.
 
     The project around the shots -- look, sound, overlays, lyrics -- is the
     style's, from an ordinary plan of the same clips; the shots, the part and
     the marks are the director's. Without a song, or with nothing in the clips
     to build with, it plans Best order and says why.
+
+    `which` is the director: "drop" (director.py) or "fasthead" (fasthead.py,
+    the same loop of kill checks around a planner of its own).
     """
-    from . import director, rhythm
+    from . import director, fasthead, rhythm
+
+    label = STYLE[style_key].label if style_key in STYLE else "This style"
+    way = "the usual build-and-drop way" if which == "drop" else "the usual way"
 
     base_it = dict(shape_it or {}, arrange="hits")
     was = str((shape_it or {}).get("arrange") or "") or "build"
@@ -1757,7 +1764,7 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
         proj, notes = plan(clips, style_key, shape=shape, song=song, part=part, seed=seed, checks=checks,
                            confirm=confirm, theirs=theirs, refine=refine, shape_it=base_it, _direct=False, **kw)
         proj["arrange"] = was
-        return proj, ["Build and drop needs a song to follow; this reel was planned without one."] + notes
+        return proj, [f"{label} needs a song to follow; this reel was planned without one."] + notes
     # The project around the shots only: no kill checks, which decode every clip.
     proj, notes = plan(clips, style_key, shape=shape, song=song, part=part, seed=seed,
                        shape_it=base_it, _direct=False, **{k: v for k, v in kw.items() if k != "measure"})
@@ -1781,18 +1788,22 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
         rh = rhythm.for_song(shape)
     except (AttributeError, OSError) as e:           # a song that cannot be read again: the usual way
         log.info("studio: no rhythm for the song (%s)", e)
-        return proj, ["The song could not be read for its drum hits; planned the usual build-and-drop way."] + notes
+        return proj, [f"The song could not be read for its drum hits; planned {way}."] + notes
     # the clip the player chose to build on, in the guided maker's build slot
     build = str((shape_it or {}).get("build_clip") or "")
     # the part the page drew by itself, which the player never touched: a length, not an end
     loose = bool((shape_it or {}).get("part_auto"))
     got = None
+
+    def direct():
+        if which == "fasthead":
+            return fasthead.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, loose=loose)
+        return director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, build=build, loose=loose)
     for _ in range(4):
         try:
-            got = director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, build=build,
-                                loose=loose)
+            got = direct()
         except ValueError as e:
-            return proj, [f"{e} It was planned the usual build-and-drop way instead."] + notes
+            return proj, [f"{e} It was planned {way} instead."] + notes
         todo = [chosen[s["clip"]] for s in got.shots if s["clip"] not in checked and s["clip"] in chosen]
         todo = list({c["path"]: c for c in todo}.values())
         if not todo or (confirm is None and refine is None and clarity is None):
@@ -1820,10 +1831,9 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
             chosen[c["path"]] = c
     else:
         try:
-            got = director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, build=build,
-                                loose=loose)
+            got = direct()
         except ValueError as e:
-            return proj, [f"{e} It was planned the usual build-and-drop way instead."] + notes
+            return proj, [f"{e} It was planned {way} instead."] + notes
     proj["shots"] = got.shots
     proj["song_offset"] = round(got.part[0], 5)
     proj["song_marks"] = [round(t, 4) for t in got.marks]
@@ -1834,13 +1844,21 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
     # ran over the last kill of two of the first four reels; a short one, which
     # derive() holds back until OUTRO_AFTER_KILL after the kill, does not.
     proj["outro_len"] = director.OUTRO_FADE
-    # the other layers drive the camera and the light; the beat engine's flips would fight them
-    proj["groove"] = fx_schedule.schedule(rh, got.part[0], got.part[1], got.kills, got.drop)
-    proj["overlays"] = [o for o in proj.get("overlays") or [] if fam(o) != "o09"]
+    if which == "fasthead":
+        # the style's look IS the beat engine (o09), keyed off the grid and the drop; no groove on top
+        proj["groove"] = {}
+        proj["hs_only"] = True
+    else:
+        # the other layers drive the camera and the light; the beat engine's flips would fight them
+        proj["groove"] = fx_schedule.schedule(rh, got.part[0], got.part[1], got.kills, got.drop)
+        proj["overlays"] = [o for o in proj.get("overlays") or [] if fam(o) != "o09"]
     used = {s["clip"] for s in got.shots}
     proj["selection"] = [{"clip": c["path"], "name": str(c.get("name") or Path(c["path"]).stem),
                           "why": "" if c["path"] in used else
-                          "Not needed: the set-up and the hits after the drop were filled by other clips."
+                          ("Not needed: every headshot slot was filled by other clips, or this clip's "
+                           "headshots had another kill too close to cut around."
+                           if which == "fasthead" else
+                           "Not needed: the set-up and the hits after the drop were filled by other clips.")
                           if c["path"] in chosen else
                           "No kill showed on screen: the game's kill icon never appeared in this clip."}
                          for c in clips if c and c.get("path")]
@@ -2043,6 +2061,13 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                               max_seconds=max_seconds, seed=seed, measure=measure, confirm=confirm,
                               theirs=theirs, refine=refine, checks=checks, part=part,
                               template=template, shape_it=shape_it)
+    # FAST-PACED HEADSHOT PLANS ITSELF TOO (clips/fasthead.py): the general planner's
+    # fixed 2.0 s pace failed the render gate on every song it was tried on.
+    if _direct and asked != "fit" and style_key == "fasthead" and song:
+        return _plan_sections(clips, style_key, shape=shape, song=song, fmt=fmt, name=name,
+                              max_seconds=max_seconds, seed=seed, measure=measure, confirm=confirm,
+                              theirs=theirs, refine=refine, checks=checks, part=part,
+                              template=template, shape_it=shape_it, which="fasthead")
     style = STYLE.get(style_key) or STYLE[DEFAULT_STYLE]
     fast = fast_reel(style, getattr(shape, "bpm", None))
     if fast:
