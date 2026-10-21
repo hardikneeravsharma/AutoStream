@@ -864,7 +864,23 @@ def test_the_preview_draws_the_lyrics_and_the_blurred_fit(ui, app, tmp_path):
     assert bg["lit"] > bg["total"] * 0.5, f"the blurred copy is empty: {bg}"
     # and the words are redrawn for the reel's new shape
     page.wait_for_function("studio.pv.lyr.name && studio.pv.lyr.name.indexOf('540x960') > 0", timeout=60_000)
-    ui.clean("lyrics and the blurred fit in the preview")
+
+    # --- F16: Near fit, from the Look group: the middle 3/4 in a 4:3 band, over the same blurred copy
+    page.evaluate("studio_tab('timeline')")
+    near = page.locator('[data-act="studio-rfit"][data-fit="near"]').first
+    near.scroll_into_view_if_needed()
+    near.click()
+    page.wait_for_function("studio.project.vfit === 'near' && "
+                           "document.getElementById('studio-player').classList.contains('is-near')", timeout=15_000)
+    box = page.evaluate("""() => { const v = studio_pvEls()[studio.pv.act], r = v.getBoundingClientRect(),
+        p = document.getElementById('studio-player').querySelector('.studio-pv').getBoundingClientRect();
+        return {w: r.width, h: r.height, pw: p.width, ph: p.height, top: r.top - p.top,
+                fit: getComputedStyle(v).objectFit,
+                bg: getComputedStyle(document.getElementById('studio-pv-bg')).display}; }""")
+    assert box["fit"] == "cover" and box["bg"] != "none", box
+    assert box["w"] == pytest.approx(box["pw"], abs=2) and box["h"] == pytest.approx(box["pw"] * 3 / 4, abs=3), box
+    assert box["top"] == pytest.approx((box["ph"] - box["h"]) / 2, abs=3), box
+    ui.clean("lyrics, the blurred fit and near fit in the preview")
 
 
 def test_the_effect_picker_shows_the_effect_large_in_the_middle(ui, app):

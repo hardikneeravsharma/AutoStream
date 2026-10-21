@@ -786,6 +786,7 @@ STUDIO_HTML = r"""
         <div class="seg hide" role="group" aria-label="Vertical framing" id="studio-mk-fit">
           <button type="button" class="seg-btn is-active" data-act="studio-mk-fit" data-fit="zoom">Zoom to fill</button>
           <button type="button" class="seg-btn" data-act="studio-mk-fit" data-fit="fit">Fit the whole picture</button>
+          <button type="button" class="seg-btn" data-act="studio-mk-fit" data-fit="near">Near fit</button>
         </div>
       </div>
       <!-- THE ORDER, ASKED WHERE THE REEL IS MADE.
@@ -7534,9 +7535,11 @@ function studio_drawInspectorBody() {
       '<div class="studio-field"><span class="field-label">Format</span>' +
       studio_seg('studio-rfmt', 'fmt', p.format, [['landscape', 'Normal 16:9'], ['vertical', 'Vertical 9:16']]) + '</div>' +
       '<div class="studio-field"><span class="field-label">Framing</span>' +
-      studio_seg('studio-rfit', 'fit', p.vfit || 'zoom', [['zoom', 'Zoom to fill'], ['fit', 'Fit the whole picture']]) +
+      studio_seg('studio-rfit', 'fit', p.vfit || 'zoom', STUDIO_FITS) +
       '<span class="muted studio-small">' + ((p.vfit || 'zoom') === 'fit'
         ? 'All of the game shows, over a blurred copy of itself.'
+        : (p.vfit || 'zoom') === 'near'
+        ? 'The middle three quarters of the game, a third taller than a full fit: the minimap and kill feed mostly stay.'
         : (vertical ? 'The middle of the game fills the tall frame; the sides are cropped.' : 'The game fills the frame.')) + '</span></div>' +
       '<div class="studio-field"><label class="field-label" for="studio-r-style">Style</label>' +
       '<select class="select" id="studio-r-style">' + styles.map(s => '<option value="' + esc(s.key) + '"' + (s.key === p.style ? ' selected' : '') + '>' + esc(s.label) + '</option>').join('') + '</select>' +
@@ -8384,7 +8387,8 @@ function studio_fitEditor() {
   const pl = studio_el('studio-player');
   if (pl && studio.project) {
     pl.classList.toggle('is-vertical', studio.project.format === 'vertical');
-    pl.classList.toggle('is-fit', studio.project.vfit === 'fit');
+    pl.classList.toggle('is-fit', studio.project.vfit === 'fit' || studio.project.vfit === 'near');
+    pl.classList.toggle('is-near', studio.project.vfit === 'near');
     studio_pvBg();
   }
   studio_frameDraw();
@@ -8792,7 +8796,7 @@ function studio_camControls(p, pre) {
       ? '<div class="studio-field"><label class="field-label" for="studio-' + pre + '-camsplit">Camera height ' + Math.round((cam.split || 0.38) * 100) + '% of the frame</label>' +
         '<input type="range" id="studio-' + pre + '-camsplit" data-cam="split" min="0.2" max="0.6" step="0.01" value="' + (cam.split || 0.38) + '"></div>' +
         '<div class="studio-field"><span class="field-label">The game below it</span>' +
-        studio_seg('studio-rfit', 'fit', p.vfit || 'zoom', [['zoom', 'Zoom to fill'], ['fit', 'Fit the whole picture']]) + '</div>'
+        studio_seg('studio-rfit', 'fit', p.vfit || 'zoom', STUDIO_FITS) + '</div>'
       : '<div class="studio-field"><span class="field-label">Where</span><div class="ed-row">' + studio_grid9('studio-cam-pos', cam.pos || [0, 0]) +
         '<div class="studio-field"><label class="field-label" for="studio-' + pre + '-camsize">Size ' + Math.round((cam.size || 0.3) * 100) + '% of the width</label>' +
         '<input type="range" id="studio-' + pre + '-camsize" data-cam="size" min="0.12" max="0.6" step="0.01" value="' + (cam.size || 0.3) + '"></div></div>' +
@@ -9014,9 +9018,12 @@ function studio_fcMock() {
 
 /* The same arithmetic as clips/facecam.py layout(), for the mock only: the
    render asks the server, which is the one that has to be right. */
+/* The three ways a 16:9 game fills a 9:16 reel (studio.VFITS). */
+const STUDIO_FITS = [['zoom', 'Zoom to fill'], ['fit', 'Fit the whole picture'], ['near', 'Near fit']];
+
 function studio_camLayout(fmt, W, H, cam, fit, has) {
   const even = v => Math.max(2, Math.round(v / 2) * 2);
-  const out = {fit: fit === 'fit' ? 'fit' : 'zoom', game: [0, 0, W, H], cam: null};
+  const out = {fit: fit === 'fit' || fit === 'near' ? fit : 'zoom', game: [0, 0, W, H], cam: null};
   if (!has) return out;
   if (fmt === 'vertical' && (cam.layout || 'stack') === 'stack') {
     const ch = even(H * (cam.split || 0.38));
@@ -9684,7 +9691,7 @@ function studio_wire() {
     else if (act === 'studio-rfmt' && p) studio_change(pr => { pr.format = b.getAttribute('data-fmt'); },
       'Format · ' + (b.getAttribute('data-fmt') === 'vertical' ? '9:16' : '16:9'));
     else if (act === 'studio-rfit' && p) studio_change(pr => { pr.vfit = b.getAttribute('data-fit'); },
-      'Framing · ' + (b.getAttribute('data-fit') === 'fit' ? 'fit the whole picture' : 'zoom to fill'));
+      'Framing · ' + ({fit: 'fit the whole picture', near: 'near fit'}[b.getAttribute('data-fit')] || 'zoom to fill'));
     else if (act === 'studio-cam-src' && p) {
       const src = b.getAttribute('data-src');
       studio_change(pr => {
@@ -10985,7 +10992,7 @@ function studio_gdRecall() {
   const gd = studio.gd, have = id => !!studio.clipIndex[id];
   if (m.style && studio.catalog.styles.some(s => s.key === m.style)) gd.style = m.style;
   if (m.fmt === 'vertical' || m.fmt === 'landscape') gd.fmt = m.fmt;
-  if (m.fit === 'fit' || m.fit === 'zoom') gd.fit = m.fit;
+  if (['fit', 'near', 'zoom'].includes(m.fit)) gd.fit = m.fit;
   gd.setup = have(m.setup) ? m.setup : '';
   gd.quick = (Array.isArray(m.quick) ? m.quick : []).filter(have);
   return !!gd.style;
@@ -11137,7 +11144,7 @@ function studio_gdDrawLook() {
   const gd = studio.gd;
   return '<div class="gd-q"><h3>How should it look?</h3><p class="muted">Only what changes the picture. The effects come with the style; lyrics and the rest are under All settings.</p></div>' +
     '<div class="gd-field"><h4>Shape</h4>' + studio_gdSeg('fmt', gd.fmt, [['vertical', '9:16 Short or Reel'], ['landscape', '16:9 YouTube']]) + '</div>' +
-    (gd.fmt === 'vertical' ? '<div class="gd-field"><h4>Framing</h4>' + studio_gdSeg('fit', gd.fit, [['fit', 'Fit the whole picture'], ['zoom', 'Zoom to fill']]) + '</div>' : '');
+    (gd.fmt === 'vertical' ? '<div class="gd-field"><h4>Framing</h4>' + studio_gdSeg('fit', gd.fit, [['fit', 'Fit the whole picture'], ['near', 'Near fit'], ['zoom', 'Zoom to fill']]) + '</div>' : '');
 }
 
 function studio_gdDrawCheck() {

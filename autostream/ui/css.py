@@ -4004,6 +4004,10 @@ STUDIO_CSS = r"""
 .studio-pv-bg{display:none;position:absolute;inset:0;width:100%;height:100%;
   filter:blur(14px) brightness(.84) saturate(.8);transform:scale(1.12)}
 .studio-player.is-vertical.is-fit .studio-pv-bg{display:block}
+/* Near fit: the middle three quarters of the game in a 4:3 band across the middle, as the render
+   crops it (studio.NEAR_KEEP). */
+.studio-player.is-vertical.is-near .studio-pv-v{object-fit:cover;inset:auto 0;top:50%;height:auto;
+  aspect-ratio:4/3;transform:translateY(-50%)}
 .studio-pv-tag{position:absolute;top:var(--space-5);left:var(--space-5);z-index:1;
   max-width:calc(100% - 2 * var(--space-5));
   padding:var(--space-3) var(--space-5);border-radius:var(--radius-sm);

@@ -4062,7 +4062,7 @@ class Server:
         ic = body.get("intro_clip")
         if isinstance(ic, dict) and str(ic.get("path") or "").strip():
             proj["intro_clip"] = ic
-        if body.get("vfit") in ("zoom", "fit"):
+        if body.get("vfit") in studio.VFITS:
             proj["vfit"] = body["vfit"]
         # Rebuilding a reel keeps what belongs to the reel rather than to the
         # plan. Untouched here: normalise clamps every one of them.

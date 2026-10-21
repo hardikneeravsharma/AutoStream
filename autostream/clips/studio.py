@@ -97,6 +97,10 @@ MIN_INTRO_SECONDS = 0.3
 # fill, or letterbox to show all of it. Both are wanted -- a 16:9 clip over a
 # 9:16 reel is unwatchable cropped, and a logo sting is unwatchable boxed.
 INTRO_FITS = ("cover", "contain")
+# How a 16:9 game fills a 9:16 reel: the middle cropped to fill it, all of it over a
+# blurred copy, or the middle three quarters of it over the same -- a third taller.
+VFITS = ("zoom", "fit", "near")
+NEAR_KEEP = 0.75
 # Windows caps a whole command line at 32,767 characters. Kept well under it:
 # the paths in the line are the user's own and can be far longer here than on
 # the machine this was measured on.
@@ -4150,7 +4154,7 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         "handle_pos": _pos(project.get("handle_pos"), (1.0, 1.0)),
         # How the footage fills the frame: "zoom" crops it to fill (what a
         # vertical reel always did), "fit" shows all of it over a blurred copy.
-        "vfit": "fit" if project.get("vfit") == "fit" else "zoom",
+        "vfit": project.get("vfit") if project.get("vfit") in VFITS else "zoom",
         # Seconds the ending takes, 0 for the style's own. A longer one holds
         # the last frame, easing in, while the picture and the song fade.
         "outro_len": round(_num(project.get("outro_len"), 0.0, 8.0, 0.0), 2),
@@ -5030,11 +5034,15 @@ def _layout_graph(seg: Segment, time_ops: list[str], effects: list[str], end: st
         # must not leave a hole in the corner of the reel.
         cam_ops.append(f"tpad=stop_mode=clone:stop_duration={seg.frames / FPS:.4f}")
         g.append("[1:v]" + ",".join(cam_ops) + "[ct]")
-    if lay.get("fit") == "fit":
+    if lay.get("fit") in ("fit", "near"):
+        # NEAR FIT keeps the middle three quarters of the width: the minimap, the kill feed
+        # and the scoreboard mostly survive, and the game is a third taller than a full fit
+        # (docs/STYLE-FAST-PACED-HEADSHOT.md section 7.2)
+        near = f"crop=iw*{NEAR_KEEP}:ih:iw*{(1 - NEAR_KEEP) / 2}:0," if lay.get("fit") == "near" else ""
         g.append(f"[gt]split[ga][gb];"
                  f"[ga]scale={GW}:{GH}:force_original_aspect_ratio=increase,crop={GW}:{GH},"
                  f"boxblur=24:2,eq=brightness=-0.12:saturation=0.8[gbg];"
-                 f"[gb]scale={GW}:{GH}:force_original_aspect_ratio=decrease:flags=lanczos[gfg];"
+                 f"[gb]{near}scale={GW}:{GH}:force_original_aspect_ratio=decrease:flags=lanczos[gfg];"
                  f"[gbg][gfg]overlay=(W-w)/2:(H-h)/2,setsar=1[gf]")
     else:
         g.append(f"[gt]scale={GW}:{GH}:force_original_aspect_ratio=increase:flags=lanczos,"
@@ -5099,9 +5107,10 @@ def retime_height(seg: Segment) -> int:
     height at 1080.
     """
     lay = seg.layout or {}
-    if lay.get("fit") == "fit":
+    if lay.get("fit") in ("fit", "near"):
         GW, GH = float(lay["game"][2]), float(lay["game"][3])
-        return 720 if min(GH, GW * 9 / 16) <= 720 else 1080
+        shown = GW * 9 / 16 / (NEAR_KEEP if lay.get("fit") == "near" else 1.0)
+        return 720 if min(GH, shown) <= 720 else 1080
     return 1080
 
 

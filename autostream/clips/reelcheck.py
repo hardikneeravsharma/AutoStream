@@ -178,7 +178,8 @@ def render_findings(mp4: Path, project: dict, derived: dict, ff: str = "ffmpeg")
             out.append(Finding(HARD, "wrong-length", f"The reel is {dur:.1f} s; the plan was {float(derived['length']):.1f} s."))
         # the game's own picture sits in the middle band of a 9:16 fit layout; in a plain frame it is the frame
         vertical = project.get("format") == "vertical"
-        crop = "crop=iw:iw*608/1080:0:(ih-iw*608/1080)/2" if vertical and project.get("vfit") == "fit" else "crop=iw:ih:0:0"
+        band = {"fit": 608, "near": 810}.get(project.get("vfit") or "") if vertical else None
+        crop = f"crop=iw:iw*{band}/1080:0:(ih-iw*{band}/1080)/2" if band else "crop=iw:ih:0:0"
         frames = _frames(ff, mp4, crop, (540, 304))
         if not len(frames):
             return out + [Finding(HARD, "does-not-decode", "The reel could not be read back.")]

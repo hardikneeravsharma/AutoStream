@@ -218,7 +218,7 @@ def layout(fmt: str, W: int, H: int, cam: dict, fit: str, has_cam: bool,
     `src_aspect` is the width/height of the footage the camera is cut from,
     so a box drawn on it keeps its shape in the reel.
     """
-    out = {"fit": "fit" if fit == "fit" else "zoom", "game": [0, 0, W, H], "cam": None,
+    out = {"fit": fit if fit in ("fit", "near") else "zoom", "game": [0, 0, W, H], "cam": None,
            "crop": list(cam.get("box") or [0, 0, 1, 1]), "border": bool(cam.get("border", True))}
     if not has_cam or cam.get("source") == "none":
         return out
