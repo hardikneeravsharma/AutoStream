@@ -27,8 +27,8 @@ job or a reel render is still running, it asks you first.
 ## Download
 
 From the [latest release](https://github.com/hardikneeravsharma/AutoStream/releases/latest):
-**`AutoStream-macos-arm64.dmg`** for Apple Silicon (M1 and later), or
-**`AutoStream-macos-x86_64.dmg`** for an Intel Mac. Open it and drag AutoStream to
+**`AutoStream-<version>-macos-arm64.dmg`** for Apple Silicon (M1 and later), or
+**`AutoStream-<version>-macos-x86_64.dmg`** for an Intel Mac. Open it and drag AutoStream to
 Applications. You still need ffmpeg: `brew install ffmpeg-full`.
 
 The app is not notarised by Apple yet, so the first time you open it macOS refuses.
@@ -60,7 +60,7 @@ found cannot draw text.
 
 ```bash
 scripts/macos/build.sh            # offline suite, then dist/macos/AutoStream.app
-scripts/macos/build.sh --dist     # and AutoStream-macos-<arch>.dmg + .sha256
+scripts/macos/build.sh --dist     # and AutoStream-macos-<arch>.dmg + .sha256 (renamed with the version on release)
 ```
 
 The output goes to `dist/macos/` and `build/macos/`. The Windows build uses
@@ -96,7 +96,8 @@ files. Shared code reaches it only from behind `sys.platform == "darwin"`.
 | `autostream/macos/deps.py` | Homebrew install commands, the in-app Homebrew installer, and the text-filter warning. |
 | `autostream/macos/dialogs.py` | The file picker: pywebview's sheet, or AppleScript when there is no window. Never Tk. |
 | `autostream/macos/shell.py` | `open` / `open -R`, for *Reveal* and *Open log*. |
-| `autostream/macos/features.py` | What is unavailable and why; the pages and settings that are hidden; the updater pointing at the `.dmg` instead of downloading a Windows build. |
+| `autostream/macos/features.py` | What is unavailable and why; the pages and settings that are hidden. |
+| `autostream/macos/updates.py` | The app updating itself: picks this Mac's `.dmg`, stages the new app, and swaps it in after the quit. |
 | `packaging/macos/` | `autostream-macos.spec`, `launcher.py`, `make_icns.py`. |
 | `scripts/macos/` | `install.sh`, `build.sh`. |
 | `.github/workflows/release.yml` | The release: a pushed `v*` tag builds Windows and both Macs on GitHub's runners and publishes them together. |
@@ -121,18 +122,38 @@ git tag -a v1.79.0 -m "v1.79.0: what it is" -m "Notes, in markdown."
 git push origin v1.79.0
 ```
 
-`.github/workflows/release.yml` builds everything on GitHub's runners:
-- the Windows `AutoStream-share.zip` and installer, with `build.ps1 -Dist`;
-- `AutoStream-macos-arm64.dmg` on an Apple Silicon runner, and
-  `AutoStream-macos-x86_64.dmg` on an Intel runner.
+`.github/workflows/release.yml` builds Windows (`build.ps1 -Dist`) and both Macs on
+GitHub's runners. `scripts/release_assets.py` then names every file the same way,
+version first, and writes its `.sha256` (issue #206):
 
-It then publishes the release with every file and its `.sha256` attached at once.
-The tag must match `__version__`, or nothing is built. If a release for that tag
-already exists, for example one published from the PC, the files it is missing are
-uploaded to it instead. The `.dmg` names carry no version, so
-`releases/latest/download/AutoStream-macos-arm64.dmg` always points at the newest
-build. To retry after a runner failure: **Actions > Release > Run workflow**, and enter
-the tag.
+| File | What it is |
+|---|---|
+| `AutoStream-<v>-windows-x64-setup.exe` | the Windows installer |
+| `AutoStream-<v>-windows-x64.zip` | the portable Windows copy |
+| `AutoStream-<v>-macos-arm64.dmg` | Apple Silicon |
+| `AutoStream-<v>-macos-x86_64.dmg` | Intel Mac |
+| `AutoStream-<v>-setup.exe` | **until v1.80.0 only**: the installer again, under the only name installs up to v1.78.1 look for, so they can still update themselves. `LEGACY_UNTIL` in the script ends it. |
+
+The release is published with every file attached at once. The tag must match
+`__version__`, or nothing is built. If a release for that tag already exists, the
+files it is missing are uploaded to it instead. To retry after a runner failure:
+**Actions > Release > Run workflow**, and enter the tag.
+
+## How the app updates itself
+
+**Settings > Updates** works the same on both platforms: it checks GitHub, downloads
+this machine's file and verifies its `.sha256`. On a Mac, **Install and restart** then:
+- mounts the `.dmg` and copies the new app next to the running one;
+- quits, and a small script swaps the two, deletes the old one and reopens AutoStream;
+- puts the old app back if the swap fails.
+
+Gatekeeper only checks files a browser has flagged as downloaded, so an update the app
+fetched itself opens without "Open Anyway". Only the first install needs it. Because
+the app is ad-hoc signed and that signature changes with every build, macOS may ask
+again for access to Documents or Desktop after an update. The app needs write access
+to its own folder; without it, it says so and points to the `.dmg`. Macs on v1.78.1
+have to download v1.78.2 by hand once: that version's updater refused everything
+(issue #205).
 
 ## Testing on a Mac
 

@@ -368,8 +368,9 @@ and **OK**. OBS does not open the port until that dialog is committed.
 
 **[⬇ Download the latest release](https://github.com/hardikneeravsharma/AutoStream/releases/latest)**
 
-1. Download `AutoStream-share.zip` and unzip it somewhere permanent, e.g.
-   `C:\AutoStream`. Do not run it from inside the zip.
+1. Download **`AutoStream-<version>-windows-x64-setup.exe`** and run it. Or, for a
+   portable copy, download `AutoStream-<version>-windows-x64.zip` and unzip it somewhere
+   permanent, e.g. `C:\AutoStream`. Do not run it from inside the zip.
 2. Double-click **`AutoStream.exe`**.
    Windows SmartScreen will warn you because the app is not code-signed —
    **More info → Run anyway**.
@@ -437,7 +438,7 @@ and reels on the Mac. The Mac build does not stream, and it never needs a game
 installed. The Dashboard, Library, OBS, YouTube and tray are not part of it.
 
 **[⬇ Download the Mac app](https://github.com/hardikneeravsharma/AutoStream/releases/latest)**:
-`AutoStream-macos-arm64.dmg` (Apple Silicon) or `AutoStream-macos-x86_64.dmg` (Intel),
+`AutoStream-<version>-macos-arm64.dmg` (Apple Silicon) or `AutoStream-<version>-macos-x86_64.dmg` (Intel),
 plus `brew install ffmpeg-full`. It is not notarised yet, so the first open needs
 **System Settings > Privacy & Security > Open Anyway**.
 

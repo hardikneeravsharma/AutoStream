@@ -8,12 +8,19 @@
 # builds, and publishes in one step with every file attached -- so "Latest"
 # is never a release with nothing to download, and never one platform short:
 #
-#   Windows   scripts\build.ps1 -Dist -NoMedia: AutoStream-share.zip and
-#             AutoStream-<version>-setup.exe, each with its .sha256. The same
-#             script and credential scan as on the PC; a runner has no
-#             credentials to leak in the first place.
-#   macOS     scripts/macos/build.sh --dist: AutoStream-macos-arm64.dmg and
-#             AutoStream-macos-x86_64.dmg, each with its .sha256.
+#   Windows   scripts\build.ps1 -Dist -NoMedia -- the same script and
+#             credential scan as on the PC; a runner has no credentials to
+#             leak in the first place.
+#   macOS     scripts/macos/build.sh --dist, on Apple Silicon and on Intel.
+#
+# and publishes them under ONE naming convention, every file carrying the
+# version (scripts/release_assets.py, issue #206):
+#
+#   AutoStream-<v>-windows-x64-setup.exe   AutoStream-<v>-windows-x64.zip
+#   AutoStream-<v>-macos-arm64.dmg          AutoStream-<v>-macos-x86_64.dmg
+#
+# each with a .sha256 -- plus, until v1.80.0, the installer again under its old
+# name AutoStream-<v>-setup.exe, the only name installs up to v1.78.1 look for.
 #
 # The tag's message is the release: its first line the title, the rest the
 # notes. The tag must match __version__, or nothing is built.
@@ -111,6 +118,9 @@ jobs:
         with:
           path: assets
           merge-multiple: true
+      # The published names and their checksums, decided in one place.
+      - name: Name and checksum every file
+        run: python3 scripts/release_assets.py "$TAG" assets
       - name: Publish, or fill in a release that already exists
         run: |
           ls -la assets
