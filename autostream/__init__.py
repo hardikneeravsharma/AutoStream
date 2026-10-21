@@ -1,2 +1,2 @@
 """AutoStream — game-aware YouTube live pipeline."""
-__version__ = "1.77.1"
+__version__ = "1.77.2"

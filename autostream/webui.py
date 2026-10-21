@@ -946,6 +946,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_plan(b))
             elif p == "/api/studio/check":
                 self._json(self.app.studio_check(b))
+            elif p == "/api/studio/feasible":
+                self._json(self.app.studio_feasible(b))
             elif p == "/api/studio/render":
                 self._json(self.app.studio_render(b))
             elif p == "/api/studio/lyrics/preview":
@@ -3899,7 +3901,7 @@ class Server:
                                   shape=shape, song=song if shape else "",
                                   fmt=str(body.get("format") or "landscape"),
                                   name=str(body.get("name") or ""), max_seconds=max_s,
-                                  checks=True,
+                                  checks=not body.get("dry"),
                                   part=part,
                                   shape_it=body.get("shaping")
                                   if isinstance(body.get("shaping"), dict) else None)
@@ -3947,6 +3949,46 @@ class Server:
         derived = studio.derive(proj)
         return {"ok": True, "project": proj, "derived": derived, "notes": notes + more,
                 "song": shape.as_dict() if shape else None}
+
+    def studio_feasible(self, body: dict) -> dict:
+        """Will these choices make a good reel? One verdict and one fix (clips/feasible.py).
+
+        The plan is made for real but without the slow footage checks, so what is said is
+        what the planner will do, in about a second. Never raises: a failure to judge is
+        a verdict of its own.
+        """
+        from .clips import director, feasible, studio
+
+        root = self._clips_dir(cfg.load())
+        want = [str(p) for p in (body.get("clips") or []) if isinstance(p, str)][:studio.MAX_SHOTS]
+        style = studio.STYLE.get(str(body.get("style") or ""))
+        song = str(body.get("song") or "")
+        try:
+            shape = self._studio_shape(song)
+        except (FileNotFoundError, OSError, RuntimeError) as e:
+            return {"ok": True, "verdict": feasible.Verdict(feasible.BAD, str(e), "pick-song", "Choose another song").as_dict()}
+        chosen = self._studio_chosen(root, want) if want else []
+        kills = sum(len(c.get("kills") or []) for c in chosen)
+        has_setup = any(director.is_setup(b) for c in chosen for b in director.bursts(c))
+        part = None
+        try:
+            p0, p1 = float(body.get("part_start")), float(body.get("part_end"))
+            if 0.0 <= p0 < p1:
+                part = (p0, p1)
+        except (TypeError, ValueError):
+            part = None
+        facts = dict(style=style, song=shape.as_dict() if shape else None, clips=len(chosen), kills=kills,
+                     has_setup=has_setup, part=part, fmt=str(body.get("format") or "vertical"))
+        pre = feasible.judge(**facts)
+        if pre.level == feasible.BAD or not (shape and chosen and style):
+            return {"ok": True, "verdict": pre.as_dict()}
+        planned = self.studio_plan(dict(body, dry=True))
+        if not planned.get("ok"):
+            facts["error"] = str(planned.get("error") or "These choices could not be planned.")
+            return {"ok": True, "verdict": feasible.judge(**facts).as_dict()}
+        v = feasible.judge(**facts, project=planned.get("project"), notes=planned.get("notes"))
+        return {"ok": True, "verdict": v.as_dict(), "shots": len((planned.get("project") or {}).get("shots") or []),
+                "length": (planned.get("derived") or {}).get("length")}
 
     def studio_check(self, body: dict) -> dict:
         """The timeline after an edit: clamped, and with every derived time."""

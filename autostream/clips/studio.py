@@ -1005,8 +1005,8 @@ STYLES: tuple[Style, ...] = (
           hero_pool=("h02", "h01", "h03"), camera_pool=("c00", "c00", "c04", "c08"),
           speed_pool=("s04", "s04", "s02", "s03"), energy=0.75),
     Style("drop", "Build and drop",
-          "Long shots through the build, a kill exactly on the song's drop, then quicker shots "
-          "through it. Needs a song with a clear drop.",
+          "Your best clutch plays as one take through the build and its last kill lands on the "
+          "drop; then quick kills on the drums. Needs a song with a clear drop.",
           ("FEKdk-cPVmg", "nkAEXZE76II", "66zl0-VoWbg"),
           intro="i03", outro="e01", cuts=("t01",), kill=("k01",), hero=("h01",),
           speed="s00", hero_speed="s02", camera="c00", grade="g01", vignette=True, drop=True,
@@ -1152,7 +1152,7 @@ def catalog() -> dict:
         "kinds": list(KINDS), "drawers": list(DRAWERS),
         "styles": [{"key": s.key, "label": s.label, "blurb": s.blurb,
                     "measured": studio_refs.summary(s.refs),
-                    "provenance": s.provenance, "fast_cuts": s.fast_cuts,
+                    "provenance": s.provenance, "fast_cuts": s.fast_cuts, "drop": bool(s.drop),
                     "defaults": {"intro": s.intro, "outro": s.outro, "cuts": list(s.cuts),
                                  "kill": list(s.kill), "hero": list(s.hero), "speed": s.speed,
                                  "hero_speed": s.hero_speed, "camera": s.camera,
