@@ -64,8 +64,8 @@ is described to the player and waits for a yes before it is built.
 
 | # | Change | Why / evidence | Status |
 |---|---|---|---|
-| F1 | **Fold Follow the song into Build and drop**: the style uses `director.plan` itself; the separate order goes; reels already made with `arrange: sections` still open and render | Picking Build and drop alone gave the old drop logic | not started |
-| F2 | **The general fixes for every style**: smooth re-time (already global), the flash/smoke kill check, no blur or white-out effect on a kill in any style's pool, the ending fade never over the last kill, one clip per reel | Only Follow the song has the last four today; k21's blur covered 3 kills of the first That Acid render | not started |
+| F1 | **Fold Follow the song into Build and drop**: the style uses `director.plan` itself; the separate order goes; reels already made with `arrange: sections` still open and render. **Then remove the old drop path** (`clutch_take`, `build_then_drop`, the R3/R5/R9 code) so two drop planners cannot drift apart | Picking Build and drop alone gave the old drop logic | not started |
+| F2 | **The general fixes for every style**: smooth re-time (already global), the flash/smoke kill check, no blur or white-out effect on a kill in any style's pool, the ending fade never over the last kill, and **no repeats** -- decided 2026-10-21: in Build and drop and the other fast styles **one clip per reel**; in the slower styles **never the same fight twice**, two fights of one file allowed but never back to back, under R13's cap of 4 shots per file | Only Follow the song has these today; k21's blur covered 3 kills of the first That Acid render; two kills of one file 4 s apart read as a repeat at half-second cuts | not started |
 | F3 | **Every render checked before it is shown**: each kill on its mark, every kill frame sharp (under 35 % of the reel's median sharpness fails), no clip twice; a failure is said on the reel card | The sharpness check caught the k21 blur and two faded last kills -- but only when run by hand | not started |
 
 #### Phase B -- the check engine
@@ -80,9 +80,9 @@ is described to the player and waits for a yes before it is built.
 | # | Change | Status |
 |---|---|---|
 | F6 | Step 1 **Style**: cards with samples, and "give us a song and we'll pick the style" | not started |
-| F7 | Step 2 **Song**: pick or paste; the best part chosen and shown on the Hits lane, draggable | not started |
-| F8 | Step 3 **Clips by role**: for Build and drop a build slot (1) and an after-the-drop slot (about 25, counted); **Pick for me** from favourites; unusable clips greyed with the reason | not started |
-| F9 | Step 4 **Look**: shape (9:16 default), framing, lyrics | not started |
+| F7 | Step 2 **Song**: pick or paste; the best part chosen and shown on the Hits lane, draggable; the song's drops shown and correctable, and **a song's corrected drops remembered** (what is left of D2) | not started |
+| F8 | Step 3 **Clips by role**: for Build and drop a build slot (1) and an after-the-drop slot (about 25, counted); **Pick for me** from favourites; unusable clips greyed with the reason. The build slot is "pin to the drop" (S1) | not started |
+| F9 | Step 4 **Look**: shape (9:16 default), framing (with F16), lyrics | not started |
 | F10 | Step 5 **Check & make**: summary and checklist, then Make | not started |
 | F11 | **All settings** on every step, opening today's page | not started |
 | F12 | **Remember the last choices** ("same as last time?") | not started |
@@ -92,17 +92,17 @@ is described to the player and waits for a yes before it is built.
 
 | # | Change | Why / evidence | Status |
 |---|---|---|---|
-| F14 | **Sequence-aware clip choice** (look ahead a few shots; enemy visibility in the cost) | ChatGPT review: greedy picking, no visibility ranking | not started |
+| F14 | **Sequence-aware clip choice**: look ahead a few shots and match movement across cuts. Enemy visibility is R10's | ChatGPT review: greedy picking | not started |
 | F15 | **Transitions on strong phrase moments**, at most one per 2.5-4 s, never on a kill | Every cut is a hard cut today | not started |
-| F16 | **A vertical crop that follows the crosshair** where the action stays in frame | The fit layout shows the game a third of the 9:16 height | not started |
-| F17 | **An ending that loops** back to the start | The reels end on a short fade | not started |
+| F16 | **Framing in 9:16**: a crop that follows the crosshair where the action stays in frame, and the headshot style's three framings and blurred backdrop (S2) | The fit layout shows the game a third of the 9:16 height | not started |
+| F17 | **The ending**: end on a section boundary and loop back to the start (R11's ending half) | The reels end on a short fade; JUST A BOY ended mid-section | not started |
 
 #### Phase E -- every other style
 
 | # | Change | Status |
 |---|---|---|
 | F18 | **Each style through the Build-and-drop loop** (spec -> render -> ChatGPT review -> measure -> fix), then its own clip slots for step 3. One style at a time | not started |
-| F19 | **Choose the shortcut's style for a song with no drop** -- only after F18 | waiting on F18 |
+| F19 | **Choose the shortcut's style for a song with no drop** -- only after F18. Replaces D4's "unconfirmed drop" decision: the check engine (F4) warns, and this picks the fallback | waiting on F18 |
 
 ### PREVIOUS TOP PRIORITY — the app makes the hand-cut Espresso reel itself (asked 2026-10-17)
 
@@ -127,11 +127,11 @@ stays whole under Headshots only. Fonts come from the player's KM Mustahin pack.
 | R7 | **One card per effect; its versions open from it** | 566 parts are 93 effects (104 tint shades -> "Colour tint", 150 crossfades into their 22 transitions) | **done** (v1.72.0) |
 | R8 | **Kill timed to the headshot burst**, not the kill icon | Up to 0.1 s apart; a prototype reader matched 12 of 22 eye-read bursts within a frame -- not enough | next |
 | R9 | **A clutch / multi-kill clip is the build as one take**, its last kill on the drop | Espresso replanned: the 1v3's kills at 2.88 / 5.19 / 9.375 s, one continuous take from 1.52 s into the drop (the shots meet where the footage does). Kept whole under Headshots only, and its quiet long-range kill is not dropped as still footage. The hidden cut that moved the hand-cut reel's kills onto accents is not built: the take plays as it happened | **done** (v1.74.0) |
-| R10 | **Shot-quality filter**: tiny or no enemy, death/respawn screens, black frames, flat ability walls | 9 of 36 shots in the JUST A BOY reel | **partly** (v1.77.0): a kill filmed through a flash or smoke is left out (`studio.kill_clarity`), in Follow the song only -- F2 takes it to every style, F14 adds enemy visibility |
-| R11 | **Open on action, end on a section boundary** | Both app reels opened on black; JUST A BOY ended mid-section | **partly** (v1.77.0): Follow the song opens on its set-up take and never fades its last kill; section-boundary endings are F17 |
+| R10 | **Shot-quality filter**: tiny or no enemy, death/respawn screens, black frames, flat ability walls | 9 of 36 shots in the JUST A BOY reel | **partly** (v1.77.0): a kill filmed through a flash or smoke is left out (`studio.kill_clarity`), in Follow the song only. **Owns enemy visibility** (moved here from F14); F2 takes the flash check to every style |
+| R11 | **Open on action, end on a section boundary** | Both app reels opened on black; JUST A BOY ended mid-section | **opening done** (v1.77.0: Build and drop opens on its set-up take); **the ending moved to F17** |
 | R12 | **A multi-kill caption only on a shot that shows those kills** | TRIPLE KILL / ACE on single-kill shots. Now the caption counts the kills inside the footage the shot plays (`studio.honest_captions`): JUST A BOY replanned has two DOUBLE KILLs, each on a shot showing two | **done** (v1.75.0) |
 | R13 | **Cap how often one clip is reused** | One clip in 7 of 36 shots. Now no clip gives more than 4 shots when a style sets no cap of its own and there are 5+ clips, never with Keep every kill: JUST A BOY replanned has at most 4 from any clip | **done** (v1.75.0) |
-| R14 | **Beat phase on the off-beat for ~10 of 49 songs** (KORDHELL, Sky, No Lie...) -- needs a ground truth before it is touched | Kick-onset score doubles at a half-beat shift on those songs | open |
+| R14 | **Beat phase on the off-beat for ~10 of 49 songs** (KORDHELL, Sky, No Lie...) -- needs a ground truth before it is touched | Kick-onset score doubles at a half-beat shift on those songs | **merged with MONTERO's tempo** (179 read as 134) into one beat-grid task. Starting point since v1.77.0: `rhythm.kick_offset` measures where the kick sits on the grid (Y Que Fue reads -0.47 beat, as heard). Needs checking against hand-marked songs before the grid is touched |
 
 ### Kill accuracy, fast-cut rules, drops, and the Make-a-reel page (asked 2026-10-15)
 
@@ -158,9 +158,9 @@ other item sits on top of them -- then M1-M6.**
 | # | Change | Evidence | Size | Status |
 |---|---|---|---|---|
 | D1 | **New drop detector: the bass enters AND the beat comes with it**, entrances at least **14 s apart** (`beatsync.find_entrances`) | Blade x Into The Void, drops marked by ear at 32.2, 108.8, 172.4, 271.1, 326.7 s: the old detector found 4 of 5, each up to 2.5 s late, and **missed 172.4 entirely** (overall loudness rises only 3 dB). New: 5 of 5 within 1 s. A bass entrance with no treble after it is a build starting (83.2 s) or a calm vocal (216.8 s): 31 dB of treble against 46-48 on real drops. On 6 hand-flagged songs: 25/33 found and precision 47% at a 6 s gap; 14 s gives 64% / 82% recall | Medium | **in the code, not yet suggested to the player**: `beatsync.find_entrances` ships and its drops reach the planner (v1.71.0, K4); the confirm-on-the-song page is D2 |
-| D2 | **Suggest, then the user confirms**: detected drops shown on the song, fixed with x and double-click, **saved per song** | The best simple rule tops out near 64-70%, and no single feature separated kept from removed drops (steady 7.5-7.75 s bass in Believer and "no!" was removed; Cradles' 8-10 s drops were kept) | Medium | **not started** |
+| D2 | **Suggest, then the user confirms**: detected drops shown on the song, fixed with x and double-click, **saved per song** | The best simple rule tops out near 64-70%, and no single feature separated kept from removed drops (steady 7.5-7.75 s bass in Believer and "no!" was removed; Cradles' 8-10 s drops were kept) | Medium | **shown and correctable since v1.76.0** (the Make page's drops lane: D to add, drag, back to automatic); **remembering a song's corrections moved to F7** |
 | D3 | **The planner uses the confirmed drop for the stretch of song it plays**, not the biggest one in the whole song | headshot3 plays 2:29-3:31 but `shape.drop` was 4:33 (273.5 s): the reel never reached it, so it had no build and no drop | Small | **done for the detected drop** (v1.71.0, `studio.drop_in`); a *confirmed* drop waits on D2 |
-| D4 | **Unconfirmed song**: fall back to the strongest drop, or to none (decide) | A wrong auto drop puts the speed-up in the wrong place | Small | **needs a decision** |
+| D4 | **Unconfirmed song**: fall back to the strongest drop, or to none (decide) | A wrong auto drop puts the speed-up in the wrong place | Small | **folded into F4 and F19**: a style that needs a drop warns on a song without a confirmed one, and F19 picks the fallback |
 
 #### M -- The Make-a-reel dialog becomes a page
 
@@ -177,8 +177,8 @@ other item sits on top of them -- then M1-M6.**
 
 | # | Item | Detail | Status |
 |---|---|---|---|
-| S1 | **"Pin to the drop"** as a named command, and a **"let earlier kills float"** switch | The two small pieces left over from the kill-diamond work in v1.69.0 | not started |
-| S2 | The headshot style's **three framings and blurred backdrop** | `docs/STYLE-FAST-PACED-HEADSHOT.md` section 7 | not started |
+| S1 | **"Pin to the drop"** as a named command, and a **"let earlier kills float"** switch | The two small pieces left over from the kill-diamond work in v1.69.0 | **folded into F8**: the build slot is the clip pinned to the drop, and its earlier kills already play as they happened |
+| S2 | The headshot style's **three framings and blurred backdrop** | `docs/STYLE-FAST-PACED-HEADSHOT.md` section 7 | **folded into F16** (framing) and the headshot style's review in F18 |
 | S3 | **The v1.67.0 GitHub release has no files** | Published with no assets before the updater was fixed; delete it or leave it | **needs a decision** |
 | S4 | **17 GB of another session's temp files** in `%TEMP%\claude` | Not deleted, because it is not this session's | **needs a decision** |
 
@@ -218,9 +218,9 @@ went wrong at the colour.
 | 2026-10-15 | **A downloaded stream's matches are found by their kills, not by the file's clock**, v1.69.1 (reported from a friend's diagnostic: Summit shown at ~34 min, started at 59 min; garbage clips even with all four matches ticked) | Measured from the diagnostic: the job had cut round-labelled clips (r1..r19) from 36m39s to 1h05m37s, and `match_spans` held one span, `[2096, 4013]`. That span is the Clips page's `at` for a match, which is `match.started - (mtime - duration)` -- and a YouTube download's mtime is the download's, so the clock was 24 minutes out yet still landed on saved matches by chance. Three things then compounded: the page cropped the scan to the wrong half-hour (`_window`), so the fingerprint saw only 7 of the real match's kills; `align()` refused a right fingerprint for disagreeing with the clock by more than `DISAGREE_MAX`; and with no fingerprint it fell back to *placing the match by the clock alone*. Fixed: the probe says whether the start is `started_exact` (OBS filename stamp) or an mtime guess; for a guess the page marks no `at`, sends no spans and asks the user to tick the matches in the video, and `align(exact=False)` takes the fingerprint whatever the clock says and never places a match by the clock. The diagnostic now records a `match_record` note (clock exact, matches used with offset and how, matches refused and why). Offline tests added; **not yet re-run on the friend's footage -- no copy of the video or match records is on this machine** | **A clock that cannot be verified is a hint, never an answer.** The old code already knew a download "carries the download's time" and built the tick-the-matches flow for it -- but only reached it when no match happened to overlap by chance. Every guard that compares two sources needs to ask which one is allowed to lose. Still open: a stamped filename on a file whose clock is wrong (timezone, renamed copy) is trusted as before. |
 | T1 | **`hud_hue` and `card_box` are never saved.** `jobs.py` switches the profile to `cardcount` in memory only; `profiles.remember()` reloads it as `killfeed` and `as_dict()` writes those keys only for `cardcount`, so both are dropped while `remember()` returns True. Every run measures from scratch, and the card-area calibration's "saved" is a lie too. Write them in any mode | Reproduced against a throwaway `AUTOSTREAM_HOME`: `remember(hud_hue=300) -> True`, file has no `hud_hue`, reload gives `0.0`. Hand-adding `hud_hue: 300.0` under `cs2.exe` **does** load | **done 2026-10-08** — written in any mode; a test on the profile CS2 really has |
 | T2 | **Hue picking is fragile on long recordings.** 60 seeks across 54 min caught 3 readings, the floor (`HUE_EXACT_MIN`), and blue 202 cleared it; the 180-sample retry never ran. `best_hue()` takes the most readings, not the most reliable arc. His cards are pale lavender, saturation 0.12–0.18 on sandstone vs `SAT_MIN` 0.18, so ~30% of tally frames are unreadable at the right hue | On the sample: 60 frames → 288 ✅, every 3rd → **350 ❌**, every 6th → 290, every 10th → none. Beam saturation is ~0.25–0.40 — a better colour source than the cards | **done 2026-10-08** — two looks a second apart over a moving view, spectating set aside, a clear win or look harder (60→180→360), colour refined from the card's own pixels. See Progress |
-| T3 | **Phantom kill when a pale card fades to "0".** `hidden_kills()` treats a 0 reading as a round reset, so the card coming back as 1 is an unexplained rise | Auto hue 288 on the sample gave 4 kills: the 3 real + one at 11.8s | **not reproduced** on the full-quality match: at hue 285 the reader made 0 false kills in 21. The phantom came from a 720p phone recording of the stream. Left alone until footage shows it again |
+| T3 | **Phantom kill when a pale card fades to "0".** `hidden_kills()` treats a 0 reading as a round reset, so the card coming back as 1 is an unexplained rise | Auto hue 288 on the sample gave 4 kills: the 3 real + one at 11.8s | **closed 2026-10-21**: not reproduced on full-quality footage (0 false kills in 21 at hue 285). Reopen if a recording shows it |
 | T4 | **Fail loudly instead of `No kills found`.** A long scan with 0 own emblems means the HUD was not read; say so and point at calibration. Put hue + its evidence, flash count, own-emblem count and sample count in the diagnostic; route `_pipe_view` / `strip_samples` ffmpeg calls through `diag` (about 90 are invisible today). Remove "Set the colour by hand on the Clips page" — no such control exists. Fix the Tesseract hint that says `winget install --id Gyan.FFmpeg` | The diagnostic file alone could not answer this; the log could | **done 2026-10-08** — `HudUnread` with what to do; scanner numbers in the diagnostic; the scan's ffmpeg calls reported; Tesseract no longer gets the ffmpeg hint; a colour is saved only after a scan reads kills in it, and forgotten if one cannot |
-| T5 | **"Pick your kill" fallback.** When measurement is weak, show 6–8 auto-found saturation-jump candidates in the bottom-centre and let the user tap one; take hue from the beam, card position from where it rises, own emblem from the frame before. The scan must then find that kill, or it reports the HUD unread | Prototype: a mark at 38.5s → hue 288, beam centred x=958 vs box 968. A **time-only** mark at 10s latched onto orange scenery (hue 32) — so the user must pick *where*, not only *when* | **not needed for now** — with T2 the measured colour is right on every alignment tried. Revisit if a HUD turns up that measurement cannot read |
+| T5 | **"Pick your kill" fallback.** When measurement is weak, show 6–8 auto-found saturation-jump candidates in the bottom-centre and let the user tap one; take hue from the beam, card position from where it rises, own emblem from the frame before. The scan must then find that kill, or it reports the HUD unread | Prototype: a mark at 38.5s → hue 288, beam centred x=958 vs box 968. A **time-only** mark at 10s latched onto orange scenery (hue 32) — so the user must pick *where*, not only *when* | **closed 2026-10-21**: not needed since T2. Reopen if a HUD turns up that measurement cannot read |
 
 Workaround already given to him: quit AutoStream, add `  hud_hue: 300.0`
 under `cs2.exe` in `%LOCALAPPDATA%\AutoStream\config\clip_profiles.yaml`,
@@ -273,7 +273,7 @@ of its own) with:
 | U15 | **The Studio opens on folders, not on every clip** (asked 2026-10-11): folders first, a folder opens on its runs, a run opens on its matches, and the clips sit under the match they came from | **done 2026-10-11**, v1.54.0 -- see Progress, and the design under [UI work](#the-studio-opens-on-folders-not-on-339-clips-asked-2026-10-11) |
 | U16 | **One registry behind every action, then Ctrl+K and a key sheet** (asked 2026-10-11): the Studio declares 147 `data-act` names and eight timeline keys and can enumerate neither, which is why it has no palette, no key sheet and no rebinding | **done 2026-10-12**, v1.58.0 -- 162 commands over 147 actions, Ctrl+K, `?`, `/api/studio/commands`, four offline rules. The old keydown block is still the one that runs the keys; see Progress |
 | U17 | **Redo, and an undo you can step back through** (asked 2026-10-11): `studio.undo` is a pop stack behind one key, so a Ctrl+Z pressed once too often cannot be taken back | **done 2026-10-12**, v1.60.0 -- Ctrl+Z and Ctrl+Shift+Z, both buttons naming the step they cross, and a history that keeps the steps you undid -- see Progress. **No browser test yet** (scenarios 6.42-6.44) |
-| U18 | **The timeline's missing hand: ripple, roll, razor and rate, more than one shot selected, markers and J/K/L** (asked 2026-10-11): `grep razor` and `grep ripple` return nothing in the package, and `sel` is a single index | **part done 2026-10-12**, v1.61.0 -- Roll, Razor, Escape-to-Select, J/K/L, in/out and marks. **Ripple was not built, deliberately: a trim already ripples here.** Rate and more-than-one-shot-selected are still to do -- see Progress |
+| U18 | **The timeline's missing hand: ripple, roll, razor and rate, more than one shot selected, markers and J/K/L** (asked 2026-10-11): `grep razor` and `grep ripple` return nothing in the package, and `sel` is a single index | **part done 2026-10-12**, v1.61.0 -- Roll, Razor, Escape-to-Select, J/K/L, in/out and marks. **Ripple was not built, deliberately: a trim already ripples here.** Left: more than one shot selected, and Rate -- which now renders through v1.77.0's smooth re-time (`clips/retime.py`), so a hand-set rate needs only the control -- see Progress |
 | U19 | **Keyframes on six properties, never on speed** (asked 2026-10-11): every effect is a per-shot constant today; scale, position X and Y, rotation, volume and grade strength get a value lane, and speed stays a named ramp because the beat arithmetic inverts it | **UNBLOCKED 2026-10-13 -- the gate number exists.** On a 20-shot reel: the join alone is **13.0 s**, one re-cut shot adds **~2 s**, and a change that re-cuts all twenty costs **37 s**. So keyframes are affordable per shot and expensive wholesale, which argues for a lane only on shots that have one. Not started; the number to beat is the 13.0 s floor -- see Progress |
 | U20 | **Write the reel out as a timeline another editor can open** (asked 2026-10-11): `<name>.reel.json` is already a project file; OpenTimelineIO and FCP7 XML make it one Resolve and Premiere can read, with a sheet saying what survives the trip | **done 2026-10-13**, v1.64.0 -- `clips/interchange.py`, both formats, and the sheet written beside the file -- see Progress |
 | U21 | **The effect picker closed on every choice** (asked 2026-10-11): "to add 4 effects I have to open the page 4 times" -- a single choice applied and shut the dialog, so trying two endings against each other meant opening it twice | **done 2026-10-11**, v1.54.0 -- it applies as you click and **Done** closes it; see Progress |
@@ -380,6 +380,10 @@ this order: **Quota** (3), **Reliability** (3), **Correctness** (4),
 **Detection** (2), **Security** (1), **Measurement** (1). Several are in
 `AutoStream-test-report-2026-09-25.md` by item number.
 
+**First, an audit** (added 2026-10-21): these fourteen have never been checked
+against what shipped after the report -- B6 turned out to be done already. List
+each with what is still true today before any of it is built.
+
 ### Phase E — Tier 3, deepen the moat
 
 Live VOD chapters · weekly recap reel · community game profiles · multistream ·
@@ -405,10 +409,12 @@ without the user saying so.
   better funded.
 - **Cloud rendering** — contradicts the local-first promise, which is the
   product's main defence.
-- **macOS** — no game capture story, and all four supported titles are
-  Windows-first.
 
 Do not add these back without a reason that is written down here.
+
+**macOS** was on this list (no game capture story; the supported titles are
+Windows-first). Since 2026-10-20 a collaborator is porting the clipper and the
+Studio to macOS, clips-only, in PR #196 -- his work stream, left to him.
 
 ---
 
@@ -433,46 +439,24 @@ Do not add these back without a reason that is written down here.
 
 ### What is not finished
 
-Written down rather than left looking done:
+Only what no table above holds (the duplicates of A1, B2, C1, C3-C5, V3 and the
+Valorant match video were removed 2026-10-21 -- each lives in its own row):
 
-- **Valorant match summary** (one video per match, the real round score,
-  Ace/Clutch chapter names) is planned and **waiting for the user's go-ahead**.
-  Today the match summary is Counter-Strike only (see C2 below).
 - **The friend's AMD machine** has not confirmed v1.50.0's GPU path; the
   diagnostic should show `d3d11va` decode and `h264_amf` encode.
 - **CS2 close kills** need measuring against demos before anything is built;
   Valorant's were measured and the screen reader already separates them.
-- **V3** (Valorant TDM: emblems while dead or respawning) is not started.
-- **MONTERO (179 BPM)** still reads at the wrong tempo (134), and the
-  study's **0.30 s run-up** needs its own measurement against the Studio's
-  per-style run-ups -- both from the U4 row.
 - **What the instant preview leaves out**: the colour grade, the kill
   effects and Stamp's grey are in the render only; the label on the preview
   says so. The picker's sharp copies need two clips longer than 4 s with a
   kill, and are not made while live, recording, cutting clips or rendering.
-
-- **A1 has never gone live.** The seam, both platforms, the OAuth sign-in and
-  the UI that follows the choice are in and tested against the live APIs --
-  Twitch resolves its channel id and categories. But no stream has been
-  pushed to either, and Kick's sign-in came back with three of its four
-  scopes, so `channel:read` has to be granted before a Kick session can
-  start. That one needs the user at the keyboard.
-- **C2 is Counter-Strike only**, and until v1.54.0 it was nothing at all:
-  the Clips page's "Also make the whole match as one video" sent a flag the
-  server dropped. The flag now reaches the job. **Valorant still has no
-  match video**, and the gap is bigger than wiring: `valorant_match.rounds_from`
-  gives the ceremonies (ACE, CLUTCH) and who won each round, but leaves
-  `score_before`/`score_after` at `(0, 0)` -- so every chapter would read
-  `0-0` -- and it derives a round's bounds from its first and last kill, so a
-  round nobody died in is dropped. The switch is also hidden for Valorant,
-  whose profile deliberately leaves `rounds` False. Those three, then the
-  video.
-- **C5 is the montage's chapters only.** Chapters in the live VOD's
-  description need recording-offset to VOD-offset arithmetic that cannot be
-  verified without a real stream; see the Progress row.
-- **B2** needs a purchased certificate. Blocked, not pending.
-- **C1, C3, C4** need credentials or real footage that is not on this
-  machine.
+- **C2's Valorant half, in detail.** The gap is bigger than wiring:
+  `valorant_match.rounds_from` gives the ceremonies (ACE, CLUTCH) and who won
+  each round, but leaves `score_before`/`score_after` at `(0, 0)` -- so every
+  chapter would read `0-0` -- and it derives a round's bounds from its first
+  and last kill, so a round nobody died in is dropped. The switch is also
+  hidden for Valorant, whose profile deliberately leaves `rounds` False. Those
+  three, then the video.
 
 ## UI work, carried alongside
 
@@ -853,6 +837,7 @@ plan**, because a roadmap that never moves was never being followed.
 
 | Date | Item | What landed | What it changed |
 |---|---|---|---|
+| 2026-10-21 | **The roadmap consolidated: nine tasks folded into others** | Read every pending task against every other. Folded: the Valorant match summary into C2; the What-is-not-finished repeats of A1, B2, C1, C3-C5 and V3 into their rows; F14's enemy visibility into R10; R11's ending into F17; S1 into F8; D2's remaining half (remembering a song's corrected drops) into F7; D4 into F4/F19; S2 into F16 and F18; MONTERO's tempo into R14. Closed T3 and T5. F1 now also removes the old drop path; Phase D gets an audit first. macOS moved off the not-on-the-roadmap list: a collaborator's PR #196. | **The player decided the repeat rule (F2)**: one clip per reel in Build and drop and the fast styles; in the slower styles never the same fight twice, two fights of one file allowed but not back to back, under R13's cap |
 | 2026-10-21 | **v1.77.0 released, four Follow-the-song reels in the Studio, and the step-by-step maker agreed** | v1.77.0 published with the installer and the share zip, both downloaded back and hash-checked; the local `dist\AutoStream` rebuilt with the app handed off while idle and reopened. Four reels made through the app's own pipeline from the 150 favourites -- That Acid, THE LAST RIDE, Sunflower, Notorious -- each in the reels folder with a timeline that opens in the Studio: 29/29, 29/29, 35/35 and 28/28 kills on their marks, no kill frame blurred, no clip twice, two kills through a flash left out of each. | **The order changed**: the reel maker's options were reviewed with the player and a new TOP PRIORITY (F1-F19) put above everything -- fold Follow the song into Build and drop, the general fixes for every style, a check on every render, a check engine with one-tap fixes, the five-step maker, then every other style through the same review. Mock-up: `https://claude.ai/artifact/H1i4nAC8X8snSVs5LnVNgg` |
 | 2026-10-21 | **Follow the song: a drop with no hit in its hold still gets its flurry, and the last kill is never faded**, v1.77.0 (found making three more reels for the release) | Notorious's first cue came 4 ms before the hold's window opened and the next 1.36 s later, so no run of targets started and the opening take played on for twenty seconds; `director.targets` now retries with a wider first step (0.9-2.5 gaps) and steps up to 2 gaps, and a song with no hits after its drop is planned in Best order with a note rather than as one long shot. The style's 1.2-2.2 s fade ran over the last kill of two reels (sharpness 17 % of median at the kill); Follow the song now ends with a 0.6 s fade that `derive()` holds back until after the last kill, and holds that kill 1.2 s. | Measuring every render's kill frames (the sharpness check used for the review) caught both; it should run on every render, not by hand |
 | 2026-10-20 | **Follow the song, after its first review** (the first That Acid sample, rated 6/10 by ChatGPT against our own spec; ships in v1.77.0 with it) | The groove moved off the finished frame onto each shot's game picture, sub-pixel, damped to 30 % in the 350 ms before every kill. No blur or inversion on a kill: punch+blur (k21) had covered the 21.2 s kill for seven frames and the 5-second inversion whited out the one at 17.4 s. The drop's kill held 1.3-1.6 gaps (was 1.34 s), no gap after it over 1 s, a double's own two kills included. One clip, one place, by file. A kill filmed through a flash is left out (`studio.kill_clarity`: 27 and 115 on the two washed-out kills of the second render, 190-1380 on the rest). Re-rendered: 31 of 31 kills on their marks, the drop held 0.82 s, no gap after it over 0.69 s, no clip twice, and no kill frame under 35 % of the reel's median sharpness (the first render had three, all k21). | Two of the review's readings were wrong and are not fixed: the 1.55-1.73 s gaps it measured were the brief leaving out the doubles' second kills (the real gaps were 1.0-1.2 s, now 1.0 at most), and the "duplicated AUTOSTREAM" is the app's own mark. The Client FPS / packet-loss text and "Show Replay UI" prompt are in the recordings -- Valorant's own settings. Still open from it: a beam search with visibility and motion direction in its cost, transitions on strong phrase boundaries (at most one per 2.5-4 s, never a quota), a crosshair-aware vertical crop, a loop-aware ending, and a render-time check that measures sharpness around every kill |
