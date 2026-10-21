@@ -63,6 +63,7 @@ import math
 import random
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -4560,6 +4561,10 @@ def signature(shots: list[dict]) -> str:
 # ============================================================== rendering
 
 def _font() -> str:
+    if sys.platform == "darwin":
+        from ..macos import fonts as _mac
+        found = _mac.first(("bahnschrift.ttf", "arialbd.ttf", "arial.ttf", "segoeuib.ttf"))
+        return "fontfile='" + found.replace(":", "\\:") + "':" if found else ""
     for name in ("bahnschrift.ttf", "arialbd.ttf", "arial.ttf", "segoeuib.ttf"):
         p = Path("C:/Windows/Fonts") / name
         if p.is_file():

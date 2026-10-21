@@ -5053,7 +5053,7 @@ function clip_renderTools() {
   var gaps = t.tools.filter(function (x) { return !x.found; });
   /* Nothing missing and nothing running: the card has no reason to exist. A
      standing "everything is fine" panel is noise on every later visit. */
-  if (!gaps.length && !clip_state.toolsBusy) { card.classList.add('hide'); return; }
+  if (!gaps.length && !clip_state.toolsBusy && !t.text_warning) { card.classList.add('hide'); return; }
   card.classList.remove('hide');
 
   var title = clip_el('clip-tools-title');
@@ -5066,9 +5066,12 @@ function clip_renderTools() {
     sub.textContent = !gaps.length
       ? 'Everything the clipper needs is on this PC.'
       : (t.can_install
-          ? 'AutoStream can install ' + (gaps.length === 1 ? 'it' : 'them') +
-            ' for you with winget. Windows will ask for permission - say yes.'
-          : 'winget is not on this PC, so these have to be installed by hand.');
+          ? (t.install_note || 'AutoStream can install ' + (gaps.length === 1 ? 'it' : 'them') +
+            ' for you with winget. Windows will ask for permission - say yes.')
+          : (t.manual_note || 'winget is not on this PC, so these have to be installed by hand.'));
+    /* The Mac's ffmpeg can be one that cannot draw text (macos/tools.py).
+       Said here, where the tools are, rather than as a clip with no caption. */
+    if (t.text_warning) sub.textContent = (gaps.length ? sub.textContent + ' ' : '') + t.text_warning;
   }
   var host = clip_el('clip-tools-list');
   if (host) {
@@ -5083,8 +5086,8 @@ function clip_renderTools() {
             '</span>' +
             '<p class="muted">' + esc(x.why) + '</p>' +
             (x.found ? '<p class="muted mono small">' + esc(x.path) + '</p>'
-                     : '<p class="muted mono small">winget install --id ' +
-                       esc(x.winget) + '</p>') +
+                     : '<p class="muted mono small">' +
+                       esc(x.install || 'winget install --id ' + x.winget) + '</p>') +
           '</div>' +
         '</div>';
     }).join('');
@@ -5109,7 +5112,8 @@ async function clip_loadTools() {
 async function clip_installTools() {
   var go = clip_el('clip-tools-go');
   if (go) go.disabled = true;
-  clip_say('clip-tools-msg', 'Asking Windows...');
+  clip_say('clip-tools-msg', (clip_state.tools && clip_state.tools.install_note)
+    ? 'Asking Homebrew...' : 'Asking Windows...');
   try {
     var r = await API.post('/api/clips/install', {});
     if (r && r.error) {

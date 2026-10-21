@@ -92,6 +92,18 @@ def is_configured() -> bool:
 
 
 
+def _platform_boot() -> dict:
+    """What this build cannot do, for /api/bootstrap, so the shell hides it.
+
+    {} on Windows, where the payload is exactly what it always was. On a Mac,
+    the clipper-only build's list -- see macos/features.py.
+    """
+    if sys.platform != "darwin":
+        return {}
+    from .macos import features as _mac
+    return _mac.bootstrap()
+
+
 def remember_setup_done() -> None:
     """Write the flag for an install that is configured without it. Never raises.
 
@@ -645,6 +657,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "theme": self.app.theme_id(),
                 "themes": theme.listing(),
                 "setup": self.app.setup.snapshot() if setup_mode else {},
+                **_platform_boot(),
             })
         elif u.path == "/api/status":
             if self.app.engine is None:
@@ -657,11 +670,20 @@ class _Handler(BaseHTTPRequestHandler):
                             "clips": self.app._clips_status(),
                             "edit": self.app._edit_status(),
                             "update": self.app.update_status(),
-                            "upload": self.app._upload_status()})
+                            "upload": self.app._upload_status(),
+                            # A Mac never has an engine, and is never streaming:
+                            # say so, or the page assumes it is.
+                            **({"streaming": False, "tools": self.app._tools_status()}
+                               if sys.platform == "darwin" else {})})
                 return
             self.app.engine.client_seen = time.monotonic()
             self._json(self.app.status())
         elif u.path == "/api/settings/schema":
+            if sys.platform == "darwin":
+                # No OBS password on a machine with no OBS -- macos/features.py.
+                from .macos import features as _mac
+                self._json(_mac.settings_schema(schema.CONFIG_SCHEMA))
+                return
             self._json(schema.CONFIG_SCHEMA)
         elif u.path == "/api/settings/values":
             self._json(schema.flatten(cfg.load()))
@@ -916,6 +938,9 @@ class _Handler(BaseHTTPRequestHandler):
                 try:
                     if os.name == "nt":
                         os.startfile(str(paths.LOG_FILE))  # noqa: S606
+                    elif sys.platform == "darwin":
+                        from .macos import shell as _mac
+                        _mac.open_path(str(paths.LOG_FILE))
                     else:
                         import subprocess
 
@@ -1280,6 +1305,7 @@ class Server:
 
         errors: dict[str, str] = {}
         clean: dict[str, Any] = {}
+        current = schema.flatten(cfg.load())
         for path, raw in values.items():
             key = str(path)
             field = schema.FIELDS_BY_PATH.get(key)
@@ -1289,6 +1315,13 @@ class Server:
                 continue
             if field.get("control") == "readonly":
                 errors[key] = "AutoStream writes this value; it cannot be edited here."
+                continue
+            # What is already in effect is not re-checked: saving it writes
+            # nothing (see `changed` below), and a check that reads the disk
+            # -- obs.path on a machine with no OBS -- would refuse the form's
+            # own value.
+            if key in current and raw == current[key]:
+                clean[key] = raw
                 continue
             err = schema.validate(key, raw)
             if err:
@@ -1302,7 +1335,6 @@ class Server:
         # config.yaml stays a sparse overlay on cfg.DEFAULTS: writing back a
         # value that already matches would pin it, so a later change to the
         # default would silently not reach anyone who ever pressed Save.
-        current = schema.flatten(cfg.load())
         changed = {k: v for k, v in clean.items() if current.get(k) != v}
         if changed:
             cfg.save_fields(changed)
@@ -1603,6 +1635,10 @@ class Server:
         from . import valorant_api
         from .clips import valorant_match
 
+        # The Riot Client is not on a Mac to ask -- macos/features.py.
+        if sys.platform == "darwin":
+            from .macos import features as _mac
+            return {"error": _mac.VALORANT_FETCH}
         if not valorant_api.available():
             return {"error": "Open VALORANT (or the Riot Client) and sign in, "
                              "then press this again. "
@@ -2957,6 +2993,12 @@ class Server:
         """Is there a newer AutoStream? -> what the page needs to say so."""
         from . import __version__, updates
 
+        # Every release asset is a Windows installer or zip. Offering one to a
+        # Mac would download 70 MB it cannot run -- macos/features.py.
+        if sys.platform == "darwin":
+            from .macos import features as _mac
+            return _mac.update_check(__version__)
+
         now = time.time()
         cached = self._update_seen
         if (not force and cached.get("at")
@@ -3006,6 +3048,9 @@ class Server:
         installer's job, and this app has one -- so what a person gets is a
         verified file and a button that opens it, not a surprise restart.
         """
+        if sys.platform == "darwin":
+            from .macos import features as _mac
+            return _mac.update_refused()
         from . import __version__, updates
 
         job = self._update_job
@@ -3056,6 +3101,9 @@ class Server:
         Refused while anything is in flight: an update that interrupts a clip
         job or a live broadcast would be a worse bug than any it fixes.
         """
+        if sys.platform == "darwin":
+            from .macos import features as _mac
+            return _mac.update_refused()
         from . import clips
         from .clips import edit as edit_mod
 
@@ -4794,6 +4842,11 @@ class Server:
         if _os.environ.get("AUTOSTREAM_NO_DIALOGS"):
             log.info("a file picker was asked for and refused: dialogs are off")
             return {"error": "File pickers are switched off in this run."}
+        # Tk off the main thread kills a Mac app outright -- macos/dialogs.py.
+        if sys.platform == "darwin":
+            from .macos import dialogs as _mac
+            picked, err = _mac.pick(getattr(self, "window", None), kind, multi)
+            return {"error": err} if err else _mac.answer(self, picked, kind)
         try:
             import tkinter as tk
             from tkinter import filedialog
@@ -5111,6 +5164,11 @@ class Server:
         """
         from .clips import cs2_demo
 
+        # Counter-Strike does the fetching, and it does not run on a Mac --
+        # macos/features.py. Copy the .dem across from the PC instead.
+        if sys.platform == "darwin":
+            from .macos import features as _mac
+            return {"error": _mac.DEMO_DOWNLOAD}
         codes = cs2_demo.share_codes(str(body.get("text") or ""))
         if not codes:
             return {"error": "No match codes in that. Copy the sharing code "
@@ -5231,6 +5289,13 @@ class Server:
         p = Path(path)
         if not p.exists():
             return {"error": "That path no longer exists."}
+        if sys.platform == "darwin":
+            from .macos import shell as _mac
+            try:
+                _mac.reveal(p)
+            except OSError as e:
+                return {"error": str(e)}
+            return {"ok": True}
         try:
             if p.is_dir():
                 subprocess.Popen(["explorer", str(p)])

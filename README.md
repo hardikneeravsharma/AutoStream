@@ -8,7 +8,7 @@
 
 [![Latest release](https://img.shields.io/github/v/release/hardikneeravsharma/AutoStream?label=release)](https://github.com/hardikneeravsharma/AutoStream/releases/latest)
 [![Licence](https://img.shields.io/github/license/hardikneeravsharma/AutoStream)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Windows-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%28clips%20%26%20Studio%29-blue)
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 
 <img src="docs/img/dashboard.png" width="600" alt="The AutoStream dashboard while live: session timer, watching/likes/views counters, a viewer graph, OBS ingest health, and live chat">
@@ -22,6 +22,10 @@ it rewrites the title. Quit the game and it ends the broadcast and tidies up.
 
 It can also record locally while you stream, then find your kills in that recording and
 cut them into clips, vertical exports and a montage — without you opening an editor.
+
+**On a Mac**, AutoStream is the clipper and the Studio on their own: copy a recording
+over from your PC and cut it into clips, verticals and reels. Streaming stays a Windows
+feature. See [On a Mac](#on-a-mac).
 
 You set it up once. After that you never open it again unless you want to.
 
@@ -40,6 +44,7 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
 - [Install](#install-the-easy-way)
 - [Your first week](#your-first-week)
 - [**Clipping a recording**](docs/CLIPPING.md) — the walkthrough, if clips are all you want
+- [**On a Mac**](#on-a-mac) — the clipper and the Studio, without streaming
 - [Install from source](#install-from-source)
 - [How it works](#how-it-works)
 - [Troubleshooting](#troubleshooting)
@@ -340,6 +345,10 @@ Closing the window does not quit — it keeps running in the tray so it can dete
 
 ## Before you start
 
+*This section is for streaming, which is Windows only. If you only want clips, on
+Windows or a Mac, skip it: the setup wizard's **Just make clips** needs nothing but
+ffmpeg.*
+
 You need three things. The first one can take a day, so start it now:
 
 1. **A YouTube channel with live streaming enabled.**
@@ -417,6 +426,31 @@ sessions, confirm it detects your games correctly, then switch to public in
 | **Quiet hours** | Optional window where it never auto-starts. Off by default; set it in Settings → Safety. |
 | **Veto list** | If a password manager or banking app is running, the entire session is vetoed and nothing streams. |
 | **Battery / disk / quota** | Won't start on battery, with under 25 GB free, or when your API quota is nearly spent. |
+
+---
+
+## On a Mac
+
+The clipper and the Studio also run on macOS (Apple Silicon or Intel, macOS 11+). Record
+on your Windows PC, copy the recording across, and cut it into clips, verticals, montages
+and reels on the Mac. The Mac build does not stream, and it never needs a game
+installed. The Dashboard, Library, OBS, YouTube and tray are not part of it.
+
+**[⬇ Download the Mac app](https://github.com/hardikneeravsharma/AutoStream/releases/latest)**:
+`AutoStream-macos-arm64.dmg` (Apple Silicon) or `AutoStream-macos-x86_64.dmg` (Intel),
+plus `brew install ffmpeg-full`. It is not notarised yet, so the first open needs
+**System Settings > Privacy & Security > Open Anyway**.
+
+From source:
+
+```bash
+brew install python ffmpeg-full      # ffmpeg-full: the plain formula cannot draw captions
+scripts/macos/install.sh
+.venv/bin/python -m autostream run   # or build the .app: scripts/macos/build.sh
+```
+
+**[docs/MACOS.md](docs/MACOS.md)** covers what works and what does not, where the app
+keeps its files, how the build works, and how the port is laid out.
 
 ---
 
@@ -618,7 +652,7 @@ minutes of footage — and it needs Tesseract, which is **not** part of AutoStre
 
 You do not have to go and get it. The Clips page names what is missing and installs it
 for you, and so does the last step of the clips-only setup; Windows asks for permission
-and that is the whole of it. Counter-Strike is greyed out with that reason until it is
+and that is the whole of it (on a Mac it uses Homebrew, and asks for nothing). Counter-Strike is greyed out with that reason until it is
 there, rather than failing four minutes into a scan the way it used to. By hand, if you
 would rather:
 
@@ -626,6 +660,8 @@ would rather:
 winget install --id UB-Mannheim.TesseractOCR
 pip install pytesseract
 ```
+
+On a Mac: `brew install tesseract` (already there if you installed `ffmpeg-full`).
 
 CS2 ships with the feed area already set; you only have to supply your name.
 
@@ -909,7 +945,7 @@ twenty-second clip. Longer clips therefore find more of them:
 
 *(measured on one real two-hour session with 219 kills)*
 
-Needs **ffmpeg** (`winget install --id Gyan.FFmpeg`) and **numpy**. Without either, the
+Needs **ffmpeg** (`winget install --id Gyan.FFmpeg`; on a Mac `brew install ffmpeg-full`) and **numpy**. Without either, the
 Clips page shows what is missing and the rest of AutoStream is unaffected.
 
 ### Module map
@@ -941,6 +977,7 @@ Clips page shows what is missing and the rest of AutoStream is unaffected.
 | [`webui.py`](autostream/webui.py) | Local HTTP server and JSON API. |
 | [`ui/`](autostream/ui/) | The six-page web app: `shell`, `dashboard`, `library`, `clips`, `studio`, `settings`, `logs`, `setup`. |
 | [`window.py`](autostream/window.py) | Native window via pywebview (Edge WebView2). |
+| [`macos/`](autostream/macos/) | The macOS build: the clips-only launch, the window, paths, ffmpeg/VideoToolbox/fonts, Homebrew, the file picker. Reached only from behind `sys.platform == "darwin"`; see [docs/MACOS.md](docs/MACOS.md). |
 | [`cfg.py`](autostream/cfg.py) | Config load/merge with defaults, atomic writes. |
 
 ### Threading

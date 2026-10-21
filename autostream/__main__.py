@@ -406,6 +406,12 @@ def cmd_run(args) -> int:
       worker  - the engine poll loop
       worker  - the HTTP server, the tray icon
     """
+    # The Mac build is the clipper and the Studio only: no engine, tray or
+    # overlay to start. It has its own launch, and none of the below runs.
+    if sys.platform == "darwin":
+        from .macos import launch as _mac
+        return _mac.run(args, setup_logging)
+
     import secrets as _secrets
     import threading
 

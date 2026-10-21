@@ -17,6 +17,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -62,6 +63,17 @@ def binary(name: str) -> str:
         direct = _override / exe
         if direct.is_file():
             return str(direct)
+    # A Mac app sees no Homebrew PATH, and the ffmpeg on it cannot draw text;
+    # macos/tools.py has both stories.
+    if sys.platform == "darwin":
+        from ..macos import tools as _mac
+        found = _mac.find(name)
+        if found:
+            return found
+        raise FfmpegMissing(
+            f"{name} was not found. Install it with:  {_mac.INSTALL_HINT}\n"
+            f"Then either reopen AutoStream, or set the ffmpeg folder in "
+            f"Settings > Clips.")
     found = shutil.which(name)
     if found:
         return found
@@ -358,6 +370,9 @@ def has_d3d11va() -> bool:
 
 def hw_decoder() -> str:
     """The hardware decoder a scan or cut should use: "cuda", "d3d11va" or ""."""
+    if sys.platform == "darwin":
+        from ..macos import encode as _mac
+        return _mac.decoder()
     if has_cuda():
         return "cuda"
     if has_d3d11va():
@@ -417,6 +432,9 @@ def gpu_encoder() -> str:
     """The hardware encoder "auto" uses: "nvenc", "amf", "qsv" or "" for the CPU."""
     if _HW_ENCODE_FAILED:
         return ""
+    if sys.platform == "darwin":
+        from ..macos import encode as _mac
+        return _mac.NAME if _mac.available() else ""
     if has_nvenc():
         return "nvenc"
     if has_amf():
@@ -447,6 +465,9 @@ def video_codec_args(encoder: str = "auto", *, cq: int = 20) -> list[str]:
         hw = _amf_args(cq)
     elif encoder == "qsv" and has_qsv():
         hw = _qsv_args(cq)
+    elif encoder == "videotoolbox" and sys.platform == "darwin":
+        from ..macos import encode as _mac
+        hw = _mac.args(cq)
     if not hw:
         return soft
     _SOFT[tuple(hw)] = soft

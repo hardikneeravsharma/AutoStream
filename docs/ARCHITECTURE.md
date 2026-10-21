@@ -13,6 +13,10 @@ retitle, and stop a live broadcast automatically.
 
 ## 1. Entry point
 
+**On macOS** `cmd_run` hands over at once to `macos/launch.run`, which starts only
+the HTTP server and the window -- no engine, tray, overlay or hotkey. Everything below
+is the Windows launch, unchanged. See [MACOS.md](MACOS.md).
+
 `python -m autostream <command>` → [`autostream/__main__.py`](../autostream/__main__.py).
 Each subcommand is a `cmd_*` function that lazily imports only the modules it needs, so
 e.g. `detect` never touches the YouTube/OBS code paths at all.
@@ -63,6 +67,7 @@ and reopening it every 15 seconds per tab flashed "connected"/"disconnected" all
 | [`catalog.py`](../autostream/catalog.py) | Discovers launchable apps (Steam/Epic/Start-Menu) for the dashboard's "Open"/"Open & stream" buttons; stored in `apps.yaml` |
 | [`tray.py`](../autostream/tray.py) | System tray icon with status menu |
 | [`window.py`](../autostream/window.py) | Native app window via pywebview, falls back to default browser |
+| [`macos/`](../autostream/macos/) | The macOS build, clips and Studio only (issue #193): `launch` (the engine-less `run`), `window` (`MacWindow`: close quits, asks while busy), `paths`, `tools` (ffmpeg-full first, Homebrew PATH), `encode` (VideoToolbox), `fonts`, `deps` (Homebrew), `dialogs` (pywebview/AppleScript picker), `shell` (`open`), `features` (what is hidden and why, and the updater's refusal). Shared code reaches it only from behind `sys.platform == "darwin"` -- see [MACOS.md](MACOS.md) |
 | [`webui.py`](../autostream/webui.py) | Current stdlib HTTP server: themed dashboard + first-run setup wizard (JSON API + HTML) |
 | [`web.py`](../autostream/web.py) | **Legacy** — an older dashboard server, superseded by `webui.py`; not wired into `cmd_run` |
 | [`setup_flow.py`](../autostream/setup_flow.py) | Backend actions for the browser-based setup wizard |

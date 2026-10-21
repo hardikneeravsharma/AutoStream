@@ -26,6 +26,7 @@ PLACEMENT
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 
 from .tools import ffmpeg, video_codec_args
@@ -65,6 +66,10 @@ SUB_FADE_OUT = 0.55
 
 
 def _font(names) -> str | None:
+    # No C:\Windows\Fonts on a Mac, so every caption would be dropped.
+    if sys.platform == "darwin":
+        from ..macos import fonts as _mac
+        return _mac.first(names)
     for n in names:
         p = _FONT_DIR / n
         if p.is_file():
@@ -278,6 +283,12 @@ def text_png(text: str, out: Path, *, size: int = 96, colour=(255, 255, 255),
     # Windows ships, and everything is scaled afterwards.
     STRIKE = 109
     font_path = _FONT_DIR / "seguiemj.ttf"
+    if sys.platform == "darwin":
+        from ..macos import fonts as _mac
+        found = _mac.emoji()
+        if found is None:
+            return None
+        font_path, STRIKE = found
     if not font_path.is_file():
         return None
     try:

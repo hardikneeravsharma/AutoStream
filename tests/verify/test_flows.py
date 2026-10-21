@@ -19,6 +19,8 @@ is asserted from the source instead, in test_surface.py.
 """
 from __future__ import annotations
 
+import urllib.error
+
 import catalog
 import pytest
 from catalog import CALL, CONTROLS
@@ -242,7 +244,13 @@ def test_no_post_route_crashes_on_a_json_array(server, c):
 
 
 def test_an_oversized_body_is_refused_rather_than_read_into_memory(server):
-    r = server.post("/api/chat", raw=b'{"text":"' + b"x" * (2 * 1024 * 1024) + b'"}')
+    try:
+        r = server.post("/api/chat", raw=b'{"text":"' + b"x" * (2 * 1024 * 1024) + b'"}')
+    except urllib.error.URLError as e:
+        # The server answered and closed before the upload finished, so the
+        # client's own write broke (macOS says EPIPE): refused, unread.
+        assert isinstance(e.reason, (BrokenPipeError, ConnectionResetError)), e
+        return
     assert r.status in (400, 413, 403), f"a 2 MiB body answered {r.status}"
 
 
@@ -374,3 +382,11 @@ def test_the_clips_routes_work_before_there_is_an_engine(headless, c):
     r = _send(headless, c)
     assert r.status != 500, (
         f"{_id(c)} raised with no engine: {r.text[:300]}")
+
+
+def test_a_changed_path_is_still_checked_against_the_disk(server):
+    """The unchanged-value pass above is not a way round validation: a NEW
+    obs.path that names nothing is refused, as it always was."""
+    r = server.post("/api/settings/save",
+                    {"values": {"obs.path": "C:/nowhere/at/all/obs64.exe"}}).json()
+    assert r["ok"] is False and "obs.path" in r["errors"]

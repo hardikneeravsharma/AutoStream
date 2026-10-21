@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import pathlib
+import sys
 import threading
 
 from . import cfg, paths, schema
@@ -379,6 +380,11 @@ class SetupFlow:
 
     def webview2(self) -> dict:
         """Is the runtime here, and what does that mean for this user."""
+        # A Mac's window is WKWebView, part of the OS: nothing to fetch, and
+        # nothing to say about a Microsoft runtime.
+        if sys.platform == "darwin":
+            return {"ok": True, "installed": True, "version": "WKWebView",
+                    "hint": "AutoStream will open in its own window."}
         from . import webview2 as wv
 
         got = wv.version()

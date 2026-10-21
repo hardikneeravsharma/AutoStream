@@ -111,7 +111,9 @@ def _spans_for(monkeypatch, **kw) -> list[tuple[float, float]]:
     prof = Profile(key="x.exe", label="X", band=(0, 0, 1, 1), template="t.png",
                    mode="colour")
     detect.scan(Path("rec.mp4"), prof, **kw)
-    return asked
+    # In start order: the workers append as they run, and on a many-core
+    # machine the last chunk of the video is not always the last to start.
+    return sorted(asked)
 
 
 def test_a_full_scan_starts_at_zero(monkeypatch):

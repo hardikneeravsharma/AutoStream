@@ -1,0 +1,27 @@
+# The macOS build: the clipper and the Studio only (issue #193).
+#
+# requirements.txt is the Windows install and is left exactly as it is. This is
+# what a Mac needs instead -- everything the streaming half pulls in (OBS
+# websocket, the Google client, the tray, the global hotkey, pywin32,
+# winotify) is left out, because nothing on a Mac starts it.
+#
+# Install with:  scripts/macos/install.sh
+psutil>=5.9
+PyYAML>=6.0
+requests>=2.31
+pywebview>=5.0          # native window: WKWebView through pyobjc on macOS
+Pillow>=10.0
+
+# The Clips page. Without numpy it shows a setup card, as on Windows.
+# ffmpeg is NOT a pip package. Use Homebrew's FULL build -- the plain `ffmpeg`
+# formula has no libass or freetype, so captions and lyrics would be dropped:
+#   brew install ffmpeg-full
+numpy>=1.24
+
+# Optional - games whose kills are READ off the kill feed (Counter-Strike 2).
+# Needs the Tesseract binary too (ffmpeg-full already depends on it):
+#   brew install tesseract
+pytesseract>=0.3.10
+
+# Optional - the Studio's "Paste a YouTube link" for a reel's song.
+yt-dlp>=2026.8.19

@@ -112,3 +112,30 @@ def test_a_rendered_retime_has_every_frame_and_slow_motion_is_not_repeats(tmp_pa
     same = sum(1 for a, b in zip(slow, slow[1:]) if np.abs(a - b).mean() < 0.3)
     assert same == 0, f"{same} repeated frames in slow motion"
     assert not list((tmp_path / "w").glob("*.flow*")), "the optical-flow copies are left behind"
+
+
+class _Held:
+    """A file Windows will not let go of for the first `busy` deletes."""
+
+    def __init__(self, busy: int):
+        self.busy, self.gone = busy, False
+
+    def unlink(self, missing_ok=False):
+        if self.busy:
+            self.busy -= 1
+            raise PermissionError("in use by another process")
+        self.gone = True
+
+
+def test_a_flow_copy_still_held_is_removed_once_it_is_let_go(monkeypatch):
+    monkeypatch.setattr(retime.time, "sleep", lambda s: None)
+    f = _Held(busy=3)
+    retime._remove(f)
+    assert f.gone
+
+
+def test_a_flow_copy_that_is_never_let_go_is_reported_not_raised(monkeypatch, caplog):
+    monkeypatch.setattr(retime.time, "sleep", lambda s: None)
+    f = _Held(busy=10_000)
+    retime._remove(f, tries=3)
+    assert not f.gone and "could not remove" in caplog.text
