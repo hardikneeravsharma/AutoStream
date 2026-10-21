@@ -4104,6 +4104,7 @@ class Server:
         chosen = self._studio_chosen(root, want) if want else []
         kills = sum(len(c.get("kills") or []) for c in chosen)
         has_setup = any(director.is_setup(b) for c in chosen for b in director.bursts(c))
+        headshots = sum(1 for c in chosen if any(h is True for h in c.get("hs") or []))
         part = None
         try:
             p0, p1 = float(body.get("part_start")), float(body.get("part_end"))
@@ -4112,7 +4113,7 @@ class Server:
         except (TypeError, ValueError):
             part = None
         facts = dict(style=style, song=shape.as_dict() if shape else None, clips=len(chosen), kills=kills,
-                     has_setup=has_setup, part=part, fmt=str(body.get("format") or "vertical"))
+                     has_setup=has_setup, part=part, fmt=str(body.get("format") or "vertical"), headshots=headshots)
         pre = feasible.judge(**facts)
         if pre.level == feasible.BAD or not (shape and chosen and style):
             return {"ok": True, "verdict": pre.as_dict()}

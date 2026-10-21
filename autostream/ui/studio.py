@@ -11021,16 +11021,32 @@ function studio_gdQuickScore(c) {
   const k = (c.kills || []).length;
   return (c.fav ? 2 : 0) + (studio_gdHs(c) > 0 ? 1.5 : 0) + (k === 2 ? 0.5 : 0);
 }
+/* THE CLIPS EACH STYLE CAN USE. Build and drop splits them into a build and quick kills.
+   Fast-paced headshot is headshots only (clips/fasthead.py): a clip with none is no use to it,
+   and Pick for me used to fill its slots with body kills the plan then left out. Any other style
+   takes every clip -- the build's clutches included, which only Build and drop sets apart. */
 function studio_gdPools() {
-  const all = studio_gdClips();
+  const all = studio_gdClips(), style = studio.gd.style;
   const setups = all.filter(studio_gdIsSetup).sort((a, b) => studio_gdSetupScore(b) - studio_gdSetupScore(a));
-  const quick = all.filter(c => !studio_gdIsSetup(c) && c.id !== studio.gd.setup)
+  if (style === 'fasthead') {
+    const quick = all.filter(c => studio_gdHs(c) > 0)
+      .sort((a, b) => (studio_gdHsDouble(b) - studio_gdHsDouble(a)) || (studio_gdQuickScore(b) - studio_gdQuickScore(a)));
+    return {setups: [], quick: quick};
+  }
+  const quick = all.filter(c => (style !== 'drop' || !studio_gdIsSetup(c)) && c.id !== studio.gd.setup)
     .sort((a, b) => studio_gdQuickScore(b) - studio_gdQuickScore(a));
   return {setups: setups, quick: quick};
 }
-/* how many quick kills the part wants after a build of about eight seconds, half a second apart */
+/* two headshots of one clip within 2.5 s: a real double, the only finale Fast-paced headshot takes */
+function studio_gdHsDouble(c) {
+  const ks = (c.kills || []).map((k, i) => [Number(k), (c.hs || [])[i] === true]).sort((a, b) => a[0] - b[0]);
+  return ks.some((k, i) => i > 0 && k[1] && ks[i - 1][1] && k[0] - ks[i - 1][0] >= 0.25 && k[0] - ks[i - 1][0] <= 2.5) ? 1 : 0;
+}
+/* how many quick kills the part wants after a build of about eight seconds, half a second apart --
+   or, for Fast-paced headshot, one headshot a second or so for its 36 s */
 function studio_gdNeed() {
   const mk = studio.mk || {};
+  if (studio.gd.style === 'fasthead') return Math.max(8, Math.round(((mk.end - mk.start) > 4 ? (mk.end - mk.start) : 36) * 0.95));
   const len = (mk.end - mk.start) > 4 ? (mk.end - mk.start) : 28;
   return Math.max(6, Math.round((len - 8.5) / 0.52));
 }
@@ -11127,7 +11143,18 @@ function studio_gdDrawClips() {
     '<span class="gd-tags">' + (studio_gdHs(c) ? '<i class="gd-hs">Headshot</i>' : '<i>Body</i>') +
     (c.fav ? '<i class="gd-fav">&#9733;</i>' : '') + ((c.kills || []).length > 1 ? '<i>' + c.kills.length + ' kills</i>' : '') +
     ((c.labels || [])[0] ? '<i>' + esc(c.labels[0]) + '</i>' : '') + '</span><span class="mono">' + esc(c.name || c.id) + '</span></button>';
-  const isBD = gd.style === 'drop';
+  const isBD = gd.style === 'drop', isFH = gd.style === 'fasthead';
+  if (isFH) {
+    const doubles = gd.quick.filter(id => studio_gdHsDouble(studio.clipIndex[id] || {})).length;
+    return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">Headshots only: a clip with none has nothing for this style.</p></div>' +
+      '<div><button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="pickall">Pick for me</button></div>' +
+      '<section class="gd-slot"><div class="gd-slothead"><h4>Headshots, one a cut</h4><span class="mono">' + gd.quick.length + ' of ' + need + '</span></div>' +
+      '<div class="gd-bar" aria-hidden="true"><i style="width:' + Math.min(100, Math.round(gd.quick.length / Math.max(1, need) * 100)) + '%"></i></div>' +
+      '<p class="muted" style="margin:0">' + (doubles ? 'The finale: ' + doubles + ' chosen clip' + (doubles > 1 ? 's have' : ' has') + ' two headshots close together.'
+        : 'No chosen clip has two headshots close together, so the reel ends on a single kill, not a multi-kill.') + '</p>' +
+      '<div class="gd-grid">' + pools.quick.slice(0, 60).map(c => tile(c, gd.quick.includes(c.id), 'quick')).join('') +
+      (pools.quick.length ? '' : '<p class="muted">None of your clips has a kill read as a headshot.</p>') + '</div></section>';
+  }
   return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">Suggestions come from your favourites, best first.</p></div>' +
     '<div><button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="pickall">Pick for me</button></div>' +
     (isBD ? '<section class="gd-slot"><div class="gd-slothead"><h4>The build: a clutch, an ace or a multi-kill</h4><span class="mono">' + (gd.setup ? '1 of 1' : '0 of 1') + '</span></div>' +
@@ -11212,7 +11239,11 @@ function studio_gdPickAll() {
   if (gd.style === 'drop') { const s = studio_gdPools().setups[0]; gd.setup = s ? s.id : ''; }
   gd.quick = [];
   let n = 0;
-  for (const c of studio_gdPools().quick) { if (n >= need) break; gd.quick.push(c.id); n += (c.kills || []).length >= 2 ? 2 : 1; }
+  for (const c of studio_gdPools().quick) {
+    if (n >= need) break;
+    gd.quick.push(c.id);
+    n += gd.style === 'fasthead' ? 1 : (c.kills || []).length >= 2 ? 2 : 1;
+  }
 }
 
 async function studio_gdUseSong(path, name) {
