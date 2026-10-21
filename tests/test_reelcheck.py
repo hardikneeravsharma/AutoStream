@@ -170,3 +170,25 @@ def test_a_fast_style_plays_each_fight_once_and_whole():
     a = [m for m in got if m.group == 0]
     assert len(a) == 1 and a[0].kills == [2.9, 5.3, 10.2]
     assert dropped == [("C:/c/a.mp4", 30.0)]
+
+
+def test_a_black_flash_and_a_white_ending_are_caught(tmp_path):
+    """ChatGPT's review of the first Fast-paced headshot render: a whole black frame before
+    the drop kill, and the last frame burnt almost white. Both had passed every check."""
+    ff = _ff()
+    if not ff:
+        pytest.skip("no ffmpeg")
+    mp4 = tmp_path / "r.mp4"
+    subprocess.run([ff, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=60:duration=4",
+                    "-vf", "drawbox=x=0:y=0:w=iw:h=ih:color=black@1:t=fill:enable='between(t,2,2.02)',"
+                           "drawbox=x=0:y=0:w=iw:h=ih:color=white@1:t=fill:enable='gte(t,3.95)',format=yuv420p",
+                    str(mp4)], check=True, creationflags=rc._NO_WINDOW)
+    f = rc.render_findings(mp4, {"format": "landscape", "shots": []}, {"length": 4.0, "kills": []}, ff)
+    got = {x.code: x for x in f}
+    assert "black-frame" in got and got["black-frame"].at == pytest.approx(2.0, abs=0.05), f
+    assert "white-ending" in got, f
+    clean = tmp_path / "c.mp4"
+    subprocess.run([ff, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=60:duration=4",
+                    "-vf", "format=yuv420p", str(clean)], check=True, creationflags=rc._NO_WINDOW)
+    assert not [x for x in rc.render_findings(clean, {"format": "landscape"}, {"length": 4.0, "kills": []}, ff)
+                if x.code in ("black-frame", "white-ending")]

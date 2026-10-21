@@ -125,12 +125,11 @@ def test_the_gate_runs_the_build_cool_and_the_last_act_hot():
     assert str(studio.GATE_LAST) in kick
 
 
-def test_two_frames_of_black_land_before_the_drop_not_on_it():
-    """The snap into the bass is worth more than any flash on it."""
+def test_nothing_blacks_out_the_approach_to_the_drop_kill():
+    """The spec's two black frames before the drop blanked the drop kill's last frames
+    of approach once the kill sat on the drop; reviewed as the reel's worst defect."""
     fx = studio.beat_engine("o09", beat=0.5, drop=4.0, length=36.0)
-    box = [f for f in fx if f.startswith("drawbox=")][0]
-    a, b = (float(x) for x in re.search(r"between\(t,([0-9.]+),([0-9.]+)\)", box).groups())
-    assert b < 4.0 and 4.0 - a < 0.05
+    assert not [f for f in fx if f.startswith("drawbox=")]
 
 
 def test_a_reel_with_no_drop_still_gets_a_grid():
@@ -144,3 +143,17 @@ def test_a_reel_with_no_drop_still_gets_a_grid():
 def test_no_song_means_no_engine_rather_than_a_division_by_zero():
     assert studio.beat_engine("o09", beat=0.0, drop=0.0, length=12.0) == []
     assert studio.beat_engine("o09", beat=0.5, drop=0.0, length=0.0) == []
+
+
+def test_a_beat_that_is_not_a_round_number_keeps_its_flips_on_the_beat():
+    """Murder in my Mind reads 0.499966 s a beat. Written to five places and taken
+    forty thousand beats back for a positive `mod`, that was 4 us a beat and a sixth
+    of a second in all: every beat flip of the reel landed 0.167 s after its beat."""
+    beat, drop = 0.499966, 9 * 0.499966
+    fx = studio.beat_engine("o09", beat=beat, drop=drop, length=36.0)
+    on = flip_frames(flip_of(fx), 36.0)
+    starts = [f for i, f in enumerate(on) if i == 0 or on[i - 1] != f - 1]
+    for f in starts:
+        beats_from_drop = (f / FPS - drop) / beat
+        assert abs(beats_from_drop - round(beats_from_drop)) * beat <= 1 / FPS, (f / FPS, beats_from_drop)
+    assert len(starts) >= 60

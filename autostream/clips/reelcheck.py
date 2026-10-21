@@ -37,6 +37,14 @@ FAST_MAX_GAP = 1.0         # s between two kills after the drop (director.MAX_GA
 SHARP_MIN = 0.35           # a kill frame's detail vs the reel's median: three blurred kills read 0.00-0.17
 SHARP_RADIUS = (2, 5)      # frames before and after the kill whose median must clear SHARP_MIN
 LENGTH_TOLERANCE = 0.25    # s a render may differ from the plan
+# A FRAME THE VIEWER SEES AS A FAULT. ChatGPT's review of the first Fast-paced headshot
+# render found a whole black frame just before the drop kill and a reel that ended on
+# a frame burnt almost white; both passed every check there was. Mean grey, 0-255,
+# over the game's own picture: a frame under BLACK_MAX between pictures brighter
+# than BLACK_AROUND is a black flash, and a last frame over WHITE_END is a white end.
+BLACK_MAX = 4.0
+BLACK_AROUND = 20.0
+WHITE_END = 225.0
 MAX_FROM_ONE_FILE = 4      # R13: no file gives a reel more shots than this
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -186,6 +194,16 @@ def render_findings(mp4: Path, project: dict, derived: dict, ff: str = "ffmpeg")
         lap = _lap(frames)
         import numpy as np
 
+        luma = frames.mean(axis=(1, 2))
+        n = len(luma)
+        for i in range(int(0.2 * 60), n - int(1.0 * 60)):          # the opening and the ending fade aside
+            if luma[i] < BLACK_MAX and np.median(luma[max(0, i - 6):i]) > BLACK_AROUND                     and np.median(luma[i + 1:i + 7]) > BLACK_AROUND:
+                out.append(Finding(HARD, "black-frame", "A black frame flashes in the middle of the reel.",
+                                   round(i / 60 - float(derived.get("offset") or 0.0), 3)))
+                break
+        if luma[-1] > WHITE_END:
+            out.append(Finding(HARD, "white-ending", "The reel ends on a frame burnt almost white.",
+                               round(n / 60 - float(derived.get("offset") or 0.0), 3)))
         med = float(np.median(lap)) or 1.0
         for k in derived.get("kills") or []:
             i = int(round((float(k) + float(derived.get("offset") or 0.0)) * 60))

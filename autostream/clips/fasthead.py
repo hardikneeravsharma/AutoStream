@@ -48,7 +48,7 @@ FINALE_PRE_BEATS = 3
 FINALE_BEATS = 6           # at least, then on to the bar line
 DOUBLE = (0.25, 2.5)       # s between a double's two headshots
 REEL_SECONDS = 36.0
-FX = ["k01snap"]           # one kill effect: the beat engine (o09) carries the rest
+FX = ["k01snap"]           # one kill effect: the beat engine (o10) carries the rest
 BIG = ("ACE", "CLUTCH", "LAST-ALIVE", "LAST ALIVE", "1V", "FLAWLESS")
 
 
