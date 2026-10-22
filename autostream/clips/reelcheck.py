@@ -37,6 +37,7 @@ FAST_MAX_GAP = 1.0         # s between two kills after the drop (director.MAX_GA
 SHARP_MIN = 0.35           # a kill frame's detail vs the reel's median: three blurred kills read 0.00-0.17
 SHARP_RADIUS = (2, 5)      # frames before and after the kill whose median must clear SHARP_MIN
 LENGTH_TOLERANCE = 0.25    # s a render may differ from the plan
+REEL_FPS = 60              # studio.FPS: what every shot is cut and checked at
 # A FRAME THE VIEWER SEES AS A FAULT. ChatGPT's review of the first Fast-paced headshot
 # render found a whole black frame just before the drop kill and a reel that ended on
 # a frame burnt almost white; both passed every check there was. Mean grey, 0-255,
@@ -181,7 +182,13 @@ def render_findings(mp4: Path, project: dict, derived: dict, ff: str = "ffmpeg")
             return [Finding(HARD, "no-file", "The reel file is missing or empty.")]
         from .tools import media_info
 
-        dur = float(media_info(mp4).get("duration") or 0.0)
+        info = media_info(mp4)
+        dur = float(info.get("duration") or 0.0)
+        # THE MASTER AT THE REEL'S OWN RATE. Every timing claim here is made at 60 fps; a
+        # file at another rate would put a kill or a flip between the frames it was cut on.
+        fps = float(info.get("fps") or 0.0)
+        if fps and abs(fps - REEL_FPS) > 0.5:
+            out.append(Finding(HARD, "wrong-fps", f"The reel is {fps:g} fps; it is cut at {REEL_FPS}."))
         if abs(dur - float(derived.get("length") or 0.0)) > LENGTH_TOLERANCE:
             out.append(Finding(HARD, "wrong-length", f"The reel is {dur:.1f} s; the plan was {float(derived['length']):.1f} s."))
         # the game's own picture sits in the middle band of a 9:16 fit layout; in a plain frame it is the frame

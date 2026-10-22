@@ -66,6 +66,13 @@ GAP_RANGE = (0.42, 0.75)
 # MAX_GAP unless one gap is longer than that.
 DROP_HOLD = (1.3, 1.6)
 MAX_GAP = 1.0              # s: no two kills after the drop further apart, a double's own two included
+# AN ANCHOR EVERY FEW KILLS. Reviewed on Lalala (ChatGPT, 2026-10-22): a nearly uniform
+# 0.46 s after the drop "becomes predictable over a long section". After every 4-6
+# fast kills the run takes one longer step, 0.69-0.92 s, onto a strong hit -- the
+# accent a hand edit gives a phrase -- and is nudged to (not forced) by the sixth.
+ANCHOR = (0.69, 0.92)
+ANCHOR_EVERY = (4, 6)
+ANCHOR_LATE = 0.25          # cost of each fast kill past the sixth without one
 TAIL = 1.2                 # s the last kill is held for: OUTRO_FADE after it, then the fade
 END_AFTER = 0.9            # s: the least the reel runs on after its last kill before the bar line it ends on
 OUTRO_FADE = 0.6           # s: the ending's fade, which never starts before TAIL - OUTRO_FADE after the last kill
@@ -194,38 +201,57 @@ def targets(cues: list[tuple[float, float]], drop: float, end: float, gap: float
 
 
 def _run(cues, drop: float, end: float, gap: float, first: tuple[float, float], longest: float) -> list[float]:
+    """The best run of targets, counting the fast kills since the last anchor (see ANCHOR).
+
+    The state is (cue, kills since the drop or the last anchor): an anchor step --
+    ANCHOR long and at least 1.3 gaps -- resets it once it has reached ANCHOR_EVERY[0],
+    and every fast kill past ANCHOR_EVERY[1] costs ANCHOR_LATE, so the run takes an
+    anchor where the song has a hit for one and keeps the pace where it has not."""
     pts = [(t, s) for t, s in cues if drop + first[0] <= t <= end]
     if not pts:
         return []
     T = np.array([drop] + [t for t, _ in pts])
     S = np.array([0.0] + [s for _, s in pts])
-    n = len(T)
-    best = np.full(n, -np.inf)
-    prev = np.full(n, -1, int)
-    best[0] = 0.0
+    n, C = len(T), ANCHOR_EVERY[1] + 1
+    a_lo, a_hi = max(ANCHOR[0], 1.3 * gap), ANCHOR[1]
+    reach = max(longest * gap, a_hi)
+    best = np.full((n, C), -np.inf)
+    prev = np.full((n, C, 2), -1, int)
+    best[0, 0] = 0.0
     for j in range(1, n):
         for i in range(j - 1, -1, -1):
             d = T[j] - T[i]
-            if i > 0 and d > longest * gap + 1e-9:
+            if i > 0 and d > reach + 1e-9:
                 continue                      # too far back; the drop itself may still reach
-            ok = (first[0] <= d <= first[1]) if i == 0 else (0.8 * gap <= d <= longest * gap)
-            if not ok or best[i] == -np.inf:
-                continue
-            cost = 0.0 if i == 0 else (0.35 * abs(d - gap) / gap + (0.15 if d > 1.25 * gap else 0.0)
-                                       + (0.6 if d > 1.6 * gap else 0.0))
-            v = best[i] + S[j] - cost
-            if v > best[j]:
-                best[j], prev[j] = v, i
+            for c in range(C):
+                if best[i, c] == -np.inf:
+                    continue
+                if i == 0:
+                    if not (first[0] <= d <= first[1]):
+                        continue
+                    nc, cost = 0, 0.0          # the drop's hold is the first accent
+                elif c >= ANCHOR_EVERY[0] and a_lo <= d <= a_hi:
+                    nc, cost = 0, 0.0          # an anchor, where it is due
+                elif 0.8 * gap <= d <= longest * gap:
+                    nc = min(c + 1, C - 1)
+                    cost = (0.35 * abs(d - gap) / gap + (0.15 if d > 1.25 * gap else 0.0)
+                            + (0.6 if d > 1.6 * gap else 0.0) + (ANCHOR_LATE if c + 1 > ANCHOR_EVERY[1] else 0.0))
+                else:
+                    continue
+                v = best[i, c] + S[j] - cost
+                if v > best[j, nc]:
+                    best[j, nc] = v
+                    prev[j, nc] = (i, c)
     # the path that ends latest among the good ones: a run that stops early wastes the part
-    ends = [j for j in range(1, n) if best[j] > -np.inf]
+    ends = [(j, c) for j in range(1, n) for c in range(C) if best[j, c] > -np.inf]
     if not ends:
         return []
-    last_t = max(T[j] for j in ends)
-    j = max((j for j in ends if T[j] >= last_t - 2 * gap), key=lambda j: best[j])
+    last_t = max(T[j] for j, _ in ends)
+    j, c = max(((j, c) for j, c in ends if T[j] >= last_t - 2 * gap), key=lambda jc: best[jc])
     path = []
     while j > 0:
         path.append(float(T[j]))
-        j = prev[j]
+        j, c = (int(x) for x in prev[j, c])
     return path[::-1]
 
 
