@@ -280,3 +280,27 @@ def test_the_make_button_opens_the_steps_with_the_clips_picked(pg):
     assert pg.inner_text("#studio-gd-open") == "Make a reel"
     assert pg.evaluate("() => studio.gd.fit") in ("near",) or pg.evaluate("() => !!localStorage.getItem('autostream.guide')")
     assert pg.evaluate("() => studio.vfit") == "near"
+
+
+def test_the_look_step_asks_for_lyrics_and_the_plan_keeps_them(pg):
+    """Asked: "why did we not give the lyrics option in the make a reel flow?" The roadmap had
+    lyrics on the Look step; it shipped without them. Chosen there, they go with the plan."""
+    _to_check(pg)
+    pg.click("#studio-gd-back")
+    looks = pg.evaluate("() => studio_gdLyricLooks().map(l => l.key)")
+    assert looks, "no lyric looks in the catalogue"
+    pg.click(f'[data-gd="set"][data-k="lyrics"][data-v="{looks[0]}"]')
+    assert pg.evaluate("() => studio.gd.lyrics") == looks[0]
+    pg.click("#studio-gd-next")
+    assert "lyrics" in pg.inner_text(".gd-facts").lower()
+    pg.evaluate("""() => { window.__plans = []; const real = API.post;
+        API.post = function (u, b) {
+            if (u === '/api/studio/plan') window.__plans.push(JSON.parse(JSON.stringify(b)));
+            if (u === '/api/studio/render') return Promise.resolve({ok: false, error: 'not rendered in this test'});
+            return real.apply(this, arguments); }; }""")
+    pg.wait_for_function("() => !document.getElementById('studio-gd-next').disabled", timeout=30_000)
+    pg.click("#studio-gd-next")
+    pg.wait_for_function("() => window.__plans.length", timeout=120_000)
+    assert pg.evaluate("() => window.__plans[0].keep.lyrics.look") == looks[0]
+    pg.wait_for_function("() => studio.project && studio.project.lyrics", timeout=120_000)
+    assert pg.evaluate("() => studio.project.lyrics.look") == looks[0]
