@@ -43,6 +43,7 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 BURST_GAP = 6.0            # s: kills further apart than this in a clip are separate fights
+SAME_KILL = 0.10           # s: kills closer than this are one kill, read twice
 # The take's first kill comes within 1.8 s: reviewed (ChatGPT, v1.79.8), a first kill at
 # 2.35 s "leaves almost the entire hook window waiting for its payoff"; its general rule is
 # the first compelling action inside 2 s.
@@ -141,6 +142,12 @@ def bursts(clip: dict) -> list[Burst]:
     hs = [bool(h) for h in hs] + [False] * (len(ks) - len(hs))
     out: list[Burst] = []
     for k, h in sorted(zip(ks, hs)):
+        # ONE KILL READ TWICE IS ONE KILL. A 1v4's first kill was in the clip at 3.415 and
+        # 3.417 s -- two readings of it -- and the take cut a shot two milliseconds long
+        # between them and called the clutch four kills. Nobody kills twice in SAME_KILL.
+        if out and k - out[-1].kills[-1] < SAME_KILL:
+            out[-1].hs[-1] = out[-1].hs[-1] or h
+            continue
         if out and k - out[-1].kills[-1] <= BURST_GAP:
             out[-1].kills.append(k)
             out[-1].hs.append(h)

@@ -1026,8 +1026,13 @@ BEAT_TOL_DB = 4.0              # ...within this of the song's own typical level
 # songs on disk: the share of the next STAY_S whose bass holds at least half its rise is
 # 0.72-1.00 on every main drop but three; under STAY_MIN it is not the main one (Ashke
 # 0.62, Believer 0.44 -- its chorus at 53.8 s takes it -- and JVKE 0.69).
+# 0.65, NOT 0.7: JVKE's chorus at 68.5 s holds 0.69 and was its main drop until the line
+# was drawn at 0.7, which moved the drop onto a verse at 49.0 -- reviewed by ChatGPT on the
+# player's reel: "the final kill lands on a verse phrase, not the main chorus arrival".
+# Between Ashke's intro hits (0.62) and JVKE's chorus (0.69), and over the 61 songs no
+# other main drop moves.
 STAY_S = 8.0
-STAY_MIN = 0.7
+STAY_MIN = 0.65
 
 
 def _bands(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
