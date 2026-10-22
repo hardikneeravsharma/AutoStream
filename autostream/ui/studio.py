@@ -4255,6 +4255,8 @@ async function studio_build(opts) {
     /* A rebuild keeps the reel's own choices -- facecam, handle, ending --
        which belong to the reel and not to the plan being redone. */
     if (studio.adding && studio.adding.keep) body.keep = studio.adding.keep;
+    /* what the guided maker asked that belongs to the reel, not the plan: the lyrics' look */
+    if (o.keep) body.keep = Object.assign({}, body.keep || {}, o.keep);
     const r = await API.post('/api/studio/plan', body);
     if (gen !== studio.buildGen) return;          /* cancelled while planning */
     if (!r || !r.ok) { say((r && r.error) || 'Could not plan that reel.', true); return; }
@@ -10979,7 +10981,7 @@ const GD_STEPS = ['Style', 'Song', 'Clips', 'Look', 'Check and make'];
 /* The styles that have been through the review loop. Fast-paced headshot since v1.79.8: ChatGPT's third review of
    its render (7.3/10) said yes, "ready to be offered as a recommended style". */
 const GD_BEST = ['drop', 'fasthead'];
-studio.gd = {step: 0, style: '', auto: false, setup: '', quick: [], fmt: 'vertical', fit: 'near', name: '',
+studio.gd = {step: 0, style: '', auto: false, setup: '', quick: [], fmt: 'vertical', fit: 'near', lyrics: 'off', name: '',
              verdict: null, asked: 0, busy: false, timer: null};
 
 /* WHAT WAS CHOSEN LAST TIME, remembered as intent -- the style, the shape, the framing -- and not as
@@ -10988,7 +10990,7 @@ studio.gd = {step: 0, style: '', auto: false, setup: '', quick: [], fmt: 'vertic
 const GD_KEY = 'autostream.guide';
 function studio_gdRemember() {
   const gd = studio.gd;
-  try { localStorage.setItem(GD_KEY, JSON.stringify({style: gd.style, fmt: gd.fmt, fit: gd.fit, song: studio.song || '',
+  try { localStorage.setItem(GD_KEY, JSON.stringify({style: gd.style, fmt: gd.fmt, fit: gd.fit, lyrics: gd.lyrics, song: studio.song || '',
                                                       setup: gd.setup, quick: gd.quick})); } catch (e) { /* private window: nothing remembered */ }
 }
 function studio_gdRecall() {
@@ -10999,6 +11001,7 @@ function studio_gdRecall() {
   if (m.style && studio.catalog.styles.some(s => s.key === m.style)) gd.style = m.style;
   if (m.fmt === 'vertical' || m.fmt === 'landscape') gd.fmt = m.fmt;
   if (['fit', 'near', 'zoom'].includes(m.fit)) gd.fit = m.fit;
+  if (typeof m.lyrics === 'string' && (m.lyrics === 'off' || studio_gdLyricLooks().some(l => l.key === m.lyrics))) gd.lyrics = m.lyrics;
   gd.setup = have(m.setup) ? m.setup : '';
   gd.quick = (Array.isArray(m.quick) ? m.quick : []).filter(have);
   return !!gd.style;
@@ -11199,11 +11202,18 @@ function studio_gdDrawClips() {
 function studio_gdSeg(name, val, opts) {
   return '<div class="seg" role="group">' + opts.map(o => '<button type="button" class="seg-btn' + (val === o[0] ? ' is-active' : '') + '" data-act="studio-gd" data-gd="set" data-k="' + name + '" data-v="' + o[0] + '" aria-pressed="' + (val === o[0]) + '">' + esc(o[1]) + '</button>').join('') + '</div>';
 }
+/* THE SONG'S WORDS ON THE REEL, asked on the Look step. The roadmap had lyrics in this step (F9) and the
+   step shipped without them -- they were only on the timeline, after a first render -- so a reel made
+   step by step could not have them without a second render. */
+function studio_gdLyricLooks() { return ((studio.catalog && studio.catalog.lyrics) || {}).looks || []; }
 function studio_gdDrawLook() {
-  const gd = studio.gd;
-  return '<div class="gd-q"><h3>How should it look?</h3><p class="muted">Only what changes the picture. The effects come with the style; lyrics and the rest are under All settings.</p></div>' +
+  const gd = studio.gd, looks = studio_gdLyricLooks();
+  const look = looks.find(l => l.key === gd.lyrics);
+  return '<div class="gd-q"><h3>How should it look?</h3><p class="muted">Only what changes the picture. The effects come with the style; the rest is under All settings.</p></div>' +
     '<div class="gd-field"><h4>Shape</h4>' + studio_gdSeg('fmt', gd.fmt, [['vertical', '9:16 Short or Reel'], ['landscape', '16:9 YouTube']]) + '</div>' +
-    (gd.fmt === 'vertical' ? '<div class="gd-field"><h4>Framing</h4>' + studio_gdSeg('fit', gd.fit, [['near', 'Near fit'], ['fit', 'Fit the whole picture'], ['zoom', 'Zoom to fill']]) + '</div>' : '');
+    (gd.fmt === 'vertical' ? '<div class="gd-field"><h4>Framing</h4>' + studio_gdSeg('fit', gd.fit, [['near', 'Near fit'], ['fit', 'Fit the whole picture'], ['zoom', 'Zoom to fill']]) + '</div>' : '') +
+    (looks.length ? '<div class="gd-field"><h4>Lyrics</h4>' + studio_gdSeg('lyrics', gd.lyrics, [['off', 'No lyrics']].concat(looks.map(l => [l.key, l.label]))) +
+      '<p class="muted" style="margin:0">' + esc(look ? look.blurb : 'The song’s own words, each on its sung syllable; the look, size and place can be changed on the timeline.') + '</p></div>' : '');
 }
 
 function studio_gdDrawCheck() {
@@ -11212,6 +11222,7 @@ function studio_gdDrawCheck() {
   return '<div class="gd-q"><h3>Check and make</h3><p class="muted">Planned, not rendered yet. This is what the reel will be.</p></div>' +
     '<div class="gd-facts"><span><b>Style</b> ' + esc(s ? s.label : '') + '</span><span><b>Song</b> ' + esc(song) + '</span>' +
     '<span><b>Clips</b> ' + ids.length + ' (' + studio_gdKillsIn(ids) + ' kills)</span><span><b>Shape</b> ' + (gd.fmt === 'vertical' ? '9:16' : '16:9') + '</span>' +
+    '<span><b>Lyrics</b> ' + esc((studio_gdLyricLooks().find(l => l.key === gd.lyrics) || {label: 'None'}).label) + '</span>' +
     (gd.verdict && gd.verdict.length ? '<span><b>Length</b> ' + Math.round(gd.verdict.length) + ' s</span>' : '') + '</div>' +
     '<div class="gd-field"><label class="field-label" for="studio-gd-name">Name</label>' +
     '<input class="input" id="studio-gd-name" maxlength="80" placeholder="' + esc(studio_gdDefaultName()) + '" value="' + esc(gd.name || '') + '"></div>' +
@@ -11340,7 +11351,8 @@ async function studio_gdMake() {
     el.innerHTML = '<span class="gd-dot">' + (level === 'bad' ? "Won't work" : 'Making it') + '</span><p>' + esc(text) + '</p><span></span>';
   };
   try {
-    await studio_build({btn: next, say: (t, failed) => failed ? chip(t, 'bad')
+    await studio_build({btn: next, keep: gd.lyrics && gd.lyrics !== 'off' ? {lyrics: {look: gd.lyrics}} : null,
+      say: (t, failed) => failed ? chip(t, 'bad')
       : chip(t + ' This takes about a minute; the reel opens on the timeline when it is planned.', 'ok')});
   } finally {
     gd.busy = false;
