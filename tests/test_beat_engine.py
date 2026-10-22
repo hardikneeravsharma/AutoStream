@@ -168,8 +168,8 @@ def test_a_flip_on_a_kill_is_one_partial_frame_and_elsewhere_as_before():
     near = [float(a) + 0.001 for a, _ in re.findall(r"between\(t,([0-9.]+),([0-9.]+)\)", flip)]
     assert near == pytest.approx([4.0, 6.0])                    # 6.01 is a frame off its bar; 7.3 and 9.0 are not on one
     off = float(re.search(r"mod\(t\+([0-9.]+),", flip).group(1))
-    lut = [f for f in fx if f.startswith("lutyuv=")]
-    assert len(lut) == 1 and str(studio.FLIP_PARTIAL) in lut[0]
+    lut = [f for f in fx if f.startswith("lutyuv=") and str(studio.FLIP_PARTIAL) in f]
+    assert len(lut) == 1
     soft = [(float(a), float(b)) for a, b in re.findall(r"between\(t,([0-9.]+),([0-9.]+)\)", lut[0])]
 
     def frames(bar_t):
@@ -182,4 +182,15 @@ def test_a_flip_on_a_kill_is_one_partial_frame_and_elsewhere_as_before():
     assert frames(4.0) == (0, 1) and frames(6.0) == (0, 1) and frames(8.0) == (3, 0)
     # no kills near a flip: every flip as before, and nothing partial
     fx = studio.beat_engine("o10", beat=0.5, drop=4.0, length=20.0)
-    assert "between" not in flip_of(fx) and not [f for f in fx if f.startswith("lutyuv=")]
+    assert "between" not in flip_of(fx) and not [f for f in fx if str(studio.FLIP_PARTIAL) in f]
+
+
+def test_a_flip_never_goes_whiter_than_the_ceiling():
+    """A dark frame inverted is a near-white one: a bar flip on no kill lit 31 % of the
+    picture above 245/255. The flip's whites are capped at FLIP_CEIL, at the same moments."""
+    fx = studio.beat_engine("o10", beat=0.5, drop=4.0, length=20.0)
+    flip = flip_of(fx)
+    cap = [f for f in fx if f.startswith("lutyuv=y='min(val,")]
+    assert len(cap) == 1 and f"{studio.FLIP_CEIL}*maxval" in cap[0]
+    assert cap[0].split("enable=")[1] == flip.split("enable=")[1]
+    assert studio.FLIP_CEIL * 255 < 245

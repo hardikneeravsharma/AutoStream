@@ -82,6 +82,9 @@ def test_the_first_question_is_the_style_and_the_reviewed_one_says_so(pg):
     assert "What kind of reel?" in pg.inner_text("#studio-gd-body")
     best = pg.locator('.gd-card[data-key="drop"]')
     assert "use this for best result" in best.inner_text().lower()
+    # the second style through the review loop (v1.79.8), in the same grid, not under More styles
+    fh = pg.locator('.gd-grid-best .gd-card[data-key="fasthead"]')
+    assert "use this for best result" in fh.inner_text().lower()
     # the others are there, folded away, and say they are not reviewed
     assert not pg.evaluate("() => document.querySelector('.gd-more').open")
     assert "not reviewed" in pg.inner_text(".gd-more summary").lower()

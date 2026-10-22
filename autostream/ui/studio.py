@@ -10972,7 +10972,9 @@ function studio_sgWire() {
    already in it.
    ===================================================================== */
 const GD_STEPS = ['Style', 'Song', 'Clips', 'Look', 'Check and make'];
-const GD_BEST = ['drop'];                      /* the styles that have been through the review loop */
+/* The styles that have been through the review loop. Fast-paced headshot since v1.79.8: ChatGPT's third review of
+   its render (7.3/10) said yes, "ready to be offered as a recommended style". */
+const GD_BEST = ['drop', 'fasthead'];
 studio.gd = {step: 0, style: '', auto: false, setup: '', quick: [], fmt: 'vertical', fit: 'fit', name: '',
              verdict: null, asked: 0, busy: false, timer: null};
 
@@ -11119,7 +11121,7 @@ function studio_gdDrawStyle() {
     '<span class="muted">We read the song for its drop and tempo and choose the style that suits it.</span></button>' +
     (gd.auto && studio.song && !gd.style ? '<p class="gd-note">That song has no clear drop, so no style is picked for you yet. Choose one below.</p>' : '') +
     '<div class="gd-grid gd-grid-best">' + best.map(card).join('') + '</div>' +
-    '<details class="gd-more"' + (gd.style && !GD_BEST.includes(gd.style) ? ' open' : '') + '><summary>More styles <span class="muted">(not reviewed yet: they work, but are not at the standard of the one above)</span></summary>' +
+    '<details class="gd-more"' + (gd.style && !GD_BEST.includes(gd.style) ? ' open' : '') + '><summary>More styles <span class="muted">(not reviewed yet: they work, but are not at the standard of the ones above)</span></summary>' +
     '<div class="gd-grid">' + rest.map(card).join('') + '</div></details>';
 }
 

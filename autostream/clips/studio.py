@@ -4805,6 +4805,11 @@ FLIP_BEAT = 0.012             # one frame at 60 fps: between 0 and 1/60
 FLIP_BAR = 0.045              # three: between 2/60 and 3/60
 FLIP_GUARD = 2.5 / 60         # s: a kill this near a flip turns it into FLIP_PARTIAL for one frame
 FLIP_PARTIAL = 0.28           # how much of the inverted picture shows in that frame
+# THE WHITES OF A FLIP ARE CAPPED. A dark frame inverted is a near-white one: a bar flip
+# on no kill still lit 31 % of the picture above 245/255 (ChatGPT's review of v1.79.7,
+# whose general rule is no more than 20 % over 245 for two frames). The inverted
+# picture keeps its shape but no grey above FLIP_CEIL of full scale -- 219 of 255.
+FLIP_CEIL = 0.86
 KICK_FALL = 0.058
 # THE PHASE IS THE DROP'S, BROUGHT INTO THE FIRST BAR. `mod` must never see a
 # negative -- ffmpeg's keeps the sign of its argument, and the whole build would
@@ -4873,7 +4878,9 @@ def beat_engine(pid: str, *, beat: float, drop: float, length: float,
     if on_beat:
         terms.insert(0, f"lt(mod({var}+{off:.{P}f},{beat:.{P}f}),{FLIP_BEAT})")
     flips = "+".join(terms)
-    out.append(f"negate=enable='gte({var},{from_t:.4f})*({flips})" + (f"*not({near})'" if near else "'"))
+    when = f"gte({var},{from_t:.4f})*({flips})" + (f"*not({near})" if near else "")
+    out.append(f"negate=enable='{when}'")
+    out.append(f"lutyuv=y='min(val,{FLIP_CEIL}*maxval)':enable='{when}'")
     if guard:
         part = f"val+{FLIP_PARTIAL}*(maxval-2*val)"
         out.append(f"lutyuv=y='{part}':u='{part}':v='{part}':enable='" +
