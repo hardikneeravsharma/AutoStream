@@ -1238,6 +1238,152 @@ def one_fight_per_clip(moments: list[Moment], dropped: list[tuple[str, float]] |
     return [merged[id(m)] for m in moments if id(m) in merged]
 
 
+# TWO SHOTS OF ONE CLIP CLOSER THAN THIS ARE THE SAME FIGHT SHOWN TWICE: what the
+# render gate calls a repeat (reelcheck, "repeat-fight"), and the same reach
+# studio.OWN_KILLS_WITHIN gives a shot's own later kills -- so a kill this close
+# to another is either in that shot or in no other.
+REPEAT_FIGHT_GAP = 3.0
+# ...and the longest a run of such kills may be and still be one shot: a run-up
+# and a landing short of MAX_SHOT_SECONDS. Past it the run is cut, not the rule.
+FIGHT_SPAN = MAX_SHOT_SECONDS - MIN_RUN_SECONDS
+
+
+def one_shot_per_fight(moments_: list[Moment], dropped: list[tuple[str, float]] | None = None,
+                       gap: float = REPEAT_FIGHT_GAP, span: float = FIGHT_SPAN) -> list[Moment]:
+    """Moments of one clip whose kills are closer than `gap` become ONE moment.
+
+    moments() splits a clip's kills into bursts GROUP_SECONDS apart (1.8 s), and
+    each burst is its own shot -- so two kills 2.3 s apart in a clutch went into
+    two shots, the order put other clips between them, and the reel showed the
+    same fight twice. Measured on the Velocity reel of Skechers: three such pairs
+    (1.85 s, 2.32 s and 2.90 s apart) failed the render gate's repeat-fight check.
+    The gate only flags it; this is the rule that makes it not happen.
+
+    Merged while the merged run spans no more than `span`; past that the weaker of
+    the two moments is left out, because its kills cannot go in a shot of their
+    own without being the same fight again. `dropped` collects (clip, kill) for those.
+    """
+    by_clip: dict[int, list[Moment]] = {}
+    for m in moments_:
+        by_clip.setdefault(m.group, []).append(m)
+    keep: dict[int, Moment] = {}           # id(original head) -> the moment that stands for it
+    for group in by_clip.values():
+        group = sorted(group, key=lambda m: m.first)
+        runs: list[list[Moment]] = []
+        for m in group:
+            if runs and m.first - runs[-1][-1].last < gap:
+                runs[-1].append(m)
+            else:
+                runs.append([m])
+        for run in runs:
+            if len(run) == 1:
+                keep[id(run[0])] = run[0]
+                continue
+            # Merge from the strongest outwards while the span allows; the rest go.
+            ranked = sorted(run, key=lambda m: (-m.strength, m.first))
+            took = [ranked[0]]
+            for m in ranked[1:]:
+                lo = min(x.first for x in took + [m])
+                hi = max(x.last for x in took + [m])
+                if hi - lo <= span + 1e-9:
+                    took.append(m)
+                elif dropped is not None:
+                    dropped.extend((m.clip.get("path", ""), k) for k in m.kills)
+            took.sort(key=lambda m: m.first)
+            head = took[0]
+            if len(took) == 1:
+                keep[id(head)] = head
+                continue
+            kills = sorted(k for m in took for k in m.kills)
+            caption = next((m.caption for m in took if m.caption), "")
+            keep[id(head)] = Moment(clip=head.clip, kills=kills, group=head.group, seq=head.seq,
+                                    seq_len=head.seq_len, caption=caption,
+                                    strength=max(m.strength for m in took) + len(kills) - len(head.kills))
+    return [keep[id(m)] for m in moments_ if id(m) in keep]
+
+
+# A SHOT HOLDS ITS OWN LATER KILLS ONLY AS FAR AS THE REEL'S PACE ALLOWS: each
+# within this many of the style's kill gaps of the one before. A double kill 2.4 s
+# apart is one shot of a story reel and two seconds of nothing in a Hype one,
+# whose kills land 0.75 s apart: held, it passed three marks by and the reel's
+# cut rate halved (28 cuts a minute against the references' 54).
+HOLD_GAPS = 2.0
+
+
+def hold_within(moments_: list[Moment], reach: float,
+                dropped: list[tuple[str, float]] | None = None) -> list[Moment]:
+    """Each moment's kills cut to the run its shot will hold: every next one within `reach`.
+
+    The kills after the run are left out of the moment -- not given a shot of
+    their own, which would be the same fight twice (REPEAT_FIGHT_GAP) -- and
+    collected in `dropped`.
+    """
+    out = []
+    for m in moments_:
+        ks = list(m.kills)
+        n = 1
+        while n < len(ks) and ks[n] - ks[n - 1] <= reach + 1e-9:
+            n += 1
+        if n == len(ks):
+            out.append(m)
+            continue
+        if dropped is not None:
+            dropped.extend((m.clip.get("path", ""), k) for k in ks[n:])
+        out.append(Moment(clip=m.clip, kills=ks[:n], group=m.group, seq=m.seq, seq_len=m.seq_len,
+                          caption=m.caption, strength=m.strength))
+    return out
+
+
+def space_apart(items: list, key, when=None, apart: int = 3, fixed: tuple[int, ...] = (0,)) -> list:
+    """`items` reordered so two of one clip (`key`) are at least `apart` places apart, where they can be.
+
+    NO PING-PONG. The build order ranks every burst of a clip at the clip's own
+    strength, so the two biggest clips' bursts all sort to the end together, and
+    spread_clips -- which only stops a clip following itself -- dealt them out
+    A B A B A B: the last six shots of the Velocity reel of Skechers played two
+    clips by turns. Each shot that sits within `apart` of another of its clip is
+    swapped with the nearest one that sits well in both places. Positions in
+    `fixed` (the opener) are not moved. Where there is nothing to swap with --
+    a reel of two clips -- the order stands.
+
+    `when(item)` orders one clip's own items: they are put back in the order
+    they happened, into the places the clip now holds, so no shot replays
+    footage an earlier one showed.
+    """
+    out = list(items)
+    n = len(out)
+
+    def clear(at: int, k, skip: int, gap: int) -> bool:
+        for j in range(at - gap + 1, at + gap):
+            if j in (at, skip) or not 0 <= j < n:
+                continue
+            if key(out[j]) == k:
+                return False
+        return True
+
+    # As far apart as asked where the clips allow it; where they do not -- a
+    # dozen shots from four clips -- at least never back to back.
+    for gap in range(apart, 1, -1):
+        for i in range(n):
+            if i in fixed or clear(i, key(out[i]), i, gap):
+                continue
+            for j in sorted(range(n), key=lambda j: (abs(j - i), j)):
+                if j == i or j in fixed or key(out[j]) == key(out[i]):
+                    continue
+                if clear(j, key(out[i]), i, gap) and clear(i, key(out[j]), j, gap):
+                    out[i], out[j] = out[j], out[i]
+                    break
+    if when is not None:
+        where: dict = {}
+        for i, it in enumerate(out):
+            where.setdefault(key(it), []).append(i)
+        for at in where.values():
+            if len(at) > 1:
+                for i, it in zip(at, sorted((out[i] for i in at), key=when)):
+                    out[i] = it
+    return out
+
+
 def cap_per_clip(moments: list[Moment], limit: int,
                  dropped: list[tuple[str, float]] | None = None) -> list[Moment]:
     """At most `limit` shots from any one clip, keeping the strongest.

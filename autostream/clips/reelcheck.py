@@ -27,6 +27,8 @@ import subprocess
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
+from . import rulebook
+
 log = logging.getLogger(__name__)
 
 HARD, SOFT = "hard", "soft"
@@ -105,12 +107,16 @@ def plan_findings(project: dict, derived: dict, *, fast: bool = True) -> list[Fi
             if lead:
                 out.append(Finding(HARD, "repeat", f"{name} is used twice.", rows[idx[1]]["kill_reel"] if rows else None))
         else:
+            # Against the kills of the clip's OTHER shots only. A double kill is two
+            # kills of one fight in ONE shot -- shown once -- and comparing each shot's
+            # kills with each other flagged it: five of the eight repeat-fight findings
+            # on the Velocity reel of Skechers were a double kill inside one shot.
             seen: list[float] = []
             for i in idx:
-                for k in shots[i].get("kills") or []:
-                    if any(abs(float(k) - p) < 3.0 for p in seen):
-                        out.append(Finding(HARD, "repeat-fight", f"The same fight in {name} is shown twice.", rows[i]["kill_reel"]))
-                    seen.append(float(k))
+                own = [float(k) for k in shots[i].get("kills") or []]
+                if any(abs(k - p) < rulebook.REPEAT_FIGHT_GAP for k in own for p in seen):
+                    out.append(Finding(HARD, "repeat-fight", f"The same fight in {name} is shown twice.", rows[i]["kill_reel"]))
+                seen += own
             if any(b - a == 1 for a, b in zip(idx, idx[1:])) and not all(_same_take(shots, idx[0], i) for i in idx):
                 out.append(Finding(SOFT, "back-to-back", f"{name} plays twice in a row.", rows[idx[0]]["kill_reel"]))
             if len(idx) > MAX_FROM_ONE_FILE:
