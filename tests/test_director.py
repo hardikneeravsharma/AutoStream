@@ -408,3 +408,17 @@ def test_a_montage_holds_its_opening_then_cuts_on_the_drums_each_clip_once():
         t += s["duration"]
     gaps = [b - a for a, b in zip(p.marks, p.marks[1:])]
     assert sorted(gaps)[len(gaps) // 2] == pytest.approx(3 * beat, abs=0.2)
+
+
+def test_a_kill_read_twice_is_one_kill():
+    """A 1v4's first kill was in the clip at 3.415 and 3.417 s: the take cut a 2 ms shot between
+    them and the note said four kills where there were three."""
+    c = clip("VALORANT_01_CLUTCH-1v4_r15", [3.415, 3.417, 5.8, 12.0], hs=[False, True, True, True], seconds=20.0,
+             labels=["CLUTCH 1v4"])
+    b = director.bursts(c)
+    assert [x.kills for x in b] == [[3.415, 5.8], [12.0]] and b[0].hs[0] is True
+    shape, r = song()
+    p = director.plan(library() + [c], shape, r, seed=1, build=c["path"])
+    take = [s for s in p.shots if s["name"] == c["name"]]
+    assert len(take) == 3 and all(s["duration"] > 0.2 for s in take)
+    assert "3 kills" in p.notes[0]
