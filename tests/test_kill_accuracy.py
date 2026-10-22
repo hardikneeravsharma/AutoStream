@@ -166,13 +166,27 @@ def test_the_fit_planner_takes_the_same_arguments_as_the_ordinary_one():
 # ======================================================================== K2
 
 @pytest.mark.parametrize("style", ["hype", "chaos", "fasthead"])
-def test_a_fast_style_on_a_fast_song_keeps_one_of_everything(clips_root, style):
+def test_a_fast_style_on_a_fast_song_keeps_real_speed_and_one_effect_a_kill(clips_root, style):
+    """K2, as revised 2026-10-23: real speed, one effect a kill, no white-flash or slow
+    cut -- and the rest of the style's variety KEPT. Cutting every pool to its first
+    entry made a Hype reel of That Acid 34 shots of one zoom punch, one camera and one
+    hard cut."""
     proj, notes = studio.plan(_clips(clips_root), style, shape=T.Shape(bpm=150.0))
     shots = proj["shots"]
-    assert {s["transition"] for s in shots} == {"t01"}
-    assert len({tuple(s["fx"]) for s in shots}) == 1, {tuple(s["fx"]) for s in shots}
+    trans = {s["transition"] for s in shots}
+    assert "t02" not in trans and len(trans - {"t01"}) <= 1, trans
+    assert all(studio._cut_seconds(t) <= studio.FAST_CUT_SECONDS for t in trans), trans
+    assert all(len(s["fx"]) <= 1 for s in shots), [s["fx"] for s in shots]
     assert {s["speed"] for s in shots} == {"s00"}
     assert any("fast-cut style" in n for n in notes), notes
+    st = studio.STYLE[style]
+    if len(set(st.kill_pool)) > 1:
+        # The variety the pools define survives: two kill effects (calm_mix's cap),
+        # and the cameras the style lists.
+        assert len({s["fx"][0] for s in shots if s["fx"]}) == 2, [s["fx"] for s in shots]
+        assert len(proj["pools"]["kill"]) > 1 and len(proj["pools"]["camera"]) > 1, proj["pools"]
+    else:
+        assert len({tuple(s["fx"]) for s in shots}) == 1, "Fast-paced headshot is one effect by design"
 
 
 def test_the_climax_does_not_stop_time_in_a_fast_reel(clips_root):
