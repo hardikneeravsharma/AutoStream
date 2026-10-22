@@ -4103,7 +4103,11 @@ class Server:
             return {"ok": True, "verdict": feasible.Verdict(feasible.BAD, str(e), "pick-song", "Choose another song").as_dict()}
         chosen = self._studio_chosen(root, want) if want else []
         kills = sum(len(c.get("kills") or []) for c in chosen)
-        has_setup = any(director.is_setup(b) for c in chosen for b in director.bursts(c))
+        # THE SAME TEST THE PLAN MAKES: a chosen CLUTCH clip whose kills are more than six
+        # seconds apart is one round to the planner (director.round_of), and the chip said
+        # "Build and drop needs a clutch" with that very clip chosen.
+        shaping = body.get("shaping") if isinstance(body.get("shaping"), dict) else {}
+        has_setup = director.can_build(chosen, str(shaping.get("build_clip") or ""))
         headshots = sum(1 for c in chosen if any(h is True for h in c.get("hs") or []))
         part = None
         try:

@@ -11015,7 +11015,15 @@ function studio_gdClips() {
 }
 function studio_gdHs(c) { return (c.hs || []).filter(h => h === true).length; }
 function studio_gdBig(c) { return /CLUTCH|LAST.ALIVE|1V|ACE/i.test((c.labels || []).join(' ') + ' ' + (c.name || '')); }
-function studio_gdIsSetup(c) { const k = (c.kills || []).length; return k >= 3 || (k >= 2 && studio_gdBig(c)); }
+/* As director.is_setup: not from a mode with no rounds, and in Valorant no more than five kills -- a
+   round has five enemies, so a 7- or 12-kill run is a Deathmatch, not a clutch or an ace. */
+function studio_gdRoundBased(c) {
+  return !c.respawn && !(/VALORANT/i.test(c.game || c.name || '') && (c.kills || []).length > 5 && c.round == null);
+}
+function studio_gdIsSetup(c) {
+  const k = (c.kills || []).length;
+  return studio_gdRoundBased(c) && (k >= 3 || (k >= 2 && studio_gdBig(c)));
+}
 function studio_gdSetupScore(c) {
   return (c.kills || []).length * 2 + (studio_gdBig(c) ? 3 : 0) + (c.fav ? 2 : 0) + 0.5 * studio_gdHs(c);
 }
@@ -11157,7 +11165,12 @@ function studio_gdDrawClips() {
       '<div class="gd-grid">' + pools.quick.slice(0, 60).map(c => tile(c, gd.quick.includes(c.id), 'quick')).join('') +
       (pools.quick.length ? '' : '<p class="muted">None of your clips has a kill read as a headshot.</p>') + '</div></section>';
   }
-  return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">Suggestions come from your favourites, best first.</p></div>' +
+  /* Said as it is: every clip of the game is a candidate, the favourites ranked first, and only the best of
+     each kind is drawn here -- "from your favourites" read as if nothing else was considered. */
+  const all = studio_gdClips().length;
+  return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">All ' + all + ' of your ' + esc((studio_gdClips()[0] || {}).game || '') +
+    ' clips are candidates, favourites first. The best ' + Math.min(8, pools.setups.length) + ' of ' + pools.setups.length +
+    ' builds and ' + Math.min(48, pools.quick.length) + ' of ' + pools.quick.length + ' quick kills are shown; Pick for me draws on all of them.</p></div>' +
     '<div><button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="pickall">Pick for me</button></div>' +
     (isBD ? '<section class="gd-slot"><div class="gd-slothead"><h4>The build: a clutch, an ace or a multi-kill</h4><span class="mono">' + (gd.setup ? '1 of 1' : '0 of 1') + '</span></div>' +
       '<div class="gd-grid">' + (pools.setups.slice(0, 8).map(c => tile(c, gd.setup === c.id, 'setup')).join('') || '<p class="muted">None of your clips has three kills or a clutch label.</p>') + '</div></section>' : '') +
