@@ -192,3 +192,16 @@ def test_a_black_flash_and_a_white_ending_are_caught(tmp_path):
                     "-vf", "format=yuv420p", str(clean)], check=True, creationflags=rc._NO_WINDOW)
     assert not [x for x in rc.render_findings(clean, {"format": "landscape"}, {"length": 4.0, "kills": []}, ff)
                 if x.code in ("black-frame", "white-ending")]
+
+
+def test_a_master_at_another_frame_rate_is_caught(tmp_path):
+    """Every timing claim is made at 60 fps; ChatGPT's review copy read 30 and asked."""
+    ff = _ff()
+    if not ff:
+        pytest.skip("no ffmpeg")
+    assert rc.REEL_FPS == studio.FPS
+    mp4 = tmp_path / "r30.mp4"
+    subprocess.run([ff, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=2",
+                    "-vf", "format=yuv420p", str(mp4)], check=True, creationflags=rc._NO_WINDOW)
+    f = rc.render_findings(mp4, {"format": "landscape"}, {"length": 2.0, "kills": []}, ff)
+    assert "wrong-fps" in codes(f)

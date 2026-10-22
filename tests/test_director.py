@@ -330,3 +330,17 @@ def test_an_ace_named_clip_is_one_round_even_unchosen():
     ace = clip("VALORANT_03_ACE_r9", [10.0, 12.0, 20.0, 22.0, 23.0], hs=[False] * 5, seconds=30.0)
     p = director.plan(library() + [ace], shape, r, seed=0)
     assert [s["name"] for s in p.shots].count("VALORANT_03_ACE_r9") == 5
+
+
+def test_the_flurry_takes_an_anchor_every_four_to_six_kills():
+    """Reviewed on Lalala: a nearly uniform 0.46 s after the drop "becomes predictable". With
+    a hit on every half beat, the run now takes a 0.69-0.92 s step every 4-6 fast kills."""
+    gap = 0.5
+    cues = [(40.0 + 0.25 * k, 0.6 + (0.2 if k % 4 == 0 else 0.0)) for k in range(1, 100)]
+    T = director.targets(cues, 40.0, 64.0, gap)
+    steps = [b - a for a, b in zip([40.0] + T, T)][1:]          # the drop's own hold aside
+    anchors = [i for i, d in enumerate(steps) if director.ANCHOR[0] - 1e-6 <= d <= director.ANCHOR[1] + 1e-6]
+    assert len(anchors) >= 3, steps
+    runs = [b - a - 1 for a, b in zip([-1] + anchors, anchors)]
+    assert all(r <= director.ANCHOR_EVERY[1] + 1 for r in runs), (runs, steps)
+    assert max(steps) <= director.MAX_GAP + 1e-6
