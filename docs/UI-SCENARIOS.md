@@ -253,7 +253,17 @@ listed so the gap is visible.
 | 6.63 | The guided maker's last step: the name field, then Make; and Build and drop with a build clip chosen and the part left untouched | The name is asked, with the song's title and the style as its placeholder; Make plans from the guide and opens the timeline, never All settings; the build clip chosen is sent with the plan (and not once it is no longer among the clips); an untouched part holds the song's main drop with room before it | yes (`test_ui_studio_guide`; the plan in `test_director`) |
 | 6.64 | The guided maker with Fast-paced headshot: the clips step, then Pick for me | Only clips with a headshot are offered; Pick for me takes those; the counter is headshots against about one a second; it says whether there is a two-headshot clip to end on | yes (`test_ui_studio_guide`) |
 | 6.65 | Pick clips on the Clips tab, then *Make a reel* | The guided maker opens -- not the full page -- with the picked clips in it; the header button reads *Make a reel*; a 9:16 reel starts at Near fit | yes (`test_ui_studio_guide`) |
-| 6.60 | Song tab: the Hits lane on a drum loop with a quiet opening | Every kick, snare and hat is a tick in its own row and the song's parts are named along the top; no kick is drawn in the opening that has none; the lane hides and comes back from its toggle | yes (`test_ui_studio_hits`) |
+| 6.66 | The guided maker's verdict, then Make, for Build and drop, Fast-paced headshot, Montage and Story | The body the chip judged is the body the plan sends, to the byte: the guide's own 9:16 part (30 s, not the Make page's 46 s), the build clip chosen, `arrange` set to the style's own | yes (`test_ui_studio_guide`) |
+| 6.67 | Leave Perfect fit, pins, Headshots only, an intro, kill marks, drops, an order, the dials and a rebuild on the Make page, then make a reel step by step | None of it reaches the guide's verdict or plan; the reel is new (no old output); the Make page afterwards holds the guide's spec and its Build would send the same request | yes (`test_ui_studio_guide`) |
+| 6.68 | *Add clips...* on a reel, then *Make a reel*, steps, *All settings* | The full page opens as *Make a reel* (not *Rebuild*), with the guide's style, clips and part; its request is the guide's | yes (`test_ui_studio_guide`) |
+| 6.69 | Pick for me under Montage, then switch to Fast-paced headshot; then back | The body-kill clips stay chosen but are listed as left out, each saying *not a headshot*, with Remove; the counter, the verdict and the plan count only headshots; back under Montage they count again. A clip of another game passed from the Clips tab is listed the same way; a clip deleted mid-session leaves the draft | yes (`test_ui_studio_guide`) |
+| 6.70 | Build and drop with a build clip chosen by hand, then the chip's *Add the best* | The verdict was asked with that build clip; the fix adds clips and keeps the chosen build clip and the clips already chosen | yes (`test_ui_studio_guide`) |
+| 6.71 | Make a Build and drop reel step by step on a chosen build clip, then *Add clips...* and the Make page | The rebuild asks again for the build clip, the page-drawn part (as a length), drops marked by hand, the intro and Headshots only | yes (`test_ui_studio_guide`; the project keeping them offline in `test_feasible`) |
+| 6.72 | Make, then Back while it plans; Make, then Close, reopen, click a style | Back is live and stops the plan: the step before, Next enabled, and the plan's answer is dropped when it comes; after Close the guide answers clicks at once and its first step's button reads Next | yes (`test_ui_studio_guide`) |
+| 6.73 | Make while a reel is rendering | Nothing is planned and the timeline is not replaced; the chip says a reel is rendering, with its percentage; the running render is still followed | yes (`test_ui_studio_guide`) |
+| 6.74 | Type a name on the last step while the verdict lands; make; start the next reel | The name field keeps focus and the typing; the next reel's name field is empty, with its own default | yes (`test_ui_studio_guide`) |
+| 6.75 | *Give us a song* with a song with no drop and one-kill clips; then with two clips | The style that works is chosen (Montage) and the others' reasons are listed; with nothing that works, each reason and *Choose another song* / *Show the other styles* -- a style that could only be planned the general way is not chosen | yes (`test_ui_studio_guide`; the flag offline in `test_feasible`) |
+| 6.76 | The guided maker's Clips step under Montage, and its Look step's lyrics | Montage says it needs at least four clips; lyrics are offered as used if the song's lyrics are found, never promised | yes (`test_ui_studio_guide`) || 6.60 | Song tab: the Hits lane on a drum loop with a quiet opening | Every kick, snare and hat is a tick in its own row and the song's parts are named along the top; no kick is drawn in the opening that has none; the lane hides and comes back from its toggle | yes (`test_ui_studio_hits`) |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.
@@ -283,8 +293,8 @@ nothing noticed.
 
 | | count |
 |---|---|
-| Scenarios catalogued | 72 |
-| Covered by a focused test | 33 |
+| Scenarios catalogued | 83 |
+| Covered by a focused test | 44 |
 | Covered only by the sweep | 12 |
 | **Known gaps** | **27** |
 

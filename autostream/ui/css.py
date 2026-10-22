@@ -3859,6 +3859,12 @@ STUDIO_CSS = r"""
 .gd-tags{display:flex;flex-wrap:wrap;gap:4px}.gd-tags i{font-size:10.5px;font-weight:600;font-style:normal;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border:1px solid var(--border);border-radius:3px;color:var(--text-secondary)}
 .gd-tags .gd-hs{color:var(--warn)}.gd-tags .gd-fav{color:var(--accent)}
 .gd-field{display:grid;gap:var(--space-2)}
+/* Chosen clips the style cannot use, each with why: in the draft, out of the counts and the plan. */
+.gd-left{border:1px dashed var(--border-strong);border-radius:var(--radius-md);padding:var(--space-3)}
+.gd-leftlist,.gd-why{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.gd-leftlist li{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px var(--space-3)}
+.gd-why li{color:var(--text-secondary)}.gd-why b{color:var(--text-primary)}
+.gd-acts{display:flex;flex-wrap:wrap;gap:var(--space-2)}
 .gd-chip{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)}
 .gd-chip p{margin:0;min-width:0}
 .gd-dot{font-size:12px;font-weight:700;letter-spacing:.05em;padding:3px 8px;border-radius:4px;text-transform:uppercase;white-space:nowrap}

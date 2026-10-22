@@ -1854,6 +1854,10 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
     proj["song_marks"] = [round(t, 4) for t in got.marks]
     proj["part_end"] = round(got.part[1], 5)
     proj["song_drop"] = round(got.drop, 4)
+    if build and which == "drop":
+        proj["build_clip"] = build           # a rebuild builds on it again (normalise keeps it)
+    if loose:
+        proj["part_auto"] = True
     proj["intro"] = "i00"                    # the take is the opening; nothing is laid over it
     # THE LAST KILL IS NOT FADED. The style's fade is most of a bar (1.2-2.2 s) and
     # ran over the last kill of two of the first four reels; a short one, which
@@ -4338,6 +4342,19 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
             marks = sorted({m for m in marks if m >= 0})
             if marks:
                 out["song_marks"] = marks
+            # The drops the player marked by hand, when they did: an answer about the song,
+            # kept so a rebuild plans on them and not on the analysis they overruled. An
+            # empty list is "no drop at all" and is kept as such; absent is "the song's own".
+            if isinstance(project.get("hand_drops"), list):
+                hd = set()
+                for d in project["hand_drops"][:64]:
+                    try:
+                        f = float(d)
+                    except (TypeError, ValueError):
+                        continue
+                    if 0.0 <= f <= 36000.0:            # a drop off the song is dropped, not clamped onto it
+                        hd.add(round(f, 4))
+                out["hand_drops"] = sorted(hd)
         else:
             notes.append("The song is no longer on disk, so this reel has no music.")
     output = str(project.get("output") or "")
@@ -4492,6 +4509,15 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
             if isinstance(n, str) and n.strip()][:20]
     if said:
         out["plan_notes"] = said
+    # WHAT THE PLAYER CHOSE THAT A REBUILD MUST ASK AGAIN: the clip the reel builds on and
+    # whether the part was the page's own (a length) or theirs (an end). Neither is in the
+    # shots, and both were lost on "Add clips": the rebuild built on whichever set-up scored
+    # best and held the part to an end nobody had chosen.
+    build = str(project.get("build_clip") or "")[:1000]
+    if build:
+        out["build_clip"] = build
+    if project.get("part_auto"):
+        out["part_auto"] = True
 
     # Transitions need footage either side of the cut; shorten them to fit.
     shots = out["shots"]

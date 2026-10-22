@@ -34,6 +34,9 @@ class Verdict:
     text: str
     fix: str = ""          # an action the page knows: "style:story", "pick-clips", "shorter", "format:vertical"
     fix_label: str = ""
+    # The style could not plan itself here and the reel was planned the general way: a reel, but
+    # not that style's. "Pick the style for me" never chooses a style on these terms.
+    fallback: bool = False
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -66,9 +69,12 @@ def judge(*, style, song: dict | None, clips: int, kills: int, has_setup: bool =
         if headshots < 8:
             return Verdict(BAD, f"{name} is headshots only, and {headshots} of these clips have a headshot; "
                                 f"it needs at least 8.", "pick-clips", "Pick for me")
+        # about one headshot a second, against the part that will be planned -- "rather than 36"
+        # was said of a 30 s part as readily as of a 46 s one
+        want = (part[1] - part[0]) if part and part[1] > part[0] else 36.0
         if headshots < 20:
             return Verdict(WARN, f"Only {headshots} of these clips have a headshot, so the reel will be about "
-                                 f"{headshots} s rather than 36.", "pick-clips", "Pick for me")
+                                 f"{headshots} s rather than {want:.0f}.", "pick-clips", "Pick for me")
     if needs_drop and not has_setup:
         return Verdict(BAD, "Build and drop needs a clutch, an ace or three kills in one clip to build with.",
                        "pick-clips", "Pick the best")
@@ -82,12 +88,20 @@ def judge(*, style, song: dict | None, clips: int, kills: int, has_setup: bool =
         if part and part[1] > part[0]:
             want = part[1] - part[0]
             if length < want * (1.0 - SHORT_BY) - 0.5:
-                short = int(max(1, round((want - length) / 0.52)))
-                return Verdict(WARN, f"The reel runs {length:.0f} s of the {want:.0f} s part: about {short} more quick kills would fill it.",
+                # HOW LONG A KILL RUNS IN THIS STYLE, from the plan itself: the middle shot, so a
+                # build-and-drop take of eight seconds does not count as a kill's length. It was
+                # 0.52 s for every style, which is Build and drop's quick kill and nobody else's.
+                durs = sorted(float(s.get("duration") or 0.0) for s in shots)
+                per = max(0.3, min(4.0, durs[len(durs) // 2] if durs else 0.52))
+                short = int(max(1, round((want - length) / per)))
+                what = ("quick kills" if needs_drop else
+                        "headshots" if getattr(style, "key", "") == "fasthead" else "kills")
+                return Verdict(WARN, f"The reel runs {length:.0f} s of the {want:.0f} s part: about {short} more {what} would fill it.",
                                "pick-clips", "Add the best")
         for n in notes or []:
             if "usual build-and-drop way" in n or "planned the usual way" in n or "planned without one" in n:
-                return Verdict(WARN, f"{name} could not follow the song here, so it was planned the usual way: " + n.split(". ")[0] + ".")
+                return Verdict(WARN, f"{name} could not follow the song here, so it was planned the usual way: " + n.split(". ")[0] + ".",
+                               fallback=True)
     if fmt != "vertical":
         return Verdict(WARN, "A Short or Reel is vertical; this shape shows black bars on a phone.", "format:vertical", "Use 9:16")
     return Verdict(OK, "This works.")
