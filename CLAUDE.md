@@ -75,6 +75,25 @@ Every fix reaches three places, without being asked:
    them together. Then download the assets back and check their hashes.
 3. **The local `dist\AutoStream` build** — rebuilt and restarted, so the app in use has it.
 
+## The fast way — a hard rule
+
+Asked for by the player (2026-10-22, "make this fast way a hard rule") after a fix took
+25-35 minutes from merge to running: the same tests ran three times (before the merge,
+in the local `-Dist` build, on CI), and the local build made a zip and an installer
+nobody downloads -- CI makes those. So, every time:
+
+1. **Tests once, before the merge.** The offline suite always. Browser tiers only for
+   what the change touches; the full UI sweep (~8 min) only when a change touches the
+   page's markup or its actions.
+2. **The release is CI's.** Push the annotated tag; `release.yml` builds and publishes
+   Windows and macOS. Never `build.ps1 -Dist` on this machine for a release.
+3. **The local app is built with `build.ps1 -NoGate`** on the merged commit -- its suite
+   has passed -- about a minute instead of five. `-NoGate` refuses `-Dist`.
+4. **Run the CI release and the local build at the same time**, then install the local
+   build when the app is idle (the rules below), and check the release's assets after.
+5. **Batch.** Fixes that are in flight together go out as one PR, one tag and one
+   install, not one each.
+
 Say plainly which of the three each fix has reached. "Pushed" does not mean "shipped" —
 a fix living only on a branch while the installed build is days old is how the same bug
 gets reported twice.
@@ -169,7 +188,8 @@ build succeeds. OBS minimised to the tray has no main window, so a polite close
 request does nothing; it is quit from its tray icon. `build.ps1` now names the holder
 rather than listing suspects — if it prints `held by: obs64.exe`, that is this.
 
-**Prefer `build.ps1 -Dist -HandOff` with the app left open.** The ~17-minute test gate
+**Prefer `build.ps1 -NoGate -HandOff` with the app left open** (the fast way above; `-Dist`
+when a build is to leave this machine by hand). The ~17-minute test gate
 does not need it closed; only the rewrite of `dist\AutoStream` does. `-HandOff` runs the
 gate first, then `scripts\handoff.py` closes the app only once it is idle (no broadcast,
 recording, clip job or reel render — it waits, and never forces), and the build reopens
