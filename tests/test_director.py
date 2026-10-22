@@ -339,8 +339,23 @@ def test_the_flurry_takes_an_anchor_every_four_to_six_kills():
     cues = [(40.0 + 0.25 * k, 0.6 + (0.2 if k % 4 == 0 else 0.0)) for k in range(1, 100)]
     T = director.targets(cues, 40.0, 64.0, gap)
     steps = [b - a for a, b in zip([40.0] + T, T)][1:]          # the drop's own hold aside
-    anchors = [i for i, d in enumerate(steps) if director.ANCHOR[0] - 1e-6 <= d <= director.ANCHOR[1] + 1e-6]
+    lo, hi = director.ANCHOR_GAPS[0] * gap, max(director.ANCHOR_BEATS * gap, director.ANCHOR_GAPS[1] * gap)
+    anchors = [i for i, d in enumerate(steps) if lo - 1e-6 <= d <= hi + 1e-6]
     assert len(anchors) >= 3, steps
     runs = [b - a - 1 for a, b in zip([-1] + anchors, anchors)]
     assert all(r <= director.ANCHOR_EVERY[1] + 1 for r in runs), (runs, steps)
     assert max(steps) <= director.MAX_GAP + 1e-6
+
+
+def test_an_anchor_is_in_beats_and_only_onto_a_strong_hit():
+    """The second review: 0.69-0.92 s is 1.5-2 beats at 130 BPM but 1.06-1.41 at 92. The
+    anchor is now up to two beats, and only onto a hit at the 70th percentile of its bar."""
+    gap, beat = 0.652, 0.652                                    # 92 BPM: the gap is one beat
+    cues = [(40.0 + 0.326 * k, 0.9 if k % 4 == 0 else 0.4) for k in range(1, 120)]
+    T = director.targets(cues, 40.0, 70.0, gap, beat=beat)
+    steps = [b - a for a, b in zip([40.0] + T, T)][1:]
+    strong = {round(t, 3) for t, s in cues if s >= 0.9}
+    # a step past 1.6 gaps can only be an anchor: two beats here, longer than the old 0.92 s
+    anchors = [(d, t) for d, t in zip(steps, T[1:]) if d > 1.6 * gap + 1e-6]
+    assert anchors and all(d > 0.92 for d, _ in anchors), steps
+    assert all(round(t, 3) in strong for d, t in anchors), anchors
