@@ -422,3 +422,15 @@ def test_a_kill_read_twice_is_one_kill():
     take = [s for s in p.shots if s["name"] == c["name"]]
     assert len(take) == 3 and all(s["duration"] > 0.2 for s in take)
     assert "3 kills" in p.notes[0]
+
+
+def test_a_montage_flashes_about_half_its_cuts_and_never_over_a_kill():
+    """Montage's second review: the white flashes on about half the cuts are the style; the
+    rule, at least eight clean frames between a flash's end and the kill."""
+    shape, r = song()
+    p = director.plan_montage(library(), shape, r, part=(16.0, 52.0), seed=2)
+    flashed = [s for s in p.shots[1:] if s["transition"] == director.FLASH]
+    share = len(flashed) / max(1, len(p.shots) - 1)
+    assert 0.40 <= share <= 0.60, share
+    assert all(s["pre"] - s["tlen"] / 2 >= director.FLASH_CLEAR - 1e-9 for s in flashed)
+    assert p.shots[0]["transition"] == "t01"

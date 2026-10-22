@@ -10980,7 +10980,9 @@ function studio_sgWire() {
 const GD_STEPS = ['Style', 'Song', 'Clips', 'Look', 'Check and make'];
 /* The styles that have been through the review loop. Fast-paced headshot since v1.79.8: ChatGPT's third review of
    its render (7.3/10) said yes, "ready to be offered as a recommended style". */
-const GD_BEST = ['drop', 'fasthead'];
+/* Montage since v1.79.15: its third review, 7.2/10 on its own planner (4.2 on the general one); the one blocker
+   named, capture overlays in the footage, is the cleanup the player set aside. */
+const GD_BEST = ['drop', 'fasthead', 'montage'];
 studio.gd = {step: 0, style: '', auto: false, setup: '', quick: [], fmt: 'vertical', fit: 'near', lyrics: 'off', name: '',
              verdict: null, asked: 0, busy: false, timer: null};
 

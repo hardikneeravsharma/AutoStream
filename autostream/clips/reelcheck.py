@@ -215,6 +215,12 @@ def render_findings(mp4: Path, project: dict, derived: dict, ff: str = "ffmpeg")
                                    round(i / 60 - float(derived.get("offset") or 0.0), 3)))
                 break
         hot = (frames > BRIGHT_LEVEL).mean(axis=(1, 2)) > BRIGHT_SHARE
+        # a white-flash transition is meant to be white: its frames are not a finding
+        off = float(derived.get("offset") or 0.0)
+        for s, r in zip(project.get("shots") or [], derived.get("shots") or []):
+            if s.get("transition") == "t02" and float(s.get("tlen") or 0.0) > 0:
+                a = int((off + float(r["start"]) - float(s["tlen"]) / 2) * 60) - 1
+                hot[max(0, a):max(0, a + int(float(s["tlen"]) * 60) + 3)] = False
         for i in range(n - BRIGHT_FRAMES + 1):
             if hot[i:i + BRIGHT_FRAMES].all():
                 out.append(Finding(SOFT, "too-bright", "A moment of the reel is almost all white for two frames or more.",
