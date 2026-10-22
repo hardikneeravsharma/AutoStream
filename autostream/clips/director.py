@@ -158,8 +158,41 @@ def single_score(b: Burst) -> float:
     return 1.0 + (1.5 if b.hs[0] else 0.0) + (0.4 if any(w in labels for w in ("CLOSER", "FLAWLESS", "LAST")) else 0.0)
 
 
+# A ROUND HAS AT MOST FIVE ENEMIES. A Valorant fight with more kills than that is not one
+# round -- it is a Deathmatch run, or rounds run together -- so it is no clutch or ace,
+# whatever the mode record says or fails to say. A clip from a mode with no rounds
+# (`respawn`, from the match record) is no build either.
+ROUND_KILLS = {"VALORANT": 5}
+
+
+def round_based(clip: dict, kills: int) -> bool:
+    if clip.get("respawn"):
+        return False
+    cap = next((n for g, n in ROUND_KILLS.items() if g in str(clip.get("game") or clip.get("name") or "").upper()), None)
+    if cap is None:
+        return True
+    # a clip cut from no one round holds the run its fights were split from: 12 kills in two
+    # minutes split into fights of three is still a Deathmatch run, not three clutches
+    whole = len(clip.get("kills") or []) if clip.get("round") is None else 0
+    return max(kills, whole) <= cap
+
+
 def is_setup(b: Burst) -> bool:
+    if not round_based(b.clip, len(b.kills)):
+        return False
     return len(b.kills) >= SETUP_MIN_KILLS or (len(b.kills) >= 2 and b.big() and b.span > 1.0)
+
+
+def can_build(clips: list[dict], build: str = "") -> bool:
+    """Whether these clips give Build and drop a take: a set-up fight, a round, or the chosen clip."""
+    for c in clips:
+        if any(is_setup(b) for b in bursts(c)):
+            return True
+        r = round_of(c)
+        if r is not None and (is_setup(r) or (build and r.path.lower() == str(build).lower()
+                                               and round_based(c, len(r.kills)))):
+            return True
+    return False
 
 
 # ------------------------------------------------------------------ the song
@@ -401,7 +434,7 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
               and (r.big() or (build and r.path.lower() == str(build).lower()))]
     setups = sorted(setups + [r for r in rounds if is_setup(r)], key=setup_score, reverse=True)
     theirs = sorted((b for b in all_b + rounds if build and b.path.lower() == str(build).lower()
-                     and len(b.kills) >= 2), key=setup_score, reverse=True)
+                     and len(b.kills) >= 2 and round_based(b.clip, len(b.kills))), key=setup_score, reverse=True)
     if build and not theirs:
         notes.append(f"The clip chosen to build on has no two kills together, so the reel builds on "
                      f"{'the best one among the rest' if setups else 'nothing'} instead.")

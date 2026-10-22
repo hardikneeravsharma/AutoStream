@@ -359,3 +359,29 @@ def test_an_anchor_is_in_beats_and_only_onto_a_strong_hit():
     anchors = [(d, t) for d, t in zip(steps, T[1:]) if d > 1.6 * gap + 1e-6]
     assert anchors and all(d > 0.92 for d, _ in anchors), steps
     assert all(round(t, 3) in strong for d, t in anchors), anchors
+
+
+def test_a_deathmatch_run_is_never_the_build():
+    """Reported: 7- and 12-kill Deathmatch clips were offered as the build. A mode with no
+    rounds (the match record says) is no build, and in Valorant neither is a clip with more
+    kills than a round has enemies."""
+    dm = dict(clip("VALORANT_01_7kills_6m45s_44s", [3.0, 5.0, 7.0, 9.0, 20.0, 22.0, 24.0], seconds=44.0),
+              game="VALORANT", round=None)
+    flagged = dict(clip("VALORANT_03_3kills_21m31s_9s", [2.0, 3.0, 4.5], seconds=9.0), game="VALORANT", respawn=True)
+    ranked = dict(clip("VALORANT_04_3-KILLS_r6_12m", [2.0, 3.0, 4.5], seconds=9.0), game="VALORANT", round=6)
+    assert not any(director.is_setup(b) for b in director.bursts(dm))
+    assert not any(director.is_setup(b) for b in director.bursts(flagged))
+    assert any(director.is_setup(b) for b in director.bursts(ranked))
+    shape, r = song()
+    p = director.plan(library() + [dm, flagged], shape, r, seed=3)
+    assert p.shots[0]["name"] == "clutch"
+
+
+def test_a_chosen_clutch_with_its_kills_far_apart_can_build():
+    """Reported: a CLUTCH 1v4 chosen for the build, kills at 3.5, 4.0, 12.3 and 25.2 s, and the
+    chip said Build and drop needs a clutch. The plan builds on it as one round; the check
+    the chip makes is now the same."""
+    c = dict(clip("VALORANT_01_CLUTCH-1v4_r15", [3.498, 3.961, 12.278, 25.211], seconds=33.0,
+                  labels=["CLUTCH 1v4"]), game="VALORANT", round=15)
+    assert not any(director.is_setup(b) for b in director.bursts(c))       # what the chip used to test
+    assert director.can_build([c]) and director.can_build([c], c["path"])

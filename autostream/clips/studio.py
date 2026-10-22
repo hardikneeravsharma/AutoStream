@@ -166,14 +166,14 @@ def _match_groups(sess: dict, clips: list[dict]) -> list[dict]:
         if not isinstance(row, dict) or not row.get("match"):
             continue
         try:
-            spans.append((float(row.get("offset") or 0.0), str(row["match"])))
+            spans.append((float(row.get("offset") or 0.0), str(row["match"]), str(row.get("mode") or "")))
         except (TypeError, ValueError):
             continue
     spans.sort()
     if not spans:
         return []
     out = []
-    for i, (at, mid) in enumerate(spans):
+    for i, (at, mid, mode) in enumerate(spans):
         end = spans[i + 1][0] if i + 1 < len(spans) else float("inf")
         inside = [c for c in clips if at <= c["start"] < end]
         if not inside:
@@ -185,8 +185,14 @@ def _match_groups(sess: dict, clips: list[dict]) -> list[dict]:
             row = {"id": mid}
         else:
             row = valorant_match.summary(match)
+        # A MODE WITH NO ROUNDS: Deathmatch, Team Deathmatch, Escalation. Its 7-, 8- and 12-kill
+        # runs were offered as the build of a Build and drop reel -- a clutch or an ace is a
+        # round's, and these have none. The record's queue, or the mode the recording carries.
+        respawn = bool(row.get("respawn")) or valorant_match.respawn_mode(mode)
         for c in inside:
             c["match"] = len(out)
+            if respawn:
+                c["respawn"] = True
         # `kills` and `seconds` on a summary are Riot's -- the player's kills
         # in the match and how long it ran. What the clips add up to is its
         # own pair of keys, so neither can be mistaken for the other.

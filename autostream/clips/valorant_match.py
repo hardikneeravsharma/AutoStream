@@ -165,6 +165,16 @@ QUEUE_NAMES = {
 }
 
 
+# Modes with no rounds: the player respawns, so a run of kills is not a clutch or an ace.
+RESPAWN_QUEUES = {"deathmatch", "hurm", "ggteam", "snowball"}
+
+
+def respawn_mode(mode: str) -> bool:
+    """Whether a queue id, or the game-mode path a recording carries, is a mode with no rounds."""
+    m = str(mode or "").lower()
+    return m in RESPAWN_QUEUES or any(w in m for w in ("deathmatch", "hurm", "gungame", "snowball"))
+
+
 def summary(match: Match) -> dict:
     """One match as a person would describe it: map, mode, when, the score,
     and how they did. Never raises -- a record Riot changed the shape of
@@ -175,6 +185,7 @@ def summary(match: Match) -> dict:
     out = {"id": match.id, "started": match.started, "seconds": match.seconds,
            "map": MAP_NAMES.get(map_key, map_key or "Unknown map"),
            "mode": QUEUE_NAMES.get(queue, queue.title() or "Custom"),
+           "respawn": respawn_mode(queue),
            "ranked": match.ranked}
     try:
         me = str(match.data.get(MINE) or "")
