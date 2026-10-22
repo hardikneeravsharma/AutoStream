@@ -9,6 +9,11 @@
     Your existing config\ and secrets\ are copied into the build so the exe
     works immediately. Rebuilding never overwrites them.
 
+    -NoGate builds the local app without the gate, for a commit whose suite
+    has already passed (CLAUDE.md, "The fast way"): the release is CI's job,
+    and running the same tests a third time cost three minutes a fix. Never
+    with -Dist.
+
     -Dist runs the full gate before it builds. Most of that gate's wall
     clock is tier 4, which decodes real footage, and tier 4 now runs only
     when something it measures has changed -- see verify.ps1. -Media and
@@ -19,7 +24,7 @@
     `import` probe) would otherwise raise NativeCommandError and abort the
     build. Exit codes are checked explicitly instead.
 #>
-param([switch]$Clean, [switch]$Dist, [switch]$Media, [switch]$NoMedia, [switch]$HandOff)
+param([switch]$Clean, [switch]$Dist, [switch]$Media, [switch]$NoMedia, [switch]$HandOff, [switch]$NoGate)
 
 $ErrorActionPreference = "Continue"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -182,7 +187,13 @@ Mark-Phase "setup: PyInstaller, version, import probe"
 #
 # Tiers 5 and 6 need the built binary and so run further down, inside -Dist.
 $verify = Join-Path $PSScriptRoot "verify.ps1"
-if (Test-Path $verify) {
+if ($NoGate -and $Dist) {
+    Write-Bad "-NoGate is for the local app only; a -Dist build always runs the gate"
+    exit 1
+}
+if ($NoGate) {
+    Write-Warn "-NoGate: the gate is skipped -- this commit's suite has already passed"
+} elseif (Test-Path $verify) {
     $vargs = @("-ExecutionPolicy", "Bypass", "-File", $verify)
     # A plain build runs the offline tiers only: they are 25 seconds and
     # nobody will wait ten minutes to test a one-line change. -Dist is the
