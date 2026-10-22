@@ -385,3 +385,26 @@ def test_a_chosen_clutch_with_its_kills_far_apart_can_build():
                   labels=["CLUTCH 1v4"]), game="VALORANT", round=15)
     assert not any(director.is_setup(b) for b in director.bursts(c))       # what the chip used to test
     assert director.can_build([c]) and director.can_build([c], c["path"])
+
+
+def test_a_montage_holds_its_opening_then_cuts_on_the_drums_each_clip_once():
+    """Montage's first review: 4.2/10 on the general planner -- a fixed 2.1 s cut, 30 shots from 10
+    clips, the same fight twice, kills seconds off the beat. Its own plan: one strong kill held
+    1-2 bars, then kills on cues about the unit apart, every clip once, every kill on its mark."""
+    shape, r = song()
+    p = director.plan_montage(library(), shape, r, part=(16.0, 52.0), seed=2)
+    beat = BEAT
+    assert director.montage_unit(beat) == pytest.approx(3 * beat)             # 1.03 s at 174 BPM
+    assert director.montage_unit(0.48) == pytest.approx(0.96)                 # 2 beats at 125
+    first = p.marks[0] - p.part[0]
+    assert 4 * beat - 1e-3 <= first <= 8 * beat + 1e-3                        # held one to two bars
+    assert len({s["clip"] for s in p.shots}) == len(p.shots)
+    cues = {round(c["t"], 3) for c in r.cues}
+    t = 0.0
+    for s, m in zip(p.shots, p.marks):
+        assert p.part[0] + t + s["pre"] == pytest.approx(m, abs=1e-3)
+        if m > p.drop + 0.01:
+            assert round(m, 3) in cues
+        t += s["duration"]
+    gaps = [b - a for a, b in zip(p.marks, p.marks[1:])]
+    assert sorted(gaps)[len(gaps) // 2] == pytest.approx(3 * beat, abs=0.2)

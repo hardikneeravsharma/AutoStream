@@ -136,7 +136,7 @@ def plan_findings(project: dict, derived: dict, *, fast: bool = True) -> list[Fi
     # pace after the drop
     drop = project.get("song_drop")
     # Fast-paced headshot holds a cut of about a second by design (clips/fasthead.py)
-    if fast and drop is not None and kills and project.get("style") != "fasthead":
+    if fast and drop is not None and kills and project.get("style") not in ("fasthead", "montage"):
         off = float(project.get("song_offset") or 0.0)
         after = [k for k in kills if k > float(drop) - off + 0.01]
         for a, b in zip(after, after[1:]):

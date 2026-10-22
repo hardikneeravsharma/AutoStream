@@ -383,7 +383,7 @@ def take_start(D: float, span: float, room: float, beats: list[float], downbeats
     return max(0.0, lo)
 
 
-def take(b: Burst, drop_reel: float) -> tuple[list[dict], float]:
+def take(b: Burst, drop_reel: float, lead_range: tuple[float, float] = TAKE_LEAD) -> tuple[list[dict], float]:
     """The set-up as consecutive shots of one clip, its last kill at `drop_reel`.
 
     -> (shots, how far into the reel the take starts). One shot per kill, cut
@@ -393,7 +393,7 @@ def take(b: Burst, drop_reel: float) -> tuple[list[dict], float]:
     """
     ks = take_kills(b)
     span = take_span(ks)
-    lead = min(TAKE_LEAD[1], max(TAKE_LEAD[0], drop_reel - span), ks[0] - 0.05)
+    lead = min(lead_range[1], max(lead_range[0], drop_reel - span), ks[0] - 0.05)
     start_src = ks[0] - lead
     begin = max(0.0, drop_reel - (span + lead))
     # each kill's shot: from halfway after the last kill, or the jump's far end, to the same before the next
@@ -476,9 +476,19 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
                  + (f", {jumped:.0f} s of waiting between them cut out" if jumped > 0.5 else "")
                  + f"), its last kill on the drop at {D:.1f} s.")
 
+    return _after(all_b, clips_by_path, setups, best, ks, take_shots, D, start, end, gap, rng, notes,
+                  shape, rhythm)
+
+
+def _after(all_b, clips_by_path, setups, best, ks, take_shots, D, start, end, gap, rng, notes,
+           shape, rhythm, fast_pre=FAST_PRE, anchor_pre=ANCHOR_PRE) -> Plan:
+    """From the take's last kill on: the targets on the drums, who hits them, and the shots.
+
+    Shared by Build and drop (after its take) and Montage (after its held opening);
+    `fast_pre` and `anchor_pre` are the run-ups of the fast and the strong cuts."""
     # ---- after the drop: targets, then who hits them
     cues = cue_scores(rhythm, list(shape.beats))
-    T = targets(cues, D, end - TAIL, gap, first_max=best.seconds - ks[-1] - 0.02 + FAST_PRE, beat=shape.beat)
+    T = targets(cues, D, end - TAIL, gap, first_max=best.seconds - ks[-1] - 0.02 + fast_pre, beat=shape.beat)
     if not T:
         raise ValueError("The song has no drum hits after this drop to cut the kills to.")
     used = {id(best)}
@@ -507,7 +517,7 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
 
     def after(j: int) -> float:
         """Footage a kill on target j must have after it: up to the next shot's run-up."""
-        return (T[j + 1] - T[j] - FAST_PRE) if j + 1 < len(T) else TAIL
+        return (T[j + 1] - T[j] - fast_pre) if j + 1 < len(T) else TAIL
 
     flurry: list[tuple[Burst, list[float], list[float]]] = []    # (burst, kills used, targets)
     last_path = best.path
@@ -530,7 +540,7 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
                     if og > max(MAX_GAP, 1.6 * gap) + 1e-6:
                         continue
                     if sg >= PAIR_TOGETHER and PAIR_RATE[0] <= rate <= PAIR_RATE[1] \
-                            and fits(b, k0, ANCHOR_PRE * rate, sg + after(j + step) * rate):
+                            and fits(b, k0, anchor_pre * rate, sg + after(j + step) * rate):
                         flurry.append((b, [k0, k1], [t, T[j + step]]))
                         used.add(id(b))
                         paths.add(b.path)
@@ -544,10 +554,10 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
         if placed:
             continue
         pick = next((b for b in singles if b.path not in paths
-                     and fits(b, b.kills[0], ANCHOR_PRE, after(j))), None)
+                     and fits(b, b.kills[0], anchor_pre, after(j))), None)
         if pick is None:
             pick = next((b for b in singles if b.path not in paths
-                         and fits(b, b.kills[0], FAST_PRE, after(j))), None)
+                         and fits(b, b.kills[0], fast_pre, after(j))), None)
         if pick is None:
             break                          # out of clips: the reel ends here
         flurry.append((pick, [pick.kills[0]], [t]))
@@ -569,8 +579,8 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
     for i in by_hit:
         t = flurry[i][2][0]
         near = {flurry[n][0].path for n in (i - 1, i + 1) if 0 <= n < len(flurry)}
-        b = next((b for b in pool if b.path not in near and fits(b, b.kills[0], ANCHOR_PRE, after(tj[t]))), None) \
-            or next((b for b in pool if fits(b, b.kills[0], ANCHOR_PRE, after(tj[t]))), None)
+        b = next((b for b in pool if b.path not in near and fits(b, b.kills[0], anchor_pre, after(tj[t]))), None) \
+            or next((b for b in pool if fits(b, b.kills[0], anchor_pre, after(tj[t]))), None)
         if b is None:
             if flurry[i][0] in pool:
                 pool.remove(flurry[i][0])
@@ -592,7 +602,7 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
     pres = []
     for i, (b, ks, ts) in enumerate(flurry):
         g_before = impacts[i + 1] - impacts[i]
-        pres.append(ANCHOR_PRE if g_before > 1.2 * gap or strength.get(ts[0], 0.0) >= 0.6 else FAST_PRE)
+        pres.append(anchor_pre if g_before > 1.2 * gap or strength.get(ts[0], 0.0) >= 0.6 else fast_pre)
 
     shots: list[dict] = []
     marks: list[float] = []
@@ -675,3 +685,68 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
             last["duration"] = round(last["duration"] + grow, 5)
     return Plan(part=(round(start, 4), round(start + sum(s["duration"] for s in shots), 4)), drop=D,
                 shots=shots, marks=marks, notes=notes, kills=kills)
+
+
+# ------------------------------------------------------------------ montage
+
+# MONTAGE, AFTER ITS FIRST REVIEW (ChatGPT, 2026-10-22: 4.2/10 on the general planner -- a
+# fixed 2.1 s cut, 30 shots from 10 of 60 clips, the same fight shown twice in eight of
+# them, kills 1.9 and 5.7 s off their beats). "A varied anthology": a held opening, then a
+# sustained flow of kills on the drums, multi-kills kept together, an accent every few,
+# each clip once -- the flurry Build and drop already cuts, without its build:
+# * THE UNIT is the beat multiple nearest the reference montages' median shot (1.18 s),
+#   inside MONTAGE_UNIT -- measured in beats at every tempo, never a fixed 2.1 s.
+# * THE OPENING is one strong kill held 1-2 bars (the references' first shot is 4.9 s),
+#   its kill on the strongest hit in the second bar.
+# * A RUN-UP OF MONTAGE_PRE before every kill: a montage's shots are twice a flurry's,
+#   and the kill reads better with the approach in it.
+MONTAGE_SHOT = 1.18
+MONTAGE_UNIT = (0.85, 1.5)
+MONTAGE_PRE = 0.35
+MONTAGE_SECONDS = 36.0
+
+
+def montage_unit(beat: float) -> float:
+    """Seconds between a montage's kills: the whole-beat multiple nearest MONTAGE_SHOT."""
+    ks = [k * beat for k in range(1, 7)]
+    inside = [g for g in ks if MONTAGE_UNIT[0] <= g <= MONTAGE_UNIT[1]]
+    return min(inside or ks, key=lambda g: abs(g - MONTAGE_SHOT))
+
+
+def plan_montage(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None = None,
+                 seconds: float = MONTAGE_SECONDS, seed: int = 0, loose: bool = False) -> Plan:
+    """Shots for a montage: a held opening, then kills on the drums, each clip once."""
+    rng = random.Random(seed)
+    all_b = [b for c in clips for b in bursts(c)]
+    if len({b.path for b in all_b}) < 4:
+        raise ValueError("A montage needs at least four clips with a kill.")
+    clips_by_path = {str(c["path"]): c for c in clips}
+    setups = sorted((b for b in all_b if is_setup(b)), key=setup_score, reverse=True)
+    notes: list[str] = []
+    beat = float(shape.beat)
+    bar = 4 * beat
+    gap = montage_unit(beat)
+    beats = list(shape.beats)
+    downbeats = [b for i, b in enumerate(beats) if i % 4 == getattr(shape, "downbeat_pos", 0) % 4]
+    lo, hi = (float(part[0]), float(part[1])) if part else (float(getattr(shape, "drums_in", None) or 0.0),
+                                                           float(shape.seconds))
+    start = next((b for b in downbeats if b >= lo - 1e-6), lo)
+    want = (hi - lo) if (part and not loose) else (hi - lo if part else seconds)
+    end = min(float(shape.seconds), start + want) if (not part or loose) else hi
+    # the opening: the strongest single, held, its kill on the strongest hit of the second bar
+    cues = cue_scores(rhythm, beats)
+    window = [(t, sc) for t, sc in cues if start + bar - 1e-6 <= t <= start + 2 * bar + 1e-6]
+    D = max(window, key=lambda x: x[1])[0] if window else start + 2 * bar
+    singles = sorted((b for b in all_b if len(b.kills) == 1 and b.kills[0] >= 1.0),
+                     key=lambda b: (single_score(b) + (1.0 if b.big() else 0.0), rng.random()), reverse=True)
+    best = next((b for b in singles if b.kills[0] - 0.05 >= min(D - start, 2 * bar)), None) or (singles or all_b)[0]
+    ks = [best.kills[0]]
+    take_shots, begin = take(Burst(best.clip, ks, best.hs[:1]), D - start, lead_range=(bar, 2 * bar))
+    if begin > 1e-3:
+        start += begin
+    notes.append(f"Montage: opens on {best.clip.get('name')}, held to its kill at {D:.1f} s, then a kill about "
+                 f"every {gap / beat:.0f} beat(s) ({gap:.2f} s) on the drums, a longer accent every few, "
+                 f"each clip once.")
+    got = _after(all_b, clips_by_path, setups, Burst(best.clip, ks, best.hs[:1]), ks, take_shots, D, start, end,
+                 gap, rng, notes, shape, rhythm, fast_pre=MONTAGE_PRE, anchor_pre=MONTAGE_PRE)
+    return got
