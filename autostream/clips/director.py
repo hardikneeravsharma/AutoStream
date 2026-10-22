@@ -43,14 +43,19 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 BURST_GAP = 6.0            # s: kills further apart than this in a clip are separate fights
-TAKE_LEAD = (0.8, 3.0)     # s of the take before its first kill: at least, at most
+# The take's first kill comes within 1.8 s: reviewed (ChatGPT, v1.79.8), a first kill at
+# 2.35 s "leaves almost the entire hook window waiting for its payoff"; its general rule is
+# the first compelling action inside 2 s.
+TAKE_LEAD = (0.8, 1.8)     # s of the take before its first kill: at least, at most
 TAKE_MAX = 14.0            # s: a set-up longer than this is cut down to its last kills
 # THE WHOLE ROUND, WITH THE WAITING CUT OUT. An ACE chosen to build on played three
 # of its five kills: the fourth came 13 s after the third, past BURST_GAP, so the
 # round was split in two and the take was the first half. A chosen clip, or one
 # named ACE or CLUTCH, is one round; where it waits longer than JUMP_GAP between
 # kills the take jumps, keeping JUMP_AFTER of the one kill and JUMP_BEFORE of the next.
-JUMP_GAP = 4.5
+# A wait over 3 s is jumped too: reviewed, a 3.5 s gap between a take's kills "holds the
+# same composition for a long time" -- its general rule, a build gap over 3 s gets a trim.
+JUMP_GAP = 3.0
 JUMP_AFTER = 1.0
 JUMP_BEFORE = 1.4
 SETUP_MIN_KILLS = 3        # ...or two, with a clutch / ace / last-alive name on it
@@ -68,9 +73,14 @@ DROP_HOLD = (1.3, 1.6)
 MAX_GAP = 1.0              # s: no two kills after the drop further apart, a double's own two included
 # AN ANCHOR EVERY FEW KILLS. Reviewed on Lalala (ChatGPT, 2026-10-22): a nearly uniform
 # 0.46 s after the drop "becomes predictable over a long section". After every 4-6
-# fast kills the run takes one longer step, 0.69-0.92 s, onto a strong hit -- the
-# accent a hand edit gives a phrase -- and is nudged to (not forced) by the sixth.
-ANCHOR = (0.69, 0.92)
+# fast kills the run takes one longer step onto a strong hit -- the accent a hand edit
+# gives a phrase -- and is nudged to (not forced) by the sixth. IN BEATS, NOT SECONDS
+# (the second review): from 1.3 gaps to two beats, or 1.75 gaps where that is longer --
+# 0.60-0.92 s at 130 BPM, 0.85-1.30 at 92 -- and only onto a hit at the 70th percentile
+# or above of the hits within a bar of it.
+ANCHOR_GAPS = (1.3, 1.75)
+ANCHOR_BEATS = 2.0
+ANCHOR_STRONG = 0.70
 ANCHOR_EVERY = (4, 6)
 ANCHOR_LATE = 0.25          # cost of each fast kill past the sixth without one
 TAIL = 1.2                 # s the last kill is held for: OUTRO_FADE after it, then the fade
@@ -176,7 +186,7 @@ def cue_scores(rhythm, beats: list[float]) -> list[tuple[float, float]]:
 
 
 def targets(cues: list[tuple[float, float]], drop: float, end: float, gap: float,
-            first_max: float = 1e9) -> list[float]:
+            first_max: float = 1e9, beat: float | None = None) -> list[float]:
     """The kill targets after the drop: the best-scoring run of cues about `gap` apart.
 
     A longest-path over the cues, each step 0.8-1.6 gaps long and costed by
@@ -189,18 +199,19 @@ def targets(cues: list[tuple[float, float]], drop: float, end: float, gap: float
     first = (DROP_HOLD[0] * gap, max(MAX_GAP, DROP_HOLD[1] * gap))
     if first_max < first[1]:
         first = (min(first[0], max(0.8 * gap, first_max - 0.3 * gap)), first_max)
-    got = _run(cues, drop, end, gap, first, 1.6)
+    got = _run(cues, drop, end, gap, first, 1.6, beat)
     if not got:
         # NO HIT IN THE HOLD'S WINDOW. Notorious's first cue after its drop came
         # 0.66 s on, 4 ms before the window opened, and the next was 1.36 s on:
         # the run never started and the take played on for twenty seconds. A
         # wider first step, and longer steps where the song leaves a hole,
         # rather than no flurry at all.
-        got = _run(cues, drop, end, gap, (0.9 * gap, max(first[1], 2.5 * gap)), 2.0)
+        got = _run(cues, drop, end, gap, (0.9 * gap, max(first[1], 2.5 * gap)), 2.0, beat)
     return got
 
 
-def _run(cues, drop: float, end: float, gap: float, first: tuple[float, float], longest: float) -> list[float]:
+def _run(cues, drop: float, end: float, gap: float, first: tuple[float, float], longest: float,
+         beat: float | None = None) -> list[float]:
     """The best run of targets, counting the fast kills since the last anchor (see ANCHOR).
 
     The state is (cue, kills since the drop or the last anchor): an anchor step --
@@ -213,7 +224,12 @@ def _run(cues, drop: float, end: float, gap: float, first: tuple[float, float], 
     T = np.array([drop] + [t for t, _ in pts])
     S = np.array([0.0] + [s for _, s in pts])
     n, C = len(T), ANCHOR_EVERY[1] + 1
-    a_lo, a_hi = max(ANCHOR[0], 1.3 * gap), ANCHOR[1]
+    beat = beat or gap
+    a_lo = ANCHOR_GAPS[0] * gap
+    a_hi = max(ANCHOR_BEATS * beat, ANCHOR_GAPS[1] * gap)
+    # a hit strong enough to anchor on: at the ANCHOR_STRONG percentile of those within a bar
+    strong = np.array([S[k] >= np.quantile(S[1:][np.abs(T[1:] - T[k]) <= 2 * beat], ANCHOR_STRONG) - 1e-9
+                       if k else False for k in range(len(T))])
     reach = max(longest * gap, a_hi)
     best = np.full((n, C), -np.inf)
     prev = np.full((n, C, 2), -1, int)
@@ -230,7 +246,7 @@ def _run(cues, drop: float, end: float, gap: float, first: tuple[float, float], 
                     if not (first[0] <= d <= first[1]):
                         continue
                     nc, cost = 0, 0.0          # the drop's hold is the first accent
-                elif c >= ANCHOR_EVERY[0] and a_lo <= d <= a_hi:
+                elif c >= ANCHOR_EVERY[0] and a_lo <= d <= a_hi and strong[j]:
                     nc, cost = 0, 0.0          # an anchor, where it is due
                 elif 0.8 * gap <= d <= longest * gap:
                     nc = min(c + 1, C - 1)
@@ -429,7 +445,7 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
 
     # ---- after the drop: targets, then who hits them
     cues = cue_scores(rhythm, list(shape.beats))
-    T = targets(cues, D, end - TAIL, gap, first_max=best.seconds - ks[-1] - 0.02 + FAST_PRE)
+    T = targets(cues, D, end - TAIL, gap, first_max=best.seconds - ks[-1] - 0.02 + FAST_PRE, beat=shape.beat)
     if not T:
         raise ValueError("The song has no drum hits after this drop to cut the kills to.")
     used = {id(best)}
