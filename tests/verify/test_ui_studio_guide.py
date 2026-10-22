@@ -106,8 +106,9 @@ def test_a_style_that_needs_a_drop_on_a_song_without_one_is_refused_in_words_wit
     pg.wait_for_function("() => document.getElementById('studio-gd-chip').className.indexOf('bad') >= 0", timeout=30_000)
     c = chip(pg)
     assert "drop" in c["text"].lower(), c
-    fix = pg.locator('#studio-gd-chip [data-gd="fix"]')
-    assert fix.inner_text() == "Choose another song"
+    # the drop may be there and missed: marking it is offered first, another song beside it
+    assert pg.locator('#studio-gd-chip [data-fix="mark-drop"]').inner_text() == "Mark the drop yourself"
+    assert pg.locator('#studio-gd-chip [data-fix="pick-song"]').inner_text() == "Choose another song"
     assert "none found" in pg.inner_text(".gd-facts")
 
 
@@ -740,3 +741,143 @@ def test_lyrics_are_offered_as_used_if_found_and_montage_says_its_minimum(rp):
     rp.click("#studio-gd-next")
     if rp.locator('[data-gd="set"][data-k="lyrics"]').count():
         assert "if this song’s lyrics are found" in rp.inner_text("#studio-gd-body")
+
+
+# ---------------------------------------------------------------------------------------------
+# THE DROPS ON THE SONG STEP, and a song from a YouTube link without leaving the guide.
+
+def _drop_view(pg, style, song):
+    _open(pg)
+    _style(pg, style)
+    pg.click("#studio-gd-next")
+    _song_named(pg, song)
+    pg.wait_for_selector("#studio-gd-dropcv")
+
+
+def test_the_song_step_shows_the_song_its_drops_and_a_player(rp):
+    """Asked for: see the drops on the chosen song, inside the guide, and hear into them."""
+    _drop_view(rp, "drop", "drop song")
+    view = rp.inner_text("#studio-gd-drops")
+    assert "found by AutoStream" in view and "main drop" in view.lower() and "AutoStream’s" in view
+    assert rp.is_enabled('#studio-gd-drops [data-gd="drop-into"]')
+    assert rp.locator("#studio-gd-seek").count() == 1 and rp.locator("#studio-gd-vol").count() == 1
+    # its parts are read for the drawing; the click track's loudness is drawn meanwhile either way
+    rp.wait_for_function("() => studio.gd.parts && !studio.gd.parts.loading", timeout=60_000)
+    # Play into the drop: from a few seconds before it
+    main = rp.evaluate("() => studio_gdMainDrop()")
+    rp.evaluate("() => { HTMLMediaElement.prototype.play = function () { this.dispatchEvent(new Event('play')); return Promise.resolve(); }; }")
+    rp.click('.gd-transport [data-gd="drop-into"]')
+    rp.wait_for_function("(t) => Math.abs(studio_gdNow() - t) < 0.3 || Math.abs(studio.gd.head - t) < 0.3", arg=main - 4)
+    # a click on the drawing seeks there
+    box = rp.locator("#studio-gd-dropcv").bounding_box()
+    rp.mouse.click(box["x"] + box["width"] * 0.25, box["y"] + box["height"] * 0.8)
+    secs = rp.evaluate("() => studio.songShape.seconds")
+    assert abs(rp.evaluate("() => studio.gd.head") - secs * 0.25) < secs * 0.02
+
+
+def test_a_drop_marked_on_a_song_with_none_is_judged_and_planned(rp):
+    """M2 done properly: Build and drop on a song with no drop said "won't work" with only another
+    song to offer. A drop marked here is in the guide's spec: the verdict and the plan carry it."""
+    _drop_view(rp, "drop", "click song")
+    rp.wait_for_function("() => studio.gd.verdict && studio.gd.verdict.level === 'bad'", timeout=60_000)
+    assert "drop" in rp.inner_text("#studio-gd-chip")
+    rp.click('#studio-gd-chip [data-fix="mark-drop"]')
+    assert rp.evaluate("() => studio.gd.step") == 1
+    rp.evaluate("() => studio_gdSeek(30)")
+    rp.click("#studio-gd-dropadd")
+    assert rp.evaluate("() => studio.gd.drops.map(d => d.t)") == [30]
+    rp.click("#studio-gd-next")
+    rp.click('[data-gd="pickall"]')
+    _settled(rp)
+    assert rp.evaluate("() => studio.gd.judged.drops") == [30]
+    assert rp.evaluate("() => studio.gd.verdict.level") != "bad", rp.evaluate("() => studio.gd.verdict")
+    rp.click("#studio-gd-next")
+    rp.click("#studio-gd-next")
+    rp.wait_for_selector("#studio-gd-name")
+    _settled(rp)
+    judged = rp.evaluate("() => studio.gd.judged")
+    sent = _make(rp)
+    assert sent == judged and sent["drops"] == [30]
+    assert abs(rp.evaluate("() => studio.project.song_drop") - 30) < 0.05
+
+
+def test_drops_move_and_go_and_come_back_and_all_settings_takes_them(rp):
+    _drop_view(rp, "drop", "drop song")
+    found = rp.evaluate("() => studio_gdDropList().map(d => d.t)")
+    assert found and rp.evaluate("() => studio.gd.drops") is None
+    # remove AutoStream's: no drop at all is an answer too
+    rp.click('#studio-gd-droplist [data-gd="drop-del"]')
+    assert rp.evaluate("() => studio.gd.drops") == []
+    _settled(rp)
+    assert rp.evaluate("() => studio.gd.judged.drops") == []
+    assert rp.evaluate("() => studio.gd.verdict.level") == "bad"
+    # double-click marks one; dragging it moves it
+    box = rp.locator("#studio-gd-dropcv").bounding_box()
+    secs = rp.evaluate("() => studio.songShape.seconds")
+    rp.mouse.dblclick(box["x"] + box["width"] * 0.5, box["y"] + box["height"] * 0.7)
+    t0 = rp.evaluate("() => studio.gd.drops[0].t")
+    assert abs(t0 - secs * 0.5) < secs * 0.02
+    box = rp.locator("#studio-gd-dropcv").bounding_box()
+    x0 = box["x"] + box["width"] * t0 / secs
+    rp.mouse.move(x0, box["y"] + 30)
+    rp.mouse.down()
+    rp.mouse.move(x0 + box["width"] * 0.1, box["y"] + 30, steps=5)
+    rp.mouse.up()
+    t1 = rp.evaluate("() => studio.gd.drops[0].t")
+    assert abs(t1 - (t0 + secs * 0.1)) < secs * 0.02, (t0, t1)
+    _settled(rp)
+    assert rp.evaluate("() => studio.gd.judged.drops") == [t1]
+    # All settings hands them over
+    rp.click('[data-gd="step"][data-i="2"]')
+    rp.click('[data-gd="pickall"]')
+    rp.click('[data-gd="all"]')
+    rp.wait_for_selector("#studio-make-scrim:not(.hide)")
+    assert rp.evaluate("() => studio_planBody(false).drops") == [t1]
+    # back in the guide: Back to AutoStream's sends none
+    rp.evaluate("() => studio_gdOpen()")
+    rp.wait_for_selector("#studio-guide-scrim:not(.hide)")
+    rp.click('[data-gd="step"][data-i="1"]')
+    rp.click('#studio-gd-drops [data-gd="drop-reset"]')
+    assert rp.evaluate("() => studio.gd.drops") is None
+    assert "drops" not in rp.evaluate("() => studio_gdBody()")
+    # a drop belongs to its song: another song starts from its own
+    rp.evaluate("() => studio_gdAddDrop(12)")
+    _song_named(rp, "click song")
+    assert rp.evaluate("() => studio.gd.drops") is None
+
+
+def test_a_youtube_link_from_the_guide_chooses_the_song_there(rp, rich_app):
+    """Asked for: paste a YouTube link on the guide's Song step. The download is stubbed -- no
+    network -- and lands a song file in the songs folder, as the real one does."""
+    import shutil
+
+    songs = rich_app["home"] / "video" / "songs"
+    got = songs / "Fetched tune [abc123].wav"
+    shutil.copy(songs / "drop song.wav", got)
+    _open(rp)
+    _style(rp, "drop")
+    rp.click("#studio-gd-next")
+    rp.evaluate("""(path) => { const post = API.post, get = API.get; window.__ytPolls = 0;
+        API.post = function (u, b) {
+            if (u === '/api/studio/songfetch') return Promise.resolve(b.url.indexOf('bad') >= 0
+                ? {ok: false, error: 'That is not a YouTube link.'} : {ok: true, fetch: {state: 'starting'}});
+            return post.apply(this, arguments); };
+        API.get = function (u) {
+            if (u === '/api/studio/songfetch/status') { window.__ytPolls++;
+                return Promise.resolve({ok: true, fetch: window.__ytPolls < 2 ? {state: 'downloading', percent: 50, title: 'Fetched tune'}
+                    : {state: 'done', path: path, title: 'Fetched tune'}}); }
+            return get.apply(this, arguments); }; }""", str(got))
+    rp.click('#studio-gd-body [data-act="studio-yt"][data-for="guide"]')
+    rp.wait_for_selector("#studio-yt-scrim:not(.hide)")
+    rp.fill("#studio-yt-url", "https://youtu.be/bad")
+    rp.click("#studio-yt-go")
+    rp.wait_for_selector("#studio-yt-error:not(.hide)")
+    assert "not a YouTube link" in rp.inner_text("#studio-yt-error")
+    rp.fill("#studio-yt-url", "https://youtu.be/abc123")
+    rp.click("#studio-yt-go")
+    rp.wait_for_function("(p) => studio.song === p && studio.songShape", arg=str(got), timeout=60_000)
+    rp.wait_for_selector("#studio-yt-scrim.hide", state="attached")
+    assert not rp.evaluate("() => document.getElementById('studio-guide-scrim').classList.contains('hide')")
+    assert rp.evaluate("() => studio.gd.step") == 1
+    rp.wait_for_selector("#studio-gd-dropcv")
+    assert rp.locator('.gd-card[data-gd="song"].is-on').inner_text().startswith("Fetched tune")

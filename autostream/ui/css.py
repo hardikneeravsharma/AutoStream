@@ -3864,7 +3864,23 @@ STUDIO_CSS = r"""
 .gd-leftlist,.gd-why{list-style:none;margin:0;padding:0;display:grid;gap:6px}
 .gd-leftlist li{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px var(--space-3)}
 .gd-why li{color:var(--text-secondary)}.gd-why b{color:var(--text-primary)}
-.gd-acts{display:flex;flex-wrap:wrap;gap:var(--space-2)}
+.gd-acts{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}
+/* THE SONG STEP'S DROPS: the song drawn, a small player, the drops as a list to play into and change. */
+.gd-dropbox{position:relative;width:100%;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface-sunken,var(--surface));overflow:hidden}
+.gd-dropbox canvas{display:block;width:100%;height:150px;cursor:crosshair;touch-action:none}
+.gd-transport{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2) var(--space-3)}
+.gd-play{min-width:64px}
+.gd-time{min-width:96px;text-align:center}
+.gd-seek{flex:1 1 220px;min-width:140px;accent-color:var(--accent)}
+.gd-vol{display:inline-flex;align-items:center;gap:6px}.gd-vol input{width:96px;accent-color:var(--accent)}
+.gd-snap{display:inline-flex;align-items:center;gap:6px;color:var(--text-secondary)}
+.gd-droplist{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.gd-droprow{display:grid;grid-template-columns:3em 6em 8em 7em minmax(0,1fr);align-items:center;gap:var(--space-2);padding:2px 0;border-bottom:1px solid var(--border-subtle)}
+.gd-droprow.is-hand .gd-who{color:var(--warn)}
+.gd-who{color:var(--text-tertiary)}
+.gd-main{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--warn)}
+.gd-droptools{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
+@media (max-width:639px){.gd-droprow{grid-template-columns:3em 6em minmax(0,1fr)}.gd-droprow .gd-who,.gd-droprow .gd-main{display:none}}
 .gd-chip{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)}
 .gd-chip p{margin:0;min-width:0}
 .gd-dot{font-size:12px;font-weight:700;letter-spacing:.05em;padding:3px 8px;border-radius:4px;text-transform:uppercase;white-space:nowrap}

@@ -987,6 +987,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_check(b))
             elif p == "/api/studio/feasible":
                 self._json(self.app.studio_feasible(b))
+            elif p == "/api/studio/songparts":
+                self._json(self.app.studio_songparts(b))
             elif p == "/api/studio/render":
                 self._json(self.app.studio_render(b))
             elif p == "/api/studio/lyrics/preview":
@@ -3745,6 +3747,27 @@ class Server:
         except Exception as e:                      # noqa: BLE001
             log.info("rhythm failed for %s: %s", p.name, e)
         return out
+
+    def studio_songparts(self, body: dict) -> dict:
+        """The song's parts and loudness, for the guided maker's drop view. -> {ok, sections, energy, hz}
+
+        Only what the drawing needs, off the same cached Rhythm the Song tab's hits lane and the
+        planner read -- not the Song tab's whole songview, whose lanes and spectrogram the guide
+        never shows. Never raises: a song whose parts cannot be read is drawn without them.
+        """
+        from .clips import rhythm, songview
+
+        p = self._song_in_home(str(body.get("song") or ""))
+        if p is None:
+            return {"ok": False, "error": "That song is not one AutoStream has read."}
+        try:
+            shape = self._reel_song({"song": str(p)})
+            r = rhythm.for_song(shape, songview.folder(self._clips_dir(cfg.load())).parent / "rhythm")
+        except Exception as e:                      # noqa: BLE001
+            log.info("song parts failed for %s: %s", p.name, e)
+            return {"ok": False, "error": "The song's parts could not be read."}
+        return {"ok": True, "hz": rhythm.ENERGY_HZ, "energy": [round(e, 3) for e in r.energy],
+                "sections": [{"kind": s.kind, "start": round(s.start, 3), "end": round(s.end, 3)} for s in r.sections]}
 
     def studio_songview_bytes(self, song: str) -> tuple[bytes, str | None]:
         from .clips import songview

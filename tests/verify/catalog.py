@@ -617,6 +617,11 @@ CONTROLS: list[Control] = [
             why="one verdict and one fix for a style, a song and clips -- made from "
                 "a real plan without the slow footage checks, so a chip says what the "
                 "planner will do; no song or no clips is a verdict of its own, not an error"),
+    Control("/api/studio/songparts", "POST", CALL, "the guide's drop view: the song's parts", "studio",
+            body={"song": ""}, expect=_has("ok"),
+            acts=("studio-gd",),
+            why="the song's parts and loudness for the drawing on the guide's Song step; a song "
+                "AutoStream has not read is refused rather than read from any path"),
     Control("/api/studio/check", "POST", CALL, "apply a timeline edit", "studio",
             body={"project": None}, expect=_has("ok"),
             reject={"project": None}, reject_soft=True,

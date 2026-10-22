@@ -263,7 +263,10 @@ listed so the gap is visible.
 | 6.73 | Make while a reel is rendering | Nothing is planned and the timeline is not replaced; the chip says a reel is rendering, with its percentage; the running render is still followed | yes (`test_ui_studio_guide`) |
 | 6.74 | Type a name on the last step while the verdict lands; make; start the next reel | The name field keeps focus and the typing; the next reel's name field is empty, with its own default | yes (`test_ui_studio_guide`) |
 | 6.75 | *Give us a song* with a song with no drop and one-kill clips; then with two clips | The style that works is chosen (Montage) and the others' reasons are listed; with nothing that works, each reason and *Choose another song* / *Show the other styles* -- a style that could only be planned the general way is not chosen | yes (`test_ui_studio_guide`; the flag offline in `test_feasible`) |
-| 6.76 | The guided maker's Clips step under Montage, and its Look step's lyrics | Montage says it needs at least four clips; lyrics are offered as used if the song's lyrics are found, never promised | yes (`test_ui_studio_guide`) || 6.60 | Song tab: the Hits lane on a drum loop with a quiet opening | Every kick, snare and hat is a tick in its own row and the song's parts are named along the top; no kick is drawn in the opening that has none; the lane hides and comes back from its toggle | yes (`test_ui_studio_hits`) |
+| 6.76 | The guided maker's Clips step under Montage, and its Look step's lyrics | Montage says it needs at least four clips; lyrics are offered as used if the song's lyrics are found, never promised | yes (`test_ui_studio_guide`) |
+| 6.77 | The guided maker's Song step with a song chosen: its drop view | The song is drawn -- loudness, its parts named, AutoStream's drops hollow and the main one marked, the part used shaded; a player with play/pause, a seek bar, volume and *Play into the drop* (from a few seconds before it); clicking the drawing seeks | yes (`test_ui_studio_guide`) |
+| 6.78 | Mark a drop on a song with none (playhead, double-click), move one, remove AutoStream's, then *Back to AutoStream's drops* | Each change is in the guide's spec: the verdict is asked again with the drops and the plan sends the same `drops`; Build and drop's *no drop* refusal offers *Mark the drop yourself* and is lifted by a marked drop; the reset sends none; All settings hands the drops to the Make page; a new song starts from its own | yes (`test_ui_studio_guide`; the verdict reading them offline in `test_feasible`) |
+| 6.79 | *Paste a YouTube link…* on the guide's Song step | The link dialog opens over the guide; a failure is said in the dialog; when the download is done the song is chosen in the guide, its card is in the refreshed list and the drop view is open on it; the guide stays open | yes (`test_ui_studio_guide`, the download stubbed) || 6.60 | Song tab: the Hits lane on a drum loop with a quiet opening | Every kick, snare and hat is a tick in its own row and the song's parts are named along the top; no kick is drawn in the opening that has none; the lane hides and comes back from its toggle | yes (`test_ui_studio_hits`) |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.
@@ -293,8 +296,8 @@ nothing noticed.
 
 | | count |
 |---|---|
-| Scenarios catalogued | 83 |
-| Covered by a focused test | 44 |
+| Scenarios catalogued | 86 |
+| Covered by a focused test | 47 |
 | Covered only by the sweep | 12 |
 | **Known gaps** | **27** |
 
