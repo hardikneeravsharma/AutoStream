@@ -146,7 +146,7 @@ def _open(pg, app):
     song = _song(app)
     _pick(pg, "14:00", 5)
     _spy(pg, song)
-    pg.click('[data-act="studio-make"]')
+    pg.evaluate("studio_openMake()")              # All settings: the full page
     pg.wait_for_selector("#studio-make-scrim:not(.hide)")
     return song
 

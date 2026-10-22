@@ -156,7 +156,7 @@ def test_how_long_keep_every_kill_and_best_order_reach_the_plan_and_a_new_style_
     pg.evaluate("() => studio_arrangePick('hits')")
     assert pg.get_attribute('#bin-arrange [data-how="hits"]', "aria-pressed") == "true"
 
-    pg.click('[data-act="studio-make"]')
+    pg.evaluate("studio_openMake()")              # All settings: the full page
     pg.wait_for_selector("#studio-make-scrim:not(.hide)")
     # Without a song there is no part to fill, so that choice is not offered.
     assert pg.is_disabled("#studio-fill-part")
@@ -215,7 +215,7 @@ def test_a_longer_part_on_the_song_tab_is_planned_again_and_kept(pg, app):
     song = _song(app)
     _pick(pg, "15:00", 6)
     _spy(pg, song)
-    pg.click('[data-act="studio-make"]')
+    pg.evaluate("studio_openMake()")              # All settings: the full page
     pg.wait_for_selector("#studio-make-scrim:not(.hide)")
     pg.click('[data-act="studio-song"]')
     pg.wait_for_selector("#studio-mk-part:not(.hide)", timeout=60_000)

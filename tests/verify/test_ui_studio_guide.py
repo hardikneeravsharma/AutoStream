@@ -263,3 +263,20 @@ def test_fast_paced_headshot_offers_and_picks_headshots_only(pg):
     assert sorted(pg.evaluate("() => studio.gd.quick")) == sorted(ids)
     text = pg.inner_text("#studio-gd-body")
     assert "Headshots only" in text and f"{len(ids)} of " in text and "single kill" in text
+
+
+def test_the_make_button_opens_the_steps_with_the_clips_picked(pg):
+    """F13, the player's call: the steps are the way in. Clips picked on the Clips tab open the
+    guided maker with them in it; the full page is All settings, on every step. And the shape
+    of a 9:16 reel starts at Near fit, the player's other call."""
+    pg.click('[data-gd="close"]')
+    ids = pg.evaluate("() => Object.keys(studio.clipIndex).slice(0, 4)")
+    pg.evaluate("(ids) => { studio.selected = ids; studio_syncSelection(); }", ids)
+    pg.evaluate("() => { studio.gd.style = ''; studio.gd.auto = false; studio.gd.quick = []; studio.gd.setup = ''; }")
+    pg.click("#studio-make-btn")
+    pg.wait_for_selector("#studio-guide-scrim:not(.hide)")
+    assert pg.evaluate("() => document.getElementById('studio-make-scrim').classList.contains('hide')")
+    assert sorted(pg.evaluate("() => studio_gdIds()")) == sorted(ids)
+    assert pg.inner_text("#studio-gd-open") == "Make a reel"
+    assert pg.evaluate("() => studio.gd.fit") in ("near",) or pg.evaluate("() => !!localStorage.getItem('autostream.guide')")
+    assert pg.evaluate("() => studio.vfit") == "near"

@@ -69,7 +69,7 @@ STUDIO_HTML = r"""
         <h1 class="bin-title">Pick your clips, then pick a look</h1>
         <p class="bin-lede" id="studio-sub">Reading your clips…</p>
       </div>
-      <button type="button" class="btn btn-primary" data-act="studio-gd-open" id="studio-gd-open">Make a reel, step by step</button>
+      <button type="button" class="btn btn-primary" data-act="studio-gd-open" id="studio-gd-open">Make a reel</button>
     </header>
     <div class="studio-tools">
       <input class="input studio-search" id="studio-q" type="search"
@@ -781,12 +781,13 @@ STUDIO_HTML = r"""
           <button type="button" class="seg-btn is-active" data-act="studio-fmt" data-fmt="landscape">Landscape 16:9</button>
           <button type="button" class="seg-btn" data-act="studio-fmt" data-fmt="vertical">Vertical 9:16</button>
         </div>
-        <!-- HOW A 16:9 GAME FILLS A 9:16 FRAME: cropped to its middle, or all
-             of it over a blurred copy. Only asked when it is a question. -->
+        <!-- HOW A 16:9 GAME FILLS A 9:16 FRAME: cropped to its middle, all of it over a
+             blurred copy, or -- the default since v1.80.0, the player's choice -- the middle
+             three quarters, a third taller. Only asked when it is a question. -->
         <div class="seg hide" role="group" aria-label="Vertical framing" id="studio-mk-fit">
-          <button type="button" class="seg-btn is-active" data-act="studio-mk-fit" data-fit="zoom">Zoom to fill</button>
+          <button type="button" class="seg-btn is-active" data-act="studio-mk-fit" data-fit="near">Near fit</button>
           <button type="button" class="seg-btn" data-act="studio-mk-fit" data-fit="fit">Fit the whole picture</button>
-          <button type="button" class="seg-btn" data-act="studio-mk-fit" data-fit="near">Near fit</button>
+          <button type="button" class="seg-btn" data-act="studio-mk-fit" data-fit="zoom">Zoom to fill</button>
         </div>
       </div>
       <!-- THE ORDER, ASKED WHERE THE REEL IS MADE.
@@ -1186,7 +1187,7 @@ const studio = {
   /* The music lane: the whole song's spectrogram as one image, which song has
      been asked for, and what the lane is showing. */
   spec: null, musicWant: '', musicPending: false, showSpec: true, showMarks: true, waveTick: 0,
-  style: '', song: '', songShape: null, fmt: 'landscape', vfit: 'zoom', order: 'chosen',
+  style: '', song: '', songShape: null, fmt: 'landscape', vfit: 'near', order: 'chosen',
   project: null, derived: null, notes: [], dirty: true, output: '', renderedAt: 0,
   /* WHAT HAS NOT REACHED THE VIDEO YET. `dirty` could say that something had
      changed; it could not say what, so pressing render was an act of faith and
@@ -9470,7 +9471,10 @@ function studio_wire() {
     else if (act === 'studio-preview-close') studio_closeModals();
     else if (act === 'studio-make-cancel') studio_buildCancel();
     else if (act === 'studio-clear') { studio.selected = []; studio.adding = null; studio_syncSelection(); }
-    else if (act === 'studio-make') studio_openMake();
+    /* THE STEPS ARE THE WAY IN (F13, the player's call once a second style passed its review):
+       the clips picked here open the guided maker with them in it. Rebuilding a reel still opens
+       the full page with that reel's settings, and All settings is on every step of the guide. */
+    else if (act === 'studio-make') { if (studio.adding) studio_openMake(); else studio_gdOpenWith(studio.selected.slice()); }
     else if (act === 'studio-gd-open') studio_gdOpen();
     else if (act === 'studio-mk-chipfix') {
       const v = document.querySelector('#studio-make [data-act="studio-fmt"][data-fmt="vertical"]');
@@ -10975,7 +10979,7 @@ const GD_STEPS = ['Style', 'Song', 'Clips', 'Look', 'Check and make'];
 /* The styles that have been through the review loop. Fast-paced headshot since v1.79.8: ChatGPT's third review of
    its render (7.3/10) said yes, "ready to be offered as a recommended style". */
 const GD_BEST = ['drop', 'fasthead'];
-studio.gd = {step: 0, style: '', auto: false, setup: '', quick: [], fmt: 'vertical', fit: 'fit', name: '',
+studio.gd = {step: 0, style: '', auto: false, setup: '', quick: [], fmt: 'vertical', fit: 'near', name: '',
              verdict: null, asked: 0, busy: false, timer: null};
 
 /* WHAT WAS CHOSEN LAST TIME, remembered as intent -- the style, the shape, the framing -- and not as
@@ -11082,6 +11086,19 @@ async function studio_gdOpen() {
   studio_makePage(true);
   studio_gdDraw();
 }
+/* The guide with the clips picked on the Clips tab already in it: the best set-up among them in the
+   build slot when the style builds, the rest as its clips. */
+async function studio_gdOpenWith(ids) {
+  await studio_gdOpen();
+  const gd = studio.gd;
+  const clips = (ids || []).map(id => studio.clipIndex[id]).filter(Boolean);
+  if (!clips.length || studio_el('studio-guide-scrim').classList.contains('hide')) return;
+  const setups = clips.filter(studio_gdIsSetup).sort((a, b) => studio_gdSetupScore(b) - studio_gdSetupScore(a));
+  gd.setup = gd.style !== 'drop' && gd.style ? '' : (setups[0] ? setups[0].id : '');
+  gd.quick = clips.map(c => c.id).filter(id => id !== gd.setup);
+  gd.verdict = null;
+  studio_gdDraw();
+}
 function studio_gdClose() {
   if (studio.gd.busy) studio.buildGen++;   /* closing while it plans abandons the plan */
   studio_show('studio-guide-scrim', false);
@@ -11186,7 +11203,7 @@ function studio_gdDrawLook() {
   const gd = studio.gd;
   return '<div class="gd-q"><h3>How should it look?</h3><p class="muted">Only what changes the picture. The effects come with the style; lyrics and the rest are under All settings.</p></div>' +
     '<div class="gd-field"><h4>Shape</h4>' + studio_gdSeg('fmt', gd.fmt, [['vertical', '9:16 Short or Reel'], ['landscape', '16:9 YouTube']]) + '</div>' +
-    (gd.fmt === 'vertical' ? '<div class="gd-field"><h4>Framing</h4>' + studio_gdSeg('fit', gd.fit, [['fit', 'Fit the whole picture'], ['near', 'Near fit'], ['zoom', 'Zoom to fill']]) + '</div>' : '');
+    (gd.fmt === 'vertical' ? '<div class="gd-field"><h4>Framing</h4>' + studio_gdSeg('fit', gd.fit, [['near', 'Near fit'], ['fit', 'Fit the whole picture'], ['zoom', 'Zoom to fill']]) + '</div>' : '');
 }
 
 function studio_gdDrawCheck() {

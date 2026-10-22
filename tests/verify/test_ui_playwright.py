@@ -321,7 +321,7 @@ def _studio_build(page, folder_label: str, picks: int, style: str, name: str) ->
     for i in range(picks):
         tiles.nth(i).click()
     assert page.inner_text("#studio-tray-count").startswith(f"{picks} clips")
-    page.click('[data-act="studio-make"]')
+    page.evaluate("studio_openMake()")              # All settings: the full page
     page.click(f'[data-act="studio-style"][data-style="{style}"]')
     page.fill("#studio-name", name)
     page.click('[data-act="studio-build"]')
@@ -454,7 +454,7 @@ def test_headshots_only_is_offered_for_read_clips_and_keeps_only_headshots(ui, a
     page.click('[data-act="studio-clear"]') if page.is_visible('[data-act="studio-clear"]') else None
     for i in range(3):
         page.locator("#studio-lib .studio-clip-hit").nth(i).click()
-    page.click('[data-act="studio-make"]')
+    page.evaluate("studio_openMake()")              # All settings: the full page
     row = page.locator("#studio-hs-row")
     assert row.is_visible(), "headshots only is not offered for clips that carry a reading"
     assert "2 of 3 kills were headshots" in row.inner_text()
@@ -527,7 +527,7 @@ def test_perfect_fit_keeps_every_kill_on_a_beat_and_survives_a_restyle(ui, app, 
         API.post = function (u, b) {                  /* the native file dialog, answered */
             if (u === '/api/clips/pick') return Promise.resolve({path: path});
             return real.apply(this, arguments); }; }""", str(song))
-    page.click('[data-act="studio-make"]')
+    page.evaluate("studio_openMake()")              # All settings: the full page
     page.click('[data-act="studio-song"]')
     page.wait_for_function("studio.song && studio.songShape", timeout=60_000)
     page.click('[data-act="studio-style"][data-style="velocity"]')
