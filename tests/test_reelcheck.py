@@ -205,3 +205,15 @@ def test_a_master_at_another_frame_rate_is_caught(tmp_path):
                     "-vf", "format=yuv420p", str(mp4)], check=True, creationflags=rc._NO_WINDOW)
     f = rc.render_findings(mp4, {"format": "landscape"}, {"length": 2.0, "kills": []}, ff)
     assert "wrong-fps" in codes(f)
+
+
+def test_two_frames_of_near_white_are_said_but_do_not_block(tmp_path):
+    ff = _ff()
+    if not ff:
+        pytest.skip("no ffmpeg")
+    mp4 = tmp_path / "w.mp4"
+    subprocess.run([ff, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=60:duration=4",
+                    "-vf", "drawbox=x=0:y=0:w=iw:h=ih:color=white@1:t=fill:enable='between(t,1.5,1.55)',format=yuv420p",
+                    str(mp4)], check=True, creationflags=rc._NO_WINDOW)
+    f = [x for x in rc.render_findings(mp4, {"format": "landscape"}, {"length": 4.0, "kills": []}, ff) if x.code == "too-bright"]
+    assert f and f[0].level == rc.SOFT and f[0].at == pytest.approx(1.5, abs=0.05)

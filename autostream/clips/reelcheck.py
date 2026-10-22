@@ -46,6 +46,12 @@ REEL_FPS = 60              # studio.FPS: what every shot is cut and checked at
 BLACK_MAX = 4.0
 BLACK_AROUND = 20.0
 WHITE_END = 225.0
+# ...and one too bright to look at: ChatGPT's general rule after a flip lit 31 % of the
+# picture above 245 -- no more than BRIGHT_SHARE of the game's pixels over BRIGHT_LEVEL
+# for BRIGHT_FRAMES frames running. Said, not blocked: a flashbang in the footage is one.
+BRIGHT_LEVEL = 245
+BRIGHT_SHARE = 0.20
+BRIGHT_FRAMES = 2
 MAX_FROM_ONE_FILE = 4      # R13: no file gives a reel more shots than this
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -206,6 +212,12 @@ def render_findings(mp4: Path, project: dict, derived: dict, ff: str = "ffmpeg")
         for i in range(int(0.2 * 60), n - int(1.0 * 60)):          # the opening and the ending fade aside
             if luma[i] < BLACK_MAX and np.median(luma[max(0, i - 6):i]) > BLACK_AROUND                     and np.median(luma[i + 1:i + 7]) > BLACK_AROUND:
                 out.append(Finding(HARD, "black-frame", "A black frame flashes in the middle of the reel.",
+                                   round(i / 60 - float(derived.get("offset") or 0.0), 3)))
+                break
+        hot = (frames > BRIGHT_LEVEL).mean(axis=(1, 2)) > BRIGHT_SHARE
+        for i in range(n - BRIGHT_FRAMES + 1):
+            if hot[i:i + BRIGHT_FRAMES].all():
+                out.append(Finding(SOFT, "too-bright", "A moment of the reel is almost all white for two frames or more.",
                                    round(i / 60 - float(derived.get("offset") or 0.0), 3)))
                 break
         if luma[-1] > WHITE_END:
