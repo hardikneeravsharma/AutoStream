@@ -157,3 +157,29 @@ def test_a_beat_that_is_not_a_round_number_keeps_its_flips_on_the_beat():
         beats_from_drop = (f / FPS - drop) / beat
         assert abs(beats_from_drop - round(beats_from_drop)) * beat <= 1 / FPS, (f / FPS, beats_from_drop)
     assert len(starts) >= 60
+
+
+def test_a_flip_on_a_kill_is_one_partial_frame_and_elsewhere_as_before():
+    """Three frames near-white over most of the picture took the drop kill and the
+    slow-motion kill with them. ChatGPT's general rule: any flip within FLIP_GUARD of any
+    kill stays on the grid but is one frame with FLIP_PARTIAL of the inverted picture."""
+    fx = studio.beat_engine("o10", beat=0.5, drop=4.0, length=20.0, kills=[4.0, 6.01, 7.3, 9.0])
+    flip = flip_of(fx)
+    near = [float(a) + 0.001 for a, _ in re.findall(r"between\(t,([0-9.]+),([0-9.]+)\)", flip)]
+    assert near == pytest.approx([4.0, 6.0])                    # 6.01 is a frame off its bar; 7.3 and 9.0 are not on one
+    off = float(re.search(r"mod\(t\+([0-9.]+),", flip).group(1))
+    lut = [f for f in fx if f.startswith("lutyuv=")]
+    assert len(lut) == 1 and str(studio.FLIP_PARTIAL) in lut[0]
+    soft = [(float(a), float(b)) for a, b in re.findall(r"between\(t,([0-9.]+),([0-9.]+)\)", lut[0])]
+
+    def frames(bar_t):
+        full = part = 0
+        for i in range(int((bar_t - 0.1) * FPS), int((bar_t + 0.1) * FPS)):
+            t = i / FPS
+            full += (t + off) % 2.0 < studio.FLIP_BAR and not any(g - 0.001 <= t <= g + studio.FLIP_BAR for g in near)
+            part += any(a <= t <= b for a, b in soft)
+        return full, part
+    assert frames(4.0) == (0, 1) and frames(6.0) == (0, 1) and frames(8.0) == (3, 0)
+    # no kills near a flip: every flip as before, and nothing partial
+    fx = studio.beat_engine("o10", beat=0.5, drop=4.0, length=20.0)
+    assert "between" not in flip_of(fx) and not [f for f in fx if f.startswith("lutyuv=")]

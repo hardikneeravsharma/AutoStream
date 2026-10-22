@@ -4803,6 +4803,8 @@ def _pulse(var: str, at: float, amount: float, fall: float) -> str:
 # light. Half a frame either side costs nothing and cannot land on the edge.
 FLIP_BEAT = 0.012             # one frame at 60 fps: between 0 and 1/60
 FLIP_BAR = 0.045              # three: between 2/60 and 3/60
+FLIP_GUARD = 2.5 / 60         # s: a kill this near a flip turns it into FLIP_PARTIAL for one frame
+FLIP_PARTIAL = 0.28           # how much of the inverted picture shows in that frame
 KICK_FALL = 0.058
 # THE PHASE IS THE DROP'S, BROUGHT INTO THE FIRST BAR. `mod` must never see a
 # negative -- ffmpeg's keeps the sign of its argument, and the whole build would
@@ -4829,13 +4831,14 @@ ACT3_SHARE = 0.69
 
 
 def beat_engine(pid: str, *, beat: float, drop: float, length: float,
-                var: str = "t") -> list[str]:
+                var: str = "t", kills: list[float] | None = None) -> list[str]:
     """Filters that put the song's grid on the picture. -> post-chain entries.
 
     `drop` is in v-time -- where the bass lands in the finished reel, which is
     the song's drop less the song offset. Zero is honest when the song has no
     drop: the grid then starts at the first frame, which is what a reel with no
-    build should do.
+    build should do. `kills`, in v-time too, are protected from the long flip
+    (FLIP_GUARD).
     """
     if beat <= 0 or length <= 0:
         return []
@@ -4857,10 +4860,24 @@ def beat_engine(pid: str, *, beat: float, drop: float, length: float,
     # treats any non-zero as on, so a bar line (both terms 1) stays on through
     # the longer window. Two filters would invert twice and cancel.
     P = GRID_PLACES
+    # A KILL IS NOT WASHED OUT BY ITS OWN FLIP. Three frames near-white over three
+    # quarters of the picture took the drop kill and the slow-motion kill with them
+    # (ChatGPT's review of the v1.79.5 render). Its general rule: wherever a flip lands
+    # within FLIP_GUARD of ANY kill, it stays on the grid but is one frame with only
+    # FLIP_PARTIAL of the inverted picture over the real one; every other flip as before.
+    grid = beat if on_beat else bar
+    guard = sorted({round(g, 4) for k in (kills or []) for g in [round((float(k) + off) / grid) * grid - off]
+                    if abs(float(k) - g) <= FLIP_GUARD and g >= from_t - 1e-6})
+    near = "+".join(f"between({var},{g - 0.001:.4f},{g + FLIP_BAR:.4f})" for g in guard)
     terms = [f"lt(mod({var}+{off:.{P}f},{bar:.{P}f}),{FLIP_BAR})"]
     if on_beat:
         terms.insert(0, f"lt(mod({var}+{off:.{P}f},{beat:.{P}f}),{FLIP_BEAT})")
-    out.append(f"negate=enable='gte({var},{from_t:.4f})*({'+'.join(terms)})'")
+    flips = "+".join(terms)
+    out.append(f"negate=enable='gte({var},{from_t:.4f})*({flips})" + (f"*not({near})'" if near else "'"))
+    if guard:
+        part = f"val+{FLIP_PARTIAL}*(maxval-2*val)"
+        out.append(f"lutyuv=y='{part}':u='{part}':v='{part}':enable='" +
+                   "+".join(f"between({var},{g - 0.001:.4f},{g + FLIP_BEAT:.4f})" for g in guard) + "'")
     if (kick := knob(pid, "kick", 0.029)) > 0:
         out.append(f"eq=brightness='({gate})*{kick:.4f}"
                    f"*exp(-mod({var}+{off:.{P}f},{beat:.{P}f})/{KICK_FALL})':eval=frame")
@@ -5639,7 +5656,7 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
             pid, beat=float(project.get("beat") or 0.0),
             drop=(float(drop) - float(project.get("song_offset") or 0.0)
                   if drop is not None else 0.0),
-            length=L)
+            length=L, kills=derived.get("kills") or [])
     if (pid := picked(ov, "o01")) and project["format"] == "landscape":
         bar = round(H * knob(pid, "h", 0.125))
         post.append(f"drawbox=x=0:y=0:w=iw:h={bar}:color=black:t=fill,drawbox=x=0:y=ih-{bar}:w=iw:h={bar}:color=black:t=fill")
