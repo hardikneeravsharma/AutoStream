@@ -44,7 +44,11 @@ AFTER_MIN = 0.15           # s every kill is held before the next shot's run-up
 SLOW_PRE_BEATS = 2         # the slow-motion shot: two beats either side of its kill
 SLOW_POST_BEATS = 2
 SLOW_RATE = 0.5            # s01, half speed
-FINALE_PRE_BEATS = 3
+# THE SLOW KILL AND THE FINALE ARE ONE BAR APART, at any tempo: the slow kill on a bar
+# line, the finale's first kill on the next, its run-up the two beats the slow shot
+# leaves. With three beats of run-up the gap between them read as time the director
+# had left over (ChatGPT's review: "an explicit purpose and duration").
+FINALE_PRE_BEATS = 2
 FINALE_BEATS = 6           # at least, then on to the bar line
 DOUBLE = (0.25, 2.5)       # s between a double's two headshots
 REEL_SECONDS = 36.0

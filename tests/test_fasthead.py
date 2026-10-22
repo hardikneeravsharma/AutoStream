@@ -143,3 +143,16 @@ def test_studio_plans_it_with_the_beat_engine_and_no_groove(tmp_path, monkeypatc
     few = [c for c in clips if "body" in c["path"]] + clips[:3]
     proj, notes = studio.plan(few, "fasthead", shape=shape, song=str(shape.path), fmt="vertical")
     assert any("planned the usual way" in n for n in notes), notes
+
+
+@pytest.mark.parametrize("bpm", [100.0, 120.0, 174.0])
+def test_the_slow_kill_and_the_finale_are_one_bar_apart(bpm):
+    """Reviewed: the time between them read as left over. At any tempo now: the slow
+    kill on a bar line, the finale's first kill on the next."""
+    shape, r = song(bpm=bpm, seconds=150.0, drop=60.0)
+    p = H.plan(library(), shape, r, seed=1)
+    beat = 60.0 / bpm
+    i = [s["speed"] for s in p.shots].index("s01")
+    assert p.marks[i + 1] - p.marks[i] == pytest.approx(4 * beat, abs=1e-3)
+    bars = shape.beats[::4]
+    assert min(abs(b - p.marks[i]) for b in bars) < 1e-3 and min(abs(b - p.marks[i + 1]) for b in bars) < 1e-3
