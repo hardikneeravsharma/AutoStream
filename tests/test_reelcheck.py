@@ -217,3 +217,18 @@ def test_two_frames_of_near_white_are_said_but_do_not_block(tmp_path):
                     str(mp4)], check=True, creationflags=rc._NO_WINDOW)
     f = [x for x in rc.render_findings(mp4, {"format": "landscape"}, {"length": 4.0, "kills": []}, ff) if x.code == "too-bright"]
     assert f and f[0].level == rc.SOFT and f[0].at == pytest.approx(1.5, abs=0.05)
+
+
+def test_a_kill_frame_burnt_white_reads_as_no_detail(tmp_path):
+    """ChatGPT's general rule: more than 20 % of the picture over 245 at a kill hides the target,
+    however much edge the rest of it has."""
+    ff = _ff()
+    if not ff:
+        pytest.skip("no ffmpeg")
+    ok, burnt = tmp_path / "ok.mp4", tmp_path / "burnt.mp4"
+    for out, vf in ((ok, "format=yuv420p"), (burnt, "lutyuv=y='min(255,val*2.2)',format=yuv420p")):
+        subprocess.run([ff, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=60:duration=2",
+                        "-vf", vf, str(out)], check=True, creationflags=rc._NO_WINDOW)
+    studio._CLEAR_CACHE.clear()
+    assert (studio.kill_clarity(str(ok), 1.0) or 0) >= studio.CLEAR_MIN
+    assert studio.kill_clarity(str(burnt), 1.0) == 0.0

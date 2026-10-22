@@ -170,6 +170,7 @@ def test_a_flip_on_a_kill_is_one_partial_frame_and_elsewhere_as_before():
     off = float(re.search(r"mod\(t\+([0-9.]+),", flip).group(1))
     lut = [f for f in fx if f.startswith("lutyuv=") and str(studio.FLIP_PARTIAL) in f]
     assert len(lut) == 1
+    assert "negval-val" in lut[0]                  # each plane toward its own inverse: no tint on a grey frame
     soft = [(float(a), float(b)) for a, b in re.findall(r"between\(t,([0-9.]+),([0-9.]+)\)", lut[0])]
 
     def frames(bar_t):

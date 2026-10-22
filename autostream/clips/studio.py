@@ -1811,6 +1811,8 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
     def direct():
         if which == "fasthead":
             return fasthead.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, loose=loose)
+        if which == "montage":
+            return director.plan_montage(list(chosen.values()), shape, rh, part=part, seed=seed_n, loose=loose)
         return director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, build=build, loose=loose)
     for _ in range(4):
         try:
@@ -1871,6 +1873,8 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
                           ("Not needed: every headshot slot was filled by other clips, or this clip's "
                            "headshots had another kill too close to cut around."
                            if which == "fasthead" else
+                           "Not needed: the reel's hits were filled by other clips, or by this one's own fight."
+                           if which == "montage" else
                            "Not needed: the set-up and the hits after the drop were filled by other clips.")
                           if c["path"] in chosen else
                           "No kill showed on screen: the game's kill icon never appeared in this clip."}
@@ -2076,11 +2080,13 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                               template=template, shape_it=shape_it)
     # FAST-PACED HEADSHOT PLANS ITSELF TOO (clips/fasthead.py): the general planner's
     # fixed 2.0 s pace failed the render gate on every song it was tried on.
-    if _direct and asked != "fit" and style_key == "fasthead" and song:
+    if _direct and asked != "fit" and style_key in ("fasthead", "montage") and song:
+        # ...and so does Montage (director.plan_montage), after its first review: 4.2/10 on
+        # the general planner, with the same fight shown twice and kills seconds off the beat
         return _plan_sections(clips, style_key, shape=shape, song=song, fmt=fmt, name=name,
                               max_seconds=max_seconds, seed=seed, measure=measure, confirm=confirm,
                               theirs=theirs, refine=refine, checks=checks, part=part,
-                              template=template, shape_it=shape_it, which="fasthead")
+                              template=template, shape_it=shape_it, which=style_key)
     style = STYLE.get(style_key) or STYLE[DEFAULT_STYLE]
     fast = fast_reel(style, getattr(shape, "bpm", None))
     if fast:
@@ -2982,7 +2988,7 @@ _MARK_CACHE: dict[tuple, list[float] | None] = {}
 # where (use_check_cache; nothing is written until it does, so a test or a script
 # never touches the player's folders), keyed by the file's path, size and time.
 # Bump KILL_CHECKS_VERSION whenever what killmark or kill_clarity reads changes.
-KILL_CHECKS_VERSION = 1
+KILL_CHECKS_VERSION = 2              # 2: a burnt-out kill frame reads as no detail
 KILL_CHECKS_FILE = "kill-checks.json"
 KILL_CHECKS_MAX = 20000
 
@@ -3143,6 +3149,11 @@ def plan_checks() -> dict:
 # before the kill) measured 27 and 115 on those two and 190-1380 on the 29 other
 # kills of the reel. Under CLEAR_MIN the kill is not one to cut to.
 CLEAR_MIN = 150.0
+# ...nor one burnt out: a picture whose middle has more than BURNT_SHARE of its pixels over
+# BURNT_LEVEL in the frames at the kill hides the target (ChatGPT's general rule, after a
+# reviewed reel's kill sat in an all-white flare). Read as no detail at all.
+BURNT_LEVEL = 245
+BURNT_SHARE = 0.20
 _CLEAR_CACHE: dict[tuple, float | None] = {}
 
 
@@ -3176,6 +3187,8 @@ def kill_clarity(path: str, t: float) -> float | None:
             lap = [float(np.var(f[1:-1, 1:-1] * 4 - f[:-2, 1:-1] - f[2:, 1:-1] - f[1:-1, :-2] - f[1:-1, 2:]))
                    for f in v]
             got = float(np.median(lap))
+            if float(np.median((v > BURNT_LEVEL).mean(axis=(1, 2)))) > BURNT_SHARE:
+                got = 0.0
     except (OSError, subprocess.SubprocessError, ValueError):
         got = None
     _CHECK_DISK.put(dk, got)
@@ -4888,7 +4901,9 @@ def beat_engine(pid: str, *, beat: float, drop: float, length: float,
     out.append(f"negate=enable='{when}'")
     out.append(f"lutyuv=y='min(val,{FLIP_CEIL}*maxval)':enable='{when}'")
     if guard:
-        part = f"val+{FLIP_PARTIAL}*(maxval-2*val)"
+        # toward each plane's own inverse (negval), the one negate itself uses: a chroma plane's
+        # range is 16-240, and inverting it against 0-255 tinted a monochrome frame green
+        part = f"val+{FLIP_PARTIAL}*(negval-val)"
         out.append(f"lutyuv=y='{part}':u='{part}':v='{part}':enable='" +
                    "+".join(f"between({var},{g - 0.001:.4f},{g + FLIP_BEAT:.4f})" for g in guard) + "'")
     if (kick := knob(pid, "kick", 0.029)) > 0:
