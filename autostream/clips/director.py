@@ -711,6 +711,16 @@ MONTAGE_SHOT = 1.18
 MONTAGE_UNIT = (0.85, 1.5)
 MONTAGE_PRE = 0.35
 MONTAGE_SECONDS = 36.0
+# WHITE FLASHES ON ABOUT HALF THE CUTS: the references flash 14.8 times a minute against 28.3
+# cuts (52 %), and the second review called them "part of the defined Montage style". Its
+# general rule: a flash may only go where at least FLASH_CLEAR -- eight frames at 60 fps --
+# of clean picture is left between its end and the kill; a transition is centred on its cut,
+# so the kill must be more than half the flash plus that after the cut. Short of the share
+# when that cannot be met, never a flash over a kill.
+FLASH = "t02"
+FLASH_LEN = 0.2
+FLASH_SHARE = 0.52
+FLASH_CLEAR = 8 / 60
 
 
 def montage_unit(beat: float) -> float:
@@ -756,4 +766,10 @@ def plan_montage(clips: list[dict], shape, rhythm, *, part: tuple[float, float] 
                  f"each clip once.")
     got = _after(all_b, clips_by_path, setups, Burst(best.clip, ks, best.hs[:1]), ks, take_shots, D, start, end,
                  gap, rng, notes, shape, rhythm, fast_pre=MONTAGE_PRE, anchor_pre=MONTAGE_PRE)
+    acc = rng.random()
+    for s in got.shots[1:]:
+        acc += FLASH_SHARE
+        if acc >= 1.0 and float(s["pre"]) - FLASH_LEN / 2 >= FLASH_CLEAR - 1e-9:
+            s["transition"], s["tlen"] = FLASH, FLASH_LEN
+            acc -= 1.0
     return got
