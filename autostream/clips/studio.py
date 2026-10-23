@@ -3046,6 +3046,20 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         last = shots[-1]
         last["speed"] = "s06"
         last["duration"] = round(last["pre"] + (lens[-1][1] + closer_post) * step, 5)
+    if style.speed_profile == "velocity" and shots:
+        # THE OPENER RUSHES TOO, so its run-up is no longer than its footage can fill at
+        # VEL_FAST. Held at the references' first shot (4.7 s) over a clip with 3.4 s
+        # before its kill, it crawled at 1.1x for three seconds -- the one stretch of
+        # the reel not rushing (Velocity on El Alfa: 63% of the footage between kills
+        # at 1.3x or more, against the 70% the gate asks).
+        # In whole beats, as every run-up is: a cap between beats took the opener's kill
+        # off the grid (test_every_cut_and_every_kill_lands_on_the_beat).
+        s0 = shots[0]
+        cap = (float(s0["kill"]) - VEL_BEFORE * VEL_SLOW) / VEL_FAST + VEL_BEFORE
+        cap = math.floor(cap / step + 1e-6) * step
+        if s0["pre"] > cap + 1e-3 and cap >= max(style.min_run, step):
+            cut = s0["pre"] - cap
+            s0["pre"], s0["duration"] = round(cap, 5), round(s0["duration"] - cut, 5)
     for s in shots:
         _fit(s, step, notes)
     if target:
@@ -4350,6 +4364,29 @@ def speed_curves(shots: list[dict], style: "Style", free: set[str] | tuple = ())
                 pts.append([round(at_src + after_out * r_out, 4), round(dur, 4)])
             elif real_out <= ANCHOR_MIN_GAP:
                 pts.append([round(at_src + after_out, 4), round(dur, 4)])
+            # BETTER, WHERE IT FITS: each later kill of its own gets the slow window too,
+            # and the shot rushes between them. Played at real speed, a double kill's
+            # second second was most of what did not rush (3.8 of 19.1 s on El Alfa).
+            owns = [float(x) for x in sorted(s.get("kills") or []) if k + 1e-3 < float(x) <= k + own]
+            if owns:
+                cur_s, cur_o, lay = k + wa * VEL_SLOW, pre + wa, []
+                for x in owns:
+                    a_s = x - VEL_BEFORE * VEL_SLOW
+                    if a_s > cur_s + 1e-3 and (a_s - cur_s) / VEL_FAST >= ANCHOR_MIN_GAP:
+                        cur_o += (a_s - cur_s) / VEL_FAST
+                        cur_s = a_s
+                        lay.append([round(cur_s, 4), round(cur_o, 4)])
+                    e_s = x + VEL_AFTER * VEL_SLOW
+                    cur_o += (e_s - cur_s) / VEL_SLOW
+                    cur_s = e_s
+                    lay.append([round(cur_s, 4), round(cur_o, 4)])
+                rest = dur - cur_o
+                need = owns[-1] + OWN_KILL_HOLD - cur_s           # still to show after the last
+                if rest > ANCHOR_MIN_GAP:
+                    r_last = min(VEL_FAST, RATE_MAX, (hi - cur_s) / rest)
+                    if r_last >= 1.0 and cur_s + rest * r_last >= cur_s + need - 1e-3:
+                        pts = pts[:3] + lay + [[round(cur_s + rest * r_last, 4), round(dur, 4)]]
+                        real_out = 0.0
             if pts[0][0] < lo - 1e-3:
                 out["short"] += 1
                 continue

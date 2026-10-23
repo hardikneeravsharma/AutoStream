@@ -14,7 +14,7 @@ import pytest
 from test_instant_preview import _server, root  # noqa: F401  (the fixture)
 from test_studio import Shape, _clips
 
-from autostream.clips import studio, versions
+from autostream.clips import editflow, studio, versions
 
 
 @pytest.fixture
@@ -102,7 +102,11 @@ def test_replan_keeps_the_players_marks_their_effects_and_the_file(srv, reel, ro
     assert new["output"] == marked["output"]
     same = [s for s in new["shots"] if s["clip"] == first["clip"] and s["kill"] == first["kill"]]
     if same:
-        assert same[0]["fx"] == ["k07"] and got["diff"]["effects_kept"] >= 1
+        # The player's k07 is on it either way; "kept" counts only a shot the new plan drew
+        # differently, and a plan can draw everything that shot carries by itself.
+        assert same[0]["fx"] == ["k07"]
+        assert got["diff"]["effects_kept"] >= 1 or all(
+            same[0].get(k) == marked["shots"][0].get(k) for k in editflow.CARRIED)
     assert not got["derived"]["edited"], "a plan just made is not an edited one"
 
 
