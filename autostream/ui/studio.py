@@ -176,6 +176,9 @@ STUDIO_HTML = r"""
         <p class="muted studio-facts ed-facts" id="studio-facts"></p>
         <span class="studio-spacer"></span>
         <div class="field-inline studio-acts">
+          <!-- WHERE THE REEL STANDS, in one word, always in view: Changed, Timing stale, Planning,
+               Ready to render, Rendering, Rendered or Check failed. The title says why. -->
+          <span class="studio-badge" id="studio-badge" role="status" aria-live="polite"></span>
           <button type="button" class="btn btn-ghost btn-sm" data-act="studio-undo" id="studio-undo-btn" disabled>Undo</button>
           <!-- UNDO WAS A ONE-WAY DOOR. A step popped off the stack was gone,
                so Ctrl+Z pressed once too often could not be taken back. Both
@@ -197,6 +200,10 @@ STUDIO_HTML = r"""
                   data-kind="fcp7" id="studio-export-xml"
                   title="Write it as Final Cut Pro 7 XML, which is what Premiere imports">Export for Premiere</button>
           <button type="button" class="btn btn-ghost btn-sm hide" data-act="studio-cancel" id="studio-cancel-btn">Cancel</button>
+          <!-- BESIDE THE RENDER IT HOLDS UP: while the kill timing is stale Render waits, and the way to
+               un-stale it is right here, in the accent, where the hand already is. -->
+          <button type="button" class="btn btn-primary studio-attn hide" data-act="studio-flow" data-do="replan"
+                  id="studio-tl-replan">Replan for this section</button>
           <button type="button" class="btn btn-primary" data-act="studio-render" id="studio-render-btn">Render</button>
         </div>
       </div>
@@ -363,6 +370,14 @@ STUDIO_HTML = r"""
         <p class="studio-state" id="studio-state" role="status" aria-live="polite"></p>
         <div class="meter hide" id="studio-meter-wrap" aria-hidden="true"><div class="meter-fill" id="studio-meter" style="width:0%"></div></div>
         <ul class="studio-pending hide" id="studio-pending"></ul>
+        <!-- THREE WAYS TO UPDATE THE REEL, not one "Rebuild" that might mean any of them: each says
+             what it keeps and what it changes before it runs (studio_flowAsk). -->
+        <div class="studio-acts3" role="group" aria-label="Update the reel">
+          <span class="muted studio-small">Update the reel:</span>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-flow-ask" data-do="rerender">Re-render</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-flow-ask" data-do="retime">Re-time</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-flow-ask" data-do="replan">Replan&hellip;</button>
+        </div>
         <!-- THE RENDER NOBODY HAS TO ASK FOR. A couple of seconds after the
              last edit the real render starts by itself, so the finished video
              is usually there by the time the preview has been watched. The
@@ -372,6 +387,9 @@ STUDIO_HTML = r"""
           <span class="studio-auto-state" id="studio-auto-state" role="status" aria-live="polite"></span>
         </div>
       </div>
+      <!-- The reel's timing, when it is stale, and whatever is being worked out for it: the same banner
+           as the Song tab's, so it is wherever the player is looking (studio_flowDraw). -->
+      <div class="studio-flow-host hide" id="studio-tl-stale"></div>
 
       <!-- WHAT AN EFFECT LOOKS LIKE, BEFORE IT IS PICKED. Pointing at any
            part in the inspector plays its example here -- the same two-second
@@ -508,11 +526,18 @@ STUDIO_HTML = r"""
          work the page can do. -->
     <div class="studio-sg-songs" id="studio-sg-songs" role="group" aria-label="Songs you have"></div>
     <div class="studio-sg-body hide" id="studio-sg-body">
+      <!-- WHEN THE PART, THE SONG, THE MARKS OR THE DROPS NO LONGER MATCH THE PLAN: said here, at the
+           top, in words nobody can miss, with the way to resolve it -- studio_flowDraw. Nothing is
+           re-planned or re-timed until the player picks one. -->
+      <div class="studio-flow-host" id="studio-sg-stale"></div>
       <p class="field-label">The whole song &mdash; drag the lit-up part to move it, or its edges to resize.
-        The faint lines are the beat; bright ones start a bar.</p>
+        The faint lines are the beat; bright ones start a bar. The kill marks stay where they are on the
+        song: moving the part never moves them.</p>
       <canvas class="studio-sg-wave" id="studio-sg-overview" height="90" aria-label="Whole song"></canvas>
-      <p class="field-label">The part you picked, up close &mdash; click anywhere to jump there</p>
-      <canvas class="studio-sg-wave studio-sg-detail" id="studio-sg-detail" height="130" aria-label="Chosen part"></canvas>
+      <p class="field-label">The part you picked, up close, on its own beats &mdash; click to hear it from there,
+        double-click to mark a kill (or a drop, on the top lane), drag a mark to move it</p>
+      <canvas class="studio-sg-wave studio-sg-detail" id="studio-sg-detail" height="140"
+              aria-label="The chosen part: drops along the top, kills below. Click a mark to select it, drag to move it, double-click to add or remove"></canvas>
       <!-- WAYS OF SEEING IT. A waveform shows loudness and nothing else; a
            kill goes on a kick or a hat, and those are only visible once the
            bands are separated (clips/songview.py). The detector's own kills
@@ -597,9 +622,11 @@ STUDIO_HTML = r"""
           <p class="muted" id="studio-sg-marksinfo"></p>
         </div></div>
       </div>
+      <!-- NO "USE THIS PART" ANY MORE. Every change here is already on the reel, as an edit undo can
+           take back; what it does to the kill timing is the banner's to resolve, by the player. -->
       <div class="studio-sg-apply">
-        <span class="muted" id="studio-sg-msg"></span>
-        <button type="button" class="btn btn-primary" data-act="studio-sg-apply" id="studio-sg-apply">Use this part</button>
+        <span class="muted" id="studio-sg-msg">A change here is on the reel at once, and undo takes it back. A part,
+          song or marks the kills are not timed for yet are said above, with how to update them.</span>
       </div>
     </div>
   </section>
@@ -629,22 +656,32 @@ STUDIO_HTML = r"""
   <div class="studio-page-card" id="studio-make" role="region" aria-labelledby="studio-make-title">
     <header class="mk-head">
       <button type="button" class="btn btn-ghost" data-act="studio-make-cancel" id="studio-make-back">&larr; Back to the clips</button>
+      <!-- FROM THE STEPS, BACK TO THE STEPS: All settings is the same draft seen fuller, and this goes
+           back to the step it came from with everything chosen here kept (studio_mkToGuide). -->
+      <button type="button" class="btn btn-ghost hide" data-act="studio-mk-guide" id="studio-mk-guide">&larr; Back to the steps</button>
       <div class="mk-head-text">
         <h2 class="mk-title" id="studio-make-title">Make a reel</h2>
         <p class="muted" id="studio-make-facts"></p>
       </div>
+      <span class="studio-badge" id="studio-mk-badge" role="status" aria-live="polite"></span>
     </header>
     <div class="mk-layout">
+      <!-- THE SETTINGS BY WHAT THEY ARE FOR. They were grouped by where each had been added: the drops
+           in Kills, the intro under the song, Headshots only under Shape. Now Music is the song, its part
+           and its drops; Footage the clips and what is built from them; Timing where each kill lands,
+           how long and in what order; Look the picture. Each control says in a line what changing it
+           does -- the same words the timeline's table uses (studio_mkSaysDraw). -->
       <nav class="mk-nav" id="studio-mk-nav" aria-label="Sections of this page">
         <button type="button" class="mk-nav-b is-on" data-act="studio-mk-jump" data-sec="style">Style</button>
+        <button type="button" class="mk-nav-b" data-act="studio-mk-jump" data-sec="music">Music</button>
+        <button type="button" class="mk-nav-b" data-act="studio-mk-jump" data-sec="footage">Footage</button>
+        <button type="button" class="mk-nav-b" data-act="studio-mk-jump" data-sec="timing">Timing</button>
         <button type="button" class="mk-nav-b" data-act="studio-mk-jump" data-sec="look">Look</button>
-        <button type="button" class="mk-nav-b" data-act="studio-mk-jump" data-sec="song">Song &amp; part</button>
-        <button type="button" class="mk-nav-b" data-act="studio-mk-jump" data-sec="kills">Kills</button>
-        <button type="button" class="mk-nav-b" data-act="studio-mk-jump" data-sec="shape">Shape &amp; order</button>
       </nav>
       <div class="mk-body">
         <section class="mk-sec" id="mk-sec-style">
       <h3 class="studio-h">Style <span class="muted studio-small" id="studio-style-count"></span></h3>
+      <p class="mk-says" data-change="style"></p>
       <!-- EVERY STYLE ON THE SAME KILLS. Each card plays fifteen seconds cut from the SAME
            clips, so the only thing that differs between two of them is the style. The set
            ships with the app; cutting them again on the player's own kills is optional. -->
@@ -655,19 +692,8 @@ STUDIO_HTML = r"""
       </div>
       <div class="studio-styles" id="studio-styles" role="radiogroup" aria-label="Style"></div>
         </section>
-        <section class="mk-sec" id="mk-sec-look">
-      <!-- THE TEMPLATE: what the style picked, shown part by part with its
-           example, and changeable one drawer at a time. -->
-      <h3 class="studio-h">Template</h3>
-      <div class="bin-dealer">
-        <button type="button" class="btn btn-sm" data-act="studio-deal">Deal a template</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-deal-reset">Back to the style's own</button>
-        <span class="bin-code" id="studio-deal-code"></span>
-      </div>
-      <p class="muted studio-small hide" id="studio-fast-note" role="note"></p>
-      <div class="bin-hand" id="studio-hand"></div>
-        </section>
-        <section class="mk-sec" id="mk-sec-song">
+        <section class="mk-sec" id="mk-sec-music">
+      <h2 class="mk-group">Music</h2>
       <h3 class="studio-h">Song</h3>
       <div class="field-inline">
         <button type="button" class="btn" data-act="studio-song">Choose a song…</button>
@@ -679,6 +705,7 @@ STUDIO_HTML = r"""
            shots away, so a short selection on a slow song came out short. -->
       <div class="studio-mk-part hide" id="studio-mk-part">
         <h3 class="studio-h">Part of the song</h3>
+        <p class="mk-says" data-change="part"></p>
         <div class="seg" role="group" aria-label="Reel length">
           <button type="button" class="seg-btn is-active" data-act="studio-mk-mode" data-mode="part">Choose the part</button>
           <button type="button" class="seg-btn" data-act="studio-mk-mode" data-mode="auto">Let AutoStream choose</button>
@@ -720,6 +747,29 @@ STUDIO_HTML = r"""
           <p class="muted" id="studio-mk-facts"></p>
         </div>
       </div>
+      <div class="studio-mk-dropsbox hide" id="studio-mk-dropsbox">
+        <h3 class="studio-h">Drops <span class="muted studio-small">where the bass comes in</span></h3>
+        <p class="mk-says" data-change="drop"></p>
+        <div class="field-inline">
+          <button type="button" class="btn btn-sm" data-act="studio-mk-adddrop" title="Marks a bass drop at the playhead (D)">Mark a drop here <kbd>D</kbd></button>
+          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-cleardrops" id="studio-mk-cleardrops">Drops back to automatic</button>
+          <span class="muted studio-small">They are drawn on the top lane of the kills, below, and on the song above.</span>
+        </div>
+        <ol class="studio-mk-marklist studio-mk-droplist" id="studio-mk-droplist" aria-label="Drops"></ol>
+      </div>
+        </section>
+        <section class="mk-sec" id="mk-sec-footage">
+      <h2 class="mk-group">Footage</h2>
+      <p class="mk-says" data-change="clips"></p>
+      <div class="field-inline">
+        <span id="studio-mk-clips"></span>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-make-cancel">Change the clips</button>
+      </div>
+      <!-- THE CLIP A BUILD AND DROP REEL BUILDS ON, chosen here as it is on the guide's Clips step. -->
+      <div class="hide" id="studio-mk-buildrow">
+        <label class="field-label" for="studio-mk-build">The build: the clip the reel builds into the drop with</label>
+        <select class="select" id="studio-mk-build"></select>
+      </div>
       <!-- THE INTRO, HERE AND NOT ONLY ON THE TIMELINE. It used to be
            reachable only after a reel had been rendered once, so the first
            render always went out without one. The trim and the fit stay on the
@@ -727,6 +777,7 @@ STUDIO_HTML = r"""
            it is heard, because those are the two that change the render. -->
       <div class="studio-mk-intro hide" id="studio-mk-intro">
         <h3 class="studio-h">Intro clip</h3>
+        <p class="mk-says" data-change="intro"></p>
         <div class="field-inline">
           <select class="input studio-mk-introsel" id="studio-mk-introsel" aria-label="Intro clip">
             <option value="">No intro</option>
@@ -737,21 +788,26 @@ STUDIO_HTML = r"""
         </div>
         <p class="muted" id="studio-mk-intronote"></p>
       </div>
+      <!-- Valorant clips carry a headshot reading per kill; shown only when some do. -->
+      <label class="studio-check hide" id="studio-hs-row"><input type="checkbox" id="studio-hs-only">
+        Headshot kills only <span class="muted studio-small" id="studio-hs-note"></span></label>
         </section>
-        <section class="mk-sec" id="mk-sec-kills">
+        <section class="mk-sec" id="mk-sec-timing">
+      <h2 class="mk-group">Timing</h2>
       <!-- M4: THE KILLS, EDITABLE HERE. The Song tab lets you mark where each kill lands; this
-           is the same thing before the reel exists. "Show where the kills will land" plans the
+           is the same editor before the reel exists. "Show where the kills will land" plans the
            reel the way Build would and draws every kill on the song; touch one and it becomes
            yours, and Build puts the rest around it. -->
       <div class="studio-mk-kills hide" id="studio-mk-killsbox">
         <h3 class="studio-h">Kills <span class="muted studio-small">where each one lands on the song</span></h3>
+        <p class="mk-says" data-change="mark"></p>
+        <!-- The part moved, or the drops, since the kills drawn were planned: said here, with the fix. -->
+        <div class="studio-flow-host hide" id="studio-mk-stale"></div>
         <p class="muted studio-small" id="studio-mk-killnote"></p>
         <div class="field-inline">
           <button type="button" class="btn btn-sm" data-act="studio-mk-plan" id="studio-mk-plan">Show where the kills will land</button>
           <button type="button" class="btn btn-sm" data-act="studio-mk-addmark" title="Drops a kill at the playhead, exactly where it is (K)">Mark a kill here <kbd>K</kbd></button>
-          <button type="button" class="btn btn-sm" data-act="studio-mk-adddrop" title="Marks a bass drop at the playhead (D)">Mark a drop here <kbd>D</kbd></button>
           <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-clearmarks" id="studio-mk-clearmarks">Back to automatic</button>
-          <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-cleardrops" id="studio-mk-cleardrops">Drops back to automatic</button>
           <span class="muted studio-small" id="studio-mk-killmsg" role="status" aria-live="polite"></span>
         </div>
         <!-- WHOSE EACH MARK IS, at a glance: AutoStream's hollow, the player's solid, drops on their own lane. -->
@@ -772,25 +828,7 @@ STUDIO_HTML = r"""
           <button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-selnone" id="studio-mk-selnone" disabled>Select none</button>
           <span class="muted studio-small">Tick marks below, Ctrl-click them on the song, or Shift-drag across it. <kbd>Delete</kbd> removes them.</span>
         </div>
-        <ol class="studio-mk-marklist studio-mk-droplist" id="studio-mk-droplist" aria-label="Drops"></ol>
         <ol class="studio-mk-marklist" id="studio-mk-marklist" aria-label="Kills"></ol>
-      </div>
-        </section>
-        <section class="mk-sec" id="mk-sec-shape">
-      <h3 class="studio-h">Shape</h3>
-      <div class="field-inline studio-shape">
-        <div class="seg" role="group" aria-label="Format">
-          <button type="button" class="seg-btn is-active" data-act="studio-fmt" data-fmt="landscape">Landscape 16:9</button>
-          <button type="button" class="seg-btn" data-act="studio-fmt" data-fmt="vertical">Vertical 9:16</button>
-        </div>
-        <!-- HOW A 16:9 GAME FILLS A 9:16 FRAME: cropped to its middle, all of it over a
-             blurred copy, or -- the default since v1.80.0, the player's choice -- the middle
-             three quarters, a third taller. Only asked when it is a question. -->
-        <div class="seg hide" role="group" aria-label="Vertical framing" id="studio-mk-fit">
-          <button type="button" class="seg-btn is-active" data-act="studio-mk-fit" data-fit="near">Near fit</button>
-          <button type="button" class="seg-btn" data-act="studio-mk-fit" data-fit="fit">Fit the whole picture</button>
-          <button type="button" class="seg-btn" data-act="studio-mk-fit" data-fit="zoom">Zoom to fill</button>
-        </div>
       </div>
       <!-- THE ORDER, ASKED WHERE THE REEL IS MADE.
 
@@ -809,6 +847,7 @@ STUDIO_HTML = r"""
            Most kills first is Best first done by the planner, and Oldest
            first is As it happened. -->
       <h3 class="studio-h">Order <span class="muted studio-small">how the kills line up</span></h3>
+      <p class="mk-says" data-change="length"></p>
       <div class="studio-mk-arrange" id="studio-mk-arrange" role="group" aria-label="Order"></div>
       <!-- HOW LONG, ASKED RATHER THAN DECIDED. The style used to set the
            length as well as the feel, so a long part and twenty-five clips
@@ -824,16 +863,50 @@ STUDIO_HTML = r"""
       <label class="studio-check" id="studio-keep-row"><input type="checkbox" id="studio-keep-all"> Keep every kill</label>
       <p class="muted studio-small">A kill with little run-up starts on its clip's first frame, or its run-up
         is slowed, instead of being left out; to fit a length the kills move closer together.</p>
-      <label class="field-label" for="studio-name">Name</label>
-      <input class="input" id="studio-name" maxlength="80" placeholder="Montage reel">
-      <!-- Valorant clips carry a headshot reading per kill; shown only when some do. -->
-      <label class="studio-check hide" id="studio-hs-row"><input type="checkbox" id="studio-hs-only">
-        Headshot kills only <span class="muted studio-small" id="studio-hs-note"></span></label>
+        </section>
+        <section class="mk-sec" id="mk-sec-look">
+      <h2 class="mk-group">Look</h2>
+      <h3 class="studio-h">Shape</h3>
+      <p class="mk-says" data-change="framing"></p>
+      <div class="field-inline studio-shape">
+        <div class="seg" role="group" aria-label="Format">
+          <button type="button" class="seg-btn is-active" data-act="studio-fmt" data-fmt="landscape">Landscape 16:9</button>
+          <button type="button" class="seg-btn" data-act="studio-fmt" data-fmt="vertical">Vertical 9:16</button>
+        </div>
+        <!-- HOW A 16:9 GAME FILLS A 9:16 FRAME: cropped to its middle, all of it over a
+             blurred copy, or -- the default since v1.80.0, the player's choice -- the middle
+             three quarters, a third taller. Only asked when it is a question. -->
+        <div class="seg hide" role="group" aria-label="Vertical framing" id="studio-mk-fit">
+          <button type="button" class="seg-btn is-active" data-act="studio-mk-fit" data-fit="near">Near fit</button>
+          <button type="button" class="seg-btn" data-act="studio-mk-fit" data-fit="fit">Fit the whole picture</button>
+          <button type="button" class="seg-btn" data-act="studio-mk-fit" data-fit="zoom">Zoom to fill</button>
+        </div>
+      </div>
+      <!-- THE TEMPLATE: what the style picked, shown part by part with its
+           example, and changeable one drawer at a time. -->
+      <h3 class="studio-h">Template</h3>
+      <p class="mk-says" data-change="look"></p>
+      <div class="bin-dealer">
+        <button type="button" class="btn btn-sm" data-act="studio-deal">Deal a template</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-deal-reset">Back to the style's own</button>
+        <span class="bin-code" id="studio-deal-code"></span>
+      </div>
+      <p class="muted studio-small hide" id="studio-fast-note" role="note"></p>
+      <div class="bin-hand" id="studio-hand"></div>
+      <!-- THE SONG'S WORDS, here as on the guide's Look step: they rode in from the steps but could not be
+           seen or changed on this page. Used if the song's lyrics are found when it renders. -->
+      <div id="studio-mk-lyricsrow">
+        <h3 class="studio-h">Lyrics</h3>
+        <p class="mk-says" data-change="lyrics"></p>
+        <div class="seg" role="group" aria-label="Lyrics" id="studio-mk-lyrics"></div>
+      </div>
         </section>
       </div>
     </div>
     <div class="gd-chip" id="studio-mk-chip" role="status" hidden></div>
     <div class="mk-bar">
+      <label class="field-label mk-bar-name" for="studio-name">Name</label>
+      <input class="input mk-bar-input" id="studio-name" maxlength="80" placeholder="Montage reel">
       <span class="muted" id="studio-make-msg"></span>
       <button type="button" class="btn btn-ghost" data-act="studio-make-cancel">Cancel</button>
       <button type="button" class="btn btn-primary" data-act="studio-build" id="studio-build-btn">Build and render</button>
@@ -1160,9 +1233,14 @@ STUDIO_HTML = r"""
   <div class="scrim hide" id="studio-preview-scrim">
   <div class="modal studio-modal" id="studio-preview" role="dialog" aria-modal="true" aria-labelledby="studio-preview-title">
     <h2 class="modal-title" id="studio-preview-title">Clip</h2>
-    <div class="modal-body"><video id="studio-preview-video" controls playsinline></video></div>
+    <div class="modal-body"><video id="studio-preview-video" controls playsinline preload="metadata"></video>
+      <!-- Where the kills are along the clip, placed from the clip's own length in the library
+           rather than the element's duration, which is NaN until the metadata lands. -->
+      <div class="gd-pvmarks hide" id="studio-preview-marks"></div></div>
     <div class="modal-actions">
       <span class="media-knobs" data-for="studio-preview-video"></span>
+      <!-- Opened from the guide's Clips step: the clip is chosen or taken out from here. -->
+      <button type="button" class="btn btn-primary hide" id="studio-preview-pick" data-act="studio-gd" data-gd="pv-pick"></button>
       <button type="button" class="btn btn-ghost" data-act="studio-preview-close">Close</button>
     </div>
   </div>
@@ -1216,8 +1294,10 @@ const studio = {
      the part when one is picked, otherwise the style's length -- what the
      server does with nothing asked, so the button lit is the one that runs. */
   fill: '', keepAll: false,
-  sg: {song: '', shape: null, start: 0, end: 0, marks: [], drag: null, ticked: {}, ac: null,
-       sel: -1, seeded: ''},
+  /* THE TIMING DRAFT OF THE REEL ON THE TIMELINE, read from its project (studio_sgSync); the same
+     shape as studio.mk below, so one machinery edits both. */
+  sg: {song: '', shape: null, start: 0, end: 0, hand: [], edited: false, planned: null, drops: null,
+       drag: null, ticked: {}, ac: null, sel: {}, nid: 0, markDrag: null, boxSel: null},
   /* The part of the song chosen on the Make dialog, in song seconds. */
   mk: {mode: 'part', start: 0, end: 0, touched: false, drag: null, seekTo: null, ticking: false,
        /* THE KILLS, as the player has them: `planned` is where a plan put them (song seconds, with the
@@ -1385,6 +1465,10 @@ async function studio_load(force) {
        but not placed, which is the whole complaint: "I don't know from
        which folder, from which run the current clips are selected". */
     c.folder = f.folder; studio.clipIndex[c.id] = c;
+    /* The map and the game mode of the match it was cut from, when the run has the record:
+       the guide's clip browser filters by both. A clip outside every match has neither. */
+    const m = c.match === undefined ? null : (f.matches || [])[c.match];
+    if (m) { c.map = m.map || ''; c.mode = m.mode || ''; }
   })));
   studio.selected = studio.selected.filter(id => studio.clipIndex[id]);
   studio_renderLib();
@@ -1647,7 +1731,8 @@ function studio_addingBand(picked) {
   const secs = sel.reduce((n, c) => n + (c.duration || 0), 0);
   const kills = sel.reduce((n, c) => n + studio_killsOf(c), 0);
   return '<section class="studio-band" aria-label="Adding clips to ' + esc(ad.name) + '">' +
-    '<div class="studio-band-who"><strong>Adding to ' + esc(ad.name) + '</strong>' +
+    '<div class="studio-band-who"><strong>' + (ad.mode === 'pool' ? 'Adding to ' + esc(ad.name) + '\u2019s pool'
+      : ad.mode === 'replace' ? 'A new clip for ' + esc(studio_shotName(ad.shot)) + ' of ' + esc(ad.name) : 'Adding to ' + esc(ad.name)) + '</strong>' +
     '<span class="muted studio-small">' + sel.length + (sel.length === 1 ? ' clip' : ' clips') +
     ' in it · ' + studio_dur(secs) + ' · ' + kills + (kills === 1 ? ' kill' : ' kills') + '</span></div>' +
     (picked.runs.length
@@ -1659,7 +1744,11 @@ function studio_addingBand(picked) {
       : '<span class="muted studio-small">Nothing is picked yet. Tick the clips you want to add.</span>') +
     '<span class="studio-band-acts">' +
     '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-add-cancel">Stop adding</button>' +
-    '<button type="button" class="btn btn-sm" data-act="studio-make">Rebuild ' + esc(ad.name) + '</button>' +
+    (ad.mode === 'pool'
+      ? '<button type="button" class="btn btn-sm btn-primary" data-act="studio-add-go">Add the picked clips to the pool</button>'
+      : ad.mode === 'replace'
+        ? '<button type="button" class="btn btn-sm btn-primary" data-act="studio-add-go">Use the picked clip for ' + esc(studio_shotName(ad.shot)) + '</button>'
+        : '<button type="button" class="btn btn-sm" data-act="studio-make">Replan ' + esc(ad.name) + ' with these clips</button>') +
     '</span></section>';
 }
 
@@ -1958,7 +2047,11 @@ function studio_renderTray() {
      the clips are as well -- which a line in the tray could not. */
   studio_show('studio-adding', false);
   studio_show('studio-add-cancel', !!ad);
-  studio_el('studio-make-btn').textContent = ad ? 'Rebuild ' + ad.name : 'Make a reel';
+  const nPick = studio.selected.length;
+  studio_el('studio-make-btn').textContent = !ad ? 'Make a reel'
+    : ad.mode === 'pool' ? 'Add ' + nPick + (nPick === 1 ? ' clip' : ' clips') + ' to the pool'
+    : ad.mode === 'replace' ? 'Use this clip for ' + studio_shotName(ad.shot)
+    : 'Replan ' + ad.name + ' with these clips';
 }
 
 function studio_pick(id, shift) {
@@ -2039,8 +2132,34 @@ function studio_preview(id) {
   studio_el('studio-preview-title').textContent = c.caption || c.name;
   const v = studio_el('studio-preview-video');
   v.src = studio_media('/api/clips/video', c.path);
+  studio.gd.pv = null;                     /* the library's preview: nothing to choose in it */
+  studio_pvMarks(c);
+  studio_show('studio-preview-pick', false);
   studio_show('studio-preview-scrim', true);
   v.play().catch(() => {});
+}
+/* THE KILLS ALONG THE CLIP, each a mark that seeks to it: a headshot in the warn colour. Placed
+   by the library's own length -- `duration` on the element is NaN until its metadata is read. */
+function studio_pvMarks(c) {
+  const box = studio_el('studio-preview-marks'), dur = Number(c.duration) || 0, ks = c.kills || [];
+  if (!box) return;
+  box.innerHTML = dur > 0 && ks.length ? ks.map((k, i) => {
+    const hs = (c.hs || [])[i] === true;
+    return '<button type="button" class="gd-pvmark' + (hs ? ' is-hs' : '') + '" style="left:' + Math.min(100, Math.max(0, k / dur * 100)).toFixed(2) +
+      '%" data-act="studio-gd" data-gd="pv-seek" data-t="' + Number(k).toFixed(2) + '" title="Kill ' + (i + 1) + ' at ' + studio_secs(k) +
+      (hs ? ', a headshot' : '') + '" aria-label="Kill ' + (i + 1) + ' at ' + studio_secs(k) + '"></button>';
+  }).join('') + '<i class="gd-pvhead" id="studio-preview-head"></i>' : '';
+  box.classList.toggle('hide', !(dur > 0 && ks.length));
+}
+/* Closing the preview. Opened from the guide it closes alone: the guide under it stays on its
+   step, its slot and its page, with every choice as it was. Anywhere else it is one of the
+   modals Close and Escape put away together. */
+function studio_previewClose() {
+  if (!studio.gd.pv) return studio_closeModals();
+  const v = studio_el('studio-preview-video');
+  if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
+  studio.gd.pv = null;
+  studio_show('studio-preview-scrim', false);
 }
 
 function studio_closeModals() {
@@ -2330,8 +2449,9 @@ async function studio_openMake(opts) {
   studio_el('studio-make-facts').textContent = sel.length + ' clips, ' +
     sel.reduce((n, c) => n + studio_killsOf(c), 0) + ' kills. Every cut and kill lands on the beat; ' +
     'you can change anything on the timeline afterwards.' +
-    (ad ? ' Rebuilding ' + ad.name + ' plans every shot again' +
-      (ad.edited ? ', so the changes you made on its timeline will be replaced.' : '.') : '');
+    (ad ? ' Replanning ' + ad.name + ' plans every shot again' +
+      (ad.edited ? ', so the edits you made on its timeline are replaced on shots the new plan does not keep.' : '.') +
+      ' It keeps the song, the part, your own kill marks and drops, and the reel\u2019s look; undo brings the reel back as it was.' : '');
   /* HEADSHOTS ONLY, offered when some chosen kills carry a headshot reading
      (Valorant). The note says what it would keep, so ticking it is not a
      guess at how short the reel becomes. */
@@ -2345,8 +2465,8 @@ async function studio_openMake(opts) {
     studio_el('studio-hs-note').textContent = '— ' + heads + ' of ' + all + ' kills were headshots, in ' +
       withHs + ' of ' + sel.length + ' clips. The rest are left out.';
   }
-  studio_el('studio-make-title').textContent = ad ? 'Rebuild ' + ad.name : 'Make a reel';
-  studio_el('studio-build-btn').textContent = ad ? 'Rebuild and render' : 'Build and render';
+  studio_el('studio-make-title').textContent = ad ? 'Replan ' + ad.name : 'Make a reel';
+  studio_el('studio-build-btn').textContent = ad ? 'Replan and render' : 'Build and render';
   studio_el('studio-make-msg').textContent = '';
   /* Draw from what is already known, then fetch once if the library has never
      been read -- the dialog must not wait on a request to appear. */
@@ -2368,6 +2488,18 @@ async function studio_openMake(opts) {
           Math.round(got.song.bpm) + ' BPM · ' + studio_dur(got.song.seconds);
       }
     }
+    /* THE PLAYER'S OWN MARKS GO WITH A REBUILD: their whole list when they had edited it, else the marks
+       they placed, as constraints the plan keeps (editflow.merge_anchors). */
+    studio.mk.planned = null; studio.mk.sel = {};
+    studio.mk.of = ad.output || 'reel';      /* this draft is that reel's now; see studio_gdOpen */
+    if (ad.marks && ad.marks.length) {
+      const own = ad.anchors || [];
+      studio.mk.hand = ad.marks.map((t, i) => ({id: 'h' + i, t: t, auto: !own.some(a => Math.abs(a - t) < 0.002), name: ''}));
+      studio.mk.edited = true; studio.mkAnchors = null;
+    } else {
+      studio.mk.hand = []; studio.mk.edited = false;
+      studio.mkAnchors = (ad.anchors || []).length ? ad.anchors.slice() : null;
+    }
     if (ad.song && studio.songShape) {
       studio.mk.mode = 'part'; studio.mk.touched = !ad.part_auto;
       /* a part the page drew is drawn again (studio_mkDefault, below), as a length; one the
@@ -2387,7 +2519,10 @@ async function studio_openMake(opts) {
     studio.mkKeep = null;                  /* the reel's own lyrics ride in ad.keep */
   } else if (!o.fromGuide) {
     studio.mkKeep = null;                  /* the guide's lyrics go with the guide's hand-over only */
+    studio.mkAnchors = null;
   }
+  if (!o.fromGuide) studio.mkFrom = null;
+  studio_show('studio-mk-guide', !!studio.mkFrom);
   const mkFacts = studio_el('studio-make-facts');
   if (studio.mkKeep && studio.mkKeep.lyrics && mkFacts) {
     const look = studio_gdLyricLooks().find(l => l.key === studio.mkKeep.lyrics.look);
@@ -2409,7 +2544,10 @@ async function studio_openMake(opts) {
   studio_fillDraw();
   studio_samplesCheck();
   studio_mkKillsDraw();
+  studio_mkSaysDraw();
+  studio_mkFootageDraw();
   studio_mkChip();
+  studio_mkFlowDraw();
 }
 
 /* THE SAME CHIP AS THE GUIDED MAKER, on the full page: one verdict for the style, the song, the
@@ -2421,17 +2559,178 @@ function studio_mkChip() {
   if (!el || studio_el('studio-make-scrim').classList.contains('hide') || !studio.selected.length) return;
   const ticket = studio.mkChipAsk = (studio.mkChipAsk || 0) + 1;
   clearTimeout(studio.mkChipTimer);
+  /* Changed until the verdict is asked, Planning while it is: the badge says which. */
+  studio.mkVerdict = null; studio.mkAsking = 'waiting';
+  studio_mkBadge();
   studio.mkChipTimer = setTimeout(async () => {
+    studio.mkAsking = 'asking';
+    studio_mkBadge();
     const got = await API.post('/api/studio/feasible', studio_planBody(false)).catch(() => null);
-    if (ticket !== studio.mkChipAsk || !got || !got.ok) return;
+    if (ticket !== studio.mkChipAsk) return;
+    studio.mkAsking = '';
+    if (!got || !got.ok) { studio_mkBadge(); return; }
     const v = got.verdict, label = {ok: 'Works', warn: 'Will work, but', bad: "Won't work"}[v.level];
+    studio.mkVerdict = v;
     const act = {'pick-song': 'Choose another song above.', 'pick-clips': 'Go back and pick more clips.',
                  'format:vertical': '', 'style:drop': 'Choose Build and drop above.'}[v.fix] || '';
     el.className = 'gd-chip ' + v.level;
     el.innerHTML = '<span class="gd-dot">' + label + '</span><p>' + esc(v.text) + (act ? ' ' + esc(act) : '') + '</p>' +
       (v.fix === 'format:vertical' ? '<button type="button" class="btn btn-primary btn-sm" data-act="studio-mk-chipfix">Use 9:16</button>' : '<span></span>');
     el.hidden = false;
+    studio_mkBadge();
   }, 300);
+}
+
+/* WHAT EACH CONTROL DOES TO A REEL, in a line, from the table the timeline answers from
+   (clips/editflow.py): "re-renders only", "plans the reel again"... */
+function studio_mkSaysDraw() {
+  const rows = studio_flowTable().changes || [];
+  document.querySelectorAll('#studio-make .mk-says[data-change]').forEach(el => {
+    const r = rows.find(x => x.key === el.getAttribute('data-change'));
+    el.textContent = r ? r.says : '';
+  });
+}
+
+/* FOOTAGE AND LOOK, drawn from what is chosen: the clips, the build clip a Build and drop reel builds
+   on, and the lyrics' look -- which rode in from the steps but could not be seen or changed here. */
+function studio_mkFootageDraw() {
+  const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
+  const box = studio_el('studio-mk-clips');
+  if (box) box.textContent = sel.length + (sel.length === 1 ? ' clip, ' : ' clips, ') +
+    sel.reduce((n, c) => n + studio_killsOf(c), 0) + ' kills';
+  const drop = studio.style === 'drop';
+  studio_show('studio-mk-buildrow', drop && sel.length > 0);
+  const bs = studio_el('studio-mk-build');
+  if (bs && drop) {
+    bs.innerHTML = '<option value="">The best of them, chosen by AutoStream</option>' + sel.map(c =>
+      '<option value="' + esc(c.path) + '"' + (c.path === studio.buildClip ? ' selected' : '') + '>' +
+      esc((c.name || c.id) + ' · ' + studio_killsOf(c) + (studio_killsOf(c) === 1 ? ' kill' : ' kills')) + '</option>').join('');
+  }
+  const looks = studio_gdLyricLooks(), now = (studio.mkKeep && studio.mkKeep.lyrics && studio.mkKeep.lyrics.look) || 'off';
+  studio_show('studio-mk-lyricsrow', looks.length > 0);
+  const lb = studio_el('studio-mk-lyrics');
+  if (lb) lb.innerHTML = [['off', 'No lyrics']].concat(looks.map(l => [l.key, l.label])).map(o =>
+    '<button type="button" class="seg-btn' + (o[0] === now ? ' is-active' : '') + '" data-act="studio-mk-lyrics" data-v="' +
+    esc(o[0]) + '" aria-pressed="' + (o[0] === now) + '">' + esc(o[1]) + '</button>').join('');
+}
+
+function studio_mkLyrics(v) {
+  if (v === 'off') { if (studio.mkKeep) delete studio.mkKeep.lyrics; }
+  else studio.mkKeep = Object.assign({}, studio.mkKeep || {}, {lyrics: {look: v}});
+  if (studio.mkKeep && !Object.keys(studio.mkKeep).length) studio.mkKeep = null;
+  studio_mkFootageDraw();
+}
+
+/* BUILD AND DROP WITH ITS DROP OUTSIDE THE PART cannot be made -- the same rule the timeline and the
+   server keep (editflow.drop_conflict) -- so Build waits, saying why, with the three ways out. */
+function studio_mkDropBlock() {
+  const sh = studio.songShape, mk = studio.mk;
+  if (studio.style !== 'drop' || !sh || mk.mode !== 'part' || !studio.song) return null;
+  const d = studio_mkMainDrop();
+  if (d != null && d >= mk.start - 1e-3 && d <= mk.end + 1e-3) return null;
+  return d != null
+    ? {text: 'Build and drop is built on the drop, and the drop (' + studio_secs(d) + ') is outside the part.',
+       fixes: [['move-to-drop', 'Move the part to the drop'], ['mark-drop', 'Mark a drop in this part'], ['other-style', 'Choose another style']]}
+    : {text: 'Build and drop is built on the drop, and this song has no drop marked.',
+       fixes: [['mark-drop', 'Mark a drop'], ['other-style', 'Choose another style']]};
+}
+
+/* THE MAKE PAGE'S BANNER: the kills drawn were planned for a part, drops or a style that have changed
+   since. The same words as the timeline's, and the same highlighted way out. */
+function studio_mkFlowDraw() {
+  const el = studio_el('studio-mk-stale');
+  if (!el) return;
+  const mk = studio.mk, why = studio_tmStale(studio_tmView('make')), block = studio_mkDropBlock();
+  let html = '';
+  if (block) {
+    html = '<div class="studio-flow is-bad" role="alert"><p class="studio-flow-head">This reel cannot be made with this part</p>' +
+      '<p>' + esc(block.text) + '</p><div class="studio-flow-acts">' + block.fixes.map(f =>
+        '<button type="button" class="btn btn-sm" data-act="studio-mk-flow" data-do="' + f[0] + '">' + esc(f[1]) + '</button>').join('') + '</div></div>';
+  } else if (why.length && mk.planned) {
+    const m = mk.planned.made || {};
+    const says = {song: 'The song changed', part: 'Song part changed', drops: 'The drops changed', style: 'The style changed'};
+    const sub = why[0] === 'part'
+      ? 'The kills drawn (dashed) were planned for ' + (m.mode === 'part' ? studio_partRange(m.start, m.end) : 'the part AutoStream chose') +
+        '; the part is now ' + (mk.mode === 'part' ? studio_partRange(mk.start, mk.end) : 'AutoStream’s to choose') + '.'
+      : 'The kills drawn (dashed) were planned before it.';
+    html = '<div class="studio-flow is-stale" role="alert" data-why="' + esc(why.join(' ')) + '"><p class="studio-flow-head">' +
+      esc(says[why[0]] + ' — kill timing needs updating') + '</p><p class="studio-small">' + esc(sub) +
+      ' Build plans it afresh either way; this only shows where the kills will land.</p><div class="studio-flow-acts">' +
+      '<button type="button" class="btn btn-primary btn-sm studio-attn" data-act="studio-mk-flow" data-do="replan">Replan for this section</button>' +
+      (why.indexOf('part') >= 0 ? '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-mk-flow" data-do="undo">Undo part change</button>' : '') +
+      '</div></div>';
+  }
+  if (el.getAttribute('data-html') !== html) {
+    el.setAttribute('data-html', html);
+    el.innerHTML = html;
+    el.classList.toggle('hide', !html);
+  }
+  const btn = studio_el('studio-build-btn');
+  if (btn && !studio.mkBuilding) {
+    btn.disabled = !!block;
+    btn.title = block ? block.text + ' ' + block.fixes.map(f => f[1]).join(', or ') + ' first.' : '';
+  }
+  studio_mkBadge();
+}
+
+function studio_mkFlowAct(b) {
+  const what = b.getAttribute('data-do'), mk = studio.mk;
+  if (what === 'replan') return studio_mkPlan();
+  if (what === 'undo' && mk.planned && mk.planned.made) {
+    const was = {start: mk.start, end: mk.end}, m = mk.planned.made;
+    mk.mode = m.mode || 'part';
+    if (m.mode === 'part') { mk.start = m.start; mk.end = m.end; }
+    studio_mkPartChanged(was);
+    return;
+  }
+  if (what === 'move-to-drop') return studio_mkPreset('drop');
+  if (what === 'mark-drop') { studio_mkJump('music'); const d = studio_el('studio-mk-dropsbox'); if (d) d.classList.add('is-flash'); return; }
+  if (what === 'other-style') return studio_mkJump('style');
+}
+
+/* THE MAKE PAGE'S STATE, in the same words as the timeline's badge. */
+function studio_mkBadgeState() {
+  if (studio.mkBuilding) return {key: 'planning', why: 'Planning the reel.'};
+  if (studio.rendering) return {key: 'rendering', why: 'A reel is rendering; build this one when it has finished.'};
+  if (studio.mkBusy || studio.mkAsking === 'asking') return {key: 'planning', why: 'Working out what these choices make.'};
+  if (studio_mkDropBlock()) return {key: 'failed', why: 'The drop this style is built on is outside the part.'};
+  if (studio.mk.planned && studio_tmStale(studio_tmView('make')).length) return {key: 'stale', why: 'The kills drawn were planned before the last change.'};
+  if (studio.mkAsking === 'waiting' || !studio.mkVerdict) return {key: 'changed', why: 'Changed since it was last checked.'};
+  if (studio.mkVerdict.level === 'bad') return {key: 'failed', why: studio.mkVerdict.text};
+  return {key: 'ready', why: studio.mkVerdict.text};
+}
+
+function studio_mkBadge() {
+  const el = studio_el('studio-mk-badge');
+  if (!el) return;
+  const st = studio_el('studio-make-scrim').classList.contains('hide') ? null : studio_mkBadgeState();
+  el.className = 'studio-badge' + (st ? ' is-' + st.key : '');
+  el.setAttribute('data-state', st ? st.key : '');
+  el.title = st ? st.why : '';
+  el.innerHTML = studio_badgeHtml(st);
+}
+
+/* BACK TO THE STEPS, from All settings: the guide at the step it was on, with what was chosen here --
+   the style, the shape, the clips, the part, the drops, the lyrics -- in it. One draft, two views. */
+function studio_mkToGuide() {
+  const gd = studio.gd, ret = studio.mkFrom || {};
+  if (studio.style) gd.style = studio.style;
+  gd.auto = false;
+  gd.fmt = studio.fmt; gd.fit = studio.vfit;
+  const build = studio.style === 'drop' && studio.buildClip
+    ? Object.keys(studio.clipIndex).find(id => studio.clipIndex[id].path === studio.buildClip) || '' : '';
+  gd.setup = build;
+  gd.quick = studio.selected.filter(id => id !== build);
+  gd.lyrics = (studio.mkKeep && studio.mkKeep.lyrics && studio.mkKeep.lyrics.look) || 'off';
+  gd.name = studio_el('studio-name').value || gd.name;
+  gd.step = ret.step == null ? 4 : ret.step;
+  gd.verdict = null;
+  studio.mkFrom = null;
+  studio_show('studio-make-scrim', false);
+  studio_show('studio-guide-scrim', true);
+  studio_makePage(true);
+  studio_gdAudioWire();
+  studio_gdDraw();
 }
 
 /* THE MAKE PAGE IS A PAGE. It used to be a dialog over the Clips tab -- centred, narrow, closed by
@@ -2462,7 +2761,7 @@ function studio_mkSpy() {
   const sc = document.getElementById('views');
   if (!sc || document.getElementById('studio-make-scrim').classList.contains('hide')) return;
   let best = 'style', gap = 1e9;
-  ['style', 'look', 'song', 'kills', 'shape'].forEach(sec => {
+  ['style', 'music', 'footage', 'timing', 'look'].forEach(sec => {
     const el = document.getElementById('mk-sec-' + sec);
     if (!el) return;
     const d = Math.abs(el.getBoundingClientRect().top - 140);
@@ -2834,37 +3133,36 @@ function studio_mkDraw() {
   studio_mkKillsDraw();
 }
 
-/* ===== M4: THE KILLS, ON THE PAGE ===================================================================== */
+/* ===== THE SONG'S TIMING: ONE DRAFT, ONE EDITOR ===================================================== */
 
-/* EVERY MARK IS AN OBJECT WITH AN ID: {id, t, auto, name}. `auto` is "AutoStream put it there", so
-   the page can draw AutoStream's kills and the player's in different colours once both are on the
-   song -- they used to become one colour the moment one was touched, and nobody could tell which of
-   fifty they had placed. The id is what a selection holds, so selecting survives a sort. */
+/* ONE EDITOR FOR THE PART, THE KILL MARKS AND THE DROPS, wherever they are edited. They used to be
+   three: the guide's drop view, the Make page's "Part of the song" and Kills, and the timeline's Song
+   tab each kept its own copy and behaved its own way -- on the Song tab, dragging the part carried
+   every mark along with it, a fixed distance from the part's start, off the beats it had been on, and
+   nothing said the timing no longer held (Hardik's recording: 0:00-0:44 dragged to 0:59-2:07, 21
+   diamonds still where they were relative to the start, covering 40% of the new part).
 
-/* The kills as they stand: the player's own once they have touched one, else where the plan put them. */
-function studio_mkKillList() {
-  const mk = studio.mk;
-  if (mk.edited) return mk.hand.map(k => ({id: k.id, t: k.t, hand: !k.auto, name: k.name || ''}));
-  if (mk.planned) return mk.planned.marks.map((t, i) => ({id: 'p' + i, t: t, hand: false, name: mk.planned.names[i] || ''}));
-  return [];
-}
+   Now there is one machinery -- these functions -- over a DRAFT with one shape, and two drafts:
 
-/* A first touch makes the plan the player's: every kill becomes a mark they can move, so moving one does
-   not discard the rest. The ones they did not touch stay AutoStream's, and are drawn as such. */
-function studio_mkOwn() {
-  const mk = studio.mk;
-  if (mk.edited) return;
-  mk.hand = mk.planned ? mk.planned.marks.map((t, i) => ({id: 'p' + i, t: t, auto: true, name: mk.planned.names[i] || ''})) : [];
-  mk.edited = true;
-}
+     studio.mk   the reel being MADE: the guide and the Make page edit it, and "All settings" is the
+                 same draft seen fuller, so nothing is copied between them
+     studio.sg   the reel OPEN ON THE TIMELINE, read from its project every time it is drawn
+                 (studio_sgSync) and written back to it as one undoable edit (studio_sgCommit)
+
+   A draft is {start, end, touched, mode, hand, edited, planned, drops, sel, nid}: the part in song
+   seconds; the kills as the player has them (`hand`, a list of {id, t, auto}, once `edited`) or where
+   the plan put them (`planned`); the drops, null while they are the song's own. A mark the player
+   placed or moved is theirs (auto false) and is never moved for them. AutoStream's marks are placed
+   again whenever the reel is planned or re-timed.
+
+   STALE is the plan no longer matching the draft: the part moved, the song changed, the drops moved.
+   It is never resolved behind the player's back -- see studio_flow, below. */
 
 /* THE DROPS, AS MARKS. The main bass drops the song analysis found used to be one thin line, and only
    the biggest of them; they are now marks on the song like the kills, every one found, and the player
-   can move them, add their own and take AutoStream's away. `mk.drops` is null while they are
-   AutoStream's -- and only then is nothing sent, so the planner keeps reading the song itself. */
-/* ONE MACHINERY, TWO OWNERS. The Make page keeps its drops in studio.mk.drops and the guided maker in
-   studio.gd.drops -- each null while the drops are the analysis's, a list once touched -- and these
-   read, own, choose from and send either list the same way. */
+   can move them, add their own and take AutoStream's away. A draft's `drops` is null while they are
+   AutoStream's -- and only then is nothing sent, so the planner keeps reading the song itself. These
+   read, own, choose from and send any draft's list the same way. */
 function studio_dropsOf(drops, sh) {
   if (drops) return drops.map(d => ({id: d.id, t: d.t, hand: !d.auto}));
   if (!sh) return [];
@@ -2884,96 +3182,247 @@ function studio_dropsMain(drops, sh) {
   return ref ? drops.reduce((b, d) => Math.abs(d.t - ref) < Math.abs(b - ref) ? d.t : b, drops[0].t) : drops[0].t;
 }
 function studio_dropsSent(drops) { return drops.map(d => Math.round(d.t * 1000) / 1000); }
-/* a drop the player placed: snapped if that page's box says so; ids shared, so a hand-over keeps them apart */
-function studio_dropNew(t, snapBox) {
+/* a drop the player placed: snapped to that song's beat if that page's box says so */
+function studio_dropNew(t, snapBox, sh) {
   studio.mk.nid = (studio.mk.nid || 0) + 1;
-  return {id: 'u' + studio.mk.nid, t: studio_mkSnap(t, snapBox), auto: false};
+  const box = studio_el(snapBox || 'studio-mk-snap');
+  const at = box && box.checked ? studio_nearestBeat(sh || studio.songShape, t) : Math.round(t * 1000) / 1000;
+  return {id: 'u' + studio.mk.nid, t: at, auto: false};
 }
 
-function studio_mkDropList() { return studio_dropsOf(studio.mk.drops, studio.songShape); }
-
-function studio_mkOwnDrops() {
-  const mk = studio.mk;
-  if (!mk.drops) mk.drops = studio_dropsOwned(null, studio.songShape);
+/* The two places the full editor is mounted, each with its own canvas, player and snap box. */
+function studio_tmView(where) {
+  if (where === 'song') {
+    const sg = studio.sg;
+    const pad = Math.max(0.5, (sg.end - sg.start) * 0.04), sh = sg.shape;
+    return {where: 'song', T: sg, sh: sh, cv: 'studio-sg-detail', snap: 'studio-sg-snap', audio: 'studio-sg-audio',
+            song: sg.song, part: {start: sg.start, end: sg.end},
+            span: {start: Math.max(0, sg.start - pad), end: Math.min(sh ? sh.seconds : sg.end + pad, sg.end + pad)}};
+  }
+  const sp = studio_mkKillSpan();
+  return {where: 'make', T: studio.mk, sh: studio.songShape, cv: 'studio-mk-kills', snap: 'studio-mk-snap',
+          audio: 'studio-mk-audio', song: studio.song, part: sp, span: sp};
 }
 
-function studio_mkMainDrop() { return studio_dropsMain(studio.mk.drops, studio.songShape); }
+/* EVERY MARK IS AN OBJECT WITH AN ID: {id, t, auto, name}. `auto` is "AutoStream put it there", so
+   the page can draw AutoStream's kills and the player's in different colours once both are on the
+   song -- they used to become one colour the moment one was touched, and nobody could tell which of
+   fifty they had placed. The id is what a selection holds, so selecting survives a sort. */
 
-function studio_mkKillSpan() {
-  const sh = studio.songShape;
-  if (!sh) return {start: 0, end: 1};
-  const sp = studio_mkSpan();
-  return {start: sp.start, end: Math.max(sp.end, sp.start + 1)};
+/* The kills as they stand: the player's own once they have touched one, else where the plan put them.
+   A plan's mark that is one of the player's own (an anchor kept from before) is drawn as theirs. */
+function studio_tmKillList(T) {
+  if (T.edited) return T.hand.map(k => ({id: k.id, t: k.t, hand: !k.auto, name: k.name || ''}));
+  if (T.planned) return T.planned.marks.map((t, i) => ({id: 'p' + i, t: t, hand: !!(T.planned.hand && T.planned.hand[i]),
+                                                        name: T.planned.names[i] || ''}));
+  return [];
 }
+
+/* A first touch makes the plan the player's: every kill becomes a mark they can move, so moving one does
+   not discard the rest. The ones they did not touch stay AutoStream's, and are drawn as such. */
+function studio_tmOwn(T) {
+  if (T.edited) return;
+  T.hand = T.planned ? T.planned.marks.map((t, i) => ({id: 'p' + i, t: t, auto: !(T.planned.hand && T.planned.hand[i]),
+                                                       name: T.planned.names[i] || ''})) : [];
+  T.edited = true;
+}
+
+function studio_tmDropList(v) { return studio_dropsOf(v.T.drops, v.sh); }
+function studio_tmOwnDrops(v) { if (!v.T.drops) v.T.drops = studio_dropsOwned(null, v.sh); }
+function studio_tmMainDrop(v) { return studio_dropsMain(v.T.drops, v.sh); }
 
 /* EXACT, UNLESS ASKED. A mark is where the player pressed K or let go of it, to the millisecond: it used
    to be pulled to the nearest beat, so a kill marked on an off-beat hit landed somewhere they had not
-   put it. Snapping is a choice on the page now, off until it is ticked. */
-function studio_mkSnap(t, boxId) {
-  const box = studio_el(boxId || 'studio-mk-snap');
-  return box && box.checked ? studio_nearestBeat(studio.songShape, t) : Math.round(t * 1000) / 1000;
+   put it. Snapping is a choice on the page, off until it is ticked. */
+function studio_tmSnap(v, t) {
+  const box = studio_el(v.snap);
+  return box && box.checked ? studio_nearestBeat(v.sh, t) : Math.round(t * 1000) / 1000;
 }
 
-function studio_mkSelCount() {
-  return Object.keys(studio.mk.sel || {}).length;
+/* Which kind an id is: kills are p# (planned) or h# (placed), drops a# (found) or u# (placed). */
+function studio_mkIsDrop(id) { return /^[au]/.test(String(id)); }
+
+/* After every change to a draft: the Make page redraws (and asks its chip again for a drop); the Song
+   tab writes the change to the reel, as one step of undo. */
+function studio_tmChanged(v, label, drop) {
+  if (v.where === 'song') { studio_sgCommit(label); return; }
+  if (drop) studio_mkDropsChanged(); else studio_mkKillsDraw();
+}
+
+function studio_tmAddMark(v, t) {
+  if (!v.sh) { toast('Choose a song first.', 'warn'); return false; }
+  if (t < v.part.start - 0.01 || t > v.part.end + 0.01) { toast('Marks go inside the part you are using.', 'warn'); return false; }
+  const T = v.T;
+  studio_tmOwn(T);
+  const at = studio_tmSnap(v, t);
+  const near = T.hand.find(k => Math.abs(k.t - at) < 0.03);
+  /* A MARK ON ONE OF AUTOSTREAM'S IS THE PLAYER CLAIMING IT: it becomes theirs, at their time, and is
+     never moved for them again. It used to be dropped without a word, so K pressed on a kill the plan
+     had already marked did nothing at all. */
+  if (near && !near.auto) return false;
+  if (near) {
+    near.auto = false; near.t = at;
+    studio_tmChanged(v, 'A kill marked at ' + studio_secs(at));
+    return true;
+  }
+  T.nid = (T.nid || 0) + 1;
+  T.hand.push({id: 'h' + T.nid, t: at, auto: false, name: ''});
+  T.hand.sort((x, y) => x.t - y.t);
+  studio_tmChanged(v, 'A kill marked at ' + studio_secs(at));
+  return true;
+}
+
+/* A DROP MARKED BY THE PLAYER: where the bass comes in, as they hear it. Build and drop builds into
+   it, and the drop flash goes on the kill that lands on it. */
+function studio_tmAddDrop(v, t) {
+  if (!v.sh) { toast('Choose a song first.', 'warn'); return; }
+  if (t < v.part.start - 0.01 || t > v.part.end + 0.01) { toast('That is outside the part you chose.', 'warn'); return; }
+  studio_tmOwnDrops(v);
+  v.T.drops.push(studio_dropNew(t, v.snap, v.sh));
+  v.T.drops.sort((x, y) => x.t - y.t);
+  studio_tmChanged(v, 'A drop marked at ' + studio_secs(t), true);
+}
+
+/* Remove marks by id, kills and drops alike -- one, or everything selected. */
+function studio_tmDelIds(v, ids) {
+  const T = v.T, kill = ids.filter(id => !studio_mkIsDrop(id)), drop = ids.filter(studio_mkIsDrop);
+  if (kill.length) {
+    studio_tmOwn(T);
+    T.hand = T.hand.filter(k => kill.indexOf(k.id) < 0);
+  }
+  if (drop.length) {
+    studio_tmOwnDrops(v);
+    T.drops = T.drops.filter(d => drop.indexOf(d.id) < 0);
+  }
+  T.sel = T.sel || {};
+  ids.forEach(id => { delete T.sel[id]; });
+  studio_tmChanged(v, ids.length === 1 ? (drop.length ? 'A drop removed' : 'A kill mark removed')
+                                        : ids.length + ' marks removed', drop.length > 0);
+}
+
+function studio_tmNudgeMark(v, id, by) {
+  const T = v.T, drop = studio_mkIsDrop(id);
+  if (drop) studio_tmOwnDrops(v); else studio_tmOwn(T);
+  const m = (drop ? T.drops : T.hand).find(x => x.id === id);
+  if (!m) return;
+  m.t = Math.max(0, Math.round((m.t + by) * 1000) / 1000);
+  m.auto = false;
+  (drop ? T.drops : T.hand).sort((x, y) => x.t - y.t);
+  studio_tmChanged(v, drop ? 'A drop moved' : 'A kill mark moved', drop);
+}
+
+/* Move every selected mark by the same amount. One that is moved is the player's from then on. */
+function studio_tmMoveSel(v, ids, dt) {
+  const T = v.T, span = v.span;
+  const list = Object.keys(ids), kills = list.some(id => !studio_mkIsDrop(id)), drops = list.some(studio_mkIsDrop);
+  const one = list.length === 1;
+  const move = m => {
+    if (!ids[m.id]) return;
+    const to = Math.max(span.start, Math.min(span.end, m.t + dt));
+    m.t = one ? studio_tmSnap(v, to) : Math.round(to * 1000) / 1000;
+    m.auto = false;
+  };
+  if (kills) { studio_tmOwn(T); T.hand.forEach(move); T.hand.sort((x, y) => x.t - y.t); }
+  if (drops) { studio_tmOwnDrops(v); T.drops.forEach(move); T.drops.sort((x, y) => x.t - y.t); }
+  studio_tmChanged(v, drops && !kills ? 'A drop moved' : list.length > 1 ? list.length + ' marks moved' : 'A kill mark moved', drops);
+}
+
+function studio_tmClearMarks(v) {
+  const T = v.T;
+  T.hand = []; T.edited = false;
+  Object.keys(T.sel || {}).forEach(id => { if (!studio_mkIsDrop(id)) delete T.sel[id]; });
+  studio_tmChanged(v, 'Kill marks back to AutoStream’s');
+}
+
+function studio_tmClearDrops(v) {
+  const T = v.T;
+  T.drops = null;
+  Object.keys(T.sel || {}).forEach(id => { if (studio_mkIsDrop(id)) delete T.sel[id]; });
+  studio_tmChanged(v, 'Drops back to AutoStream’s', true);
+}
+
+/* WHAT THE PLAN HAS NOT CAUGHT UP WITH, as reasons: 'song', 'part', 'marks', 'drops', 'style'. The reel's
+   are its project's draft (clips/editflow.py, the same names); the Make page's are what changed since
+   "Show where the kills will land" planned the marks drawn. [] when the timing holds. */
+function studio_tmStale(v) {
+  if (v.where === 'song') {
+    const d = (studio.project && studio.project.draft) || {};
+    return ['song', 'part', 'marks', 'drops'].filter(k => k === 'part' ? (d.start !== undefined || d.end !== undefined) : d[k] !== undefined);
+  }
+  const T = v.T, m = T.planned && T.planned.made;
+  if (!m) return [];
+  const out = [];
+  if ((m.song || '') !== (studio.song || '')) out.push('song');
+  else if (m.mode !== T.mode || (T.mode === 'part' && (Math.abs(m.start - T.start) > 5e-4 || Math.abs(m.end - T.end) > 5e-4))) out.push('part');
+  if (m.drops !== JSON.stringify(T.drops ? studio_dropsSent(T.drops) : null)) out.push('drops');
+  if (m.style !== studio.style) out.push('style');
+  return out;
+}
+
+/* THE MARKS, DRAWN THE SAME WAY EVERYWHERE: AutoStream's hollow, the player's solid, a selected one
+   ringed -- and, while the timing is stale, AutoStream's dashed and faint, at the song seconds they
+   were planned on, because that is where they still are and they are about to be placed again. */
+function studio_tmDiamond(ctx, x, y, k, o) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(x, y - 8); ctx.lineTo(x + 8, y); ctx.lineTo(x, y + 8); ctx.lineTo(x - 8, y); ctx.closePath();
+  if (o.ghost && !k.hand) {
+    ctx.globalAlpha = 0.5; ctx.setLineDash([3, 3]);
+    ctx.fillStyle = o.surface; ctx.fill(); ctx.strokeStyle = o.auto; ctx.lineWidth = 1.5; ctx.stroke();
+  } else if (k.hand) { ctx.fillStyle = o.accent; ctx.fill(); }
+  else { ctx.fillStyle = o.surface; ctx.fill(); ctx.strokeStyle = o.auto; ctx.lineWidth = 1.75; ctx.stroke(); }
+  ctx.restore();
 }
 
 /* Where the lanes sit on the canvas: drops along the top, kills through the middle. */
 const MK_DROP_LANE = 26;
 const MK_KILLS_H = 140;
 
-function studio_mkKillsDraw() {
-  const box = studio_el('studio-mk-killsbox');
-  if (!box) return;
-  const sh = studio.songShape, mk = studio.mk;
-  box.classList.toggle('hide', !sh);
-  const note = studio_el('studio-mk-killnote');
-  if (!sh) {
-    if (note) note.textContent = '';
-    return;
-  }
-  mk.sel = mk.sel || {};
-  const list = studio_mkKillList(), drops = studio_mkDropList();
-  const mine = list.filter(k => k.hand).length;
-  if (note) {
-    note.textContent = mk.edited
-      ? list.length + ' kill(s): ' + mine + ' placed by you, ' + (list.length - mine) + ' by AutoStream. Build puts every shot around them; "Back to automatic" lets AutoStream choose again.'
-      : mk.planned
-        ? 'Where the plan puts ' + list.length + ' kills on the song. Drag one, press K at the playhead, or double-click the song to place your own.'
-        : 'AutoStream puts each kill on a hit of the song. Press "Show where the kills will land" to see them here, then move any you like.';
-  }
-  const c = studio_sgCanvas('studio-mk-kills', MK_KILLS_H);
-  if (!c || !sh.peaks) return;
-  const {ctx, W, H} = c, span = studio_mkKillSpan(), len = span.end - span.start;
+/* THE PART UP CLOSE: the song's loudness, the part's beats and hits, the drops on their lane and the
+   kills on theirs, the playhead. One drawing for the Make page and the Song tab; each mounts it on its
+   own canvas. Drawn a little wider than the part on the Song tab, so the part's edges show. */
+function studio_tmKillsDraw(v) {
+  const sh = v.sh, T = v.T;
+  if (!sh) return;
+  T.sel = T.sel || {};
+  const list = studio_tmKillList(T), drops = studio_tmDropList(v);
+  const c = studio_sgCanvas(v.cv, MK_KILLS_H);
+  if (!c || !sh.peaks) return {list: list, drops: drops};
+  const {ctx, W, H} = c, span = v.span, len = Math.max(0.5, span.end - span.start);
   const X = t => (t - span.start) / len * W, top = MK_DROP_LANE, mid = top + (H - top - 14) / 2;
   const css = getComputedStyle(document.documentElement);
   const tok = (n, d) => css.getPropertyValue(n).trim() || d;
   const accent = tok('--accent', '#5aa9ff'), auto = tok('--ok', '#4fc97a'), warn = tok('--warn', '#e3b341');
   const faint = tok('--text-tertiary', '#8a8a8a'), text = tok('--text-primary', '#fff'), surface = tok('--surface', '#111');
   const n = sh.peaks.length;
+  /* outside the part, dimmed: the part is what is cut to */
   ctx.fillStyle = faint;
-  ctx.globalAlpha = 0.45;
   for (let x = 0; x < W; x++) {
     const t = span.start + x / W * len;
     const amp = (sh.peaks[Math.min(n - 1, Math.max(0, Math.floor(t / sh.seconds * n)))] || 0) * (mid - top - 4);
+    ctx.globalAlpha = (t >= v.part.start && t <= v.part.end) ? 0.45 : 0.15;
     ctx.fillRect(x, mid - amp, 1, amp * 2 || 1);
   }
   ctx.globalAlpha = 1;
+  /* THE PART'S OWN BEATS. They are read from the song where the part is, so a part dragged elsewhere
+     shows the grid its kills will be placed on, not the one they were. */
   studio_beatGrid(ctx, X, H - 14, sh, {width: W, alpha: 0.9, top: top, height: H - 14 - top});
-  /* Where kills CAN land: the song's own hits, as small ticks under the waveform. */
   ctx.fillStyle = faint;
   ctx.globalAlpha = 0.7;
   (sh.hits || []).forEach(t => { if (t >= span.start && t <= span.end) ctx.fillRect(X(t) - 0.5, H - 12, 1, 8); });
   ctx.globalAlpha = 1;
-  /* The drop lane. */
+  if (v.where === 'song') {
+    ctx.fillStyle = accent;
+    ctx.fillRect(X(v.part.start) - 1, 0, 3, H); ctx.fillRect(X(v.part.end) - 1, 0, 3, H);
+  }
   ctx.fillStyle = tok('--surface-sunken', '#080b10');
   ctx.fillRect(0, 0, W, top - 2);
-  const md = mk.markDrag, dt = md && md.moved ? md.dt : 0;
+  const md = T.markDrag, dt = md && md.moved ? md.dt : 0;
   const at = (id, t) => (md && md.moved && md.ids[id]) ? t + dt : t;
   drops.forEach(d => {
     const t = at(d.id, d.t);
     if (t < span.start - 0.01 || t > span.end + 0.01) return;
-    const x = X(t), on = !!mk.sel[d.id];
+    const x = X(t), on = !!T.sel[d.id];
     ctx.globalAlpha = 0.55;
     ctx.fillStyle = warn;
     ctx.fillRect(x - 0.75, top, 1.5, H - 14 - top);
@@ -2986,35 +3435,214 @@ function studio_mkKillsDraw() {
     ctx.fillStyle = warn; ctx.font = '10px monospace';
     ctx.fillText('drop', x + 10, 15);
   });
-  /* The kills: AutoStream's are hollow and green, the player's solid in the accent, a selected one ringed. */
-  list.forEach((k, i) => {
+  const why = studio_tmStale(v), ghost = why.indexOf('part') >= 0 || why.indexOf('style') >= 0;
+  /* A new song's marks were beats of another song: not drawn on this one at all. */
+  const shown = why.indexOf('song') >= 0 ? list.filter(k => k.hand) : list;
+  shown.forEach((k, i) => {
     const t = at(k.id, k.t);
     if (t < span.start - 0.01 || t > span.end + 0.01) return;
-    const x = X(t), y = mid, on = !!mk.sel[k.id], col = k.hand ? accent : auto;
-    ctx.beginPath();
-    ctx.moveTo(x, y - 8); ctx.lineTo(x + 8, y); ctx.lineTo(x, y + 8); ctx.lineTo(x - 8, y); ctx.closePath();
-    if (k.hand) { ctx.fillStyle = col; ctx.fill(); }
-    else { ctx.fillStyle = surface; ctx.fill(); ctx.strokeStyle = col; ctx.lineWidth = 1.75; ctx.stroke(); }
+    const x = X(t), on = !!T.sel[k.id];
+    studio_tmDiamond(ctx, x, mid, k, {ghost: ghost, accent: accent, auto: auto, surface: surface});
     if (on) {
-      ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2);
+      ctx.beginPath(); ctx.arc(x, mid, 12, 0, Math.PI * 2);
       ctx.strokeStyle = text; ctx.lineWidth = 2; ctx.stroke();
     }
-    ctx.fillStyle = col;
+    ctx.fillStyle = k.hand ? accent : auto;
+    ctx.globalAlpha = ghost && !k.hand ? 0.5 : 1;
     ctx.font = '10px monospace';
-    ctx.fillText(String(i + 1), x - 3, y - 13);
+    ctx.fillText(String(i + 1), x - 3, mid - 13);
+    ctx.globalAlpha = 1;
   });
-  /* A box being dragged out to select. */
-  const bs = mk.boxSel;
+  const bs = T.boxSel;
   if (bs) {
     ctx.fillStyle = accent; ctx.globalAlpha = 0.15;
     ctx.fillRect(Math.min(X(bs.t0), X(bs.t1)), 0, Math.abs(X(bs.t1) - X(bs.t0)), H);
     ctx.globalAlpha = 1;
   }
-  const a = studio_el('studio-mk-audio');
-  if (a && a.getAttribute('data-song') === studio.song && (!a.paused || a.currentTime > 0)) {
+  const a = studio_el(v.audio);
+  if (a && a.getAttribute('data-song') === v.song && (!a.paused || a.currentTime > 0)) {
     ctx.fillStyle = '#ff5c5c'; ctx.fillRect(X(a.currentTime) - 1, 0, 2, H);
   }
+  c.cv.setAttribute('data-t0', span.start); c.cv.setAttribute('data-t1', span.end);
+  return {list: list, drops: drops};
+}
+
+/* THE CANVAS. Click a mark to select it (Ctrl or Shift adds to the selection), drag to move it -- and
+   everything selected with it -- Shift-drag the empty song to box-select, click the empty song to hear
+   it from there, double-click to add or remove. The top lane is the drops, the rest the kills. */
+function studio_tmKillPointer(v, e, seek) {
+  const cv = studio_el(v.cv), T = v.T;
+  if (!cv || !v.sh) return;
+  T.sel = T.sel || {};
+  const redraw = () => { if (v.where === 'song') studio_sgDraw(); else studio_mkKillsDraw(); };
+  const r = cv.getBoundingClientRect(), span = v.span, len = span.end - span.start;
+  const x = Math.max(0, Math.min(r.width, e.clientX - r.left)), y = e.clientY - r.top;
+  const t = span.start + x / r.width * len;
+  const inDrops = y < MK_DROP_LANE * r.height / MK_KILLS_H;
+  const pool = inDrops ? studio_tmDropList(v) : studio_tmKillList(T);
+  let near = -1, gap = 11;
+  pool.forEach((k, i) => { const d = Math.abs((k.t - span.start) / len * r.width - x); if (d < gap) { gap = d; near = i; } });
+  const hit = near >= 0 ? pool[near] : null;
+  const inPart = u => Math.max(v.part.start, Math.min(v.part.end, u));
+  if (e.type === 'pointerdown') {
+    if (e.button !== undefined && e.button !== 0) return;
+    if (hit) {
+      if (e.ctrlKey || e.metaKey || e.shiftKey) {
+        if (T.sel[hit.id]) delete T.sel[hit.id]; else T.sel[hit.id] = true;
+        redraw();
+      } else {
+        if (!T.sel[hit.id]) T.sel = {[hit.id]: true};
+        const ids = {};
+        Object.keys(T.sel).forEach(id => { ids[id] = true; });
+        T.markDrag = {t0: t, dt: 0, ids: ids, moved: false};
+        try { cv.setPointerCapture(e.pointerId); } catch (err) { /* a mouse still works */ }
+        redraw();
+      }
+    } else if (e.shiftKey) {
+      T.boxSel = {t0: t, t1: t, add: e.ctrlKey || e.metaKey};
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { /* a mouse still works */ }
+    } else {
+      T.sel = {};
+      seek(Math.max(span.start, Math.min(span.end, t)));      /* click the song: hear it from there */
+    }
+    e.preventDefault();
+  } else if (e.type === 'pointermove' && T.markDrag) {
+    const md = T.markDrag;
+    md.dt = t - md.t0;
+    md.moved = md.moved || Math.abs(md.dt) * r.width / len > 2;
+    redraw();
+  } else if (e.type === 'pointermove' && T.boxSel) {
+    T.boxSel.t1 = t;
+    redraw();
+  } else if ((e.type === 'pointerup' || e.type === 'pointercancel') && T.markDrag) {
+    const md = T.markDrag;
+    T.markDrag = null;
+    if (md.moved && e.type === 'pointerup') studio_tmMoveSel(v, md.ids, md.dt);
+    else redraw();
+  } else if ((e.type === 'pointerup' || e.type === 'pointercancel') && T.boxSel) {
+    const bs = T.boxSel, lo = Math.min(bs.t0, bs.t1), hi = Math.max(bs.t0, bs.t1);
+    T.boxSel = null;
+    if (!bs.add) T.sel = {};
+    studio_tmKillList(T).concat(studio_tmDropList(v)).forEach(k => { if (k.t >= lo && k.t <= hi) T.sel[k.id] = true; });
+    redraw();
+  } else if (e.type === 'dblclick') {
+    if (hit) studio_tmDelIds(v, [hit.id]);
+    else if (inDrops) studio_tmAddDrop(v, inPart(t));
+    else studio_tmAddMark(v, inPart(t));
+  }
+}
+
+/* THE WHOLE SONG, WITH THE PART ON IT: drag the part to move it, an edge to resize it, click elsewhere
+   to move it there. One gesture for the Make page and the Song tab.
+
+   WHILE IT IS DRAGGED, ONLY THE RANGE AND THE WAVEFORM MOVE. Nothing is planned, no shot is touched and
+   no mark moves -- a mark is a moment of the song and stays at its second. On release the part lands
+   on a beat, and only if it really changed (its start or its end, even at the same length) is that a
+   change at all: `commit` is called with what it was, so a surface can tell. `T.drag` is the live
+   range, which is what the canvases draw while it exists. */
+function studio_tmPartPointer(e, o) {
+  const T = o.T, sh = o.sh, cv = o.cv;
+  if (!sh || !cv) return;
+  if (e.type === 'pointerdown' && o.seekOnly) {
+    const r = cv.getBoundingClientRect();
+    o.seek((e.clientX - r.left) / r.width * sh.seconds);
+    return;
+  }
+  if (e.type === 'pointerdown') {
+    const r = cv.getBoundingClientRect();
+    const t = (e.clientX - r.left) / r.width * sh.seconds;
+    const edge = 6 / r.width * sh.seconds;
+    const kind = Math.abs(t - T.start) < edge ? 'start' : Math.abs(t - T.end) < edge ? 'end'
+      : (t > T.start && t < T.end) ? 'move' : 'jump';
+    const was = {start: T.start, end: T.end};
+    if (kind === 'jump') {
+      const len = T.end - T.start;
+      T.start = studio_nearestBeat(sh, Math.max(0, Math.min(sh.seconds - len, t - len / 2)));
+      T.end = Math.min(sh.seconds, T.start + len);
+      o.commit(was);
+      return;
+    }
+    T.drag = {kind: kind, x0: e.clientX, start: T.start, end: T.end, w: r.width, pointer: e.pointerId, was: was};
+    try { cv.setPointerCapture(e.pointerId); } catch (err) { /* fine without */ }
+    e.preventDefault();
+    return;
+  }
+  const g = T.drag;
+  if (!g || e.pointerId !== g.pointer) return;
+  const dt = (e.clientX - g.x0) / g.w * sh.seconds;
+  if (e.type === 'pointermove') {
+    if (g.kind === 'start') T.start = Math.max(0, Math.min(T.end - 1, g.start + dt));
+    else if (g.kind === 'end') T.end = Math.max(T.start + 1, Math.min(sh.seconds, g.end + dt));
+    else {
+      const len = g.end - g.start;
+      T.start = Math.max(0, Math.min(sh.seconds - len, g.start + dt));
+      T.end = T.start + len;
+    }
+    o.redraw();
+    return;
+  }
+  T.drag = null;
+  if (e.type === 'pointercancel') { T.start = g.was.start; T.end = g.was.end; o.redraw(); return; }
+  /* Dropped on a beat, so the reel's cuts are the song's beats. */
+  const len = T.end - T.start, bar = 4 * (sh.beat || 60 / sh.bpm);
+  if (g.kind !== 'end') {
+    T.start = studio_nearestBeat(sh, T.start);
+    if (g.kind === 'move') T.end = Math.min(sh.seconds, T.start + len);
+    else T.start = Math.min(T.end - bar / 8, T.start);
+  } else {
+    T.end = Math.max(T.start + bar / 4, studio_nearestBeat(sh, T.end));
+  }
+  o.commit(g.was);
+}
+
+/* ----- the Make page's mounting of it ----- */
+
+function studio_mkKillList() { return studio_tmKillList(studio.mk); }
+function studio_mkOwn() { studio_tmOwn(studio.mk); }
+function studio_mkDropList() { return studio_dropsOf(studio.mk.drops, studio.songShape); }
+function studio_mkOwnDrops() { studio_tmOwnDrops(studio_tmView('make')); }
+function studio_mkMainDrop() { return studio_dropsMain(studio.mk.drops, studio.songShape); }
+
+function studio_mkKillSpan() {
+  const sh = studio.songShape;
+  if (!sh) return {start: 0, end: 1};
+  const sp = studio_mkSpan();
+  return {start: sp.start, end: Math.max(sp.end, sp.start + 1)};
+}
+
+function studio_mkSnap(t, boxId) {
+  const box = studio_el(boxId || 'studio-mk-snap');
+  return box && box.checked ? studio_nearestBeat(studio.songShape, t) : Math.round(t * 1000) / 1000;
+}
+
+function studio_mkSelCount() {
+  return Object.keys(studio.mk.sel || {}).length;
+}
+
+function studio_mkKillsDraw() {
+  const box = studio_el('studio-mk-killsbox');
+  if (!box) return;
+  const sh = studio.songShape, mk = studio.mk;
+  box.classList.toggle('hide', !sh);
+  studio_show('studio-mk-dropsbox', !!sh);
+  const note = studio_el('studio-mk-killnote');
+  if (!sh) {
+    if (note) note.textContent = '';
+    return;
+  }
+  const v = studio_tmView('make');
+  const list = studio_tmKillList(mk), drops = studio_tmDropList(v);
+  const mine = list.filter(k => k.hand).length;
+  if (note) {
+    note.textContent = mk.edited
+      ? list.length + ' kill(s): ' + mine + ' placed by you, ' + (list.length - mine) + ' by AutoStream. Build puts every shot around them; "Back to automatic" lets AutoStream choose again.'
+      : mk.planned
+        ? 'Where the plan puts ' + list.length + ' kills on the song. Drag one, press K at the playhead, or double-click the song to place your own.'
+        : 'AutoStream puts each kill on a hit of the song. Press "Show where the kills will land" to see them here, then move any you like.';
+  }
+  studio_tmKillsDraw(v);
   studio_mkListDraw(list, drops);
+  studio_flowDraw();
 }
 
 /* The lists under the song: what lands where, whose each one is, and a box to pick several.
@@ -3022,6 +3650,7 @@ function studio_mkKillsDraw() {
    second, and a list rebuilt that often eats the click that was meant for one of its boxes. */
 function studio_mkListDraw(list, drops) {
   const mk = studio.mk;
+  mk.sel = mk.sel || {};
   const sig = JSON.stringify([list, drops, mk.sel]);
   if (sig !== mk.listSig) {
     mk.listSig = sig;
@@ -3057,64 +3686,22 @@ function studio_mkListDraw(list, drops) {
   if (dclear) dclear.disabled = !mk.drops;
 }
 
-/* Which kind an id is: kills are p# (planned) or h# (placed), drops a# (found) or u# (placed). */
-function studio_mkIsDrop(id) { return /^[au]/.test(String(id)); }
-
 /* Where the playhead is, or the start of the part before anything has played. */
 function studio_mkHead() {
   const a = studio_el('studio-mk-audio');
   return a && a.getAttribute('data-song') === studio.song && a.readyState >= 1 ? a.currentTime : studio_mkSpan().start;
 }
 
-function studio_mkAddMark(at) {
-  const sh = studio.songShape;
-  if (!sh) { toast('Choose a song first.', 'warn'); return; }
-  const t = at !== undefined ? at : studio_mkHead();
-  const sp = studio_mkKillSpan();
-  if (t < sp.start - 0.01 || t > sp.end + 0.01) { toast('That is outside the part you chose.', 'warn'); return; }
-  const mk = studio.mk;
-  studio_mkOwn();
-  mk.nid = (mk.nid || 0) + 1;
-  mk.hand.push({id: 'h' + mk.nid, t: studio_mkSnap(t), auto: false, name: ''});
-  mk.hand.sort((x, y) => x.t - y.t);
-  studio_mkKillsDraw();
-}
+function studio_mkAddMark(at) { studio_tmAddMark(studio_tmView('make'), at !== undefined ? at : studio_mkHead()); }
+function studio_mkAddDrop(at) { studio_tmAddDrop(studio_tmView('make'), at !== undefined ? at : studio_mkHead()); }
 
-/* A DROP MARKED BY THE PLAYER: where the bass comes in, as they hear it. Build and drop builds into
-   it, and the drop flash goes on the kill that lands on it. */
-function studio_mkAddDrop(at) {
-  const sh = studio.songShape;
-  if (!sh) { toast('Choose a song first.', 'warn'); return; }
-  const t = at !== undefined ? at : studio_mkHead();
-  const sp = studio_mkKillSpan();
-  if (t < sp.start - 0.01 || t > sp.end + 0.01) { toast('That is outside the part you chose.', 'warn'); return; }
-  const mk = studio.mk;
-  studio_mkOwnDrops();
-  mk.drops.push(studio_dropNew(t));
-  mk.drops.sort((x, y) => x.t - y.t);
-  studio_mkDropsChanged();
-}
-
+/* A change to the drops: the chip is asked again, and the marks drawn were planned around the old ones. */
 function studio_mkDropsChanged() {
-  if (studio.mk.planned) studio_el('studio-mk-killmsg').textContent = 'The drops changed: "Show where the kills will land" plans again around them.';
+  studio_mkChip();
   studio_mkDraw();
 }
 
-/* Remove marks by id, kills and drops alike -- one, or everything selected. */
-function studio_mkDelIds(ids) {
-  const mk = studio.mk, kill = ids.filter(id => !studio_mkIsDrop(id)), drop = ids.filter(studio_mkIsDrop);
-  if (kill.length) {
-    studio_mkOwn();
-    mk.hand = mk.hand.filter(k => kill.indexOf(k.id) < 0);
-  }
-  if (drop.length) {
-    studio_mkOwnDrops();
-    mk.drops = mk.drops.filter(d => drop.indexOf(d.id) < 0);
-  }
-  ids.forEach(id => { delete mk.sel[id]; });
-  if (drop.length) studio_mkDropsChanged(); else studio_mkKillsDraw();
-}
-
+function studio_mkDelIds(ids) { studio_tmDelIds(studio_tmView('make'), ids); }
 function studio_mkDelMark(id) { studio_mkDelIds([id]); }
 
 function studio_mkDelSelected() {
@@ -3138,139 +3725,49 @@ function studio_mkSelAll(on) {
   studio_mkKillsDraw();
 }
 
-function studio_mkNudgeMark(id, d) {
-  const mk = studio.mk, drop = studio_mkIsDrop(id);
-  if (drop) studio_mkOwnDrops(); else studio_mkOwn();
-  const m = (drop ? mk.drops : mk.hand).find(x => x.id === id);
-  if (!m) return;
-  m.t = Math.max(0, Math.round((m.t + d * 0.1) * 1000) / 1000);
-  m.auto = false;
-  (drop ? mk.drops : mk.hand).sort((x, y) => x.t - y.t);
-  if (drop) studio_mkDropsChanged(); else studio_mkKillsDraw();
-}
+function studio_mkNudgeMark(id, d) { studio_tmNudgeMark(studio_tmView('make'), id, d * 0.1); }
+function studio_mkClearMarks() { studio_tmClearMarks(studio_tmView('make')); }
+function studio_mkClearDrops() { studio_tmClearDrops(studio_tmView('make')); }
 
-function studio_mkClearMarks() {
-  const mk = studio.mk;
-  mk.hand = []; mk.edited = false;
-  Object.keys(mk.sel || {}).forEach(id => { if (!studio_mkIsDrop(id)) delete mk.sel[id]; });
-  studio_mkKillsDraw();
-}
-
-function studio_mkClearDrops() {
-  const mk = studio.mk;
-  mk.drops = null;
-  Object.keys(mk.sel || {}).forEach(id => { if (studio_mkIsDrop(id)) delete mk.sel[id]; });
-  studio_mkDropsChanged();
-}
-
-/* A style, a part, a song or the clips changed: where a plan PLACED the kills no longer holds. Marks the
-   player placed are theirs and stay -- they are about the song, not the plan -- and the page says so. */
+/* A style, a part, a song or the clips changed. The marks a plan PLACED were planned on what was there
+   before, so they no longer hold -- but they are not wiped: they stay where they were, dashed, and the
+   page says so and offers to plan again (studio_flowDraw). Marks the player placed are theirs and stay
+   as they are; they are about the song, not the plan. */
 function studio_mkStale() {
-  const mk = studio.mk;
   studio_mkChip();
-  if (!mk.planned) return;
-  mk.planned = null;
-  studio_el('studio-mk-killmsg').textContent = mk.edited ? 'Your marks are kept.' : '';
   studio_mkKillsDraw();
 }
 
 async function studio_mkPlan() {
   if (!studio.selected.length || !studio.song) { toast('Choose a song first: kills land on its hits.', 'warn'); return; }
-  const btn = studio_el('studio-mk-plan'), msg = studio_el('studio-mk-killmsg');
+  const btn = studio_el('studio-mk-plan'), msg = studio_el('studio-mk-killmsg'), mk = studio.mk;
   btn.disabled = true;
   msg.textContent = 'Planning the reel to find where each kill lands... this is the plan Build would make' +
     (studio.arrange === 'fit' ? ', and a perfect fit takes up to ~30 s.' : '.');
+  /* What this plan is made on, so the page can tell when the part or the drops have moved past it --
+     and so an answer to an older question is dropped rather than drawn over a newer part. */
+  const body = studio_planBody(false);
+  const made = {song: studio.song, mode: mk.mode, start: mk.start, end: mk.end, style: studio.style,
+                drops: JSON.stringify(mk.drops ? studio_dropsSent(mk.drops) : null)};
+  const ask = mk.planAsk = (mk.planAsk || 0) + 1;
+  studio.mkBusy = true;
+  studio_mkBadge();
   try {
-    const r = await API.post('/api/studio/plan', studio_planBody(false));
+    const r = await API.post('/api/studio/plan', body);
+    if (ask !== mk.planAsk) return;
     if (!r || !r.ok) { msg.textContent = (r && r.error) || 'Could not plan that reel.'; return; }
     const p = r.project, marks = (p.song_marks || []).slice();
     const names = (p.shots || []).map(x => (x.caption || x.name || '').replace(/\.mp4$/i, ''));
-    studio.mk.planned = {marks: marks, names: names};
+    mk.planned = {marks: marks, names: names, made: made};
     msg.textContent = marks.length + ' kills placed on the song.';
   } finally {
-    btn.disabled = false;
+    if (ask === mk.planAsk) { btn.disabled = false; studio.mkBusy = false; }
     studio_mkKillsDraw();
+    studio_mkBadge();
   }
 }
 
-/* THE CANVAS. Click a mark to select it (Ctrl or Shift adds to the selection), drag to move it -- and
-   everything selected with it -- Shift-drag the empty song to box-select, click the empty song to hear
-   it from there, double-click to add or remove. The top lane is the drops, the rest the kills. */
-function studio_mkKillPointer(e) {
-  const cv = studio_el('studio-mk-kills'), mk = studio.mk;
-  if (!cv || !studio.songShape) return;
-  mk.sel = mk.sel || {};
-  const r = cv.getBoundingClientRect(), span = studio_mkKillSpan(), len = span.end - span.start;
-  const x = Math.max(0, Math.min(r.width, e.clientX - r.left)), y = e.clientY - r.top;
-  const t = span.start + x / r.width * len;
-  const inDrops = y < MK_DROP_LANE * r.height / MK_KILLS_H;
-  const pool = inDrops ? studio_mkDropList() : studio_mkKillList();
-  let near = -1, gap = 11;
-  pool.forEach((k, i) => { const d = Math.abs((k.t - span.start) / len * r.width - x); if (d < gap) { gap = d; near = i; } });
-  const hit = near >= 0 ? pool[near] : null;
-  if (e.type === 'pointerdown') {
-    if (e.button !== undefined && e.button !== 0) return;
-    if (hit) {
-      if (e.ctrlKey || e.metaKey || e.shiftKey) {
-        if (mk.sel[hit.id]) delete mk.sel[hit.id]; else mk.sel[hit.id] = true;
-        studio_mkKillsDraw();
-      } else {
-        if (!mk.sel[hit.id]) mk.sel = {[hit.id]: true};
-        const ids = {};
-        Object.keys(mk.sel).forEach(id => { ids[id] = true; });
-        mk.markDrag = {t0: t, dt: 0, ids: ids, moved: false};
-        try { cv.setPointerCapture(e.pointerId); } catch (err) { /* a mouse still works */ }
-        studio_mkKillsDraw();
-      }
-    } else if (e.shiftKey) {
-      mk.boxSel = {t0: t, t1: t, add: e.ctrlKey || e.metaKey};
-      try { cv.setPointerCapture(e.pointerId); } catch (err) { /* a mouse still works */ }
-    } else {
-      mk.sel = {};
-      studio_mkSeek(Math.max(span.start, Math.min(span.end, t)));      /* click the song: hear it from there */
-    }
-    e.preventDefault();
-  } else if (e.type === 'pointermove' && mk.markDrag) {
-    const md = mk.markDrag;
-    md.dt = t - md.t0;
-    md.moved = md.moved || Math.abs(md.dt) * r.width / len > 2;
-    studio_mkKillsDraw();
-  } else if (e.type === 'pointermove' && mk.boxSel) {
-    mk.boxSel.t1 = t;
-    studio_mkKillsDraw();
-  } else if ((e.type === 'pointerup' || e.type === 'pointercancel') && mk.markDrag) {
-    const md = mk.markDrag;
-    mk.markDrag = null;
-    if (md.moved && e.type === 'pointerup') studio_mkMoveSel(md.ids, md.dt);
-    else studio_mkKillsDraw();
-  } else if ((e.type === 'pointerup' || e.type === 'pointercancel') && mk.boxSel) {
-    const bs = mk.boxSel, lo = Math.min(bs.t0, bs.t1), hi = Math.max(bs.t0, bs.t1);
-    mk.boxSel = null;
-    if (!bs.add) mk.sel = {};
-    studio_mkKillList().concat(studio_mkDropList()).forEach(k => { if (k.t >= lo && k.t <= hi) mk.sel[k.id] = true; });
-    studio_mkKillsDraw();
-  } else if (e.type === 'dblclick') {
-    if (hit) studio_mkDelMark(hit.id);
-    else if (inDrops) studio_mkAddDrop(Math.max(span.start, Math.min(span.end, t)));
-    else studio_mkAddMark(Math.max(span.start, Math.min(span.end, t)));
-  }
-}
-
-/* Move every selected mark by the same amount. One that is moved is the player's from then on. */
-function studio_mkMoveSel(ids, dt) {
-  const mk = studio.mk, span = studio_mkKillSpan();
-  const list = Object.keys(ids), kills = list.some(id => !studio_mkIsDrop(id)), drops = list.some(studio_mkIsDrop);
-  const one = list.length === 1;
-  const move = m => {
-    if (!ids[m.id]) return;
-    const to = Math.max(span.start, Math.min(span.end, m.t + dt));
-    m.t = one ? studio_mkSnap(to) : Math.round(to * 1000) / 1000;
-    m.auto = false;
-  };
-  if (kills) { studio_mkOwn(); mk.hand.forEach(move); mk.hand.sort((x, y) => x.t - y.t); }
-  if (drops) { studio_mkOwnDrops(); mk.drops.forEach(move); mk.drops.sort((x, y) => x.t - y.t); }
-  if (drops) studio_mkDropsChanged(); else studio_mkKillsDraw();
-}
+function studio_mkKillPointer(e) { studio_tmKillPointer(studio_tmView('make'), e, studio_mkSeek); }
 
 /* A SOUND AS THE PLAYHEAD PASSES A MARK, so a kill placed by eye can be checked by ear: a short tick
    for a kill, a low thump for a drop. Crossings, not proximity -- a frame that skips past a mark
@@ -3312,8 +3809,7 @@ function studio_mkTickMarks(a) {
 function studio_mkNudge(what, how) {
   const sh = studio.songShape, mk = studio.mk;
   if (!sh) return;
-  const bar = studio_mkBar(), step = how === 'bar' ? bar : -bar;
-  mk.touched = true;
+  const bar = studio_mkBar(), step = how === 'bar' ? bar : -bar, was = {start: mk.start, end: mk.end};
   if (what === 'start') {
     const len = mk.end - mk.start;
     mk.start = Math.max(0, Math.min(sh.seconds - bar, mk.start + step));
@@ -3321,14 +3817,13 @@ function studio_mkNudge(what, how) {
   } else {
     mk.end = Math.max(mk.start + bar, Math.min(sh.seconds, mk.end + step));
   }
-  studio_mkDraw();
+  studio_mkPartChanged(was);
 }
 
 function studio_mkPreset(which) {
   const sh = studio.songShape, mk = studio.mk;
   if (!sh) return;
-  const bar = studio_mkBar(), len = mk.end - mk.start;
-  mk.touched = true;
+  const bar = studio_mkBar(), len = mk.end - mk.start, was = {start: mk.start, end: mk.end};
   if (which === 'whole') {
     mk.start = (sh.beats && sh.beats[0]) || 0;
     mk.end = sh.seconds;
@@ -3341,7 +3836,7 @@ function studio_mkPreset(which) {
     mk.start = studio_nearestBeat(sh, Math.max(0, Math.min(sh.drums_in || 0, sh.seconds - bar)));
     mk.end = Math.min(sh.seconds, mk.start + len);
   }
-  studio_mkDraw();
+  studio_mkPartChanged(was);
 }
 
 /* The part's player. The song is loaded on first use; a seek asked for before the
@@ -3582,55 +4077,21 @@ async function studio_ytClose() {
 }
 
 function studio_mkPointer(e) {
-  const sh = studio.songShape, mk = studio.mk, cv = studio_el('studio-mk-wave');
-  if (!sh || !cv) return;
-  if (e.type === 'pointerdown' && mk.mode !== 'part') {
+  const mk = studio.mk;
+  studio_tmPartPointer(e, {T: mk, sh: studio.songShape, cv: studio_el('studio-mk-wave'),
     /* Nothing to drag while AutoStream chooses; a click is a seek. */
-    const r = cv.getBoundingClientRect();
-    studio_mkSeek((e.clientX - r.left) / r.width * sh.seconds);
-    return;
-  }
-  if (e.type === 'pointerdown') {
-    const r = cv.getBoundingClientRect();
-    const t = (e.clientX - r.left) / r.width * sh.seconds;
-    const edge = 6 / r.width * sh.seconds;
-    const kind = Math.abs(t - mk.start) < edge ? 'start' : Math.abs(t - mk.end) < edge ? 'end'
-      : (t > mk.start && t < mk.end) ? 'move' : 'jump';
-    mk.touched = true;
-    if (kind === 'jump') {
-      const len = mk.end - mk.start;
-      mk.start = studio_nearestBeat(sh, Math.max(0, Math.min(sh.seconds - len, t - len / 2)));
-      mk.end = Math.min(sh.seconds, mk.start + len);
-      studio_mkDraw();
-      return;
-    }
-    mk.drag = {kind: kind, x0: e.clientX, start: mk.start, end: mk.end, w: r.width, pointer: e.pointerId};
-    try { cv.setPointerCapture(e.pointerId); } catch (err) { /* fine without */ }
-    e.preventDefault();
-    return;
-  }
-  const g = mk.drag;
-  if (!g || e.pointerId !== g.pointer) return;
-  const dt = (e.clientX - g.x0) / g.w * sh.seconds;
-  if (e.type === 'pointermove') {
-    if (g.kind === 'start') mk.start = Math.max(0, Math.min(mk.end - 1, g.start + dt));
-    else if (g.kind === 'end') mk.end = Math.max(mk.start + 1, Math.min(sh.seconds, g.end + dt));
-    else {
-      const len = g.end - g.start;
-      mk.start = Math.max(0, Math.min(sh.seconds - len, g.start + dt));
-      mk.end = mk.start + len;
-    }
-  } else {
-    mk.drag = null;
-    /* Dropped on a beat, so the reel's cuts are the song's beats. */
-    const len = mk.end - mk.start;
-    if (g.kind !== 'end') {
-      mk.start = studio_nearestBeat(sh, mk.start);
-      if (g.kind === 'move') mk.end = Math.min(sh.seconds, mk.start + len);
-    } else {
-      mk.end = Math.max(mk.start + studio_mkBar() / 4, studio_nearestBeat(sh, mk.end));
-    }
-  }
+    seekOnly: mk.mode !== 'part', seek: studio_mkSeek, redraw: studio_mkDraw,
+    commit: was => studio_mkPartChanged(was)});
+}
+
+/* THE PART, MOVED ON THE MAKE PAGE -- by a drag, a nudge or a preset. Only a real change counts, and
+   makes the part the player's (`touched`). The marks drawn stay where they are; studio_tmStale says
+   they no longer hold, and "Undo part change" puts back the part they were planned on. */
+function studio_mkPartChanged(was) {
+  const mk = studio.mk;
+  if (Math.abs(was.start - mk.start) < 5e-4 && Math.abs(was.end - mk.end) < 5e-4) { studio_mkDraw(); return; }
+  mk.touched = true;
+  studio_mkStale();
   studio_mkDraw();
 }
 
@@ -4283,6 +4744,8 @@ function studio_planBody(withMarks) {
   if (withMarks && studio.song && studio.mk.edited && studio.mk.hand.length) {
     body.marks = studio.mk.hand.map(k => Math.round(k.t * 1000) / 1000);
   }
+  /* The player's own marks on a reel being rebuilt, as constraints rather than the whole list. */
+  if (studio.song && !body.marks && studio.mkAnchors && studio.mkAnchors.length) body.anchors = studio.mkAnchors.slice();
   /* THE DROPS, once the player has touched them -- every plan, the preview's as well as Build's, so
      the kills it shows are the ones it will build around them. An empty list is "no drop at all". */
   if (studio.song && studio.mk.drops) body.drops = studio_dropsSent(studio.mk.drops);
@@ -4305,6 +4768,8 @@ async function studio_build(opts) {
      and nothing else, so the render started anyway a moment later and looked
      like a Cancel that had been ignored. */
   const gen = ++studio.buildGen;
+  studio.mkBuilding = true;
+  studio_mkBadge();
   const ad = o.body ? null : studio.adding;
   const body = o.body || studio_planBody(true);
   say(!studio.song ? 'Planning every shot…'
@@ -4333,8 +4798,14 @@ async function studio_build(opts) {
     studio_closeModals();
     /* A rebuild renders over the reel it rebuilds rather than beside it. */
     if (ad && ad.output) r.project.output = ad.output;
+    /* A REBUILD OVER A REEL IS ONE STEP OF UNDO. It used to empty the history, so the timeline edits a
+       rebuild replaced were gone for good the moment it landed; now Undo brings the reel back as it was. */
+    const before = ad && ad.output && studio.project && studio.project.output === ad.output ? JSON.stringify(studio.project) : '';
+    studio_flowForget(); studio.flow.ask = '';
     studio_setProject(r.project, r.derived, r.notes, r.song);
-    studio.output = ad && ad.output ? ad.output : ''; studio.undo = []; studio.redo = [];
+    studio.output = ad && ad.output ? ad.output : '';
+    if (before) studio_pushUndo(before, 'Rebuilt from the clips');
+    else { studio.undo = []; studio.redo = []; studio.playFile = ''; }
     /* A fresh reel has no video to differ from; a rebuild over an existing one
        has exactly one difference, and it is the whole reel. */
     studio.pending = []; studio.dirty = true; studio.failMsg = '';
@@ -4348,6 +4819,8 @@ async function studio_build(opts) {
     return true;
   } finally {
     btn.disabled = false;
+    studio.mkBuilding = false;
+    studio_mkFlowDraw();
   }
 }
 
@@ -4368,6 +4841,9 @@ function studio_buildCancel() {
 function studio_setProject(project, derived, notes, songShape) {
   studio.project = project; studio.derived = derived; studio.notes = notes || [];
   if (songShape !== undefined) studio.songShape = songShape;
+  if (project.output !== studio.output) studio.playFile = '';
+  /* The analysis that came with a project is its song's, for the Song tab to draw it with. */
+  if (songShape && songShape.beats && project.song) studio.shapes[project.song] = songShape;
   if (project.output) studio.output = project.output;
   studio_el('studio-tab-timeline').disabled = false;
   studio_el('studio-tab-song').disabled = false;
@@ -4411,6 +4887,7 @@ function studio_pushUndo(snapshot, label) {
 function studio_step(from, to) {
   const got = from.pop();
   if (!got) return false;
+  studio_flowForget();
   to.push({snap: JSON.stringify(studio.project), label: got.label});
   studio.gen++;
   studio.project = JSON.parse(got.snap);
@@ -4512,6 +4989,9 @@ function studio_reconcile() {
 /* `paths` is what the edit changed (studio_diff). Left out, the line cannot be
    compared and stays until a render. */
 function studio_touched(label, shot, paths) {
+  /* An edit of nothing the render draws -- a clip put in the reel's pool, shots locked together -- is
+     a step of undo but not a change the video lacks. */
+  if (paths && paths.length && !paths.some(studio_isEdit)) { studio_reconcile(); return; }
   studio.dirty = true;
   studio.failMsg = '';
   /* "Ready · rendered in 23 s" stops being true the moment anything is
@@ -4577,7 +5057,9 @@ function studio_remark(p) { if ((p.song_marks || []).length) p.remark = true; }
 
 /* What a render writes about itself rather than what anyone chose: never a
    reason to render again. */
-const STUDIO_NOT_EDITS = {output: 1, plan_notes: 1, lyrics_note: 1, render: 1, version: 1, remark: 1};
+const STUDIO_NOT_EDITS = {output: 1, plan_notes: 1, lyrics_note: 1, render: 1, version: 1, remark: 1,
+                          /* which render the reel is, and the clips waiting in its pool: neither is drawn */
+                          render_version: 1, made_from: 1, checks: 1, selection: 1};
 /* ...nor is which shots are locked together: the timeline reads it, the render does not. */
 function studio_isEdit(k) { return k.length && !STUDIO_NOT_EDITS[k[0]] && k[k.length - 1] !== 'lock'; }
 
@@ -4612,6 +5094,7 @@ function studio_untouched() {
    cannot see (a camera video attached): it stays on the list until a render. */
 function studio_change(mutate, label, shot, sticky) {
   if (!studio.project) return;
+  studio_flowForget();
   const was = JSON.stringify(studio.project);
   studio_pushUndo(was, label);
   studio.gen++;
@@ -4688,6 +5171,8 @@ function studio_histDraw() {
               'still yours to put back.</p>';
     }
   }
+  /* The edits are one history; the renders are the other -- each a file of its own (studio_verHtml). */
+  html += studio_verHtml();
   host.innerHTML = html;
 }
 
@@ -4706,6 +5191,507 @@ function studio_redo() {
 function studio_histGo(back, fwd) {
   for (let i = 0; i < back; i++) if (!studio_step(studio.undo, studio.redo)) break;
   for (let i = 0; i < fwd; i++) if (!studio_step(studio.redo, studio.undo)) break;
+}
+
+/* ------------------------------------------------- every render, kept (clips/versions.py)
+
+   A render used to replace the reel. Each one is a version of its own now, promoted to the reel only
+   when it has finished, and History lists them -- what each was made from, which one the reel is --
+   with Restore this version and Save as new reel. The player plays the version file itself, which is
+   never written again, so a render finishing never has to wait for the player to let go of it. */
+studio.versions = {list: [], current: 0, of: ''};
+
+async function studio_verLoad() {
+  const out = studio.output;
+  if (!out) { studio.versions = {list: [], current: 0, of: ''}; studio_histDraw(); return; }
+  const r = await API.get('/api/studio/versions?path=' + encodeURIComponent(out)).catch(() => null);
+  if (out !== studio.output) return;
+  studio.versions = r && r.ok ? {list: r.versions || [], current: r.current || 0, of: out} : {list: [], current: 0, of: out};
+  studio_histDraw();
+}
+
+/* What a render was made from, in a line. */
+function studio_verMade(m) {
+  if (!m) return '';
+  const st = (studio.catalog ? studio.catalog.styles : []).find(s => s.key === m.style);
+  const bits = [st ? st.label : m.style, m.format === 'vertical' ? '9:16' : '16:9'];
+  if (m.song) bits.push(m.song + (m.part ? ' ' + studio_partRange(m.part[0], m.part[1]) : ''));
+  bits.push(m.shots + (m.shots === 1 ? ' shot' : ' shots'));
+  if (m.length) bits.push(studio_dur(m.length));
+  if (m.lyrics && m.lyrics !== 'off') bits.push('lyrics');
+  return bits.join(' · ');
+}
+
+function studio_verHtml() {
+  const v = studio.versions;
+  if (!studio.output || v.of !== studio.output || !v.list.length) return '';
+  return '<div class="studio-hist-head studio-ver-head"><h3>Renders</h3><span class="muted">' + v.list.length +
+    (v.list.length === 1 ? ' version' : ' versions') + '</span></div>' +
+    v.list.map(r => '<div class="studio-ver-row' + (r.current ? ' is-current' : '') + '" data-version="' + r.version + '">' +
+      '<span class="studio-ver-name"><b>v' + r.version + '</b>' + (r.current ? ' <span class="studio-ver-now">the reel now</span>' : '') +
+      (r.hard ? ' <span class="studio-ver-bad">check failed</span>' : '') + '</span>' +
+      '<span class="muted studio-small">' + esc(studio_verMade(r.made_from)) + ' · ' + esc(studio_ago(r.when * 1000)) + '</span>' +
+      '<span class="studio-ver-acts">' +
+      (r.current ? '' : '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-ver-restore" data-v="' + r.version + '">Restore this version</button>') +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-ver-fork" data-v="' + r.version + '">Save as new reel</button>' +
+      '</span></div>').join('');
+}
+
+/* RESTORE THIS VERSION: the reel becomes that render again -- the file and the project it was made from
+   -- as one step of undo. Nothing is rendered. */
+async function studio_verRestore(n) {
+  const p = studio.project;
+  if (!p || !studio.output || !n) return;
+  const r = await API.post('/api/studio/version', {path: studio.output, version: n, action: 'restore'}).catch(() => null);
+  if (!r || !r.ok) { toast((r && r.error) || 'That version could not be restored.', 'warn'); return; }
+  studio_pushUndo(JSON.stringify(p), 'Render v' + n + ' restored');
+  studio.gen++;
+  studio_setProject(r.project, r.derived, r.notes, r.song);
+  studio.output = r.project.output; studio.playFile = r.version_file || '';
+  studio.renderedAt = Date.now(); studio.checksHard = 0;
+  studio_settled();
+  studio_loadVideo();
+  studio_drawAll();
+  studio_verLoad();
+  toast('The reel is render v' + n + ' again.', 'ok');
+}
+
+/* SAVE AS NEW REEL: that render becomes a reel of its own, beside this one, and opens. */
+async function studio_verFork(n) {
+  const p = studio.project;
+  if (!p || !studio.output || !n) return;
+  const r = await API.post('/api/studio/version', {path: studio.output, version: n, action: 'fork',
+                                                  name: (p.name || 'Reel') + ' v' + n}).catch(() => null);
+  if (!r || !r.ok) { toast((r && r.error) || 'That version could not be saved as a reel.', 'warn'); return; }
+  toast('Saved as a new reel: ' + r.name + '.', 'ok');
+  studio.lib = null;
+  await studio_open(r.path);
+}
+
+/* ------------------------------------------------- the reel's timing, resolved by the player
+
+   WHAT HAPPENS WHEN THE PLAN NO LONGER MATCHES THE REEL. A part moved, a song changed, marks tapped
+   again, drops moved: the reel's project carries a `draft` (clips/editflow.py) and its kill timing is
+   STALE. Nothing re-plans on its own. The page says so in a banner nobody can miss, Render waits with
+   the reason beside it, and the player picks one of:
+
+     Replan for this section       the style's own planner on the new part, as a dry run, then a diff
+     Keep my shots, retime them    the same shots, each kill placed on the new part's beats
+     Undo part change              the draft dropped: the plan was never touched, so it holds again
+     Re-snap my marks              the player's own marks moved with the part (only when there are any)
+
+   A dry run carries the revision it was asked for (`rev`); any edit made while it runs bumps the
+   revision, and an answer for an older one is dropped -- so a drag, a release and another drag can
+   never apply what was planned for the first. Applying is one step of undo.
+
+   The same machinery runs the three ways to update a reel (Re-render, Re-time, Replan) and the three
+   things "Add clips..." can mean, each saying first what it keeps and what it changes -- the words
+   come from the server's own table (studio.catalog.editflow). */
+studio.flow = {rev: 0, busy: '', ask: '', askOpts: null, prop: null, conflicts: null, err: '', last: '', opts: null};
+
+function studio_flowTable() { return (studio.catalog && studio.catalog.editflow) || {actions: {}, changes: []}; }
+function studio_flowAction(kind) { return studio_flowTable().actions[kind] || {label: kind, says: '', keeps: [], changes: []}; }
+
+/* Whether the reel on the timeline is waiting for its timing to be updated. */
+function studio_reelStale() {
+  const d = studio.project && studio.project.draft;
+  return !!(d && Object.keys(d).length);
+}
+
+function studio_reelStaleWhy() {
+  const why = studio_tmStale(studio_tmView('song'));
+  const says = {song: 'The song changed', part: 'Song part changed', marks: 'Your kill marks changed', drops: 'The drops changed'};
+  return why.length ? says[why[0]] + ' — kill timing needs updating' : '';
+}
+
+/* Any edit makes an answer about the reel before it an answer about a reel that is gone. */
+function studio_flowForget() {
+  const f = studio.flow;
+  f.rev++;
+  f.busy = ''; f.prop = null; f.conflicts = null; f.err = '';
+}
+
+function studio_partRange(a, b) { return studio_secs(a).replace(/\.\d+$/, '') + '–' + studio_secs(b).replace(/\.\d+$/, ''); }
+
+/* THE STYLE BUILT ON A DROP, WITH ITS DROP OUTSIDE THE PART: it cannot be made, and the page says so
+   before asking the server -- the same rule as editflow.drop_conflict. */
+function studio_flowDropBlock() {
+  const p = studio.project, sg = studio.sg;
+  if (!p || !sg.shape) return null;
+  const st = (studio.catalog ? studio.catalog.styles : []).find(s => s.key === p.style);
+  if (!st || !st.drop) return null;
+  const d = studio_tmMainDrop(studio_tmView('song'));
+  if (d != null && d >= sg.start - 1e-3 && d <= sg.end + 1e-3) return null;
+  return d != null
+    ? {kind: 'drop-outside', text: 'This style is built on the drop, and the drop (' + studio_secs(d) + ') is outside the part.',
+       fixes: [{fix: 'move-to-drop', label: 'Move the part to the drop'}, {fix: 'mark-drop', label: 'Mark a drop in this part'},
+               {fix: 'other-style', label: 'Choose another style'}]}
+    : {kind: 'drop-outside', text: 'This style is built on the drop, and this song has no drop marked.',
+       fixes: [{fix: 'mark-drop', label: 'Mark a drop'}, {fix: 'other-style', label: 'Choose another style'}]};
+}
+
+/* A dry run of a re-time or a replan, for the part as it stands. Nothing is applied. */
+async function studio_flowStart(kind, opts) {
+  const p = studio.project, f = studio.flow, o = opts || {};
+  if (!p) return;
+  if (kind === 'rerender') { f.ask = ''; studio_flowDraw(); studio_render(); return; }
+  if (studio.rendering) { toast('A reel is rendering. Update its timing once it has finished.', 'warn'); return; }
+  const block = studio_reelStale() ? studio_flowDropBlock() : null;
+  if (block) { f.conflicts = [block]; f.ask = ''; studio_flowDraw(); return; }
+  const rev = ++f.rev;
+  f.busy = kind; f.last = kind; f.opts = o; f.ask = ''; f.prop = null; f.conflicts = null; f.err = '';
+  studio_drawRenderCard();
+  const body = {project: p, rev: rev};
+  if (kind === 'replan' && o.with) body.with = o.with;
+  if (o.relax) body.relax = o.relax;
+  if (o.add) body.add = true;
+  const r = await API.post(kind === 'replan' ? '/api/studio/replan' : '/api/studio/retime', body).catch(() => null);
+  if (rev !== f.rev || (r && r.rev !== undefined && r.rev !== rev)) return;     /* asked about a draft that is gone */
+  f.busy = '';
+  if (!r || !r.ok) f.err = (r && r.error) || 'That could not be worked out just now.';
+  else if (r.conflicts && r.conflicts.length) f.conflicts = r.conflicts;
+  else {
+    const d = r.project.draft ? null : r.project;
+    const part = d && d.song ? ' for ' + studio_partRange(d.song_offset || 0, d.part_end || (d.song_offset || 0) + r.derived.length) : '';
+    const style = o.with && o.with.style ? (studio.catalog.styles.find(s => s.key === o.with.style) || {label: o.with.style}).label : '';
+    f.prop = {kind: kind, project: r.project, derived: r.derived, notes: r.notes || [], diff: r.diff || {},
+              room: r.room || null, song: r.song, opts: o,
+              label: kind === 'retime' ? 'Shots re-timed' + part
+                   : style ? 'Replanned as ' + style : o.with && o.with.clips ? 'Replanned with the clips you added' : 'Replanned' + part};
+  }
+  studio_drawRenderCard();
+}
+
+/* APPLY: the answer becomes the reel, as one step of undo. */
+function studio_flowApply() {
+  const f = studio.flow, pr = f.prop, p = studio.project;
+  if (!pr || !p) return;
+  const snapshot = JSON.stringify(p);
+  studio_pushUndo(snapshot, pr.label);
+  studio.gen++;
+  pr.project.output = p.output;
+  f.prop = null; f.rev++;
+  studio_setProject(pr.project, pr.derived, pr.notes, pr.song === undefined ? undefined : pr.song);
+  studio_touched(pr.label, -1, studio_diff(JSON.parse(snapshot), pr.project));
+  studio_fit();
+  studio_drawAll();
+  toast(pr.label + '. Render to see it.', 'ok');
+}
+
+function studio_flowDiscard() {
+  const f = studio.flow;
+  f.prop = null; f.conflicts = null; f.err = ''; f.ask = '';
+  studio_drawRenderCard();
+}
+
+/* UNDO PART CHANGE: the exact spec before it. The plan was never touched while the part was stale, so
+   with the part back the plan holds again at once -- nothing is planned or re-timed. One edit, which
+   undo can take back too. */
+function studio_flowUndo(what) {
+  const keys = what === 'marks' ? ['marks'] : what === 'drops' ? ['drops'] : ['start', 'end', 'song'];
+  const label = what === 'marks' ? 'Mark changes undone' : what === 'drops' ? 'Drop changes undone' : 'Part change undone';
+  studio_flowForget();
+  studio_change(p => {
+    const d = Object.assign({}, p.draft || {});
+    keys.forEach(k => { delete d[k]; });
+    if (Object.keys(d).length) p.draft = d; else delete p.draft;
+  }, label);
+}
+
+/* The nearest of the song's hits within half a beat, else the nearest beat: where a moved mark lands. */
+function studio_tmHit(sh, t) {
+  if (!sh) return t;
+  const beat = sh.beat || 60 / sh.bpm;
+  let best = null, gap = beat / 2 + 1e-6;
+  (sh.hits || []).forEach(h => { const g = Math.abs(h - t); if (g < gap) { gap = g; best = h; } });
+  return best != null ? best : studio_nearestBeat(sh, t);
+}
+
+/* RE-SNAP MY MARKS: the player's own marks moved with the part, by as far as it moved, each onto the
+   new section's nearest hit. The one thing that ever moves a hand mark, and only when asked. */
+function studio_flowResnap() {
+  const p = studio.project, sg = studio.sg;
+  if (!p) return;
+  const dt = sg.start - (p.song_offset || 0);
+  studio_tmOwn(sg);
+  let n = 0;
+  sg.hand.forEach(k => { if (!k.auto) { k.t = Math.round(studio_tmHit(sg.shape, k.t + dt) * 1000) / 1000; n++; } });
+  if (!n) { toast('None of the marks are yours: AutoStream places its own again anyway.', 'warn'); return; }
+  sg.hand.sort((x, y) => x.t - y.t);
+  /* the anchors go with them */
+  const moved = sg.hand.filter(k => !k.auto).map(k => k.t);
+  studio_change(q => { studio_tmWriteReel(q, sg); q.anchors = moved; }, 'Your marks moved with the part');
+}
+
+function studio_flowFix(fix, el) {
+  const f = studio.flow, sg = studio.sg;
+  f.conflicts = null;
+  if (fix === 'resnap') { studio_flowResnap(); studio_flowStart(f.last || 'retime'); return; }
+  if (fix === 'forget-outside') {
+    studio_change(p => { p.anchors = (p.anchors || []).filter(a => a >= sg.start - 1e-3 && a <= sg.end + 1e-3); }, 'Your marks outside the part forgotten');
+    studio_flowStart(f.last || 'retime');
+    return;
+  }
+  if (fix === 'longer-part') {
+    const end = Number(el && el.getAttribute('data-end'));
+    if (isFinite(end) && sg.shape) { sg.end = Math.min(sg.shape.seconds, end); studio_sgCommit('The part made longer'); }
+    studio_flowStart('retime');
+    return;
+  }
+  if (fix.indexOf('relax:') === 0) { studio_flowStart('retime', {relax: fix.slice(6)}); return; }
+  if (fix === 'add') { studio_flowStart('retime', {add: true}); return; }
+  if (fix === 'move-to-drop') { studio_sgAtDrop(); return; }
+  if (fix === 'mark-drop') {
+    studio_tab('song');
+    toast('Double-click the top lane of the part up close, where you hear the bass come in, to mark the drop.');
+    return;
+  }
+  if (fix === 'other-style') { studio_flowAsk('replan', {chooseStyle: true}); return; }
+  studio_drawRenderCard();
+}
+
+/* BEFORE ANYTHING RUNS, WHAT IT KEEPS AND WHAT IT CHANGES. */
+function studio_flowAsk(kind, opts) {
+  const f = studio.flow;
+  f.ask = kind; f.askOpts = opts || {}; f.prop = null; f.conflicts = null; f.err = '';
+  if (studio_el('studio-pane-timeline').classList.contains('hide') && kind !== 'add') studio_tab('timeline');
+  studio_drawRenderCard();
+  const host = studio_el('studio-tl-stale');
+  if (host && host.scrollIntoView) host.scrollIntoView({block: 'nearest'});
+}
+
+function studio_flowList(items) { return '<ul>' + items.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>'; }
+
+function studio_flowKeeps(kind) {
+  const a = studio_flowAction(kind);
+  return '<div class="studio-flow-cols"><div><b>Keeps</b>' + studio_flowList(a.keeps || []) + '</div>' +
+    '<div><b>Changes</b>' + studio_flowList(a.changes || []) + '</div></div>';
+}
+
+function studio_flowBtn(act, label, opts) {
+  const o = opts || {};
+  return '<button type="button" class="btn ' + (o.primary ? 'btn-primary ' : o.ghost ? 'btn-ghost ' : '') + 'btn-sm' +
+    (o.attn ? ' studio-attn' : '') + '" data-act="' + act + '"' + (o.do ? ' data-do="' + o.do + '"' : '') +
+    (o.how ? ' data-how="' + o.how + '"' : '') + (o.disabled ? ' disabled' : '') +
+    (o.title ? ' title="' + esc(o.title) + '"' : '') + '>' + esc(label) + '</button>';
+}
+
+/* The proposal: what applying it would change, in the terms the player decides on. */
+function studio_flowPropHtml(pr) {
+  const d = pr.diff || {}, a = d.shots || [0, 0], len = d.length || [0, 0];
+  const facts = [];
+  facts.push('Shots: ' + a[0] + (a[1] !== a[0] ? ' → ' + a[1] : ', all kept'));
+  if ((d.clips_in || []).length) facts.push('Clips coming in: ' + d.clips_in.slice(0, 6).join(', ') + (d.clips_in.length > 6 ? '…' : ''));
+  if ((d.clips_out || []).length) facts.push('Clips going out: ' + d.clips_out.slice(0, 6).join(', ') + (d.clips_out.length > 6 ? '…' : ''));
+  facts.push('Kills: ' + (d.kills_moved || 0) + ' moved, ' + (d.kills_kept || 0) + ' where they were' +
+             (d.kills_new ? ', ' + d.kills_new + ' new' : '') + (d.kills_gone ? ', ' + d.kills_gone + ' left out' : ''));
+  facts.push('Length: ' + studio_dur(len[0]) + (Math.abs(len[1] - len[0]) > 0.05 ? ' → ' + studio_dur(len[1]) : ''));
+  const om = d.on_marks || [0, 0];
+  facts.push('Kills on their marks: ' + om[1] + ' of ' + a[1] + (om[1] !== om[0] ? ' (was ' + om[0] + ')' : ''));
+  if (d.effects_kept) facts.push('Your effects kept on ' + d.effects_kept + ' shot' + (d.effects_kept === 1 ? '' : 's'));
+  if (d.marks_outside) facts.push(d.marks_outside + ' of your marks are outside this part and could not be used');
+  if (pr.kind === 'replan' && d.edited) facts.push('Your timeline edits are replaced on every shot the new plan does not keep');
+  const notes = (pr.notes || []).slice(0, 4);
+  return '<div class="studio-flow is-prop" role="region" aria-label="What this would change">' +
+    '<p class="studio-flow-head">' + esc(pr.label) + ' — apply it?</p>' +
+    '<p class="muted studio-small">Worked out, not applied. The reel is as it was until you apply this; applying it is one step of undo.</p>' +
+    studio_flowList(facts) +
+    (notes.length ? '<details class="studio-fold"><summary>What the ' + (pr.kind === 'retime' ? 're-time' : 'plan') + ' said</summary>' + studio_flowList(notes) + '</details>' : '') +
+    (pr.room ? '<p class="studio-flow-room">The part has room for ' + pr.room.marks + ' more kill' + (pr.room.marks === 1 ? '' : 's') +
+               ' after the last shot. <button type="button" class="btn btn-sm" data-act="studio-flow-fix" data-fix="add">Add shots from this reel’s clips</button></p>' : '') +
+    '<div class="studio-flow-acts">' + studio_flowBtn('studio-flow', 'Apply', {primary: true, do: 'apply'}) +
+    studio_flowBtn('studio-flow', 'Discard', {ghost: true, do: 'discard'}) + '</div></div>';
+}
+
+function studio_flowConflictHtml(list) {
+  return '<div class="studio-flow is-bad" role="alert">' +
+    '<p class="studio-flow-head">This cannot be done as it stands</p>' +
+    list.map(c => '<p>' + esc(c.text) + '</p><div class="studio-flow-acts">' +
+      (c.fixes || []).map(x => '<button type="button" class="btn btn-sm" data-act="studio-flow-fix" data-fix="' + esc(x.fix) + '"' +
+        (x.end !== undefined ? ' data-end="' + x.end + '"' : '') + '>' + esc(x.label) + '</button>').join('') + '</div>').join('') +
+    '<div class="studio-flow-acts">' + studio_flowBtn('studio-flow', 'Close', {ghost: true, do: 'discard'}) + '</div></div>';
+}
+
+/* "ADD CLIPS..." SAYS WHICH. It used to be a rebuild in all but name: back to the clips, then the Make
+   page, then every shot planned again. Now it is one of three, each saying what it does to the reel. */
+function studio_flowAddHtml() {
+  const p = studio.project, d = studio.derived, i = studio.sel;
+  const shot = p && i >= 0 && i < p.shots.length ? p.shots[i] : null;
+  const rp = studio_flowAction('replan');
+  return '<div class="studio-flow is-ask" role="region" aria-label="Add clips">' +
+    '<p class="studio-flow-head">Add clips to ' + esc(p.name || 'this reel') + '</p>' +
+    '<div class="studio-flow-choice"><b>Add them to the reel’s pool</b>' +
+      '<p class="muted studio-small">Every shot stays as it is. The clips wait in the pool, for "Add shots" when a part has room, or for a replan.</p>' +
+      studio_flowBtn('studio-add-how', 'Pick clips for the pool', {how: 'pool'}) + '</div>' +
+    '<div class="studio-flow-choice"><b>Replace ' + (shot ? esc(studio_shotName(i)) + '’s clip' : 'a shot’s clip') + '</b>' +
+      '<p class="muted studio-small">' + (shot ? 'Keeps its place, its length and its effects (' + esc(shot.name || '') +
+        ' now); its kill is re-timed onto its mark. The shots around it do not change.' : 'Select a shot on the timeline first.') + '</p>' +
+      studio_flowBtn('studio-add-how', 'Pick its new clip', {how: 'replace', disabled: !shot, title: shot ? '' : 'Select a shot on the timeline first.'}) + '</div>' +
+    '<div class="studio-flow-choice"><b>Replan with these clips</b>' +
+      '<p class="muted studio-small">' + esc(rp.says ? rp.says[0].toUpperCase() + rp.says.slice(1) : 'Plans the reel again') + ', with every setting on the Make page.' +
+        (d && d.edited ? ' Your timeline edits are replaced on shots the new plan does not keep.' : '') + '</p>' +
+      studio_flowKeeps('replan') + studio_flowBtn('studio-add-how', 'Pick clips, then replan', {how: 'replan'}) + '</div>' +
+    '<div class="studio-flow-acts">' + studio_flowBtn('studio-flow', 'Cancel', {ghost: true, do: 'discard'}) + '</div></div>';
+}
+
+function studio_flowAskHtml() {
+  const f = studio.flow, k = f.ask, a = studio_flowAction(k), p = studio.project, d = studio.derived;
+  if (k === 'add') return studio_flowAddHtml();
+  const stale = studio_reelStale();
+  let extra = '', go = '';
+  if (k === 'rerender') {
+    go = studio_flowBtn('studio-flow', 'Re-render', {primary: true, do: 'rerender', disabled: stale,
+                        title: stale ? studio_reelStaleWhy() + ': update the timing first.' : ''});
+    if (stale) extra = '<p class="studio-flow-why">' + esc(studio_reelStaleWhy()) + ': update the timing first.</p>';
+  } else if (k === 'retime') {
+    go = studio_flowBtn('studio-flow', 'Re-time the shots', {primary: true, do: 'retime'});
+  } else {
+    const styles = (studio.catalog ? studio.catalog.styles : []);
+    const want = (f.askOpts && f.askOpts.style) || p.style;
+    extra = '<label class="field-label" for="studio-flow-style">Style</label><select class="select" id="studio-flow-style">' +
+      styles.map(s => '<option value="' + esc(s.key) + '"' + (s.key === want ? ' selected' : '') + '>' + esc(s.label) + '</option>').join('') + '</select>' +
+      (d && d.edited ? '<p class="studio-flow-why">You have edited this reel’s timeline since it was planned: those edits are replaced on every shot the new plan does not keep.</p>' : '');
+    go = studio_flowBtn('studio-flow', 'Replan', {primary: true, do: 'replan'});
+  }
+  return '<div class="studio-flow is-ask" role="region" aria-label="' + esc(a.label) + '">' +
+    '<p class="studio-flow-head">' + esc(a.label) + ' — ' + esc(a.says) + '</p>' + studio_flowKeeps(k) + extra +
+    '<div class="studio-flow-acts">' + go + studio_flowBtn('studio-flow', 'Cancel', {ghost: true, do: 'discard'}) + '</div></div>';
+}
+
+/* THE BANNER: why the timing is stale and what to do about it. The way to resolve it most people want
+   -- a plan of its own for the new section -- is the one that cannot be missed: the primary button, in
+   the accent, with a slow glow (still, for anyone who has asked for less motion). */
+function studio_flowStaleHtml() {
+  const p = studio.project, sg = studio.sg, why = studio_tmStale(studio_tmView('song'));
+  const block = studio_flowDropBlock();
+  const s0 = p.song_offset || 0, e0 = p.part_end > s0 ? p.part_end : s0 + ((studio.derived && studio.derived.length) || 0);
+  const mine = (p.anchors || []).length > 0;
+  let sub = '', acts = '';
+  const no = block ? {disabled: true, title: 'The drop is outside the part: ' + block.fixes.map(x => x.label.toLowerCase()).join(', or ') + ' first.'} : {};
+  if (why.indexOf('song') >= 0 || why.indexOf('part') >= 0) {
+    sub = why.indexOf('song') >= 0
+      ? 'The kills are still timed for ' + esc((p.song || 'no song').split(/[\\/]/).pop()) + '. Render waits until the timing matches.'
+      : 'The kills are still timed for ' + studio_partRange(s0, e0) + ' (dashed); the part is now ' +
+        studio_partRange(sg.start, sg.end) + '. Render waits until they match.';
+    acts = studio_flowBtn('studio-flow', 'Replan for this section', Object.assign({primary: true, attn: !block, do: 'replan'}, no)) +
+      studio_flowBtn('studio-flow', 'Keep my shots, retime them', Object.assign({do: 'retime'}, no)) +
+      studio_flowBtn('studio-flow', why.indexOf('song') >= 0 ? 'Undo song change' : 'Undo part change', {ghost: true, do: 'undo'}) +
+      (mine ? studio_flowBtn('studio-flow', 'Re-snap my marks', {ghost: true, do: 'resnap',
+              title: 'Move the marks you placed with the part, each onto the new section’s nearest hit'}) : '');
+  } else if (why.indexOf('marks') >= 0) {
+    sub = 'The shots are still cut to the marks they were planned on. Render waits until they are re-timed to yours.';
+    acts = studio_flowBtn('studio-flow', 'Re-time to my marks', {primary: true, attn: true, do: 'retime'}) +
+      studio_flowBtn('studio-flow', 'Undo mark changes', {ghost: true, do: 'undo-marks'});
+  } else {
+    const st = (studio.catalog ? studio.catalog.styles : []).find(s => s.key === p.style);
+    sub = 'The kills were placed around the drops as they were. Render waits until the timing matches.';
+    acts = (st && st.drop
+      ? studio_flowBtn('studio-flow', 'Replan around the drops', Object.assign({primary: true, attn: !block, do: 'replan'}, no))
+      : studio_flowBtn('studio-flow', 'Re-time to the drops', {primary: true, attn: true, do: 'retime'}) +
+        studio_flowBtn('studio-flow', 'Replan for this section', {do: 'replan'})) +
+      studio_flowBtn('studio-flow', 'Undo drop changes', {ghost: true, do: 'undo-drops'});
+  }
+  return '<div class="studio-flow is-stale" role="alert" data-why="' + esc(why.join(' ')) + '">' +
+    '<p class="studio-flow-head">' + esc(studio_reelStaleWhy()) + '</p><p class="studio-small">' + sub + '</p>' +
+    (block ? '<p class="studio-flow-why">' + esc(block.text) + '</p><div class="studio-flow-acts">' +
+      block.fixes.map(x => '<button type="button" class="btn btn-sm" data-act="studio-flow-fix" data-fix="' + esc(x.fix) + '">' + esc(x.label) + '</button>').join('') + '</div>' : '') +
+    '<div class="studio-flow-acts">' + acts + '</div></div>';
+}
+
+function studio_flowHtml() {
+  const p = studio.project, f = studio.flow;
+  if (!p) return '';
+  if (f.busy) {
+    return '<div class="studio-flow is-busy" role="status"><p class="studio-flow-head">' +
+      (f.busy === 'replan' ? 'Planning the reel for this section…' : 'Re-timing your shots…') + '</p>' +
+      '<p class="muted studio-small">The reel stays as it is until you apply what comes back. A change you make meanwhile makes this answer old, and it is dropped.</p>' +
+      '<div class="studio-flow-acts">' + studio_flowBtn('studio-flow', 'Stop', {ghost: true, do: 'stop'}) + '</div></div>';
+  }
+  if (f.prop) return studio_flowPropHtml(f.prop);
+  if (f.conflicts) return studio_flowConflictHtml(f.conflicts);
+  if (f.err) {
+    return '<div class="studio-flow is-bad" role="alert"><p class="studio-flow-head">' + esc(f.err) + '</p><div class="studio-flow-acts">' +
+      studio_flowBtn('studio-flow', 'Try again', {do: f.last || 'replan'}) + studio_flowBtn('studio-flow', 'Close', {ghost: true, do: 'discard'}) + '</div></div>';
+  }
+  if (f.ask) return studio_flowAskHtml();
+  if (studio_reelStale()) return studio_flowStaleHtml();
+  return '';
+}
+
+/* Drawn into every place that shows the reel's timing: the Song tab, and the timeline's side panel --
+   so the same banner, and the same buttons, are wherever the player is looking. */
+function studio_flowDraw() {
+  const html = studio_flowHtml();
+  /* What is asked before an update runs, and "Add clips...", belong to the timeline's panel only: the
+     Song tab shows the timing's own banner, and one set of controls has one set of ids. */
+  const f = studio.flow, song = f.ask && !f.busy && !f.prop && !f.conflicts && !f.err
+    ? (studio.project && studio_reelStale() ? studio_flowStaleHtml() : '') : html;
+  ['studio-sg-stale', 'studio-tl-stale'].forEach(id => {
+    const el = studio_el(id);
+    if (!el) return;
+    const html2 = id === 'studio-sg-stale' ? song : html;
+    /* A stale banner already showing is left alone, so the glow is not restarted on every redraw. */
+    if (el.getAttribute('data-html') === html2) return;
+    el.setAttribute('data-html', html2);
+    el.innerHTML = html2;
+    el.classList.toggle('hide', !html2);
+  });
+  const stale = studio_reelStale(), rp = studio_el('studio-tl-replan');
+  if (rp) {
+    const block = stale ? studio_flowDropBlock() : null;
+    rp.classList.toggle('hide', !stale || !!studio.flow.busy || !!studio.flow.prop);
+    rp.disabled = !!block;
+    rp.title = block ? block.text : studio_reelStaleWhy() + ': plan the reel again for the new part';
+  }
+  studio_mkFlowDraw();
+}
+
+function studio_flowAct(b) {
+  const what = b.getAttribute('data-do'), f = studio.flow;
+  if (what === 'apply') return studio_flowApply();
+  if (what === 'discard') return studio_flowDiscard();
+  if (what === 'stop') { studio_flowForget(); return studio_drawRenderCard(); }
+  if (what === 'undo') return studio_flowUndo('part');
+  if (what === 'undo-marks') return studio_flowUndo('marks');
+  if (what === 'undo-drops') return studio_flowUndo('drops');
+  if (what === 'resnap') return studio_flowResnap();
+  if (what === 'rerender') return studio_flowStart('rerender');
+  if (what === 'retime') return studio_flowStart('retime', f.err && f.last === 'retime' ? f.opts : {});
+  if (what === 'replan') {
+    const sel = studio_el('studio-flow-style');
+    const style = f.ask === 'replan' && sel ? sel.value : '';
+    return studio_flowStart('replan', style && style !== studio.project.style ? {with: {style: style}} : {});
+  }
+}
+
+/* THE STATE OF THE REEL, ALWAYS IN VIEW: one word for where it stands, and why when it is held. */
+const STUDIO_BADGES = {
+  changed: 'Changed', stale: 'Timing stale', planning: 'Planning', ready: 'Ready to render',
+  rendering: 'Rendering', rendered: 'Rendered', failed: 'Check failed'
+};
+
+function studio_badgeState() {
+  if (!studio.project) return null;
+  if (studio.rendering || studio.auto.running) return {key: 'rendering', why: studio.jobMsg || 'The reel is rendering.'};
+  if (studio.flow.busy) return {key: 'planning', why: studio.flow.busy === 'replan' ? 'Planning the reel for the part.' : 'Re-timing the shots.'};
+  if (studio_reelStale()) return {key: 'stale', why: studio_reelStaleWhy() + '. Render waits until it is updated.'};
+  if (studio.failMsg || studio.checksHard) return {key: 'failed', why: studio.failMsg || 'The finished reel did not pass its check.'};
+  if (!studio.output) return {key: 'ready', why: 'Planned; nothing rendered yet.'};
+  if (studio.dirty) return {key: 'changed', why: studio_pendingCount() + ' change(s) not in the video yet.'};
+  return {key: 'rendered', why: 'The video matches the reel.'};
+}
+
+function studio_badgeHtml(st) {
+  return st ? '<span class="studio-badge-dot" aria-hidden="true"></span>' + esc(STUDIO_BADGES[st.key]) : '';
+}
+
+function studio_badgeDraw() {
+  const el = studio_el('studio-badge'), st = studio_badgeState();
+  if (!el) return;
+  el.className = 'studio-badge' + (st ? ' is-' + st.key : '');
+  el.setAttribute('data-state', st ? st.key : '');
+  el.title = st ? st.why : '';
+  el.innerHTML = studio_badgeHtml(st);
 }
 
 /* A quick estimate while dragging. The server's answer replaces it. */
@@ -4763,6 +5749,8 @@ function studio_snapTo(t) {
 function studio_freeOutput() {
   const v = studio_el('studio-video');
   if (!v || !v.getAttribute('src')) return;
+  /* A version file is never replaced, so the previous render keeps playing while the next one runs. */
+  if (studio.playFile) return;
   try {
     v.pause();
     v.removeAttribute('src');
@@ -4772,6 +5760,8 @@ function studio_freeOutput() {
 
 async function studio_render() {
   if (!studio.project) return;
+  /* The server refuses it too (editflow.can_render); this is only so nothing is let go of for it. */
+  if (studio_reelStale()) { toast(studio_reelStaleWhy() + '. Update it first.', 'warn'); studio_drawRenderCard(); return; }
   studio_freeOutput();
   /* A check still waiting or in flight describes the project before the
      server allocates its output; letting it land afterwards would wipe that. */
@@ -4783,6 +5773,7 @@ async function studio_render() {
      and forgetting it lost its progress and its "Reel ready". */
   const wasSeen = studio.seenJob, wasWatching = studio.watching;
   studio.seenJob = studio.jobId; studio.watching = -1;
+  studio.checksHard = 0;
   /* Render beats the background render: the server cancels that one to start
      this, and its timer has nothing left to do. */
   clearTimeout(studio.auto.timer); studio.auto.timer = null;
@@ -4880,11 +5871,13 @@ async function studio_poll() {
       studio_drawInspector();
     }
     studio_state('Ready · rendered in ' + j.elapsed + ' s' + (j.cached ? ' · ' + j.cached + ' shots reused' : ''));
+    studio.checksHard = (j.checks || []).filter(c => c && c.level === 'hard').length;
     if (same) {
       /* Not studio_settled(): an edit made while the render ran is a real
          difference from the video that has just arrived, and saying otherwise
          would lose it. studio_render() already cleared what it sent. */
-      studio.output = j.output; studio.renderedAt = Date.now();
+      studio.output = j.output; studio.renderedAt = Date.now(); studio.playFile = j.version_file || '';
+      studio_verLoad();
       studio_loadVideo();
     }
     toast('Reel ready.', 'ok');
@@ -4926,9 +5919,11 @@ function studio_autoDone(j) {
       studio_drawInspector();
     }
     if (studio.project && j.output === studio.project.output) {
-      studio.output = j.output; studio.renderedAt = Date.now();
+      studio.output = j.output; studio.renderedAt = Date.now(); studio.playFile = j.version_file || '';
+      studio.checksHard = (j.checks || []).filter(c => c && c.level === 'hard').length;
       if (fresh) studio_settled();
       studio_loadVideo();
+      studio_verLoad();
     }
     studio_state(fresh ? 'Rendered in the background in ' + j.elapsed + ' s' + extra : '');
     studio_autoLog('done', String(j.elapsed));
@@ -4948,14 +5943,16 @@ function studio_autoDone(j) {
 function studio_busy(on) {
   studio.rendering = !!on;
   studio_show('studio-cancel-btn', on);
-  studio_el('studio-render-btn').disabled = on;
+  studio_el('studio-render-btn').disabled = on || studio_reelStale();
   studio_show('studio-meter-wrap', on);
 }
 
 function studio_loadVideo() {
   const v = studio_el('studio-video');
   if (!studio.output) { v.removeAttribute('src'); studio_show('studio-player-empty', true); return; }
-  v.src = studio_media('/api/clips/video', studio.output, '&v=' + studio.renderedAt);
+  /* The render's own version file when known: it is never written again, so nothing waits for the
+     player to let go of it (clips/versions.py). */
+  v.src = studio_media('/api/clips/video', studio.playFile || studio.output, '&v=' + studio.renderedAt);
   studio_show('studio-player-empty', false);
 }
 
@@ -5474,6 +6471,7 @@ function studio_autoArm() {
   a.waitMs = Math.min(AUTO_WAIT_MAX, Math.max(a.idleMs, (a.lastMs || 0) / 10));
   a.dueAt = Date.now() + a.waitMs;
   if (!a.on || !studio.project || !studio.dirty) return;
+  if (studio_reelStale()) { a.held = 'Waiting: the kill timing needs updating.'; return; }
   if (studio.rendering) {
     /* Never a second encode beside the one the user asked for. The edit
        waits, and the poll starts it when that render is done. */
@@ -5493,7 +6491,8 @@ async function studio_autoGo() {
   if (studio.drag) { a.timer = setTimeout(studio_autoGo, 600); return; }
   const sig = studio_projSig();
   if (a.running && a.sig === sig) return;
-  let held = studio.rendering ? 'Waiting for the render you started.' : studio_autoBusyElsewhere();
+  let held = studio.rendering ? 'Waiting for the render you started.'
+    : studio_reelStale() ? 'Waiting: the kill timing needs updating.' : studio_autoBusyElsewhere();
   if (!held && sig === a.failed) held = 'The last render of these edits failed. Press Render to try again.';
   if (held) { a.held = held; studio_autoLog('held', held); studio_autoDraw(); return; }
   const gen = studio.gen;
@@ -5533,7 +6532,7 @@ async function studio_autoGo() {
    goes as soon as nothing is in its way. */
 function studio_autoTick() {
   const a = studio.auto;
-  if (!a.on || !studio.project || !studio.dirty || a.timer || a.running || studio.rendering) return;
+  if (!a.on || !studio.project || !studio.dirty || a.timer || a.running || studio.rendering || studio_reelStale()) return;
   if (Date.now() < a.heldUntil || Date.now() < a.dueAt) return;
   if (studio_projSig() === a.failed) return;
   studio_autoGo();
@@ -5598,6 +6597,8 @@ function studio_drawRenderCard() {
   }
   studio_histDraw();
   studio_el('studio-show-btn').disabled = !studio.output || studio.dirty && !studio.renderedAt;
+  studio_flowDraw();
+  studio_badgeDraw();
   studio_drawWhy();
   studio_pvSync();
   studio_autoArm();
@@ -5624,6 +6625,12 @@ function studio_drawSync() {
     kind = 'busy'; label = 'Rendering…';
     head = 'Rendering your changes';
     sub = '';
+  } else if (studio_reelStale()) {
+    /* NEVER A RENDER OF A PLAN THE REEL HAS MOVED PAST. The button is not taken away -- it says why it
+       is held, and the fix is beside it and in the banner below. */
+    kind = 'timing'; label = 'Render';
+    head = studio_reelStaleWhy();
+    sub = 'Render waits until the kill timing matches: replan for this section, or keep your shots and re-time them.';
   } else if (studio.auto.running && !studio.failMsg) {
     /* Not "N changes are not in the video": they are on their way into it,
        and the preview is already showing them. */
@@ -5661,7 +6668,9 @@ function studio_drawSync() {
   if (btn) {
     btn.textContent = label;
     btn.classList.toggle('btn-warn', kind === 'stale');
-    btn.classList.toggle('btn-primary', kind !== 'stale');
+    btn.classList.toggle('btn-primary', kind !== 'stale' && kind !== 'timing');
+    btn.disabled = studio.rendering || kind === 'timing';
+    btn.title = kind === 'timing' ? head + '. Replan for this section, or keep your shots and re-time them, first.' : '';
   }
   /* WHICH changes, not just how many -- the newest first, because that is the
      one being second-guessed. Six is as many as the card can hold without
@@ -5677,9 +6686,15 @@ function studio_drawSync() {
   /* The player says it too: the sidebar is not where someone watching looks. */
   const stale = studio_el('studio-stale');
   if (stale) {
-    /* Not over the preview: that IS the edits, and says what it leaves out. */
-    studio_show('studio-stale', kind === 'stale' && !!studio.output && !studio_pvWanted());
-    stale.textContent = 'Last render · ' + n + (n === 1 ? ' change not shown' : ' changes not shown');
+    /* Not over the preview: that IS the edits, and says what it leaves out -- except when the timing
+       is stale, when both the video and the preview are the timing that no longer holds. */
+    if (kind === 'timing') {
+      studio_show('studio-stale', true);
+      stale.textContent = (studio.output ? 'Previous render' : 'Preview') + ' · the kill timing is out of date';
+    } else {
+      studio_show('studio-stale', kind === 'stale' && !!studio.output && !studio_pvWanted());
+      stale.textContent = 'Last render · ' + n + (n === 1 ? ' change not shown' : ' changes not shown');
+    }
   }
 }
 
@@ -5738,10 +6753,20 @@ function studio_drawWhy() {
   box.innerHTML = h;
 }
 
-/* Back to the clips with this reel's selection picked, to add more and rebuild. */
-async function studio_addClips() {
-  const p = studio.project, d = studio.derived;
+/* BACK TO THE CLIPS, TO ADD SOME -- one of three ways, chosen first (studio_flowAddHtml):
+
+     pool       the clips join the reel's pool; no shot changes
+     replace    one clip replaces the selected shot's; it keeps its place, length and effects
+     replan     the reel planned again with them, on the Make page, every setting carried
+
+   For a replan the reel's clips are picked already, so the ones added are seen beside them; for the
+   other two nothing is, so what is picked is exactly what is added. What a rebuild asks for is the
+   reel's SPEC: a part moved and not yet planned for is the part it plans. */
+async function studio_addClips(how) {
+  const p = studio.project, d = studio.derived, mode = how || 'replan';
   if (!p) return;
+  if (mode === 'replace' && !(studio.sel >= 0 && studio.sel < p.shots.length)) { toast('Select a shot on the timeline first.', 'warn'); return; }
+  studio.flow.ask = '';
   await studio_load(false);
   const want = (p.selection && p.selection.length) ? p.selection.map(x => x.clip) : p.shots.map(x => x.clip);
   const byPath = {};
@@ -5751,25 +6776,70 @@ async function studio_addClips() {
     const id = byPath[String(path).toLowerCase()];
     if (id && ids.indexOf(id) < 0) ids.push(id);
   });
-  studio.selected = ids;
+  studio.selected = mode === 'replan' ? ids : [];
+  studio_syncSelection();
+  const dr = p.draft || {};
+  const start = dr.start !== undefined ? dr.start : (p.song_offset || 0);
   studio.adding = {
-    name: p.name, style: p.style, song: p.song || '', fmt: p.format,
+    mode: mode, shot: studio.sel,
+    name: p.name, style: p.style, song: dr.song !== undefined ? dr.song : (p.song || ''), fmt: p.format,
     output: studio.output || p.output || '',
-    start: p.song_offset || 0, end: p.part_end || ((p.song_offset || 0) + (d ? d.length : 0)),
+    start: start, end: dr.end !== undefined ? dr.end : (p.part_end || (start + (d ? d.length : 0))),
     fill: p.fill || '', keep_all: !!p.keep_all,
     edited: !!(d && d.edited) || studio.undo.length > 0,
     keep: {cam: p.cam, vfit: p.vfit, handle: p.handle, handle_pos: p.handle_pos,
            outro_len: p.outro_len, overlays: p.overlays, lyrics: p.lyrics},
     /* WHAT THE PLAYER CHOSE, ASKED AGAIN. A rebuild of a Build and drop reel built on whichever
        set-up scored best, held the page's own part to an end, and dropped the intro, Headshots
-       only and any drops marked by hand -- none of them were carried. The project keeps them. */
-    build_clip: p.build_clip || '', part_auto: !!p.part_auto, hs_only: !!p.hs_only,
+       only and any drops marked by hand -- none of them were carried. The project keeps them,
+       and the player's own kill marks too: the rebuild plans around them. */
+    build_clip: p.build_clip || '', part_auto: !!p.part_auto && dr.start === undefined, hs_only: !!p.hs_only,
     intro_clip: p.intro_clip && p.intro_clip.path ? {path: p.intro_clip.path, audio: !!p.intro_clip.audio} : null,
-    drops: Array.isArray(p.hand_drops) ? p.hand_drops.slice() : null
+    drops: dr.drops !== undefined ? (dr.drops ? dr.drops.slice() : null) : (Array.isArray(p.hand_drops) ? p.hand_drops.slice() : null),
+    anchors: (p.anchors || []).slice(), marks: dr.marks ? dr.marks.slice() : null
   };
   studio_tab('clips');
   studio_renderLib();
-  if (ids.length < new Set(want).size) toast('Some of the clips in this reel are not in the clips folder any more.', 'warn');
+  if (mode === 'replan' && ids.length < new Set(want).size) toast('Some of the clips in this reel are not in the clips folder any more.', 'warn');
+  if (mode === 'replace') toast('Pick the clip for ' + studio_shotName(studio.sel) + ', then "Use this clip".');
+}
+
+/* The pool or a shot's clip, from the clips picked: an edit of the reel, back on the timeline. */
+function studio_addGo() {
+  const ad = studio.adding, p = studio.project;
+  if (!ad || !p) return;
+  const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
+  if (ad.mode === 'pool') {
+    const have = new Set((p.selection || []).map(r => String(r.clip).toLowerCase())
+                          .concat(p.shots.map(s => String(s.clip).toLowerCase())));
+    const add = sel.filter(c => !have.has(String(c.path).toLowerCase()));
+    if (!add.length) { toast(sel.length ? 'Those clips are in this reel already.' : 'Pick the clips to add first.', 'warn'); return; }
+    studio_change(q => {
+      const rows = (q.selection && q.selection.length) ? q.selection.slice()
+        : Array.from(new Set(q.shots.map(s => s.clip))).map(c => ({clip: c, name: (q.shots.find(s => s.clip === c) || {}).name || ''}));
+      q.selection = rows.concat(add.map(c => ({clip: c.path, name: c.name || '', why: 'In the pool, not in the reel yet.'})));
+    }, add.length + (add.length === 1 ? ' clip added to the pool' : ' clips added to the pool'));
+    toast(add.length + (add.length === 1 ? ' clip is' : ' clips are') + ' in the pool now. Every shot is as it was.', 'ok');
+  } else if (ad.mode === 'replace') {
+    if (sel.length !== 1) { toast('Pick exactly one clip for the shot.', 'warn'); return; }
+    const c = sel[0], i = ad.shot;
+    if (!p.shots[i]) { toast('That shot is not in the reel any more.', 'warn'); return; }
+    const kills = (c.kills || []).slice(), k = kills.length ? kills[0] : (c.duration || 2) / 2;
+    studio_change(q => {
+      const s = q.shots[i];
+      /* the place, the length, the run-up and every effect stay; the footage and its kills are the new clip's */
+      Object.assign(s, {clip: c.path, clip_id: '', name: c.name || '', kill: k, kills: kills.length ? kills : [k],
+                        clip_seconds: 0, clip_mtime: 0});
+      delete s.stretch; delete s.anchors; delete s.led;
+      /* ...and its kill goes back onto its mark: the local re-time the table names */
+      studio_remark(q);
+    }, studio_shotName(i) + ': its clip replaced', i);
+  } else {
+    return;
+  }
+  studio.adding = null; studio.selected = []; studio_syncSelection();
+  studio_renderTray();
+  studio_tab('timeline');
 }
 
 /* ------------------------------------------------------------ deleting clips */
@@ -6185,6 +7255,8 @@ function studio_drawAll() {
   if (!typing) studio_drawInspector();
   studio_frameDraw();
   if (!studio_el('studio-pane-facecam').classList.contains('hide')) studio_fcDraw();
+  /* The Song tab is the reel's draft, read from the project: an undo, an edit or an answer redraws it. */
+  if (!studio_el('studio-pane-song').classList.contains('hide')) { studio_sgSync(); studio_sgReset(); }
 }
 
 function studio_fit() {
@@ -7627,7 +8699,7 @@ function studio_drawInspectorBody() {
         : (vertical ? 'The middle of the game fills the tall frame; the sides are cropped.' : 'The game fills the frame.')) + '</span></div>' +
       '<div class="studio-field"><label class="field-label" for="studio-r-style">Style</label>' +
       '<select class="select" id="studio-r-style">' + styles.map(s => '<option value="' + esc(s.key) + '"' + (s.key === p.style ? ' selected' : '') + '>' + esc(s.label) + '</option>').join('') + '</select>' +
-      '<button type="button" class="btn btn-sm studio-add-btn" data-act="studio-restyle" id="studio-restyle-btn"' + (studio.busy ? ' disabled' : '') + '>Rebuild with this style</button>' +
+      '<button type="button" class="btn btn-sm studio-add-btn" data-act="studio-restyle" id="studio-restyle-btn"' + (studio.busy ? ' disabled' : '') + '>Replan with this style&hellip;</button>' +
       '<span class="muted studio-small">Replans every shot. Undo brings your edits back.</span></div>' +
       '<div class="studio-field"><label class="field-label" for="studio-r-grade">Colour</label>' + studio_select_html('studio-r-grade', 'grade', p.grade) +
       '<label class="studio-check"><input type="checkbox" id="studio-r-vignette"' + (p.vignette ? ' checked' : '') + '> Soft vignette</label></div>');
@@ -8425,12 +9497,15 @@ async function studio_open(path) {
   /* `when` is the file's mtime in SECONDS; the page counts in milliseconds,
      so an opened reel read as rendered 20,000 days ago. */
   studio.output = r.project.output; studio.renderedAt = r.when ? r.when * 1000 : Date.now();
+  studio.playFile = r.version_file || ''; studio.checksHard = 0;
+  studio_flowForget(); studio.flow.ask = '';
   studio_settled();
   studio.renderNote = '';
   studio_tab('timeline');
   studio_fit();
   studio_drawAll();
   studio_loadVideo();
+  studio_verLoad();
 }
 
 function studio_tab(which) {
@@ -9551,13 +10626,17 @@ function studio_wire() {
     else if (act === 'studio-pick') studio_pick(b.getAttribute('data-clip'), e.shiftKey);
     else if (act === 'studio-folder') studio_folderToggle(b.getAttribute('data-folder'));
     else if (act === 'studio-preview') studio_preview(b.getAttribute('data-clip'));
-    else if (act === 'studio-preview-close') studio_closeModals();
+    else if (act === 'studio-preview-close') studio_previewClose();
     else if (act === 'studio-make-cancel') studio_buildCancel();
     else if (act === 'studio-clear') { studio.selected = []; studio.adding = null; studio_syncSelection(); }
     /* THE STEPS ARE THE WAY IN (F13, the player's call once a second style passed its review):
        the clips picked here open the guided maker with them in it. Rebuilding a reel still opens
        the full page with that reel's settings, and All settings is on every step of the guide. */
-    else if (act === 'studio-make') { if (studio.adding) studio_openMake(); else studio_gdOpenWith(studio.selected.slice()); }
+    else if (act === 'studio-make') {
+      if (studio.adding && studio.adding.mode && studio.adding.mode !== 'replan') studio_addGo();
+      else if (studio.adding) studio_openMake();
+      else studio_gdOpenWith(studio.selected.slice());
+    }
     else if (act === 'studio-gd-open') studio_gdOpen();
     else if (act === 'studio-mk-chipfix') {
       const v = document.querySelector('#studio-make [data-act="studio-fmt"][data-fmt="vertical"]');
@@ -9568,6 +10647,7 @@ function studio_wire() {
       /* A style is a template: taking one drops the picks dealt over the last. */
       studio.style = b.getAttribute('data-style');
       studio.picks = null;
+      studio_mkFootageDraw();
       studio_mkStale();
       studio_mkDefault();                  /* an untouched part follows the style: see studio_mkDefault */
       studio_renderStyles(); studio_hand(); studio_binDraw();
@@ -9628,7 +10708,17 @@ function studio_wire() {
     else if (act === 'studio-yt') studio_ytOpen(b.getAttribute('data-for'));
     else if (act === 'studio-yt-go') studio_ytGo();
     else if (act === 'studio-yt-close') studio_ytClose();
-    else if (act === 'studio-add') studio_addClips();
+    else if (act === 'studio-add') studio_flowAsk('add');
+    else if (act === 'studio-add-how') studio_addClips(b.getAttribute('data-how'));
+    else if (act === 'studio-add-go') studio_addGo();
+    else if (act === 'studio-flow') studio_flowAct(b);
+    else if (act === 'studio-flow-fix') studio_flowFix(b.getAttribute('data-fix'), b);
+    else if (act === 'studio-flow-ask') studio_flowAsk(b.getAttribute('data-do'));
+    else if (act === 'studio-ver-restore') studio_verRestore(Number(b.getAttribute('data-v')));
+    else if (act === 'studio-ver-fork') studio_verFork(Number(b.getAttribute('data-v')));
+    else if (act === 'studio-mk-flow') studio_mkFlowAct(b);
+    else if (act === 'studio-mk-guide') studio_mkToGuide();
+    else if (act === 'studio-mk-lyrics') studio_mkLyrics(b.getAttribute('data-v'));
     else if (act === 'studio-add-cancel') { studio.adding = null; studio.selected = []; studio_syncSelection(); }
     else if (act === 'studio-delete') studio_deleteAsk();
     else if (act === 'studio-del-cancel') studio_closeModals();
@@ -9708,6 +10798,7 @@ function studio_wire() {
       studio.histOpen = !studio.histOpen;
       b.setAttribute('aria-expanded', studio.histOpen ? 'true' : 'false');
       studio_histDraw();
+      if (studio.histOpen) studio_verLoad();
     }
     else if (act === 'studio-hist-back') studio_histGo(Number(b.getAttribute('data-n')) || 0, 0);
     else if (act === 'studio-hist-fwd') studio_histGo(0, Number(b.getAttribute('data-n')) || 0);
@@ -9865,7 +10956,7 @@ function studio_wire() {
     else if (act === 'studio-imp-cutclear') studio_impCutClear();
     else if (act === 'studio-imp-detectall') studio_impDetectAll();
     else if (act === 'studio-imp-close') studio_impClose(false);
-    else if (act === 'studio-restyle' && p) studio_restyle();
+    else if (act === 'studio-restyle' && p) { const sel = studio_el('studio-r-style'); studio_flowAsk('replan', {style: sel ? sel.value : ''}); }
     else if (act === 'studio-mix' && p) studio_mix(b.getAttribute('data-what'), true);
     else if (act === 'studio-fxp-open' && p) studio_fxpOpen(b);
     else if (act === 'studio-fxp-pick') studio_fxpPick(b.getAttribute('data-part'));
@@ -9887,25 +10978,38 @@ function studio_wire() {
       toast('Every cut is now ' + studio_part(t).label + '.', 'ok');
     }
     else if (act === 'studio-sg-pick') studio_sgPick();
-    else if (act === 'studio-sg-none') studio_sgApply(true);
+    else if (act === 'studio-sg-none') studio_sgNoSong();
     else if (act === 'studio-sg-play') studio_sgPlay();
     else if (act === 'studio-sg-mark') studio_sgMark();
     else if (act === 'studio-sg-fromkills') studio_sgFromKills();
     else if (act === 'studio-sg-marknudge') studio_sgNudgeMark(b.getAttribute('data-d'));
     else if (act === 'studio-sg-markplay') studio_sgHearMark();
     else if (act === 'studio-sg-markdrop') studio_sgDropMark();
-    else if (act === 'studio-sg-unmark') { studio.sg.marks.pop(); studio.sg.sel = -1; studio_sgDraw(); }
-    else if (act === 'studio-sg-clearmarks') { studio.sg.marks = []; studio.sg.sel = -1; studio_sgDraw(); }
+    else if (act === 'studio-sg-unmark') studio_sgUnmark();
+    else if (act === 'studio-sg-clearmarks') studio_sgClearMarks();
     else if (act === 'studio-sg-nudge') studio_sgNudge(b.getAttribute('data-what'), b.getAttribute('data-d'));
     else if (act === 'studio-sg-snapbar') studio_sgSnapBar();
     else if (act === 'studio-sg-atdrop') studio_sgAtDrop();
     else if (act === 'studio-sg-fit') studio_sgFit();
-    else if (act === 'studio-sg-apply') studio_sgApply(false);
   });
   document.addEventListener('change', studio_inspectorInput);
   document.addEventListener('change', studio_camInput);
   document.addEventListener('input', studio_camInput);
   document.addEventListener('input', e => { if (e.target && e.target.id === 'studio-gd-name') studio.gd.name = e.target.value; });
+  document.addEventListener('input', studio_gdFind);
+  document.addEventListener('change', studio_gdViewChange);
+  /* A thumbnail that cannot be read is said once, as an empty frame -- never retried, and
+     never a broken-image icon in the middle of a card (error does not bubble: caught going down). */
+  document.addEventListener('error', e => {
+    const t = e.target;
+    if (t && t.classList && t.classList.contains('gd-thumbimg')) t.parentNode.classList.add('is-missing');
+  }, true);
+  const pvv = studio_el('studio-preview-video');
+  if (pvv) pvv.addEventListener('timeupdate', () => {
+    const h = studio_el('studio-preview-head'), c = studio.clipIndex[(studio.gd.pv || {}).id] || null;
+    const dur = c ? Number(c.duration) : (isFinite(pvv.duration) ? pvv.duration : 0);
+    if (h && dur > 0) h.style.left = Math.min(100, pvv.currentTime / dur * 100).toFixed(2) + '%';
+  });
   /* The inspector's groups remember whether they are open (toggle does not
      bubble, so it is caught on the way down). */
   document.addEventListener('toggle', e => {
@@ -10009,6 +11113,9 @@ function studio_wire() {
     if (v) v.muted = !(studio.intro.audio && studio.intro.hasAudio);
     studio_introDraw();
   });
+  /* the build clip a Build and drop reel builds on, chosen on the Make page's Footage */
+  const mkb = studio_el('studio-mk-build');
+  if (mkb) mkb.addEventListener('change', () => { studio.buildClip = mkb.value; studio_mkChip(); });
   const mis = studio_el('studio-mk-introsel');
   if (mis) mis.addEventListener('change', () => {
     studio.mkIntro.path = mis.value;
@@ -10104,7 +11211,7 @@ function studio_wire() {
   if (ar) ar.addEventListener('change', () => studio_autoSet(ar.checked));
   ['studio-preview-scrim', 'studio-fxp-scrim'].forEach(id => {
     const sc = studio_el(id);
-    if (sc) sc.addEventListener('click', e => { if (e.target === sc) studio_closeModals(); });
+    if (sc) sc.addEventListener('click', e => { if (e.target === sc) { if (id === 'studio-preview-scrim') studio_previewClose(); else studio_closeModals(); } });
   });
   document.addEventListener('keydown', e => {
     if (shell_page !== 'studio') return;
@@ -10128,6 +11235,8 @@ function studio_wire() {
       if ((e.key === 'Delete' || e.key === 'Backspace') && studio_mkSelCount()) { e.preventDefault(); studio_mkDelSelected(); return; }
     }
     if (e.key === 'Escape') {
+      /* a clip played from the guide: Escape puts the clip away, not the guide under it */
+      if (studio.gd.pv && !studio_el('studio-preview-scrim').classList.contains('hide')) { studio_previewClose(); return; }
       studio_closeModals();
       /* Nobody is stranded holding a tool. */
       if (studio.tool !== 'select') studio_tool('select');
@@ -10146,6 +11255,12 @@ function studio_wire() {
     /* A focused button owns Space and Backspace: Space presses it. */
     const onButton = tag === 'BUTTON' || (e.target.closest && e.target.closest('button,[role="tab"],a'));
     const song = !studio_el('studio-pane-song').classList.contains('hide');
+    /* Undo covers the song's timing too: every change there is an edit of the reel. */
+    if (song && (e.ctrlKey || e.metaKey) && (e.key || '').toLowerCase() === 'z') {
+      e.preventDefault();
+      if (e.shiftKey) studio_redo(); else studio_undo();
+      return;
+    }
     if (song && studio.sg.shape) {
       if ((e.key || '').toLowerCase() === 'k') { e.preventDefault(); studio_sgMark(); }
       else if (e.key === ' ' && !onButton) { e.preventDefault(); studio_sgPlay(); }
@@ -10194,54 +11309,6 @@ function studio_wire() {
     }
   });
   window.addEventListener('resize', () => { if (studio.project && shell_page === 'studio') studio_drawTimeline(); });
-}
-
-async function studio_restyle() {
-  const p = studio.project, sel = studio_el('studio-r-style');
-  if (!p || !sel || studio.busy) return;
-  const key = sel.value;
-  const label = (sel.options[sel.selectedIndex] || {}).text || key;
-  studio.busy = true;
-  const btn = studio_el('studio-restyle-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Rebuilding…'; }
-  try {
-    const snapshot = JSON.stringify(p);
-    /* The clips this reel was made from, each once. Sending the timeline's
-       shots made a clip used in nine of them arrive nine times, and the
-       rebuild filled itself with that one clip. */
-    const from = (p.selection && p.selection.length) ? p.selection.map(x => x.clip) : p.shots.map(x => x.clip);
-    const clips = [];
-    from.forEach(c => { if (clips.indexOf(c) < 0) clips.push(c); });
-    /* THE PART GOES WITH IT. A new style used to re-plan without the part
-       the reel was cut to, so the style's own length came back and the
-       clips that had filled the part fell out "to fit the reel's length".
-       How long and Keep every kill go too. */
-    const body = {clips: clips, style: key,
-      song: p.song, format: p.format, name: p.name, shaping: Object.assign({}, studio.shaping,
-        {arrange: studio.arrange, pins: studio.pins, shuffle_seed: studio.shuffleSeed,
-         hs_only: !!p.hs_only, fill: p.fill || '', keep_all: !!p.keep_all})};
-    if (p.song && p.part_end > (p.song_offset || 0)) {
-      body.part_start = p.song_offset || 0;
-      body.part_end = p.part_end;
-    }
-    const r = await API.post('/api/studio/plan', body);
-    if (!r || !r.ok) { toast((r && r.error) || 'Could not rebuild with that style.', 'warn'); return; }
-    studio_pushUndo(snapshot, 'Rebuilt as ' + label);
-    studio.gen++;
-    r.project.output = p.output;
-    /* The words belong to the song, not to the style: a new cut keeps them. */
-    if (p.lyrics) r.project.lyrics = p.lyrics;
-    studio.sel = -1;
-    /* After the project is replaced, not before: the line is measured against
-       the reel it describes. */
-    studio_setProject(r.project, r.derived, r.notes, r.song);
-    studio_touched('Rebuilt as ' + label, -1, studio_diff(JSON.parse(snapshot), r.project));
-    studio_fit(); studio_drawAll();
-    toast('Rebuilt as ' + label + ' — ' + r.project.shots.length + ' shots. Render to see it.', 'ok');
-  } finally {
-    studio.busy = false;
-    studio_drawInspector();
-  }
 }
 
 async function studio_mix(what, announce, ride) {
@@ -10456,8 +11523,8 @@ function studio_svLaneDraw(id, c, v) {
   const sg = studio.sg;
   if (sg) {
     x.fillStyle = studio_tok('--warn');
-    (sg.marks || []).forEach(t => {
-      if (t >= v.t0 && t <= v.t1) x.fillRect(X(t) - 1, pad, 2, H - pad);
+    studio_tmKillList(sg).forEach(k => {
+      if (k.t >= v.t0 && k.t <= v.t1) x.fillRect(X(k.t) - 1, pad, 2, H - pad);
     });
     if (sg.start >= v.t0 && sg.start <= v.t1) {
       x.fillStyle = studio_tok('--ok'); x.fillRect(X(sg.start) - 1, 0, 2, H);
@@ -10545,56 +11612,129 @@ function studio_svToggle(id) {
   studio_svBuild();
 }
 
+/* ===== THE SONG TAB: the reel's own draft =====================================================
+
+   studio.sg is the timing draft of the reel open on the timeline, in the shape every surface's draft
+   has (see THE SONG'S TIMING, above). It is not a copy that can drift: it is READ from the project
+   on every draw (studio_sgSync) and every change is WRITTEN back as one edit of the project
+   (studio_sgCommit), which is what makes it undoable, what the server checks before a render, and
+   what survives leaving the tab. What the plan has not caught up with goes in the project's `draft`
+   (clips/editflow.py): the shots are not touched until the player says how. */
+
+/* Each song's analysis, by path: the reel's song and any it is being moved to. */
+studio.shapes = {};
+
+async function studio_sgShape(song) {
+  if (!song) return null;
+  if (studio.shapes[song]) return studio.shapes[song];
+  const got = await API.post('/api/reel/song', {song: song}).catch(() => null);
+  if (!got || !got.ok) return null;
+  studio.shapes[song] = got.song;
+  const sg = studio.sg;
+  if (sg.song === song && !sg.shape) { sg.shape = got.song; studio_sgReset(); }
+  return got.song;
+}
+
+/* Where the plan put the kills, in song seconds, and the shot each belongs to: the marks it was cut to,
+   or -- for a reel cut to none -- where its kills land now, which is the same thing to edit. */
+function studio_sgPlanMarks() {
+  const p = studio.project, d = studio.derived;
+  if (!p) return {marks: [], names: []};
+  const names = (p.shots || []).map(s => (s.caption || s.name || '').replace(/\.mp4$/i, ''));
+  if ((p.song_marks || []).length) return {marks: p.song_marks.slice().sort((a, b) => a - b), names: names};
+  const off = p.song_offset || 0;
+  return {marks: ((d && d.shots) || []).map(r => Math.round((off + r.kill_reel) * 1000) / 1000).sort((a, b) => a - b), names: names};
+}
+
+/* THE DRAFT, READ FROM THE PROJECT. Not while a gesture is in flight: a drag owns the range until it
+   lets go. */
+function studio_sgSync() {
+  const p = studio.project, d = studio.derived, sg = studio.sg;
+  if (!p || sg.drag || sg.markDrag) return;
+  const dr = p.draft || {};
+  const song = dr.song !== undefined ? dr.song : (p.song || '');
+  if (song !== sg.song) {
+    sg.song = song; sg.sel = {};
+    sg.shape = song ? (studio.shapes[song] || null) : null;
+    if (song && !sg.shape) studio_sgShape(song);
+  }
+  const len = (d && d.length) || 30;
+  sg.start = dr.start !== undefined ? dr.start : (p.song_offset || 0);
+  sg.end = dr.end !== undefined && dr.end > sg.start ? dr.end : (p.part_end > sg.start ? p.part_end : sg.start + len);
+  if (sg.shape) sg.end = Math.min(sg.end, sg.shape.seconds);
+  const anchors = p.anchors || [];
+  const mine = t => anchors.some(a => Math.abs(a - t) < 0.002);
+  const plan = studio_sgPlanMarks();
+  sg.planned = {marks: plan.marks, names: plan.names, hand: plan.marks.map(mine)};
+  if (dr.marks) { sg.hand = dr.marks.map((t, i) => ({id: 'm' + i, t: t, auto: !mine(t), name: ''})); sg.edited = true; }
+  else { sg.hand = []; sg.edited = false; }
+  const drops = dr.drops !== undefined ? dr.drops : (Array.isArray(p.hand_drops) ? p.hand_drops : null);
+  sg.drops = drops ? drops.map((t, i) => ({id: 'ud' + i, t: t, auto: false})) : null;
+  sg.sel = sg.sel || {};
+}
+
+/* THE DRAFT, WRITTEN TO THE PROJECT: only what differs from the plan goes in `draft` -- the part put
+   back where it was is no draft, which is how "if it did not change, do nothing" holds. Every mark the
+   player placed or moved is one of theirs (`anchors`), and stays one through any plan. */
+function studio_tmWriteReel(p, T) {
+  const r4 = x => Math.round(x * 10000) / 10000;
+  const same = (a, b) => a.length === b.length && a.every((x, i) => Math.abs(x - b[i]) < 5e-4);
+  const d = {};
+  if ((T.song || '') !== (p.song || '')) d.song = T.song || '';
+  const s0 = p.song_offset || 0, e0 = p.part_end || 0;
+  if (d.song !== undefined || Math.abs(T.start - s0) > 5e-4 || Math.abs(T.end - e0) > 5e-4) { d.start = r4(T.start); d.end = r4(T.end); }
+  if (T.edited) {
+    const times = T.hand.map(k => r4(k.t)).sort((a, b) => a - b);
+    if (!same(times, (p.song_marks || []).slice().sort((a, b) => a - b))) d.marks = times;
+    const kept = (p.anchors || []).filter(a => T.hand.some(k => !k.auto && Math.abs(k.t - a) < 0.002));
+    const mine = T.hand.filter(k => !k.auto).map(k => r4(k.t));
+    p.anchors = Array.from(new Set(kept.concat(mine))).sort((a, b) => a - b);
+    if (!p.anchors.length) delete p.anchors;
+  } else if (T.cleared) {
+    delete p.anchors;
+  }
+  const planned = Array.isArray(p.hand_drops) ? p.hand_drops.slice().sort((a, b) => a - b) : null;
+  const want = T.drops ? T.drops.map(x => r4(x.t)).sort((a, b) => a - b) : null;
+  if (!(want === null ? planned === null : (planned !== null && same(want, planned)))) d.drops = want;
+  if (Object.keys(d).length) p.draft = d; else delete p.draft;
+}
+
+/* ONE EDIT OF THE REEL, OR NONE. A change that writes the same draft as before is no change: no undo
+   step, no stale reel, no line in what has not been rendered. */
+function studio_sgCommit(label) {
+  const p = studio.project, sg = studio.sg;
+  if (!p) return;
+  const probe = JSON.parse(JSON.stringify(p));
+  studio_tmWriteReel(probe, sg);
+  const key = q => JSON.stringify([q.draft || null, q.anchors || []]);
+  sg.cleared = false;
+  if (key(probe) === key(p)) { studio_sgSync(); studio_sgDraw(); return; }
+  /* Whatever was being planned for the draft before this is about a draft that is gone. */
+  studio_flowForget();
+  studio_change(q => studio_tmWriteReel(q, sg), label || 'The song’s timing');
+}
+
 function studio_sgOpen() {
   const p = studio.project, sg = studio.sg;
   if (!p) return;
-  if (p.song && (!sg.shape || sg.song !== p.song)) {
-    sg.song = p.song;
-    sg.shape = studio.songShape && studio.songShape.beats ? studio.songShape : null;
-    if (!sg.shape) {
-      API.post('/api/reel/song', {song: p.song}).then(got => {
-        if (got && got.ok) { sg.shape = got.song; studio.songShape = got.song; studio_sgReset(); }
-      });
-    }
-  }
-  if (!p.song) { sg.song = ''; sg.shape = null; }
+  studio_sgSync();
   studio_sgSongs();
   studio_svLoad(sg.song || '');
   studio_sgReset();
 }
 
 function studio_sgReset() {
-  const p = studio.project, sg = studio.sg, sh = sg.shape;
+  const sg = studio.sg, sh = sg.shape;
   studio_show('studio-sg-body', !!sh);
   studio_el('studio-sg-name').textContent = sg.song ? sg.song.split(/[\\/]/).pop() : 'No song';
   studio_el('studio-sg-facts').textContent = sh
     ? Math.round(sh.bpm) + ' BPM · ' + studio_dur(sh.seconds) + (sh.drop ? ' · drop at ' + studio_secs(sh.drop) : '') +
       (sh.drums_in ? ' · drums in at ' + studio_secs(sh.drums_in) : '')
-    : 'Choose a song to cut the reel to. Without one the clips keep their own sound on a 120 BPM grid.';
-  if (!sh) return;
-  const len = (studio.derived && studio.derived.length) || 30;
-  if (sg.song === p.song && !sg.touched) {
-    sg.start = p.song_offset || 0;
-    /* On the part the reel was cut to, not on the reel's length: opened on
-       the length, a part chosen longer than the reel was forgotten the
-       moment the tab was left. */
-    sg.end = Math.min(sh.seconds, p.part_end > sg.start ? p.part_end : sg.start + len);
-  }
-  // Open on the marks this reel is already using, so the section is an editor
-  // of what is there rather than a blank sheet. Once per song: retyping them
-  // over the player's own edits every redraw would be worse than no seeding.
-  if (sg.song && sg.seeded !== sg.song && !sg.marks.length && (p.song_marks || []).length) {
-    // Placed against the part the reel was planned on, so if the part has
-    // since been moved they keep their place in it -- see studio_sgMovePart.
-    const dt = sg.song === p.song ? sg.start - (p.song_offset || 0) : 0;
-    sg.marks = p.song_marks.map(m => Math.round((m + dt) * 1000) / 1000).sort((a, b) => a - b);
-    sg.sel = -1;
-  }
-  if (sg.song) sg.seeded = sg.song;
-  studio_el('studio-sg-atdrop').disabled = !sh.drop;
+    : sg.song ? 'Finding the beat…' : 'Choose a song to cut the reel to. Without one the clips keep their own sound on a 120 BPM grid.';
+  if (!sh) { studio_flowDraw(); return; }
+  studio_el('studio-sg-atdrop').disabled = !studio_tmMainDrop(studio_tmView('song'));
   const a = studio_el('studio-sg-audio');
-  const want = studio_media('/api/reel/audio', sg.song);
-  if (a.getAttribute('data-song') !== sg.song) { a.src = want; a.setAttribute('data-song', sg.song); }
+  if (a.getAttribute('data-song') !== sg.song) { a.src = studio_media('/api/reel/audio', sg.song); a.setAttribute('data-song', sg.song); }
   studio_sgDraw();
 }
 
@@ -10603,25 +11743,35 @@ function studio_sgBeat() {
   return sh ? sh.beat || (60 / sh.bpm) : 0.5;
 }
 
-function studio_sgNearestBeat(t) {
-  const b = (studio.sg.shape && studio.sg.shape.beats) || [];
-  let best = t, d = 1e9;
-  for (let i = 0; i < b.length; i++) { const x = Math.abs(b[i] - t); if (x < d) { d = x; best = b[i]; } }
-  return best;
+function studio_sgNearestBeat(t) { return studio_nearestBeat(studio.sg.shape, t); }
+
+/* A PART MOVED BY A BUTTON, as by a drag: a change only if it is one. */
+function studio_sgPart(was, label) {
+  const sg = studio.sg;
+  if (Math.abs(was.start - sg.start) < 5e-4 && Math.abs(was.end - sg.end) < 5e-4) { studio_sgDraw(); return; }
+  studio_sgCommit(label || 'The part of the song');
+}
+
+/* THE PART MOVES; THE MARKS DO NOT. A mark is a moment of the song -- the snare a kill lands on -- and
+   it stays at that second whatever the part does. It used to be carried along with a moved part, a
+   fixed distance from its start, which put it off every beat of the new section and made the reel
+   look re-timed when nothing had been re-timed. */
+function studio_sgMovePart(start) {
+  const sg = studio.sg, sh = sg.shape;
+  if (!sh) return;
+  const len = sg.end - sg.start;
+  sg.start = Math.max(0, Math.min(sh.seconds - Math.min(len, sh.seconds), start));
+  sg.end = Math.min(sh.seconds, sg.start + len);
 }
 
 function studio_sgNudge(what, how) {
   const sg = studio.sg, sh = sg.shape;
   if (!sh) return;
-  const beat = studio_sgBeat();
+  const beat = studio_sgBeat(), was = {start: sg.start, end: sg.end};
   const step = {bar: 4 * beat, '-bar': -4 * beat, beat: beat, '-beat': -beat, ms: 0.01, '-ms': -0.01}[how] || 0;
-  sg.touched = true;
-  if (what === 'start') {
-    studio_sgMovePart(sg.start + step);
-  } else {
-    sg.end = Math.max(sg.start + beat, Math.min(sh.seconds, sg.end + step));
-  }
-  studio_sgDraw();
+  if (what === 'start') studio_sgMovePart(sg.start + step);
+  else sg.end = Math.max(sg.start + beat, Math.min(sh.seconds, sg.end + step));
+  studio_sgPart(was);
 }
 
 function studio_sgSnapBar() {
@@ -10630,27 +11780,26 @@ function studio_sgSnapBar() {
   const bars = sh.beats.filter((b, i) => (i % 4) === (sh.downbeat_pos || 0));
   let best = sg.start, d = 1e9;
   bars.forEach(b => { const x = Math.abs(b - sg.start); if (x < d) { d = x; best = b; } });
-  sg.touched = true;
+  const was = {start: sg.start, end: sg.end};
   studio_sgMovePart(best);
-  studio_sgDraw();
+  studio_sgPart(was);
 }
 
 function studio_sgAtDrop() {
-  const sg = studio.sg, sh = sg.shape;
-  if (!sh || !sh.drop) return;
-  const len = sg.end - sg.start;
-  const lead = Math.min(8 * 4 * studio_sgBeat(), sh.drop, Math.max(4 * studio_sgBeat(), len / 3));
-  sg.touched = true;
-  studio_sgMovePart(Math.max(0, studio_sgNearestBeat(sh.drop - lead)));
-  studio_sgDraw();
+  const sg = studio.sg, sh = sg.shape, drop = studio_tmMainDrop(studio_tmView('song'));
+  if (!sh || drop == null) return;
+  const len = sg.end - sg.start, was = {start: sg.start, end: sg.end};
+  const lead = Math.min(8 * 4 * studio_sgBeat(), drop, Math.max(4 * studio_sgBeat(), len / 3));
+  studio_sgMovePart(Math.max(0, studio_sgNearestBeat(drop - lead)));
+  studio_sgPart(was);
 }
 
 function studio_sgFit() {
   const sg = studio.sg, sh = sg.shape, d = studio.derived;
   if (!sh || !d) return;
-  sg.touched = true;
+  const was = {start: sg.start, end: sg.end};
   sg.end = Math.min(sh.seconds, sg.start + d.length);
-  studio_sgDraw();
+  studio_sgPart(was);
 }
 
 function studio_sgPlay() {
@@ -10665,81 +11814,76 @@ function studio_sgPlay() {
   }
 }
 
-/* THE MARKS AUTOSTREAM ALREADY CHOSE, so they can be moved instead of retapped.
-   A reel's kills are on the song's bass hits by the time the timeline exists;
-   without this the Song section opened on an empty list and the only way to
-   change one placement was to tap all twenty again. `song_marks` is what a
-   previous Use-these-marks stored; where there is none the kills themselves are
-   where the reel currently puts them, which is the same thing to edit. */
-function studio_sgKillMarks() {
-  const p = studio.project, d = studio.derived, sg = studio.sg;
-  if (!p || !d) return [];
-  if ((p.song_marks || []).length) return p.song_marks.slice().sort((a, b) => a - b);
-  return (d.shots || []).map(r => sg.start + r.kill_reel).sort((a, b) => a - b);
-}
-
+/* "WHERE THE KILLS ARE NOW": every kill, where the reel puts it, becomes one of the player's own marks
+   -- locked, so no plan or re-time moves it -- and can then be moved rather than retapped. */
 function studio_sgFromKills() {
-  const sg = studio.sg, got = studio_sgKillMarks();
-  if (!got.length) { toast('This reel has no kills to mark yet.'); return; }
+  const sg = studio.sg, got = studio_sgPlanMarks().marks;
+  const off = (studio.project && studio.project.song_offset) || 0, d = studio.derived;
+  const now = ((d && d.shots) || []).map(r => Math.round((off + r.kill_reel) * 1000) / 1000);
+  const at = (now.length ? now : got).slice().sort((a, b) => a - b).filter((t, i, a) => i === 0 || t - a[i - 1] > 0.03);
+  if (!at.length) { toast('This reel has no kills to mark yet.'); return; }
   const snap = studio_el('studio-sg-snap').checked;
-  sg.marks = got.map(t => snap ? studio_sgNearestBeat(t) : Math.round(t * 1000) / 1000)
-                .filter((t, i, a) => i === 0 || t - a[i - 1] > 0.03);
-  sg.sel = -1;
-  sg.touched = true;
-  studio_sgDraw();
-  toast(sg.marks.length + ' marks from the reel. Move any of them, then use them.');
+  sg.hand = at.map((t, i) => ({id: 'k' + i, t: snap ? studio_sgNearestBeat(t) : t, auto: false, name: ''}));
+  sg.edited = true; sg.sel = {};
+  studio_sgCommit('“Where the kills are now”, kept as your marks');
+  toast(at.length + ' marks from the reel, kept as yours. Move any of them, then re-time.');
 }
 
-function studio_sgSelect(i) {
+/* One mark chosen, by its chip: the nudges and Hear it act on it. */
+function studio_sgSelect(id) {
   const sg = studio.sg;
-  sg.sel = (sg.sel === i) ? -1 : i;
+  sg.sel = sg.sel && sg.sel[id] && Object.keys(sg.sel).length === 1 ? {} : {[id]: true};
   studio_sgDraw();
 }
 
-/* Moving a mark keeps the list in order, so mark 2 is always after mark 1 --
-   shot N's kill lands on mark N, and a list that crossed over would silently
-   swap two shots' places in the song. A nudge that would cross its neighbour
-   stops against it instead. */
+function studio_sgPicked() {
+  const sg = studio.sg, ids = Object.keys(sg.sel || {}).filter(id => !studio_mkIsDrop(id));
+  return ids.length === 1 ? studio_tmKillList(sg).find(k => k.id === ids[0]) || null : null;
+}
+
+/* Moving a mark keeps the list in order: shot N's kill lands on mark N, and the list is sorted after
+   every move, so a mark nudged past its neighbour swaps numbers with it rather than swapping shots. */
 function studio_sgNudgeMark(how) {
-  const sg = studio.sg, sh = sg.shape;
-  if (!sh || sg.sel < 0 || sg.sel >= sg.marks.length) return;
+  const k = studio_sgPicked();
+  if (!k) return;
   const beat = studio_sgBeat();
   const d = (how === 'beat' ? beat : how === '-beat' ? -beat : how === 'half' ? beat / 2 : -beat / 2);
-  const lo = sg.sel > 0 ? sg.marks[sg.sel - 1] + 0.03 : sg.start;
-  const hi = sg.sel < sg.marks.length - 1 ? sg.marks[sg.sel + 1] - 0.03 : sh.seconds;
-  sg.marks[sg.sel] = Math.max(lo, Math.min(hi, sg.marks[sg.sel] + d));
-  sg.touched = true;
-  studio_sgDraw();
+  studio_tmNudgeMark(studio_tmView('song'), k.id, d);
 }
 
-/* A mark is a moment in the music, so the way to judge one is to hear it: this
-   plays the bar it sits in rather than asking the ear to remember. */
+/* A mark is a moment in the music, so the way to judge one is to hear it: this plays the bar it sits
+   in rather than asking the ear to remember. */
 function studio_sgHearMark() {
-  const sg = studio.sg, a = studio_el('studio-sg-audio');
-  if (sg.sel < 0 || sg.sel >= sg.marks.length || !a) return;
-  a.currentTime = Math.max(0, sg.marks[sg.sel] - studio_sgBeat() * 2);
+  const k = studio_sgPicked(), a = studio_el('studio-sg-audio');
+  if (!k || !a) return;
+  a.currentTime = Math.max(0, k.t - studio_sgBeat() * 2);
   a.play();
 }
 
 function studio_sgDropMark() {
-  const sg = studio.sg;
-  if (sg.sel < 0 || sg.sel >= sg.marks.length) return;
-  sg.marks.splice(sg.sel, 1);
-  sg.sel = -1;
-  sg.touched = true;
-  studio_sgDraw();
+  const ids = Object.keys(studio.sg.sel || {});
+  if (ids.length) studio_tmDelIds(studio_tmView('song'), ids);
 }
 
 function studio_sgMark() {
   const a = studio_el('studio-sg-audio'), sg = studio.sg;
   if (!sg.shape) return;
-  let t = a.currentTime || sg.start;
-  if (studio_el('studio-sg-snap').checked) t = studio_sgNearestBeat(t);
-  if (t < sg.start - 0.01 || t > sg.end + 0.01) { toast('Marks go inside the part you are using.', 'warn'); return; }
-  if (sg.marks.some(m => Math.abs(m - t) < 0.03)) return;
-  sg.marks.push(t);
-  sg.marks.sort((x, y) => x - y);
-  studio_sgDraw();
+  studio_tmAddMark(studio_tmView('song'), a.currentTime || sg.start);
+}
+
+/* The last mark the player placed, taken back. */
+function studio_sgUnmark() {
+  const sg = studio.sg;
+  const mine = studio_tmKillList(sg).filter(k => k.hand);
+  if (!mine.length) { toast('There is no mark of yours to take back.', 'warn'); return; }
+  const last = sg.edited ? sg.hand.filter(k => !k.auto).reduce((b, k) => (String(k.id) > String(b.id) ? k : b)) : null;
+  if (last) studio_tmDelIds(studio_tmView('song'), [last.id]);
+}
+
+function studio_sgClearMarks() {
+  const sg = studio.sg;
+  sg.cleared = true;
+  studio_tmClearMarks(studio_tmView('song'));
 }
 
 function studio_sgClick() {
@@ -10761,8 +11905,8 @@ function studio_sgTick() {
     a.currentTime = sg.start; sg.ticked = {};
   }
   if (!a.paused && studio_el('studio-sg-click').checked) {
-    sg.marks.forEach((m, i) => {
-      if (Math.abs(a.currentTime - m) < 0.05 && !sg.ticked[i]) { sg.ticked[i] = 1; studio_sgClick(); }
+    studio_tmKillList(sg).forEach((m, i) => {
+      if (Math.abs(a.currentTime - m.t) < 0.05 && !sg.ticked[i]) { sg.ticked[i] = 1; studio_sgClick(); }
     });
   }
   studio_el('studio-sg-clock').textContent = studio_secs(a.currentTime || 0);
@@ -10770,36 +11914,9 @@ function studio_sgTick() {
   if (!a.paused) requestAnimationFrame(studio_sgTick);
 }
 
-/* THE MARKS ARE SONG SECONDS, AND THEY MOVE ONLY WHEN THE PART MOVES.
-   A mark is a moment of the song -- the snare a kill lands on -- so it is
-   stored as song time and drawn from it. Moving the whole part (dragging it,
-   clicking elsewhere on the song, the start nudges, snapping to a bar, "build
-   into the drop") carries every mark with it by exactly the distance the part
-   moved, so a kill ten seconds into the part is still ten seconds in.
-   Resizing the part by an edge moves nothing: the marks stay on the beats
-   they were tapped on.
-
-   It used to be inferred instead -- any change to the start since the last
-   redraw shifted the marks -- so dragging the START EDGE dragged every mark
-   along with it, off the beats they were tapped on, and the release's snap to
-   a beat moved them again. Now each thing that moves the part says so. */
-function studio_sgMovePart(start) {
-  const sg = studio.sg, sh = sg.shape;
-  if (!sh) return;
-  const len = sg.end - sg.start;
-  const to = Math.max(0, Math.min(sh.seconds - Math.min(len, sh.seconds), start));
-  const dt = to - sg.start;
-  sg.start = to;
-  sg.end = Math.min(sh.seconds, to + len);
-  if (Math.abs(dt) > 1e-6) {
-    // Kept even where they fall past the song's end: dragging the part to the
-    // end and back must not cost marks, and none past the end is used.
-    sg.marks = sg.marks.map(m => Math.round((m + dt) * 1000) / 1000);
-  }
-}
-
 function studio_sgDraw() {
   const sg = studio.sg, sh = sg.shape, d = studio.derived, p = studio.project;
+  studio_flowDraw();
   if (!sh) return;
   studio_el('studio-sg-start').textContent = studio_secs(sg.start);
   studio_el('studio-sg-end').textContent = studio_secs(sg.end);
@@ -10807,23 +11924,26 @@ function studio_sgDraw() {
     ' (' + studio_dur(sg.end - sg.start) + ')';
   const len = d ? d.length : 0, part = sg.end - sg.start;
   studio_el('studio-sg-fitnote').textContent = len > part + 0.05
-    ? 'The timeline is ' + studio_dur(len) + '; shots past ' + studio_dur(part) + ' will be left out. "Fit the timeline" keeps them all.'
+    ? 'The timeline is ' + studio_dur(len) + '; the part is ' + studio_dur(part) + '. "Fit the timeline" makes the part as long as the reel.'
     : 'The whole timeline fits in this part.';
-  if (sg.sel >= sg.marks.length) sg.sel = -1;
-  studio_el('studio-sg-chips').innerHTML = sg.marks.map((m, i) =>
-    '<span class="reel-chip' + (i === sg.sel ? ' is-on' : '') + '" data-sgmark="' + i +
-    '" title="click to choose this mark">' + (i + 1) + ' · ' + studio_secs(m) + '</span>').join('');
-  studio_show('studio-sg-marknudge', sg.sel >= 0);
-  if (sg.sel >= 0) {
-    studio_el('studio-sg-marknum').textContent = String(sg.sel + 1);
-    studio_el('studio-sg-marktime').textContent = studio_secs(sg.marks[sg.sel]);
+  const list = studio_tmKillList(sg), stale = studio_tmStale(studio_tmView('song')).length > 0;
+  sg.sel = sg.sel || {};
+  studio_el('studio-sg-chips').innerHTML = list.map((m, i) =>
+    '<span class="reel-chip' + (sg.sel[m.id] ? ' is-on' : '') + (m.hand ? ' is-hand' : ' is-auto') + (stale && !m.hand ? ' is-ghost' : '') +
+    '" data-sgmark="' + esc(m.id) + '" title="' + (m.hand ? 'Yours: never moved for you' : 'AutoStream’s: placed again when the reel is re-timed') +
+    '">' + (i + 1) + ' · ' + studio_secs(m.t) + '</span>').join('');
+  const picked = studio_sgPicked();
+  studio_show('studio-sg-marknudge', !!picked);
+  if (picked) {
+    studio_el('studio-sg-marknum').textContent = String(list.indexOf(picked) + 1);
+    studio_el('studio-sg-marktime').textContent = studio_secs(picked.t);
   }
-  studio_el('studio-sg-fromkills').disabled = !studio_sgKillMarks().length;
-  const shots = p ? p.shots.length : 0;
-  studio_el('studio-sg-marksinfo').textContent = sg.marks.length
-    ? sg.marks.length + ' marks for ' + shots + ' shots' + (sg.marks.length < shots ? ' — the rest keep their spacing after the last mark.' : sg.marks.length > shots ? ' — the extra marks will not be used.' : '.')
+  studio_el('studio-sg-fromkills').disabled = !((d && d.shots) || []).length;
+  const shots = p ? p.shots.length : 0, mine = list.filter(k => k.hand).length;
+  studio_el('studio-sg-marksinfo').textContent = list.length
+    ? list.length + ' marks for ' + shots + ' shots' + (mine ? ', ' + mine + ' of them yours' : '') +
+      (list.length < shots ? ' — the rest keep their spacing after the last mark.' : list.length > shots ? ' — the extra marks are not used.' : '.')
     : 'No marks: the shots keep the lengths they have, starting from here.';
-  studio_el('studio-sg-apply').textContent = sg.marks.length ? 'Use this part and these marks' : 'Use this part';
   studio_sgDrawWaves();
 }
 
@@ -10837,27 +11957,30 @@ function studio_sgCanvas(id, H) {
   return {cv: cv, ctx: ctx, W: W, H: H};
 }
 
+/* THE WHOLE SONG, and the part up close. The overview carries the marks too, small, at their song
+   seconds -- so after the part has moved, the kills still timed for where it was are seen where they
+   are, dashed, beside the part they are about to be placed in again. The part the plan was made on is
+   outlined while it differs from the one chosen. */
 function studio_sgDrawWaves() {
   studio_svDraw();                      /* the lanes follow the playhead too */
-  const sg = studio.sg, sh = sg.shape;
+  const sg = studio.sg, sh = sg.shape, p = studio.project;
   if (!sh || !sh.peaks) return;
   const css = getComputedStyle(document.documentElement);
   const accent = css.getPropertyValue('--accent').trim() || '#5aa9ff';
   const warn = css.getPropertyValue('--warn').trim() || '#e3b341';
-  const faint = css.getPropertyValue('--border-strong').trim() || '#555';
+  const ok = css.getPropertyValue('--ok').trim() || '#4fc97a';
+  const surface = css.getPropertyValue('--surface').trim() || '#111';
   const a = studio_el('studio-sg-audio');
   const now = a ? a.currentTime || 0 : 0;
-  const n = sh.peaks.length, per = sh.seconds / n;
-
-  /* the whole song */
+  const n = sh.peaks.length;
+  const v = studio_tmView('song'), why = studio_tmStale(v);
   const o = studio_sgCanvas('studio-sg-overview', 90);
   if (o) {
     const {ctx, W, H} = o, X = t => t / sh.seconds * W, mid = H / 2;
     ctx.fillStyle = accent;
-    ctx.globalAlpha = 0.35;
     for (let x = 0; x < W; x++) {
       const k = Math.min(n - 1, Math.floor(x / W * n));
-      const amp = sh.peaks[k] * (mid - 2);
+      const amp = sh.peaks[k] * (mid - 10);
       ctx.globalAlpha = (x >= X(sg.start) && x <= X(sg.end)) ? 1 : 0.3;
       ctx.fillRect(x, mid - amp, 1, amp * 2);
     }
@@ -10868,102 +11991,49 @@ function studio_sgDrawWaves() {
     ctx.globalAlpha = 1;
     ctx.fillStyle = accent;
     ctx.fillRect(X(sg.start) - 2, 0, 4, H); ctx.fillRect(X(sg.end) - 2, 0, 4, H);
-    if (sh.drop) { ctx.fillStyle = warn; ctx.fillRect(X(sh.drop) - 1, 0, 2, H); }
+    if (p && why.indexOf('part') >= 0 && why.indexOf('song') < 0) {
+      /* where the kills are still timed for */
+      const s0 = p.song_offset || 0, e0 = p.part_end > s0 ? p.part_end : s0 + ((studio.derived && studio.derived.length) || 0);
+      ctx.save(); ctx.setLineDash([4, 3]); ctx.strokeStyle = warn; ctx.lineWidth = 1.5;
+      ctx.strokeRect(X(s0) + 0.5, 1.5, Math.max(2, X(e0) - X(s0) - 1), H - 3);
+      ctx.restore();
+    }
+    ctx.fillStyle = warn;
+    studio_tmDropList(v).forEach(dd => ctx.fillRect(X(dd.t) - 1, 0, 2, H));
+    if (why.indexOf('song') < 0) {
+      const ghost = why.indexOf('part') >= 0;
+      studio_tmKillList(sg).forEach(k => {
+        const x = X(k.t), y = H - 7;
+        ctx.save();
+        ctx.beginPath(); ctx.moveTo(x, y - 5); ctx.lineTo(x + 5, y); ctx.lineTo(x, y + 5); ctx.lineTo(x - 5, y); ctx.closePath();
+        if (k.hand) { ctx.fillStyle = accent; ctx.fill(); }
+        else {
+          if (ghost) { ctx.globalAlpha = 0.6; ctx.setLineDash([2, 2]); }
+          ctx.fillStyle = surface; ctx.fill(); ctx.strokeStyle = ok; ctx.lineWidth = 1.25; ctx.stroke();
+        }
+        ctx.restore();
+      });
+    }
     ctx.fillStyle = '#ff5c5c'; ctx.fillRect(X(now) - 1, 0, 2, H);
     o.cv.title = 'Drag the highlighted part to move it, or its edges to resize it';
   }
-
-  /* the part, magnified */
-  const dt = studio_sgCanvas('studio-sg-detail', 130);
-  if (dt) {
-    const {ctx, W, H} = dt;
-    const pad = Math.max(0.5, (sg.end - sg.start) * 0.04);
-    const t0 = Math.max(0, sg.start - pad), t1 = Math.min(sh.seconds, sg.end + pad);
-    const X = t => (t - t0) / (t1 - t0) * W, mid = H / 2;
-    ctx.fillStyle = accent;
-    for (let x = 0; x < W; x += 2) {
-      const t = t0 + x / W * (t1 - t0), k = Math.min(n - 1, Math.floor(t / per));
-      const amp = sh.peaks[k] * (mid - 14);
-      ctx.globalAlpha = (t >= sg.start && t <= sg.end) ? 0.9 : 0.25;
-      ctx.fillRect(x, mid - amp, 1.5, amp * 2);
-    }
-    ctx.globalAlpha = 1;
-    (sh.beats || []).forEach((b, i) => {
-      if (b < t0 || b > t1) return;
-      const bar = (i % 4) === (sh.downbeat_pos || 0);
-      ctx.fillStyle = faint;
-      ctx.globalAlpha = bar ? 0.9 : 0.35;
-      ctx.fillRect(X(b), bar ? 0 : H - 12, 1, bar ? H : 12);
-    });
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = accent;
-    ctx.fillRect(X(sg.start) - 1, 0, 3, H); ctx.fillRect(X(sg.end) - 1, 0, 3, H);
-    if (sh.drop && sh.drop >= t0 && sh.drop <= t1) {
-      ctx.fillStyle = warn; ctx.fillRect(X(sh.drop) - 1, 0, 2, H);
-      ctx.font = '11px sans-serif'; ctx.fillText('drop', X(sh.drop) + 4, 12);
-    }
-    sg.marks.forEach((m, i) => {
-      const x = X(m);
-      ctx.save(); ctx.translate(x, H - 20); ctx.rotate(Math.PI / 4);
-      ctx.fillStyle = '#fff'; ctx.fillRect(-6, -6, 12, 12);
-      ctx.strokeStyle = accent; ctx.lineWidth = 2; ctx.strokeRect(-6, -6, 12, 12);
-      ctx.restore();
-      ctx.fillStyle = css.getPropertyValue('--text-primary').trim() || '#fff';
-      ctx.font = '11px sans-serif'; ctx.fillText(String(i + 1), x + 8, H - 26);
-    });
-    ctx.fillStyle = '#ff5c5c'; ctx.fillRect(X(now) - 1, 0, 2, H);
-    dt.cv.setAttribute('data-t0', t0); dt.cv.setAttribute('data-t1', t1);
-  }
+  studio_tmKillsDraw(v);
 }
 
 function studio_sgPointer(e) {
-  const sg = studio.sg, sh = sg.shape;
-  if (!sh) return;
-  const ov = studio_el('studio-sg-overview'), de = studio_el('studio-sg-detail');
-  const a = studio_el('studio-sg-audio');
-  if (e.type === 'pointerdown' && e.target === de) {
-    const r = de.getBoundingClientRect();
-    const t0 = Number(de.getAttribute('data-t0')), t1 = Number(de.getAttribute('data-t1'));
-    a.currentTime = Math.max(0, t0 + (e.clientX - r.left) / r.width * (t1 - t0));
+  const sg = studio.sg;
+  studio_tmPartPointer(e, {T: sg, sh: sg.shape, cv: studio_el('studio-sg-overview'),
+    redraw: studio_sgDraw, commit: was => studio_sgPart(was)});
+}
+
+/* The part up close: the shared marks canvas (studio_tmKillPointer); a click on the empty song is a seek. */
+function studio_sgDetailPointer(e) {
+  studio_tmKillPointer(studio_tmView('song'), e, t => {
+    const a = studio_el('studio-sg-audio');
+    if (a) a.currentTime = Math.max(0, t);
+    studio_el('studio-sg-clock').textContent = studio_secs(t);
     studio_sgDrawWaves();
-    studio_el('studio-sg-clock').textContent = studio_secs(a.currentTime);
-    return;
-  }
-  if (e.type === 'pointerdown' && e.target === ov) {
-    const r = ov.getBoundingClientRect();
-    const t = (e.clientX - r.left) / r.width * sh.seconds;
-    const edge = 6 / r.width * sh.seconds;
-    const kind = Math.abs(t - sg.start) < edge ? 'start' : Math.abs(t - sg.end) < edge ? 'end'
-      : (t > sg.start && t < sg.end) ? 'move' : 'jump';
-    if (kind === 'jump') {
-      sg.touched = true;
-      studio_sgMovePart(t - (sg.end - sg.start) / 2);
-      studio_sgDraw();
-      return;
-    }
-    sg.drag = {kind: kind, x0: e.clientX, start: sg.start, end: sg.end, w: r.width, pointer: e.pointerId};
-    try { ov.setPointerCapture(e.pointerId); } catch (err) { /* fine without */ }
-    e.preventDefault();
-    return;
-  }
-  const g = sg.drag;
-  if (!g || e.pointerId !== g.pointer) return;
-  if (e.type === 'pointermove') {
-    const dt = (e.clientX - g.x0) / g.w * sh.seconds;
-    sg.touched = true;
-    if (g.kind === 'start') sg.start = Math.max(0, Math.min(sg.end - 1, g.start + dt));
-    else if (g.kind === 'end') sg.end = Math.max(sg.start + 1, Math.min(sh.seconds, g.end + dt));
-    else studio_sgMovePart(g.start + dt);
-    studio_sgDraw();
-  } else {
-    sg.drag = null;
-    /* Dragging lands the part on a beat; the 10 ms nudges are for leaving it.
-       A moved part takes its marks to the beat with it; a resized one does not. */
-    if (g.kind === 'move') studio_sgMovePart(studio_sgNearestBeat(sg.start));
-    else if (g.kind === 'start') sg.start = Math.min(sg.end - 0.5, studio_sgNearestBeat(sg.start));
-    else sg.end = Math.max(sg.start + 0.5, studio_sgNearestBeat(sg.end));
-    studio_sgDraw();
-  }
+  });
 }
 
 async function studio_sgPick() {
@@ -10972,61 +12042,58 @@ async function studio_sgPick() {
   await studio_sgUseSong(r.path);
 }
 
-/* A song file as the Song tab's song. -> whether it could be read. */
+/* A SONG FILE AS THE REEL'S SONG -- a change to the draft like any other: the part is placed where the
+   drums come in and the reel's timing is stale until the player replans or re-times it. The old song's
+   marks were beats of that song, so none is carried over. -> whether it could be read. */
 async function studio_sgUseSong(path) {
   studio_el('studio-sg-facts').textContent = 'Finding the beat in ' + path.split(/[\\/]/).pop() + '…';
   const got = await API.post('/api/reel/song', {song: path});
   if (!got || !got.ok) { studio_el('studio-sg-facts').textContent = (got && got.error) || 'Could not read that song.'; return false; }
   const sg = studio.sg, sh = got.song, len = (studio.derived && studio.derived.length) || 30;
-  /* A new song: the marks were beats of the old one, so they go. */
-  sg.song = path; sg.shape = sh; sg.marks = []; sg.sel = -1; sg.touched = true;
-  studio.songShape = sh;
+  studio.shapes[path] = sh;
+  if (!studio.project) {
+    sg.song = path; sg.shape = sh;
+    studio_sgSongs(); studio_sgReset();
+    return true;
+  }
+  sg.song = path; sg.shape = sh; sg.hand = []; sg.edited = false; sg.sel = {}; sg.drops = null;
+  const from = sh.drums_in || (sh.beats && sh.beats[0]) || 0;
+  sg.start = studio_nearestBeat(sh, Math.max(0, Math.min(from, sh.seconds - len)));
+  sg.end = Math.min(sh.seconds, sg.start + len);
+  studio_sgCommit('The song: ' + path.split(/[\\/]/).pop());
   studio_sgSongs();
   studio_svLoad(path);
-  const from = sh.drums_in || (sh.beats && sh.beats[0]) || 0;
-  sg.start = studio_sgNearestBeat(Math.max(0, Math.min(from, sh.seconds - len)));
-  sg.end = Math.min(sh.seconds, sg.start + len);
   studio_sgReset();
   return true;
 }
 
-async function studio_sgApply(noSong) {
-  const p = studio.project, sg = studio.sg;
+/* NO SONG: the reel's music taken off, at once. One explicit button, and one step of undo. */
+async function studio_sgNoSong() {
+  const p = studio.project;
   if (!p) return;
-  const btn = studio_el('studio-sg-apply');
-  btn.disabled = true;
-  studio_el('studio-sg-msg').textContent = noSong ? 'Taking the song off…' : 'Fitting the timeline to the song…';
-  try {
-    const snapshot = JSON.stringify(p);
-    const gen = ++studio.gen;
-    const body = noSong ? {project: p, song: ''} :
-      {project: p, song: sg.song, start: sg.start, end: sg.end, marks: sg.marks};
-    const r = await API.post('/api/studio/song', body);
-    if (gen !== studio.gen) return;
-    if (!r || !r.ok) { studio_el('studio-sg-msg').textContent = (r && r.error) || 'Could not use that song.'; return; }
-    studio_pushUndo(snapshot, noSong ? 'The song taken off' : 'The part of the song');
-    r.project.output = p.output;
-    studio_setProject(r.project, r.derived, r.notes, r.song);
-    studio_touched(noSong ? 'The song taken off'
-                 : sg.marks.length ? 'The song, and ' + sg.marks.length + ' kill marks' : 'The part of the song',
-                   -1, studio_diff(JSON.parse(snapshot), r.project));
-    if (noSong) { sg.song = ''; sg.shape = null; sg.marks = []; }
-    sg.touched = false;
-    studio_el('studio-sg-msg').textContent = '';
-    toast(noSong ? 'The reel has no song now.' : sg.marks.length
-      ? 'Kills moved onto your ' + Math.min(sg.marks.length, r.project.shots.length) + ' marks. Render to hear it.'
-      : 'Song part set. Render to hear it.', 'ok');
-    studio_tab('timeline');
-  } finally {
-    btn.disabled = false;
-  }
+  studio_el('studio-sg-msg').textContent = 'Taking the song off…';
+  const snapshot = JSON.stringify(p);
+  const gen = ++studio.gen;
+  const r = await API.post('/api/studio/song', {project: p, song: ''});
+  if (gen !== studio.gen) return;
+  studio_el('studio-sg-msg').textContent = '';
+  if (!r || !r.ok) { toast((r && r.error) || 'Could not take the song off.', 'warn'); return; }
+  studio_pushUndo(snapshot, 'The song taken off');
+  r.project.output = p.output;
+  studio_setProject(r.project, r.derived, r.notes, r.song);
+  studio_touched('The song taken off', -1, studio_diff(JSON.parse(snapshot), r.project));
+  studio.sg.song = ''; studio.sg.shape = null;
+  toast('The reel has no song now.', 'ok');
+  studio_tab('timeline');
 }
 
 function studio_sgWire() {
   const ov = studio_el('studio-sg-overview'), de = studio_el('studio-sg-detail');
   ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(ev => {
     if (ov) ov.addEventListener(ev, studio_sgPointer);
-    if (de && ev === 'pointerdown') de.addEventListener(ev, studio_sgPointer);
+  });
+  ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'dblclick'].forEach(ev => {
+    if (de) de.addEventListener(ev, studio_sgDetailPointer);
   });
   const a = studio_el('studio-sg-audio');
   if (a) {
@@ -11043,7 +12110,7 @@ function studio_sgWire() {
     // Choosing, not removing. A chip used to delete on click, which is a hard
     // thing to undo when the marks are the twenty AutoStream placed; Remove is
     // its own button on the row that appears.
-    studio_sgSelect(Number(c.getAttribute('data-sgmark')));
+    studio_sgSelect(c.getAttribute('data-sgmark'));
   });
   window.addEventListener('resize', () => { if (shell_page === 'studio') studio_sgDrawWaves(); });
 }
@@ -11063,7 +12130,11 @@ const GD_STEPS = ['Style', 'Song', 'Clips', 'Look', 'Check and make'];
    its render (7.3/10) said yes, "ready to be offered as a recommended style". */
 /* Montage since v1.79.15: its third review, 7.2/10 on its own planner (4.2 on the general one); the one blocker
    named, capture overlays in the footage, is the cleanup the player set aside. */
-const GD_BEST = ['drop', 'fasthead', 'montage'];
+/* Hype (7.6/10) and Velocity (7.2/10) after their pace-and-signature review: both run on the general
+   planner, which is why "Pick the style for me" no longer means "a style with a planner of its own" --
+   it skips only a verdict that says its style fell back to another planner (`fallback`), and these two
+   never do: the general planner is theirs. */
+const GD_BEST = ['drop', 'fasthead', 'montage', 'hype', 'velocity'];
 /* THE GUIDE OWNS ITS SPEC. Everything a guided reel is made from is here or in the song: the style,
    the clips, the shape, the lyrics, the name. Nothing is read from the Make page -- Perfect fit left
    there, Headshots only ticked there, an intro, kills or drops marked there, a reel being rebuilt
@@ -11075,8 +12146,13 @@ const GD_BEST = ['drop', 'fasthead', 'montage'];
    step, null while they are AutoStream's: part of the spec, so the verdict and the plan both carry
    them; a drop belongs to its song, and a new song or a new reel starts from null again. */
 studio.gd = {step: 0, style: '', auto: false, autoWhy: null, setup: '', quick: [], fmt: 'vertical', fit: 'near', lyrics: 'off', name: '',
-             drops: null, parts: null, head: 0, snap: false, dropDrag: null,
-             verdict: null, asked: 0, autoAsked: 0, busy: false, run: 0, held: null, timer: null};
+             /* ONE DRAFT: the guide's drops are the Make page's (studio.mk.drops), so a drop marked on
+                either is the same drop on both, and All settings has nothing to copy. */
+             get drops() { return studio.mk.drops; }, set drops(v) { studio.mk.drops = v; },
+             parts: null, head: 0, snap: false, dropDrag: null,
+             verdict: null, asked: 0, autoAsked: 0, busy: false, run: 0, held: null, timer: null,
+             /* the Clips step's browsers (studio_gdView), the clip playing over the guide, the one being trimmed */
+             views: null, pv: null, editing: null};
 
 /* WHAT WAS CHOSEN LAST TIME, remembered as intent -- the style, the shape, the framing -- and not as
    results: the song and the clips are checked again against what exists now, and the chip is asked
@@ -11209,8 +12285,10 @@ function studio_gdHsDouble(c) {
 function studio_gdMainDrop(d) { return studio_dropsMain((d || studio.gd).drops, studio.songShape); }
 function studio_gdPart(d) {
   d = d || studio.gd;
-  const sh = studio.songShape;
+  const sh = studio.songShape, mk = studio.mk;
   if (!studio.song || !sh || !sh.seconds) return null;
+  /* the part the player chose on All settings is the draft's, and the guide's too */
+  if (mk.touched && mk.mode === 'part' && mk.end > mk.start) return [mk.start, mk.end];
   return studio_partFor(sh, d.fmt, d.style === 'drop' ? studio_gdMainDrop(d) : null);
 }
 /* how many quick kills the part wants after a build of about eight seconds, half a second apart --
@@ -11276,8 +12354,11 @@ function studio_gdBody(draft) {
   if (part) {
     body.part_start = part[0];
     body.part_end = part[1];
-    body.shaping.part_auto = true;      /* drawn by the guide, never moved: Build and drop takes it as a length */
+    /* drawn by the guide, never moved: Build and drop takes it as a length -- unless the player chose it */
+    if (!studio.mk.touched) body.shaping.part_auto = true;
   }
+  /* kill marks the player placed on All settings are this draft's too */
+  if (studio.song && studio.mk.edited && studio.mk.hand.length) body.marks = studio.mk.hand.map(k => Math.round(k.t * 1000) / 1000);
   /* the drops as the player marked them on the Song step; none sent while they are the song's own */
   if (studio.song && d.drops) body.drops = studio_dropsSent(d.drops);
   if (d.lyrics && d.lyrics !== 'off') body.keep = {lyrics: {look: d.lyrics}};
@@ -11302,10 +12383,12 @@ function studio_gdHandOff(body) {
   studio.mkKeep = b.keep ? JSON.parse(JSON.stringify(b.keep)) : null;
   const hs = studio_el('studio-hs-only');
   if (hs) hs.checked = false;
-  mk.hand = []; mk.edited = false; mk.planned = null; mk.sel = {};
-  mk.drops = gd.drops ? JSON.parse(JSON.stringify(gd.drops)) : null;   /* the guide's drops, the page's to change now */
-  mk.mode = 'part'; mk.touched = false;
-  if (b.part_start != null) { mk.start = b.part_start; mk.end = b.part_end; }
+  /* THE TIMING IS ONE DRAFT, NOT HANDED OVER: the part, the marks and the drops are studio.mk already,
+     whichever page is showing it -- a part chosen on All settings and a drop marked on the Song step
+     are the same draft's. Only an untouched part is drawn again here, from the guide's own choice. */
+  mk.sel = {};
+  mk.mode = 'part';
+  if (!mk.touched && b.part_start != null) { mk.start = b.part_start; mk.end = b.part_end; }
   studio_el('studio-name').value = b.name;
   studio_arrangeDraw();
   studio_shapeDraw();
@@ -11319,6 +12402,9 @@ async function studio_gdOpen() {
   if (!studio.catalog || !Object.keys(studio.clipIndex || {}).length) { toast('The clips are still loading.', 'warn'); return; }
   const gd = studio.gd;
   gd.step = 0; gd.verdict = null; gd.held = null;
+  /* A draft seeded from a reel being rebuilt is that reel's; a new reel does not start from it. A new
+     reel's own draft is kept across closing and opening the guide, as everything chosen there is. */
+  if (studio.mk.of && studio.mk.of !== 'new') studio_tmFresh();
   if (!gd.style && !gd.auto) studio_gdRecall();
   studio_gdPrune();
   studio_gdAudioWire();
@@ -11369,8 +12455,6 @@ function studio_gdCanGo(i) {
 function studio_gdDraw() {
   const gd = studio.gd;
   studio_gdPrune();
-  /* drops marked on another song -- changed through a file dialog or on the Make page -- are not this one's */
-  if (gd.drops && gd.dropsFor !== studio.song) gd.drops = null;
   studio_el('studio-gd-steps').innerHTML = GD_STEPS.map((n, i) =>
     '<li><button type="button" class="gd-step' + (i === gd.step ? ' is-on' : '') + (i < gd.step ? ' is-done' : '') +
     '" data-act="studio-gd" data-gd="step" data-i="' + i + '"' + (studio_gdCanGo(i) ? '' : ' disabled') +
@@ -11520,7 +12604,6 @@ function studio_gdDropList() { return studio_dropsOf(studio.gd.drops, studio.son
 function studio_gdDropsChanged() {
   const gd = studio.gd;
   gd.drops.sort((x, y) => x.t - y.t);
-  gd.dropsFor = studio.song;
   gd.verdict = null;
   studio_gdDraw();
 }
@@ -11737,49 +12820,282 @@ function studio_gdDrawClips() {
   const ids = studio_gdIds(), out = studio_gdLeftOut();
   const quickIds = ids.filter(id => !(isBD && id === gd.setup));
   const have = quickIds.reduce((n, id) => n + studio_gdWeight(studio.clipIndex[id], gd.style), 0);
-  const tile = (c, on, act) => '<button type="button" class="gd-clip' + (on ? ' is-on' : '') + '" data-act="studio-gd" data-gd="' + act + '" data-id="' + esc(c.id) + '" aria-pressed="' + on + '">' +
-    '<span class="gd-tags">' + (studio_gdHs(c) ? '<i class="gd-hs">Headshot</i>' : '<i>Body</i>') +
-    (c.fav ? '<i class="gd-fav">&#9733;</i>' : '') + ((c.kills || []).length > 1 ? '<i>' + c.kills.length + ' kills</i>' : '') +
-    ((c.labels || [])[0] ? '<i>' + esc(c.labels[0]) + '</i>' : '') + '</span><span class="mono">' + esc(c.name || c.id) + '</span></button>';
-  /* EVERY CHOSEN CLIP IS DRAWN: the best of the pool, then any chosen one beyond them -- a clip
-     counted but nowhere on screen could not be seen, let alone taken out again. */
-  const grid = (list, n) => {
-    const top = list.slice(0, n), seen = {};
-    top.forEach(c => { seen[c.id] = 1; });
-    return top.concat(quickIds.filter(id => !seen[id]).map(id => studio.clipIndex[id]))
-      .map(c => tile(c, gd.quick.includes(c.id), 'quick')).join('');
-  };
+  const bar = '<div class="gd-bar" aria-hidden="true"><i style="width:' + Math.min(100, Math.round(have / Math.max(1, need) * 100)) + '%"></i></div>';
   const label = (studio_gdStyle() || {label: 'this'}).label;
   const left = out.length ? '<section class="gd-slot gd-left"><div class="gd-slothead"><h4>Chosen, but not in a ' + esc(label) + ' reel</h4>' +
     '<span class="mono">' + out.length + ' left out</span></div><ul class="gd-leftlist">' + out.map(x =>
       '<li><span class="mono">' + esc(x.c.name || x.c.id) + '</span><span class="muted">' + esc(x.why) + '</span>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="unpick" data-id="' + esc(x.c.id) + '">Remove</button></li>').join('') +
     '</ul></section>' : '';
+  const pick = '<div><button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="pickall">Pick for me</button></div>';
+  /* SAID AS IT IS: every clip is here, a page at a time, the best -- favourites first -- on the first
+     page. Only the best 48 used to be drawn, so a player with more favourites than that saw nothing
+     else and read it as "only my favourites are offered"; Pick for me drew on all of them anyway. */
+  const paged = ' are here, ' + GD_PAGE + ' a page, the best first and favourites before the rest. Find, filter and sort them under each slot; Pick for me draws on all of them.';
   if (isFH) {
     const doubles = quickIds.filter(id => studio_gdHsDouble(studio.clipIndex[id] || {})).length;
-    return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">Headshots only: a clip with none has nothing for this style.</p></div>' +
-      '<div><button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="pickall">Pick for me</button></div>' +
-      '<section class="gd-slot"><div class="gd-slothead"><h4>Headshots, one a cut</h4><span class="mono">' + have + ' of ' + need + '</span></div>' +
-      '<div class="gd-bar" aria-hidden="true"><i style="width:' + Math.min(100, Math.round(have / Math.max(1, need) * 100)) + '%"></i></div>' +
+    return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">Headshots only: a clip with none has nothing for this style. All ' +
+      pools.quick.length + ' of your clips with a headshot' + paged + '</p></div>' + pick +
+      '<section class="gd-slot"><div class="gd-slothead"><h4>Headshots, one a cut</h4><span class="mono">' + have + ' of ' + need + '</span></div>' + bar +
       '<p class="muted" style="margin:0">' + (doubles ? 'The finale: ' + doubles + ' chosen clip' + (doubles > 1 ? 's have' : ' has') + ' two headshots close together.'
         : 'No chosen clip has two headshots close together, so the reel ends on a single kill, not a multi-kill.') + '</p>' +
-      '<div class="gd-grid">' + grid(pools.quick, 60) +
-      (pools.quick.length ? '' : '<p class="muted">None of your clips has a kill read as a headshot.</p>') + '</div></section>' + left;
+      studio_gdBrowser('quick') + '</section>' + left;
   }
-  /* Said as it is: every clip of the game is a candidate, the favourites ranked first, and only the best of
-     each kind is drawn here -- "from your favourites" read as if nothing else was considered. */
   const all = studio_gdClips();
-  return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">All ' + all.length + ' of your ' + esc((all[0] || {}).game || '') +
-    ' clips are candidates, favourites first. ' + (isBD ? 'The best ' + Math.min(8, pools.setups.length) + ' of ' + pools.setups.length + ' builds and ' : 'The best ') +
-    Math.min(48, pools.quick.length) + ' of ' + pools.quick.length + (isBD ? ' quick kills' : ' clips') + ' are shown; Pick for me draws on all of them.' +
-    (isMT ? ' A montage needs at least four clips with a kill: with fewer it is planned the usual way, not to the song.' : '') + '</p></div>' +
-    '<div><button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="pickall">Pick for me</button></div>' +
+  return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">All ' + all.length + ' of your ' + esc((all[0] || {}).game || '') + ' clips' +
+    (isBD ? ' (' + pools.setups.length + ' can be the build, ' + pools.quick.length + ' are quick kills)' : '') + paged +
+    (isMT ? ' A montage needs at least four clips with a kill: with fewer it is planned the usual way, not to the song.' : '') + '</p></div>' + pick +
     (isBD ? '<section class="gd-slot"><div class="gd-slothead"><h4>The build: a clutch, an ace or a multi-kill</h4><span class="mono">' + (gd.setup && ids.indexOf(gd.setup) >= 0 ? '1 of 1' : '0 of 1') + '</span></div>' +
-      '<div class="gd-grid">' + (pools.setups.slice(0, 8).map(c => tile(c, gd.setup === c.id, 'setup')).join('') || '<p class="muted">None of your clips has three kills or a clutch label.</p>') + '</div></section>' : '') +
+      studio_gdBrowser('setup') + '</section>' : '') +
     '<section class="gd-slot"><div class="gd-slothead"><h4>' + (isBD ? 'After the drop: quick kills' : 'Your clips') + '</h4><span class="mono">' +
       (isBD ? have + ' of ' + need : quickIds.length + ' chosen' + (isMT ? ', at least 4' : '')) + '</span></div>' +
-    (isBD ? '<div class="gd-bar" aria-hidden="true"><i style="width:' + Math.min(100, Math.round(have / Math.max(1, need) * 100)) + '%"></i></div><p class="muted" style="margin:0">Headshots first. A two-kill clip counts as two: it plays as a quick run.</p>' : '') +
-    '<div class="gd-grid">' + grid(pools.quick, 48) + '</div></section>' + left;
+    (isBD ? bar + '<p class="muted" style="margin:0">Headshots first. A two-kill clip counts as two: it plays as a quick run.</p>' : '') +
+    studio_gdBrowser('quick') + '</section>' + left;
+}
+
+/* ===== EACH SLOT'S CLIP BROWSER =====
+   The step keeps its slots -- Build and drop's build and its quick kills, Fast-paced headshot's
+   headshots -- because what a clip is FOR is what the folders elsewhere cannot show. Each slot
+   browses every clip it can take: a thumbnail card per clip, found by name or label, narrowed by
+   favourite, session, map, game mode, kind or chosen-only, sorted, and paged 24 at a time.
+   ALL OF THIS IS A VIEW. Searching, filtering, sorting and paging never change a choice, the
+   verdict or the request (studio_gdBody), so none of them asks /api/studio/feasible again: they
+   redraw the one slot (studio_gdRedrawSlot), never the step. Each slot keeps its own view, so
+   paging the quick kills does not move the build's page, and choosing a clip never moves either. */
+const GD_PAGE = 24;
+const GD_SORTS = [['best', 'Best first'], ['new', 'Newest'], ['kills', 'Most kills'], ['long', 'Longest']];
+const GD_KINDS = [['hs', 'Headshot', c => studio_gdHs(c) > 0], ['multi', 'Multi-kill', c => (c.kills || []).length >= 2],
+                  ['big', 'Clutch, ace or last alive', c => studio_gdBig(c)]];
+
+/* What a slot offers, in its best-first order, which of them are chosen, and what a click does.
+   A chosen clip is always among them -- one counted but nowhere to be found could not be taken
+   out again -- even when it is not of the slot's kind (a build clip moved into the quick kills). */
+function studio_gdSlot(slot) {
+  const gd = studio.gd, pools = studio_gdPools();
+  if (slot === 'setup') {
+    const list = pools.setups.slice(), own = gd.setup && studio.clipIndex[gd.setup];
+    if (own && list.indexOf(own) < 0 && !studio_gdWhyNot(own, gd.style)) list.push(own);
+    return {list: list, on: c => gd.setup === c.id, act: 'setup', none: 'None of your clips has three kills or a clutch label.'};
+  }
+  const list = pools.quick.slice(), seen = {};
+  list.forEach(c => { seen[c.id] = 1; });
+  studio_gdIds().filter(id => !(gd.style === 'drop' && id === gd.setup) && !seen[id]).forEach(id => list.push(studio.clipIndex[id]));
+  return {list: list, on: c => gd.quick.includes(c.id), act: 'quick',
+          none: gd.style === 'fasthead' ? 'None of your clips has a kill read as a headshot.' : 'None of your clips has a kill read in it.'};
+}
+function studio_gdView(slot) {
+  const gd = studio.gd;
+  gd.views = gd.views || {};
+  if (!gd.views[slot]) gd.views[slot] = {q: '', fav: 'any', run: '', map: '', mode: '', kind: '', chosen: false, sort: 'best', page: 1};
+  return gd.views[slot];
+}
+function studio_gdNarrowed(v) { return !!(v.q.trim() || v.fav !== 'any' || v.run || v.map || v.mode || v.kind || v.chosen); }
+/* A clip with no match record -- CS2, an import, a run whose record was never fetched -- is said as unknown, not left out. */
+function studio_gdMapOf(c) { return c.map || 'Unknown map'; }
+function studio_gdModeOf(c) { return c.mode || 'Unknown mode'; }
+
+/* The values one filter can take in this slot, each with how many clips have it. */
+function studio_gdFacet(list, key, name, order) {
+  const by = {};
+  list.forEach(c => { const k = key(c); if (!by[k]) by[k] = {v: k, label: name(c), n: 0, c: c}; by[k].n++; });
+  return Object.values(by).sort(order || ((a, b) => (b.n - a.n) || a.label.localeCompare(b.label)));
+}
+
+function studio_gdFiltered(slot, s) {
+  const v = studio_gdView(slot), q = v.q.trim().toLowerCase(), kind = GD_KINDS.find(k => k[0] === v.kind);
+  const rank = {};
+  s.list.forEach((c, i) => { rank[c.id] = i; });
+  const best = (a, b) => rank[a.id] - rank[b.id];
+  const sorts = {
+    best: best,
+    new: (a, b) => ((b.when || 0) - (a.when || 0)) || ((b.start || 0) - (a.start || 0)) || best(a, b),
+    kills: (a, b) => ((b.kills || []).length - (a.kills || []).length) || best(a, b),
+    long: (a, b) => ((Number(b.duration) || 0) - (Number(a.duration) || 0)) || best(a, b)
+  };
+  return s.list.filter(c =>
+    (v.fav === 'any' || (v.fav === 'fav') === !!c.fav) &&
+    (!v.run || c.folder === v.run) && (!v.map || studio_gdMapOf(c) === v.map) && (!v.mode || studio_gdModeOf(c) === v.mode) &&
+    (!kind || kind[2](c)) && (!v.chosen || s.on(c)) &&
+    (!q || [c.name || c.id, (c.labels || []).join(' '), c.caption || '', c.folderLabel || '', c.map || '', c.mode || '']
+      .join(' ').toLowerCase().indexOf(q) >= 0)
+  ).sort(sorts[v.sort] || best);
+}
+
+/* THE TOOLS. A filter is offered only with the values that occur in this slot, each with its count,
+   and only when it could narrow the slot at all: a map filter over clips all from one map, or a
+   session filter over one session, is a control that does nothing. */
+function studio_gdTools(slot, s) {
+  const v = studio_gdView(slot), list = s.list, n = list.length;
+  if (!n) return '';
+  const sel = (k, all, aria, items) => {
+    if (v[k] && !items.some(o => o.v === v[k])) v[k] = '';   /* a value no clip here has any more */
+    if (!items.length || (!v[k] && !items.some(o => o.n < n))) return '';
+    return '<select class="select" id="studio-gd-' + k + '-' + slot + '" data-gdview="' + k + '" data-slot="' + slot + '" aria-label="' + aria + '">' +
+      '<option value="">' + esc(all) + '</option>' + items.map(o => '<option value="' + esc(o.v) + '"' + (v[k] === o.v ? ' selected' : '') + '>' +
+        esc(o.label) + ' (' + o.n + ')</option>').join('') + '</select>';
+  };
+  const favs = list.filter(c => c.fav).length, chosen = list.filter(s.on).length;
+  const seg = (favs && favs < n) || v.fav !== 'any' ? '<div class="seg" role="group" aria-label="Favourites">' +
+    [['any', 'All (' + n + ')'], ['fav', 'Favourites (' + favs + ')'], ['other', 'Not favourites (' + (n - favs) + ')']].map(o =>
+      '<button type="button" class="seg-btn' + (v.fav === o[0] ? ' is-active' : '') + '" data-act="studio-gd" data-gd="view" data-slot="' + slot +
+      '" data-k="fav" data-v="' + o[0] + '" aria-pressed="' + (v.fav === o[0]) + '">' + esc(o[1]) + '</button>').join('') + '</div>' : '';
+  /* the recording runs, newest first, as the library names them */
+  const runs = studio_gdFacet(list, c => c.folder || '', c => c.folderLabel || 'Another run', (a, b) => (b.c.when || 0) - (a.c.when || 0));
+  const kinds = GD_KINDS.map(k => ({v: k[0], label: k[1], n: list.filter(k[2]).length})).filter(o => o.n);
+  return '<div class="gd-tools">' +
+    '<input class="input" id="studio-gd-find-' + slot + '" data-slot="' + slot + '" type="search" autocomplete="off" placeholder="Find a clip by name or label" aria-label="Find a clip by name or label" value="' + esc(v.q) + '">' +
+    seg +
+    sel('run', 'Every session', 'Session', runs) +
+    sel('map', 'Every map', 'Map', studio_gdFacet(list, studio_gdMapOf, studio_gdMapOf)) +
+    sel('mode', 'Every game mode', 'Game mode', studio_gdFacet(list, studio_gdModeOf, studio_gdModeOf)) +
+    sel('kind', 'Every kind', 'Kind', kinds) +
+    (chosen || v.chosen ? '<button type="button" class="btn btn-sm" data-act="studio-gd" data-gd="view" data-slot="' + slot + '" data-k="chosen" data-v="' +
+      (v.chosen ? '' : '1') + '" aria-pressed="' + !!v.chosen + '">Chosen only (' + chosen + ')</button>' : '') +
+    (n > 1 ? '<select class="select" id="studio-gd-sort-' + slot + '" data-gdview="sort" data-slot="' + slot + '" aria-label="Sort">' +
+      GD_SORTS.map(o => '<option value="' + o[0] + '"' + (v.sort === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') + '</select>' : '') +
+    '</div>';
+}
+
+/* One page of cards, what it is out of, and the pager. The page is clamped, never reset: a filter
+   that leaves fewer pages shows the last there is, and a choice -- which redraws the step -- stays put. */
+function studio_gdResults(slot, s) {
+  const v = studio_gdView(slot), l = studio_gdFiltered(slot, s);
+  const pages = Math.max(1, Math.ceil(l.length / GD_PAGE));
+  v.page = Math.min(Math.max(1, Number(v.page) || 1), pages);
+  const from = (v.page - 1) * GD_PAGE, shown = l.slice(from, from + GD_PAGE), narrowed = studio_gdNarrowed(v);
+  const count = l.length ? 'Showing ' + (from + 1) + '–' + (from + shown.length) + ' of ' + l.length +
+    (narrowed ? ' that match, of ' + s.list.length : '') : '';
+  return '<p class="gd-count muted" id="studio-gd-count-' + slot + '">' + count + '</p>' +
+    '<div class="gd-grid gd-clips" id="studio-gd-' + slot + 'grid">' + (shown.map(c => studio_gdCard(c, s.on(c), s.act)).join('') ||
+      (s.list.length ? '<p class="muted">No clip matches. <button type="button" class="btn btn-sm btn-ghost" data-act="studio-gd" data-gd="view-clear" data-slot="' + slot + '">Clear the filters</button></p>'
+                     : '<p class="muted">' + esc(s.none) + '</p>')) + '</div>' +
+    studio_gdPager(slot, v.page, pages);
+}
+function studio_gdPager(slot, page, pages) {
+  if (pages < 2) return '';
+  const btn = (p, text, aria, on, off) => '<button type="button" class="btn btn-sm' + (on ? ' btn-primary' : ' btn-ghost') + '" data-act="studio-gd" data-gd="page" data-slot="' + slot +
+    '" data-v="' + p + '" aria-label="' + aria + '"' + (on ? ' aria-current="page"' : '') + (off ? ' disabled' : '') + '>' + text + '</button>';
+  let html = btn(page - 1, '‹ Prev', 'Previous page', false, page <= 1), last = 0;
+  /* the first and last pages, and two either side of this one: 1 ... 4 5 [6] 7 8 ... 14 */
+  for (let i = 1; i <= pages; i++) {
+    if (i !== 1 && i !== pages && Math.abs(i - page) > 2) continue;
+    if (i - last > 1) html += '<span class="gd-gap" aria-hidden="true">…</span>';
+    html += btn(i, String(i), 'Page ' + i, i === page, false);
+    last = i;
+  }
+  return '<nav class="gd-pager" aria-label="Pages">' + html + btn(page + 1, 'Next ›', 'Next page', false, page >= pages) + '</nav>';
+}
+function studio_gdBrowser(slot, s) {
+  s = s || studio_gdSlot(slot);
+  return '<div class="gd-browse" id="studio-gd-browse-' + slot + '">' + studio_gdTools(slot, s) +
+    '<div class="gd-results" id="studio-gd-res-' + slot + '">' + studio_gdResults(slot, s) + '</div></div>';
+}
+
+/* A CLIP AS A CARD: its frame at the first kill, what it is, how long, from which match and when,
+   and whether it is chosen. The card's body chooses it; Play and Edit are beside it, not in it. */
+function studio_gdCard(c, on, act) {
+  const at = Math.max(0, ((c.kills || [])[0] || 0) - 0.3).toFixed(2);
+  const k = (c.kills || []).length, meta = [c.map, c.mode, c.folderLabel].filter(Boolean);
+  return '<div class="gd-clip' + (on ? ' is-on' : '') + '" data-id="' + esc(c.id) + '">' +
+    '<button type="button" class="gd-clip-hit" data-act="studio-gd" data-gd="' + act + '" data-id="' + esc(c.id) + '" aria-pressed="' + on + '"' +
+      ' title="' + (on ? 'Chosen. Click to take it out.' : 'Click to choose it.') + '">' +
+    '<span class="gd-thumb"><img class="gd-thumbimg" loading="lazy" alt="" width="320" height="180" src="' +
+      studio_media('/api/studio/thumb', c.path, '&t=' + at + '&v=' + (c.mtime || 0)) + '">' +
+      '<span class="gd-len mono">' + studio_dur(c.duration) + '</span><span class="gd-tick" aria-hidden="true">' + icon('check') + '</span></span>' +
+    '<span class="gd-tags">' + (studio_gdHs(c) ? '<i class="gd-hs">Headshot</i>' : '<i>Body</i>') +
+      (c.fav ? '<i class="gd-fav" title="A favourite">&#9733;</i>' : '') + (k > 1 ? '<i>' + k + ' kills</i>' : '') +
+      (c.labels || []).slice(0, 2).map(x => '<i>' + esc(x) + '</i>').join('') + '</span>' +
+    '<span class="gd-name mono">' + esc(c.name || c.id) + '</span>' +
+    (meta.length ? '<span class="gd-meta">' + esc(meta.join(' · ')) + '</span>' : '') + '</button>' +
+    '<div class="gd-clip-acts">' +
+      '<button type="button" class="btn btn-sm" data-act="studio-gd" data-gd="clip-play" data-slot="' + act + '" data-id="' + esc(c.id) + '">' + icon('play') + '<span>Play</span></button>' +
+      '<button type="button" class="btn btn-sm btn-ghost" data-act="studio-gd" data-gd="clip-edit" data-id="' + esc(c.id) + '" title="Trim and cut it on the Clips page">' +
+        icon('scissors') + '<span>Edit</span></button></div></div>';
+}
+
+/* Redraw one slot's browser -- or only its results, which leaves the find box and the filters alone,
+   so the caret and the open select stay where the player left them. Never the verdict. */
+function studio_gdRedrawSlot(slot, resultsOnly) {
+  const host = studio_el(resultsOnly ? 'studio-gd-res-' + slot : 'studio-gd-browse-' + slot);
+  if (!host) return;
+  const s = studio_gdSlot(slot), had = document.activeElement && host.contains(document.activeElement) ? document.activeElement.id : '';
+  if (resultsOnly) host.innerHTML = studio_gdResults(slot, s);
+  else host.outerHTML = studio_gdBrowser(slot, s);
+  const el = had && studio_el(had);
+  if (el) el.focus();
+}
+/* typing in a find box redraws that slot's results alone, so the box keeps its focus and caret */
+function studio_gdFind(e) {
+  const t = e.target;
+  if (!t || !t.id || t.id.indexOf('studio-gd-find-') !== 0) return;
+  const slot = t.getAttribute('data-slot'), v = studio_gdView(slot);
+  v.q = t.value; v.page = 1;
+  studio_gdRedrawSlot(slot, true);
+}
+function studio_gdViewChange(e) {
+  const t = e.target, k = t && t.getAttribute ? t.getAttribute('data-gdview') : null;
+  if (!k) return;
+  const slot = t.getAttribute('data-slot'), v = studio_gdView(slot);
+  v[k] = t.value; v.page = 1;
+  studio_gdRedrawSlot(slot, true);
+}
+
+/* ▶ PLAY: the clip in the Studio's own preview, over the guide, with its kills marked along it and
+   the choice in reach. Closing it (studio_previewClose) leaves the guide exactly where it was. */
+function studio_gdPlayClip(id, slot) {
+  if (!studio.clipIndex[id]) return;
+  studio_preview(id);
+  studio.gd.pv = {id: id, slot: slot === 'setup' ? 'setup' : 'quick'};
+  studio_gdPvPick();
+}
+function studio_gdPvPick() {
+  const gd = studio.gd, pv = gd.pv, b = studio_el('studio-preview-pick');
+  if (!b) return;
+  studio_show('studio-preview-pick', !!pv);
+  if (!pv) return;
+  const on = pv.slot === 'setup' ? gd.setup === pv.id : gd.quick.includes(pv.id);
+  b.classList.toggle('btn-primary', !on);
+  b.setAttribute('aria-pressed', String(on));
+  b.innerHTML = on ? icon('check') + '<span>' + (pv.slot === 'setup' ? 'The build: take it out' : 'Chosen: take it out') + '</span>'
+                   : '<span>' + (pv.slot === 'setup' ? 'Use it as the build' : 'Choose this clip') + '</span>';
+}
+
+/* ✎ EDIT: the Clips page's own Trim and cut, for this clip (clip_visit). The guide is left open
+   under it, on its step, with its slots' pages and every choice; back from there it is shown
+   again. A saved trim re-reads the library -- the clip's length, kills and thumbnail are what the
+   trim made them -- and the choice follows the clip. */
+function studio_gdEditClip(id) {
+  const c = studio.clipIndex[id];
+  if (!c || !c.folder || typeof clip_visit !== 'function') { toast('That clip cannot be edited from here.', 'warn'); return; }
+  studio.gd.editing = {id: id, path: c.path, folder: c.folder, name: c.name};
+  go('clips');
+  clip_visit(c.folder, c.path, studio_gdEdited);
+}
+async function studio_gdEdited(res) {
+  const gd = studio.gd, was = gd.editing;
+  gd.editing = null;
+  go('studio');
+  if (!was) return;
+  if (res) {
+    await studio_load(true);
+    /* AN EDIT RE-CUTS THE CLIP UNDER ITS OWN NAME, so its id -- the hash of its path -- normally
+       stays. One that comes back under another path is found by that path, or by its name in the
+       same run, and takes the old one's place in the draft rather than leaving it. */
+    if (!studio.clipIndex[was.id]) {
+      const norm = p => String(p || '').split('/').join('\\').toLowerCase(), all = Object.values(studio.clipIndex);
+      const now = all.find(c => res.master && norm(c.path) === norm(res.master)) || all.find(c => c.folder === was.folder && c.name === was.name);
+      if (now) {
+        if (gd.setup === was.id) gd.setup = now.id;
+        gd.quick = gd.quick.map(x => x === was.id ? now.id : x);
+        was.id = now.id;
+      }
+    }
+    gd.verdict = null;                     /* the clip is not what was judged: asked again */
+  }
+  if (studio_el('studio-guide-scrim').classList.contains('hide')) return;
+  if (res) studio_gdDraw();
+  const card = document.querySelector('#studio-gd-body .gd-clip[data-id="' + CSS.escape(was.id) + '"]');
+  if (card) card.scrollIntoView({block: 'center'});
 }
 
 function studio_gdSeg(name, val, opts) {
@@ -11929,9 +13245,21 @@ function studio_gdFix(fix) {
 
 function studio_gdAllSettings() {
   if (!studio_gdIds().length) { toast('Pick the clips first: the full page starts from them.', 'warn'); return; }
+  const step = studio.gd.step;
   studio_gdHandOff();
   studio_gdClose();
+  studio.mkFrom = {step: step};                 /* so "Back to the steps" returns to it */
   studio_openMake({fromGuide: true});
+}
+
+/* A NEW REEL'S DRAFT, STARTED AFRESH: the part drawn by the page again, no marks, the song's own drops.
+   Opening the guide from the clips is a new reel; the draft of the last one is not carried into it. */
+function studio_tmFresh() {
+  const mk = studio.mk;
+  mk.hand = []; mk.edited = false; mk.planned = null; mk.drops = null; mk.sel = {};
+  mk.touched = false; mk.mode = 'part'; mk.planAsk = (mk.planAsk || 0) + 1;
+  mk.of = 'new';
+  studio.mkAnchors = null;
 }
 
 /* MAKE, FROM THE GUIDE ITSELF. It used to open All settings and build from there, so the player
@@ -11966,7 +13294,7 @@ async function studio_gdMake() {
     if (run === gd.run) {
       gd.busy = false;
       /* the next reel is a new one: its own name and the song's own drops, not this one's */
-      if (made) { studio_gdHandOff(body); gd.name = ''; gd.drops = null; }
+      if (made) { studio_gdHandOff(body); gd.name = ''; studio_tmFresh(); }
     }
     if (!studio_el('studio-guide-scrim').classList.contains('hide')) studio_gdDraw();
   }
@@ -11977,7 +13305,18 @@ function studio_gdAct(b) {
   if (what === 'close') return studio_gdClose();
   /* Back while it plans lets go of the plan and goes back: it used to look live and do nothing */
   if (what === 'back' && gd.busy) { studio_gdDetach(); gd.step = 3; gd.verdict = null; return studio_gdDraw(); }
+  /* a kill mark in the preview: a seek, in the library's preview as in the guide's */
+  if (what === 'pv-seek') { const v = studio_el('studio-preview-video'), t = Number(b.getAttribute('data-t')); if (v && isFinite(t)) v.currentTime = t; return; }
   if (gd.busy) return;                     /* planning: Back and Close are what is offered */
+  if (what === 'view' || what === 'page' || what === 'view-clear') return studio_gdViewAct(what, b);
+  if (what === 'clip-play') return studio_gdPlayClip(b.getAttribute('data-id'), b.getAttribute('data-slot'));
+  if (what === 'clip-edit') return studio_gdEditClip(b.getAttribute('data-id'));
+  if (what === 'pv-pick') {
+    if (!gd.pv) return;
+    studio_gdToggle(gd.pv.slot, gd.pv.id);
+    studio_gdDraw();
+    return studio_gdPvPick();
+  }
   gd.held = null;
   if (what === 'all') return studio_gdAllSettings();
   if (what === 'fix') return studio_gdFix(b.getAttribute('data-fix'));
@@ -12004,19 +13343,38 @@ function studio_gdAct(b) {
     gd.verdict = null;
   }
   else if (what === 'auto') { gd.auto = true; gd.style = ''; gd.autoWhy = null; gd.step = 1; gd.verdict = null; }
-  else if (what === 'setup') {
-    const id = b.getAttribute('data-id');
-    gd.setup = gd.setup === id ? '' : id; gd.quick = gd.quick.filter(x => x !== gd.setup); gd.verdict = null;
-  }
-  else if (what === 'quick' || what === 'unpick') {
-    const id = b.getAttribute('data-id'), off = what === 'unpick' || gd.quick.indexOf(id) >= 0;
-    gd.quick = off ? gd.quick.filter(x => x !== id) : gd.quick.concat([id]);
-    if (off && gd.setup === id) gd.setup = '';   /* taken out is taken out, from the build slot too */
-    gd.verdict = null;
-  }
+  else if (what === 'setup' || what === 'quick' || what === 'unpick') studio_gdToggle(what, b.getAttribute('data-id'));
   else if (what === 'pickall') { studio_gdPickAll(false); gd.verdict = null; }
   else if (what === 'set') { gd[b.getAttribute('data-k')] = b.getAttribute('data-v'); gd.verdict = null; }
   studio_gdDraw();
+}
+/* A clip chosen or taken out, from its card, the left-out list or the player. A choice is the one
+   thing on the Clips step the verdict is asked again for. */
+function studio_gdToggle(what, id) {
+  const gd = studio.gd;
+  if (what === 'setup') { gd.setup = gd.setup === id ? '' : id; gd.quick = gd.quick.filter(x => x !== gd.setup); }
+  else {
+    const off = what === 'unpick' || gd.quick.indexOf(id) >= 0;
+    gd.quick = off ? gd.quick.filter(x => x !== id) : gd.quick.concat([id]);
+    if (off && gd.setup === id) gd.setup = '';   /* taken out is taken out, from the build slot too */
+  }
+  gd.verdict = null;
+}
+/* THE CLIP BROWSERS' VIEWS: which clips a slot shows, never which are chosen -- so one slot is
+   redrawn and nothing is asked again. A filter, a search or a sort starts again from page one. */
+function studio_gdViewAct(what, b) {
+  const slot = b.getAttribute('data-slot'), v = studio_gdView(slot);
+  if (what === 'page') {
+    v.page = Number(b.getAttribute('data-v')) || 1;
+    studio_gdRedrawSlot(slot, true);
+    const top = studio_el('studio-gd-count-' + slot);
+    if (top) top.scrollIntoView({block: 'nearest'});
+    return;
+  }
+  if (what === 'view-clear') Object.assign(v, {q: '', fav: 'any', run: '', map: '', mode: '', kind: '', chosen: false});
+  else { const k = b.getAttribute('data-k'), val = b.getAttribute('data-v'); v[k] = k === 'chosen' ? !!val : val; }
+  v.page = 1;
+  studio_gdRedrawSlot(slot, false);
 }
 
 

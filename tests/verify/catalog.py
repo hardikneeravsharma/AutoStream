@@ -639,9 +639,32 @@ CONTROLS: list[Control] = [
     Control("/api/studio/song", "POST", CALL, "Use this part", "studio",
             body={"project": None}, expect=_has("ok"),
             reject={"project": None}, reject_soft=True,
-            acts=("studio-sg-apply", "studio-sg-none"),
-            why="the song, the part of it and the kill marks are applied by the "
-                "server, which re-times the cuts against what the footage allows"),
+            acts=("studio-sg-none",),
+            why="No song: the music taken off at once. The part and the marks are no longer "
+                "applied here -- they are the reel's draft, resolved by /api/studio/retime and "
+                "/api/studio/replan"),
+    Control("/api/studio/retime", "POST", CALL, "Keep my shots, re-time them", "studio",
+            body={"project": None}, expect=_has("ok"),
+            reject={"project": None}, reject_soft=True,
+            acts=("studio-flow", "studio-flow-fix"),
+            why="a dry run: the shots kept, each kill placed on the part's own beats, and "
+                "what that changes -- or the conflict and its fixes. Nothing is applied; "
+                "`rev` comes back so the page can drop an answer a newer edit made stale"),
+    Control("/api/studio/replan", "POST", CALL, "Replan for this section", "studio",
+            body={"project": None}, expect=_has("ok"),
+            reject={"project": None}, reject_soft=True,
+            acts=(),
+            why="a dry run of the style's own planner on the spec as it stands, with the "
+                "player's marks as constraints, and the diff the page shows before Apply"),
+    Control("/api/studio/versions", "GET", CALL, "a reel's render versions", "studio",
+            query="path=", expect=_has("ok"),
+            why="History's list of renders; a blank path or one outside the reels folder "
+                "is refused with ok:false"),
+    Control("/api/studio/version", "POST", CALL, "Restore a version, or save it as a new reel", "studio",
+            body={"path": "", "version": 0, "action": "restore"}, expect=_has("ok"),
+            reject={"path": "C:/elsewhere.mp4", "version": 1, "action": "restore"}, reject_soft=True,
+            acts=("studio-ver-restore", "studio-ver-fork"),
+            why="a version outside the reels folder, or one not on disk, is refused with ok:false"),
     Control("/api/studio/render", "POST", CALL, "Render", "studio",
             body={"project": None}, expect=_has("ok"),
             reject={"project": None}, reject_soft=True, acts=("studio-render",),
@@ -789,6 +812,12 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-deal-reset": "drops the dealt parts back to the style's own",
     "studio-bin-slot": "ticks a drawer in and out of the how-many-reels count",
     "studio-sg-win": "zooms the song's lanes",
+    "studio-flow-ask": "says what Re-render, Re-time or Replan would keep and change, before it runs",
+    "studio-add-how": "chooses what Add clips means -- the pool, one shot's clip, or a replan -- and goes to the clips",
+    "studio-add-go": "puts the picked clips in the reel's pool or in the selected shot, as one edit (checked by /api/studio/check)",
+    "studio-mk-flow": "the Make page's stale banner: plan the kills again, put the part back, or a fix for a drop outside it",
+    "studio-mk-guide": "goes back from All settings to the guide's step, with the same draft",
+    "studio-mk-lyrics": "chooses the lyrics' look on the Make page; it rides with the plan request",
     "studio-gd-open": "opens the guided maker: one question a screen",
     "studio-mk-chipfix": "applies the Make page check's fix (9:16 for a landscape Short)",
     "studio-gd": "moves through the guided maker and answers its questions; Make hands them to the Make page's plan",

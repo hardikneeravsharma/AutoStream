@@ -116,7 +116,8 @@ def test_fast_cuts_keep_the_variety_their_pools_define(pile):
         studio._cut_seconds(t) <= studio.FAST_CUT_SECONDS for t in st.transition_pool)
     assert not any(studio.fam(h) == "h02" for h in st.hero_pool)
     proj, *_ = _planned(pile, "hype", 174.0)
-    assert len({s["fx"][0] for s in proj["shots"]}) == studio.MAX_KILL_FX
+    own = [[f for f in s["fx"] if studio.fam(f) != "k02"] for s in proj["shots"]]
+    assert len({f[0] for f in own if f}) == studio.MAX_KILL_FX, own
     assert len({s["camera"] for s in proj["shots"]}) > 1
 
 
@@ -240,3 +241,154 @@ def test_the_flash_intro_and_ending_stop_short_of_white(pile):
     # a frame of the game's usual grey peaks well under the gate's white-ending line
     grey = (70 * (1 - a) + 235 * a - 16) * 255 / 219
     assert grey < reelcheck.WHITE_END
+
+
+# ================================================================== round 2 (2026-10-23)
+#
+# ChatGPT's second review: Hype 6.4/10, Velocity 6.2/10. Pace by the references'
+# spread, not one gap for every shot; a floor per style; Velocity's speed shape and
+# Hype's shake as checks the gate holds them to.
+
+PACE_TEMPOS = [90.0, 125.0, 170.0]
+WITH_REFS = [s for s in GENERAL if studio.studio_refs.summary(studio.STYLE[s].refs).get("median_shot")]
+
+
+@pytest.mark.parametrize("bpm", PACE_TEMPOS)
+@pytest.mark.parametrize("style", WITH_REFS)
+def test_pace_matches_the_references_median_and_cuts_a_minute(pile, style, bpm):
+    """Rule 1: median shot within 15% of the references', cuts a minute within 10% --
+    or the plan names the limit that stopped it (and the gate says so, softly)."""
+    proj, notes, got, derived, found = _planned(pile, style, bpm)
+    ref = studio.studio_refs.summary(studio.STYLE[style].refs)
+    durs = sorted(s["duration"] for s in got["shots"])
+    med = statistics.median(durs)
+    cpm = 60.0 * len(durs) / derived["length"]
+    limits = (proj.get("pace") or {}).get("limits") or []
+    ok = abs(med / ref["median_shot"] - 1) <= 0.15 and abs(cpm / ref["cuts_per_min"] - 1) <= 0.10
+    assert ok or limits, (med, ref["median_shot"], cpm, ref["cuts_per_min"])
+    codes = {f.code for f in found}
+    assert ok == (not ({"pace-median", "pace-cuts"} & codes)), codes
+
+
+def test_the_gate_says_when_the_pace_is_off():
+    """Every shot 1.5x the median with the cuts a minute right -- the v2 Hype reel."""
+    shots = [{"clip": f"{i}.mp4", "duration": 0.95, "kills": [3.0], "fx": ["k02soft"]} for i in range(40)]
+    rows = [{"kill_reel": 0.95 * i + 0.5, "start": 0.95 * i, "drift": 0.0, "kills_reel": [0.95 * i + 0.5],
+             "pieces": [[0.0, 0.95, 1.0]]} for i in range(40)]
+    codes = {f.code for f in reelcheck.style_findings({"style": "hype", "shots": shots},
+                                                      {"shots": rows, "length": 44.5})}
+    assert "pace-median" in codes and "pace-cuts" not in codes
+
+
+def test_each_style_reads_down_to_its_own_floor():
+    """Rule 2: no 0.75 s floor for everyone -- a kill a beat at 100 BPM is 0.6 s."""
+    for key in ("hype", "chaos", "velocity"):
+        st = studio.STYLE[key]
+        assert st.min_run + st.min_after <= 0.6, key
+    assert studio.STYLE["story"].min_run + studio.STYLE["story"].min_after == pytest.approx(
+        rulebook.MIN_KILL_GAP_SECONDS)
+
+
+def _shot(pre, dur, kill=3.5, speed="s00", **kw):
+    return {"clip": "a.mp4", "kill": kill, "kills": [kill], "pre": pre, "duration": dur, "clip_seconds": 12.0,
+            "speed": speed, "fx": ["k01"], "hero": False, "hero_fx": [], "camera": "c00", **kw}
+
+
+def _rate(shot, t0, t1):
+    ps = studio.shot_pieces(shot)
+    return (studio.source_used(ps, t1) - studio.source_used(ps, t0)) / (t1 - t0)
+
+
+def test_a_velocity_kill_a_beat_at_100_bpm_still_rushes_and_slows():
+    """Rule 2 and 3: a 0.6 s shot -- one beat at 100 BPM -- gets the whole shape: a
+    rush in of at least 1.3x, 0.5-0.7x through the impact, a rush out."""
+    s = _shot(0.36, 0.6)
+    got = studio.speed_curves([s], studio.STYLE["velocity"])
+    assert got["velocity"] == 1 and got["short"] == 0, got
+    assert 0.5 <= _rate(s, 0.36 - 0.05, 0.36 + 0.05) <= 0.7
+    assert _rate(s, 0.0, 0.2) >= 1.3 and _rate(s, 0.55, 0.6) >= 1.3
+    run_up_src = studio.source_used(studio.shot_pieces(s), 0.36)
+    assert run_up_src >= 0.4, run_up_src
+    assert studio._span(s)[0] >= 0.0
+
+
+def test_the_velocity_shape_never_replays_another_shots_footage():
+    a = _shot(0.4, 0.8, kill=3.5)
+    b = _shot(0.4, 0.8, kill=4.6)
+    studio.speed_curves([a, b], studio.STYLE["velocity"])
+    assert studio._span(a)[1] <= studio._span(b)[0] + 1e-3
+
+
+def test_a_readability_ramp_squeezes_the_fight_not_the_kill():
+    """Rule 2: a 0.33 s run-up on a Hype shot shows MIN_RUN_SECONDS of the fight by a
+    ramp of at most ramp_max, and the kill frame plays at real speed."""
+    st = studio.STYLE["hype"]
+    shots = [_shot(1.0, 1.4, kill=3.0), _shot(0.33, 0.55, kill=3.5, clip="b.mp4")]
+    shots[1]["clip"] = "b.mp4"
+    got = studio.speed_curves(shots, st)
+    assert got["ramped"] == 1
+    s = shots[1]
+    assert _rate(s, 0.0, 0.1) <= st.ramp_max + 1e-6
+    assert _rate(s, 0.33 - 0.02, 0.33 + 0.02) == pytest.approx(1.0, abs=1e-3)
+    assert studio.source_used(studio.shot_pieces(s), 0.33) >= rulebook.MIN_RUN_SECONDS - 0.12
+
+
+@pytest.mark.parametrize("bpm", PACE_TEMPOS)
+def test_velocity_passes_its_own_speed_check(pile, bpm):
+    """Rule 3: the gate measures the shape off the pieces the render plays."""
+    proj, notes, got, derived, found = _planned(pile, "velocity", bpm)
+    codes = {f.code for f in found}
+    assert not ({"velocity-slow", "velocity-fast"} & codes), [f.message for f in found]
+
+
+def test_a_velocity_reel_without_the_shape_is_refused(pile):
+    proj, notes, got, derived, found = _planned(pile, "velocity", 125.0)
+    for s in got["shots"]:
+        s.pop("anchors", None)
+    derived = studio.derive(got)
+    codes = {f.code for f in reelcheck.plan_findings(got, derived, fast=False)}
+    assert "velocity-slow" in codes and "velocity-fast" in codes
+
+
+@pytest.mark.parametrize("bpm", PACE_TEMPOS)
+def test_every_hype_kill_shakes(pile, bpm):
+    """Rule 4: at least 95% of kills carry the (soft) shake, the guard aside."""
+    proj, notes, got, derived, found = _planned(pile, "hype", bpm)
+    sig = studio.STYLE["hype"].signature[0]
+    eligible = [s for s in got["shots"] if not s.get("signature_off")]
+    has = [s for s in eligible if sig in s["fx"]]
+    assert len(has) >= 0.95 * len(eligible)
+    assert "signature" not in {f.code for f in found}
+    assert studio.knob(sig, "amp", 1.0) < studio.knob("k02", "amp", 0.7), "restrained: the soft shake"
+
+
+def test_a_shake_never_rides_a_drifting_camera():
+    s = _shot(0.5, 0.8, camera="c07")
+    studio.signature_fx([s], studio.STYLE["hype"])
+    assert s["fx"] == ["k01", "k02soft"] and s["camera"] == "c00"
+
+
+def test_the_guard_takes_the_shake_off_only_a_kill_it_would_hide():
+    soft = _shot(0.5, 0.8)
+    soft["fx"] = ["k08"]                       # a red wash: 0.44 alone
+    sharp = _shot(0.5, 0.8)
+    studio.signature_fx([soft, sharp], studio.STYLE["hype"])
+    assert studio.signature_guard([soft, sharp], studio.STYLE["hype"]) == 1
+    assert soft.get("signature_off") and "k02soft" not in soft["fx"]
+    assert "k02soft" in sharp["fx"] and not sharp.get("signature_off")
+
+
+def test_the_gate_refuses_a_hype_reel_without_its_shake(pile):
+    proj, notes, got, derived, found = _planned(pile, "hype", 125.0)
+    for s in got["shots"]:
+        s["fx"] = [f for f in s["fx"] if studio.fam(f) != "k02"]
+    assert "signature" in {f.code for f in reelcheck.plan_findings(got, studio.derive(got))}
+
+
+def test_the_kill_counter_ticks_once_for_every_kill_shown(pile):
+    """Rule 4: the counter is the shown kills, no more, no fewer."""
+    proj, notes, got, derived, found = _planned(pile, "hype", 125.0)
+    assert "kill-counter" not in {f.code for f in found}
+    assert len(derived["kills"]) == sum(len(r["kills_reel"]) for r in derived["shots"])
+    broken = dict(derived, kills=derived["kills"][:-1])
+    assert "kill-counter" in {f.code for f in reelcheck.style_findings(got, broken)}

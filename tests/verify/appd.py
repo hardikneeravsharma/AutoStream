@@ -211,6 +211,26 @@ def answering(base: str, timeout: float = 4.0) -> bool:
         return False
 
 
+def replan_as(page, style: str, timeout: int = 120_000) -> None:
+    """Replan the reel on the timeline in another style, the way the player does.
+
+    SINCE THE EDIT FLOW (v1.81.0) "Replan with this style..." ASKS FIRST. It
+    says what it keeps and changes, Replan answers with a proposal, and
+    nothing is the reel until Apply -- so a test that clicked the button and
+    waited for the style waited for ever. It also refuses while a reel is
+    rendering, and a cancelled render is still rendering to the page until
+    its next status poll.
+    """
+    page.wait_for_function("() => !studio.rendering", timeout=60_000)
+    page.select_option("#studio-r-style", style)
+    page.click("#studio-restyle-btn")
+    page.click('#studio-tl-stale [data-act="studio-flow"][data-do="replan"]')
+    page.wait_for_function("() => studio.flow.prop || studio.flow.conflicts || studio.flow.err", timeout=timeout)
+    assert not page.evaluate("studio.flow.err"), page.evaluate("studio.flow.err")
+    page.click('#studio-tl-stale [data-act="studio-flow"][data-do="apply"]')
+    page.wait_for_function("(s) => studio.project.style === s", arg=style, timeout=15_000)
+
+
 def stop(base: str, proc) -> None:
     """Its own Quit -- what the tray and the rail button use. Killed only if it will not go."""
     try:

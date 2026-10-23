@@ -157,7 +157,7 @@ def test_it_is_a_page_not_a_dialog_and_the_nav_moves_it(pg, app):
     assert pos != "fixed", "the Make page is still an overlay"
     assert pg.evaluate("document.getElementById('view-studio').classList.contains('is-making')")
     assert pg.get_attribute("#studio-make", "role") != "dialog"
-    for sec in ("look", "song", "kills", "shape", "style"):
+    for sec in ("look", "music", "footage", "timing", "style"):      # grouped by intent (UI-SCENARIOS 6.102)
         pg.click(f'[data-act="studio-mk-jump"][data-sec="{sec}"]')
         assert pg.evaluate(f"!!document.getElementById('mk-sec-{sec}')")
     # clicking beside it does nothing: a page is left through Back

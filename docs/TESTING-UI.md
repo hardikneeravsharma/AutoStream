@@ -78,6 +78,7 @@ can pass having never booted the binary it just made.
 |---|---|---|
 | `test_ui_playwright.py` | The big Studio flows, and that media really plays | ~4 min |
 | `test_ui_sweep.py` | Presses every control it can reach; nothing errors | ~1.5 min |
+| `test_ui_studio_timing.py` | A reel after it is made: the part, the marks and the drops as one draft, stale timing and how it is resolved, the state badge, render versions (UI-SCENARIOS 6.86-6.104) | ~1.5 min |
 | `test_ui_clip_stages.py` | The Clips page's six stages, button by button | ~1 min |
 | `test_ui_journey.py` | One person's whole path, in order, ending in a real run | ~5 min+ |
 | `test_ui_setup.py` | The first screen a new user sees | seconds |

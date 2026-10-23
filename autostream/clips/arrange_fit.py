@@ -1133,7 +1133,7 @@ def _assemble(fit: Fitter, ev, path, style, grid, tw, arrangement, hs_only, fmt,
         ok = _valid(shots, index[id(shot)])
         shot["speed"] = was
         return ok
-    if not studio.fast_reel(style, getattr(grid, "bpm", None)):     # see studio.plan: fast cuts keep real speed
+    if not studio.fast_reel(style, getattr(grid, "bpm", None)) and not style.speed_profile:     # see studio.plan
         rulebook.climax(shots, [blocks[s["_block"]].strength for s in shots], pools, speed_ok=speed_ok)
     if style.outro in ("e01", "e03", "e02") and len(shots) > 1 and speed_ok(shots[-1], "s06"):
         shots[-1]["speed"] = "s06"             # slowed as it leaves, as studio.plan() ends
@@ -1147,6 +1147,11 @@ def _assemble(fit: Fitter, ev, path, style, grid, tw, arrangement, hs_only, fmt,
     for s in shots:
         for k in ("_block", "_planned", "_riders"):
             s.pop(k, None)
+    # Velocity's speed shape and Hype's shake, as studio.plan gives them: the style
+    # is the same whichever planner laid the cuts.
+    studio.speed_curves(shots, style)
+    studio.signature_fx(shots, style)
+    studio.signature_guard(shots, style)
     marks = [round(float(T[p]), 4) for _a, _r, p in anchors]
     return {
         "version": studio.VERSION, "name": name or f"{style.label} reel",

@@ -3858,6 +3858,39 @@ STUDIO_CSS = r"""
 .gd-bar{height:8px;border-radius:4px;background:var(--surface-active);border:1px solid var(--border);overflow:hidden}.gd-bar i{display:block;height:100%;background:var(--accent)}
 .gd-tags{display:flex;flex-wrap:wrap;gap:4px}.gd-tags i{font-size:10.5px;font-weight:600;font-style:normal;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border:1px solid var(--border);border-radius:3px;color:var(--text-secondary)}
 .gd-tags .gd-hs{color:var(--warn)}.gd-tags .gd-fav{color:var(--accent)}
+/* EACH SLOT'S CLIP BROWSER: find, filters and sort above, a page of thumbnail cards, the pager below. */
+.gd-browse{display:grid;gap:var(--space-3);min-width:0}
+.gd-results{display:grid;gap:var(--space-3);min-width:0}
+.gd-tools{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}.gd-tools .input{flex:1 1 220px;min-width:0;max-width:360px}
+.gd-tools .select{flex:0 1 auto;min-width:0;max-width:240px}
+.gd-tools .btn[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+.gd-count{margin:0;font-size:12px}
+.gd-clips{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+.gd-clip{padding:0;gap:0;overflow:hidden;cursor:default}
+.gd-clip-hit{display:grid;gap:6px;align-content:start;min-width:0;padding:0 0 var(--space-2);text-align:left;background:none;border:0;color:inherit;font:inherit;cursor:pointer}
+.gd-clip-hit>:not(.gd-thumb){margin:0 var(--space-3)}
+.gd-clip-hit:focus-visible{outline:var(--focus-ring-width) solid var(--accent);outline-offset:calc(-1 * var(--focus-ring-width))}
+.gd-thumb{position:relative;display:block;aspect-ratio:16/9;background:var(--surface-active);overflow:hidden}
+.gd-thumb img{display:block;width:100%;height:100%;object-fit:cover}
+.gd-thumb.is-missing img{visibility:hidden}
+.gd-len{position:absolute;right:6px;bottom:6px;padding:1px 6px;border-radius:var(--radius-sm);font-size:11px;background:var(--on-media-scrim);color:var(--on-media)}
+.gd-tick{position:absolute;left:6px;top:6px;display:none;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--accent);color:var(--text-on-accent)}
+.gd-tick .icon{width:16px;height:16px}
+.gd-clip.is-on .gd-tick{display:grid}
+.gd-name{font-size:12px;overflow-wrap:anywhere}
+.gd-meta{font-size:12px;color:var(--text-tertiary);overflow-wrap:anywhere}
+.gd-clip-acts{display:flex;flex-wrap:wrap;gap:var(--space-2);padding:0 var(--space-3) var(--space-3)}
+.gd-clip-acts .icon{width:14px;height:14px}
+.gd-pager{display:flex;flex-wrap:wrap;gap:4px;align-items:center;justify-content:center}
+.gd-gap{padding:0 4px;color:var(--text-tertiary)}
+/* The preview's kills along the clip, and where it is playing. */
+.gd-pvmarks{position:relative;height:18px;margin-top:var(--space-2);border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-active)}
+.gd-pvmark{position:absolute;top:2px;bottom:2px;width:6px;margin-left:-3px;padding:0;border:0;border-radius:2px;background:var(--text-secondary);cursor:pointer}
+.gd-pvmark.is-hs{background:var(--warn)}
+.gd-pvhead{position:absolute;top:0;bottom:0;left:0;width:2px;background:var(--accent);pointer-events:none}
+/* The Clips page's player visited from the guide (clip_visit): the player alone. */
+#view-clips.is-visit>:not(#clip-player-card){display:none!important}
+#view-clips.is-visit>#clip-player-card:not(.hide){display:flex!important}
 .gd-field{display:grid;gap:var(--space-2)}
 /* Chosen clips the style cannot use, each with why: in the draft, out of the counts and the plan. */
 .gd-left{border:1px dashed var(--border-strong);border-radius:var(--radius-md);padding:var(--space-3)}
@@ -4713,4 +4746,65 @@ CSS += r"""
   .clip-part-times{gap:var(--space-4)}
   .clip-part-time b{font-size:16px}
 }
+"""
+
+# ONE REEL'S TIMING, AND WHERE IT STANDS (ui/studio.py: studio_flowDraw, studio_badgeDraw). The stale
+# banner has to be the thing nobody misses on the Song tab and beside Render: a warn edge and wash, the
+# way out as the page's primary button, and a slow glow on it -- which stops, and becomes a plain ring,
+# for anyone who has asked their system for less motion.
+CSS += r"""
+.studio-flow-host:empty{display:none}
+.studio-flow{display:flex;flex-direction:column;gap:var(--space-3);padding:var(--space-4) var(--space-5);
+  border:var(--border-hair) solid var(--border);border-left:4px solid var(--border-strong);
+  border-radius:var(--radius-md);background:var(--surface);margin:0 0 var(--space-4)}
+.studio-flow p{margin:0}
+.studio-flow ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:2px;font-size:12.5px}
+.studio-flow-head{font:650 14px/1.35 var(--font-text);color:var(--text-primary)}
+.studio-flow.is-stale{border-left-color:var(--warn);background:var(--warn-muted)}
+.studio-flow.is-bad{border-left-color:var(--danger);background:var(--danger-muted)}
+.studio-flow.is-busy{border-left-color:var(--accent)}
+.studio-flow.is-prop{border-left-color:var(--accent);background:var(--accent-muted)}
+.studio-flow.is-ask{border-left-color:var(--accent)}
+.studio-flow-acts{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}
+.studio-flow-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:var(--space-3)}
+.studio-flow-cols b{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary)}
+.studio-flow-why{font-size:12.5px;color:var(--text-primary);font-weight:600}
+.studio-flow-room{font-size:12.5px;display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}
+.studio-flow-choice{display:flex;flex-direction:column;gap:var(--space-2);padding:var(--space-3) 0;
+  border-top:var(--border-hair) solid var(--border-subtle)}
+.studio-attn{position:relative;box-shadow:0 0 0 2px var(--accent);animation:studio-attn var(--dur-pulse) var(--ease-standard) infinite}
+@keyframes studio-attn{0%,100%{box-shadow:0 0 0 2px var(--accent),0 0 0 0 var(--accent-muted)}
+  50%{box-shadow:0 0 0 2px var(--accent),0 0 0 7px var(--accent-muted)}}
+@media (prefers-reduced-motion:reduce){.studio-attn{animation:none;box-shadow:0 0 0 2px var(--accent),0 0 0 5px var(--accent-muted)}}
+.studio-attn:disabled{animation:none;box-shadow:none}
+.studio-badge{display:inline-flex;align-items:center;gap:6px;height:var(--h-control-sm);padding:0 10px;
+  border-radius:var(--radius-pill);border:var(--border-hair) solid var(--border);font:600 12px/1 var(--font-text);
+  color:var(--text-secondary);white-space:nowrap}
+.studio-badge:empty{display:none}
+.studio-badge-dot{width:var(--size-dot);height:var(--size-dot);border-radius:var(--radius-pill);background:var(--text-tertiary)}
+.studio-badge.is-stale,.studio-badge.is-changed{border-color:var(--warn);color:var(--text-primary);background:var(--warn-muted)}
+.studio-badge.is-stale .studio-badge-dot,.studio-badge.is-changed .studio-badge-dot{background:var(--warn)}
+.studio-badge.is-failed{border-color:var(--danger);color:var(--text-primary);background:var(--danger-muted)}
+.studio-badge.is-failed .studio-badge-dot{background:var(--danger)}
+.studio-badge.is-rendered,.studio-badge.is-ready{border-color:var(--ok);color:var(--text-primary)}
+.studio-badge.is-rendered .studio-badge-dot,.studio-badge.is-ready .studio-badge-dot{background:var(--ok)}
+.studio-badge.is-planning,.studio-badge.is-rendering{border-color:var(--accent);color:var(--text-primary)}
+.studio-badge.is-planning .studio-badge-dot,.studio-badge.is-rendering .studio-badge-dot{background:var(--accent)}
+.studio-sync.is-timing{border-left-color:var(--warn);background:var(--warn-muted)}
+.studio-sync.is-timing .studio-sync-dot{background:var(--warn)}
+.studio-acts3{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2)}
+.studio-ver-head{margin-top:var(--space-4)}
+.studio-ver-row{display:flex;flex-direction:column;gap:2px;padding:var(--space-2) 0;border-top:var(--border-hair) solid var(--border-subtle)}
+.studio-ver-row.is-current .studio-ver-name b{color:var(--accent-text)}
+.studio-ver-now{font-size:11px;color:var(--ok)}
+.studio-ver-bad{font-size:11px;color:var(--danger)}
+.studio-ver-acts{display:flex;gap:var(--space-2);flex-wrap:wrap}
+.mk-says{margin:0 0 var(--space-2);font-size:12px;color:var(--text-secondary)}
+.mk-says:empty{display:none}
+.mk-group{margin:0 0 var(--space-3);font:650 18px/1.2 var(--font-display);color:var(--text-primary)}
+.mk-bar-name{margin:0}
+.mk-bar-input{max-width:260px}
+.reel-chip.is-hand{border-color:var(--accent)}
+.reel-chip.is-ghost{opacity:.55;border-style:dashed}
+.studio-mk-dropsbox.is-flash{outline:2px solid var(--warn);outline-offset:4px;border-radius:var(--radius-md)}
 """

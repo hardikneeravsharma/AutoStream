@@ -220,6 +220,41 @@ def test_a_match_whose_record_is_gone_still_groups_its_clips(matched, monkeypatc
     assert one["clips"] == 2 and one["clip_kills"] == 5
 
 
+def test_a_gone_record_keeps_the_map_and_mode_the_run_wrote_down(matched, monkeypatch):
+    """The guide filters clips by map and by game mode. A run names the map of each
+    match it aligned, and its recording carries the game-mode path: with the record
+    deleted, those still say where the clips are from. A path that cannot tell
+    Competitive from Unrated names no mode rather than guessing one."""
+    import json as _json
+
+    from autostream.clips import valorant_match as vm
+    run = next(p for p in matched.iterdir() if p.is_dir() and p.name.startswith("2026"))
+    sess = _json.loads((run / "session.json").read_text())
+    sess["demo"]["matches"] = [
+        {"match": "match-two", "offset": 2632.0, "map": "Drift",
+         "mode": "/Game/GameModes/HURM/HURMGameMode.HURMGameMode_C"},
+        {"match": "match-one", "offset": 299.0, "map": "Lotus",
+         "mode": "/Game/GameModes/Bomb/BombGameMode.BombGameMode_C"}]
+    (run / "session.json").write_text(_json.dumps(sess))
+    for f in vm.CACHE.glob("*.json"):
+        f.unlink()
+    one, two = _folder(matched)["matches"]
+    assert one["map"] == "Lotus" and "mode" not in one
+    assert two["map"] == "Drift" and two["mode"] == "Team Deathmatch"
+
+
+@pytest.mark.parametrize("mode,name", [
+    ("competitive", "Competitive"), ("hurm", "Team Deathmatch"), ("ggteam", "Escalation"),
+    ("/Game/GameModes/QuickBomb/QuickBombGameMode.QuickBombGameMode_C", "Spike Rush"),
+    ("/Game/GameModes/Deathmatch/DeathmatchGameMode.DeathmatchGameMode_C", "Deathmatch"),
+    ("/Game/GameModes/HURM/HURMGameMode.HURMGameMode_C", "Team Deathmatch"),
+    ("/Game/GameModes/GunGame/GunGameTeamsGameMode.GunGameTeamsGameMode_C", "Escalation"),
+    ("/Game/GameModes/Bomb/BombGameMode.BombGameMode_C", ""), ("", "")])
+def test_a_mode_is_named_from_a_queue_or_a_game_mode_path(mode, name):
+    from autostream.clips import valorant_match as vm
+    assert vm.mode_name(mode) == name
+
+
 def test_a_run_with_no_match_records_has_no_groups(root):
     """CS2, Delta Force, anything imported: the page shows the one grid it
     always did rather than inventing a match."""
@@ -849,6 +884,22 @@ def test_no_two_shots_running_get_the_same_kill_effect(long_run, style):
     assert len(set(firsts)) == min(studio.MAX_KILL_FX, len(pool)), firsts
 
 
+def test_no_seed_puts_one_kill_effect_on_two_shots_running(long_run):
+    """The test above draws one seed, from a crc of the clip paths -- so it passed here and failed
+    on CI's paths. Velocity's opener [k06, k11] beside a k11 could only drop its soft k06 in
+    sharp_kills, and came out k11 twice running on 6 seeds in 300. Every seed, every style."""
+    clips = _clips(long_run)
+    for st in studio.STYLES:
+        pool = set((studio.fast_rules(st) if studio.fast_reel(st, 128.0) else st).kill_pool)
+        if len(pool) == 1:
+            continue
+        for seed in range(300):
+            proj, _ = studio.plan(clips, st.key, shape=Shape(bpm=128.0), seed=seed)
+            firsts = [s["fx"][0] for s in proj["shots"] if s["fx"]]
+            assert all(a != b for a, b in zip(firsts, firsts[1:])), (st.key, seed, firsts)
+            assert len(set(firsts)) == min(studio.MAX_KILL_FX, len(pool)), (st.key, seed, firsts)
+
+
 @pytest.mark.parametrize("style", [s.key for s in studio.STYLES])
 def test_transitions_are_mixed_too(long_run, style):
     proj, _ = studio.plan(_clips(long_run), style, shape=Shape(bpm=128.0))
@@ -1143,7 +1194,8 @@ def test_cancel_is_reported_as_cancelled_not_as_a_failure(root, tmp_path, monkey
 
     def fake_ff(argv, capture=False, seconds=0.0):
         out = Path(argv[-1])
-        joining = out.name.endswith(".part.mp4") and out.parent.name == "reels"
+        # The join writes the render's own version file (clips/versions.py), not the reel.
+        joining = out.name.endswith(".part.mp4") and out.parent.parent.name == ".versions"
         if (stage == "shot") or joining:
             job._cancel.set()
             raise studio.Cancelled("cancelled")

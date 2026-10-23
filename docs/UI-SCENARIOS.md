@@ -181,7 +181,7 @@ listed so the gap is visible.
 | 6.3 | Clips tab: pick, range-pick, clear | Selection count follows | sweep |
 | 6.4 | Timeline: zoom, snap, undo | No console error; undo restores | sweep |
 | 6.5 | Song tab: pick a song, see the beats | The beat grid is drawn | **gap** |
-| 6.6 | Song tab: drag the part | Snaps to a beat | **gap** |
+| 6.6 | Song tab: drag the part | Snaps to a beat, and no mark moves with it (see 6.86) | yes (`test_ui_studio_timing`) |
 | 6.7 | Facecam: draw a box, keep it | Box persists across reels | **gap** |
 | 6.8 | Every drawer of the parts bin deals | No dead drawer | sweep |
 | 6.9 | The effect picker: search by name and by code, preview follows the pointer, Esc closes and returns focus, a click applies undoably, recently used comes first, several at once with Done, a chip's × takes one off | The project changes exactly as chosen | yes |
@@ -191,7 +191,7 @@ listed so the gap is visible.
 | 6.13 | The change count after a render: the vignette on (1), off again (0, the button stops saying Apply), two reel settings changed and one undone (1), a shot's speed changed and put back by hand (0) | The count is what differs from the video, never how many clicks it took | yes |
 | 6.14 | How long: "Fill the song part I picked" is greyed until a song and a part are chosen, then lit by default; "Every clip I chose" says what it does; Keep every kill ticked; Best order chosen; Build | The plan request carries the part, `fill`, `keep_all` and `arrange: hits`, the project keeps all four, and the reel fills most of the part | yes (`test_ui_studio_length`) |
 | 6.15 | Rebuild with another style on a reel cut to a part | The new plan is asked for on the same part, with the same How long and Keep every kill | yes (`test_ui_studio_length`) |
-| 6.16 | Song tab: lengthen the part well past the reel and "Use this part" | The reel is planned again to fill it, the part is kept on the project, and the tab reopens on it rather than on the reel's length | yes (`test_ui_studio_length`) |
+| 6.16 | Song tab: lengthen the part well past the reel and *Replan for this section* (was "Use this part") | The reel is planned again to fill it, the part is kept on the project, and the tab reopens on it rather than on the reel's length | yes (`test_ui_studio_length`) |
 | 6.17 | Instant preview: delete a shot from a rendered reel; play across the new cut; a song applied plays under it | The player takes the edit in the same frame (shots, length, the clip after the cut) with nothing rendered; its clip/second/rate at 30 reel times equal `preview_at()`'s; the cut lands within 50 ms; the song is within 0.2 s of the cuts | yes |
 | 6.18 | Background render: stop editing; then edit again while a Render you pressed is running | It starts itself after the idle delay and the player changes over to a file as long as the edited timeline; never a background request while your render runs; the edit made during it renders itself afterwards | yes |
 | 6.19 | Perfect fit: the arrangement says it is slower, the Make dialog warns it takes up to ~30 s, and the plan has every kill of a triple, a double and a single, each shot's kill within a frame of its hit; a rebuild in another style keeps the arrangement | Every chosen kill is in the timeline; `arrange` is still `fit` after a restyle | yes |
@@ -266,7 +266,41 @@ listed so the gap is visible.
 | 6.76 | The guided maker's Clips step under Montage, and its Look step's lyrics | Montage says it needs at least four clips; lyrics are offered as used if the song's lyrics are found, never promised | yes (`test_ui_studio_guide`) |
 | 6.77 | The guided maker's Song step with a song chosen: its drop view | The song is drawn -- loudness, its parts named, AutoStream's drops hollow and the main one marked, the part used shaded; a player with play/pause, a seek bar, volume and *Play into the drop* (from a few seconds before it); clicking the drawing seeks | yes (`test_ui_studio_guide`) |
 | 6.78 | Mark a drop on a song with none (playhead, double-click), move one, remove AutoStream's, then *Back to AutoStream's drops* | Each change is in the guide's spec: the verdict is asked again with the drops and the plan sends the same `drops`; Build and drop's *no drop* refusal offers *Mark the drop yourself* and is lifted by a marked drop; the reset sends none; All settings hands the drops to the Make page; a new song starts from its own | yes (`test_ui_studio_guide`; the verdict reading them offline in `test_feasible`) |
-| 6.79 | *Paste a YouTube link…* on the guide's Song step | The link dialog opens over the guide; a failure is said in the dialog; when the download is done the song is chosen in the guide, its card is in the refreshed list and the drop view is open on it; the guide stays open | yes (`test_ui_studio_guide`, the download stubbed) || 6.60 | Song tab: the Hits lane on a drum loop with a quiet opening | Every kick, snare and hat is a tick in its own row and the song's parts are named along the top; no kick is drawn in the opening that has none; the lane hides and comes back from its toggle | yes (`test_ui_studio_hits`) |
+| 6.79 | *Paste a YouTube link…* on the guide's Song step | The link dialog opens over the guide; a failure is said in the dialog; when the download is done the song is chosen in the guide, its card is in the refreshed list and the drop view is open on it; the guide stays open | yes (`test_ui_studio_guide`, the download stubbed) |
+| 6.80 | The guided maker's Clips step with more clips than a page, in each slot (Build and drop's build and quick kills, Fast-paced headshot's headshots) | Every clip the slot can take is offered, 24 to a page, the best first and favourites before the rest; each card shows the frame at its first kill (lazily loaded, an empty frame and no retry when it cannot be read), its tags, length, map, mode and session, and a tick when chosen; the line above says every clip is here, paged; long names wrap inside the card | yes (`test_ui_studio_guide`) |
+| 6.81 | The slot's pager: *‹ Prev*, page numbers, *Next ›* | "Showing 25–48 of N"; a page change redraws that slot alone; each slot keeps its own page; choosing a clip never moves the page; a filter, a search or a sort goes back to page one | yes (`test_ui_studio_guide`) |
+| 6.82 | The slot's find box and filters: favourites, session, map, game mode, kind, *Chosen only*, and the sort | Each narrows the slot, combined; only values that occur in the slot are offered, each with its count, and a filter that cannot narrow is not drawn; a clip with no match record is *Unknown map* / *Unknown mode*; typing keeps the caret in the box; the sort is best first, newest, most kills or longest | yes (`test_ui_studio_guide`, map and mode from seeded match records) |
+| 6.83 | Choices across views: choose on one page, page on, filter them out of sight | The "N chosen" counter and the slot's count count every chosen clip, on any page and filtered out or not; the left-out list stays; no view -- page, filter, search, sort -- asks `/api/studio/feasible` again or changes the request | yes (`test_ui_studio_guide`) |
+| 6.84 | *Play* on a card | The clip plays in the Studio preview over the guide, its kills marked along it (from the clip's own length, not the element's NaN duration) and seeking when clicked; *Choose this clip* chooses it in the guide and the button says so; Close or Escape puts the clip away and leaves the guide on its step, slot and page with the choice | yes (`test_ui_studio_guide`) |
+| 6.85 | *Edit* on a card | The Clips page opens on that clip's player alone, with *Trim and cut* (opened when the run's recording is there to trim from) and *Back to the guide*; Back returns to the guide on the same step and page with the choices kept; a finished re-render returns too, re-reads the library so the card shows the trimmed clip, and a clip that comes back under another path keeps its place in the choice | yes (`test_ui_studio_guide`, the re-render's end simulated -- it needs the run's recording) |
+| 6.60 | Song tab: the Hits lane on a drum loop with a quiet opening | Every kick, snare and hat is a tick in its own row and the song's parts are named along the top; no kick is drawn in the opening that has none; the lane hides and comes back from its toggle | yes (`test_ui_studio_hits`) |
+
+
+## 6g · A reel after it is made: one draft, stale timing, versions
+
+One editor for the part, the marks and the drops wherever they are edited; nothing re-planned behind the player; every render a version. The reported bug is 6.86 (`tests/verify/probe_part_drag.py` shows it before and after).
+
+| # | Scenario | Must be true | Covered |
+|---|---|---|---|
+| 6.86 | Song tab: drag the part from 0:00-0:44 to 0:59-2:07 (the reported bug) | While it is dragged only the range and the waveform move -- no undo step, no request, no mark moves. On release every kill mark is still at its song second (dashed), the part up close is the new section on its own beats, the banner reads *Song part changed — kill timing needs updating*, Render is disabled with the reason, *Replan for this section* is beside it, the player says *Previous render · the kill timing is out of date*, and the server refuses to render it | yes (`test_ui_studio_timing`) |
+| 6.87 | Release the part where it was; nudge it a bar and back | No change at all: no banner, no undo step, nothing on the list of what is not rendered | yes (`test_ui_studio_timing`) |
+| 6.88 | The banner's way out | *Replan for this section* is the primary button, in the accent, with a slow glow -- a still ring under `prefers-reduced-motion` -- in the banner and beside the held Render; *Keep my shots, retime them* and *Undo part change* beside it; *Re-snap my marks* only when there are marks of the player's own | yes (`test_ui_studio_timing`) |
+| 6.89 | *Replan for this section* | The badge says Planning; a proposal comes back -- shots, clips in and out, kills moved, length -- and nothing is applied until *Apply*; applied, the timing holds, Render is back, and one Undo brings back the stale reel exactly | yes (`test_ui_studio_timing`) |
+| 6.90 | Drag, release, *Replan*, and drag again before it answers | The first answer is dropped when it lands: what is offered is never a plan for a part that is gone | yes (`test_ui_studio_timing`) |
+| 6.91 | *Keep my shots, retime them*, with effects and a kill marked by hand | The same clips in the same order, the effects and captions, the run-ups; the hand mark is where a kill lands and stays the player's; every other kill on a beat of the new section. A much longer part keeps every shot, says how much room is left and offers *Add shots from this reel's clips*, which fills it from the pool | yes (`test_ui_studio_timing`) |
+| 6.92 | *Undo part change* | No request is made: the reel is exactly the plan it had, valid at once, Render enabled | yes (`test_ui_studio_timing`) |
+| 6.93 | *Where the kills are now*, move the part, re-time, re-snap, replan | The player's marks never move with the part; re-timing says they are outside it and offers to move them; *Re-snap my marks* moves them by as far as the part moved, onto the nearest hit; a replan keeps them | yes (`test_ui_studio_timing`) |
+| 6.94 | Build and drop with its drop outside the new part -- on the Song tab and on the Make page | Replan and Re-time are disabled; the banner says the drop is outside, with *Move the part to the drop*, *Mark a drop in this part*, *Choose another style*; moving it to the drop lets them back. On the Make page Build is disabled with the reason, and the badge says Check failed. A drop taken away is gone through a re-time and a whole new plan: never found again | yes (`test_ui_studio_timing`) |
+| 6.95 | A part too short for the locked shots, then *Keep my shots* | Nothing applied; the conflict in words, with *Leave out unlocked shots too*, *Make the part N s*, *Let locked shots go too*; *Make the part N s* re-times with every locked shot kept -- never a speed-up, a repeat or empty frames | yes (`test_ui_studio_timing`) |
+| 6.96 | *Re-render*, *Re-time*, *Replan…* on the render card | Each says what it keeps and what it changes before anything runs; *Replan* offers the style (Rebuild with this style is now this); Re-render waits while the timing is stale and says so | yes (`test_ui_studio_timing`) |
+| 6.97 | *Add clips…*: to the pool, for the selected shot, to replan | Three choices, each saying what it does. The pool: every shot as it was, the clips listed as in the pool, nothing to render. One shot: its clip replaced, its place, length and effects kept. Replan: the Make page, with the reel's draft | yes (`test_ui_studio_timing`) |
+| 6.98 | The state badge through a reel's life | Ready to render, Timing stale, Planning, Rendered, Changed, Rendering, Check failed -- each named, on the timeline and on the Make page | yes (`test_ui_studio_timing`) |
+| 6.99 | Render a reel twice | Each render is a version file of its own; while the second renders the reel is the first, whole; the first is untouched afterwards; the player plays the version file | yes (`test_ui_studio_timing`) |
+| 6.100 | History's renders: *Restore this version*, *Save as new reel* | Restore makes the reel that render again, as one step of undo; Save as new opens a reel of its own with that render; the original reel is not touched | yes (`test_ui_studio_timing`) |
+| 6.101 | The same editor in three places | A drop marked on the guide's Song step is the Make page's; a kill marked on All settings reaches the guide's plan; the Song tab's part up close is the Make page's kills canvas -- double-click marks a kill there too | yes (`test_ui_studio_timing`) |
+| 6.102 | The Make page's groups | Style, Music (song, part, drops), Footage (clips, build clip, intro, headshots), Timing (kills, order, how long), Look (shape, framing, template, lyrics); each control says in a line what changing it does, in the timeline table's own words | yes (`test_ui_studio_timing`) |
+| 6.103 | *All settings*, change the shape, the part and the lyrics, then *Back to the steps* | The guide on the step it was on, with the style, the clips, the shape, the lyrics and the part chosen on the full page -- the part sent as the player's, not as a length | yes (`test_ui_studio_timing`) |
+| 6.104 | Ctrl+Z and Ctrl+Shift+Z on the Song tab | A mark and a part move are taken back and put back like any timeline edit | yes (`test_ui_studio_timing`) |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.
@@ -294,12 +328,16 @@ nothing noticed.
 
 # The honest summary
 
+Counted from the tables above on 2026-10-23, when 6.86-6.104 were added: rows whose last
+column says yes, sweep or gap. Two say something else (one *partial*, one planned offline only)
+and are counted as gaps.
+
 | | count |
 |---|---|
-| Scenarios catalogued | 86 |
-| Covered by a focused test | 47 |
-| Covered only by the sweep | 12 |
-| **Known gaps** | **27** |
+| Scenarios catalogued | 174 |
+| Covered by a focused test | 113 |
+| Covered only by the sweep | 9 |
+| **Known gaps** | **52** |
 
 The gaps are not a to-do list to be cleared blindly. The ones worth writing
 next, in order, are the ones where something has already gone wrong or where

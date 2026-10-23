@@ -553,9 +553,7 @@ def test_perfect_fit_keeps_every_kill_on_a_beat_and_survives_a_restyle(ui, app, 
     assert {k: sorted(v) for k, v in shown.items()} == {k: [round(x, 1) for x in v] for k, v in want.items()}
 
     # --- a rebuild in another style keeps the arrangement
-    page.select_option("#studio-r-style", "hype")
-    page.click("#studio-restyle-btn")
-    page.wait_for_function("studio.project.style === 'hype'", timeout=120_000)
+    appd.replan_as(page, "hype")
     assert page.evaluate("studio.project.arrange") == "fit", "the rebuild forgot the perfect fit"
     ui.clean("a perfect-fit reel")
 
@@ -1229,11 +1227,9 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
         "studio.project.shots.every(s => s.fx.every(k => k === 'k02' || k === 'k06'))", timeout=15_000)
 
     # --- Rebuild with this style
-    page.select_option("#studio-r-style", "hype")
-    page.click("#studio-restyle-btn")
-    page.wait_for_function("studio.project.style === 'hype'", timeout=30_000)
+    appd.replan_as(page, "hype")
     assert page.evaluate("studio.project.name") == "Mix check"
-    assert any(t.startswith("Rebuilt as") for t in page.evaluate("window.__toasts"))
+    assert any(t.startswith("Replanned as") for t in page.evaluate("window.__toasts"))
 
     # --- one shot's effects, then onto every shot
     page.locator(".st-shot").nth(1).click()
@@ -1306,16 +1302,27 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
         page.evaluate(f"document.getElementById('studio-sg-audio').currentTime = {start + k * 2 * beat + 0.04}")
         page.evaluate("document.activeElement && document.activeElement.blur()")
         page.keyboard.press("k")
-    marks = page.evaluate("studio.sg.marks")
+    marks = page.evaluate("studio_tmKillList(studio.sg).filter(k => k.hand).map(k => k.t)")
     assert len(marks) == 3, f"K did not mark the kills: {marks}"
-    assert page.locator("#studio-sg-chips .reel-chip").count() == 3
-    page.click("#studio-sg-apply")
+    assert page.locator("#studio-sg-chips .reel-chip.is-hand").count() == 3
+    # NO "USE THIS PART" SINCE THE EDIT FLOW (v1.81.0): the song, the part and the marks are the reel's
+    # at once, as its timing draft, and the banner's Keep my shots puts the kills on them.
+    assert page.evaluate("!!studio.project.draft")
+    page.click('#studio-sg-stale [data-act="studio-flow"][data-do="retime"]')
+    page.wait_for_function("() => studio.flow.prop || studio.flow.conflicts || studio.flow.err", timeout=60_000)
+    assert page.evaluate("studio.flow.prop") and not page.evaluate("studio.flow.err"), \
+        page.evaluate("[studio.flow.err, studio.flow.conflicts]")
+    page.click('#studio-sg-stale [data-act="studio-flow"][data-do="apply"]')
+    assert page.evaluate("studio.project.draft || null") is None
+    page.click("#studio-tab-timeline")
     page.wait_for_selector("#studio-pane-timeline:not(.hide)", timeout=60_000)
     proj, derived = page.evaluate("[studio.project, studio.derived]")
     assert proj["song"] == str(song)
     assert proj["song_offset"] == pytest.approx(start, abs=1e-3)
-    landed = [derived["shots"][i]["kill_reel"] + proj["song_offset"] for i in range(3)]
-    assert landed == pytest.approx(marks, abs=0.04), f"marks {marks}, kills landed at {landed}"
+    # A hand mark is a fixed point a kill lands on (editflow anchors), not "shot N on mark N": the
+    # planner's own marks stay between them.
+    landed = [r["kill_reel"] + proj["song_offset"] for r in derived["shots"] if r.get("kill_reel") is not None]
+    assert all(min(abs(m - k) for k in landed) < 0.04 for m in marks), f"marks {marks}, kills landed at {landed}"
     # --- the instant preview plays the new song under the cuts, from where
     # the reel starts it -- before anything has been rendered with it
     song_play = page.evaluate("""async () => {
