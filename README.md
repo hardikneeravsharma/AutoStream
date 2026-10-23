@@ -230,9 +230,19 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     part is full, and the kills are spread over the part, each on one of the song's
     hits; if the clips are short of it, each kill gets a longer run-up (as far
     as its clip has footage, never over 8 s), and after that the reel ends early and
-    says so. *Let AutoStream choose* keeps the old behaviour. A part chosen later, on
-    the Song tab, longer than the reel plans it again to fill the part, and every
-    rebuild or new style keeps the part.
+    says so. *Let AutoStream choose* keeps the old behaviour. Every new plan or new
+    style keeps the part.
+  - **Change the part afterwards, and nothing moves behind your back.** Drag the part
+    on the Song tab and the kill marks stay where they are on the song; the reel says
+    *Song part changed — kill timing needs updating* and Render waits. *Replan for
+    this section* plans it for the new part (you see what would change before you
+    apply it), *Keep my shots, retime them* keeps every clip, trim and effect and puts
+    each kill on the new part's beats, and *Undo part change* puts it back. Marks you
+    placed yourself are never moved for you. The same editor is on the guide's Song
+    step and the Make page.
+  - **Every render is kept.** History lists each render with what it was made from;
+    restore an older one, or save it as a reel of its own. A render that fails leaves
+    the last good one playing.
   - **Say how long.** *The style's length*, *Fill the song part I picked* or *Every
     clip I chose* (as long as the kills need, at the style's pace). The style then sets
     only the feel — the pace, the effects, the flashes — so a long Hype reel still

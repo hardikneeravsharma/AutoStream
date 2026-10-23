@@ -88,7 +88,7 @@ def test_the_first_question_is_the_style_and_the_reviewed_one_says_so(pg):
     # the others are there, folded away, and say they are not reviewed
     assert not pg.evaluate("() => document.querySelector('.gd-more').open")
     assert "not reviewed" in pg.inner_text(".gd-more summary").lower()
-    assert pg.locator(".gd-more .gd-card").count() >= 8
+    assert pg.locator(".gd-more .gd-card").count() >= 6        # the eleven styles less the five recommended
     # nothing chosen: no way on, and the chip says why
     assert pg.is_disabled("#studio-gd-next")
     assert "warn" in chip(pg)["cls"] and "Pick a style" in chip(pg)["text"]
@@ -449,6 +449,14 @@ def rich_app(tmp_path_factory):
                 demo={"matches": [{"match": "match-asc", "offset": 150.0}, {"match": "match-hvn", "offset": 350.0}]})
     _match_record(home, "match-asc", "Ascent", "competitive")
     _match_record(home, "match-hvn", "Triad", "spikerush")
+    # THE NEWEST RUN IS NEWEST BY A CLEAR MARGIN. A run's age is its clips.json's mtime in whole
+    # seconds, and the three runs above are written within a second or two of each other -- so on a
+    # fast machine "Newest" tied and fell back to clip start times, and the sort test passed or
+    # failed with the clock.
+    import os
+    import time
+    later = time.time() + 60
+    os.utime(home / "video" / "clips" / "2026-10-18_2100_VALORANT" / "clips.json", (later, later))
     songs = home / "video" / "songs"
     _drop_song(songs / "drop song.wav")
     appd.click_track(songs / "click song.wav", seconds=60, bpm=120.0)
@@ -563,12 +571,22 @@ def test_no_setting_left_on_the_make_page_reaches_a_guided_reel(rp):
         studio.arrange = 'fit'; studio.pins = {open: 'x'}; studio.shuffleSeed = 77; studio.order = 'kills';
         studio.fill = 'all'; studio.keepAll = true; studio.shaping = {length: 2, pace: 2, effects: 2, flash: 2};
         studio.picks = {kill: ['k01']}; studio.mkIntro = {path: 'C:/intro.mp4', audio: true};
-        studio.mk.hand = [{id: 'h1', t: 41, auto: false}]; studio.mk.edited = true; studio.mk.drops = [{id: 'u1', t: 20, auto: false}];
-        studio.mk.touched = true; studio.mk.start = 0; studio.mk.end = 80; studio.fmt = 'landscape'; studio.vfit = 'zoom';
+        studio.fmt = 'landscape'; studio.vfit = 'zoom';
         studio.buildClip = studio.clipIndex[Object.keys(studio.clipIndex)[5]].path;
         const hs = document.getElementById('studio-hs-only'); hs.checked = true;
         document.getElementById('studio-hs-row').classList.remove('hide');
         studio.adding = {name: 'Old reel', output: 'C:/reels/old.mp4', style: 'story', keep: {handle: '@old'}}; }""")
+    assert rp.evaluate("() => studio_gdBody()") == clean
+    # THE SONG'S TIMING IS ONE DRAFT (2026-10-23): a part chosen, a kill or a drop marked on All
+    # settings is this reel's, so it IS in the guide's request -- the part as the player's own.
+    shared = rp.evaluate("""() => { const mk = studio.mk, was = [mk.start, mk.end];
+        mk.hand = [{id: 'h1', t: 41, auto: false}]; mk.edited = true; mk.drops = [{id: 'u1', t: 20, auto: false}];
+        mk.touched = true; mk.start = 0; mk.end = 80;
+        const b = studio_gdBody();
+        mk.hand = []; mk.edited = false; mk.drops = null; mk.touched = false; mk.start = was[0]; mk.end = was[1];
+        return b; }""")
+    assert shared["marks"] == [41] and shared["drops"] == [20]
+    assert (shared["part_start"], shared["part_end"]) == (0, 80) and "part_auto" not in shared["shaping"]
     assert rp.evaluate("() => studio_gdBody()") == clean
     sent = _make(rp)
     assert sent == clean
@@ -700,7 +718,7 @@ def test_a_rebuild_asks_again_for_what_the_player_chose(rp):
     rp.wait_for_selector("#studio-make-scrim:not(.hide)")
     rp.wait_for_function("() => studio.songShape && studio.mk.drops", timeout=30_000)
     body = rp.evaluate("() => studio_planBody(true)")
-    assert rp.inner_text("#studio-make-title").startswith("Rebuild")
+    assert rp.inner_text("#studio-make-title").startswith("Replan")      # what a rebuild is now called
     assert body["shaping"]["build_clip"] == path
     assert body["shaping"]["part_auto"] is True
     assert body["drops"] == [40.5]
@@ -873,7 +891,7 @@ def test_drops_move_and_go_and_come_back_and_all_settings_takes_them(rp):
     rp.wait_for_selector("#studio-make-scrim:not(.hide)")
     assert rp.evaluate("() => studio_planBody(false).drops") == [t1]
     # back in the guide: Back to AutoStream's sends none
-    rp.evaluate("() => studio_gdOpen()")
+    rp.click("#studio-mk-guide")                        # Back to the steps: the same draft
     rp.wait_for_selector("#studio-guide-scrim:not(.hide)")
     rp.click('[data-gd="step"][data-i="1"]')
     rp.click('#studio-gd-drops [data-gd="drop-reset"]')

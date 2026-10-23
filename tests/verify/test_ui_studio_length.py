@@ -13,8 +13,10 @@ So this drives the page, not the planner:
     the Make dialog      How long, Keep every kill and Best order reach the
                          plan request and come back on the project
     a new style          re-plans on the part the reel was cut to
-    the Song tab         a longer part is planned again and kept, and the
-                         tab reopens on it rather than on the reel's length
+    the Song tab         a longer part makes the timing stale (never planned
+                         again by itself), Replan for this section plans it
+                         and keeps it, and the tab reopens on it rather than
+                         on the reel's length
 """
 from __future__ import annotations
 
@@ -197,9 +199,7 @@ def test_how_long_keep_every_kill_and_best_order_reach_the_plan_and_a_new_style_
     assert all(x["in"] for x in d["selection"])
 
     # --- a new style re-plans on the same part, with the same choices
-    pg.select_option("#studio-r-style", "story")
-    pg.click("#studio-restyle-btn")
-    pg.wait_for_function("studio.project.style === 'story'", timeout=60_000)
+    appd.replan_as(pg, "story")
     sent = pg.evaluate("window.__plans")[-1]
     assert sent["part_start"] == pytest.approx(part[0], abs=0.01), "a new style dropped the part"
     assert sent["part_end"] == pytest.approx(part[1], abs=0.01), "a new style dropped the part"
@@ -238,12 +238,18 @@ def test_a_longer_part_on_the_song_tab_is_planned_again_and_kept(pg, app):
         pg.click('[data-act="studio-sg-nudge"][data-what="end"][data-d="bar"]')
     start, end = pg.evaluate("[studio.sg.start, studio.sg.end]")
     assert end - start > before + 15
-    pg.click('[data-act="studio-sg-apply"]')
+    # NEVER RE-PLANNED BEHIND THE PLAYER (v1.81.0): the longer part makes the timing stale, and the
+    # banner's Replan for this section is what plans it again -- shown first, applied on Apply.
+    assert pg.evaluate("!!studio.project.draft")
+    assert pg.evaluate("studio.derived.length") == pytest.approx(before, abs=0.01), "the part re-planned by itself"
+    pg.click('#studio-sg-stale [data-act="studio-flow"][data-do="replan"]')
+    pg.wait_for_function("() => studio.flow.prop || studio.flow.conflicts || studio.flow.err", timeout=120_000)
+    assert pg.evaluate("studio.flow.prop"), pg.evaluate("[studio.flow.err, studio.flow.conflicts]")
+    pg.click('#studio-sg-stale [data-act="studio-flow"][data-do="apply"]')
     pg.wait_for_function("(e) => studio.project.part_end && Math.abs(studio.project.part_end - e) < 0.05",
-                         arg=end, timeout=120_000)
+                         arg=end, timeout=15_000)
     after = pg.evaluate("studio.derived.length")
     assert after > before + 8, (before, after)
-    assert any("planned again" in n for n in pg.evaluate("studio.notes")), pg.evaluate("studio.notes")
 
     # --- and it is the part the tab reopens on, not the reel's length
     pg.click("#studio-tab-timeline")

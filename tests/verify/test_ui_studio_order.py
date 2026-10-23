@@ -146,12 +146,14 @@ def test_pressing_best_order_takes_and_reaches_the_plan(pg):
     assert pg.evaluate(
         """() => document.querySelector('#studio-mk-arrange [data-how="hits"]')
                 .classList.contains('is-on')""")
-    sent = pg.evaluate("""() => { let body = null; const real = API.post;
+    # Awaited: studio_build asks whether a reel is rendering before it plans, so a spy put back
+    # straight after the call was gone before the plan was asked for.
+    sent = pg.evaluate("""async () => { let body = null; const real = API.post;
         API.post = function (u, b) {
             if (u === '/api/studio/plan') { body = b; return Promise.resolve({ok: false}); }
             return real.apply(this, arguments); };
-        studio_build();
-        API.post = real; return body; }""")
+        try { await studio_build(); } finally { API.post = real; }
+        return body; }""")
     assert (sent or {}).get("shaping", {}).get("arrange") == "hits", sent
 
 

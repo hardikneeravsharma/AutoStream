@@ -189,6 +189,9 @@ def test_moving_the_part_never_moves_the_marks_and_holds_render(pg):
                      " t0: Number(document.getElementById('studio-sg-detail').getAttribute('data-t0'))})")
     # every mark is where it was on the song: none followed the part
     assert st["marks"] == before, (before, st["marks"])
+    # and the part itself landed on a beat (6.6)
+    beats = pg.evaluate("studio.sg.shape.beats")
+    assert min(abs(st["start"] - b) for b in beats) < 1e-3
     assert st["draft"]["start"] == pytest.approx(st["start"]) and st["end"] == pytest.approx(127.0, abs=0.6)
     assert all(abs(m / BEAT - round(m / BEAT)) < 0.02 for m in st["marks"])
     # the part up close is the NEW section, drawn on its own beats
@@ -623,8 +626,14 @@ def test_the_same_draft_and_editor_in_the_guide_the_make_page_and_the_song_tab(p
     _song_tab(pg)
     assert pg.evaluate("studio_tmView('song').cv") == "studio-sg-detail"
     box = pg.locator("#studio-sg-detail").bounding_box()
-    n = len(pg.evaluate(MARKS))
-    pg.mouse.dblclick(box["x"] + box["width"] * 0.5, box["y"] + box["height"] * 0.6)
+    marks = pg.evaluate(MARKS)
+    n = len(marks)
+    # A DOUBLE-CLICK ON A MARK REMOVES IT, so aim at the widest gap between marks: the canvas's middle
+    # was within 11 px of a mark on some plans, and the test then counted one fewer.
+    t0, t1 = pg.evaluate("['data-t0', 'data-t1'].map(a => +studio_el('studio-sg-detail').getAttribute(a))")
+    edges = [t0] + sorted(m for m in marks if t0 <= m <= t1) + [t1]
+    lo, hi = max(zip(edges, edges[1:]), key=lambda g: g[1] - g[0])
+    pg.mouse.dblclick(box["x"] + ((lo + hi) / 2 - t0) / (t1 - t0) * box["width"], box["y"] + box["height"] * 0.6)
     pg.wait_for_timeout(300)
     assert len(pg.evaluate(MARKS)) == n + 1
     assert pg.evaluate("studio.project.draft.marks.length") == n + 1
@@ -706,3 +715,50 @@ def test_undo_and_redo_cover_the_songs_timing(pg):
     assert pg.evaluate("studio.project.draft || null") is None
     pg.keyboard.press("Control+Shift+z")
     assert pg.evaluate("!!studio.project.draft")
+
+
+# ---------------------------------------------------------------- 6.91 (a longer part), 6.94 (a drop taken away)
+
+def test_a_longer_part_says_there_is_room_and_adds_shots_from_the_pool(pg):
+    _reel(pg, n=5, part=(0.0, 14.0))
+    n = pg.evaluate("studio.project.shots.length")
+    # four clips in the reel's pool, not in it
+    pg.evaluate("""() => studio_change(p => {
+        const have = new Set(p.shots.map(s => s.clip));
+        const more = Object.keys(studio.clipIndex).sort().map(id => studio.clipIndex[id]).filter(c => !have.has(c.path)).slice(0, 4);
+        p.selection = (p.selection || []).concat(more.map(c => ({clip: c.path, name: c.name, why: 'In the pool, not in the reel yet.'})));
+    }, 'pool')""")
+    pg.wait_for_timeout(500)
+    _song_tab(pg)
+    _drag_end(pg, 70.0)
+    pg.click('#studio-sg-stale [data-act="studio-flow"][data-do="retime"]')
+    _wait_prop(pg)
+    room = pg.evaluate("studio.flow.prop.room")
+    assert room and room["marks"] > 0, "a much longer part says how much room it has"
+    assert pg.evaluate("studio.flow.prop.project.shots.length") == n, "re-timing never adds a shot by itself"
+    assert "room for" in pg.inner_text("#studio-sg-stale")
+    pg.click('#studio-sg-stale [data-act="studio-flow-fix"][data-fix="add"]')
+    _wait_prop(pg)
+    assert pg.evaluate("studio.flow.prop.project.shots.length") > n, "Add shots added none from the pool"
+    pg.click('#studio-sg-stale [data-act="studio-flow"][data-do="apply"]')
+    assert pg.evaluate("studio.project.draft || null") is None
+
+
+def test_a_drop_taken_away_is_never_found_again(pg):
+    _reel(pg, song="drop song.wav", part=(25.0, 60.0))
+    _song_tab(pg)
+    pg.wait_for_function("() => studio_tmDropList(studio_tmView('song')).length > 0", timeout=30_000)
+    found = pg.evaluate("studio_tmDropList(studio_tmView('song')).map(d => d.id)")
+    pg.evaluate("(ids) => studio_tmDelIds(studio_tmView('song'), ids)", found)
+    assert pg.evaluate("studio.project.draft.drops") == []
+    assert "The drops changed" in pg.inner_text("#studio-sg-stale")
+    pg.click('#studio-sg-stale [data-act="studio-flow"][data-do="retime"]')
+    _wait_prop(pg)
+    pg.click('#studio-sg-stale [data-act="studio-flow"][data-do="apply"]')
+    assert pg.evaluate("studio.project.hand_drops") == []
+    # a whole new plan does not rediscover it
+    pg.click("#studio-tab-timeline")
+    pg.click('[data-act="studio-flow-ask"][data-do="replan"]')
+    pg.click('#studio-tl-stale [data-act="studio-flow"][data-do="replan"]')
+    _wait_prop(pg)
+    assert pg.evaluate("studio.flow.prop.project.hand_drops") == []

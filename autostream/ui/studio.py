@@ -2491,6 +2491,7 @@ async function studio_openMake(opts) {
     /* THE PLAYER'S OWN MARKS GO WITH A REBUILD: their whole list when they had edited it, else the marks
        they placed, as constraints the plan keeps (editflow.merge_anchors). */
     studio.mk.planned = null; studio.mk.sel = {};
+    studio.mk.of = ad.output || 'reel';      /* this draft is that reel's now; see studio_gdOpen */
     if (ad.marks && ad.marks.length) {
       const own = ad.anchors || [];
       studio.mk.hand = ad.marks.map((t, i) => ({id: 'h' + i, t: t, auto: !own.some(a => Math.abs(a - t) < 0.002), name: ''}));
@@ -3254,7 +3255,16 @@ function studio_tmAddMark(v, t) {
   const T = v.T;
   studio_tmOwn(T);
   const at = studio_tmSnap(v, t);
-  if (T.hand.some(k => Math.abs(k.t - at) < 0.03)) return false;
+  const near = T.hand.find(k => Math.abs(k.t - at) < 0.03);
+  /* A MARK ON ONE OF AUTOSTREAM'S IS THE PLAYER CLAIMING IT: it becomes theirs, at their time, and is
+     never moved for them again. It used to be dropped without a word, so K pressed on a kill the plan
+     had already marked did nothing at all. */
+  if (near && !near.auto) return false;
+  if (near) {
+    near.auto = false; near.t = at;
+    studio_tmChanged(v, 'A kill marked at ' + studio_secs(at));
+    return true;
+  }
   T.nid = (T.nid || 0) + 1;
   T.hand.push({id: 'h' + T.nid, t: at, auto: false, name: ''});
   T.hand.sort((x, y) => x.t - y.t);
@@ -5476,6 +5486,8 @@ function studio_flowPropHtml(pr) {
   facts.push('Kills: ' + (d.kills_moved || 0) + ' moved, ' + (d.kills_kept || 0) + ' where they were' +
              (d.kills_new ? ', ' + d.kills_new + ' new' : '') + (d.kills_gone ? ', ' + d.kills_gone + ' left out' : ''));
   facts.push('Length: ' + studio_dur(len[0]) + (Math.abs(len[1] - len[0]) > 0.05 ? ' → ' + studio_dur(len[1]) : ''));
+  const om = d.on_marks || [0, 0];
+  facts.push('Kills on their marks: ' + om[1] + ' of ' + a[1] + (om[1] !== om[0] ? ' (was ' + om[0] + ')' : ''));
   if (d.effects_kept) facts.push('Your effects kept on ' + d.effects_kept + ' shot' + (d.effects_kept === 1 ? '' : 's'));
   if (d.marks_outside) facts.push(d.marks_outside + ' of your marks are outside this part and could not be used');
   if (pr.kind === 'replan' && d.edited) facts.push('Your timeline edits are replaced on every shot the new plan does not keep');
@@ -12390,7 +12402,9 @@ async function studio_gdOpen() {
   if (!studio.catalog || !Object.keys(studio.clipIndex || {}).length) { toast('The clips are still loading.', 'warn'); return; }
   const gd = studio.gd;
   gd.step = 0; gd.verdict = null; gd.held = null;
-  studio_tmFresh();
+  /* A draft seeded from a reel being rebuilt is that reel's; a new reel does not start from it. A new
+     reel's own draft is kept across closing and opening the guide, as everything chosen there is. */
+  if (studio.mk.of && studio.mk.of !== 'new') studio_tmFresh();
   if (!gd.style && !gd.auto) studio_gdRecall();
   studio_gdPrune();
   studio_gdAudioWire();
@@ -13244,6 +13258,7 @@ function studio_tmFresh() {
   const mk = studio.mk;
   mk.hand = []; mk.edited = false; mk.planned = null; mk.drops = null; mk.sel = {};
   mk.touched = false; mk.mode = 'part'; mk.planAsk = (mk.planAsk || 0) + 1;
+  mk.of = 'new';
   studio.mkAnchors = null;
 }
 
