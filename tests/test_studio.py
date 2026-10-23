@@ -884,6 +884,22 @@ def test_no_two_shots_running_get_the_same_kill_effect(long_run, style):
     assert len(set(firsts)) == min(studio.MAX_KILL_FX, len(pool)), firsts
 
 
+def test_no_seed_puts_one_kill_effect_on_two_shots_running(long_run):
+    """The test above draws one seed, from a crc of the clip paths -- so it passed here and failed
+    on CI's paths. Velocity's opener [k06, k11] beside a k11 could only drop its soft k06 in
+    sharp_kills, and came out k11 twice running on 6 seeds in 300. Every seed, every style."""
+    clips = _clips(long_run)
+    for st in studio.STYLES:
+        pool = set((studio.fast_rules(st) if studio.fast_reel(st, 128.0) else st).kill_pool)
+        if len(pool) == 1:
+            continue
+        for seed in range(300):
+            proj, _ = studio.plan(clips, st.key, shape=Shape(bpm=128.0), seed=seed)
+            firsts = [s["fx"][0] for s in proj["shots"] if s["fx"]]
+            assert all(a != b for a, b in zip(firsts, firsts[1:])), (st.key, seed, firsts)
+            assert len(set(firsts)) == min(studio.MAX_KILL_FX, len(pool)), (st.key, seed, firsts)
+
+
 @pytest.mark.parametrize("style", [s.key for s in studio.STYLES])
 def test_transitions_are_mixed_too(long_run, style):
     proj, _ = studio.plan(_clips(long_run), style, shape=Shape(bpm=128.0))

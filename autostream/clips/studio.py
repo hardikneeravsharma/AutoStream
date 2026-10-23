@@ -4479,6 +4479,15 @@ def sharp_kills(shots: list[dict], pools: dict, free: set[str] | tuple = (),
                         rest = fx[:i] + fx[i + 1:]
                         moves.append((again(rest[0]), False, _detail(f),
                                       lambda rest=rest: s.__setitem__("fx", with_fixed(s, rest))))
+                        # ...OR SWAPPED, WHERE DROPPING IT WOULD REPEAT A NEIGHBOUR. Velocity's
+                        # opener [k06, k11] beside a k11 had only the drop on offer, and came out
+                        # k11 twice running (CI's seed; 6 seeds in 300 locally).
+                        for wide in (False, True):
+                            to = kill_swap(_detail(f), wide)
+                            if to and to not in fx and (not wide or to not in used):
+                                swapped = fx[:i] + [to] + fx[i + 1:]
+                                moves.append((again(swapped[0]), wide, _detail(f),
+                                              lambda swapped=swapped: s.__setitem__("fx", with_fixed(s, swapped))))
                     elif (to := kill_swap(_detail(f), False)):
                         moves.append((again(to), False, _detail(f),
                                       lambda to=to: s.__setitem__("fx", with_fixed(s, [to]))))
