@@ -1482,26 +1482,68 @@ def _first_kill(hits: list[float], big: list[float], *, earliest: float,
 
 
 def _hit_slots(hits: list[float], strengths: list[float], *, first: float, end: float,
-               gap: float, count: int, even: bool = False) -> list[float]:
+               gap: float, count: int, even: bool = False, beats: list[float] | None = None,
+               min_shot: float = 0.0) -> list[float]:
     """The song times this reel's kills land on: `count` of them from `first`.
 
     `even`: no quick runs of a kill per hit -- every kill at least most of `gap` from the
     one before. A drop cut one kill a beat wants that; a short run of close hits cut
     kill-per-hit (the player's rule elsewhere) put kills 0.35 s apart at 171 BPM.
+    `min_shot`: the closest two kills may be, whatever the hits do.
+
+    `beats`: the song's beat grid, to cut on where the song has no hit to cut on --
+    see HOLE_GAPS.
     """
     keep = [i for i, t in enumerate(hits) if first - 1e-6 <= t <= end + 1e-6]
     if not keep:
         return [first]
     within = [hits[i] for i in keep]
     strong = [strengths[i] for i in keep] if len(strengths) == len(hits) else None
+    shortest = 0.8 * gap if even else 0.0
+    shortest = max(shortest, min_shot)
     kills, _accents = hits_mod.choose_kills(within, strong, target_gap=gap,
-                                            **({"min_shot": 0.8 * gap} if even else {}))
+                                            **({"min_shot": shortest} if shortest else {}))
     # The opener is not up for grabs: choose_kills takes the loudest hit in
     # each window, and in the first window that is rarely the hit the reel was
     # aimed at -- on Skechers it moved the first kill 2.4 s past the drop.
     if kills and abs(kills[0] - first) > 1e-6:
-        kills = [first] + [k for k in kills if k >= first + hits_mod.WINDOW[0] * gap]
+        kills = [first] + [k for k in kills if k >= first + max(hits_mod.WINDOW[0] * gap, min_shot)]
+    if beats:
+        kills = _fill_holes(kills, beats, gap=gap, end=end)
     return kills[:count] if count else kills
+
+
+# A STRETCH OF SONG WITH NO HIT IS CUT ON ITS BEATS. choose_kills only ever picks
+# hits, so where the bass stops -- a breakdown -- the next kill waited for it to
+# come back: on That Acid there is no hit from 53.5 s to 59.6 s, and the Hype reel
+# held one shot for all six (a hard long-shot in a fast-cut reel). The same where
+# the song's figure is sparser than the style's pace: Blinding Lights' hats land
+# once a bar, 1.40 s, and Hype's kills -- 0.75 s apart by its references -- all
+# came out 1.40 s apart. Past the far end of the window choose_kills looks for
+# the next kill in (hits.WINDOW), there was no hit where the kill belonged, so
+# kills are laid on the beat grid at the style's pace until the next hit: still
+# on the music, and the shot is the style's length.
+HOLE_GAPS = hits_mod.WINDOW[1]
+
+
+def _fill_holes(kills: list[float], beats: list[float], *, gap: float, end: float) -> list[float]:
+    """`kills` with the song's beats, `gap` apart, laid into every stretch longer than HOLE_GAPS gaps."""
+    if not kills or len(beats) < 2:
+        return kills
+    beat = (beats[-1] - beats[0]) / max(1, len(beats) - 1)
+    every = max(1, int(round(gap / max(beat, 1e-6))))
+    out = [kills[0]]
+    ahead = kills[1:] + [end]
+    for n, nxt in enumerate(ahead):
+        last = out[-1]
+        if nxt - last > HOLE_GAPS * gap:
+            # Every `every`-th beat from the one nearest a gap after the last kill,
+            # stopping most of a gap short of the next hit so no shot comes out short.
+            on = [b for b in beats if last + 0.8 * gap - 1e-6 <= b <= nxt - 0.8 * gap + 1e-6]
+            out += on[::every]
+        if n < len(ahead) - 1:
+            out.append(nxt)
+    return sorted(set(round(t, 4) for t in out))
 
 
 def _spread_slots(hits: list[float], strengths: list[float], big: list[float], *,
@@ -1854,6 +1896,10 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
     proj["song_marks"] = [round(t, 4) for t in got.marks]
     proj["part_end"] = round(got.part[1], 5)
     proj["song_drop"] = round(got.drop, 4)
+    if build and which == "drop":
+        proj["build_clip"] = build           # a rebuild builds on it again (normalise keeps it)
+    if loose:
+        proj["part_auto"] = True
     proj["intro"] = "i00"                    # the take is the opening; nothing is laid over it
     # THE LAST KILL IS NOT FADED. The style's fade is most of a bar (1.2-2.2 s) and
     # ran over the last kill of two of the first four reels; a short one, which
@@ -1956,20 +2002,53 @@ def auto_part(grid: "Grid", style: "Style") -> tuple[float, float] | None:
     return None
 
 
+# The longest cut a fast-cut reel keeps in its transition pool: past this the
+# transition outlasts a good share of the 0.7-1 s shot it joins (see TLEN).
+FAST_CUT_SECONDS = 0.3
+
+
 def fast_rules(style: "Style") -> "Style":
-    """`style` with one transition, one kill effect, one hero treatment and real speed.
+    """`style` with what a fast cut cannot carry taken out of its pools -- and the rest kept.
+
+    Taken out, each for a measured reason: speed ramps and the freeze (a slowed
+    or held kill lands its hit late -- headshot3's shot 20), stacked effects
+    (energy 0: one effect a kill), the white-flash cut (a second flash on top of
+    the kill's) and any transition longer than FAST_CUT_SECONDS. KEPT: every
+    kill effect, camera and the other hero treatments the style's pools hold.
+    This used to cut every pool to its first entry, and a Hype reel of That Acid
+    came out 34 shots of one zoom punch, one camera and one hard cut -- the
+    variety the pools exist for, gone. calm_mix still holds any one reel to two
+    kill effects and one transition beside the hard cut.
 
     Applied BEFORE the player's template, so anything they chose on the Make page
     still wins -- including a deliberate set of several, which is the point of
     letting them choose a set.
     """
+    def keep(pool: tuple, ok, fallback: str) -> tuple:
+        got = tuple(p for p in pool if ok(p))
+        return got or (fallback,)
+
+    if style.drop:
+        # BUILD AND DROP IS ITS OWN SPECIFICATION: plain cuts through the build and
+        # one kill a beat after the drop, as the hand-cut Espresso reel it was
+        # measured against -- one transition and one kill effect, by design.
+        return dataclasses.replace(
+            style, cuts=("t01",), transition_pool=("t01",),
+            kill=(style.kill[0],), kill_pool=(style.kill[0],),
+            hero=(style.hero[0],), hero_pool=(style.hero[0],),
+            speed="s00", hero_speed="s00", speed_pool=("s00",),
+            camera_pool=(style.camera,), energy=0.0)
+    trans = keep(style.transition_pool,
+                 lambda p: p == "t01" or (p != "t02" and _cut_seconds(p) <= FAST_CUT_SECONDS + 1e-9), "t01")
+    kills = keep(style.kill_pool, lambda p: fam(p) not in KILL_BLURS, style.kill[0])
+    heroes = keep(style.hero_pool, lambda p: fam(p) != "h02", style.hero[0])
     return dataclasses.replace(
         style,
-        cuts=("t01",), transition_pool=("t01",),
-        kill=(style.kill[0],), kill_pool=(style.kill[0],),
-        hero=(style.hero[0],), hero_pool=(style.hero[0],),
+        cuts=("t01",), transition_pool=trans,
+        kill=(kills[0],), kill_pool=kills,
+        hero=(heroes[0],), hero_pool=heroes,
         speed="s00", hero_speed="s00", speed_pool=("s00",),
-        camera_pool=(style.camera,),
+        camera_pool=style.camera_pool or (style.camera,),
         energy=0.0)
 
 
@@ -2115,9 +2194,9 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     grid = Grid.of(shape) if shape is not None else Grid.none()
     notes: list[str] = []
     if fast:
-        notes.append(f"{STYLE[style_key].label} is a fast-cut style at {grid.bpm:.0f} BPM, so every "
-                     f"cut is a hard cut, every kill has the same effect and the footage plays at "
-                     f"real speed. Choose effects yourself on the Make page to mix them.")
+        notes.append(f"{STYLE[style_key].label} is a fast-cut style at {grid.bpm:.0f} BPM, so the "
+                     f"footage plays at real speed, each kill gets one effect and no cut is a slow "
+                     f"or white-flash transition. Choose effects yourself on the Make page to mix them.")
     meas = studio_refs.summary(style.refs)
     beat = grid.beat
 
@@ -2191,6 +2270,17 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     div = 1 if (style.drop and part_len) else _grid_div(want, beat)
     step = beat / div
     shot_beats = max(1, min(8 * div, int(round(want / step))))
+    # HOW FAR APART THE KILLS LAND: THE SAME PACE THE SHOTS ARE SIZED AT. This was
+    # a minute divided by the references' cuts -- their MEAN shot -- while the
+    # walk sizes and selects shots at their MEDIAN (`want` above). The two differ
+    # by 1.4-1.8x on every style, and with the kills on the song's kicks the mean
+    # rounded up again to the next one: Hype on That Acid (174 BPM) chose 34
+    # moments for 44 s at 0.69 s a shot, then laid them 1.38 s apart -- a reel of
+    # 117 s with a 3.1 s median shot against the references' 0.63 s. One number
+    # now does both jobs, so the shots chosen are the shots that fit. In grid
+    # steps, so it scales with the tempo; never closer than a run-up and a
+    # landing (MIN_KILL_GAP_SECONDS): under that a cut is a flicker, not a fight.
+    gap_style = max(rulebook.MIN_KILL_GAP_SECONDS, shot_beats * step)
     # The opening hold is left on the beat: it already lands inside the
     # references' band on 20 of 24 reels, so only its unit changes.
     open_beats = _pow2_beats(max(meas.get("first_shot") or 4.0, 2.0), beat, lo=2, hi=16) * div
@@ -2298,6 +2388,14 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     all_moments = rulebook.moments(chosen, beat, keep_short=keep_all, dropped=short)
     for key in short:
         kill_why.setdefault(key, "too little footage before it to show the fight")
+    # ONE FIGHT, ONE SHOT (every style): two bursts of one clip closer than the gate's
+    # repeat window are merged into one shot, or the weaker is left out -- never two
+    # shots of the same fight. "Keep every kill" merges without a limit on the span.
+    refight: list[tuple[str, float]] = []
+    all_moments = rulebook.one_shot_per_fight(all_moments, refight,
+                                              span=float("inf") if keep_all else rulebook.FIGHT_SPAN)
+    for key in refight:
+        kill_why.setdefault(key, "a kill of the same fight is already in the reel")
     # NO CLIP TAKES OVER THE REEL (R13). A style that sets no cap of its own still
     # holds each clip to DEFAULT_CLIP_SHOTS when there are clips enough to fill the
     # reel without it: the JUST A BOY reel put one 8-kill clip in 7 of its 36 shots
@@ -2317,7 +2415,12 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                          f"weakest of a clip's own go first.")
     # ONE CLIP, ONE FIGHT in the fast styles (F2): at a cut every beat, two fights of one
     # file read as the same scene twice. Not with Keep every kill, and not on a handful.
-    if fast and not keep_all and len({m.group for m in all_moments}) >= CAP_FROM_CLIPS:
+    # A FAST-CUT STYLE AT ANY TEMPO: the render gate holds Hype and Chaos to one shot a
+    # clip whatever the song (reelcheck: fast = the style's fast_cuts), and the planner
+    # did only from FAST_BPM up (`fast`) -- Hype on Skechers (100 BPM) planned twelve
+    # repeats the gate then refused.
+    if ((fast or style.fast_cuts) and not keep_all
+            and len({m.group for m in all_moments}) >= CAP_FROM_CLIPS):
         before_fight = len(all_moments)
         refought: list[tuple[str, float]] = []
         all_moments = rulebook.one_fight_per_clip(all_moments, refought)
@@ -2326,6 +2429,12 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         if len(all_moments) < before_fight:
             notes.append(f"{before_fight - len(all_moments)} moment(s) left out: a fast reel shows one "
                          f"fight from each clip, so the same scene never comes round twice.")
+    if not keep_all:
+        # A SHOT HOLDS ONLY THE KILLS THE PACE HAS ROOM FOR (rulebook.HOLD_GAPS).
+        unheld: list[tuple[str, float]] = []
+        all_moments = rulebook.hold_within(all_moments, rulebook.HOLD_GAPS * gap_style, unheld)
+        for key in unheld:
+            kill_why.setdefault(key, f"it comes too long after the kill before it for {style.label}'s pace")
     with_moments = {m.clip["path"] for m in all_moments}
     left_out((c["path"] for c in chosen if c["path"] not in with_moments),
              "Too little footage before its kill to show the fight.")
@@ -2456,9 +2565,9 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         return lens_, heroes_
 
     # WHERE THE KILLS LAND, as a rule both the ordering and the cut use. At the
-    # style's pace unless a length was asked for: then spread over the part,
-    # or -- keeping every kill -- closed up to fit the style's length.
-    gap_style = 60.0 / max(cpm, 1.0)
+    # style's pace (gap_style, set beside shot_beats) unless a length was asked
+    # for: then spread over the part, or -- keeping every kill -- closed up to
+    # fit the style's length.
     end_at = (part_start + part_len) if (part_len and fill != "all") else grid.seconds
     tail_s = max(1.0, closer_post * step)
 
@@ -2485,19 +2594,23 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     drop_gap = grid.beat * max(1, int(round(DROP_KILL_GAP / max(grid.beat, 1e-3))))
     drop_shot = None
 
-    def kill_slots(first: float, count: int, last: float | None = None) -> list[float]:
+    def kill_slots(first: float, count: int, last: float | None = None,
+                   end: float | None = None) -> list[float]:
+        # `end`: where the reel's planned length runs out, when that is before the
+        # part's or the song's end (see LAID ON THE PLANNED LENGTH below).
+        end_ = end_at if end is None else min(end, end_at)
         if drop_t is not None and drop_t - first >= 0.75 * BUILD_BEATS * grid.beat:
             # Build and drop: from the drop on, a kill every beat -- the hand-cut Espresso
             # reel's 16 kills on 16 beats -- not the style's references' 1.2 s.
             return build_then_drop(grid.hits, grid.hit_strength, first=first, drop=drop_t, count=count,
                                    beat=grid.beat, gap=drop_gap if style.drop else gap_style,
-                                   end=end_at, even=bool(style.drop))
+                                   end=end_, even=bool(style.drop))
         last = spread_to(first, count) if last is None else last
         if last is None:
-            return _hit_slots(grid.hits, grid.hit_strength, first=first, end=end_at,
-                              gap=gap_style, count=count)
+            return _hit_slots(grid.hits, grid.hit_strength, first=first, end=end_,
+                              gap=gap_style, count=count, beats=grid.beats, min_shot=min_gap)
         return _spread_slots(grid.hits, grid.hit_strength, grid.big, first=first,
-                             last=min(last, end_at), count=count, min_gap=min_gap)
+                             last=min(last, end_), count=count, min_gap=min_gap)
 
     # Where the first kill will land, worked out before the shots are, as the
     # cut below works it out. For what follows, not for the cut itself.
@@ -2621,6 +2734,13 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         else:
             break
         lens, hero_set = plan_walk(picked)
+    # NO CLIP BACK WITHIN TWO SHOTS OF ITSELF -- no A B A B (see rulebook.space_apart).
+    # The opener and the closer stay where the order put them.
+    spaced = rulebook.space_apart(picked, key=lambda m: m.group, when=lambda m: m.first,
+                                  fixed=(0, len(picked) - 1))
+    if [id(m) for m in spaced] != [id(m) for m in picked]:
+        picked = spaced
+        lens, hero_set = plan_walk(picked)
     if style.drop and song and grid.drop and len(picked) > 3 and not part_len:
         # The build is walked once; reel zero then moves so the fourth shot's
         # kill lands exactly on the drop, and the rest is walked from there.
@@ -2661,7 +2781,11 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                 "speed": speed, "fx": list(style.kill), "hero": is_hero,
                 "hero_fx": list(style.hero) if is_hero else [],
                 "camera": style.camera, "transition": "t01", "tlen": 0.0,
-                "caption": m.caption}
+                "caption": m.caption,
+                # How strong the moment is, for choosing which shots make way when
+                # the planned length is full (see _weakest). Planning only: popped
+                # before the project is handed back.
+                "_strength": float(m.strength)}
         _fit(shot, step, notes)
         shots.append(shot)
 
@@ -2672,12 +2796,23 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         ("hero", style.hero_pool), ("camera", style.camera_pool), ("speed", style.speed_pool))}
     # NOTHING THAT BLURS THE KILL (F2, every style), unless the player chose it: a blur on
     # the kill hid three kills of the first That Acid render for seven frames each.
+    # ...AND NOTHING THAT WASHES IT OUT ON ITS OWN: an effect that alone leaves less
+    # of the kill frame's detail than SHARP_FLOOR (KILL_DETAIL: the highlight bloom
+    # k20 leaves 0.10, the red wash k08 0.44) is as good as a blur. Out of the pool
+    # here, the reel's two kill effects are two it can actually alternate between.
+    # At the speed this style plays its kills, too: Velocity's ramps leave 0.83 of the
+    # detail, and its RGB split (0.53) on top of one is under the floor on every kill
+    # it lands on -- a pool the reel then has to fight shot by shot (sharp_kills).
     if not (template and template.get("kill")):
-        kept = [p for p in pools["kill"] if fam(p) not in KILL_BLURS]
+        slowest = min(_detail(p) for p in set(pools["speed"]) | {style.hero_speed, style.speed})
+
+        def clear_fx(p: str) -> bool:
+            return fam(p) not in KILL_BLURS and _detail(p) * slowest >= SHARP_FLOOR
+        kept = [p for p in pools["kill"] if clear_fx(p)]
         pools["kill"] = kept or pools["kill"]
         for s in shots:
-            s["fx"] = [f for f in s["fx"] if fam(f) not in KILL_BLURS]
-    _vary(shots, pools, style, seed, "all")
+            s["fx"] = [f for f in s["fx"] if clear_fx(f)]
+    _vary(shots, pools, style, seed, "all", flash=0.0 if fast else None)
     rulebook.budget(shots, pools)
     mix_free = chosen_sets(template)
     clip_look = {m.clip["path"]: looks.get(m.group) for m in picked}
@@ -2695,8 +2830,11 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     if build and shots:
         shots[0]["speed"] = "s05"
         shots[0]["fx"] = shots[0]["fx"][:1]
-    if closer_post and len(shots) > 1:
+    if closer_post and len(shots) > 1 and _own_after(shots[-1]) < 1.0:
         # Slowed as it leaves, so the bar after the last kill has footage to fill.
+        # NOT OVER KILLS OF ITS OWN still to come: at a third of real speed a
+        # second kill 2.5 s on is 7.4 s away, and Retro on El Alfa closed on a
+        # 10 s shot. A closer with a later kill of its own plays it as it happened.
         last = shots[-1]
         last["speed"] = "s06"
         last["duration"] = round(last["pre"] + (lens[-1][1] + closer_post) * step, 5)
@@ -2787,7 +2925,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             # A drop reel's fourth kill lands ON the drop: the build is the
             # three shots before it. With the kills on hits the opener moves
             # to whichever hit puts the fourth slot on the drop's own hit.
-            gap = 60.0 / max(cpm, 1.0)
+            gap = gap_style
             aim = min(grid.hits, key=lambda t: abs(t - grid.drop))
             best = None
             for c in grid.hits:
@@ -2815,42 +2953,84 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         # fits the footage the longer one did.
         first = _first_kill(grid.hits, [], earliest=floor + max(0.0, shots[0]["pre"] - FIRST_HIT_SLACK * step))
     if song and shots and grid.hits:
-        last = spread_to(first, len(shots))
-        spread = last is not None
-        # A FILLED PART ENDS ON ITS END, NOT PAST IT. A shot whose mark comes
-        # too soon after another's later kills takes the mark after (see
-        # apply_marks), so the last shots can run past the last mark: on
-        # dwayIR's 93 s part two of them did and were cut off by the part's
-        # end. Aim the last kill earlier by what ran over and place again.
-        # Never closer than min_gap: past that the shots that do not fit are
-        # the part's to cut, below.
-        floor_last = first + (len(shots) - 1) * min_gap
         hard_end = bool(part_len) and fill != "all"
-        for attempt in range(5):
-            slots = kill_slots(first, len(shots), last)
-            pool_shots = copy.deepcopy(shots)
-            order = list(range(len(pool_shots)))
-            if style.drop and drop_t is not None:
-                order, slots = clutch_take(pool_shots, slots, drop_t, part_start)
-            trial = {**proj, "shots": [pool_shots[i] for i in order]}
-            if style.drop and drop_t is not None:
-                # AFTER THE DROP EACH SHOT OPENS HALF A BEAT BEFORE ITS KILL, so the
-                # kill has the other half after it: a cut on the off-beat, the kill
-                # on the beat. The hand-cut reel's 0.28 s / 0.30 s at 104 BPM.
-                for s, t in zip(trial["shots"], slots):
-                    if t > drop_t + 1e-6:
-                        s["pre"] = round(drop_gap / 2, 5)
-            got_notes = apply_marks(trial, [t - offset for t in slots])
-            over = sum(s["duration"] for s in trial["shots"]) - (end_at - offset)
-            if not hard_end or over <= 0.05 or attempt == 4:
-                break
-            if last is None:
-                if not slots:
+        # LAID ON THE PLANNED LENGTH, AND EVERY SHOT ON A MARK. Two rules the
+        # render gate checks and the plan used to leave to chance:
+        #
+        # * the kills are laid only as far as the length this reel was planned
+        #   at (`target`), not to the end of the song. Asked for "a slot per
+        #   shot" with no end, That Acid's 34 slots ran 59 s past a 44 s plan;
+        # * a shot with no mark left "followed at its own length" (apply_marks),
+        #   and its own length is the walk's -- a whole merged fight. Hype's last
+        #   nine shots did that: 7-10 s each, their kills 2 to 50 s off the beat.
+        #
+        # So the marks are asked for again, more of them, while the planned
+        # length still has room -- a shot holding a double kill passes its mark on
+        # and needs one more -- and once it has none, the weakest shots make
+        # way until every shot that is left has its mark. The opener, the closer
+        # and the strongest shot are the last to go. "Keep every kill" keeps
+        # them all: it may run past the planned length, never off the beat.
+        plan_end = (offset + target - tail_s) if (target and fill != "part") else None
+        extra = 0
+        left_for_room: list[str] = []
+        for _round in range(4 * len(shots) + 8):
+            want_n = len(shots) + extra
+            last = spread_to(first, want_n)
+            spread = last is not None
+            # A FILLED PART ENDS ON ITS END, NOT PAST IT. A shot whose mark comes
+            # too soon after another's later kills takes the mark after (see
+            # apply_marks), so the last shots can run past the last mark: on
+            # dwayIR's 93 s part two of them did and were cut off by the part's
+            # end. Aim the last kill earlier by what ran over and place again.
+            # Never closer than min_gap: past that the shots that do not fit are
+            # the part's to cut, below.
+            floor_last = first + (len(shots) - 1) * min_gap
+            placed: list[int] = []
+            for attempt in range(5):
+                slots = kill_slots(first, want_n, last, end=plan_end)
+                pool_shots = copy.deepcopy(shots)
+                order = list(range(len(pool_shots)))
+                if style.drop and drop_t is not None:
+                    order, slots = clutch_take(pool_shots, slots, drop_t, part_start)
+                trial = {**proj, "shots": [pool_shots[i] for i in order]}
+                if style.drop and drop_t is not None:
+                    # AFTER THE DROP EACH SHOT OPENS HALF A BEAT BEFORE ITS KILL, so the
+                    # kill has the other half after it: a cut on the off-beat, the kill
+                    # on the beat. The hand-cut reel's 0.28 s / 0.30 s at 104 BPM.
+                    for s, t in zip(trial["shots"], slots):
+                        if t > drop_t + 1e-6:
+                            s["pre"] = round(drop_gap / 2, 5)
+                placed.clear()
+                got_notes = apply_marks(trial, [t - offset for t in slots], placed=placed)
+                over = sum(s["duration"] for s in trial["shots"]) - (end_at - offset)
+                if not hard_end or over <= 0.05 or attempt == 4:
                     break
-                last = slots[-1]
-            if last <= floor_last + 1e-6:
+                if last is None:
+                    if not slots:
+                        break
+                    last = slots[-1]
+                if last <= floor_last + 1e-6:
+                    break
+                last, spread = max(floor_last, last - over), True
+            unplaced = len(trial["shots"]) - (placed[0] if placed else len(trial["shots"]))
+            if unplaced <= 0 or len(shots) <= 1:
                 break
-            last, spread = max(floor_last, last - over), True
+            if len(slots) >= want_n:
+                extra += unplaced                     # too few were asked for: ask for more
+                continue
+            if keep_all and plan_end is not None:
+                plan_end = None                       # every kill: past the length, on the beat
+                continue
+            gone = {id(s) for s in _weakest(shots, unplaced)}
+            left_for_room += [s["clip"] for s in shots if id(s) in gone]
+            shots = [s for s in shots if id(s) not in gone]
+            shots = rulebook.space_apart(shots, key=lambda s: s["clip"], when=lambda s: float(s["kill"]),
+                                         fixed=(0, len(shots) - 1))
+        if left_for_room:
+            room_was = f"the reel's {target:.0f} s" if plan_end is not None else "the song"
+            notes.append(f"{len(left_for_room)} shot(s) left out: {room_was} had no beat left to land "
+                         f"their kills on, and the weakest go first.")
+            left_out(left_for_room, "Left out to fit the reel's length: the clips that went in were stronger.")
         proj["shots"] = shots = trial["shots"]
         proj["song_offset"] = round(offset, 5)
         # The hits the kills were aimed at, kept in song seconds. Without them
@@ -2905,6 +3085,12 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     rulebook.transitions(shots, starts_b, first_kill_beat=int(round(shots[0]["pre"] / step)) if shots else 0,
                          looks=clip_look, pools=pools, flash_share=flash_share, beat=step, div=div)
     calm_mix(shots, mix_free)
+    # Before the drop's flash goes on: that flash is the one effect asked for by name.
+    # A drawer the player picked on the Make page -- one part or a set -- is theirs.
+    softened = sharp_kills(shots, pools, set(mix_free) | {k for k in POOL_KINDS if (template or {}).get(k)})
+    if softened:
+        notes.append(f"{softened} kill(s) had effects that together would wash the kill out; "
+                     f"the softest of them gave way so every kill stays sharp.")
     if drop_shot is not None and drop_shot < len(shots) and DROP_FLASH not in shots[drop_shot]["fx"]:
         # THE DROP FLASHES WHITE, as the reference edits do on theirs: on the kill that
         # lands on it, on top of that kill's own effect. After the mix is held to two
@@ -2976,7 +3162,26 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                           why_out.get(c["path"], "Left out to fit the reel's length."),
                           **({"kills_out": missing[c["path"]]} if c["path"] in missing else {})}
                          for c in offered]
+    for s in proj["shots"]:
+        s.pop("_strength", None)
     return proj, notes
+
+
+def _weakest(shots: list[dict], n: int) -> list[dict]:
+    """The `n` shots to leave out when the planned length is full: the weakest first.
+
+    Never the opener, the closer or the strongest shot while anything else can go --
+    the reel's shape is built on those three (rulebook.order).
+    """
+    if n <= 0 or not shots:
+        return []
+    best = max(range(len(shots)), key=lambda i: shots[i].get("_strength", 0.0))
+    keep = {0, len(shots) - 1, best}
+    free = sorted((i for i in range(len(shots)) if i not in keep),
+                  key=lambda i: (shots[i].get("_strength", 0.0), -i))
+    rest = sorted((i for i in keep if i != 0), key=lambda i: (shots[i].get("_strength", 0.0), -i))
+    out = (free + rest)[:min(n, len(shots) - 1)]
+    return [shots[i] for i in out]
 
 
 _MARK_CACHE: dict[tuple, list[float] | None] = {}
@@ -3519,7 +3724,8 @@ def _flash_share(style: "Style") -> float:
     return min(0.9, (meas.get("flashes_per_min") or 0.0) / max(cpm, 1.0))
 
 
-def _vary(shots: list[dict], pools: dict, style: "Style", seed: int, what: str = "all") -> None:
+def _vary(shots: list[dict], pools: dict, style: "Style", seed: int, what: str = "all",
+          flash: float | None = None) -> None:
     """Give every shot its own mix of effects, from the style's pools.
 
     NEVER THE SAME TWICE RUNNING: each draw avoids what the previous shot got
@@ -3542,8 +3748,11 @@ def _vary(shots: list[dict], pools: dict, style: "Style", seed: int, what: str =
     kills, trans, heroes = pool("kill"), pool("transition"), pool("hero")
     cams, speeds = pool("camera"), pool("speed")
     # A pool that is only hard cuts is a reel that asked for one transition -- a fast-cut
-    # reel -- and a white flash on a share of its cuts would be a second.
+    # reel -- and a white flash on a share of its cuts would be a second. A fast-cut reel
+    # keeps the rest of its transitions now (fast_rules), so it says so with `flash`.
     flash_share = 0.0 if set(trans) <= {"t01"} else _flash_share(style)
+    if flash is not None:
+        flash_share = flash
     recent: list[str] = []
     last_cam = last_speed = last_hero = last_trans = ""
     acc = 0.0
@@ -3552,7 +3761,10 @@ def _vary(shots: list[dict], pools: dict, style: "Style", seed: int, what: str =
             if kills:
                 first = draw(kills, set(recent[-2:]))
                 fx = [first]
-                stack = style.energy + (0.3 if s.get("hero") else 0.0)
+                # A style at energy 0 stacks nothing, not even on a hero: a fast-cut
+                # reel is one effect a kill (fast_rules), and its pools are no longer
+                # cut to one entry to make that true by accident.
+                stack = style.energy + (0.3 if s.get("hero") and style.energy > 0 else 0.0)
                 others = [k for k in dict.fromkeys(kills) if k != first]
                 if others and rng.random() < stack:
                     fx.append(draw(others, set(recent[-1:])))
@@ -3616,12 +3828,19 @@ def vary(project: dict, what: str = "all", seed: int | None = None) -> dict:
     # where the flashes sit where the music puts them. So a draw that changed
     # nothing is drawn again with the next seed, a few times. An explicit seed is
     # a request for that draw and is kept as it comes.
+    # A fast-cut reel never draws white-flash cuts (fast_rules), whatever its pools hold.
+    beat_ = float(project.get("beat") or 0.0)
+    fast = fast_reel(style, 60.0 / beat_ if beat_ > 0 else None)
     for _ in range(1 if asked else 6):
         project["shots"] = copy.deepcopy(start)
         project["seed"] = int(seed)
-        _vary(project["shots"], pools, style, seed, kind)
+        _vary(project["shots"], pools, style, seed, kind, flash=0.0 if fast else None)
         rulebook.budget(project["shots"], pools, what if what in POOL_KINDS else None)
         calm_mix(project["shots"], set(project.get("mix_free") or ()), keep_cuts=what == "kill")
+        # Only the drawers being mixed may give way: "mix the kill effects" must
+        # leave the speeds as they were.
+        sharp_kills(project["shots"], pools, set(project.get("mix_free") or ())
+                    | ({k for k in POOL_KINDS if k != kind} if kind != "all" else set()))
         if mix_of(project["shots"]) != was:
             break
         seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
@@ -3672,6 +3891,15 @@ def calm_mix(shots: list[dict], free: set[str] | tuple = (), keep_cuts: bool = F
                 # choose from, the other one -- the reel alternates rather than repeats.
                 other = [f for f in keep if f != last]
                 kept = [other[0]] if other else keep[:1]
+            if (fam(kept[0]) in FREEZES and not any(fam(f) in FREEZES for f in fx)
+                    and _own_after(s) > 0):
+                # NOT A FREEZE PUT ON AFTER THE CUTS ARE SET, on a shot with a later
+                # kill of its own: the marks left that kill room at real speed, and
+                # 0.4 s of held frame took it -- the quadra's fourth kill went unseen
+                # in 7 of 40 plans of the same clips (test_a_planned_reel_shows_every_
+                # kill_of_its_clips_once, flaky before this).
+                calm = [f for f in keep if fam(f) not in FREEZES]
+                kept = calm[:1] or kept
             s["fx"] = kept
             last = kept[0]
     # A white cut straight into a bright kill is one flash on top of another; the
@@ -3688,6 +3916,120 @@ def calm_mix(shots: list[dict], free: set[str] | tuple = (), keep_cuts: bool = F
                 s["fx"] = [calm[0] if calm else "k01"]
             else:
                 s["transition"], s["tlen"] = "t01", 0.0
+
+
+# HOW MUCH OF THE PICTURE'S DETAIL EACH PART LEAVES AT THE KILL FRAME, by family:
+# the render gate's own measure (reelcheck, kill-not-sharp: the Laplacian's
+# variance over the kill's frames) with the part alone on one shot, against the
+# same shot plain. Measured on the opener of the Velocity reel of Skechers --
+# VALORANT_01_7kills at 2.913 s, in the 9:16 fit band -- one render per part.
+# A part not listed measured 0.97 or better, or sharpens (k11 1.42).
+#
+# The effects MULTIPLY: that opener carried s04, k06, h01 and c08 -- 0.83, 0.53,
+# 0.91 and 0.93, each harmless alone -- and its kill frames read 0.26 of a plain
+# shot, the reel's one kill-not-sharp. Measured, a stack comes out at 0.7-0.9 of
+# the product, so a product over SHARP_FLOOR keeps a kill above the gate's 0.35.
+KILL_DETAIL = {
+    "k20": 0.10, "k08": 0.44, "k06": 0.53, "k19": 0.60, "k03": 0.76, "k17": 0.77,
+    "k01": 0.79, "k15": 0.79, "k18": 0.83, "k02": 0.86, "k22": 0.88,
+    "h03": 0.59, "h01": 0.91, "h02": 0.98,
+    "s04": 0.83, "s03": 0.83, "s02": 0.84, "s01": 0.86,
+    "c06": 0.60, "c01": 0.88, "c07": 0.88, "c03": 0.91, "c08": 0.93,
+}
+SHARP_FLOOR = 0.5
+FREEZES = ("k04", "h02")     # the parts that stop time on the kill (see _freeze_of)
+
+
+def _detail(pid: str) -> float:
+    return KILL_DETAIL.get(fam(pid), 1.0) if pid else 1.0
+
+
+def kill_detail(shot: dict) -> float:
+    """What share of the picture's detail this shot's effects leave on its kill (see KILL_DETAIL)."""
+    d = _detail(shot.get("speed") or "") * _detail(shot.get("camera") or "")
+    for pid in list(shot.get("fx") or []) + list(shot.get("hero_fx") or []):
+        d *= _detail(pid)
+    return d
+
+
+def sharp_kills(shots: list[dict], pools: dict, free: set[str] | tuple = ()) -> int:
+    """Take the softest effect off any kill whose stack would wash it out. In place. -> shots changed.
+
+    EVERY KILL STAYS SHARP ENOUGH TO SEE (every style). While a shot's kill_detail
+    is under SHARP_FLOOR, its softest part that has somewhere to go gives way: a
+    stacked second kill effect is dropped; a kill effect becomes a sharper one
+    this reel already uses -- not a third kind (calm_mix's rule); a hero treatment
+    the sharpest the pool has; a speed ramp real speed; a camera move none. A move
+    that would put the same kill effect on two shots running (_vary's rule) is
+    taken only when nothing else is left -- so on Velocity a k06 kill keeps its
+    RGB split and loses its ramp, rather than every kill becoming the zoom punch.
+    Only when none of those is left does a kill effect come from the rest of the
+    pool. A drawer the player chose (`free`) is theirs and left alone.
+
+    Never a freeze in place of what goes (k04, h02): this runs after the kills are
+    on their marks, and a freeze moves every later kill of the shot.
+    """
+    used = list(dict.fromkeys(f for s in shots for f in (s.get("fx") or [])))
+    ok = lambda p: fam(p) not in FREEZES                      # noqa: E731
+    changed = 0
+    for n, s in enumerate(shots):
+        before = (list(s.get("fx") or []), list(s.get("hero_fx") or []), s.get("speed"), s.get("camera"))
+        span = _span(s) if "kill" in s and "pre" in s else (-1e9, 1e9)
+        prev = (shots[n - 1].get("fx") or [""])[0] if n else ""
+        nxt = (shots[n + 1].get("fx") or [""])[0] if n + 1 < len(shots) else ""
+
+        def kill_swap(d: float, wide: bool) -> str | None:
+            pool = [f for f in pools.get("kill") or [] if f not in used] if wide else used
+            better = [f for f in dict.fromkeys(pool) if _detail(f) > d and ok(f)]
+            fresh = [f for f in better if f not in (prev, nxt)]
+            return max(fresh or better, key=_detail) if better else None
+
+        def again(to: str) -> bool:
+            return to in (prev, nxt)
+
+        for _ in range(12):
+            if kill_detail(s) >= SHARP_FLOOR:
+                break
+            fx = list(s.get("fx") or [])
+            # (repeats a neighbour's effect, brings a third kind in, detail of what goes, apply):
+            # the first move taken is the one breaking the fewest of the other rules.
+            moves = []
+            if "kill" not in free:
+                for i, f in enumerate(fx):
+                    if len(fx) > 1:
+                        rest = fx[:i] + fx[i + 1:]
+                        moves.append((again(rest[0]), False, _detail(f), lambda rest=rest: s.__setitem__("fx", rest)))
+                    elif (to := kill_swap(_detail(f), False)):
+                        moves.append((again(to), False, _detail(f), lambda to=to: s.__setitem__("fx", [to])))
+            if "hero" not in free:
+                for i, h in enumerate(s.get("hero_fx") or []):
+                    better = [x for x in pools.get("hero") or [] if _detail(x) > _detail(h) and ok(x)]
+                    hs = list(s["hero_fx"])
+                    hs[i:i + 1] = [max(better, key=_detail)] if better else []
+                    moves.append((False, False, _detail(h), lambda hs=hs: s.__setitem__("hero_fx", hs)))
+            if "speed" not in free and _detail(s.get("speed") or "") < 1.0:
+                moves.append((False, False, _detail(s["speed"]), lambda: s.__setitem__("speed", "s00")))
+            if "camera" not in free and _detail(s.get("camera") or "") < 1.0:
+                moves.append((False, False, _detail(s["camera"]), lambda: s.__setitem__("camera", "c00")))
+            if "kill" not in free and len(fx) == 1 and (to := kill_swap(_detail(fx[0]), True)) and to not in used:
+                moves.append((again(to), True, _detail(fx[0]), lambda to=to: s.__setitem__("fx", [to])))
+            moves = [m for m in moves if m[2] < 1.0]
+            # NO MOVE THAT REACHES FOR FOOTAGE THE SHOT DID NOT SHOW. This runs after the
+            # cuts are set, and real speed in place of a ramp, or a freeze taken off,
+            # plays more of the clip after the kill -- into what the next shot of the
+            # same clip shows (test_a_longer_run_up_never_shows_a_kill_twice caught it).
+            for m in sorted(moves, key=lambda m: m[:3]):
+                snap = {k: copy.deepcopy(s.get(k)) for k in ("fx", "hero_fx", "speed", "camera")}
+                m[3]()
+                a, b = _span(s)
+                if a >= span[0] - 1e-3 and b <= span[1] + 1e-3:
+                    break
+                s.update(snap)
+            else:
+                break
+        if before != (list(s.get("fx") or []), list(s.get("hero_fx") or []), s.get("speed"), s.get("camera")):
+            changed += 1
+    return changed
 
 
 # ============================================================== the song part
@@ -3779,12 +4121,14 @@ def stretch_to(shot: dict, pre: float) -> bool:
 CUT_LEAD = 3.0 / FPS        # how far a cut lands before the hit its kill is on; see apply_marks
 
 
-def apply_marks(project: dict, marks: list[float]) -> list[str]:
+def apply_marks(project: dict, marks: list[float], placed: list[int] | None = None) -> list[str]:
     """Re-time the timeline so the shots' kills land on the marks (reel seconds).
 
     Cuts move, never the marks: each shot starts as far before its mark as its
     own run-up wants and its footage allows, and the shot before it runs up to
-    that cut. Shots past the last mark keep their lengths and follow on.
+    that cut. Shots past the last mark keep their lengths and follow on --
+    `placed`, when given, gets how many shots were laid on a mark, so a caller
+    that will not have a shot off its mark (plan) can tell.
 
     Usually shot N takes mark N. The exception is an opener whose footage
     cannot reach the first mark -- see below: it becomes the reel's lead-in
@@ -3987,8 +4331,29 @@ def apply_marks(project: dict, marks: list[float]) -> list[str]:
             s["duration"] = round(cuts[i + 1] - cuts[i], 5)
         else:
             post = max(floor, float(s["duration"]) - float(s["pre"]) if s["duration"] > s["pre"] else 0.5)
-            post = max(post, _own_tail(s, pres[i]))
+            own = _own_tail(s, pres[i])
+            # THE LAST SHOT HOLDS ITS OWN KILLS AND AN ENDING, NOT ITS WHOLE FIGHT.
+            # The length it came in with is the walk's, which spans every kill of
+            # the moment -- a fast reel's merged fight runs to 6 s between kills --
+            # and the closer of the That Acid Hype reel held 8.3 s after its kill.
+            # Its later kills within OWN_KILLS_WITHIN are shown (`own`); past them
+            # it keeps at most the ending the walk gives a closer.
+            beat_ = float(project.get("beat") or 0.5)
+            post = min(post, max(floor, own) + rulebook.ENDING_BEATS * beat_)
+            post = max(post, own)
+            # ...and the reel never ends on its last kill. A ramp that rushes out
+            # (s04) plays the held 0.35 s of footage after a later kill in less
+            # than that: Chaos on El Alfa ended 0.20 s after its last kill, under
+            # the gate's 0.3 (no-room-after-kill). OUTRO_AFTER_KILL of the reel's
+            # own time after it, as far as the clip has footage.
+            mine = _own_after(s)
+            # (a freeze on the kill puts everything after it that much later; see derive)
+            last_at = (_post_for(s, pres[i], mine - OWN_KILL_HOLD) + _freeze_of(s)) if mine else 0.0
+            if post < last_at + OUTRO_AFTER_KILL:
+                post = max(post, max_post(s, pres[i], last_at + OUTRO_AFTER_KILL))
             s["duration"] = round(pres[i] + post, 5)
+    if placed is not None:
+        placed.append(done)
     return notes
 
 
@@ -4338,6 +4703,19 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
             marks = sorted({m for m in marks if m >= 0})
             if marks:
                 out["song_marks"] = marks
+            # The drops the player marked by hand, when they did: an answer about the song,
+            # kept so a rebuild plans on them and not on the analysis they overruled. An
+            # empty list is "no drop at all" and is kept as such; absent is "the song's own".
+            if isinstance(project.get("hand_drops"), list):
+                hd = set()
+                for d in project["hand_drops"][:64]:
+                    try:
+                        f = float(d)
+                    except (TypeError, ValueError):
+                        continue
+                    if 0.0 <= f <= 36000.0:            # a drop off the song is dropped, not clamped onto it
+                        hd.add(round(f, 4))
+                out["hand_drops"] = sorted(hd)
         else:
             notes.append("The song is no longer on disk, so this reel has no music.")
     output = str(project.get("output") or "")
@@ -4492,6 +4870,15 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
             if isinstance(n, str) and n.strip()][:20]
     if said:
         out["plan_notes"] = said
+    # WHAT THE PLAYER CHOSE THAT A REBUILD MUST ASK AGAIN: the clip the reel builds on and
+    # whether the part was the page's own (a length) or theirs (an end). Neither is in the
+    # shots, and both were lost on "Add clips": the rebuild built on whichever set-up scored
+    # best and held the part to an end nobody had chosen.
+    build = str(project.get("build_clip") or "")[:1000]
+    if build:
+        out["build_clip"] = build
+    if project.get("part_auto"):
+        out["part_auto"] = True
 
     # Transitions need footage either side of the cut; shorten them to fit.
     shots = out["shots"]
@@ -4783,6 +5170,28 @@ def _fade_colour(pid: str) -> str:
     i = int(knob(pid, "colour", 0.0))
     hexes = parts_mod.FADE_HEX
     return hexes[i] if 0 <= i < len(hexes) else "black"
+
+
+# HOW FAR TOWARD WHITE THE OPENING AND CLOSING FLASHES GO (i08, e05): each pixel
+# moves this share of the way to white, so the picture stays under it. They used
+# to ADD brightness (+0.85) or fade TO white, and both reels the gate read -- Hype
+# and Velocity on 2026-10-22 -- opened on frames 100% and 88% above the gate's
+# 245 (too-bright) and the Hype one ended on a frame of 255 (white-ending: the
+# last frame reads as the reel breaking off). Blended at 0.6, a pixel only
+# passes 245 where it was over 230 already, and a frame of the game's usual
+# mean grey (60-80) peaks near 180 -- a flash, not a burn-out.
+FLASH_PEAK = 0.6
+
+
+def _toward_white(share: str) -> str:
+    """An eq filter moving each frame `share` (an expression in t, 0..1) of the way to white.
+
+    eq's luma is contrast*(y-128)+128+brightness*256 (measured on yuv420p: 16, 64,
+    128, 235 at contrast 0.4 and brightness 0.3 came out 159, 178, 204, 246). The
+    picture is video range, white at 235, so contrast 1-a and brightness
+    a*107/256 make it y*(1-a)+235*a: a share of the way to white, never past it.
+    """
+    return f"eq=contrast='1-({share})':brightness='({share})*{107 / 256:.5f}':eval=frame"
 
 
 def _wash_colour(hue: float) -> str:
@@ -5630,7 +6039,7 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         post.append(f"fade=in:st=0:d={over(1.0, 0.6, 3.0)}")
     elif intro == "i08":
         d = over(0.35, 0.25, 1.2)
-        post.append(f"eq=brightness='max(0,0.85*(1-t/{d}))':eval=frame")
+        post.append(_toward_white(f"max(0,{FLASH_PEAK}*(1-t/{d}))"))
     elif intro == "i12":
         k1 = derived["kills"][0] if derived["kills"] else 0.0
         post.append(f"eq=saturation='if(lt(t,{k1:.4f}),0.15,1)':eval=frame")
@@ -5659,7 +6068,7 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         post.append(f"fade=out:st={max(0.0, L - end_fade):.4f}:d={end_fade:.4f}")
     elif outro == "e05":
         d = unfaded(end_fade if long_end else 0.35)
-        post.append(f"fade=out:st={max(0.0, L - d):.4f}:d={d:.4f}:color=white")
+        post.append(_toward_white(f"{FLASH_PEAK}*clip((t-{L - d:.4f})/{d:.4f},0,1)"))
     elif outro == "e02":
         d = unfaded(end_fade if long_end else 1.0)
         post.append(f"hue=s='if(gt(t,{L - d:.4f}),max(0,1-(t-{L - d:.4f})/{d * 0.8:.4f}),1)'")

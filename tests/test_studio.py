@@ -6,6 +6,7 @@ every cut and kill lands on the song, and what the page is refused.
 """
 from __future__ import annotations
 
+import copy
 import json
 import math
 import re
@@ -837,9 +838,9 @@ def test_no_two_shots_running_get_the_same_kill_effect(long_run, style):
     # engine rather than from the parts bin, and stacking a per-kill effect on
     # a per-beat one muddies both.
     st = studio.STYLE[style]
-    # A fast-cut style on a fast song keeps ONE kill effect on purpose (K2): the pool it
-    # is held to is then the one it was reduced to, not the one it was written with.
-    pool = ({st.kill[0]} if studio.fast_reel(st, 128.0) else set(st.kill_pool))
+    # A fast-cut style on a fast song is held to what fast_rules leaves of its pool (K2):
+    # no stacking and no blur -- but, since 2026-10-23, still every other kill effect.
+    pool = set((studio.fast_rules(st) if studio.fast_reel(st, 128.0) else st).kill_pool)
     if len(pool) == 1:
         assert set(firsts) == pool, firsts
         return
@@ -853,7 +854,7 @@ def test_transitions_are_mixed_too(long_run, style):
     proj, _ = studio.plan(_clips(long_run), style, shape=Shape(bpm=128.0))
     cuts = [s["transition"] for s in proj["shots"][1:]]
     st = studio.STYLE[style]
-    pool = ({"t01"} if studio.fast_reel(st, 128.0) else set(st.transition_pool))
+    pool = set((studio.fast_rules(st) if studio.fast_reel(st, 128.0) else st).transition_pool)
     if len(pool) == 1:                 # see the kill-effect test above
         assert set(cuts) <= pool, cuts
         return
@@ -1028,10 +1029,10 @@ def test_the_openers_hit_may_sit_a_hair_before_its_run_up_ends(long_run, monkeyp
     seen = {}
     real = studio.apply_marks
 
-    def spy(project, marks):
+    def spy(project, marks, **kw):
         seen.setdefault("pre0", project["shots"][0]["pre"])
         seen.setdefault("first", marks[0])
-        return real(project, marks)
+        return real(project, marks, **kw)
     monkeypatch.setattr(studio, "apply_marks", spy)
     hits = [10.0 + 0.5 * n - 0.026 for n in range(1, 60)]          # every beat, a hair early
     shape = Shape(bpm=120.0, seconds=120.0, phase=0.0, hits=hits)
@@ -1288,6 +1289,14 @@ def _quadra_first(r, *, hero_freeze=False):
     proj, _ = studio.plan(_clips(r), "story", shape=Shape(bpm=110.0))
     shots = proj["shots"]
     q = [s for s in shots if s["clip_seconds"] == pytest.approx(26.4)]
+    # The planner now plans two kills 1.9 s apart as ONE shot (rulebook.one_shot_per_fight:
+    # the render gate calls two shots of them the same fight twice). apply_marks still
+    # meets them as two -- a timeline cut by hand, or planned before -- so split them back.
+    assert [s["kills"] for s in q] == [[3.567, 5.467], [17.6, 18.433]]
+    follow = copy.deepcopy(q[0])
+    follow.update(kill=5.467, kills=[5.467], caption="")
+    q[0].update(kills=[3.567])
+    q.insert(1, follow)
     proj["shots"] = q + [s for s in shots if s not in q]
     assert [s["kills"] for s in q] == [[3.567], [5.467], [17.6, 18.433]]
     for s in proj["shots"]:

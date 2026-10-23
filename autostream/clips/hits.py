@@ -384,6 +384,10 @@ def choose_kills(hits: list[float], strengths: list[float] | None = None, *,
             accents.extend(left)
             continue
         step = int(round(target_gap / max(1e-6, float(np.median(gaps)))))
+        # Never a step that lands under min_shot: the filter below would then drop
+        # every other kill and HALVE the pace -- half-beat hits at 174 BPM and a
+        # 0.75 s floor gave every 4th hit (0.69 s), then every 8th (1.38 s).
+        step = max(step, int(np.ceil(min_shot / max(1e-6, float(np.median(gaps))) - 1e-9)))
         step = max(2, min(MAX_STEP, step))
         for k, t in enumerate(run):
             (kills if k % step == 0 else accents).append(t)

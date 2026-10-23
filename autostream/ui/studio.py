@@ -613,6 +613,8 @@ STUDIO_HTML = r"""
     <ol class="gd-steps" id="studio-gd-steps"></ol>
     <section class="gd-body" id="studio-gd-body" aria-live="polite"></section>
     <div class="gd-chip" id="studio-gd-chip" role="status"></div>
+    <!-- the Song step's player: here, not in the step, so redrawing the step does not stop the song -->
+    <audio id="studio-gd-audio" preload="metadata"></audio>
     <footer class="gd-foot">
       <button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="all">All settings</button>
       <span class="gd-nav">
@@ -2047,6 +2049,8 @@ function studio_closeModals() {
   if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
   const a = studio_el('studio-mk-audio');
   if (a && !a.paused) a.pause();
+  const ga = studio_el('studio-gd-audio');
+  if (ga && !ga.paused) ga.pause();
   ['studio-preview-scrim', 'studio-make-scrim', 'studio-guide-scrim', 'studio-del-scrim',
    'studio-rdel-scrim', 'studio-intro-scrim'].forEach(id => studio_show(id, false));
   studio_makePage(false);
@@ -2318,7 +2322,8 @@ function studio_keysOpen() {
 
 /* ------------------------------------------------------------ make a reel */
 
-async function studio_openMake() {
+async function studio_openMake(opts) {
+  const o = opts || {};
   if (!studio.selected.length) return;
   const sel = studio.selected.map(id => studio.clipIndex[id]).filter(Boolean);
   const ad = studio.adding;
@@ -2364,13 +2369,36 @@ async function studio_openMake() {
       }
     }
     if (ad.song && studio.songShape) {
-      studio.mk.mode = 'part'; studio.mk.touched = true;
-      studio.mk.start = ad.start; studio.mk.end = Math.max(ad.start + studio_mkBar(), ad.end);
+      studio.mk.mode = 'part'; studio.mk.touched = !ad.part_auto;
+      /* a part the page drew is drawn again (studio_mkDefault, below), as a length; one the
+         player chose is theirs, to its end */
+      if (!ad.part_auto) { studio.mk.start = ad.start; studio.mk.end = Math.max(ad.start + studio_mkBar(), ad.end); }
+      if (ad.drops) {
+        studio.mk.drops = ad.drops.map(t => { studio.mk.nid = (studio.mk.nid || 0) + 1; return {id: 'u' + studio.mk.nid, t: t, auto: false}; });
+      }
     }
     /* What the reel asked for, so a rebuild is the same kind of reel. */
     studio.fill = ad.fill || '';
     studio.keepAll = !!ad.keep_all;
+    studio.buildClip = ad.build_clip || '';
+    studio.mkIntro = ad.intro_clip ? {path: ad.intro_clip.path, audio: ad.intro_clip.audio} : {path: '', audio: false};
+    const hsBox = studio_el('studio-hs-only');
+    if (hsBox) hsBox.checked = !!ad.hs_only;
+    studio.mkKeep = null;                  /* the reel's own lyrics ride in ad.keep */
+  } else if (!o.fromGuide) {
+    studio.mkKeep = null;                  /* the guide's lyrics go with the guide's hand-over only */
   }
+  const mkFacts = studio_el('studio-make-facts');
+  if (studio.mkKeep && studio.mkKeep.lyrics && mkFacts) {
+    const look = studio_gdLyricLooks().find(l => l.key === studio.mkKeep.lyrics.look);
+    mkFacts.textContent += ' Lyrics: ' + (look ? look.label : studio.mkKeep.lyrics.look) + ', from the steps, if the song’s lyrics are found.';
+  }
+  /* drawn again from what is now chosen: a rebuild's or the guide's, not the page's last */
+  document.querySelectorAll('#studio-make [data-act="studio-fmt"]').forEach(x =>
+    x.classList.toggle('is-active', x.getAttribute('data-fmt') === studio.fmt));
+  document.querySelectorAll('#studio-make [data-act="studio-mk-fit"]').forEach(x =>
+    x.classList.toggle('is-active', x.getAttribute('data-fit') === studio.vfit));
+  studio_mkIntroDraw();
   studio_renderStyles();
   studio_hand();
   studio_show('studio-make-scrim', true);
@@ -2628,21 +2656,28 @@ function studio_mkDefault() {
   studio_show('studio-mk-part', !!sh);
   if (!sh) return;
   if (!mk.touched) {
-    const bar = studio_mkBar();
-    const want = studio.fmt === 'vertical' ? 30 : 46;
-    const bars = Math.max(1, Math.round(want / bar));
-    let from = sh.drums_in || (sh.beats && sh.beats[0]) || 0;
-    /* BUILD AND DROP NEEDS ITS DROP INSIDE THE PART, with the build before it. From where the
-       drums come in, Lalala's 30 s part left 2 s before its first drop: the take could not fit,
-       so it went to the second drop 18 s in, and the reel was the 15 s that were left. */
-    const guided = !studio_el('studio-guide-scrim').classList.contains('hide');
-    const drop = (guided ? studio.gd.style : studio.style) === 'drop' ? studio_mkMainDrop() : null;
-    if (drop != null) from = Math.max(0, drop - Math.min(16, want / 2));
-    mk.start = studio_nearestBeat(sh, Math.max(0, Math.min(from, sh.seconds - bar)));
-    mk.end = Math.min(sh.seconds, mk.start + bars * bar);
+    const p = studio_partFor(sh, studio.fmt, studio.style === 'drop' ? studio_mkMainDrop() : null);
+    mk.start = p[0]; mk.end = p[1];
   }
   studio_el('studio-mk-drop').disabled = studio_mkMainDrop() == null;
   studio_mkDraw();
+}
+
+/* THE PART A PAGE DRAWS BY ITSELF, from the song, the shape and -- for Build and drop -- the drop.
+   One function for the Make page and the guided maker, so the part the guide judged is the part
+   the Make page shows when the guide hands over: the guide used to read the Make page's shape
+   (16:9 until it was changed) and judged a 46 s part for a 30 s vertical reel. */
+function studio_partFor(sh, fmt, drop) {
+  const bar = 4 * (sh.beat || 60 / sh.bpm);
+  const want = fmt === 'vertical' ? 30 : 46;
+  const bars = Math.max(1, Math.round(want / bar));
+  let from = sh.drums_in || (sh.beats && sh.beats[0]) || 0;
+  /* BUILD AND DROP NEEDS ITS DROP INSIDE THE PART, with the build before it. From where the
+     drums come in, Lalala's 30 s part left 2 s before its first drop: the take could not fit,
+     so it went to the second drop 18 s in, and the reel was the 15 s that were left. */
+  if (drop != null) from = Math.max(0, drop - Math.min(16, want / 2));
+  const start = studio_nearestBeat(sh, Math.max(0, Math.min(from, sh.seconds - bar)));
+  return [start, Math.min(sh.seconds, start + bars * bar)];
 }
 
 /* THE BEATS AUTOSTREAM FOUND, drawn on a whole-song canvas.
@@ -2827,29 +2862,42 @@ function studio_mkOwn() {
    the biggest of them; they are now marks on the song like the kills, every one found, and the player
    can move them, add their own and take AutoStream's away. `mk.drops` is null while they are
    AutoStream's -- and only then is nothing sent, so the planner keeps reading the song itself. */
-function studio_mkDropList() {
-  const sh = studio.songShape, mk = studio.mk;
-  if (mk.drops) return mk.drops.map(d => ({id: d.id, t: d.t, hand: !d.auto}));
+/* ONE MACHINERY, TWO OWNERS. The Make page keeps its drops in studio.mk.drops and the guided maker in
+   studio.gd.drops -- each null while the drops are the analysis's, a list once touched -- and these
+   read, own, choose from and send either list the same way. */
+function studio_dropsOf(drops, sh) {
+  if (drops) return drops.map(d => ({id: d.id, t: d.t, hand: !d.auto}));
   if (!sh) return [];
   const found = (sh.drops && sh.drops.length) ? sh.drops : (sh.drop ? [sh.drop] : []);
   return found.map((t, i) => ({id: 'a' + i, t: t, hand: false}));
 }
+/* the list as the player's to change: the analysis's drops copied in, marked as AutoStream's */
+function studio_dropsOwned(drops, sh) {
+  return drops || studio_dropsOf(null, sh).map(d => ({id: d.id, t: d.t, auto: true}));
+}
+/* THE drop: the analysis's own, or -- once the player has marked theirs -- the one of theirs nearest it,
+   the same choice the server makes with the list. */
+function studio_dropsMain(drops, sh) {
+  if (!drops) return sh && sh.drop ? sh.drop : null;
+  if (!drops.length) return null;
+  const ref = sh && sh.drop;
+  return ref ? drops.reduce((b, d) => Math.abs(d.t - ref) < Math.abs(b - ref) ? d.t : b, drops[0].t) : drops[0].t;
+}
+function studio_dropsSent(drops) { return drops.map(d => Math.round(d.t * 1000) / 1000); }
+/* a drop the player placed: snapped if that page's box says so; ids shared, so a hand-over keeps them apart */
+function studio_dropNew(t, snapBox) {
+  studio.mk.nid = (studio.mk.nid || 0) + 1;
+  return {id: 'u' + studio.mk.nid, t: studio_mkSnap(t, snapBox), auto: false};
+}
+
+function studio_mkDropList() { return studio_dropsOf(studio.mk.drops, studio.songShape); }
 
 function studio_mkOwnDrops() {
   const mk = studio.mk;
-  if (mk.drops) return;
-  mk.drops = studio_mkDropList().map(d => ({id: d.id, t: d.t, auto: true}));
+  if (!mk.drops) mk.drops = studio_dropsOwned(null, studio.songShape);
 }
 
-/* THE drop: the analysis's own, or -- once the player has marked theirs -- the one of theirs nearest it,
-   the same choice the server makes with the list. */
-function studio_mkMainDrop() {
-  const sh = studio.songShape, mk = studio.mk;
-  if (!mk.drops) return sh && sh.drop ? sh.drop : null;
-  if (!mk.drops.length) return null;
-  const ref = sh && sh.drop;
-  return ref ? mk.drops.reduce((b, d) => Math.abs(d.t - ref) < Math.abs(b - ref) ? d.t : b, mk.drops[0].t) : mk.drops[0].t;
-}
+function studio_mkMainDrop() { return studio_dropsMain(studio.mk.drops, studio.songShape); }
 
 function studio_mkKillSpan() {
   const sh = studio.songShape;
@@ -2861,8 +2909,8 @@ function studio_mkKillSpan() {
 /* EXACT, UNLESS ASKED. A mark is where the player pressed K or let go of it, to the millisecond: it used
    to be pulled to the nearest beat, so a kill marked on an off-beat hit landed somewhere they had not
    put it. Snapping is a choice on the page now, off until it is ticked. */
-function studio_mkSnap(t) {
-  const box = studio_el('studio-mk-snap');
+function studio_mkSnap(t, boxId) {
+  const box = studio_el(boxId || 'studio-mk-snap');
   return box && box.checked ? studio_nearestBeat(studio.songShape, t) : Math.round(t * 1000) / 1000;
 }
 
@@ -3042,8 +3090,7 @@ function studio_mkAddDrop(at) {
   if (t < sp.start - 0.01 || t > sp.end + 0.01) { toast('That is outside the part you chose.', 'warn'); return; }
   const mk = studio.mk;
   studio_mkOwnDrops();
-  mk.nid = (mk.nid || 0) + 1;
-  mk.drops.push({id: 'u' + mk.nid, t: studio_mkSnap(t), auto: false});
+  mk.drops.push(studio_dropNew(t));
   mk.drops.sort((x, y) => x.t - y.t);
   studio_mkDropsChanged();
 }
@@ -3388,7 +3435,7 @@ function studio_mkSeekInput() {
 
 function studio_ytOpen(target) {
   const yt = studio.yt;
-  yt.target = target === 'song' ? 'song' : 'make';
+  yt.target = target === 'song' || target === 'guide' ? target : 'make';
   if (!yt.running) {
     studio_el('studio-yt-url').value = '';
     studio_show('studio-yt-progress', false);
@@ -3505,7 +3552,16 @@ async function studio_ytPoll() {
     return;
   }
   studio_ytShow(Object.assign({}, f, {state: 'analysing'}));
-  const ok = yt.target === 'song' ? await studio_sgUseSong(f.path) : await studio_useSong(f.path, f.title || '');
+  /* From the guide: the songs list it shows is read again (the new file is in it now), and the
+     song is chosen there, on its Song step, with the drops on it -- the guide stays open. */
+  if (yt.target === 'guide') {
+    const r = await API.get('/api/studio/songs').catch(() => null);
+    if (r && r.ok) studio.songList = r.songs || [];
+    studio.gd.step = 1;
+  }
+  const ok = yt.target === 'song' ? await studio_sgUseSong(f.path)
+    : yt.target === 'guide' ? await studio_gdUseSong(f.path, f.title || '')
+    : await studio_useSong(f.path, f.title || '');
   studio_ytBusy(false);
   if (!ok) {
     studio_show('studio-yt-progress', false);
@@ -4229,14 +4285,16 @@ function studio_planBody(withMarks) {
   }
   /* THE DROPS, once the player has touched them -- every plan, the preview's as well as Build's, so
      the kills it shows are the ones it will build around them. An empty list is "no drop at all". */
-  if (studio.song && studio.mk.drops) {
-    body.drops = studio.mk.drops.map(d => Math.round(d.t * 1000) / 1000);
-  }
+  if (studio.song && studio.mk.drops) body.drops = studio_dropsSent(studio.mk.drops);
+  /* What the guided maker handed over that belongs to the reel, not the plan: the lyrics' look.
+     The page has no control of its own for it, so it is said in the facts line while it rides. */
+  if (studio.mkKeep) body.keep = JSON.parse(JSON.stringify(studio.mkKeep));
   return body;
 }
 
 async function studio_build(opts) {
-  /* The guided maker plans from its own page: its button, its chip for the words. */
+  /* The guided maker plans from its own page: its button, its chip for the words, and its own
+     request (`body`, from studio_gdBody) -- a new reel, never the rebuild the Make page may hold. */
   const o = opts || {};
   const btn = o.btn || studio_el('studio-build-btn');
   const say = o.say || (t => { studio_el('studio-make-msg').textContent = t; });
@@ -4247,21 +4305,32 @@ async function studio_build(opts) {
      and nothing else, so the render started anyway a moment later and looked
      like a Cancel that had been ignored. */
   const gen = ++studio.buildGen;
+  const ad = o.body ? null : studio.adding;
+  const body = o.body || studio_planBody(true);
   say(!studio.song ? 'Planning every shot…'
-    : studio.arrange === 'fit' ? 'Finding the perfect fit of every kill to the song — this can take up to ~30 s…'
+    : (body.shaping || {}).arrange === 'fit' ? 'Finding the perfect fit of every kill to the song — this can take up to ~30 s…'
     : 'Finding the beat and planning every shot…');
   try {
-    const body = studio_planBody(true);
+    /* NOT OVER A RENDER IN PROGRESS. The plan took a minute, replaced the timeline of the reel
+       being rendered, and then the server refused the render ("A reel is already rendering") --
+       with the running render's progress lost from the page as well. A background render gives
+       way to this one, so only a render somebody asked for holds it. */
+    const job = await API.get('/api/studio/job').catch(() => null);
+    if (gen !== studio.buildGen) return false;
+    if (job && (job.state === 'running' || job.state === 'queued') && !job.auto) {
+      const t = 'A reel is rendering now (' + Math.round(job.percent || 0) + '%). Make this one when it has finished: ' +
+                'planning it now would replace the timeline of the reel being rendered.';
+      if (o.held) o.held(t); else say(t, true);
+      studio_poll();
+      return false;
+    }
     /* A rebuild keeps the reel's own choices -- facecam, handle, ending --
        which belong to the reel and not to the plan being redone. */
-    if (studio.adding && studio.adding.keep) body.keep = studio.adding.keep;
-    /* what the guided maker asked that belongs to the reel, not the plan: the lyrics' look */
-    if (o.keep) body.keep = Object.assign({}, body.keep || {}, o.keep);
+    if (ad && ad.keep) body.keep = Object.assign({}, body.keep || {}, ad.keep);
     const r = await API.post('/api/studio/plan', body);
-    if (gen !== studio.buildGen) return;          /* cancelled while planning */
-    if (!r || !r.ok) { say((r && r.error) || 'Could not plan that reel.', true); return; }
+    if (gen !== studio.buildGen) return false;    /* cancelled while planning */
+    if (!r || !r.ok) { say((r && r.error) || 'Could not plan that reel.', true); return false; }
     studio_closeModals();
-    const ad = studio.adding;
     /* A rebuild renders over the reel it rebuilds rather than beside it. */
     if (ad && ad.output) r.project.output = ad.output;
     studio_setProject(r.project, r.derived, r.notes, r.song);
@@ -4276,6 +4345,7 @@ async function studio_build(opts) {
     studio_tab('timeline');
     studio_fit();
     studio_render();
+    return true;
   } finally {
     btn.disabled = false;
   }
@@ -4708,7 +4778,10 @@ async function studio_render() {
   clearTimeout(studio.checkTimer);
   studio.gen++;
   /* The previous render is old news once a new one is asked for: a poll that
-     lands in between must not say "Ready" about the reel being replaced. */
+     lands in between must not say "Ready" about the reel being replaced. Unless
+     the server refuses this one -- then the render still running is still news,
+     and forgetting it lost its progress and its "Reel ready". */
+  const wasSeen = studio.seenJob, wasWatching = studio.watching;
   studio.seenJob = studio.jobId; studio.watching = -1;
   /* Render beats the background render: the server cancels that one to start
      this, and its timer has nothing left to do. */
@@ -4731,9 +4804,11 @@ async function studio_render() {
   const r = await API.post('/api/studio/render', {project: studio.project});
   if (!r || !r.ok) {
     studio_busy(false);
+    studio.seenJob = wasSeen; studio.watching = wasWatching;
     studio.pending = sent.concat(studio.pending); studio.base = sentBase; studio.dirty = studio.pending.length > 0;
     studio_state((r && r.error) || 'Could not start the render.', true);
     studio_drawRenderCard();
+    studio_poll();                  /* a render already running is followed again */
     return;
   }
   /* AN EDIT MADE WHILE THE SERVER WAS ANSWERING STAYS. The answer is the project
@@ -5684,7 +5759,13 @@ async function studio_addClips() {
     fill: p.fill || '', keep_all: !!p.keep_all,
     edited: !!(d && d.edited) || studio.undo.length > 0,
     keep: {cam: p.cam, vfit: p.vfit, handle: p.handle, handle_pos: p.handle_pos,
-           outro_len: p.outro_len, overlays: p.overlays, lyrics: p.lyrics}
+           outro_len: p.outro_len, overlays: p.overlays, lyrics: p.lyrics},
+    /* WHAT THE PLAYER CHOSE, ASKED AGAIN. A rebuild of a Build and drop reel built on whichever
+       set-up scored best, held the page's own part to an end, and dropped the intro, Headshots
+       only and any drops marked by hand -- none of them were carried. The project keeps them. */
+    build_clip: p.build_clip || '', part_auto: !!p.part_auto, hs_only: !!p.hs_only,
+    intro_clip: p.intro_clip && p.intro_clip.path ? {path: p.intro_clip.path, audio: !!p.intro_clip.audio} : null,
+    drops: Array.isArray(p.hand_drops) ? p.hand_drops.slice() : null
   };
   studio_tab('clips');
   studio_renderLib();
@@ -10983,8 +11064,19 @@ const GD_STEPS = ['Style', 'Song', 'Clips', 'Look', 'Check and make'];
 /* Montage since v1.79.15: its third review, 7.2/10 on its own planner (4.2 on the general one); the one blocker
    named, capture overlays in the footage, is the cleanup the player set aside. */
 const GD_BEST = ['drop', 'fasthead', 'montage'];
-studio.gd = {step: 0, style: '', auto: false, setup: '', quick: [], fmt: 'vertical', fit: 'near', lyrics: 'off', name: '',
-             verdict: null, asked: 0, busy: false, timer: null};
+/* THE GUIDE OWNS ITS SPEC. Everything a guided reel is made from is here or in the song: the style,
+   the clips, the shape, the lyrics, the name. Nothing is read from the Make page -- Perfect fit left
+   there, Headshots only ticked there, an intro, kills or drops marked there, a reel being rebuilt
+   there all used to reach a guided plan unseen, and some reached the verdict but not the plan. One
+   function, studio_gdBody, turns this into the request, and the verdict and the plan both send it.
+   `run` is the plan in flight: closing or going Back bumps it, and a plan that returns to a newer
+   run is dropped. `held` is what the chip says when a reel was not made (a render running, a plan
+   refused), until the next answer. `drops` are the song's drops as the player marked them on the Song
+   step, null while they are AutoStream's: part of the spec, so the verdict and the plan both carry
+   them; a drop belongs to its song, and a new song or a new reel starts from null again. */
+studio.gd = {step: 0, style: '', auto: false, autoWhy: null, setup: '', quick: [], fmt: 'vertical', fit: 'near', lyrics: 'off', name: '',
+             drops: null, parts: null, head: 0, snap: false, dropDrag: null,
+             verdict: null, asked: 0, autoAsked: 0, busy: false, run: 0, held: null, timer: null};
 
 /* WHAT WAS CHOSEN LAST TIME, remembered as intent -- the style, the shape, the framing -- and not as
    results: the song and the clips are checked again against what exists now, and the chip is asked
@@ -11009,18 +11101,28 @@ function studio_gdRecall() {
   return !!gd.style;
 }
 
-function studio_gdStyle() {
-  const cat = studio.catalog;
-  return cat ? cat.styles.find(s => s.key === studio.gd.style) : null;
+function studio_gdStyle(key) {
+  const cat = studio.catalog, k = key === undefined ? studio.gd.style : key;
+  return cat ? cat.styles.find(s => s.key === k) : null;
 }
 
-/* every clip the library holds, of the game the player has most favourites in */
+/* THE GAME OF THE REEL: the one most of the chosen clips are from -- clips picked on the Clips tab
+   decide it -- else the one the player has most favourites in. */
+function studio_gdGame() {
+  const gd = studio.gd, by = {};
+  Object.values(studio.clipIndex || {}).forEach(c => {
+    if (!(c.kills || []).length) return;
+    const g = c.game || '';
+    by[g] = by[g] || {n: 0, fav: 0, picked: 0}; by[g].n++; if (c.fav) by[g].fav++;
+  });
+  [gd.setup].concat(gd.quick).forEach(id => { const c = studio.clipIndex[id]; if (c && by[c.game || '']) by[c.game || ''].picked++; });
+  const games = Object.keys(by).sort((a, b) => (by[b].picked - by[a].picked) || (by[b].fav - by[a].fav) || (by[b].n - by[a].n));
+  return games.length ? games[0] : '';
+}
+/* every clip the library holds of that game */
 function studio_gdClips() {
-  const all = Object.values(studio.clipIndex || {}).filter(c => (c.kills || []).length);
-  const by = {};
-  all.forEach(c => { const g = c.game || ''; by[g] = by[g] || {n: 0, fav: 0}; by[g].n++; if (c.fav) by[g].fav++; });
-  const games = Object.keys(by).sort((a, b) => (by[b].fav - by[a].fav) || (by[b].n - by[a].n));
-  return all.filter(c => (c.game || '') === games[0]);
+  const g = studio_gdGame();
+  return Object.values(studio.clipIndex || {}).filter(c => (c.kills || []).length && (c.game || '') === g);
 }
 function studio_gdHs(c) { return (c.hs || []).filter(h => h === true).length; }
 function studio_gdBig(c) { return /CLUTCH|LAST.ALIVE|1V|ACE/i.test((c.labels || []).join(' ') + ' ' + (c.name || '')); }
@@ -11040,19 +11142,59 @@ function studio_gdQuickScore(c) {
   const k = (c.kills || []).length;
   return (c.fav ? 2 : 0) + (studio_gdHs(c) > 0 ? 1.5 : 0) + (k === 2 ? 0.5 : 0);
 }
+
+/* WHY A CHOSEN CLIP IS NOT IN THIS STYLE'S REEL, or '' when it is. Asked again on every change of
+   style: the selection is the player's and stays in the draft, but a clip the style cannot use is
+   left out of the counts, the targets, the verdict and the plan -- and shown, with this reason --
+   rather than kept out of sight and counted. Montage's seven body kills went on counting under
+   Fast-paced headshot, and a clip of another game passed from the Clips tab could not be removed. */
+function studio_gdWhyNot(c, style) {
+  if (!(c.kills || []).length) return 'no kill was read in it';
+  const g = studio_gdGame();
+  if ((c.game || '') !== g) return 'another game (' + (c.game || 'unknown') + '): this reel is ' + (g || 'one game');
+  if (style === 'fasthead' && !studio_gdHs(c)) return 'not a headshot: this style is headshots only';
+  return '';
+}
+/* A clip deleted while the guide is open leaves the draft: there is nothing left to show or send. */
+function studio_gdPrune() {
+  const gd = studio.gd, have = id => !!studio.clipIndex[id];
+  if (gd.setup && !have(gd.setup)) gd.setup = '';
+  gd.quick = gd.quick.filter(have);
+}
+/* What the player has chosen, usable or not. The build slot is Build and drop's alone; in any other
+   style a build clip chosen earlier is one of the clips (studio_gdAct moves it there). */
+function studio_gdChosen(d) {
+  d = d || studio.gd;
+  const out = d.style === 'drop' && d.setup ? [d.setup] : [];
+  d.quick.forEach(id => { if (out.indexOf(id) < 0) out.push(id); });
+  return out;
+}
+/* The clips the reel is made of: chosen, and usable by the style. */
+function studio_gdIds(d) {
+  d = d || studio.gd;
+  return studio_gdChosen(d).filter(id => studio.clipIndex[id] && !studio_gdWhyNot(studio.clipIndex[id], d.style));
+}
+function studio_gdLeftOut(d) {
+  d = d || studio.gd;
+  return studio_gdChosen(d).map(id => studio.clipIndex[id]).filter(Boolean)
+    .map(c => ({c: c, why: studio_gdWhyNot(c, d.style)})).filter(x => x.why);
+}
+
 /* THE CLIPS EACH STYLE CAN USE. Build and drop splits them into a build and quick kills.
    Fast-paced headshot is headshots only (clips/fasthead.py): a clip with none is no use to it,
    and Pick for me used to fill its slots with body kills the plan then left out. Any other style
    takes every clip -- the build's clutches included, which only Build and drop sets apart. */
-function studio_gdPools() {
-  const all = studio_gdClips(), style = studio.gd.style;
+function studio_gdPools(style, setup) {
+  style = style === undefined ? studio.gd.style : style;
+  setup = setup === undefined ? studio.gd.setup : setup;
+  const all = studio_gdClips();
   const setups = all.filter(studio_gdIsSetup).sort((a, b) => studio_gdSetupScore(b) - studio_gdSetupScore(a));
   if (style === 'fasthead') {
     const quick = all.filter(c => studio_gdHs(c) > 0)
       .sort((a, b) => (studio_gdHsDouble(b) - studio_gdHsDouble(a)) || (studio_gdQuickScore(b) - studio_gdQuickScore(a)));
     return {setups: [], quick: quick};
   }
-  const quick = all.filter(c => (style !== 'drop' || !studio_gdIsSetup(c)) && c.id !== studio.gd.setup)
+  const quick = all.filter(c => style !== 'drop' || (!studio_gdIsSetup(c) && c.id !== setup))
     .sort((a, b) => studio_gdQuickScore(b) - studio_gdQuickScore(a));
   return {setups: setups, quick: quick};
 }
@@ -11061,20 +11203,112 @@ function studio_gdHsDouble(c) {
   const ks = (c.kills || []).map((k, i) => [Number(k), (c.hs || [])[i] === true]).sort((a, b) => a[0] - b[0]);
   return ks.some((k, i) => i > 0 && k[1] && ks[i - 1][1] && k[0] - ks[i - 1][0] >= 0.25 && k[0] - ks[i - 1][0] <= 2.5) ? 1 : 0;
 }
-/* how many quick kills the part wants after a build of about eight seconds, half a second apart --
-   or, for Fast-paced headshot, one headshot a second or so for its 36 s */
-function studio_gdNeed() {
-  const mk = studio.mk || {};
-  if (studio.gd.style === 'fasthead') return Math.max(8, Math.round(((mk.end - mk.start) > 4 ? (mk.end - mk.start) : 36) * 0.95));
-  const len = (mk.end - mk.start) > 4 ? (mk.end - mk.start) : 28;
-  return Math.max(6, Math.round((len - 8.5) / 0.52));
+
+/* THE DROP AND THE PART THE GUIDE PLANS ON: the guide's drops -- the song's own, or the player's --
+   for the guide's own shape and style. */
+function studio_gdMainDrop(d) { return studio_dropsMain((d || studio.gd).drops, studio.songShape); }
+function studio_gdPart(d) {
+  d = d || studio.gd;
+  const sh = studio.songShape;
+  if (!studio.song || !sh || !sh.seconds) return null;
+  return studio_partFor(sh, d.fmt, d.style === 'drop' ? studio_gdMainDrop(d) : null);
 }
+/* how many quick kills the part wants after a build of about eight seconds, half a second apart --
+   or, for Fast-paced headshot, one headshot a second or so */
+function studio_gdNeed(d) {
+  d = d || studio.gd;
+  const p = studio_gdPart(d), len = p ? p[1] - p[0] : 0;
+  if (d.style === 'fasthead') return Math.max(8, Math.round((len > 4 ? len : 36) * 0.95));
+  return Math.max(6, Math.round(((len > 4 ? len : 28) - 8.5) / 0.52));
+}
+/* what a clip counts for against that: a two-kill clip plays as a quick run, except in a style of one headshot a cut */
+function studio_gdWeight(c, style) { return style === 'fasthead' ? 1 : (c.kills || []).length >= 2 ? 2 : 1; }
 function studio_gdKillsIn(ids) {
   return ids.reduce((n, id) => n + (((studio.clipIndex[id] || {}).kills || []).length || 0), 0);
 }
-function studio_gdIds() {
-  const gd = studio.gd;
-  return (gd.setup ? [gd.setup] : []).concat(gd.quick.filter(id => id !== gd.setup));
+
+/* WHAT PICK FOR ME CHOOSES, without choosing it, for any draft. `top` keeps every clip already chosen
+   and only adds -- the chip's "Add the best" -- where the button draws the clips again. Either way
+   the build clip the player chose stays: a recommendation never overrules a pick, and "Pick the
+   best" used to swap the ACE they had chosen for the clip that scored highest. */
+function studio_gdPickFor(d, top) {
+  let setup = d.setup;
+  if (d.style === 'drop') {
+    const own = setup && studio.clipIndex[setup];
+    /* theirs, whatever the scores say -- unless it cannot be in this reel at all */
+    if (!own || studio_gdWhyNot(own, 'drop')) {
+      const best = studio_gdPools('drop', '').setups[0];
+      setup = best ? best.id : '';
+    }
+  }
+  const pools = studio_gdPools(d.style, setup), need = studio_gdNeed(d);
+  const skip = id => d.style === 'drop' && id === setup;
+  const quick = top ? d.quick.slice() : [];
+  let n = quick.map(id => studio.clipIndex[id])
+    .filter(c => c && !skip(c.id) && !studio_gdWhyNot(c, d.style))
+    .reduce((s, c) => s + studio_gdWeight(c, d.style), 0);
+  for (const c of pools.quick) {
+    if (n >= need) break;
+    if (quick.indexOf(c.id) >= 0 || skip(c.id)) continue;
+    quick.push(c.id);
+    n += studio_gdWeight(c, d.style);
+  }
+  return {setup: setup, quick: quick};
+}
+function studio_gdPickAll(top) { Object.assign(studio.gd, studio_gdPickFor(studio.gd, !!top)); }
+
+/* THE ONE REQUEST. Built from the guide's spec and nothing else, for the verdict and the plan alike,
+   so what the chip judged is what gets planned: the same clips, the same part (from the guide's own
+   shape), the same build clip, and every way of ordering and dialling set to the style's own --
+   `arrange` said outright, so a Perfect fit chosen on the Make page cannot take over a Build and
+   drop. `d` is a draft of the spec (Pick the style for me judges three); the guide's own when absent. */
+function studio_gdBody(draft) {
+  const d = draft || studio.gd, ids = studio_gdIds(d), part = studio_gdPart(d);
+  const body = {
+    clips: ids.map(id => studio.clipIndex[id].path), style: d.style, song: studio.song,
+    format: d.fmt, vfit: d.fmt === 'vertical' ? d.fit : 'zoom',
+    name: String(d.name || '').trim() || studio_gdDefaultName(d),
+    template: null,
+    shaping: {length: 1, pace: 1, effects: 1, flash: 1, arrange: 'build', pins: {}, shuffle_seed: 0,
+              hs_only: false, fill: '', keep_all: false}
+  };
+  if (d.style === 'drop' && d.setup && ids.indexOf(d.setup) >= 0) body.shaping.build_clip = studio.clipIndex[d.setup].path;
+  if (part) {
+    body.part_start = part[0];
+    body.part_end = part[1];
+    body.shaping.part_auto = true;      /* drawn by the guide, never moved: Build and drop takes it as a length */
+  }
+  /* the drops as the player marked them on the Song step; none sent while they are the song's own */
+  if (studio.song && d.drops) body.drops = studio_dropsSent(d.drops);
+  if (d.lyrics && d.lyrics !== 'off') body.keep = {lyrics: {look: d.lyrics}};
+  return body;
+}
+
+/* THE SPEC, HANDED TO THE MAKE PAGE: what All settings opens on and what a guided reel leaves there.
+   Every setting the guide does not ask goes back to the style's own, so the page shows the reel the
+   guide judged and its Build sends the same request (studio_planBody == studio_gdBody). A new reel,
+   never a rebuild: "Add clips" to another reel is not carried into it. */
+function studio_gdHandOff(body) {
+  const gd = studio.gd, b = body || studio_gdBody(), ids = studio_gdIds(), mk = studio.mk;
+  if (gd.style) studio.style = gd.style;
+  studio.fmt = gd.fmt; studio.vfit = gd.fit;
+  studio.selected = ids; studio_syncSelection();
+  studio.buildClip = (b.shaping || {}).build_clip || '';
+  studio.adding = null; studio.picks = null; studio.order = 'chosen';
+  studio.shaping = {length: 1, pace: 1, effects: 1, flash: 1};
+  studio.arrange = 'build'; studio.pins = {}; studio.shuffleSeed = 0;
+  studio.fill = ''; studio.keepAll = false;
+  studio.mkIntro = {path: '', audio: false};
+  studio.mkKeep = b.keep ? JSON.parse(JSON.stringify(b.keep)) : null;
+  const hs = studio_el('studio-hs-only');
+  if (hs) hs.checked = false;
+  mk.hand = []; mk.edited = false; mk.planned = null; mk.sel = {};
+  mk.drops = gd.drops ? JSON.parse(JSON.stringify(gd.drops)) : null;   /* the guide's drops, the page's to change now */
+  mk.mode = 'part'; mk.touched = false;
+  if (b.part_start != null) { mk.start = b.part_start; mk.end = b.part_end; }
+  studio_el('studio-name').value = b.name;
+  studio_arrangeDraw();
+  studio_shapeDraw();
 }
 
 async function studio_gdOpen() {
@@ -11083,8 +11317,11 @@ async function studio_gdOpen() {
     studio.songList = (r && r.ok && r.songs) || [];
   }
   if (!studio.catalog || !Object.keys(studio.clipIndex || {}).length) { toast('The clips are still loading.', 'warn'); return; }
-  studio.gd.step = 0; studio.gd.verdict = null;
-  if (!studio.gd.style && !studio.gd.auto) studio_gdRecall();
+  const gd = studio.gd;
+  gd.step = 0; gd.verdict = null; gd.held = null;
+  if (!gd.style && !gd.auto) studio_gdRecall();
+  studio_gdPrune();
+  studio_gdAudioWire();
   studio_show('studio-preview-scrim', false);
   studio_show('studio-make-scrim', false);
   studio_show('studio-guide-scrim', true);
@@ -11104,33 +11341,54 @@ async function studio_gdOpenWith(ids) {
   gd.verdict = null;
   studio_gdDraw();
 }
+/* A plan in flight, let go: its answer is dropped when it comes (studio_build checks buildGen), and
+   the guide is usable at once rather than ignoring every click until it does. */
+function studio_gdDetach() {
+  const gd = studio.gd;
+  if (!gd.busy) return;
+  gd.run++; studio.buildGen++; gd.busy = false;
+}
 function studio_gdClose() {
-  if (studio.gd.busy) studio.buildGen++;   /* closing while it plans abandons the plan */
+  studio_gdDetach();
+  const a = studio_el('studio-gd-audio');
+  if (a && !a.paused) a.pause();
   studio_show('studio-guide-scrim', false);
   studio_makePage(false);
 }
 
 function studio_gdCanGo(i) {
   const gd = studio.gd;
+  if (gd.busy && i !== gd.step) return false;   /* planning: Back or Close lets go of it first */
   if (i <= 0) return true;
   if (!gd.style && !gd.auto) return false;
   if (i >= 2 && !studio.song) return false;
-  if (i >= 3 && !gd.quick.length && !gd.setup) return false;
+  if (i >= 3 && !studio_gdIds().length) return false;
   return true;
 }
 
 function studio_gdDraw() {
   const gd = studio.gd;
+  studio_gdPrune();
+  /* drops marked on another song -- changed through a file dialog or on the Make page -- are not this one's */
+  if (gd.drops && gd.dropsFor !== studio.song) gd.drops = null;
   studio_el('studio-gd-steps').innerHTML = GD_STEPS.map((n, i) =>
     '<li><button type="button" class="gd-step' + (i === gd.step ? ' is-on' : '') + (i < gd.step ? ' is-done' : '') +
     '" data-act="studio-gd" data-gd="step" data-i="' + i + '"' + (studio_gdCanGo(i) ? '' : ' disabled') +
     ' aria-current="' + (i === gd.step ? 'step' : 'false') + '"><b>Step ' + (i + 1) + '</b><span>' + esc(n) + '</span></button></li>').join('');
   const draw = [studio_gdDrawStyle, studio_gdDrawSong, studio_gdDrawClips, studio_gdDrawLook, studio_gdDrawCheck][gd.step];
   studio_el('studio-gd-body').innerHTML = draw();
-  studio_el('studio-gd-back').disabled = gd.step === 0;
+  if (gd.step === 1) studio_gdDropWire();
+  else { const a = studio_el('studio-gd-audio'); if (a && !a.paused) a.pause(); }
+  const back = studio_el('studio-gd-back');
+  back.disabled = gd.step === 0;
+  back.textContent = gd.busy ? 'Back (stop planning)' : 'Back';
   const next = studio_el('studio-gd-next');
-  next.textContent = gd.step === 4 ? 'Make the reel' : 'Next';
+  next.textContent = gd.step === 4 ? (gd.busy ? 'Planning…' : 'Make the reel') : 'Next';
   next.disabled = gd.step < 4 ? !studio_gdCanGo(gd.step + 1) : (gd.busy || !!(gd.verdict && gd.verdict.level === 'bad'));
+  /* the name as it is typed, so a redraw keeps it and the request carries it */
+  const nm = studio_el('studio-gd-name');
+  if (nm) nm.addEventListener('input', () => { gd.name = nm.value; });
+  if (gd.busy) return;                     /* the chip is saying what the plan is doing */
   studio_gdChip();
   if (gd.step >= 1) studio_gdAsk();
   studio_gdRemember();
@@ -11148,57 +11406,380 @@ function studio_gdDrawStyle() {
   const best = cat.styles.filter(s => GD_BEST.includes(s.key)), rest = cat.styles.filter(s => !GD_BEST.includes(s.key));
   return '<div class="gd-q"><h3>What kind of reel?</h3><p class="muted">Pick a style, or give us a song and we will choose one for it.</p></div>' +
     '<button type="button" class="gd-auto' + (gd.auto ? ' is-on' : '') + '" data-act="studio-gd" data-gd="auto"><strong>Not sure? Give us a song and we will pick the style.</strong>' +
-    '<span class="muted">We read the song for its drop and tempo and choose the style that suits it.</span></button>' +
-    (gd.auto && studio.song && !gd.style ? '<p class="gd-note">That song has no clear drop, so no style is picked for you yet. Choose one below.</p>' : '') +
+    '<span class="muted">We try each recommended style on the song and your clips, and choose the one that works best.</span></button>' +
+    (gd.auto && studio.song ? studio_gdAutoNote() : '') +
     '<div class="gd-grid gd-grid-best">' + best.map(card).join('') + '</div>' +
     '<details class="gd-more"' + (gd.style && !GD_BEST.includes(gd.style) ? ' open' : '') + '><summary>More styles <span class="muted">(not reviewed yet: they work, but are not at the standard of the ones above)</span></summary>' +
     '<div class="gd-grid">' + rest.map(card).join('') + '</div></details>';
 }
 
+/* WHAT PICK THE STYLE FOR ME FOUND, in words: the style it chose and why not the others -- or, when
+   none fits, each one's reason and what to do instead, never a dead end. */
+function studio_gdAutoNote() {
+  const gd = studio.gd, why = gd.autoWhy;
+  if (!why) return '<p class="muted">Trying each recommended style on this song and your clips…</p>';
+  const others = why.filter(w => w.key !== gd.style);
+  const list = others.length ? '<ul class="gd-why">' + others.map(w => '<li><b>' + esc(w.label) + ':</b> ' + esc(w.text) + '</li>').join('') + '</ul>' : '';
+  if (gd.style) {
+    return '<div class="gd-field"><p class="gd-picked"><b>' + esc((studio_gdStyle() || {label: ''}).label) +
+      '</b> suits this song with your clips.' + (others.length ? ' Not the others:' : '') + '</p>' + list + '</div>';
+  }
+  return '<div class="gd-field"><p class="gd-note">None of the recommended styles works with this song and your clips:</p>' + list +
+    '<div class="gd-acts">' + (studio.songShape && studio_gdMainDrop() == null
+      ? '<button type="button" class="btn btn-primary btn-sm" data-act="studio-gd" data-gd="fix" data-fix="mark-drop:drop">Mark the drop yourself, for Build and drop</button>' : '') +
+    '<button type="button" class="btn btn-primary btn-sm" data-act="studio-gd" data-gd="step" data-i="1">Choose another song</button>' +
+    '<button type="button" class="btn btn-sm" data-act="studio-gd" data-gd="more">Show the other styles</button></div></div>';
+}
+
+/* Each recommended style, tried on this song with the clips it would take (the player's own, when
+   they have chosen some), through the same verdict the chip gives; the best that works is chosen --
+   one that works before one that works with a but, in the order of GD_BEST. It used to choose Build
+   and drop when the song had a drop and nothing otherwise, so a song with none was a dead end. */
+async function studio_gdAutoStyle() {
+  const gd = studio.gd, mine = studio_gdChosen(Object.assign({}, gd, {style: ''})).length > 0;
+  const ticket = ++gd.autoAsked;
+  const keys = GD_BEST.filter(k => studio.catalog.styles.some(s => s.key === k));
+  const drafts = keys.map(k => {
+    const d = Object.assign({}, gd, {style: k, quick: gd.quick.slice()});
+    if (k !== 'drop' && d.setup && d.quick.indexOf(d.setup) < 0) d.quick.unshift(d.setup);
+    if (!mine) Object.assign(d, studio_gdPickFor(d, false));
+    return d;
+  });
+  const got = await Promise.all(drafts.map(d => studio_gdNone(d) ? Promise.resolve({ok: true, verdict: studio_gdNone(d)})
+    : API.post('/api/studio/feasible', studio_gdBody(d)).catch(() => null)));
+  if (ticket !== gd.autoAsked || !gd.auto) return;
+  const rank = {ok: 0, warn: 1};
+  const tried = drafts.map((d, i) => ({d: d, v: got[i] && got[i].ok ? got[i].verdict : {level: 'bad', text: 'It could not be checked just now.'}}));
+  gd.autoWhy = tried.map(x => ({key: x.d.style, label: (studio_gdStyle(x.d.style) || {label: x.d.style}).label, level: x.v.level, text: x.v.text}));
+  /* a style that could only be planned the general way is that style in name only: not chosen */
+  const fits = tried.filter(x => x.v.level in rank && !x.v.fallback).sort((a, b) => rank[a.v.level] - rank[b.v.level]);
+  if (!fits.length) { gd.style = ''; return; }
+  const pick = fits[0].d;
+  gd.style = pick.style;
+  if (!mine) { gd.setup = pick.setup; gd.quick = pick.quick; }
+  else if (pick.style !== 'drop') gd.quick = pick.quick;
+}
+
+/* THE SONG, SEEN AND MARKED, ON THE SONG STEP. Build and drop on a song whose drop the analysis
+   missed was a dead end ("choose another song"); the drops could only be seen and marked on the
+   Make page, which the guide does not show. The same machinery as the Make page's drop lane
+   (studio_dropsOf and the rest, above), on the guide's own list, `gd.drops`: null while the drops
+   are AutoStream's, a list once the player has touched them. The list is part of the guide's spec,
+   so the verdict and the plan both carry it (studio_gdBody). */
+const GD_LEAD = 4;                         /* "Play into the drop" starts this many seconds before it */
+const GD_DROP_H = 150, GD_DROP_LANE = 24, GD_DROP_PARTS = 18;
+
+/* The song's parts and loudness, read once per song for the drawing -- not needed to plan. */
+async function studio_gdParts() {
+  const gd = studio.gd, song = studio.song;
+  if (!song || (gd.parts && gd.parts.song === song)) return;
+  gd.parts = {song: song, sections: [], energy: [], hz: 10, loading: true};
+  const r = await API.post('/api/studio/songparts', {song: song}).catch(() => null);
+  if (!gd.parts || gd.parts.song !== song) return;
+  gd.parts = {song: song, sections: (r && r.ok && r.sections) || [], energy: (r && r.ok && r.energy) || [],
+              hz: (r && r.hz) || 10, loading: false};
+  studio_gdDropDraw();
+}
+
+function studio_gdAudio() {
+  const a = studio_el('studio-gd-audio');
+  if (a && studio.song && a.getAttribute('data-song') !== studio.song) {
+    a.pause();
+    a.src = studio_media('/api/reel/audio', studio.song);
+    a.setAttribute('data-song', studio.song);
+  }
+  return a;
+}
+/* where the playhead is: the player's, once it has the song, else where it was last sent */
+function studio_gdNow() {
+  const a = studio_el('studio-gd-audio');
+  return a && a.getAttribute('data-song') === studio.song && a.readyState >= 1 ? (a.currentTime || 0) : (studio.gd.head || 0);
+}
+function studio_gdSeek(t) {
+  const a = studio_gdAudio(), sh = studio.songShape;
+  if (!a || !sh) return;
+  t = Math.max(0, Math.min(sh.seconds, t));
+  if (a.readyState >= 1) a.currentTime = t;
+  else a.addEventListener('loadedmetadata', () => { a.currentTime = t; }, {once: true});
+  studio.gd.head = t;
+  studio_gdDropDraw();
+}
+function studio_gdPlay(from) {
+  const a = studio_gdAudio();
+  if (!a) return;
+  if (from == null && !a.paused) { a.pause(); return; }
+  if (from != null) studio_gdSeek(from);
+  a.play().catch(() => toast('The song could not be played.', 'warn'));
+}
+/* Into a drop: from a few seconds before it, so the build is heard arriving. */
+function studio_gdPlayInto(t) { studio_gdPlay(Math.max(0, t - GD_LEAD)); }
+
+/* The guide's drops, as the drawing and the list show them. */
+function studio_gdDropList() { return studio_dropsOf(studio.gd.drops, studio.songShape); }
+/* A change to the drops is a change to the spec: the part may move and the verdict is asked again. */
+function studio_gdDropsChanged() {
+  const gd = studio.gd;
+  gd.drops.sort((x, y) => x.t - y.t);
+  gd.dropsFor = studio.song;
+  gd.verdict = null;
+  studio_gdDraw();
+}
+function studio_gdAddDrop(t) {
+  const gd = studio.gd, sh = studio.songShape;
+  if (!sh) return;
+  gd.drops = studio_dropsOwned(gd.drops, sh);
+  gd.drops.push(studio_dropNew(Math.max(0, Math.min(sh.seconds, t)), 'studio-gd-snap'));
+  studio_gdDropsChanged();
+}
+function studio_gdDelDrop(id) {
+  const gd = studio.gd;
+  gd.drops = studio_dropsOwned(gd.drops, studio.songShape).filter(d => d.id !== id);
+  studio_gdDropsChanged();
+}
+function studio_gdNudgeDrop(id, by) {
+  const gd = studio.gd;
+  gd.drops = studio_dropsOwned(gd.drops, studio.songShape);
+  const d = gd.drops.find(x => x.id === id);
+  if (!d) return;
+  d.t = Math.max(0, Math.round((d.t + by) * 1000) / 1000); d.auto = false;
+  studio_gdDropsChanged();
+}
+
+function studio_gdDropView() {
+  const gd = studio.gd, sh = studio.songShape;
+  if (!sh) return '';
+  const list = studio_gdDropList(), main = studio_gdMainDrop();
+  const row = (d, i) => {
+    const name = 'drop ' + (i + 1), isMain = main != null && Math.abs(d.t - main) < 1e-3;
+    return '<li class="gd-droprow' + (d.hand ? ' is-hand' : '') + '"><span class="mono">D' + (i + 1) + '</span>' +
+      '<span class="mono">' + esc(studio_secs(d.t)) + '</span><span class="gd-who">' + (d.hand ? 'yours' : 'AutoStream’s') + '</span>' +
+      (isMain ? '<span class="gd-main">main drop</span>' : '<span></span>') +
+      '<span class="gd-droptools">' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="drop-into" data-t="' + d.t + '" aria-label="Play into ' + name + '">Play into</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="drop-nudge" data-id="' + esc(d.id) + '" data-by="-0.1" aria-label="Move ' + name + ' a tenth of a second earlier">&minus;0.1</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="drop-nudge" data-id="' + esc(d.id) + '" data-by="0.1" aria-label="Move ' + name + ' a tenth of a second later">+0.1</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="drop-del" data-id="' + esc(d.id) + '" aria-label="Remove ' + name + '">Remove</button>' +
+      '</span></li>';
+  };
+  const a = studio_el('studio-gd-audio'), playing = a && !a.paused && a.getAttribute('data-song') === studio.song;
+  return '<section class="gd-slot gd-drops" id="studio-gd-drops"><div class="gd-slothead"><h4>The drops</h4>' +
+    '<span class="mono" id="studio-gd-dropcount">' + (gd.drops ? list.length + (list.length === 1 ? ' drop' : ' drops') + ', as you set them' : list.length + ' found by AutoStream') + '</span></div>' +
+    '<p class="muted" style="margin:0">Where the bass comes in. Build and drop builds into the main one. Listen, and mark it yourself if it is not where you hear it: ' +
+    'click the song to move the playhead, double-click to mark a drop there, drag a drop to move it.</p>' +
+    '<div class="gd-dropbox"><canvas id="studio-gd-dropcv" aria-label="The song: its loudness, its parts and its drops"></canvas></div>' +
+    '<div class="gd-transport" role="group" aria-label="Player">' +
+    '<button type="button" class="btn btn-sm gd-play" data-act="studio-gd" data-gd="play" id="studio-gd-play" aria-label="' + (playing ? 'Pause' : 'Play') + '">' +
+      icon(playing ? 'pause' : 'play') + '<span>' + (playing ? 'Pause' : 'Play') + '</span></button>' +
+    '<span class="mono gd-time" id="studio-gd-time">' + studio_dur(studio_gdNow()) + ' / ' + studio_dur(sh.seconds) + '</span>' +
+    '<input type="range" class="gd-seek" id="studio-gd-seek" min="0" max="1000" step="1" value="' + Math.round(studio_gdNow() / Math.max(1, sh.seconds) * 1000) + '" aria-label="Seek">' +
+    '<label class="gd-vol"><span class="muted">Volume</span><input type="range" id="studio-gd-vol" min="0" max="1" step="0.05" value="' + (a ? a.volume : 0.8) + '" aria-label="Volume"></label>' +
+    '<button type="button" class="btn btn-sm" data-act="studio-gd" data-gd="drop-into" data-t="' + (main == null ? '' : main) + '"' + (main == null ? ' disabled' : '') + '>Play into the drop</button>' +
+    '</div>' +
+    '<div class="gd-acts">' +
+    '<button type="button" class="btn btn-sm" data-act="studio-gd" data-gd="drop-add" id="studio-gd-dropadd">Mark a drop at the playhead</button>' +
+    '<label class="gd-snap"><input type="checkbox" id="studio-gd-snap"' + (gd.snap ? ' checked' : '') + '> Snap to the beat</label>' +
+    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="drop-reset"' + (gd.drops ? '' : ' disabled') + '>Back to AutoStream’s drops</button>' +
+    '</div>' +
+    (list.length ? '<ol class="gd-droplist" id="studio-gd-droplist">' + list.map(row).join('') + '</ol>'
+                 : '<p class="gd-note" id="studio-gd-droplist">' + (gd.drops ? 'No drops: every one was removed.' : 'AutoStream found no drop in this song.') + ' Mark one where you hear the bass come in.</p>') +
+    '</section>';
+}
+
+/* The drawing: loudness (the song's energy, or its waveform until that is read), its parts named
+   along the top, the part the guide plans on, the drops -- AutoStream's hollow, the player's solid,
+   the main one taller and named -- and the playhead. Redrawn alone while it plays or a drop is dragged. */
+function studio_gdDropDraw() {
+  const cv = studio_el('studio-gd-dropcv'), sh = studio.songShape, gd = studio.gd;
+  if (!cv || !sh) return;
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth || 600, H = GD_DROP_H;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); cv.style.height = H + 'px';
+  const x = cv.getContext('2d');
+  x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  x.clearRect(0, 0, W, H);
+  const X = t => t / sh.seconds * W, top = GD_DROP_PARTS + GD_DROP_LANE, base = H - 4;
+  const warn = studio_tok('--warn'), ok = studio_tok('--ok'), faint = studio_tok('--text-tertiary');
+  /* the part the guide plans on */
+  const part = studio_gdPart();
+  if (part) {
+    x.fillStyle = studio_tok('--accent'); x.globalAlpha = 0.1;
+    x.fillRect(X(part[0]), GD_DROP_PARTS, X(part[1]) - X(part[0]), H - GD_DROP_PARTS);
+    x.globalAlpha = 1;
+  }
+  /* the parts, named */
+  const p = gd.parts && gd.parts.song === studio.song ? gd.parts : null;
+  ((p && p.sections) || []).forEach(s => {
+    const a = X(s.start), b = X(s.end), hot = s.kind === 'drop' || s.kind === 'riser';
+    x.fillStyle = hot ? warn : studio_tok('--border-subtle');
+    x.globalAlpha = hot ? 0.45 : 0.6;
+    x.fillRect(a, 1, Math.max(1, b - a - 1), GD_DROP_PARTS - 4);
+    x.globalAlpha = 1;
+    x.fillStyle = studio_tok('--text-secondary'); x.font = '11px system-ui, sans-serif';
+    if (b - a > 34) x.fillText(SG_PARTS[s.kind] || s.kind, a + 4, GD_DROP_PARTS - 6);
+  });
+  /* loudness: the energy curve once read, the waveform's peaks until then */
+  const e = p && p.energy && p.energy.length ? p.energy : null, pk = sh.peaks || [];
+  x.fillStyle = faint; x.globalAlpha = 0.5;
+  for (let i = 0; i < W; i++) {
+    const t = i / W * sh.seconds;
+    const v = e ? (e[Math.min(e.length - 1, Math.floor(t * (p.hz || 10)))] || 0)
+                : (pk[Math.min(pk.length - 1, Math.floor(t / sh.seconds * pk.length))] || 0);
+    const h = Math.max(1, Math.min(1, v) * (base - top));
+    x.fillRect(i, base - h, 1, h);
+  }
+  x.globalAlpha = 1;
+  /* the drops */
+  const main = studio_gdMainDrop(), drag = gd.dropDrag;
+  studio_gdDropList().forEach((d, i) => {
+    const t = drag && drag.id === d.id && drag.moved ? drag.t : d.t, xx = X(t);
+    const isMain = main != null && Math.abs(d.t - main) < 1e-3;
+    x.fillStyle = warn; x.globalAlpha = isMain ? 0.9 : 0.5;
+    x.fillRect(xx - (isMain ? 1 : 0.75), GD_DROP_PARTS + GD_DROP_LANE - 4, isMain ? 2 : 1.5, H - GD_DROP_PARTS - GD_DROP_LANE);
+    x.globalAlpha = 1;
+    x.beginPath();
+    x.moveTo(xx - 8, GD_DROP_PARTS + 2); x.lineTo(xx + 8, GD_DROP_PARTS + 2); x.lineTo(xx, GD_DROP_PARTS + 17); x.closePath();
+    if (d.hand) { x.fillStyle = warn; x.fill(); }
+    else { x.fillStyle = studio_tok('--surface'); x.fill(); x.strokeStyle = warn; x.lineWidth = 1.5; x.stroke(); }
+    x.fillStyle = warn; x.font = '10px monospace';
+    x.fillText(isMain ? 'D' + (i + 1) + ' main' : 'D' + (i + 1), xx + 10, GD_DROP_PARTS + 13);
+  });
+  /* the playhead */
+  x.fillStyle = studio_tok('--bad');
+  x.fillRect(X(studio_gdNow()) - 1, GD_DROP_PARTS, 2, H - GD_DROP_PARTS);
+  const tl = studio_el('studio-gd-time'), sk = studio_el('studio-gd-seek');
+  if (tl) tl.textContent = studio_dur(studio_gdNow()) + ' / ' + studio_dur(sh.seconds);
+  if (sk && document.activeElement !== sk) sk.value = String(Math.round(studio_gdNow() / Math.max(1, sh.seconds) * 1000));
+}
+
+/* Click to seek, double-click to mark, drag a drop to move it. */
+function studio_gdDropWire() {
+  const cv = studio_el('studio-gd-dropcv'), gd = studio.gd;
+  if (!cv) return;
+  const at = e => { const r = cv.getBoundingClientRect(); return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * studio.songShape.seconds; };
+  const near = e => {
+    const r = cv.getBoundingClientRect(), px = e.clientX - r.left, sh = studio.songShape;
+    let best = null, gap = 9;
+    studio_gdDropList().forEach(d => { const g = Math.abs(d.t / sh.seconds * r.width - px); if (g < gap) { gap = g; best = d; } });
+    return best;
+  };
+  cv.addEventListener('pointerdown', e => {
+    const d = near(e);
+    if (d) { gd.dropDrag = {id: d.id, t: d.t, from: e.clientX, moved: false}; cv.setPointerCapture(e.pointerId); return; }
+    studio_gdSeek(at(e));
+  });
+  cv.addEventListener('pointermove', e => {
+    const g = gd.dropDrag;
+    if (!g) return;
+    if (Math.abs(e.clientX - g.from) > 3) g.moved = true;
+    if (g.moved) { g.t = at(e); studio_gdDropDraw(); }
+  });
+  const up = e => {
+    const g = gd.dropDrag;
+    gd.dropDrag = null;
+    if (!g) return;
+    if (!g.moved) { studio_gdSeek(g.t); return; }
+    gd.drops = studio_dropsOwned(gd.drops, studio.songShape);
+    const d = gd.drops.find(x => x.id === g.id);
+    if (d) { d.t = studio_mkSnap(at(e), 'studio-gd-snap'); d.auto = false; }
+    studio_gdDropsChanged();
+  };
+  cv.addEventListener('pointerup', up);
+  cv.addEventListener('pointercancel', () => { gd.dropDrag = null; studio_gdDropDraw(); });
+  cv.addEventListener('dblclick', e => { if (!near(e)) studio_gdAddDrop(at(e)); });
+  const sk = studio_el('studio-gd-seek');
+  if (sk) sk.addEventListener('input', () => studio_gdSeek(Number(sk.value) / 1000 * studio.songShape.seconds));
+  const vol = studio_el('studio-gd-vol');
+  if (vol) vol.addEventListener('input', () => { const a = studio_gdAudio(); if (a) a.volume = Number(vol.value); });
+  const snap = studio_el('studio-gd-snap');
+  if (snap) snap.addEventListener('change', () => { gd.snap = snap.checked; });
+  studio_gdDropDraw();
+  studio_gdParts();
+}
+
+/* The player's own events, wired once: the button says what it will do, the playhead moves. */
+function studio_gdAudioWire() {
+  const a = studio_el('studio-gd-audio');
+  if (!a || a.getAttribute('data-wired')) return;
+  a.setAttribute('data-wired', '1');
+  a.volume = 0.8;
+  const label = () => {
+    const b = studio_el('studio-gd-play');
+    if (b) {
+      b.innerHTML = icon(a.paused ? 'play' : 'pause') + '<span>' + (a.paused ? 'Play' : 'Pause') + '</span>';
+      b.setAttribute('aria-label', a.paused ? 'Play' : 'Pause');
+    }
+  };
+  const tick = () => { studio_gdDropDraw(); if (!a.paused) requestAnimationFrame(tick); };
+  a.addEventListener('play', () => { label(); requestAnimationFrame(tick); });
+  a.addEventListener('pause', () => { label(); studio_gdDropDraw(); });
+  a.addEventListener('seeked', studio_gdDropDraw);
+}
+
 function studio_gdDrawSong() {
-  const sh = studio.songShape, list = studio.songList || [], mk = studio.mk || {};
+  const sh = studio.songShape, list = studio.songList || [], part = studio_gdPart();
   const drops = sh ? (sh.drops && sh.drops.length ? sh.drops : (sh.drop ? [sh.drop] : [])) : [];
   return '<div class="gd-q"><h3>Which song?</h3><p class="muted">We pick the best part of it for ' + esc((studio_gdStyle() || {label: 'the style'}).label) + '. You can change it under All settings.</p></div>' +
     '<div class="gd-grid">' + list.map(s => '<button type="button" class="gd-card' + (studio.song && s.path.toLowerCase() === studio.song.toLowerCase() ? ' is-on' : '') +
       '" data-act="studio-gd" data-gd="song" data-path="' + esc(s.path) + '" data-name="' + esc(s.name) + '"><span class="gd-card-name">' + esc(s.name) + '</span></button>').join('') + '</div>' +
-    '<div><button type="button" class="btn" data-act="studio-gd" data-gd="pick-song">Choose a song file&hellip;</button> ' +
+    '<div class="gd-acts"><button type="button" class="btn" data-act="studio-gd" data-gd="pick-song">Choose a song file&hellip;</button>' +
+    /* the link dialog the Song tab and the Make page use, answering to the guide */
+    '<button type="button" class="btn" data-act="studio-yt" data-for="guide">Paste a YouTube link&hellip;</button>' +
     '<span class="muted" id="studio-gd-song-msg"></span></div>' +
     (sh ? '<div class="gd-facts"><span><b>Tempo</b> ' + Math.round(sh.bpm) + ' BPM</span><span><b>Length</b> ' + studio_dur(sh.seconds) + '</span>' +
-      '<span><b>Drop</b> ' + (drops.length ? drops.map(d => studio_secs(d)).join(', ') : 'none found') + '</span>' +
-      (mk.end > mk.start ? '<span><b>Part used</b> ' + studio_secs(mk.start) + ' &rarr; ' + studio_secs(mk.end) + '</span>' : '') + '</div>' : '');
+      '<span><b>Drop</b> ' + (drops.length ? drops.map(d => studio_secs(d)).join(', ') : 'none found') +
+      (studio.gd.drops ? ' (as you set them: ' + (studio.gd.drops.length ? studio.gd.drops.map(d => studio_secs(d.t)).join(', ') : 'none') + ')' : '') + '</span>' +
+      (part ? '<span><b>Part used</b> ' + studio_secs(part[0]) + ' &rarr; ' + studio_secs(part[1]) + '</span>' : '') + '</div>' +
+      studio_gdDropView() : '');
 }
 
 function studio_gdDrawClips() {
   const gd = studio.gd, pools = studio_gdPools(), need = studio_gdNeed();
-  const have = gd.quick.reduce((n, id) => n + (((studio.clipIndex[id] || {}).kills || []).length >= 2 ? 2 : 1), 0);
+  const isBD = gd.style === 'drop', isFH = gd.style === 'fasthead', isMT = gd.style === 'montage';
+  const ids = studio_gdIds(), out = studio_gdLeftOut();
+  const quickIds = ids.filter(id => !(isBD && id === gd.setup));
+  const have = quickIds.reduce((n, id) => n + studio_gdWeight(studio.clipIndex[id], gd.style), 0);
   const tile = (c, on, act) => '<button type="button" class="gd-clip' + (on ? ' is-on' : '') + '" data-act="studio-gd" data-gd="' + act + '" data-id="' + esc(c.id) + '" aria-pressed="' + on + '">' +
     '<span class="gd-tags">' + (studio_gdHs(c) ? '<i class="gd-hs">Headshot</i>' : '<i>Body</i>') +
     (c.fav ? '<i class="gd-fav">&#9733;</i>' : '') + ((c.kills || []).length > 1 ? '<i>' + c.kills.length + ' kills</i>' : '') +
     ((c.labels || [])[0] ? '<i>' + esc(c.labels[0]) + '</i>' : '') + '</span><span class="mono">' + esc(c.name || c.id) + '</span></button>';
-  const isBD = gd.style === 'drop', isFH = gd.style === 'fasthead';
+  /* EVERY CHOSEN CLIP IS DRAWN: the best of the pool, then any chosen one beyond them -- a clip
+     counted but nowhere on screen could not be seen, let alone taken out again. */
+  const grid = (list, n) => {
+    const top = list.slice(0, n), seen = {};
+    top.forEach(c => { seen[c.id] = 1; });
+    return top.concat(quickIds.filter(id => !seen[id]).map(id => studio.clipIndex[id]))
+      .map(c => tile(c, gd.quick.includes(c.id), 'quick')).join('');
+  };
+  const label = (studio_gdStyle() || {label: 'this'}).label;
+  const left = out.length ? '<section class="gd-slot gd-left"><div class="gd-slothead"><h4>Chosen, but not in a ' + esc(label) + ' reel</h4>' +
+    '<span class="mono">' + out.length + ' left out</span></div><ul class="gd-leftlist">' + out.map(x =>
+      '<li><span class="mono">' + esc(x.c.name || x.c.id) + '</span><span class="muted">' + esc(x.why) + '</span>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="unpick" data-id="' + esc(x.c.id) + '">Remove</button></li>').join('') +
+    '</ul></section>' : '';
   if (isFH) {
-    const doubles = gd.quick.filter(id => studio_gdHsDouble(studio.clipIndex[id] || {})).length;
+    const doubles = quickIds.filter(id => studio_gdHsDouble(studio.clipIndex[id] || {})).length;
     return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">Headshots only: a clip with none has nothing for this style.</p></div>' +
       '<div><button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="pickall">Pick for me</button></div>' +
-      '<section class="gd-slot"><div class="gd-slothead"><h4>Headshots, one a cut</h4><span class="mono">' + gd.quick.length + ' of ' + need + '</span></div>' +
-      '<div class="gd-bar" aria-hidden="true"><i style="width:' + Math.min(100, Math.round(gd.quick.length / Math.max(1, need) * 100)) + '%"></i></div>' +
+      '<section class="gd-slot"><div class="gd-slothead"><h4>Headshots, one a cut</h4><span class="mono">' + have + ' of ' + need + '</span></div>' +
+      '<div class="gd-bar" aria-hidden="true"><i style="width:' + Math.min(100, Math.round(have / Math.max(1, need) * 100)) + '%"></i></div>' +
       '<p class="muted" style="margin:0">' + (doubles ? 'The finale: ' + doubles + ' chosen clip' + (doubles > 1 ? 's have' : ' has') + ' two headshots close together.'
         : 'No chosen clip has two headshots close together, so the reel ends on a single kill, not a multi-kill.') + '</p>' +
-      '<div class="gd-grid">' + pools.quick.slice(0, 60).map(c => tile(c, gd.quick.includes(c.id), 'quick')).join('') +
-      (pools.quick.length ? '' : '<p class="muted">None of your clips has a kill read as a headshot.</p>') + '</div></section>';
+      '<div class="gd-grid">' + grid(pools.quick, 60) +
+      (pools.quick.length ? '' : '<p class="muted">None of your clips has a kill read as a headshot.</p>') + '</div></section>' + left;
   }
   /* Said as it is: every clip of the game is a candidate, the favourites ranked first, and only the best of
      each kind is drawn here -- "from your favourites" read as if nothing else was considered. */
-  const all = studio_gdClips().length;
-  return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">All ' + all + ' of your ' + esc((studio_gdClips()[0] || {}).game || '') +
-    ' clips are candidates, favourites first. The best ' + Math.min(8, pools.setups.length) + ' of ' + pools.setups.length +
-    ' builds and ' + Math.min(48, pools.quick.length) + ' of ' + pools.quick.length + ' quick kills are shown; Pick for me draws on all of them.</p></div>' +
+  const all = studio_gdClips();
+  return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">All ' + all.length + ' of your ' + esc((all[0] || {}).game || '') +
+    ' clips are candidates, favourites first. ' + (isBD ? 'The best ' + Math.min(8, pools.setups.length) + ' of ' + pools.setups.length + ' builds and ' : 'The best ') +
+    Math.min(48, pools.quick.length) + ' of ' + pools.quick.length + (isBD ? ' quick kills' : ' clips') + ' are shown; Pick for me draws on all of them.' +
+    (isMT ? ' A montage needs at least four clips with a kill: with fewer it is planned the usual way, not to the song.' : '') + '</p></div>' +
     '<div><button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="pickall">Pick for me</button></div>' +
-    (isBD ? '<section class="gd-slot"><div class="gd-slothead"><h4>The build: a clutch, an ace or a multi-kill</h4><span class="mono">' + (gd.setup ? '1 of 1' : '0 of 1') + '</span></div>' +
+    (isBD ? '<section class="gd-slot"><div class="gd-slothead"><h4>The build: a clutch, an ace or a multi-kill</h4><span class="mono">' + (gd.setup && ids.indexOf(gd.setup) >= 0 ? '1 of 1' : '0 of 1') + '</span></div>' +
       '<div class="gd-grid">' + (pools.setups.slice(0, 8).map(c => tile(c, gd.setup === c.id, 'setup')).join('') || '<p class="muted">None of your clips has three kills or a clutch label.</p>') + '</div></section>' : '') +
-    '<section class="gd-slot"><div class="gd-slothead"><h4>' + (isBD ? 'After the drop: quick kills' : 'Your clips') + '</h4><span class="mono">' + (isBD ? have + ' of ' + need : gd.quick.length + ' chosen') + '</span></div>' +
+    '<section class="gd-slot"><div class="gd-slothead"><h4>' + (isBD ? 'After the drop: quick kills' : 'Your clips') + '</h4><span class="mono">' +
+      (isBD ? have + ' of ' + need : quickIds.length + ' chosen' + (isMT ? ', at least 4' : '')) + '</span></div>' +
     (isBD ? '<div class="gd-bar" aria-hidden="true"><i style="width:' + Math.min(100, Math.round(have / Math.max(1, need) * 100)) + '%"></i></div><p class="muted" style="margin:0">Headshots first. A two-kill clip counts as two: it plays as a quick run.</p>' : '') +
-    '<div class="gd-grid">' + pools.quick.slice(0, 48).map(c => tile(c, gd.quick.includes(c.id), 'quick')).join('') + '</div></section>';
+    '<div class="gd-grid">' + grid(pools.quick, 48) + '</div></section>' + left;
 }
 
 function studio_gdSeg(name, val, opts) {
@@ -11206,7 +11787,8 @@ function studio_gdSeg(name, val, opts) {
 }
 /* THE SONG'S WORDS ON THE REEL, asked on the Look step. The roadmap had lyrics in this step (F9) and the
    step shipped without them -- they were only on the timeline, after a first render -- so a reel made
-   step by step could not have them without a second render. */
+   step by step could not have them without a second render. Whether a song's words can be found is
+   only known when it renders, so they are offered as that: used if found, never promised. */
 function studio_gdLyricLooks() { return ((studio.catalog && studio.catalog.lyrics) || {}).looks || []; }
 function studio_gdDrawLook() {
   const gd = studio.gd, looks = studio_gdLyricLooks();
@@ -11215,17 +11797,26 @@ function studio_gdDrawLook() {
     '<div class="gd-field"><h4>Shape</h4>' + studio_gdSeg('fmt', gd.fmt, [['vertical', '9:16 Short or Reel'], ['landscape', '16:9 YouTube']]) + '</div>' +
     (gd.fmt === 'vertical' ? '<div class="gd-field"><h4>Framing</h4>' + studio_gdSeg('fit', gd.fit, [['near', 'Near fit'], ['fit', 'Fit the whole picture'], ['zoom', 'Zoom to fill']]) + '</div>' : '') +
     (looks.length ? '<div class="gd-field"><h4>Lyrics</h4>' + studio_gdSeg('lyrics', gd.lyrics, [['off', 'No lyrics']].concat(looks.map(l => [l.key, l.label]))) +
-      '<p class="muted" style="margin:0">' + esc(look ? look.blurb : 'The song’s own words, each on its sung syllable; the look, size and place can be changed on the timeline.') + '</p></div>' : '');
+      '<p class="muted" style="margin:0">' + esc(look ? look.blurb : 'The song’s own words, each on its sung syllable; the look, size and place can be changed on the timeline.') +
+      ' Used if this song’s lyrics are found when the reel renders; if they are not, the reel has none and says so.</p></div>' : '');
 }
 
-function studio_gdDrawCheck() {
-  const gd = studio.gd, s = studio_gdStyle(), ids = studio_gdIds();
+/* The facts of the check step, redrawn alone when the verdict lands: redrawing the whole step took the
+   name field out from under the player's typing. */
+function studio_gdFacts() {
+  const gd = studio.gd, s = studio_gdStyle(), ids = studio_gdIds(), out = studio_gdLeftOut();
   const song = studio.song ? studio.song.split(/[\\/]/).pop().replace(/\.[^.]+$/, '') : '';
+  const lyr = studio_gdLyricLooks().find(l => l.key === gd.lyrics);
+  return '<div class="gd-facts" id="studio-gd-facts"><span><b>Style</b> ' + esc(s ? s.label : '') + '</span><span><b>Song</b> ' + esc(song) + '</span>' +
+    '<span><b>Clips</b> ' + ids.length + ' (' + studio_gdKillsIn(ids) + ' kills)' + (out.length ? ', ' + out.length + ' left out' : '') + '</span>' +
+    '<span><b>Shape</b> ' + (gd.fmt === 'vertical' ? '9:16' : '16:9') + '</span>' +
+    '<span><b>Lyrics</b> ' + esc(lyr ? lyr.label + ', if found' : 'None') + '</span>' +
+    (gd.verdict && gd.verdict.length ? '<span><b>Length</b> ' + Math.round(gd.verdict.length) + ' s</span>' : '') + '</div>';
+}
+function studio_gdDrawCheck() {
+  const gd = studio.gd;
   return '<div class="gd-q"><h3>Check and make</h3><p class="muted">Planned, not rendered yet. This is what the reel will be.</p></div>' +
-    '<div class="gd-facts"><span><b>Style</b> ' + esc(s ? s.label : '') + '</span><span><b>Song</b> ' + esc(song) + '</span>' +
-    '<span><b>Clips</b> ' + ids.length + ' (' + studio_gdKillsIn(ids) + ' kills)</span><span><b>Shape</b> ' + (gd.fmt === 'vertical' ? '9:16' : '16:9') + '</span>' +
-    '<span><b>Lyrics</b> ' + esc((studio_gdLyricLooks().find(l => l.key === gd.lyrics) || {label: 'None'}).label) + '</span>' +
-    (gd.verdict && gd.verdict.length ? '<span><b>Length</b> ' + Math.round(gd.verdict.length) + ' s</span>' : '') + '</div>' +
+    studio_gdFacts() +
     '<div class="gd-field"><label class="field-label" for="studio-gd-name">Name</label>' +
     '<input class="input" id="studio-gd-name" maxlength="80" placeholder="' + esc(studio_gdDefaultName()) + '" value="' + esc(gd.name || '') + '"></div>' +
     '<p class="muted">After it is rendered we read the finished reel back and check every kill is on its beat, in focus and not repeated.</p>';
@@ -11233,15 +11824,16 @@ function studio_gdDrawCheck() {
 
 /* The name a reel gets when none is typed: the song's title and the style, not "Build and drop reel"
    for every one. "Y2K, bbno$ - Lalala (Official Video) [N2Y2vQ-1m7M]" is "Lalala". */
-function studio_gdDefaultName() {
-  const s = studio_gdStyle();
+function studio_gdDefaultName(d) {
+  const s = studio_gdStyle((d || studio.gd).style);
   let song = studio.song ? studio.song.split(/[\\/]/).pop().replace(/\.[^.]+$/, '') : '';
   song = song.replace(/\s*\[[^\]]*\]/g, '').replace(/\s*\((official|lyric|audio|music)[^)]*\)/ig, '');
   if (song.includes(' - ')) song = song.split(' - ').slice(1).join(' - ');
   return ((song.trim() ? song.trim() + ' ' : '') + (s ? s.label.toLowerCase() : 'reel')).replace(/^./, c => c.toUpperCase());
 }
 
-/* THE CHIP: the server's verdict, or the one thing known without asking */
+/* THE CHIP: the server's verdict, or the one thing known without asking -- or, on the last step,
+   why the reel was not made just now */
 function studio_gdChip() {
   const gd = studio.gd, el = studio_el('studio-gd-chip');
   let v = gd.verdict;
@@ -11250,122 +11842,143 @@ function studio_gdChip() {
       : {level: 'ok', text: gd.style ? 'Good. Next: the song.' : 'Pick a song next and we will choose the style.'};
   }
   if (gd.step >= 1 && !v) v = {level: 'ok', text: 'Checking this against your song and clips…'};
-  const label = {ok: 'Works', warn: 'Will work, but', bad: "Won't work"}[v.level];
+  if (gd.step === 4 && gd.held) v = gd.held;
+  const label = v.dot || {ok: 'Works', warn: 'Will work, but', bad: "Won't work"}[v.level];
   el.className = 'gd-chip ' + v.level;
-  el.innerHTML = '<span class="gd-dot">' + label + '</span><p>' + esc(v.text) + '</p>' +
-    (v.fix ? '<button type="button" class="btn btn-primary btn-sm" data-act="studio-gd" data-gd="fix" data-fix="' + esc(v.fix) + '">' + esc(v.fix_label || 'Fix it') + '</button>' : '<span></span>');
+  /* A STYLE THAT NEEDS A DROP, ON A SONG WITHOUT ONE: the drop may be there and missed, and the
+     player can hear it. Marking it is offered first; another song is still offered beside it. */
+  const markIt = v.fix === 'pick-song' && studio.songShape && (studio_gdStyle() || {}).drop && studio_gdMainDrop() == null;
+  const fix = v.fix ? '<button type="button" class="btn ' + (markIt ? '' : 'btn-primary ') + 'btn-sm" data-act="studio-gd" data-gd="fix" data-fix="' + esc(v.fix) + '">' + esc(v.fix_label || 'Fix it') + '</button>' : '';
+  el.innerHTML = '<span class="gd-dot">' + esc(label) + '</span><p>' + esc(v.text) + '</p>' +
+    (markIt ? '<span class="gd-acts"><button type="button" class="btn btn-primary btn-sm" data-act="studio-gd" data-gd="fix" data-fix="mark-drop">Mark the drop yourself</button>' + fix + '</span>'
+            : fix || '<span></span>');
 }
 
-/* Ask the server once the last answer has settled; a newer question makes an older answer stale. */
+/* NOTHING THE STYLE CAN USE, said as that: clips were chosen and every one is left out, or the
+   library has none of the kind. The server would only hear "no clips" and say none were chosen. */
+function studio_gdNone(d) {
+  if (studio_gdIds(d).length) return null;
+  const out = studio_gdLeftOut(d), label = (studio_gdStyle(d.style) || {label: 'This style'}).label;
+  if (out.length) return {level: 'bad', text: 'None of the chosen clips can be in a ' + label + ' reel: ' + out[0].why + '.',
+                          fix: 'pick-clips', fix_label: 'Pick for me'};
+  if (!studio_gdPools(d.style, d.setup).quick.length && !(d.style === 'drop' && studio_gdPools('drop', '').setups.length))
+    return {level: 'bad', text: d.style === 'fasthead' ? 'None of your clips has a kill read as a headshot.' : 'None of your clips has a kill read in it.'};
+  return null;                             /* none chosen yet: the server says so, with Pick for me */
+}
+
+/* Ask the server once the last answer has settled; a newer question makes an older answer stale.
+   The body asked about is kept beside the answer (`judged`): it is the plan's body, to the byte. */
 function studio_gdAsk() {
   const gd = studio.gd;
   clearTimeout(gd.timer);
   if (!gd.style || !studio.song) { gd.verdict = null; studio_gdChip(); return; }
   const ticket = ++gd.asked;
   gd.timer = setTimeout(async () => {
-    studio.style = gd.style; studio.fmt = gd.fmt; studio.vfit = gd.fit;
-    const keep = studio.selected; studio.selected = studio_gdIds();
-    const body = studio_planBody(false);
-    studio.selected = keep;
-    const got = await API.post('/api/studio/feasible', body).catch(() => null);
-    if (ticket !== gd.asked) return;
+    const body = studio_gdBody(), none = studio_gdNone(gd);
+    const got = none ? {ok: true, verdict: none} : await API.post('/api/studio/feasible', body).catch(() => null);
+    if (ticket !== gd.asked || gd.busy) return;
     gd.verdict = got && got.ok ? Object.assign({}, got.verdict, {length: got.length})
                                : {level: 'warn', text: 'Could not check this against your clips just now.'};
+    gd.judged = body;
     studio_gdChip();
     if (gd.step === 4) {
-      studio_el('studio-gd-body').innerHTML = studio_gdDrawCheck();
+      const f = studio_el('studio-gd-facts');
+      if (f) f.outerHTML = studio_gdFacts();
       studio_el('studio-gd-next').disabled = gd.busy || gd.verdict.level === 'bad';
     }
   }, 250);
 }
 
-function studio_gdPickAll() {
-  const gd = studio.gd, need = studio_gdNeed();
-  if (gd.style === 'drop') { const s = studio_gdPools().setups[0]; gd.setup = s ? s.id : ''; }
-  gd.quick = [];
-  let n = 0;
-  for (const c of studio_gdPools().quick) {
-    if (n >= need) break;
-    gd.quick.push(c.id);
-    n += gd.style === 'fasthead' ? 1 : (c.kills || []).length >= 2 ? 2 : 1;
-  }
-}
-
 async function studio_gdUseSong(path, name) {
   const msg = studio_el('studio-gd-song-msg');
   if (msg) msg.textContent = 'Finding the beat…';
+  const was = studio.song;
   const ok = await studio_useSong(path, name);
-  if (!ok) { if (msg) msg.textContent = 'Could not read that song.'; return; }
-  const sh = studio.songShape, gd = studio.gd;
-  const hasDrop = !!(sh && ((sh.drops && sh.drops.length) || sh.drop));
-  if (gd.auto) {
-    gd.step = 0;
-    gd.style = hasDrop ? 'drop' : '';
-    if (hasDrop) toast('Build and drop suits this song: it has a clear drop.', 'ok');
-  }
+  if (!ok) { if (msg) msg.textContent = 'Could not read that song.'; return false; }
+  const gd = studio.gd;
   gd.verdict = null;
+  if (was !== studio.song) { gd.drops = null; gd.head = 0; }   /* a drop belongs to the song it was marked on */
+  if (gd.auto) {
+    gd.step = 0; gd.style = ''; gd.autoWhy = null;
+    studio_gdDraw();
+    await studio_gdAutoStyle();
+  }
   studio_gdDraw();
+  return true;
 }
 
 function studio_gdFix(fix) {
   const gd = studio.gd;
   if (fix.indexOf('style:') === 0) { gd.style = fix.slice(6); gd.auto = false; }
   else if (fix === 'pick-song') { gd.step = 1; }
-  else if (fix === 'pick-clips') { studio_gdPickAll(); gd.step = 2; }
+  else if (fix === 'mark-drop' || fix === 'mark-drop:drop') {
+    if (fix === 'mark-drop:drop') { gd.style = 'drop'; gd.auto = false; gd.verdict = null; }
+    gd.step = 1;
+    studio_gdDraw();
+    const v = studio_el('studio-gd-drops');
+    if (v) v.scrollIntoView({block: 'nearest'});
+    const add = studio_el('studio-gd-dropadd');
+    if (add) add.focus();
+    return;
+  }
+  else if (fix === 'pick-clips') { studio_gdPickAll(true); gd.step = 2; }   /* adds; keeps what was chosen */
   else if (fix === 'format:vertical') { gd.fmt = 'vertical'; }
   gd.verdict = null;
   studio_gdDraw();
 }
 
 function studio_gdAllSettings() {
-  const gd = studio.gd;
-  if (gd.style) studio.style = gd.style;
-  studio.fmt = gd.fmt; studio.vfit = gd.fit;
-  const ids = studio_gdIds();
-  if (ids.length) { studio.selected = ids; studio_syncSelection(); }
+  if (!studio_gdIds().length) { toast('Pick the clips first: the full page starts from them.', 'warn'); return; }
+  studio_gdHandOff();
   studio_gdClose();
-  if (studio.selected.length) studio_openMake();
+  studio_openMake({fromGuide: true});
 }
 
 /* MAKE, FROM THE GUIDE ITSELF. It used to open All settings and build from there, so the player
    watched a page they had not asked for, its Build button greyed for the minute the plan takes,
-   with a name nobody had asked them for. Now the guide plans in place and opens the timeline. */
+   with a name nobody had asked them for. Now the guide plans in place, from the body the chip
+   judged, and opens the timeline. */
 async function studio_gdMake() {
   const gd = studio.gd;
   if (gd.busy) return;
   const nameEl = studio_el('studio-gd-name');
-  if (nameEl) gd.name = nameEl.value.trim();
-  gd.busy = true;
-  studio.style = gd.style; studio.picks = null; studio.fmt = gd.fmt; studio.vfit = gd.fit;
-  studio.selected = studio_gdIds(); studio_syncSelection();
-  const setup = gd.setup && studio.clipIndex[gd.setup];
-  studio.buildClip = gd.style === 'drop' && setup ? setup.path : '';
-  studio.adding = null;                    /* the guide makes a new reel; it never rebuilds one */
-  studio_el('studio-name').value = gd.name || studio_gdDefaultName();
-  const hs = studio_el('studio-hs-only');
-  if (hs) hs.checked = false;              /* headshots only is not a question the guide asks */
-  studio_mkDefault();
+  if (nameEl) gd.name = nameEl.value;
+  const body = studio_gdBody();
+  const run = ++gd.run;
+  gd.busy = true; gd.held = null;
+  studio_gdDraw();
   const next = studio_el('studio-gd-next');
-  next.textContent = 'Planning…';
-  const chip = (text, level) => {
+  const chip = (text, level, dot) => {
+    if (run !== gd.run) return;
     const el = studio_el('studio-gd-chip');
     el.className = 'gd-chip ' + level;
-    el.innerHTML = '<span class="gd-dot">' + (level === 'bad' ? "Won't work" : 'Making it') + '</span><p>' + esc(text) + '</p><span></span>';
+    el.innerHTML = '<span class="gd-dot">' + esc(dot) + '</span><p>' + esc(text) + '</p><span></span>';
   };
+  let made = false;
   try {
-    await studio_build({btn: next, keep: gd.lyrics && gd.lyrics !== 'off' ? {lyrics: {look: gd.lyrics}} : null,
-      say: (t, failed) => failed ? chip(t, 'bad')
-      : chip(t + ' This takes about a minute; the reel opens on the timeline when it is planned.', 'ok')});
+    made = await studio_build({btn: next, body: body,
+      held: t => { if (run === gd.run) gd.held = {level: 'warn', text: t, dot: 'Not now'}; },
+      say: (t, failed) => {
+        if (failed) { if (run === gd.run) gd.held = {level: 'bad', text: t}; chip(t, 'bad', "Won't work"); }
+        else chip(t + ' This takes about a minute; the reel opens on the timeline when it is planned.', 'ok', 'Making it');
+      }});
   } finally {
-    gd.busy = false;
-    next.textContent = 'Make the reel';
+    if (run === gd.run) {
+      gd.busy = false;
+      /* the next reel is a new one: its own name and the song's own drops, not this one's */
+      if (made) { studio_gdHandOff(body); gd.name = ''; gd.drops = null; }
+    }
+    if (!studio_el('studio-guide-scrim').classList.contains('hide')) studio_gdDraw();
   }
 }
 
 function studio_gdAct(b) {
   const gd = studio.gd, what = b.getAttribute('data-gd');
   if (what === 'close') return studio_gdClose();
-  if (gd.busy) return;                     /* planning: only closing it is offered */
+  /* Back while it plans lets go of the plan and goes back: it used to look live and do nothing */
+  if (what === 'back' && gd.busy) { studio_gdDetach(); gd.step = 3; gd.verdict = null; return studio_gdDraw(); }
+  if (gd.busy) return;                     /* planning: Back and Close are what is offered */
+  gd.held = null;
   if (what === 'all') return studio_gdAllSettings();
   if (what === 'fix') return studio_gdFix(b.getAttribute('data-fix'));
   if (what === 'song') { studio_gdUseSong(b.getAttribute('data-path'), b.getAttribute('data-name')); return; }
@@ -11373,24 +11986,35 @@ function studio_gdAct(b) {
     studio_pickSong().then(() => { if (gd.auto && studio.song) studio_gdUseSong(studio.song, ''); else studio_gdDraw(); });
     return;
   }
+  if (what === 'more') { const d = document.querySelector('.gd-more'); if (d) { d.open = true; d.scrollIntoView({block: 'nearest'}); } return; }
+  /* the Song step's player and drops (studio_gdDropView) */
+  if (what === 'play') return studio_gdPlay();
+  if (what === 'drop-into') { const t = Number(b.getAttribute('data-t')); if (isFinite(t)) studio_gdPlayInto(t); return; }
+  if (what === 'drop-add') return studio_gdAddDrop(studio_gdNow());
+  if (what === 'drop-del') return studio_gdDelDrop(b.getAttribute('data-id'));
+  if (what === 'drop-nudge') return studio_gdNudgeDrop(b.getAttribute('data-id'), Number(b.getAttribute('data-by')));
+  if (what === 'drop-reset') { gd.drops = null; gd.verdict = null; return studio_gdDraw(); }
   if (what === 'step') { gd.step = Number(b.getAttribute('data-i')); }
   else if (what === 'back') { gd.step = Math.max(0, gd.step - 1); }
   else if (what === 'next') { if (gd.step === 4) return studio_gdMake(); gd.step++; }
   else if (what === 'style') {
-    gd.style = b.getAttribute('data-key'); gd.auto = false;
-    if (gd.style !== 'drop') gd.setup = '';
+    gd.style = b.getAttribute('data-key'); gd.auto = false; gd.autoWhy = null;
+    /* a build clip chosen for Build and drop is still one of the player's clips in another style */
+    if (gd.style !== 'drop' && gd.setup && gd.quick.indexOf(gd.setup) < 0) gd.quick = [gd.setup].concat(gd.quick);
     gd.verdict = null;
   }
-  else if (what === 'auto') { gd.auto = true; gd.style = ''; gd.step = 1; gd.verdict = null; }
+  else if (what === 'auto') { gd.auto = true; gd.style = ''; gd.autoWhy = null; gd.step = 1; gd.verdict = null; }
   else if (what === 'setup') {
     const id = b.getAttribute('data-id');
     gd.setup = gd.setup === id ? '' : id; gd.quick = gd.quick.filter(x => x !== gd.setup); gd.verdict = null;
   }
-  else if (what === 'quick') {
-    const id = b.getAttribute('data-id');
-    gd.quick = gd.quick.indexOf(id) >= 0 ? gd.quick.filter(x => x !== id) : gd.quick.concat([id]); gd.verdict = null;
+  else if (what === 'quick' || what === 'unpick') {
+    const id = b.getAttribute('data-id'), off = what === 'unpick' || gd.quick.indexOf(id) >= 0;
+    gd.quick = off ? gd.quick.filter(x => x !== id) : gd.quick.concat([id]);
+    if (off && gd.setup === id) gd.setup = '';   /* taken out is taken out, from the build slot too */
+    gd.verdict = null;
   }
-  else if (what === 'pickall') { studio_gdPickAll(); gd.verdict = null; }
+  else if (what === 'pickall') { studio_gdPickAll(false); gd.verdict = null; }
   else if (what === 'set') { gd[b.getAttribute('data-k')] = b.getAttribute('data-v'); gd.verdict = null; }
   studio_gdDraw();
 }

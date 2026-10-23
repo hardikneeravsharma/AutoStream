@@ -987,6 +987,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_check(b))
             elif p == "/api/studio/feasible":
                 self._json(self.app.studio_feasible(b))
+            elif p == "/api/studio/songparts":
+                self._json(self.app.studio_songparts(b))
             elif p == "/api/studio/render":
                 self._json(self.app.studio_render(b))
             elif p == "/api/studio/lyrics/preview":
@@ -3746,6 +3748,27 @@ class Server:
             log.info("rhythm failed for %s: %s", p.name, e)
         return out
 
+    def studio_songparts(self, body: dict) -> dict:
+        """The song's parts and loudness, for the guided maker's drop view. -> {ok, sections, energy, hz}
+
+        Only what the drawing needs, off the same cached Rhythm the Song tab's hits lane and the
+        planner read -- not the Song tab's whole songview, whose lanes and spectrogram the guide
+        never shows. Never raises: a song whose parts cannot be read is drawn without them.
+        """
+        from .clips import rhythm, songview
+
+        p = self._song_in_home(str(body.get("song") or ""))
+        if p is None:
+            return {"ok": False, "error": "That song is not one AutoStream has read."}
+        try:
+            shape = self._reel_song({"song": str(p)})
+            r = rhythm.for_song(shape, songview.folder(self._clips_dir(cfg.load())).parent / "rhythm")
+        except Exception as e:                      # noqa: BLE001
+            log.info("song parts failed for %s: %s", p.name, e)
+            return {"ok": False, "error": "The song's parts could not be read."}
+        return {"ok": True, "hz": rhythm.ENERGY_HZ, "energy": [round(e, 3) for e in r.energy],
+                "sections": [{"kind": s.kind, "start": round(s.start, 3), "end": round(s.end, 3)} for s in r.sections]}
+
     def studio_songview_bytes(self, song: str) -> tuple[bytes, str | None]:
         from .clips import songview
 
@@ -4072,6 +4095,9 @@ class Server:
         for k in ("cam", "vfit", "handle", "handle_pos", "outro_len", "overlays", "lyrics"):
             if keep.get(k) is not None:
                 proj[k] = keep[k]
+        # The drops the player marked, on the reel, so a rebuild asks for them again.
+        if shape is not None and isinstance(body.get("drops"), list):
+            proj["hand_drops"] = list(getattr(shape, "drops", None) or [])
         try:
             proj, derived, more = studio.normalise(proj, root)
         except studio.ProjectError as e:
@@ -4101,6 +4127,10 @@ class Server:
             shape = self._studio_shape(song)
         except (FileNotFoundError, OSError, RuntimeError) as e:
             return {"ok": True, "verdict": feasible.Verdict(feasible.BAD, str(e), "pick-song", "Choose another song").as_dict()}
+        # THE SONG THE PLAN WILL READ: with the player's own drops when they marked any, as
+        # studio_plan reads it. Judged on the analysis alone, a drop marked by hand on a song
+        # with none was refused ("needs a song with a drop") by a chip whose plan built on it.
+        shape = self._studio_drops(shape, body.get("drops"))
         chosen = self._studio_chosen(root, want) if want else []
         kills = sum(len(c.get("kills") or []) for c in chosen)
         # THE SAME TEST THE PLAN MAKES: a chosen CLUTCH clip whose kills are more than six
