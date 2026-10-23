@@ -2977,6 +2977,8 @@ async function clip_load() {
     if (d['clips.min_kills']) clip_state.min = String(d['clips.min_kills']);
     if (d['clips.clip_seconds']) clip_state.len = String(d['clips.clip_seconds']);
     if (d['clips.vertical_mode']) clip_state.vert = String(d['clips.vertical_mode']);
+    /* Checked against undefined, not truthiness: false is the setting. */
+    if (d['clips.montage'] !== undefined) clip_state.montage = !!d['clips.montage'];
     if (d['clips.transition']) clip_state.trans = String(d['clips.transition']);
     if (d['clips.transition_ms']) clip_state.transMs = Number(d['clips.transition_ms']);
 

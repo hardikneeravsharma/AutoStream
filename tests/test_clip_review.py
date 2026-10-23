@@ -348,6 +348,22 @@ def test_the_whole_match_switch_actually_reaches_the_job():
         "the whole-match switch is sent by the page and dropped by the server")
 
 
+def test_the_montage_is_a_setting_at_both_ends():
+    """It was on for every run, with only a per-visit switch, so a player who
+    never wants one deleted gigabytes after every job. Both ends, as above:
+    the page seeds its switch from the setting, the server falls back to it."""
+    from autostream import cfg, schema
+    from autostream import webui as w
+    from autostream.ui import clips as clips_page
+
+    assert "clips.montage" in schema.flatten(cfg.load())
+    assert "d['clips.montage'] !== undefined" in clips_page.CLIPS_JS
+    src = pathlib.Path(w.__file__).read_text(encoding="utf-8")
+    run = src[src.index("def clips_run(self, body: dict) -> dict:"):]
+    run = run[:run.index("    def _cached_kills(")]
+    assert 'body.get("montage", c.clips.montage)' in run
+
+
 def test_a_run_and_a_re_render_cannot_overlap():
     """Both are encodes on the same machine. clips_edit already refused while a
     job was running; this is the other half."""
