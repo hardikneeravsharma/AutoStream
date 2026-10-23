@@ -3747,8 +3747,21 @@ def _refine_kills(clips: list[dict], refine) -> tuple[list[dict], dict]:
     new = {i: list(c.get("kills") or []) for i, c in enumerate(clips)}
     seen = 0
     shifts: list[float] = []
+    # ONE EMBLEM PER KILL. Each kill is read on its own, so two kills of one fight could
+    # both reach the same emblem -- a 2-kill clip's 3.505 and 4.326 both became 3.45, and
+    # the kill counter ticked twice in one frame (Hype on That Acid, round 3). The nearer
+    # kill takes the emblem; the other keeps the time it had.
+    claim: dict[tuple[int, int], tuple[float, int]] = {}
     for (i, j, k), a in zip(jobs, found):
         if a is None or abs(a - k) > REFINE_REACH:
+            continue
+        key = (i, int(round(float(a) * FPS)))
+        if key not in claim or abs(a - k) < claim[key][0]:
+            claim[key] = (abs(a - k), j)
+    for (i, j, k), a in zip(jobs, found):
+        if a is None or abs(a - k) > REFINE_REACH:
+            continue
+        if claim[(i, int(round(float(a) * FPS)))][1] != j:
             continue
         seen += 1
         if abs(a - k) > 1.0 / FPS:

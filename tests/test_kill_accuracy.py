@@ -113,6 +113,15 @@ def test_refine_keeps_the_headshot_readings_matched_to_their_kills():
     assert out[0]["kills"] == [3.8] and out[0]["_hs_times"] == [3.8]
 
 
+def test_two_kills_never_share_one_emblem():
+    """A 2-kill clip's 3.505 and 4.326 both read the emblem at 3.45, and the reel's kill
+    counter ticked twice in one frame. The nearer kill takes it; the other keeps its time."""
+    clips = [{"path": "a.mp4", "game": "VALORANT", "kills": [3.505, 4.326]}]
+    out, got = studio._refine_kills(clips, lambda p, g, t: 3.45)
+    assert out[0]["kills"] == [3.45, 4.326]
+    assert got["seen"] == 1
+
+
 def test_refine_survives_a_reader_that_throws():
     clips = [{"path": "a.mp4", "game": "VALORANT", "kills": [3.5]}]
 
