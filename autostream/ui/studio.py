@@ -1160,9 +1160,14 @@ STUDIO_HTML = r"""
   <div class="scrim hide" id="studio-preview-scrim">
   <div class="modal studio-modal" id="studio-preview" role="dialog" aria-modal="true" aria-labelledby="studio-preview-title">
     <h2 class="modal-title" id="studio-preview-title">Clip</h2>
-    <div class="modal-body"><video id="studio-preview-video" controls playsinline></video></div>
+    <div class="modal-body"><video id="studio-preview-video" controls playsinline preload="metadata"></video>
+      <!-- Where the kills are along the clip, placed from the clip's own length in the library
+           rather than the element's duration, which is NaN until the metadata lands. -->
+      <div class="gd-pvmarks hide" id="studio-preview-marks"></div></div>
     <div class="modal-actions">
       <span class="media-knobs" data-for="studio-preview-video"></span>
+      <!-- Opened from the guide's Clips step: the clip is chosen or taken out from here. -->
+      <button type="button" class="btn btn-primary hide" id="studio-preview-pick" data-act="studio-gd" data-gd="pv-pick"></button>
       <button type="button" class="btn btn-ghost" data-act="studio-preview-close">Close</button>
     </div>
   </div>
@@ -1385,6 +1390,10 @@ async function studio_load(force) {
        but not placed, which is the whole complaint: "I don't know from
        which folder, from which run the current clips are selected". */
     c.folder = f.folder; studio.clipIndex[c.id] = c;
+    /* The map and the game mode of the match it was cut from, when the run has the record:
+       the guide's clip browser filters by both. A clip outside every match has neither. */
+    const m = c.match === undefined ? null : (f.matches || [])[c.match];
+    if (m) { c.map = m.map || ''; c.mode = m.mode || ''; }
   })));
   studio.selected = studio.selected.filter(id => studio.clipIndex[id]);
   studio_renderLib();
@@ -2039,8 +2048,34 @@ function studio_preview(id) {
   studio_el('studio-preview-title').textContent = c.caption || c.name;
   const v = studio_el('studio-preview-video');
   v.src = studio_media('/api/clips/video', c.path);
+  studio.gd.pv = null;                     /* the library's preview: nothing to choose in it */
+  studio_pvMarks(c);
+  studio_show('studio-preview-pick', false);
   studio_show('studio-preview-scrim', true);
   v.play().catch(() => {});
+}
+/* THE KILLS ALONG THE CLIP, each a mark that seeks to it: a headshot in the warn colour. Placed
+   by the library's own length -- `duration` on the element is NaN until its metadata is read. */
+function studio_pvMarks(c) {
+  const box = studio_el('studio-preview-marks'), dur = Number(c.duration) || 0, ks = c.kills || [];
+  if (!box) return;
+  box.innerHTML = dur > 0 && ks.length ? ks.map((k, i) => {
+    const hs = (c.hs || [])[i] === true;
+    return '<button type="button" class="gd-pvmark' + (hs ? ' is-hs' : '') + '" style="left:' + Math.min(100, Math.max(0, k / dur * 100)).toFixed(2) +
+      '%" data-act="studio-gd" data-gd="pv-seek" data-t="' + Number(k).toFixed(2) + '" title="Kill ' + (i + 1) + ' at ' + studio_secs(k) +
+      (hs ? ', a headshot' : '') + '" aria-label="Kill ' + (i + 1) + ' at ' + studio_secs(k) + '"></button>';
+  }).join('') + '<i class="gd-pvhead" id="studio-preview-head"></i>' : '';
+  box.classList.toggle('hide', !(dur > 0 && ks.length));
+}
+/* Closing the preview. Opened from the guide it closes alone: the guide under it stays on its
+   step, its slot and its page, with every choice as it was. Anywhere else it is one of the
+   modals Close and Escape put away together. */
+function studio_previewClose() {
+  if (!studio.gd.pv) return studio_closeModals();
+  const v = studio_el('studio-preview-video');
+  if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
+  studio.gd.pv = null;
+  studio_show('studio-preview-scrim', false);
 }
 
 function studio_closeModals() {
@@ -9551,7 +9586,7 @@ function studio_wire() {
     else if (act === 'studio-pick') studio_pick(b.getAttribute('data-clip'), e.shiftKey);
     else if (act === 'studio-folder') studio_folderToggle(b.getAttribute('data-folder'));
     else if (act === 'studio-preview') studio_preview(b.getAttribute('data-clip'));
-    else if (act === 'studio-preview-close') studio_closeModals();
+    else if (act === 'studio-preview-close') studio_previewClose();
     else if (act === 'studio-make-cancel') studio_buildCancel();
     else if (act === 'studio-clear') { studio.selected = []; studio.adding = null; studio_syncSelection(); }
     /* THE STEPS ARE THE WAY IN (F13, the player's call once a second style passed its review):
@@ -9906,6 +9941,20 @@ function studio_wire() {
   document.addEventListener('change', studio_camInput);
   document.addEventListener('input', studio_camInput);
   document.addEventListener('input', e => { if (e.target && e.target.id === 'studio-gd-name') studio.gd.name = e.target.value; });
+  document.addEventListener('input', studio_gdFind);
+  document.addEventListener('change', studio_gdViewChange);
+  /* A thumbnail that cannot be read is said once, as an empty frame -- never retried, and
+     never a broken-image icon in the middle of a card (error does not bubble: caught going down). */
+  document.addEventListener('error', e => {
+    const t = e.target;
+    if (t && t.classList && t.classList.contains('gd-thumbimg')) t.parentNode.classList.add('is-missing');
+  }, true);
+  const pvv = studio_el('studio-preview-video');
+  if (pvv) pvv.addEventListener('timeupdate', () => {
+    const h = studio_el('studio-preview-head'), c = studio.clipIndex[(studio.gd.pv || {}).id] || null;
+    const dur = c ? Number(c.duration) : (isFinite(pvv.duration) ? pvv.duration : 0);
+    if (h && dur > 0) h.style.left = Math.min(100, pvv.currentTime / dur * 100).toFixed(2) + '%';
+  });
   /* The inspector's groups remember whether they are open (toggle does not
      bubble, so it is caught on the way down). */
   document.addEventListener('toggle', e => {
@@ -10104,7 +10153,7 @@ function studio_wire() {
   if (ar) ar.addEventListener('change', () => studio_autoSet(ar.checked));
   ['studio-preview-scrim', 'studio-fxp-scrim'].forEach(id => {
     const sc = studio_el(id);
-    if (sc) sc.addEventListener('click', e => { if (e.target === sc) studio_closeModals(); });
+    if (sc) sc.addEventListener('click', e => { if (e.target === sc) { if (id === 'studio-preview-scrim') studio_previewClose(); else studio_closeModals(); } });
   });
   document.addEventListener('keydown', e => {
     if (shell_page !== 'studio') return;
@@ -10128,6 +10177,8 @@ function studio_wire() {
       if ((e.key === 'Delete' || e.key === 'Backspace') && studio_mkSelCount()) { e.preventDefault(); studio_mkDelSelected(); return; }
     }
     if (e.key === 'Escape') {
+      /* a clip played from the guide: Escape puts the clip away, not the guide under it */
+      if (studio.gd.pv && !studio_el('studio-preview-scrim').classList.contains('hide')) { studio_previewClose(); return; }
       studio_closeModals();
       /* Nobody is stranded holding a tool. */
       if (studio.tool !== 'select') studio_tool('select');
@@ -11076,7 +11127,9 @@ const GD_BEST = ['drop', 'fasthead', 'montage'];
    them; a drop belongs to its song, and a new song or a new reel starts from null again. */
 studio.gd = {step: 0, style: '', auto: false, autoWhy: null, setup: '', quick: [], fmt: 'vertical', fit: 'near', lyrics: 'off', name: '',
              drops: null, parts: null, head: 0, snap: false, dropDrag: null,
-             verdict: null, asked: 0, autoAsked: 0, busy: false, run: 0, held: null, timer: null};
+             verdict: null, asked: 0, autoAsked: 0, busy: false, run: 0, held: null, timer: null,
+             /* the Clips step's browsers (studio_gdView), the clip playing over the guide, the one being trimmed */
+             views: null, pv: null, editing: null};
 
 /* WHAT WAS CHOSEN LAST TIME, remembered as intent -- the style, the shape, the framing -- and not as
    results: the song and the clips are checked again against what exists now, and the chip is asked
@@ -11737,49 +11790,282 @@ function studio_gdDrawClips() {
   const ids = studio_gdIds(), out = studio_gdLeftOut();
   const quickIds = ids.filter(id => !(isBD && id === gd.setup));
   const have = quickIds.reduce((n, id) => n + studio_gdWeight(studio.clipIndex[id], gd.style), 0);
-  const tile = (c, on, act) => '<button type="button" class="gd-clip' + (on ? ' is-on' : '') + '" data-act="studio-gd" data-gd="' + act + '" data-id="' + esc(c.id) + '" aria-pressed="' + on + '">' +
-    '<span class="gd-tags">' + (studio_gdHs(c) ? '<i class="gd-hs">Headshot</i>' : '<i>Body</i>') +
-    (c.fav ? '<i class="gd-fav">&#9733;</i>' : '') + ((c.kills || []).length > 1 ? '<i>' + c.kills.length + ' kills</i>' : '') +
-    ((c.labels || [])[0] ? '<i>' + esc(c.labels[0]) + '</i>' : '') + '</span><span class="mono">' + esc(c.name || c.id) + '</span></button>';
-  /* EVERY CHOSEN CLIP IS DRAWN: the best of the pool, then any chosen one beyond them -- a clip
-     counted but nowhere on screen could not be seen, let alone taken out again. */
-  const grid = (list, n) => {
-    const top = list.slice(0, n), seen = {};
-    top.forEach(c => { seen[c.id] = 1; });
-    return top.concat(quickIds.filter(id => !seen[id]).map(id => studio.clipIndex[id]))
-      .map(c => tile(c, gd.quick.includes(c.id), 'quick')).join('');
-  };
+  const bar = '<div class="gd-bar" aria-hidden="true"><i style="width:' + Math.min(100, Math.round(have / Math.max(1, need) * 100)) + '%"></i></div>';
   const label = (studio_gdStyle() || {label: 'this'}).label;
   const left = out.length ? '<section class="gd-slot gd-left"><div class="gd-slothead"><h4>Chosen, but not in a ' + esc(label) + ' reel</h4>' +
     '<span class="mono">' + out.length + ' left out</span></div><ul class="gd-leftlist">' + out.map(x =>
       '<li><span class="mono">' + esc(x.c.name || x.c.id) + '</span><span class="muted">' + esc(x.why) + '</span>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="unpick" data-id="' + esc(x.c.id) + '">Remove</button></li>').join('') +
     '</ul></section>' : '';
+  const pick = '<div><button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="pickall">Pick for me</button></div>';
+  /* SAID AS IT IS: every clip is here, a page at a time, the best -- favourites first -- on the first
+     page. Only the best 48 used to be drawn, so a player with more favourites than that saw nothing
+     else and read it as "only my favourites are offered"; Pick for me drew on all of them anyway. */
+  const paged = ' are here, ' + GD_PAGE + ' a page, the best first and favourites before the rest. Find, filter and sort them under each slot; Pick for me draws on all of them.';
   if (isFH) {
     const doubles = quickIds.filter(id => studio_gdHsDouble(studio.clipIndex[id] || {})).length;
-    return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">Headshots only: a clip with none has nothing for this style.</p></div>' +
-      '<div><button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="pickall">Pick for me</button></div>' +
-      '<section class="gd-slot"><div class="gd-slothead"><h4>Headshots, one a cut</h4><span class="mono">' + have + ' of ' + need + '</span></div>' +
-      '<div class="gd-bar" aria-hidden="true"><i style="width:' + Math.min(100, Math.round(have / Math.max(1, need) * 100)) + '%"></i></div>' +
+    return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">Headshots only: a clip with none has nothing for this style. All ' +
+      pools.quick.length + ' of your clips with a headshot' + paged + '</p></div>' + pick +
+      '<section class="gd-slot"><div class="gd-slothead"><h4>Headshots, one a cut</h4><span class="mono">' + have + ' of ' + need + '</span></div>' + bar +
       '<p class="muted" style="margin:0">' + (doubles ? 'The finale: ' + doubles + ' chosen clip' + (doubles > 1 ? 's have' : ' has') + ' two headshots close together.'
         : 'No chosen clip has two headshots close together, so the reel ends on a single kill, not a multi-kill.') + '</p>' +
-      '<div class="gd-grid">' + grid(pools.quick, 60) +
-      (pools.quick.length ? '' : '<p class="muted">None of your clips has a kill read as a headshot.</p>') + '</div></section>' + left;
+      studio_gdBrowser('quick') + '</section>' + left;
   }
-  /* Said as it is: every clip of the game is a candidate, the favourites ranked first, and only the best of
-     each kind is drawn here -- "from your favourites" read as if nothing else was considered. */
   const all = studio_gdClips();
-  return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">All ' + all.length + ' of your ' + esc((all[0] || {}).game || '') +
-    ' clips are candidates, favourites first. ' + (isBD ? 'The best ' + Math.min(8, pools.setups.length) + ' of ' + pools.setups.length + ' builds and ' : 'The best ') +
-    Math.min(48, pools.quick.length) + ' of ' + pools.quick.length + (isBD ? ' quick kills' : ' clips') + ' are shown; Pick for me draws on all of them.' +
-    (isMT ? ' A montage needs at least four clips with a kill: with fewer it is planned the usual way, not to the song.' : '') + '</p></div>' +
-    '<div><button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="pickall">Pick for me</button></div>' +
+  return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">All ' + all.length + ' of your ' + esc((all[0] || {}).game || '') + ' clips' +
+    (isBD ? ' (' + pools.setups.length + ' can be the build, ' + pools.quick.length + ' are quick kills)' : '') + paged +
+    (isMT ? ' A montage needs at least four clips with a kill: with fewer it is planned the usual way, not to the song.' : '') + '</p></div>' + pick +
     (isBD ? '<section class="gd-slot"><div class="gd-slothead"><h4>The build: a clutch, an ace or a multi-kill</h4><span class="mono">' + (gd.setup && ids.indexOf(gd.setup) >= 0 ? '1 of 1' : '0 of 1') + '</span></div>' +
-      '<div class="gd-grid">' + (pools.setups.slice(0, 8).map(c => tile(c, gd.setup === c.id, 'setup')).join('') || '<p class="muted">None of your clips has three kills or a clutch label.</p>') + '</div></section>' : '') +
+      studio_gdBrowser('setup') + '</section>' : '') +
     '<section class="gd-slot"><div class="gd-slothead"><h4>' + (isBD ? 'After the drop: quick kills' : 'Your clips') + '</h4><span class="mono">' +
       (isBD ? have + ' of ' + need : quickIds.length + ' chosen' + (isMT ? ', at least 4' : '')) + '</span></div>' +
-    (isBD ? '<div class="gd-bar" aria-hidden="true"><i style="width:' + Math.min(100, Math.round(have / Math.max(1, need) * 100)) + '%"></i></div><p class="muted" style="margin:0">Headshots first. A two-kill clip counts as two: it plays as a quick run.</p>' : '') +
-    '<div class="gd-grid">' + grid(pools.quick, 48) + '</div></section>' + left;
+    (isBD ? bar + '<p class="muted" style="margin:0">Headshots first. A two-kill clip counts as two: it plays as a quick run.</p>' : '') +
+    studio_gdBrowser('quick') + '</section>' + left;
+}
+
+/* ===== EACH SLOT'S CLIP BROWSER =====
+   The step keeps its slots -- Build and drop's build and its quick kills, Fast-paced headshot's
+   headshots -- because what a clip is FOR is what the folders elsewhere cannot show. Each slot
+   browses every clip it can take: a thumbnail card per clip, found by name or label, narrowed by
+   favourite, session, map, game mode, kind or chosen-only, sorted, and paged 24 at a time.
+   ALL OF THIS IS A VIEW. Searching, filtering, sorting and paging never change a choice, the
+   verdict or the request (studio_gdBody), so none of them asks /api/studio/feasible again: they
+   redraw the one slot (studio_gdRedrawSlot), never the step. Each slot keeps its own view, so
+   paging the quick kills does not move the build's page, and choosing a clip never moves either. */
+const GD_PAGE = 24;
+const GD_SORTS = [['best', 'Best first'], ['new', 'Newest'], ['kills', 'Most kills'], ['long', 'Longest']];
+const GD_KINDS = [['hs', 'Headshot', c => studio_gdHs(c) > 0], ['multi', 'Multi-kill', c => (c.kills || []).length >= 2],
+                  ['big', 'Clutch, ace or last alive', c => studio_gdBig(c)]];
+
+/* What a slot offers, in its best-first order, which of them are chosen, and what a click does.
+   A chosen clip is always among them -- one counted but nowhere to be found could not be taken
+   out again -- even when it is not of the slot's kind (a build clip moved into the quick kills). */
+function studio_gdSlot(slot) {
+  const gd = studio.gd, pools = studio_gdPools();
+  if (slot === 'setup') {
+    const list = pools.setups.slice(), own = gd.setup && studio.clipIndex[gd.setup];
+    if (own && list.indexOf(own) < 0 && !studio_gdWhyNot(own, gd.style)) list.push(own);
+    return {list: list, on: c => gd.setup === c.id, act: 'setup', none: 'None of your clips has three kills or a clutch label.'};
+  }
+  const list = pools.quick.slice(), seen = {};
+  list.forEach(c => { seen[c.id] = 1; });
+  studio_gdIds().filter(id => !(gd.style === 'drop' && id === gd.setup) && !seen[id]).forEach(id => list.push(studio.clipIndex[id]));
+  return {list: list, on: c => gd.quick.includes(c.id), act: 'quick',
+          none: gd.style === 'fasthead' ? 'None of your clips has a kill read as a headshot.' : 'None of your clips has a kill read in it.'};
+}
+function studio_gdView(slot) {
+  const gd = studio.gd;
+  gd.views = gd.views || {};
+  if (!gd.views[slot]) gd.views[slot] = {q: '', fav: 'any', run: '', map: '', mode: '', kind: '', chosen: false, sort: 'best', page: 1};
+  return gd.views[slot];
+}
+function studio_gdNarrowed(v) { return !!(v.q.trim() || v.fav !== 'any' || v.run || v.map || v.mode || v.kind || v.chosen); }
+/* A clip with no match record -- CS2, an import, a run whose record was never fetched -- is said as unknown, not left out. */
+function studio_gdMapOf(c) { return c.map || 'Unknown map'; }
+function studio_gdModeOf(c) { return c.mode || 'Unknown mode'; }
+
+/* The values one filter can take in this slot, each with how many clips have it. */
+function studio_gdFacet(list, key, name, order) {
+  const by = {};
+  list.forEach(c => { const k = key(c); if (!by[k]) by[k] = {v: k, label: name(c), n: 0, c: c}; by[k].n++; });
+  return Object.values(by).sort(order || ((a, b) => (b.n - a.n) || a.label.localeCompare(b.label)));
+}
+
+function studio_gdFiltered(slot, s) {
+  const v = studio_gdView(slot), q = v.q.trim().toLowerCase(), kind = GD_KINDS.find(k => k[0] === v.kind);
+  const rank = {};
+  s.list.forEach((c, i) => { rank[c.id] = i; });
+  const best = (a, b) => rank[a.id] - rank[b.id];
+  const sorts = {
+    best: best,
+    new: (a, b) => ((b.when || 0) - (a.when || 0)) || ((b.start || 0) - (a.start || 0)) || best(a, b),
+    kills: (a, b) => ((b.kills || []).length - (a.kills || []).length) || best(a, b),
+    long: (a, b) => ((Number(b.duration) || 0) - (Number(a.duration) || 0)) || best(a, b)
+  };
+  return s.list.filter(c =>
+    (v.fav === 'any' || (v.fav === 'fav') === !!c.fav) &&
+    (!v.run || c.folder === v.run) && (!v.map || studio_gdMapOf(c) === v.map) && (!v.mode || studio_gdModeOf(c) === v.mode) &&
+    (!kind || kind[2](c)) && (!v.chosen || s.on(c)) &&
+    (!q || [c.name || c.id, (c.labels || []).join(' '), c.caption || '', c.folderLabel || '', c.map || '', c.mode || '']
+      .join(' ').toLowerCase().indexOf(q) >= 0)
+  ).sort(sorts[v.sort] || best);
+}
+
+/* THE TOOLS. A filter is offered only with the values that occur in this slot, each with its count,
+   and only when it could narrow the slot at all: a map filter over clips all from one map, or a
+   session filter over one session, is a control that does nothing. */
+function studio_gdTools(slot, s) {
+  const v = studio_gdView(slot), list = s.list, n = list.length;
+  if (!n) return '';
+  const sel = (k, all, aria, items) => {
+    if (v[k] && !items.some(o => o.v === v[k])) v[k] = '';   /* a value no clip here has any more */
+    if (!items.length || (!v[k] && !items.some(o => o.n < n))) return '';
+    return '<select class="select" id="studio-gd-' + k + '-' + slot + '" data-gdview="' + k + '" data-slot="' + slot + '" aria-label="' + aria + '">' +
+      '<option value="">' + esc(all) + '</option>' + items.map(o => '<option value="' + esc(o.v) + '"' + (v[k] === o.v ? ' selected' : '') + '>' +
+        esc(o.label) + ' (' + o.n + ')</option>').join('') + '</select>';
+  };
+  const favs = list.filter(c => c.fav).length, chosen = list.filter(s.on).length;
+  const seg = (favs && favs < n) || v.fav !== 'any' ? '<div class="seg" role="group" aria-label="Favourites">' +
+    [['any', 'All (' + n + ')'], ['fav', 'Favourites (' + favs + ')'], ['other', 'Not favourites (' + (n - favs) + ')']].map(o =>
+      '<button type="button" class="seg-btn' + (v.fav === o[0] ? ' is-active' : '') + '" data-act="studio-gd" data-gd="view" data-slot="' + slot +
+      '" data-k="fav" data-v="' + o[0] + '" aria-pressed="' + (v.fav === o[0]) + '">' + esc(o[1]) + '</button>').join('') + '</div>' : '';
+  /* the recording runs, newest first, as the library names them */
+  const runs = studio_gdFacet(list, c => c.folder || '', c => c.folderLabel || 'Another run', (a, b) => (b.c.when || 0) - (a.c.when || 0));
+  const kinds = GD_KINDS.map(k => ({v: k[0], label: k[1], n: list.filter(k[2]).length})).filter(o => o.n);
+  return '<div class="gd-tools">' +
+    '<input class="input" id="studio-gd-find-' + slot + '" data-slot="' + slot + '" type="search" autocomplete="off" placeholder="Find a clip by name or label" aria-label="Find a clip by name or label" value="' + esc(v.q) + '">' +
+    seg +
+    sel('run', 'Every session', 'Session', runs) +
+    sel('map', 'Every map', 'Map', studio_gdFacet(list, studio_gdMapOf, studio_gdMapOf)) +
+    sel('mode', 'Every game mode', 'Game mode', studio_gdFacet(list, studio_gdModeOf, studio_gdModeOf)) +
+    sel('kind', 'Every kind', 'Kind', kinds) +
+    (chosen || v.chosen ? '<button type="button" class="btn btn-sm" data-act="studio-gd" data-gd="view" data-slot="' + slot + '" data-k="chosen" data-v="' +
+      (v.chosen ? '' : '1') + '" aria-pressed="' + !!v.chosen + '">Chosen only (' + chosen + ')</button>' : '') +
+    (n > 1 ? '<select class="select" id="studio-gd-sort-' + slot + '" data-gdview="sort" data-slot="' + slot + '" aria-label="Sort">' +
+      GD_SORTS.map(o => '<option value="' + o[0] + '"' + (v.sort === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('') + '</select>' : '') +
+    '</div>';
+}
+
+/* One page of cards, what it is out of, and the pager. The page is clamped, never reset: a filter
+   that leaves fewer pages shows the last there is, and a choice -- which redraws the step -- stays put. */
+function studio_gdResults(slot, s) {
+  const v = studio_gdView(slot), l = studio_gdFiltered(slot, s);
+  const pages = Math.max(1, Math.ceil(l.length / GD_PAGE));
+  v.page = Math.min(Math.max(1, Number(v.page) || 1), pages);
+  const from = (v.page - 1) * GD_PAGE, shown = l.slice(from, from + GD_PAGE), narrowed = studio_gdNarrowed(v);
+  const count = l.length ? 'Showing ' + (from + 1) + '–' + (from + shown.length) + ' of ' + l.length +
+    (narrowed ? ' that match, of ' + s.list.length : '') : '';
+  return '<p class="gd-count muted" id="studio-gd-count-' + slot + '">' + count + '</p>' +
+    '<div class="gd-grid gd-clips" id="studio-gd-' + slot + 'grid">' + (shown.map(c => studio_gdCard(c, s.on(c), s.act)).join('') ||
+      (s.list.length ? '<p class="muted">No clip matches. <button type="button" class="btn btn-sm btn-ghost" data-act="studio-gd" data-gd="view-clear" data-slot="' + slot + '">Clear the filters</button></p>'
+                     : '<p class="muted">' + esc(s.none) + '</p>')) + '</div>' +
+    studio_gdPager(slot, v.page, pages);
+}
+function studio_gdPager(slot, page, pages) {
+  if (pages < 2) return '';
+  const btn = (p, text, aria, on, off) => '<button type="button" class="btn btn-sm' + (on ? ' btn-primary' : ' btn-ghost') + '" data-act="studio-gd" data-gd="page" data-slot="' + slot +
+    '" data-v="' + p + '" aria-label="' + aria + '"' + (on ? ' aria-current="page"' : '') + (off ? ' disabled' : '') + '>' + text + '</button>';
+  let html = btn(page - 1, '‹ Prev', 'Previous page', false, page <= 1), last = 0;
+  /* the first and last pages, and two either side of this one: 1 ... 4 5 [6] 7 8 ... 14 */
+  for (let i = 1; i <= pages; i++) {
+    if (i !== 1 && i !== pages && Math.abs(i - page) > 2) continue;
+    if (i - last > 1) html += '<span class="gd-gap" aria-hidden="true">…</span>';
+    html += btn(i, String(i), 'Page ' + i, i === page, false);
+    last = i;
+  }
+  return '<nav class="gd-pager" aria-label="Pages">' + html + btn(page + 1, 'Next ›', 'Next page', false, page >= pages) + '</nav>';
+}
+function studio_gdBrowser(slot, s) {
+  s = s || studio_gdSlot(slot);
+  return '<div class="gd-browse" id="studio-gd-browse-' + slot + '">' + studio_gdTools(slot, s) +
+    '<div class="gd-results" id="studio-gd-res-' + slot + '">' + studio_gdResults(slot, s) + '</div></div>';
+}
+
+/* A CLIP AS A CARD: its frame at the first kill, what it is, how long, from which match and when,
+   and whether it is chosen. The card's body chooses it; Play and Edit are beside it, not in it. */
+function studio_gdCard(c, on, act) {
+  const at = Math.max(0, ((c.kills || [])[0] || 0) - 0.3).toFixed(2);
+  const k = (c.kills || []).length, meta = [c.map, c.mode, c.folderLabel].filter(Boolean);
+  return '<div class="gd-clip' + (on ? ' is-on' : '') + '" data-id="' + esc(c.id) + '">' +
+    '<button type="button" class="gd-clip-hit" data-act="studio-gd" data-gd="' + act + '" data-id="' + esc(c.id) + '" aria-pressed="' + on + '"' +
+      ' title="' + (on ? 'Chosen. Click to take it out.' : 'Click to choose it.') + '">' +
+    '<span class="gd-thumb"><img class="gd-thumbimg" loading="lazy" alt="" width="320" height="180" src="' +
+      studio_media('/api/studio/thumb', c.path, '&t=' + at + '&v=' + (c.mtime || 0)) + '">' +
+      '<span class="gd-len mono">' + studio_dur(c.duration) + '</span><span class="gd-tick" aria-hidden="true">' + icon('check') + '</span></span>' +
+    '<span class="gd-tags">' + (studio_gdHs(c) ? '<i class="gd-hs">Headshot</i>' : '<i>Body</i>') +
+      (c.fav ? '<i class="gd-fav" title="A favourite">&#9733;</i>' : '') + (k > 1 ? '<i>' + k + ' kills</i>' : '') +
+      (c.labels || []).slice(0, 2).map(x => '<i>' + esc(x) + '</i>').join('') + '</span>' +
+    '<span class="gd-name mono">' + esc(c.name || c.id) + '</span>' +
+    (meta.length ? '<span class="gd-meta">' + esc(meta.join(' · ')) + '</span>' : '') + '</button>' +
+    '<div class="gd-clip-acts">' +
+      '<button type="button" class="btn btn-sm" data-act="studio-gd" data-gd="clip-play" data-slot="' + act + '" data-id="' + esc(c.id) + '">' + icon('play') + '<span>Play</span></button>' +
+      '<button type="button" class="btn btn-sm btn-ghost" data-act="studio-gd" data-gd="clip-edit" data-id="' + esc(c.id) + '" title="Trim and cut it on the Clips page">' +
+        icon('scissors') + '<span>Edit</span></button></div></div>';
+}
+
+/* Redraw one slot's browser -- or only its results, which leaves the find box and the filters alone,
+   so the caret and the open select stay where the player left them. Never the verdict. */
+function studio_gdRedrawSlot(slot, resultsOnly) {
+  const host = studio_el(resultsOnly ? 'studio-gd-res-' + slot : 'studio-gd-browse-' + slot);
+  if (!host) return;
+  const s = studio_gdSlot(slot), had = document.activeElement && host.contains(document.activeElement) ? document.activeElement.id : '';
+  if (resultsOnly) host.innerHTML = studio_gdResults(slot, s);
+  else host.outerHTML = studio_gdBrowser(slot, s);
+  const el = had && studio_el(had);
+  if (el) el.focus();
+}
+/* typing in a find box redraws that slot's results alone, so the box keeps its focus and caret */
+function studio_gdFind(e) {
+  const t = e.target;
+  if (!t || !t.id || t.id.indexOf('studio-gd-find-') !== 0) return;
+  const slot = t.getAttribute('data-slot'), v = studio_gdView(slot);
+  v.q = t.value; v.page = 1;
+  studio_gdRedrawSlot(slot, true);
+}
+function studio_gdViewChange(e) {
+  const t = e.target, k = t && t.getAttribute ? t.getAttribute('data-gdview') : null;
+  if (!k) return;
+  const slot = t.getAttribute('data-slot'), v = studio_gdView(slot);
+  v[k] = t.value; v.page = 1;
+  studio_gdRedrawSlot(slot, true);
+}
+
+/* ▶ PLAY: the clip in the Studio's own preview, over the guide, with its kills marked along it and
+   the choice in reach. Closing it (studio_previewClose) leaves the guide exactly where it was. */
+function studio_gdPlayClip(id, slot) {
+  if (!studio.clipIndex[id]) return;
+  studio_preview(id);
+  studio.gd.pv = {id: id, slot: slot === 'setup' ? 'setup' : 'quick'};
+  studio_gdPvPick();
+}
+function studio_gdPvPick() {
+  const gd = studio.gd, pv = gd.pv, b = studio_el('studio-preview-pick');
+  if (!b) return;
+  studio_show('studio-preview-pick', !!pv);
+  if (!pv) return;
+  const on = pv.slot === 'setup' ? gd.setup === pv.id : gd.quick.includes(pv.id);
+  b.classList.toggle('btn-primary', !on);
+  b.setAttribute('aria-pressed', String(on));
+  b.innerHTML = on ? icon('check') + '<span>' + (pv.slot === 'setup' ? 'The build: take it out' : 'Chosen: take it out') + '</span>'
+                   : '<span>' + (pv.slot === 'setup' ? 'Use it as the build' : 'Choose this clip') + '</span>';
+}
+
+/* ✎ EDIT: the Clips page's own Trim and cut, for this clip (clip_visit). The guide is left open
+   under it, on its step, with its slots' pages and every choice; back from there it is shown
+   again. A saved trim re-reads the library -- the clip's length, kills and thumbnail are what the
+   trim made them -- and the choice follows the clip. */
+function studio_gdEditClip(id) {
+  const c = studio.clipIndex[id];
+  if (!c || !c.folder || typeof clip_visit !== 'function') { toast('That clip cannot be edited from here.', 'warn'); return; }
+  studio.gd.editing = {id: id, path: c.path, folder: c.folder, name: c.name};
+  go('clips');
+  clip_visit(c.folder, c.path, studio_gdEdited);
+}
+async function studio_gdEdited(res) {
+  const gd = studio.gd, was = gd.editing;
+  gd.editing = null;
+  go('studio');
+  if (!was) return;
+  if (res) {
+    await studio_load(true);
+    /* AN EDIT RE-CUTS THE CLIP UNDER ITS OWN NAME, so its id -- the hash of its path -- normally
+       stays. One that comes back under another path is found by that path, or by its name in the
+       same run, and takes the old one's place in the draft rather than leaving it. */
+    if (!studio.clipIndex[was.id]) {
+      const norm = p => String(p || '').split('/').join('\\').toLowerCase(), all = Object.values(studio.clipIndex);
+      const now = all.find(c => res.master && norm(c.path) === norm(res.master)) || all.find(c => c.folder === was.folder && c.name === was.name);
+      if (now) {
+        if (gd.setup === was.id) gd.setup = now.id;
+        gd.quick = gd.quick.map(x => x === was.id ? now.id : x);
+        was.id = now.id;
+      }
+    }
+    gd.verdict = null;                     /* the clip is not what was judged: asked again */
+  }
+  if (studio_el('studio-guide-scrim').classList.contains('hide')) return;
+  if (res) studio_gdDraw();
+  const card = document.querySelector('#studio-gd-body .gd-clip[data-id="' + CSS.escape(was.id) + '"]');
+  if (card) card.scrollIntoView({block: 'center'});
 }
 
 function studio_gdSeg(name, val, opts) {
@@ -11977,7 +12263,18 @@ function studio_gdAct(b) {
   if (what === 'close') return studio_gdClose();
   /* Back while it plans lets go of the plan and goes back: it used to look live and do nothing */
   if (what === 'back' && gd.busy) { studio_gdDetach(); gd.step = 3; gd.verdict = null; return studio_gdDraw(); }
+  /* a kill mark in the preview: a seek, in the library's preview as in the guide's */
+  if (what === 'pv-seek') { const v = studio_el('studio-preview-video'), t = Number(b.getAttribute('data-t')); if (v && isFinite(t)) v.currentTime = t; return; }
   if (gd.busy) return;                     /* planning: Back and Close are what is offered */
+  if (what === 'view' || what === 'page' || what === 'view-clear') return studio_gdViewAct(what, b);
+  if (what === 'clip-play') return studio_gdPlayClip(b.getAttribute('data-id'), b.getAttribute('data-slot'));
+  if (what === 'clip-edit') return studio_gdEditClip(b.getAttribute('data-id'));
+  if (what === 'pv-pick') {
+    if (!gd.pv) return;
+    studio_gdToggle(gd.pv.slot, gd.pv.id);
+    studio_gdDraw();
+    return studio_gdPvPick();
+  }
   gd.held = null;
   if (what === 'all') return studio_gdAllSettings();
   if (what === 'fix') return studio_gdFix(b.getAttribute('data-fix'));
@@ -12004,19 +12301,38 @@ function studio_gdAct(b) {
     gd.verdict = null;
   }
   else if (what === 'auto') { gd.auto = true; gd.style = ''; gd.autoWhy = null; gd.step = 1; gd.verdict = null; }
-  else if (what === 'setup') {
-    const id = b.getAttribute('data-id');
-    gd.setup = gd.setup === id ? '' : id; gd.quick = gd.quick.filter(x => x !== gd.setup); gd.verdict = null;
-  }
-  else if (what === 'quick' || what === 'unpick') {
-    const id = b.getAttribute('data-id'), off = what === 'unpick' || gd.quick.indexOf(id) >= 0;
-    gd.quick = off ? gd.quick.filter(x => x !== id) : gd.quick.concat([id]);
-    if (off && gd.setup === id) gd.setup = '';   /* taken out is taken out, from the build slot too */
-    gd.verdict = null;
-  }
+  else if (what === 'setup' || what === 'quick' || what === 'unpick') studio_gdToggle(what, b.getAttribute('data-id'));
   else if (what === 'pickall') { studio_gdPickAll(false); gd.verdict = null; }
   else if (what === 'set') { gd[b.getAttribute('data-k')] = b.getAttribute('data-v'); gd.verdict = null; }
   studio_gdDraw();
+}
+/* A clip chosen or taken out, from its card, the left-out list or the player. A choice is the one
+   thing on the Clips step the verdict is asked again for. */
+function studio_gdToggle(what, id) {
+  const gd = studio.gd;
+  if (what === 'setup') { gd.setup = gd.setup === id ? '' : id; gd.quick = gd.quick.filter(x => x !== gd.setup); }
+  else {
+    const off = what === 'unpick' || gd.quick.indexOf(id) >= 0;
+    gd.quick = off ? gd.quick.filter(x => x !== id) : gd.quick.concat([id]);
+    if (off && gd.setup === id) gd.setup = '';   /* taken out is taken out, from the build slot too */
+  }
+  gd.verdict = null;
+}
+/* THE CLIP BROWSERS' VIEWS: which clips a slot shows, never which are chosen -- so one slot is
+   redrawn and nothing is asked again. A filter, a search or a sort starts again from page one. */
+function studio_gdViewAct(what, b) {
+  const slot = b.getAttribute('data-slot'), v = studio_gdView(slot);
+  if (what === 'page') {
+    v.page = Number(b.getAttribute('data-v')) || 1;
+    studio_gdRedrawSlot(slot, true);
+    const top = studio_el('studio-gd-count-' + slot);
+    if (top) top.scrollIntoView({block: 'nearest'});
+    return;
+  }
+  if (what === 'view-clear') Object.assign(v, {q: '', fav: 'any', run: '', map: '', mode: '', kind: '', chosen: false});
+  else { const k = b.getAttribute('data-k'), val = b.getAttribute('data-v'); v[k] = k === 'chosen' ? !!val : val; }
+  v.page = 1;
+  studio_gdRedrawSlot(slot, false);
 }
 
 

@@ -360,9 +360,11 @@ def _drop_song(path, seconds=90.0, bpm=120.0, drop_at=40.0, rate=22050):
         w.writeframes(bytes(fr))
 
 
-def _rich_clips(home, run_name="2026-10-20_2000_VALORANT", game="VALORANT", n=26, seconds=8.0):
+def _rich_clips(home, run_name="2026-10-20_2000_VALORANT", game="VALORANT", n=26, seconds=8.0,
+                prefix=None, singles=False, demo=None):
     """Three set-ups (three headshots; the first a CLUTCH), three headshot doubles, then single
-    kills, two in three of them headshots."""
+    kills, two in three of them headshots. `singles` makes every clip a single kill, and `demo`
+    is the run's alignment against Riot's records -- where each match starts in the recording."""
     import json
     import shutil
     import subprocess
@@ -381,10 +383,12 @@ def _rich_clips(home, run_name="2026-10-20_2000_VALORANT", game="VALORANT", n=26
                     str(base)], check=True, timeout=180, creationflags=appd.NO_WINDOW)
     rows, kills = [], []
     for i in range(n):
-        clip = run / "clips" / f"{run_name[-4:].lower()}{i:02d}.mp4"
+        clip = run / "clips" / f"{prefix or run_name[-4:].lower()}{i:02d}.mp4"
         shutil.copy(base, clip)
         start = 100.0 * (i + 1)
-        if i < 3:
+        if singles:
+            ks, labels = [(4.0, i % 2 == 0)], []
+        elif i < 3:
             ks, labels = [(2.0, True), (3.5, True), (5.0, True)], (["CLUTCH 1v3"] if i == 0 else [])
         elif i < 6:
             ks, labels = [(3.0, True), (4.0, True)], []
@@ -395,7 +399,20 @@ def _rich_clips(home, run_name="2026-10-20_2000_VALORANT", game="VALORANT", n=26
                      "name": clip.stem, "master": str(clip), "vertical": "", "caption": "", "tags": labels, "at": ""})
     base.unlink()
     (run / "clips.json").write_text(json.dumps({"game": game, "clips": rows}))
-    (run / "session.json").write_text(json.dumps({"game": game, "kills": kills}))
+    (run / "session.json").write_text(json.dumps({"game": game, "kills": kills, **({"demo": demo} if demo else {})}))
+
+
+def _match_record(home, mid, map_key, queue):
+    """One saved Riot match record, shaped like what valorant_match.summary reads."""
+    import json
+
+    d = home / "video" / "matches"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{mid}.json").write_text(json.dumps({
+        "matchInfo": {"matchId": mid, "mapId": f"/Game/Maps/{map_key}/{map_key}", "queueID": queue,
+                      "isRanked": queue == "competitive", "gameStartMillis": 1_792_000_000_000,
+                      "gameLengthMillis": 900_000},
+        "players": [], "teams": []}))
 
 
 @pytest.fixture(scope="module")
@@ -410,6 +427,12 @@ def rich_app(tmp_path_factory):
     appd.seed_home(home, port, rules={"setup_done": True})
     _rich_clips(home)
     _rich_clips(home, "2026-10-19_1800_CS2", game="Counter-Strike 2", n=2)
+    # A second Valorant session whose clips came from two matches Riot recorded: the guide's
+    # map and game-mode filters. The first clip is from before either match: Unknown.
+    _rich_clips(home, "2026-10-18_2100_VALORANT", n=6, prefix="mtch", singles=True,
+                demo={"matches": [{"match": "match-asc", "offset": 150.0}, {"match": "match-hvn", "offset": 350.0}]})
+    _match_record(home, "match-asc", "Ascent", "competitive")
+    _match_record(home, "match-hvn", "Triad", "spikerush")
     songs = home / "video" / "songs"
     _drop_song(songs / "drop song.wav")
     appd.click_track(songs / "click song.wav", seconds=60, bpm=120.0)
@@ -881,3 +904,355 @@ def test_a_youtube_link_from_the_guide_chooses_the_song_there(rp, rich_app):
     assert rp.evaluate("() => studio.gd.step") == 1
     rp.wait_for_selector("#studio-gd-dropcv")
     assert rp.locator('.gd-card[data-gd="song"].is-on').inner_text().startswith("Fetched tune")
+
+
+# ---------------------------------------------------------------------------------------------
+# EVERY CLIP, A PAGE AT A TIME. The Clips step drew only the best 48 of a game's clips, favourites
+# first: with more favourites than that the player saw nothing else and had no way to. Each slot is
+# now a clip browser -- thumbnail cards, find, filters, sort, 24 a page -- and every part of that
+# is a view: it never changes a choice, the verdict or the request.
+
+QUICK = "#studio-gd-quickgrid .gd-clip"
+
+
+def _many_clips(pg, extra=40, favs=5):
+    """the fixture's Valorant clips, plus `extra` single-kill copies of one of them (each a little
+    longer than the last), the first `favs` of them all favourites"""
+    # Opening the page reads the library twice (the page's own load and the fixture's refresh);
+    # one landing after this would put back a clip index without them.
+    pg.evaluate("async () => { await studio_load(true); }")
+    pg.wait_for_timeout(500)
+    pg.evaluate("""([extra, favs]) => {
+      const base = Object.values(studio.clipIndex).find(c => (c.kills || []).length === 1 && /^rant/.test(c.name));
+      for (let i = 0; i < extra; i++) studio.clipIndex['extra' + i] = Object.assign({}, base,
+        {id: 'extra' + i, name: 'extra_clip_' + i, fav: false, duration: 8 + i / 10});
+      Object.values(studio.clipIndex).filter(c => c.game === 'VALORANT').forEach((c, i) => { c.fav = i < favs; });
+    }""", [extra, favs])
+
+
+def _to_clips(pg, style="montage", song="click song"):
+    _open(pg)
+    _style(pg, style)
+    pg.click("#studio-gd-next")
+    _song_named(pg, song)
+    pg.click("#studio-gd-next")
+    pg.wait_for_selector("#studio-gd-browse-quick")
+
+
+def _ids(pg, sel=QUICK):
+    return pg.evaluate("(s) => [...document.querySelectorAll(s)].map(e => e.getAttribute('data-id'))", sel)
+
+
+def _count(pg, slot="quick"):
+    return pg.inner_text(f"#studio-gd-count-{slot}")
+
+
+def _pick_view(pg, k, label, slot="quick"):
+    """choose a filter's option by its label, whatever its count"""
+    sel = f"#studio-gd-{k}-{slot}"
+    value = pg.evaluate("([s, l]) => [...document.querySelector(s).options].find(o => o.text.startsWith(l)).value", [sel, label])
+    pg.select_option(sel, value)
+
+
+def test_every_clip_is_offered_as_a_card_24_a_page(rp):
+    _many_clips(rp)
+    rp.evaluate("() => { studio.clipIndex.extra3.name = 'a_very_long_clip_name_without_any_breaks_' + 'x'.repeat(90); }")
+    _to_clips(rp)
+    n = rp.evaluate("() => studio_gdClips().length")
+    assert n == 72                                       # 26 + 6 of the fixture's, 40 more
+    lead = rp.inner_text("#studio-gd-body .gd-q")
+    assert f"All {n} of your VALORANT clips are here, 24 a page" in lead and "Pick for me draws on all of them" in lead
+    assert rp.locator(QUICK).count() == 24
+    assert _count(rp) == f"Showing 1–24 of {n}"
+    # favourites first, then the rest
+    favs = rp.evaluate(f"() => [...document.querySelectorAll('{QUICK}')].map(e => !!studio.clipIndex[e.dataset.id].fav)")
+    assert favs[:5] == [True] * 5 and not any(favs[5:])
+    # a card: its frame at the first kill, lazily, and it loads; its tags, length and session
+    imgs = rp.evaluate(f"() => [...document.querySelectorAll('{QUICK} img.gd-thumbimg')].map(i => [i.loading, i.src])")
+    assert len(imgs) == 24 and all(lazy == "lazy" and "/api/studio/thumb" in src for lazy, src in imgs)
+    rp.locator(QUICK).first.scroll_into_view_if_needed()
+    rp.wait_for_function(f"() => {{ const i = document.querySelector('{QUICK} img.gd-thumbimg'); return i.complete && i.naturalWidth > 0; }}",
+                         timeout=60_000)
+    card = rp.locator(QUICK).first
+    text, when = card.inner_text(), rp.evaluate("(id) => studio.clipIndex[id].folderLabel", card.get_attribute("data-id"))
+    assert "8s" in text and when in text and ("HEADSHOT" in text.upper() or "BODY" in text.upper())
+    assert card.locator('[data-gd="clip-play"]').is_visible() and card.locator('[data-gd="clip-edit"]').is_visible()
+    # the pager: page numbers, Next and Prev, and what it shows out of how many
+    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Page 2"]')
+    assert _count(rp) == f"Showing 25–48 of {n}"
+    second = _ids(rp)
+    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Next page"]')
+    assert _count(rp) == f"Showing 49–72 of {n}" and rp.locator(QUICK).count() == 24
+    assert rp.is_disabled('#studio-gd-browse-quick .gd-pager [aria-label="Next page"]')
+    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Previous page"]')
+    assert _ids(rp) == second
+    # every clip is on exactly one page
+    seen = []
+    for p in (1, 2, 3):
+        rp.click(f'#studio-gd-browse-quick .gd-pager [aria-label="Page {p}"]')
+        seen += _ids(rp)
+    assert len(seen) == n and len(set(seen)) == n
+    # a long name wraps inside its card
+    rp.fill("#studio-gd-find-quick", "a_very_long")
+    rp.wait_for_function(f"() => document.querySelectorAll('{QUICK}').length === 1")
+    assert rp.evaluate(f"""() => {{ const c = document.querySelector('{QUICK}'), m = c.querySelector('.gd-name');
+        return m.getBoundingClientRect().right <= c.getBoundingClientRect().right + 0.5 && c.scrollWidth <= c.clientWidth; }}""")
+
+
+def test_each_slot_keeps_its_own_page_and_a_choice_never_moves_it(rp):
+    """Build and drop's two slots, each a browser of its own."""
+    _many_clips(rp)
+    rp.evaluate("""() => {
+      const base = Object.values(studio.clipIndex).find(c => (c.kills || []).length === 3 && !(c.labels || []).length);
+      for (let i = 0; i < 30; i++) studio.clipIndex['build' + i] = Object.assign({}, base, {id: 'build' + i, name: 'build_clip_' + i});
+    }""")
+    _to_clips(rp, "drop", "drop song")
+    assert _count(rp, "setup") == "Showing 1–24 of 33"
+    rp.click('#studio-gd-browse-setup .gd-pager [aria-label="Page 2"]')
+    assert _count(rp, "setup") == "Showing 25–33 of 33"
+    assert _count(rp, "quick").startswith("Showing 1–24 of ")
+    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Page 3"]')
+    assert _count(rp, "setup") == "Showing 25–33 of 33"
+    # choosing, in either slot, leaves both pages where they were
+    pick = _ids(rp, "#studio-gd-setupgrid .gd-clip")[2]
+    rp.click(f'#studio-gd-setupgrid [data-gd="setup"][data-id="{pick}"]')
+    assert rp.evaluate("() => studio.gd.setup") == pick
+    quick = _ids(rp)[1]
+    rp.click(f'#studio-gd-quickgrid [data-gd="quick"][data-id="{quick}"]')
+    assert rp.evaluate("(id) => studio.gd.quick.includes(id)", quick)
+    assert _count(rp, "setup") == "Showing 25–33 of 33"
+    assert _count(rp, "quick").startswith("Showing 49–")
+    assert rp.locator(f'#studio-gd-quickgrid .gd-clip.is-on[data-id="{quick}"]').count() == 1
+    assert rp.locator(f'#studio-gd-setupgrid .gd-clip.is-on[data-id="{pick}"]').count() == 1
+
+
+def test_find_and_each_filter_narrow_with_counts_and_go_back_to_page_one(rp):
+    _many_clips(rp)
+    _to_clips(rp)
+    n = 72
+    # favourites
+    assert rp.inner_text('#studio-gd-browse-quick [data-k="fav"][data-v="fav"]') == "Favourites (5)"
+    assert rp.inner_text('#studio-gd-browse-quick [data-k="fav"][data-v="other"]') == f"Not favourites ({n - 5})"
+    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Page 2"]')
+    rp.click('#studio-gd-browse-quick [data-k="fav"][data-v="fav"]')
+    assert _count(rp) == f"Showing 1–5 of 5 that match, of {n}"
+    assert rp.evaluate(f"() => [...document.querySelectorAll('{QUICK}')].every(e => studio.clipIndex[e.dataset.id].fav)")
+    rp.click('#studio-gd-browse-quick [data-k="fav"][data-v="other"]')
+    assert _count(rp) == f"Showing 1–24 of {n - 5} that match, of {n}"
+    rp.click('#studio-gd-browse-quick [data-k="fav"][data-v="any"]')
+    # the sessions, newest first, each with its count
+    runs = rp.evaluate("() => [...document.getElementById('studio-gd-run-quick').options].map(o => o.text)")
+    assert runs[0] == "Every session" and len(runs) == 3
+    assert sorted(runs[1:]) == sorted(["18 Oct 2026, 21:00 (6)", f"20 Oct 2026, 20:00 ({n - 6})"])
+    _pick_view(rp, "run", "18 Oct 2026")
+    assert _count(rp) == f"Showing 1–6 of 6 that match, of {n}"
+    assert sorted(rp.evaluate(f"() => [...document.querySelectorAll('{QUICK}')].map(e => studio.clipIndex[e.dataset.id].name)")) == \
+        [f"mtch{i:02d}" for i in range(6)]
+    rp.select_option("#studio-gd-run-quick", "")
+    # kind
+    multi = rp.evaluate("() => studio_gdClips().filter(c => c.kills.length >= 2).length")
+    assert multi == 6
+    _pick_view(rp, "kind", "Multi-kill")
+    assert _count(rp) == f"Showing 1–6 of 6 that match, of {n}"
+    _pick_view(rp, "kind", "Clutch")
+    assert rp.locator(QUICK).count() == 1 and "CLUTCH" in rp.locator(QUICK).first.inner_text().upper()
+    rp.select_option("#studio-gd-kind-quick", "")
+    # the find box: by name or label, the caret kept in the box, and back to page one
+    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Page 3"]')
+    rp.click("#studio-gd-find-quick")
+    rp.keyboard.type("extra_clip_1")
+    assert rp.locator(QUICK).count() == 11                 # extra_clip_1 and extra_clip_10..19
+    assert _count(rp).startswith("Showing 1–11 of 11")
+    assert rp.evaluate("() => document.activeElement && document.activeElement.id") == "studio-gd-find-quick"
+    rp.keyboard.type("x")
+    assert "No clip matches" in rp.inner_text("#studio-gd-quickgrid")
+    rp.fill("#studio-gd-find-quick", "clutch")
+    assert rp.locator(QUICK).count() == 1                  # a label
+    rp.fill("#studio-gd-find-quick", "")
+    # combined: two filters that leave nothing say so, and Clear the filters puts every clip back
+    _pick_view(rp, "kind", "Multi-kill")
+    _pick_view(rp, "run", "18 Oct 2026")
+    assert "No clip matches" in rp.inner_text("#studio-gd-quickgrid")
+    rp.click('#studio-gd-quickgrid [data-gd="view-clear"]')
+    assert _count(rp) == f"Showing 1–24 of {n}"
+    # the sorts
+    rp.select_option("#studio-gd-sort-quick", "kills")
+    assert rp.evaluate(f"() => studio.clipIndex[document.querySelector('{QUICK}').dataset.id].kills.length") == 3
+    rp.select_option("#studio-gd-sort-quick", "long")
+    assert _ids(rp)[0] == "extra39"
+    rp.select_option("#studio-gd-sort-quick", "new")
+    assert rp.evaluate(f"() => studio.clipIndex[document.querySelector('{QUICK}').dataset.id].name").startswith("mtch")
+    # chosen only
+    rp.select_option("#studio-gd-sort-quick", "best")
+    first = _ids(rp)[:2]
+    for i in first:
+        rp.click(f'#studio-gd-quickgrid [data-gd="quick"][data-id="{i}"]')
+    assert rp.inner_text('#studio-gd-browse-quick [data-k="chosen"]') == "Chosen only (2)"
+    rp.click('#studio-gd-browse-quick [data-k="chosen"]')
+    assert sorted(_ids(rp)) == sorted(first)
+
+
+def test_map_and_game_mode_come_from_the_match_records(rp):
+    """The seeded session's clips: one before either match (unknown), two from an Ascent
+    Competitive, three from a Haven Spike Rush. The rest have no record at all."""
+    _to_clips(rp)
+    n = rp.evaluate("() => studio_gdClips().length")
+    maps = rp.evaluate("() => [...document.getElementById('studio-gd-map-quick').options].map(o => o.text)")
+    assert maps == ["Every map", f"Unknown map ({n - 5})", "Haven (3)", "Ascent (2)"]
+    modes = rp.evaluate("() => [...document.getElementById('studio-gd-mode-quick').options].map(o => o.text)")
+    assert modes == ["Every game mode", f"Unknown mode ({n - 5})", "Spike Rush (3)", "Competitive (2)"]
+    _pick_view(rp, "map", "Ascent")
+    names = rp.evaluate(f"() => [...document.querySelectorAll('{QUICK}')].map(e => studio.clipIndex[e.dataset.id].name).sort()")
+    assert names == ["mtch01", "mtch02"]
+    assert all("Ascent · Competitive" in t for t in rp.locator(QUICK).all_inner_texts())
+    rp.select_option("#studio-gd-map-quick", "")
+    _pick_view(rp, "mode", "Spike Rush")
+    names = rp.evaluate(f"() => [...document.querySelectorAll('{QUICK}')].map(e => studio.clipIndex[e.dataset.id].name).sort()")
+    assert names == ["mtch03", "mtch04", "mtch05"]
+    # combined with the map they are not on: nothing
+    _pick_view(rp, "map", "Ascent")
+    assert "No clip matches" in rp.inner_text("#studio-gd-quickgrid")
+    _pick_view(rp, "map", "Unknown map")
+    assert "No clip matches" in rp.inner_text("#studio-gd-quickgrid")
+    rp.select_option("#studio-gd-mode-quick", "")
+    _pick_view(rp, "mode", "Unknown mode")
+    assert "mtch00" in rp.evaluate(f"() => [...document.querySelectorAll('{QUICK}')].map(e => studio.clipIndex[e.dataset.id].name)")
+
+
+def test_choices_survive_paging_and_filtering_and_no_view_asks_the_verdict_again(rp):
+    _many_clips(rp)
+    _to_clips(rp)
+    a = _ids(rp)[3]
+    rp.click(f'#studio-gd-quickgrid [data-gd="quick"][data-id="{a}"]')
+    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Page 2"]')
+    b = _ids(rp)[5]
+    rp.click(f'#studio-gd-quickgrid [data-gd="quick"][data-id="{b}"]')
+    assert _count(rp).startswith("Showing 25–48")          # choosing did not move the page
+    _settled(rp)
+    asked, body = rp.evaluate("() => [window.__feas.length, JSON.stringify(studio_gdBody())]")
+    head = "#studio-gd-body .gd-slot .gd-slothead .mono"
+    assert rp.inner_text(head) == "2 chosen, at least 4"
+    # every kind of view, with both chosen clips out of sight in most of them
+    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Page 3"]')
+    rp.click('#studio-gd-browse-quick [data-k="fav"][data-v="fav"]')
+    assert rp.inner_text(head) == "2 chosen, at least 4"
+    assert rp.inner_text('#studio-gd-browse-quick [data-k="chosen"]') == "Chosen only (2)"
+    rp.click('#studio-gd-browse-quick [data-k="fav"][data-v="any"]')
+    _pick_view(rp, "run", "18 Oct 2026")
+    _pick_view(rp, "map", "Haven")
+    rp.select_option("#studio-gd-sort-quick", "long")
+    rp.fill("#studio-gd-find-quick", "mtch")
+    rp.click('#studio-gd-browse-quick [data-k="chosen"]')
+    assert set(_ids(rp)) <= {a, b}
+    rp.fill("#studio-gd-find-quick", "")
+    rp.click('#studio-gd-browse-quick [data-k="chosen"]')
+    _pick_view(rp, "kind", "Multi-kill")
+    rp.select_option("#studio-gd-kind-quick", "")
+    rp.select_option("#studio-gd-run-quick", "")
+    rp.select_option("#studio-gd-map-quick", "")
+    rp.select_option("#studio-gd-sort-quick", "best")
+    rp.wait_for_timeout(700)                               # past the verdict's own debounce
+    assert rp.evaluate("() => window.__feas.length") == asked
+    assert rp.evaluate("() => JSON.stringify(studio_gdBody())") == body
+    assert rp.evaluate("() => !!studio.gd.verdict")
+    assert sorted(rp.evaluate("() => studio.gd.quick")) == sorted([a, b])
+    assert rp.inner_text(head) == "2 chosen, at least 4"
+
+
+def test_play_opens_the_clip_over_the_guide_and_chooses_it_there(rp):
+    _to_clips(rp, "drop", "drop song")
+    rp.evaluate("() => { studio.gd.quick = []; studio.gd.setup = ''; studio_gdDraw(); }")
+    card = rp.locator("#studio-gd-setupgrid .gd-clip").first
+    cid = card.get_attribute("data-id")
+    card.locator('[data-gd="clip-play"]').click()
+    rp.wait_for_selector("#studio-preview-scrim:not(.hide)")
+    assert "/api/clips/video" in rp.get_attribute("#studio-preview-video", "src")
+    kills = rp.evaluate("(id) => studio.clipIndex[id].kills", cid)
+    assert rp.locator("#studio-preview-marks .gd-pvmark").count() == len(kills) == 3
+    assert rp.locator("#studio-preview-marks .gd-pvmark.is-hs").count() == 3
+    # a kill mark seeks there
+    rp.locator("#studio-preview-marks .gd-pvmark").nth(1).click()
+    assert abs(rp.evaluate("() => document.getElementById('studio-preview-video').currentTime") - kills[1]) < 0.5
+    # chosen from inside the player, and the guide behind it says so
+    assert rp.inner_text("#studio-preview-pick") == "Use it as the build"
+    rp.click("#studio-preview-pick")
+    assert rp.evaluate("() => studio.gd.setup") == cid
+    assert "take it out" in rp.inner_text("#studio-preview-pick")
+    assert rp.locator(f'#studio-gd-setupgrid .gd-clip.is-on[data-id="{cid}"]').count() == 1
+    # the quick kills' Play chooses into the quick kills
+    rp.keyboard.press("Escape")
+    rp.wait_for_selector("#studio-preview-scrim.hide", state="attached")
+    assert rp.is_visible("#studio-guide-scrim") and rp.evaluate("() => studio.gd.step") == 2
+    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Page 2"]')
+    page = _count(rp)
+    q = rp.locator(QUICK).first
+    qid = q.get_attribute("data-id")
+    q.locator('[data-gd="clip-play"]').click()
+    rp.wait_for_selector("#studio-preview-scrim:not(.hide)")
+    rp.click("#studio-preview-pick")
+    assert rp.evaluate("(id) => studio.gd.quick.includes(id)", qid)
+    rp.click('#studio-preview [data-act="studio-preview-close"]')
+    assert rp.is_hidden("#studio-preview-scrim")
+    # the guide is where it was: the step, the slot's page, both choices
+    assert rp.is_visible("#studio-guide-scrim") and _count(rp) == page
+    assert rp.evaluate("() => studio.gd.setup") == cid
+    assert rp.locator(f'{QUICK}.is-on[data-id="{qid}"]').count() == 1
+
+
+def test_edit_opens_trim_and_cut_and_comes_back_with_the_choices(rp, rich_app):
+    """Back keeps everything; a finished re-render re-reads the library and the choice follows
+    the clip, even to a new path. The re-render itself needs the run's recording, which the
+    fixture has not got, so its end is played to the page the way the status poll delivers it."""
+    import json
+    import shutil
+
+    run = rich_app["home"] / "video" / "clips" / "2026-10-18_2100_VALORANT"
+    man = run / "clips.json"
+    kept = man.read_text()
+    _to_clips(rp)
+    target = rp.evaluate("() => Object.values(studio.clipIndex).find(c => c.name === 'mtch03').id")
+    other = _ids(rp)[0]
+    rp.evaluate("([a, b]) => { studio.gd.quick = [a, b]; studio_gdDraw(); }", [other, target])
+    rp.fill("#studio-gd-find-quick", "mtch0")
+    rp.locator(f'{QUICK}[data-id="{target}"] [data-gd="clip-edit"]').click()
+    # the Clips page, on that clip's player alone, with Trim and cut
+    rp.wait_for_selector("#view-clips.is-active.is-visit")
+    rp.wait_for_selector("#clip-player-card:not(.hide)")
+    assert rp.is_visible("#clip-player-card") and rp.is_visible("#clip-trim-open")
+    assert "trim and cut" in rp.inner_text("#clip-player-card").lower()
+    assert rp.inner_text("#clip-play-close") == "Back to the guide"
+    assert rp.evaluate("() => clip_playerClip().master").endswith("mtch03.mp4")
+    assert not rp.is_visible("#clip-local")
+    # Back: the guide on its step, its search and its choices
+    rp.click("#clip-play-close")
+    rp.wait_for_selector("#view-studio.is-active")
+    assert rp.is_visible("#studio-guide-scrim") and rp.evaluate("() => studio.gd.step") == 2
+    assert rp.input_value("#studio-gd-find-quick") == "mtch0"
+    assert rp.evaluate("() => studio.gd.quick") == [other, target]
+    assert not rp.evaluate("() => document.getElementById('view-clips').classList.contains('is-visit')")
+    # a save: the clip comes back two seconds shorter, under another name
+    rp.locator(f'{QUICK}[data-id="{target}"] [data-gd="clip-edit"]').click()
+    rp.wait_for_selector("#clip-player-card:not(.hide)")
+    new = run / "clips" / "mtch03b.mp4"
+    try:
+        shutil.copy(run / "clips" / "mtch03.mp4", new)
+        data = json.loads(kept)
+        row = next(r for r in data["clips"] if r["name"] == "mtch03")
+        row.update(name="mtch03b", master=str(new), duration=6.0, end=row["start"] + 6.0)
+        man.write_text(json.dumps(data))
+        rp.evaluate("(p) => { clip_state.editing = true; clip_renderEdit({state: 'done', result: {master: p, duration: 6}}); }", str(new))
+        rp.wait_for_selector("#view-studio.is-active")
+        rp.wait_for_function("() => Object.values(studio.clipIndex).some(c => c.name === 'mtch03b')", timeout=30_000)
+        now = rp.evaluate("() => Object.values(studio.clipIndex).find(c => c.name === 'mtch03b').id")
+        assert now != target
+        rp.wait_for_function("([a, b]) => JSON.stringify(studio.gd.quick) === JSON.stringify([a, b])", arg=[other, now], timeout=30_000)
+        assert rp.evaluate("() => studio.gd.step") == 2
+        card = rp.locator(f'{QUICK}.is-on[data-id="{now}"]')
+        assert card.count() == 1 and "6s" in card.inner_text()
+        assert "mtch03b" in card.locator("img.gd-thumbimg").get_attribute("src")
+    finally:
+        man.write_text(kept)
+        try:
+            new.unlink()
+        except OSError:
+            pass

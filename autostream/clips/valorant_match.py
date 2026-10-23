@@ -175,6 +175,23 @@ def respawn_mode(mode: str) -> bool:
     return m in RESPAWN_QUEUES or any(w in m for w in ("deathmatch", "hurm", "gungame", "snowball"))
 
 
+# The word in a game-mode path ("/Game/GameModes/QuickBomb/QuickBombGameMode...") that names
+# the mode, for a recording whose match record is gone. Team Deathmatch's path says HURM, so
+# it is read before Deathmatch. Bomb is not here: Competitive, Unrated and a custom game all
+# play it, and only the record's queue can tell them apart.
+_MODE_WORDS = (("hurm", "Team Deathmatch"), ("deathmatch", "Deathmatch"), ("gungame", "Escalation"),
+               ("quickbomb", "Spike Rush"), ("swiftplay", "Swiftplay"), ("onefa", "Replication"),
+               ("snowball", "Snowball Fight"))
+
+
+def mode_name(mode: str) -> str:
+    """A queue id or a game-mode path as the game names it: "Spike Rush", or "" when it cannot tell."""
+    m = str(mode or "").strip().lower()
+    if m and m in QUEUE_NAMES:
+        return QUEUE_NAMES[m]
+    return next((name for word, name in _MODE_WORDS if word in m), "")
+
+
 def summary(match: Match) -> dict:
     """One match as a person would describe it: map, mode, when, the score,
     and how they did. Never raises -- a record Riot changed the shape of

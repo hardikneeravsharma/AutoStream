@@ -3066,6 +3066,65 @@ function clip_openPlayer(list, i, folder) {
   }
 }
 
+/* THE PLAYER AND ITS TRIM AND CUT, FOR A CLIP CHOSEN ON ANOTHER PAGE. The Studio's step-by-step
+   reel maker offers Edit on every clip it shows; it is this editor, not a second one, so a trim
+   made there is the same re-cut written to the same clips.json. The page shows the player alone
+   while it is visited (`is-visit`): the run's own steps would be a page the player did not ask
+   for. Back, or a finished re-render, hands the clip to `back` -- null when nothing was saved --
+   and the caller goes back to where it was. */
+async function clip_visit(folder, path, back) {
+  var r = null;
+  try {
+    r = await API.get('/api/clips/existing?folder=' + encodeURIComponent(folder));
+  } catch (e) {
+    r = null;
+  }
+  var norm = function (s) { return String(s || '').split('/').join('\\').toLowerCase(); };
+  var rows = ((r && !r.error && r.clips) || []).filter(function (c) {
+    return c && c.kind !== 'summary' && c.kind !== 'highlight';
+  });
+  var row = rows.filter(function (c) { return norm(c.master) === norm(path); })[0] ||
+            rows.filter(function (c) {
+              return String(c.master || '').split(/[\\/]/).pop().toLowerCase() ===
+                     String(path || '').split(/[\\/]/).pop().toLowerCase();
+            })[0];
+  if (!row) {
+    toast((r && r.error) || 'That clip is not in its run any more.', 'error');
+    back(null);
+    return;
+  }
+  /* The run is already read: the trim needs its recording, and asking again costs a request. */
+  clip_state.runs = clip_state.runs || {};
+  clip_state.runs[folder] = (r && r.source) ? r : null;
+  clip_state.visit = {back: back, master: row.master};
+  var view = clip_el('view-clips');
+  if (view) view.classList.add('is-visit');
+  var close = clip_el('clip-play-close');
+  if (close) close.innerHTML = '<span>Back to the guide</span>';
+  /* One clip, not its run: n and p would wander off to clips the guide did not offer. */
+  clip_openPlayer([row], 0, folder);
+  /* Straight to the trim, when the recording it was cut from is still there to trim from. */
+  var p = clip_state.player;
+  if (p && p.edit && p.edit.ready && !p.edit.on) clip_trimToggle();
+  var trim = clip_el('clip-trim-open');
+  if (trim && trim.scrollIntoView) trim.scrollIntoView({block: 'center'});
+}
+
+function clip_visitEnd(saved) {
+  var v = clip_state.visit;
+  if (!v) return;
+  clip_state.visit = null;
+  var view = clip_el('view-clips');
+  if (view) view.classList.remove('is-visit');
+  var close = clip_el('clip-play-close');
+  if (close) close.innerHTML = '<span>Close</span>';
+  var vid = clip_el('clip-video');
+  if (vid) { vid.pause(); vid.removeAttribute('src'); vid.load(); }
+  clip_state.player = null;
+  clip_show('clip-player-card', false);
+  v.back(saved ? {master: saved.master || v.master, was: v.master, vertical: saved.vertical || ''} : null);
+}
+
 function clip_playerClip() {
   var p = clip_state.player;
   return p ? p.list[p.i] : null;
@@ -4496,6 +4555,8 @@ function clip_renderEdit(ed) {
       if (on) c.vertical_mode = on.getAttribute('data-vert');
     }
     toast('Clip re-rendered.', 'ok');
+    /* Visited from the guide: saved is done, and the guide shows the clip as it is now. */
+    if (clip_state.visit) { clip_visitEnd(c || {}); return; }
     clip_playerLoad();                  /* reload so the new file is shown */
   }
 }
@@ -6758,6 +6819,7 @@ function clip_wire() {
   if (apply) apply.addEventListener('click', clip_playerApply);
   var pclose = clip_el('clip-play-close');
   if (pclose) pclose.addEventListener('click', function () {
+    if (clip_state.visit) { clip_visitEnd(null); return; }
     var v = clip_el('clip-video');
     if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
     clip_state.player = null;

@@ -3858,6 +3858,39 @@ STUDIO_CSS = r"""
 .gd-bar{height:8px;border-radius:4px;background:var(--surface-active);border:1px solid var(--border);overflow:hidden}.gd-bar i{display:block;height:100%;background:var(--accent)}
 .gd-tags{display:flex;flex-wrap:wrap;gap:4px}.gd-tags i{font-size:10.5px;font-weight:600;font-style:normal;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border:1px solid var(--border);border-radius:3px;color:var(--text-secondary)}
 .gd-tags .gd-hs{color:var(--warn)}.gd-tags .gd-fav{color:var(--accent)}
+/* EACH SLOT'S CLIP BROWSER: find, filters and sort above, a page of thumbnail cards, the pager below. */
+.gd-browse{display:grid;gap:var(--space-3);min-width:0}
+.gd-results{display:grid;gap:var(--space-3);min-width:0}
+.gd-tools{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}.gd-tools .input{flex:1 1 220px;min-width:0;max-width:360px}
+.gd-tools .select{flex:0 1 auto;min-width:0;max-width:240px}
+.gd-tools .btn[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+.gd-count{margin:0;font-size:12px}
+.gd-clips{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+.gd-clip{padding:0;gap:0;overflow:hidden;cursor:default}
+.gd-clip-hit{display:grid;gap:6px;align-content:start;min-width:0;padding:0 0 var(--space-2);text-align:left;background:none;border:0;color:inherit;font:inherit;cursor:pointer}
+.gd-clip-hit>:not(.gd-thumb){margin:0 var(--space-3)}
+.gd-clip-hit:focus-visible{outline:var(--focus-ring-width) solid var(--accent);outline-offset:calc(-1 * var(--focus-ring-width))}
+.gd-thumb{position:relative;display:block;aspect-ratio:16/9;background:var(--surface-active);overflow:hidden}
+.gd-thumb img{display:block;width:100%;height:100%;object-fit:cover}
+.gd-thumb.is-missing img{visibility:hidden}
+.gd-len{position:absolute;right:6px;bottom:6px;padding:1px 6px;border-radius:var(--radius-sm);font-size:11px;background:var(--on-media-scrim);color:var(--on-media)}
+.gd-tick{position:absolute;left:6px;top:6px;display:none;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--accent);color:var(--text-on-accent)}
+.gd-tick .icon{width:16px;height:16px}
+.gd-clip.is-on .gd-tick{display:grid}
+.gd-name{font-size:12px;overflow-wrap:anywhere}
+.gd-meta{font-size:12px;color:var(--text-tertiary);overflow-wrap:anywhere}
+.gd-clip-acts{display:flex;flex-wrap:wrap;gap:var(--space-2);padding:0 var(--space-3) var(--space-3)}
+.gd-clip-acts .icon{width:14px;height:14px}
+.gd-pager{display:flex;flex-wrap:wrap;gap:4px;align-items:center;justify-content:center}
+.gd-gap{padding:0 4px;color:var(--text-tertiary)}
+/* The preview's kills along the clip, and where it is playing. */
+.gd-pvmarks{position:relative;height:18px;margin-top:var(--space-2);border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-active)}
+.gd-pvmark{position:absolute;top:2px;bottom:2px;width:6px;margin-left:-3px;padding:0;border:0;border-radius:2px;background:var(--text-secondary);cursor:pointer}
+.gd-pvmark.is-hs{background:var(--warn)}
+.gd-pvhead{position:absolute;top:0;bottom:0;left:0;width:2px;background:var(--accent);pointer-events:none}
+/* The Clips page's player visited from the guide (clip_visit): the player alone. */
+#view-clips.is-visit>:not(#clip-player-card){display:none!important}
+#view-clips.is-visit>#clip-player-card:not(.hide){display:flex!important}
 .gd-field{display:grid;gap:var(--space-2)}
 /* Chosen clips the style cannot use, each with why: in the draft, out of the counts and the plan. */
 .gd-left{border:1px dashed var(--border-strong);border-radius:var(--radius-md);padding:var(--space-3)}

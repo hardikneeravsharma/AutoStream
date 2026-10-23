@@ -166,14 +166,15 @@ def _match_groups(sess: dict, clips: list[dict]) -> list[dict]:
         if not isinstance(row, dict) or not row.get("match"):
             continue
         try:
-            spans.append((float(row.get("offset") or 0.0), str(row["match"]), str(row.get("mode") or "")))
+            spans.append((float(row.get("offset") or 0.0), str(row["match"]), str(row.get("mode") or ""),
+                          str(row.get("map") or "")))
         except (TypeError, ValueError):
             continue
     spans.sort()
     if not spans:
         return []
     out = []
-    for i, (at, mid, mode) in enumerate(spans):
+    for i, (at, mid, mode, map_name) in enumerate(spans):
         end = spans[i + 1][0] if i + 1 < len(spans) else float("inf")
         inside = [c for c in clips if at <= c["start"] < end]
         if not inside:
@@ -181,8 +182,15 @@ def _match_groups(sess: dict, clips: list[dict]) -> list[dict]:
         match = valorant_match.one(mid)
         if match is None:
             # The record has been deleted since the clips were cut. The span is
-            # still real, so the clips stay grouped -- without a map name.
+            # still real, so the clips stay grouped -- with what the run wrote
+            # down itself: the map, when it was named at the time, and the mode
+            # its recording carries, when the game's path for it says which.
+            # The guide's map and mode filters read these.
             row = {"id": mid}
+            if map_name:
+                row["map"] = map_name
+            if valorant_match.mode_name(mode):
+                row["mode"] = valorant_match.mode_name(mode)
         else:
             row = valorant_match.summary(match)
         # A MODE WITH NO ROUNDS: Deathmatch, Team Deathmatch, Escalation. Its 7-, 8- and 12-kill
