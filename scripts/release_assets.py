@@ -15,10 +15,17 @@ for every platform (issue #206):
 each with a .sha256 in the format `sha256sum -c` reads.
 
 THE COMPATIBILITY COPY. Every Windows install up to v1.78.1 finds its update by
-the name AutoStream-<v>-setup.exe and nothing else. So until LEGACY_UNTIL the
-installer is ALSO published under that name: an old install updates through it
+the name AutoStream-<v>-setup.exe and nothing else. So the installer is ALSO
+published under that name, on every release: an old install updates through it
 to a version whose updater knows the new names (updates.SETUP), and from then
-on needs it no more. From LEGACY_UNTIL on the copy stops, by itself.
+on needs it no more.
+
+It used to stop at v1.80.0, "two releases of runway" -- but releases came
+several a day, so the runway was about a day long, and nobody updates on a
+schedule. An install of v1.77.0 was then told v1.82.0 had "no package attached
+to it - no installer and no zip", with eight files sitting on the page. There
+is no version at which every old install is known to be gone, so there is no
+version at which the copy can stop.
 """
 from __future__ import annotations
 
@@ -26,15 +33,6 @@ import hashlib
 import shutil
 import sys
 from pathlib import Path
-
-# The first version published WITHOUT the old-name installer. Two releases of
-# runway past the one that taught the updater the new names (v1.78.2).
-LEGACY_UNTIL = (1, 80, 0)
-
-
-def _v(version: str) -> tuple[int, ...]:
-    return tuple(int(p) for p in version.lstrip("vV").split(".")[:3])
-
 
 def renames(version: str) -> dict[str, str]:
     """Build output name -> published name."""
@@ -47,10 +45,9 @@ def renames(version: str) -> dict[str, str]:
     }
 
 
-def legacy(version: str) -> str | None:
-    """The old-name installer this release still carries, or None."""
-    v = version.lstrip("vV")
-    return f"AutoStream-{v}-setup.exe" if _v(v) < LEGACY_UNTIL else None
+def legacy(version: str) -> str:
+    """The old-name installer every release carries -- see the docstring."""
+    return f"AutoStream-{version.lstrip('vV')}-setup.exe"
 
 
 def prepare(version: str, folder: Path) -> list[Path]:
@@ -65,10 +62,8 @@ def prepare(version: str, folder: Path) -> list[Path]:
         (folder / src).rename(folder / dst)
         out.append(folder / dst)
     copy = legacy(version)
-    if copy:
-        shutil.copyfile(folder / renames(version)[f"AutoStream-{version.lstrip('vV')}-setup.exe"],
-                        folder / copy)
-        out.append(folder / copy)
+    shutil.copyfile(folder / renames(version)[copy], folder / copy)
+    out.append(folder / copy)
     for f in list(out):
         digest = hashlib.sha256(f.read_bytes()).hexdigest()
         side = f.with_name(f.name + ".sha256")

@@ -1246,6 +1246,20 @@ def _rec_seconds(row: dict) -> float:
     return 0.0
 
 
+def _rec_started(row: dict) -> float:
+    """When a session's recording begins: the file's own start, else the
+    session's. The same clock the clip job uses (its file name), so the page
+    and the run agree about which matches are in it."""
+    for key in ("recording_started", "started"):
+        try:
+            got = float(row.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+        if got:
+            return got
+    return 0.0
+
+
 # Scrubbing previews are about nine megabytes each and are a means to an end,
 # not a result. A handful is enough to move between clips without waiting; a
 # folder of forty is just disk that nobody asked to spend.
@@ -1984,7 +1998,12 @@ class Server:
 
                 if vmatches is None:
                     vmatches = valorant_match.cached()
-                got = valorant_match.state(float(r.get("started") or 0),
+                # WHEN THE FILE BEGINS, not when the session armed. A session
+                # can own a second recording that starts an hour in, and the
+                # session's clock put the first file's matches into it -- the
+                # job itself dates the file by its name, so the page and the
+                # run disagreed about which matches were in the video.
+                got = valorant_match.state(_rec_started(r),
                                            _rec_seconds(r), matches=vmatches)
                 r["match_state"] = got["state"]
                 r["match_count"] = got["matches"]

@@ -6164,7 +6164,9 @@ async function clip_showMatches(force) {
   if (btn) { btn.setAttribute('aria-expanded', String(open)); btn.textContent = open ? 'Hide matches' : 'Show matches'; }
   if (!open) return;
   var s = clip_state.pick || {};
-  var q = '?started=' + encodeURIComponent(s.started || 0) + '&seconds=' + encodeURIComponent(s.duration || 0) +
+  /* The FILE's start: a session's second recording begins long after the
+     session does, and display_started is the file's own clock. */
+  var q = '?started=' + encodeURIComponent(s.display_started || s.started || 0) + '&seconds=' + encodeURIComponent(s.duration || 0) +
     (s.started_exact === false ? '&exact=0' : '');
   box.innerHTML = '<p class="muted">Reading the saved match records…</p>';
   var r = await API.get('/api/clips/valorant/matches' + q);
@@ -6182,7 +6184,7 @@ async function clip_fetchMatches() {
   var r;
   try {
     r = await API.post('/api/clips/valorant/fetch', {
-      started: s.started || 0,
+      started: s.display_started || s.started || 0,
       seconds: s.duration || 0,
       started_exact: s.started_exact !== false
     });
