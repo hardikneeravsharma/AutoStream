@@ -11114,7 +11114,11 @@ const GD_STEPS = ['Style', 'Song', 'Clips', 'Look', 'Check and make'];
    its render (7.3/10) said yes, "ready to be offered as a recommended style". */
 /* Montage since v1.79.15: its third review, 7.2/10 on its own planner (4.2 on the general one); the one blocker
    named, capture overlays in the footage, is the cleanup the player set aside. */
-const GD_BEST = ['drop', 'fasthead', 'montage'];
+/* Hype (7.6/10) and Velocity (7.2/10) after their pace-and-signature review: both run on the general
+   planner, which is why "Pick the style for me" no longer means "a style with a planner of its own" --
+   it skips only a verdict that says its style fell back to another planner (`fallback`), and these two
+   never do: the general planner is theirs. */
+const GD_BEST = ['drop', 'fasthead', 'montage', 'hype', 'velocity'];
 /* THE GUIDE OWNS ITS SPEC. Everything a guided reel is made from is here or in the song: the style,
    the clips, the shape, the lyrics, the name. Nothing is read from the Make page -- Perfect fit left
    there, Headshots only ticked there, an intro, kills or drops marked there, a reel being rebuilt

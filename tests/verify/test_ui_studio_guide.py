@@ -115,14 +115,23 @@ def test_a_style_that_needs_a_drop_on_a_song_without_one_is_refused_in_words_wit
 def test_give_us_a_song_chooses_the_style_that_works_and_says_why_not_the_others(pg):
     """It chose Build and drop for a song with a drop and nothing otherwise, so a song with none
     was a dead end. Each recommended style is now tried on the song and the clips through the
-    chip's own verdict: the click track has no drop and the clips no headshot, so Montage."""
+    chip's own verdict: the click track has no drop and the clips no headshot, so not Build and drop
+    and not Fast-paced headshot. Montage, Hype and Velocity (recommended since their review) can
+    all cut it; the one chosen is one that works without a but, in the recommended order."""
     pg.click(".gd-auto")
     pg.wait_for_selector('.gd-card[data-gd="song"]')
     pg.click('.gd-card[data-gd="song"]')
     pg.wait_for_function("() => studio.gd.step === 0 && studio.song && studio.gd.autoWhy", timeout=60_000)
-    assert pg.evaluate("() => studio.gd.style") == "montage"
+    why = {w["key"]: w for w in pg.evaluate("() => studio.gd.autoWhy")}
+    assert list(why) == ["drop", "fasthead", "montage", "hype", "velocity"], why
+    style = pg.evaluate("() => studio.gd.style")
+    assert style in ("montage", "hype", "velocity"), style
+    best = min(("ok", "warn").index(w["level"]) for k, w in why.items() if w["level"] in ("ok", "warn"))
+    assert ("ok", "warn").index(why[style]["level"]) == best, why
+    first = next(k for k in why if why[k]["level"] == ("ok", "warn")[best])
+    assert style == first, (style, why)
     body = pg.inner_text("#studio-gd-body")
-    assert "Montage suits this song" in body
+    assert why[style]["label"] + " suits this song" in body
     assert "needs a song with a drop" in body and "headshot" in body.split("Not the others:")[1], body
     assert pg.evaluate("() => studio.gd.quick.length") >= 4          # the clips it was judged with are chosen
 
@@ -131,12 +140,19 @@ def test_when_no_recommended_style_works_it_says_why_and_offers_a_way_on(pg):
     """None works with only two clips: no dead end, each style's reason and what to do instead."""
     ids = pg.evaluate("() => Object.keys(studio.clipIndex).slice(0, 2)")
     pg.evaluate("(ids) => { studio.gd.quick = ids; }", ids)
+    # Hype and Velocity run on the general planner, which cuts two clips into a short reel that
+    # works -- so here they are answered as refused, to reach the page that says none works.
+    pg.evaluate("""() => { const real = API.post;
+        API.post = function (u, b) {
+            if (u === '/api/studio/feasible' && b && (b.style === 'hype' || b.style === 'velocity'))
+                return Promise.resolve({ok: true, verdict: {level: 'bad', text: 'Two clips are too few for this style.'}});
+            return real.apply(this, arguments); }; }""")
     pg.evaluate("() => { studio.gd.auto = true; studio.gd.step = 1; studio_gdDraw(); }")
     pg.click('.gd-card[data-gd="song"]')
     pg.wait_for_function("() => studio.gd.step === 0 && studio.gd.autoWhy", timeout=60_000)
     why = pg.evaluate("() => studio.gd.autoWhy")
     # Montage plans two clips the general way: a reel, but not a montage, so not chosen either
-    assert [w["key"] for w in why] == ["drop", "fasthead", "montage"], why
+    assert [w["key"] for w in why] == ["drop", "fasthead", "montage", "hype", "velocity"], why
     assert pg.evaluate("() => studio.gd.style") == ""
     body = pg.inner_text("#studio-gd-body")
     assert "None of the recommended styles works" in body
