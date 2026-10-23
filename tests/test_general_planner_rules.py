@@ -392,3 +392,44 @@ def test_the_kill_counter_ticks_once_for_every_kill_shown(pile):
     assert len(derived["kills"]) == sum(len(r["kills_reel"]) for r in derived["shots"])
     broken = dict(derived, kills=derived["kills"][:-1])
     assert "kill-counter" in {f.code for f in reelcheck.style_findings(got, broken)}
+
+
+# ---------------------------------------------------------------- round 3 (ChatGPT's third review)
+
+@pytest.mark.parametrize("style", ["hype", "velocity", "clean", "story"])
+def test_every_shot_goes_out_in_the_reels_grade_by_id(pile, style):
+    """The grade is checked by id on what each shot's render is handed, not by its colour."""
+    proj, notes, got, derived, found = _planned(pile, style, 125.0)
+    assert not {"grade", "grade-chosen"} & {f.code for f in found}, [f.message for f in found]
+    assert {g.grade for g in studio.segments(got, derived, has_audio=lambda p: True)} == {studio.STYLE[style].grade}
+    # a reel graded other than its style's own is said, not failed
+    other = dict(got, grade="g07")
+    codes = {f.level: f.code for f in reelcheck.style_findings(other, derived) if f.code.startswith("grade")}
+    assert codes == {reelcheck.SOFT: "grade-chosen"}
+    # an id that is no grade fails
+    bad = dict(got, grade="g99")
+    assert "grade" in {f.code for f in reelcheck.style_findings(bad, derived) if f.level == reelcheck.HARD}
+
+
+@pytest.mark.parametrize("bpm", PACE_TEMPOS)
+def test_velocity_rushes_seventy_percent_of_the_footage_between_kills(pile, bpm):
+    """At least 70% of the between-kill footage at 1.3x or more (it measured 64-81% before)."""
+    proj, notes, got, derived, found = _planned(pile, "velocity", bpm)
+    saved = reelcheck.VEL_FAST_SHARE
+    try:
+        reelcheck.VEL_FAST_SHARE = 1.01                 # so the gate says the share
+        msg = next(f.message for f in reelcheck.style_findings(got, derived) if f.code == "velocity-fast")
+    finally:
+        reelcheck.VEL_FAST_SHARE = saved
+    assert int(msg.split("%")[0]) >= 70, msg
+
+
+def test_quartiles_are_checked_only_where_the_references_carry_them(pile, monkeypatch):
+    from autostream.clips import studio_refs
+    proj, notes, got, derived, found = _planned(pile, "hype", 125.0)
+    assert "pace-quartile" not in {f.code for f in found}
+    assert not any(q in studio_refs.summary(studio.STYLE["hype"].refs) for q in studio_refs.QUARTILES), \
+        "no reference was measured for its quartiles: none may be made up"
+    real = studio_refs.summary
+    monkeypatch.setattr(studio_refs, "summary", lambda ids: dict(real(ids), p25_beats=40.0, p50_beats=50.0, p75_beats=60.0))
+    assert "pace-quartile" in {f.code for f in reelcheck.style_findings(got, derived)}
