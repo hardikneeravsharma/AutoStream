@@ -252,15 +252,17 @@ def test_the_speed_tables_are_the_renderers_own_time_map(speed):
 
 
 def test_a_velocity_reel_keeps_its_ramps():
-    """Planned at real speed and ramped afterwards, most of velocity's s04s no
-    longer fitted and were taken back. Planned through them, the clips' opening
-    shots keep the speeds the style draws -- less only budget()'s rule that two
-    ramps never touch, and a clip whose first kill rides in a run-up a ramp
-    would rush."""
+    """Velocity's speed is a shape every kill gets (studio.speed_curves) since
+    2026-10-23, not a preset drawn per shot -- and Perfect fit gives it too: most
+    shots rush in, slow through the kill and rush out."""
     proj, notes = _plan(style="velocity")
-    ramped = [s["speed"] for s in proj["shots"] if s["speed"] != "s00"]
-    opening = {s["clip"] for s in proj["shots"]}
-    assert len(ramped) >= len(opening) * 3 // 4, f"only {ramped} of {len(opening)} clips kept a ramp"
+    shaped = [s for s in proj["shots"] if s.get("anchors")]
+    assert len(shaped) >= len(proj["shots"]) * 3 // 4, f"only {len(shaped)} of {len(proj['shots'])} shots shaped"
+    for s in shaped:
+        ps = studio.shot_pieces(s)
+        p = float(s["pre"])
+        slow = (studio.source_used(ps, p + 0.05) - studio.source_used(ps, p - 0.05)) / 0.1
+        assert 0.5 <= slow <= 0.7, slow
     assert not [n for n in notes if "changed speed" in n], notes
 
 

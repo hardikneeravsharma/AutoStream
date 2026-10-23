@@ -139,6 +139,8 @@ def plan_findings(project: dict, derived: dict, *, fast: bool = True) -> list[Fi
         if length - max(kills) < 0.3:
             out.append(Finding(HARD, "no-room-after-kill", "The reel ends within a third of a second of its last kill.", max(kills)))
 
+    out += style_findings(project, derived)
+
     # pace after the drop
     drop = project.get("song_drop")
     # Fast-paced headshot holds a cut of about a second by design (clips/fasthead.py)
@@ -148,6 +150,112 @@ def plan_findings(project: dict, derived: dict, *, fast: bool = True) -> list[Fi
         for a, b in zip(after, after[1:]):
             if b - a > FAST_MAX_GAP + 1e-6:
                 out.append(Finding(SOFT, "slow-pace", f"{b - a:.1f} s between two kills after the drop.", a))
+    return out
+
+
+# ------------------------------------------------------------- the style itself
+#
+# ChatGPT's second review (Hype 6.4/10, Velocity 6.2/10): a reel can pass every
+# check above and still not be its style. These measure what the style promises.
+
+PACE_MEDIAN = 0.15         # the median shot within this share of the references'
+PACE_CPM = 0.10            # ...and the cuts a minute within this
+PACE_MIN_SHOTS = 8         # fewer shots than this have no median worth the name
+DIRECTED = ("drop", "fasthead", "montage")   # planned by the director, to their own specifications
+VEL_SLOW_BAND = (0.45, 0.75)   # "roughly 0.5-0.7x" through the impact
+VEL_SLOW_SHARE = 0.90          # of the kills
+VEL_FAST = 1.3                 # the rush between kills, at least
+VEL_FAST_SHARE = 0.50          # of the time between them ("most")
+VEL_WINDOW = 0.06              # s either side of the kill the slow rate is read over
+VEL_CLEAR = 0.20               # s either side of a kill that is not "between kills"
+SIGNATURE_SHARE = 0.95
+
+
+def _rate(pieces: list, t0: float, t1: float) -> float:
+    """Source seconds per output second over [t0, t1] of a shot's pieces."""
+    src = 0.0
+    for a, b, r in pieces:
+        lo, hi = max(a, t0), min(b, t1)
+        if hi > lo:
+            src += (hi - lo) * float(r)
+    return src / max(1e-6, t1 - t0)
+
+
+def style_findings(project: dict, derived: dict) -> list[Finding]:
+    """Pace against the references (soft), Velocity's speed shape and Hype's signature (hard)."""
+    from . import studio, studio_refs
+
+    out: list[Finding] = []
+    shots = project.get("shots") or []
+    rows = derived.get("shots") or []
+    st = studio.STYLE.get(project.get("style") or "")
+    if not st or not shots or not rows:
+        return out
+    # PACE: the median shot and the cuts a minute against the references' own --
+    # both, because one gap for every shot made the cuts a minute right with every
+    # shot 1.5x the median. Soft: a limit the plan names is said with it.
+    ref = studio_refs.summary(st.refs) if st.refs else {}
+    if st.key not in DIRECTED and ref.get("median_shot") and len(shots) >= PACE_MIN_SHOTS:
+        pace = float((project.get("shaping") or {}).get("pace") or 1.0)
+        want_med = float(ref["median_shot"]) / pace
+        want_cpm = float(ref["cuts_per_min"]) * pace
+        durs = sorted(float(s["duration"]) for s in shots)
+        med = durs[len(durs) // 2] if len(durs) % 2 else (durs[len(durs) // 2 - 1] + durs[len(durs) // 2]) / 2
+        cpm = 60.0 * len(shots) / max(1e-6, float(derived.get("length") or 0.0))
+        why = "; ".join((project.get("pace") or {}).get("limits") or [])
+        if abs(med / want_med - 1) > PACE_MEDIAN:
+            out.append(Finding(SOFT, "pace-median", f"The median shot is {med:.2f} s; {st.label}'s references "
+                               f"hold {want_med:.2f} s." + (f" ({why})" if why else "")))
+        if abs(cpm / want_cpm - 1) > PACE_CPM:
+            out.append(Finding(SOFT, "pace-cuts", f"{cpm:.0f} cuts a minute; {st.label}'s references cut "
+                               f"{want_cpm:.0f}." + (f" ({why})" if why else "")))
+    # VELOCITY: slow through every impact, fast between them, measured off the
+    # speed the render plays (each row's pieces).
+    if st.speed_profile == "velocity":
+        slow = n = 0
+        fast_t = between_t = 0.0
+        for s, r in zip(shots, rows):
+            if r.get("lead_in"):
+                continue
+            ps = r.get("pieces") or [[0.0, float(s["duration"]), 1.0]]
+            k = float(r["kill_reel"]) - float(r["start"])
+            n += 1
+            lo_, hi_ = VEL_SLOW_BAND
+            if lo_ <= _rate(ps, max(0.0, k - VEL_WINDOW), k + VEL_WINDOW) <= hi_:
+                slow += 1
+            ks = [float(x) - float(r["start"]) for x in r.get("kills_reel") or []] or [k]
+            t, step = 0.0, 1.0 / REEL_FPS
+            while t < float(s["duration"]) - 1e-9:
+                if all(abs(t - x) > VEL_CLEAR for x in ks):
+                    between_t += step
+                    if _rate(ps, t, t + step) >= VEL_FAST - 1e-6:
+                        fast_t += step
+                t += step
+        if n and slow / n < VEL_SLOW_SHARE:
+            out.append(Finding(HARD, "velocity-slow", f"{slow} of {n} kills slow to "
+                               f"{VEL_SLOW_BAND[0]:g}-{VEL_SLOW_BAND[1]:g}x through the impact; Velocity needs "
+                               f"{VEL_SLOW_SHARE:.0%}."))
+        if between_t and fast_t / between_t < VEL_FAST_SHARE:
+            out.append(Finding(HARD, "velocity-fast", f"{fast_t / between_t:.0%} of the footage between kills "
+                               f"runs at {VEL_FAST:g}x or more; Velocity needs most of it."))
+    # THE SIGNATURE (Hype's shake) on every kill the readability guard allows.
+    if st.signature:
+        sig = studio.fam(st.signature[0])
+        eligible = [s for s in shots if not s.get("signature_off")]
+        has = sum(1 for s in eligible if any(studio.fam(f) == sig for f in s.get("fx") or []))
+        if eligible and has / len(eligible) < SIGNATURE_SHARE:
+            out.append(Finding(HARD, "signature", f"{has} of {len(eligible)} kills have {st.label}'s "
+                               f"{studio.PART[st.signature[0]].label.lower()}."))
+    # THE KILL COUNTER ticks once for every kill the reel shows, and on it.
+    if "o02" in (project.get("overlays") or []):
+        shown = sorted(round(float(k), 3) for r in rows for k in r.get("kills_reel") or [])
+        ticks = sorted(round(float(k), 3) for k in derived.get("kills") or [])
+        missing = [r for r in rows if not r.get("lead_in")
+                   and not any(abs(float(k) - float(r["kill_reel"])) < 1.5 / REEL_FPS for k in r.get("kills_reel") or [])]
+        if shown != ticks or missing or len(set(ticks)) != len(ticks):
+            out.append(Finding(HARD, "kill-counter", f"The kill counter ticks {len(ticks)} times for "
+                               f"{len(shown)} kills shown" + (f"; {len(missing)} shot(s) do not count their own kill."
+                                                              if missing else ".")))
     return out
 
 
