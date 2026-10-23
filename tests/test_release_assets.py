@@ -42,17 +42,14 @@ def test_each_checksum_is_the_files_own_in_sha256sum_format(tmp_path):
         assert side == f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n".encode()
 
 
-def test_the_old_name_installer_rides_along_until_1_80(tmp_path):
-    ra.prepare("1.79.4", _builds(tmp_path, "1.79.4"))
-    old = tmp_path / "AutoStream-1.79.4-setup.exe"
-    assert old.read_bytes() == (tmp_path / "AutoStream-1.79.4-windows-x64-setup.exe").read_bytes()
-    assert (tmp_path / "AutoStream-1.79.4-setup.exe.sha256").is_file()
-
-
-def test_from_1_80_the_copy_stops_by_itself(tmp_path):
-    names = {p.name for p in ra.prepare("1.80.0", _builds(tmp_path, "1.80.0"))}
-    assert "AutoStream-1.80.0-setup.exe" not in names
-    assert ra.legacy("1.80.0") is None and ra.legacy("1.79.9") == "AutoStream-1.79.9-setup.exe"
+@pytest.mark.parametrize("version", ["1.79.4", "1.82.0", "2.0.0"])
+def test_the_old_name_installer_rides_along_on_every_release(tmp_path, version):
+    """It stopped at v1.80.0 once, and a v1.77.0 install was told v1.82.0 had
+    nothing to download. No version is late enough for the copy to stop."""
+    ra.prepare(version, _builds(tmp_path, version))
+    old = tmp_path / f"AutoStream-{version}-setup.exe"
+    assert old.read_bytes() == (tmp_path / f"AutoStream-{version}-windows-x64-setup.exe").read_bytes()
+    assert (tmp_path / f"AutoStream-{version}-setup.exe.sha256").is_file()
 
 
 def test_a_missing_build_stops_the_release(tmp_path):

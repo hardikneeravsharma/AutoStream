@@ -19,8 +19,9 @@
 #   AutoStream-<v>-windows-x64-setup.exe   AutoStream-<v>-windows-x64.zip
 #   AutoStream-<v>-macos-arm64.dmg          AutoStream-<v>-macos-x86_64.dmg
 #
-# each with a .sha256 -- plus, until v1.80.0, the installer again under its old
-# name AutoStream-<v>-setup.exe, the only name installs up to v1.78.1 look for.
+# each with a .sha256 -- plus, on every release, the installer again under its
+# old name AutoStream-<v>-setup.exe, the only name installs up to v1.78.1 look
+# for. (It stopped at v1.80.0 once, and stranded every one of them.)
 #
 # The tag's message is the release: its first line the title, the rest the
 # notes. The tag must match __version__, or nothing is built.

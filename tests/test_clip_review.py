@@ -312,6 +312,20 @@ def test_the_recordings_length_is_read_from_the_field_that_exists():
     assert _rec_seconds({"recording_seconds": "nonsense", "duration": 7}) == 7.0
 
 
+def test_a_sessions_second_recording_is_dated_by_its_own_start():
+    """FROM THE APP: one session owned a 78-minute file from 20:39 and a
+    35-minute one from 21:57. The page dated both by the session, so the
+    second listed the first file's deathmatches while the job -- which dates
+    a file by its name -- found Ability Draft and Corrode in it."""
+    from autostream.webui import _rec_started
+
+    row = {"started": 1792768148.1, "recording_started": 1792772847.0}
+    assert _rec_started(row) == 1792772847.0
+    assert _rec_started({"started": 1792768148.1}) == 1792768148.1
+    assert _rec_started({"recording_started": None, "started": 5}) == 5.0
+    assert _rec_started({}) == 0.0
+
+
 def test_the_whole_match_switch_actually_reaches_the_job():
     """"Also make the whole match as one video" did nothing for a year.
 
