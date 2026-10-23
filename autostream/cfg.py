@@ -166,6 +166,10 @@ DEFAULTS: dict[str, Any] = {
         "arc": True,
         # Which arrangement, when arc is on: story / build / hook.
         "order": "story",
+        # Run every clip together into one montage at the end of a job. It was
+        # always on, with only a per-visit switch on the Clips page, so a player
+        # who never wants one deleted gigabytes of it after every run.
+        "montage": True,
         # Sweep the clips that fell below min_kills into one promo reel rather
         # than cutting them individually. A lone kill rarely earns a post; a
         # dozen of them cut short and run together is a channel advert.

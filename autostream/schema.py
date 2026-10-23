@@ -1038,6 +1038,13 @@ CONFIG_SCHEMA: list[Section] = [
                 advanced=True,
             ),
             _field(
+                "clips.montage",
+                "Make a montage",
+                "Run every clip together into one video at the end of the job. "
+                "The Clips page can still switch it for a single run.",
+                "toggle",
+            ),
+            _field(
                 "clips.promo",
                 "Sweep the leftovers into a promo",
                 "Clips that fell below the minimum above are not cut on their own. "

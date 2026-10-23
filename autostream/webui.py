@@ -2782,7 +2782,7 @@ class Server:
             "transition_ms": _int(body.get("transition_ms"),
                                   _int(c.clips.transition_ms, 500)),
             "encoder": str(body.get("encoder") or c.clips.encoder),
-            "montage": bool(body.get("montage", True)),
+            "montage": bool(body.get("montage", c.clips.montage)),
             "voice": bool(body.get("voice", c.clips.voice)),
             "voice_name": str(body.get("voice_name") or c.clips.voice_name),
             "music": str(body.get("music") or c.clips.music),
