@@ -403,7 +403,7 @@ def reels(root: Path) -> list[dict]:
     except OSError:
         files = []
     for mp4 in files:
-        if mp4.name.endswith((".part.mp4", ".loud.mp4")):
+        if mp4.name.endswith((".part.mp4", ".loud.mp4", ".promote.mp4")):
             continue                       # a render in progress, or one that died
         proj = mp4.with_suffix(".reel.json")
         meta = _read_json(proj) if proj.is_file() else None
@@ -455,6 +455,7 @@ def delete_reels(root: Path, paths: list[str], *, dry_run: bool = False) -> dict
     found: set[str] = set()
     names: list[str] = []
     files: list[Path] = []
+    reel_files: list[Path] = []
     total = 0
     for r in reels(root):
         key = _key(r["path"])
@@ -463,6 +464,7 @@ def delete_reels(root: Path, paths: list[str], *, dry_run: bool = False) -> dict
         found.add(key)
         names.append(r["name"])
         mp4 = Path(r["path"])
+        reel_files.append(mp4)
         # The .part/.loud names are what a render leaves behind when it dies;
         # reels() hides them, so this is the only chance to clear them.
         for f in (mp4, mp4.with_suffix(".reel.json"),
@@ -489,6 +491,11 @@ def delete_reels(root: Path, paths: list[str], *, dry_run: bool = False) -> dict
             pass
         except OSError as e:
             out["errors"].append(f"{f.name}: {e}")
+    # ...and every version of each (clips/versions.py): a deleted reel is gone
+    # from History too, not left taking the space it was deleted to free.
+    from . import versions
+    for mp4 in reel_files:
+        versions.remove(mp4)
     out["bytes"] = freed
     log.info("deleted %d reel(s), %.1f MB freed%s", out["reels"], freed / 1e6,
              f"; {len(out['errors'])} could not be removed" if out["errors"] else "")
@@ -5353,6 +5360,30 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         out["build_clip"] = build
     if project.get("part_auto"):
         out["part_auto"] = True
+    # THE TIMING THE PLAN HAS NOT CAUGHT UP WITH (clips/editflow.py): a part, a song,
+    # marks or drops the player chose after the shots were laid out. Kept until they
+    # say how to resolve it -- and only what differs from the plan, so a part dragged
+    # away and back again is no draft at all. A song in it is a file on disk or nothing.
+    from . import editflow
+    raw_draft = project.get("draft") if isinstance(project.get("draft"), dict) else None
+    if raw_draft and isinstance(raw_draft.get("song"), str) and raw_draft["song"]:
+        ds = Path(raw_draft["song"])
+        if not (ds.is_file() and ds.suffix.lower() in (".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac", ".opus")):
+            raw_draft = {k: v for k, v in raw_draft.items() if k != "song"}
+    draft = editflow.tidy_draft(raw_draft, out)
+    if draft:
+        out["draft"] = draft
+    # The marks the player placed by hand: song-time constraints nothing moves for them.
+    anchors = editflow._times(project.get("anchors"))
+    if anchors and (out["song"] or (draft or {}).get("song")):
+        out["anchors"] = anchors
+    # Which render version the reel is (clips/versions.py); written by the render.
+    try:
+        rv = int(project.get("render_version") or 0)
+    except (TypeError, ValueError):
+        rv = 0
+    if 0 < rv < 10 ** 6:
+        out["render_version"] = rv
 
     # Transitions need footage either side of the cut; shorten them to fit.
     shots = out["shots"]
@@ -6815,6 +6846,11 @@ class StudioJob:
         self.id = next(_JOB_IDS)
         self.project, self.derived, self.root, self.out = project, derived, root, out
         self.shape_beats = shape_beats
+        # EVERY RENDER IS A VERSION OF ITS OWN (clips/versions.py): written to a
+        # file nothing else touches, and made the reel only once it has finished,
+        # so the reel before stays whole and playable for the length of it.
+        from . import versions
+        self.version, self.vfile = versions.next_file(out)
         # Started by the page on its own, once the user stopped editing, rather
         # than by Render. A newer edit -- or a press of Render -- replaces it
         # without asking: see Runner.yield_auto.
@@ -6857,7 +6893,8 @@ class StudioJob:
                     "output": str(self.out), "project": str(self.out.with_suffix(".reel.json")),
                     "elapsed": int((self.finished or time.time()) - self.started),
                     "cached": self.cached, "name": self.project.get("name", ""),
-                    "lyrics_note": self.lyrics_note, "auto": self.auto, "checks": self.checks}
+                    "lyrics_note": self.lyrics_note, "auto": self.auto, "checks": self.checks,
+                    "version": self.version, "version_file": str(self.vfile)}
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -7094,7 +7131,7 @@ class StudioJob:
             derived = dict(self.derived)
             derived["length"] = float(derived.get("length") or 0.0) + intro
             derived["offset"] = intro               # the intro sits in front of every kill
-            return reelcheck.check(self.project, derived, self.out, fast=fast, ff=ff)
+            return reelcheck.check(self.project, derived, self.vfile, fast=fast, ff=ff)
         except Exception as e:                              # noqa: BLE001
             log.info("reel check failed: %s", e)
             return [reelcheck.Finding(reelcheck.HARD, "check-failed", f"The reel could not be checked ({e}).")]
@@ -7173,8 +7210,11 @@ class StudioJob:
             # than leaving a still bar to mean whatever the watcher fears.
             self._set(step="join",
                       message=f"Joining {len(segs)} shots and mixing the sound")
+            from . import versions
             self.out.parent.mkdir(parents=True, exist_ok=True)
-            tmp = self.out.with_name(self.out.stem + ".part.mp4")
+            # Named for the job as well as the version: a background render that
+            # is replaced cleans up its own part file, never the next one's.
+            tmp = self.vfile.with_name(f"{self.vfile.stem}.{self.id}.part.mp4")
             try:
                 try:
                     # EVERY REEL CARRIES THE MARK. Drawn once per reel height
@@ -7208,7 +7248,7 @@ class StudioJob:
                     self._prepend_intro(ff, tmp)
                 self._set(step="sound", message="Matching loudness")
                 self._loudness(ff, tmp)
-                _swap_in(tmp, self.out)
+                tmp.replace(self.vfile)
             finally:
                 # A cancelled or failed join leaves a headerless mp4 that would
                 # otherwise sit in the reels folder looking like a reel.
@@ -7227,6 +7267,8 @@ class StudioJob:
                               "reel": self.derived["length"], "intro": intro,
                               "when": int(time.time()),
                               "shots": len(segs), "cached": len(segs) - len(todo)}
+            meta["render_version"] = self.version
+            meta["made_from"] = versions.made_from(self.project, self.derived)
             # THE GATE (clips/reelcheck.py): the finished file is read back before
             # anyone is told it is ready. It never fails a render -- a check that
             # cannot run is a finding of its own -- but a hard finding changes what
@@ -7234,7 +7276,13 @@ class StudioJob:
             self._set(step="check", message="Checking the finished reel")
             findings = self._check(ff, intro)
             meta["checks"] = [f.as_dict() for f in findings]
-            self.out.with_suffix(".reel.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
+            versions.write_meta(self.out, self.version, meta)
+            # PROMOTED ONLY NOW, with the file whole and read back: the reel becomes
+            # this version. A promotion refused by something holding the reel open
+            # leaves the version on disk, restorable from History.
+            self._set(step="check", message="Making it the reel")
+            versions.promote(self.out, self.version, _swap_in)
+            versions.prune(self.out)
             hard = [f for f in findings if f.level == reelcheck.HARD]
             self._set(state="done", step="done", done=self.total, checks=meta["checks"],
                       message="Reel ready" if not hard else "Rendered, but not ready: " + hard[0].message,

@@ -642,6 +642,28 @@ CONTROLS: list[Control] = [
             acts=("studio-sg-apply", "studio-sg-none"),
             why="the song, the part of it and the kill marks are applied by the "
                 "server, which re-times the cuts against what the footage allows"),
+    Control("/api/studio/retime", "POST", CALL, "Keep my shots, re-time them", "studio",
+            body={"project": None}, expect=_has("ok"),
+            reject={"project": None}, reject_soft=True,
+            acts=(),
+            why="a dry run: the shots kept, each kill placed on the part's own beats, and "
+                "what that changes -- or the conflict and its fixes. Nothing is applied; "
+                "`rev` comes back so the page can drop an answer a newer edit made stale"),
+    Control("/api/studio/replan", "POST", CALL, "Replan for this section", "studio",
+            body={"project": None}, expect=_has("ok"),
+            reject={"project": None}, reject_soft=True,
+            acts=(),
+            why="a dry run of the style's own planner on the spec as it stands, with the "
+                "player's marks as constraints, and the diff the page shows before Apply"),
+    Control("/api/studio/versions", "GET", CALL, "a reel's render versions", "studio",
+            query="path=", expect=_has("ok"),
+            why="History's list of renders; a blank path or one outside the reels folder "
+                "is refused with ok:false"),
+    Control("/api/studio/version", "POST", CALL, "Restore a version, or save it as a new reel", "studio",
+            body={"path": "", "version": 0, "action": "restore"}, expect=_has("ok"),
+            reject={"path": "C:/elsewhere.mp4", "version": 1, "action": "restore"}, reject_soft=True,
+            acts=(),
+            why="a version outside the reels folder, or one not on disk, is refused with ok:false"),
     Control("/api/studio/render", "POST", CALL, "Render", "studio",
             body={"project": None}, expect=_has("ok"),
             reject={"project": None}, reject_soft=True, acts=("studio-render",),

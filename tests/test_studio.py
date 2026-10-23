@@ -1178,7 +1178,8 @@ def test_cancel_is_reported_as_cancelled_not_as_a_failure(root, tmp_path, monkey
 
     def fake_ff(argv, capture=False, seconds=0.0):
         out = Path(argv[-1])
-        joining = out.name.endswith(".part.mp4") and out.parent.name == "reels"
+        # The join writes the render's own version file (clips/versions.py), not the reel.
+        joining = out.name.endswith(".part.mp4") and out.parent.parent.name == ".versions"
         if (stage == "shot") or joining:
             job._cancel.set()
             raise studio.Cancelled("cancelled")

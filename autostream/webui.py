@@ -786,6 +786,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.app.studio_job())
         elif u.path == "/api/studio/project":
             self._json(self.app.studio_project((parse_qs(u.query).get("path") or [""])[0]))
+        elif u.path == "/api/studio/versions":
+            self._json(self.app.studio_versions((parse_qs(u.query).get("path") or [""])[0]))
         elif u.path == "/api/studio/songs":
             self._json(self.app.studio_songs())
         elif u.path == "/api/studio/intros":
@@ -999,6 +1001,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_vary(b))
             elif p == "/api/studio/song":
                 self._json(self.app.studio_song(b))
+            elif p == "/api/studio/retime":
+                self._json(self.app.studio_retime(b))
+            elif p == "/api/studio/replan":
+                self._json(self.app.studio_replan(b))
+            elif p == "/api/studio/version":
+                self._json(self.app.studio_version(b))
             elif p == "/api/studio/delete":
                 self._json(self.app.studio_delete(b))
             elif p == "/api/studio/export":
@@ -3624,7 +3632,12 @@ class Server:
     def studio_catalog(self) -> dict:
         from .clips import studio, style_samples as ss
 
+        from .clips import editflow
+
         cat = studio.catalog()
+        # THE DEPENDENCY TABLE, so every control on the page answers from the one the
+        # server classifies with: what a change needs, and what each action keeps.
+        cat["editflow"] = editflow.table()
         # Which styles a shipped sample exists for: the cards play it from the moment the
         # page opens, before -- or instead of -- one cut from the player's own kills.
         have = set(ss.stock([s["key"] for s in cat["styles"]]))
@@ -4248,6 +4261,14 @@ class Server:
         except studio.ProjectError as e:
             run.release(claim)
             return {"ok": False, "error": str(e)}
+        # THE PLAN MUST MATCH THE SPEC, checked here, immediately before the render,
+        # whatever the page believed: a part moved and never planned for is not
+        # rendered as if the old kill timing belonged to it.
+        from .clips import editflow
+        why = editflow.can_render(proj)
+        if why:
+            run.release(claim)
+            return {"ok": False, "error": why, "stale": editflow.stale(proj)}
         outdir = root / "reels"
         outdir.mkdir(parents=True, exist_ok=True)
         out = Path(proj["output"]) if proj.get("output") else \
@@ -4262,7 +4283,8 @@ class Server:
         log.info("studio: rendering %d shots -> %s%s", len(proj["shots"]), out.name,
                  " (in the background)" if auto else "")
         return {"ok": True, "job": job.id, "output": str(out), "project": proj,
-                "derived": derived, "notes": notes, "auto": auto}
+                "derived": derived, "notes": notes, "auto": auto,
+                "version": job.version, "version_file": str(job.vfile)}
 
     def studio_auto_held(self) -> str:
         """Why a background render must not start now. "" when it may.
@@ -4400,6 +4422,218 @@ class Server:
             return {"ok": False, "error": str(e)}
         return {"ok": True, "project": proj, "derived": derived, "notes": notes + more,
                 "song": shape.as_dict()}
+
+    # ---- the reel's timing, resolved by the player (clips/editflow.py) --------------
+
+    def _timing_shape(self, proj: dict):
+        """The song the spec names, with its drops as the player set them. -> (spec, shape)"""
+        from .clips import editflow
+
+        spec = editflow.timing_spec(proj)
+        shape = self._studio_shape(spec["song"]) if spec["song"] else None
+        return spec, self._studio_drops(shape, spec["drops"])
+
+    def studio_retime(self, body: dict) -> dict:
+        """KEEP MY SHOTS, RE-TIME THEM, as a dry run: the shots as they are, each kill on the
+        part's own beats. Nothing is applied -- the page shows what changes and the player
+        applies it as one step. `rev` comes back as it went, so the page can drop an answer a
+        newer edit has made stale. `resnap` moves the player's own marks with the part;
+        `relax` widens what a shorter part may leave out; `add` fills a longer part with
+        shots from the reel's clips that are not in it."""
+        from . import clips as clips_mod
+        from .clips import editflow, studio
+
+        rev = body.get("rev")
+        c = cfg.load()
+        root = self._clips_dir(c)
+        try:
+            proj, derived, _ = studio.normalise(body.get("project"), root)
+        except studio.ProjectError as e:
+            return {"ok": False, "rev": rev, "error": str(e)}
+        try:
+            spec, shape = self._timing_shape(proj)
+        except (FileNotFoundError, OSError, RuntimeError) as e:
+            return {"ok": False, "rev": rev, "error": str(e)}
+        if shape is None:
+            return {"ok": False, "rev": rev, "error": "This reel has no song to re-time to."}
+        style = studio.STYLE.get(proj.get("style") or "")
+        end = spec["end"] if spec["end"] > spec["start"] else spec["start"] + float(derived.get("length") or 0.0)
+        conflict = editflow.drop_conflict(bool(style and style.drop), spec["drops"], shape.drop, spec["start"], end)
+        if conflict:
+            return {"ok": True, "rev": rev, "conflicts": [conflict], "notes": [], "project": None}
+        rep = editflow.retime(proj, derived, shape, relax=str(body.get("relax") or ""),
+                              resnap=bool(body.get("resnap")))
+        if rep["conflicts"]:
+            return {"ok": True, "rev": rev, "conflicts": rep["conflicts"], "notes": rep["notes"], "project": None}
+        new = rep["project"]
+        notes = list(rep["notes"])
+        if body.get("add") and rep["room"]:
+            clips_mod.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+            notes += self._fill_tail(root, new, shape, rep["part"])
+        try:
+            new, nd, more = studio.normalise(new, root)
+        except studio.ProjectError as e:
+            return {"ok": False, "rev": rev, "error": str(e)}
+        diff = editflow.plan_diff(proj, derived, new, nd)
+        return {"ok": True, "rev": rev, "project": new, "derived": nd, "notes": notes + more,
+                "diff": diff, "room": rep["room"], "dropped": rep["dropped"], "conflicts": [],
+                "song": shape.as_dict() if hasattr(shape, "as_dict") else None}
+
+    def _fill_tail(self, root: Path, proj: dict, shape, part) -> list[str]:
+        """ADD SHOTS to a longer part, after the last one, from the reel's own clips that are
+        not in it -- planned by the style for that stretch alone, so what is there stays.
+        In place. -> notes"""
+        from .clips import studio
+
+        used = {str(s["clip"]).lower() for s in proj["shots"]}
+        pool = [r["clip"] for r in proj.get("selection") or [] if str(r.get("clip") or "").lower() not in used]
+        chosen = self._studio_chosen(root, pool)
+        if not chosen:
+            return ["There are no clips in this reel's pool that are not in it already: "
+                    "Add clips to the pool, then add shots."]
+        derived = studio.derive(proj)
+        start = float(proj.get("song_offset") or 0.0)
+        tail_at = start + float(derived["length"]) + 0.05
+        end = float(part[1])
+        if end - tail_at < 2.0:
+            return []
+        more, _ = studio.plan(chosen, proj.get("style") or studio.DEFAULT_STYLE, shape=shape,
+                              song=str(proj.get("song") or ""), fmt=proj.get("format") or "landscape",
+                              part=(tail_at, end), checks=False)
+        add = list(more.get("shots") or [])
+        if not add:
+            return ["The style found nothing in the pool's clips for the rest of the part."]
+        marks = [m for m in (proj.get("song_marks") or []) if m < tail_at] + \
+                [m for m in (more.get("song_marks") or []) if m >= tail_at]
+        proj["shots"] = proj["shots"] + add
+        notes = studio.apply_song(proj, shape, str(proj.get("song") or ""), start, end, marks)
+        return [f"{len(add)} shot(s) from the reel's pool fill the rest of the part."] + notes
+
+    def studio_replan(self, body: dict) -> dict:
+        """REPLAN, as a dry run: the style's real planner on the spec as it is now -- the new
+        part, the drops, the player's own marks as constraints -- and what it would change.
+        `with` may name another style, other clips or a How long. Nothing is applied."""
+        from .clips import editflow, studio
+
+        rev = body.get("rev")
+        root = self._clips_dir(cfg.load())
+        try:
+            proj, derived, _ = studio.normalise(body.get("project"), root)
+        except studio.ProjectError as e:
+            return {"ok": False, "rev": rev, "error": str(e)}
+        over = body.get("with") if isinstance(body.get("with"), dict) else {}
+        over = {k: over[k] for k in ("style", "clips", "fill") if over.get(k)}
+        if "clips" in over:
+            over["clips"] = [str(x) for x in over["clips"] if isinstance(x, str)][:studio.MAX_SHOTS]
+        try:
+            spec, shape = self._timing_shape(proj)
+        except (FileNotFoundError, OSError, RuntimeError) as e:
+            return {"ok": False, "rev": rev, "error": str(e)}
+        style = studio.STYLE.get(over.get("style") or proj.get("style") or "")
+        if shape is not None and spec["end"] > spec["start"]:
+            conflict = editflow.drop_conflict(bool(style and style.drop), spec["drops"], shape.drop,
+                                              spec["start"], spec["end"])
+            if conflict:
+                return {"ok": True, "rev": rev, "conflicts": [conflict], "notes": [], "project": None}
+        req = editflow.replan_request(proj, over)
+        got = self.studio_plan(req)
+        if not got.get("ok"):
+            return {"ok": False, "rev": rev, "error": got.get("error") or "That reel could not be planned."}
+        new = got["project"]
+        notes = list(got.get("notes") or [])
+        new["output"] = proj.get("output") or ""
+        anchors = list(spec["anchors"])
+        start, end = editflow.plan_part(new)
+        inside = [a for a in anchors if start - 1e-3 <= a <= (end or 1e9) + 1e-3]
+        if inside and "marks" not in req:
+            # The player's own marks are constraints on the plan, not suggestions to it.
+            merged = editflow.merge_anchors(new.get("song_marks") or [], inside, start=start, end=end or 1e9,
+                                            beat=float(new.get("beat") or 0.5))
+            if merged != sorted(new.get("song_marks") or []):
+                notes += studio.apply_marks(new, [m - start for m in merged])
+                new["song_marks"] = [round(m, 4) for m in merged]
+        if len(inside) < len(anchors):
+            notes.append(f"{len(anchors) - len(inside)} of your own kill marks are outside this part, "
+                         f"so the plan could not use them. They are kept.")
+        if anchors:
+            new["anchors"] = anchors
+        kept = editflow.carry_edits(proj, new)
+        if kept:
+            notes.append(f"{kept} shot(s) kept the effects you gave them: the same kill is in the new plan.")
+        if proj.get("render_version"):
+            new["render_version"] = proj["render_version"]
+        new["plan_sig"] = studio.signature(new["shots"])
+        try:
+            new, nd, more = studio.normalise(new, root)
+        except studio.ProjectError as e:
+            return {"ok": False, "rev": rev, "error": str(e)}
+        new["plan_sig"] = studio.signature(new["shots"])
+        nd = studio.derive(new)
+        diff = editflow.plan_diff(proj, derived, new, nd)
+        diff["effects_kept"] = kept
+        diff["marks_outside"] = len(anchors) - len(inside)
+        return {"ok": True, "rev": rev, "project": new, "derived": nd, "notes": list(dict.fromkeys(notes + more)),
+                "diff": diff, "conflicts": [], "song": got.get("song")}
+
+    def studio_versions(self, path: str) -> dict:
+        """Every render of a reel, newest first, with what each was made from (clips/versions.py)."""
+        from .clips import versions
+
+        mp4 = self._reel_path(path)
+        if isinstance(mp4, dict):
+            return mp4
+        return {"ok": True, "versions": versions.listing(mp4), "current": versions.current(mp4)}
+
+    def _reel_path(self, path: str):
+        """A reel's mp4 inside the reels folder, or an error answer."""
+        root = self._clips_dir(cfg.load())
+        mp4 = Path(str(path or ""))
+        try:
+            if not str(path).strip() or mp4.suffix.lower() != ".mp4" or \
+                    not mp4.resolve().is_relative_to((root / "reels").resolve()):
+                return {"ok": False, "error": "That reel is not in the reels folder."}
+        except OSError:
+            return {"ok": False, "error": "That reel is gone."}
+        return mp4
+
+    def studio_version(self, body: dict) -> dict:
+        """RESTORE THIS VERSION (it becomes the reel again) or SAVE AS NEW REEL (it becomes a
+        reel of its own). Refused while a reel renders: the render promotes its own version
+        when it finishes, and two promotions racing would leave either one."""
+        from .clips import plan as plan_mod
+        from .clips import studio, versions
+
+        mp4 = self._reel_path(body.get("path"))
+        if isinstance(mp4, dict):
+            return mp4
+        try:
+            n = int(body.get("version") or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if n not in versions.numbers(mp4):
+            return {"ok": False, "error": "That version of the reel is not on disk any more."}
+        if studio.runner().busy():
+            return {"ok": False, "error": "A reel is rendering; restore a version once it has finished."}
+        action = str(body.get("action") or "")
+        if action == "restore":
+            try:
+                versions.promote(mp4, n, studio._swap_in)
+            except (OSError, RuntimeError) as e:
+                return {"ok": False, "error": f"Version {n} could not be made the reel: {e}"}
+            got = self.studio_project(str(mp4))
+            got["restored"] = n
+            return got
+        if action == "fork":
+            meta = versions.project_of(mp4, n)
+            name = re.sub(r"[\r\n]", " ", str(body.get("name") or "")).strip()[:80] or \
+                f"{meta.get('name') or mp4.stem} v{n}"
+            new_out = _free_reel(mp4.parent, plan_mod.slug(name) or "reel")
+            try:
+                versions.fork(mp4, n, new_out, name)
+            except (OSError, FileNotFoundError) as e:
+                return {"ok": False, "error": str(e)}
+            return {"ok": True, "path": str(new_out), "name": name}
+        return {"ok": False, "error": "Restore or save as a new reel?"}
 
     def studio_delete(self, body: dict) -> dict:
         """Delete chosen clips to free space. `dry_run` says what would go, for the confirmation."""
@@ -4682,9 +4916,14 @@ class Server:
                 shape = self._studio_shape(proj["song"])
             except Exception:                        # noqa: BLE001
                 shape = None
+        from .clips import versions
+        versions.adopt(mp4)                  # a reel from before versions: its file becomes v1
+        n = versions.current(mp4)
+        vfile = versions.folder(mp4) / f"v{n}.mp4" if n else None
         return {"ok": True, "project": proj, "derived": derived, "notes": notes,
                 "song": shape.as_dict() if shape else None,
-                "when": int(mp4.stat().st_mtime)}
+                "when": int(mp4.stat().st_mtime), "version": n,
+                "version_file": str(vfile) if vfile and vfile.is_file() else ""}
 
     def cards_check(self, body: dict) -> dict:
         """Does the card reader actually work on this recording?
