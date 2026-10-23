@@ -176,14 +176,17 @@ def test_a_fast_style_on_a_fast_song_keeps_real_speed_and_one_effect_a_kill(clip
     trans = {s["transition"] for s in shots}
     assert "t02" not in trans and len(trans - {"t01"}) <= 1, trans
     assert all(studio._cut_seconds(t) <= studio.FAST_CUT_SECONDS for t in trans), trans
-    assert all(len(s["fx"]) <= 1 for s in shots), [s["fx"] for s in shots]
+    # One effect a kill -- beside the style's signature (Hype's shake), which every
+    # kill carries on top (studio.signature_fx).
+    sig = {studio.fam(p) for p in studio.STYLE[style].signature}
+    assert all(len([f for f in s["fx"] if studio.fam(f) not in sig]) <= 1 for s in shots), [s["fx"] for s in shots]
     assert {s["speed"] for s in shots} == {"s00"}
     assert any("fast-cut style" in n for n in notes), notes
     st = studio.STYLE[style]
     if len(set(st.kill_pool)) > 1:
         # The variety the pools define survives: two kill effects (calm_mix's cap),
         # and the cameras the style lists.
-        assert len({s["fx"][0] for s in shots if s["fx"]}) == 2, [s["fx"] for s in shots]
+        assert len({f for s in shots for f in s["fx"] if studio.fam(f) not in sig}) == 2, [s["fx"] for s in shots]
         assert len(proj["pools"]["kill"]) > 1 and len(proj["pools"]["camera"]) > 1, proj["pools"]
     else:
         assert len({tuple(s["fx"]) for s in shots}) == 1, "Fast-paced headshot is one effect by design"

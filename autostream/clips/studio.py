@@ -994,6 +994,22 @@ class Style:
     # speed -- see fast_rules -- unless the player chooses otherwise on the Make
     # page, which always wins.
     fast_cuts: bool = False
+    # THE SHORTEST KILL SHOT THIS STYLE CAN READ, as output seconds of run-up and
+    # of landing. One 0.75 s floor for every style held Hype and Velocity at 1.5x
+    # their references' median shot (0.96 s against 0.63, 1.20 against 0.76): a
+    # kill a beat at 100 BPM is 0.6 s and could not be cut at all. The run-up
+    # still shows MIN_RUN_SECONDS of the fight -- squeezed by a ramp of at most
+    # `ramp_max` when the output is shorter (see readable_ramps), real speed for
+    # the last frames into the kill.
+    min_run: float = rulebook.MIN_RUN_SECONDS
+    min_after: float = rulebook.MIN_KILL_GAP_SECONDS - rulebook.MIN_RUN_SECONDS
+    ramp_max: float = 1.0
+    # A speed SHAPE every kill gets, worked out per shot from its own length (see
+    # velocity_curves): "velocity" -- rush in, slow through the impact, rush out.
+    speed_profile: str = ""
+    # An effect EVERY kill carries on top of its own, the thing the style is named
+    # for (Hype's shake). Only the readability guard takes it off (see signature_fx).
+    signature: tuple[str, ...] = ()
 
 
 STYLES: tuple[Style, ...] = (
@@ -1023,12 +1039,18 @@ STYLES: tuple[Style, ...] = (
           ("xrgExBQyHBc", "nqa8RP_R0cU", "Ro6MDXmB8uA", "oJDesm--wss", "H2N0eHGOi_w",
            "RmaACKww8do", "prevxQTdkGo", "-rkr4IpA3jM"),
           intro="i08", outro="e12", cuts=("t06", "t05"), kill=("k01", "k16"), hero=("h02",),
-          speed="s04", hero_speed="s04", camera="c00", grade="g05", vignette=True,
+          speed="s00", hero_speed="s00", camera="c00", grade="g05", vignette=True,
           overlays=("o01",),
           kill_pool=("k01", "k16", "k06", "k03", "k02", "k14", "k11", "k12", "k19", "k21"),
           transition_pool=("t06", "t05", "t01", "t06", "t02", "t12", "t13"),
           hero_pool=("h02", "h01", "h03"), camera_pool=("c00", "c00", "c04", "c08"),
-          speed_pool=("s04", "s04", "s02", "s03"), energy=0.75),
+          # THE SPEED IS THE STYLE, so it is a shape every kill gets (velocity_curves),
+          # not a preset drawn per shot: s04 hung at 0.3x and s02/s03 only ramped one
+          # side -- measured on the v2 render of Skechers, 0 of 37 kills had a slow
+          # window in the 0.5-0.7x the references slow to, and 25% of the footage
+          # between kills ran fast. A kill a beat at 100 BPM (0.6 s) has to fit.
+          speed_pool=("s00",), energy=0.75,
+          min_run=0.25, min_after=0.20, ramp_max=2.2, speed_profile="velocity"),
     Style("drop", "Build and drop",
           "Your best clutch plays as one take through the build and its last kill lands on the "
           "drop; then quick kills on the drums. Needs a song with a clear drop.",
@@ -1073,7 +1095,11 @@ STYLES: tuple[Style, ...] = (
           kill_pool=("k01", "k02", "k11", "k06", "k08", "k16", "k12", "k03", "k19", "k22", "k18"),
           transition_pool=("t01", "t05", "t01", "t06", "t02", "t12", "t13"),
           hero_pool=("h01", "h02", "h03"), camera_pool=("c04", "c00", "c04", "c03", "c07"),
-          speed_pool=("s00", "s00", "s02", "s03"), energy=0.7, fast_cuts=True),
+          speed_pool=("s00", "s00", "s02", "s03"), energy=0.7, fast_cuts=True,
+          # A SHAKE ON EVERY KILL is what the blurb promises and what the reviewer
+          # looked for; the soft one, so it never hides the target. 0 of 36 kills
+          # of the v2 That Acid render had one.
+          min_run=0.30, min_after=0.18, ramp_max=1.6, signature=("k02soft",)),
     # ---- five more, each grouped by what its references MEASURE, not by taste.
     Style("clean", "Clean",
           "The calm end of the shelf: long shots, almost no effects, the game's own "
@@ -1098,7 +1124,8 @@ STYLES: tuple[Style, ...] = (
           transition_pool=("t02", "t06", "t13", "t12", "t05", "t01"),
           hero_pool=("h01", "h02", "h03"),
           camera_pool=("c04hard", "c04slam", "c00", "c06far"),
-          speed_pool=("s04", "s04", "s03", "s02"), energy=0.9, fast_cuts=True),
+          speed_pool=("s04", "s04", "s03", "s02"), energy=0.9, fast_cuts=True,
+          min_run=0.30, min_after=0.18, ramp_max=1.6),
     Style("short", "Short", 
           "Built for a Short: under half a minute, a cut a second, and the mark of the "
           "vertical edits -- quick in, quick out, nothing held.",
@@ -1109,7 +1136,8 @@ STYLES: tuple[Style, ...] = (
           kill_pool=("k01hard", "k03", "k02fast", "k14", "k19", "k07hard", "k20blink"),
           transition_pool=("t06", "t01", "t05", "t12", "t01"),
           hero_pool=("h02", "h01"), camera_pool=("c00", "c00", "c04soft", "c08soft"),
-          speed_pool=("s02", "s04", "s00", "s03"), energy=0.6),
+          speed_pool=("s02", "s04", "s00", "s03"), energy=0.6,
+          min_run=0.40, min_after=0.22, ramp_max=1.4),
     Style("cinematic", "Cinematic",
           "Bars, a graded picture and a camera that never stops moving. The slower "
           "references, played like a trailer rather than a montage.",
@@ -1552,6 +1580,136 @@ def _fill_holes(kills: list[float], beats: list[float], *, gap: float, end: floa
         if n < len(ahead) - 1:
             out.append(nxt)
     return sorted(set(round(t, 4) for t in out))
+
+
+def hold_cap(median: float, mean: float) -> float:
+    """The longest a held shot may run: the references' 90th percentile shot, as near as their numbers say.
+
+    The references keep only a median shot and cuts a minute, not the spread. Shot
+    lengths in an edit are skewed (a few long, many short), so a log-normal is read
+    off the two: its sigma from mean/median, then the 90th percentile -- 2.5 s for
+    Hype, 3.0 s for Velocity. Never past rulebook.MAX_SHOT_SECONDS.
+    """
+    if median <= 0:
+        return rulebook.MAX_SHOT_SECONDS
+    ratio = max(1.0, mean / median)
+    sigma = math.sqrt(2.0 * math.log(ratio))
+    return max(median, min(rulebook.MAX_SHOT_SECONDS, median * math.exp(1.2816 * sigma)))
+
+
+def _shot_gaps(shots: list[dict], *, median: float, mean: float, min_run: float, min_after: float,
+               beat: float, lead: float, tail: float) -> tuple[list[float], list[str]]:
+    """How far after each shot's kill the next kill lands. -> (gaps, limits)
+
+    THE REFERENCES' MEDIAN SHOT, AND THEIR CUTS A MINUTE, BOTH -- planned as SHOT
+    LENGTHS, because that is what both are measured on. A shot is its run-up and
+    what it keeps after its kill (the landing, or its own later kills), and a gap
+    between two kills is the first one's keep plus the second one's run-up; laid
+    out as gaps, a double kill's long gap made the shot AFTER it short and the
+    median came out anywhere (Velocity on Believer: 1.41 s against 0.76).
+
+    Every shot is first the median long -- or its own kills' length, if more. The
+    reel then has `mean` seconds a shot to fill (that is the cuts a minute), and
+    what is left is shared out as HOLDS: longer run-ups, half a beat at a time,
+    on the shots already longer than the median first and then the strongest,
+    never on more than 45% of them (so the median stays the median) and never
+    past hold_cap. `limits` names whatever stopped the plan short.
+    """
+    n = len(shots)
+    if n < 2:
+        return [], []
+    def keep_of(s: dict, p: float) -> float:
+        # What apply_marks will keep after this kill (its own later kills as they
+        # PLAY, at this run-up and speed), and a few frames over: a keep it
+        # measures longer than planned makes it skip the next mark, and every
+        # shot after that one lands a gap late.
+        own = _own_tail(s, p) if _own_after(s) else 0.0
+        return max(min_after, own + 3.0 / FPS) if own else min_after
+    keep = [keep_of(s, float(s["pre"])) for s in shots]
+    pre = [float(shots[0]["pre"])] + [max(min_run, median - keep[j]) for j in range(1, n)]
+    keep = [keep_of(s, p) for s, p in zip(shots, pre)]
+    pre = [pre[0]] + [max(min_run, median - keep[j]) for j in range(1, n)]
+    length = lambda j: pre[j] + keep[j]                       # noqa: E731
+    excess = n * mean - lead - keep[0] - tail - sum(pre[1:]) - sum(keep[1:])
+    cap = hold_cap(median, mean)
+    long_ = [j for j in range(1, n) if length(j) > median + 1e-6]
+    # The opener's held run-up and the closer's ending are long shots too.
+    room = max(1, int(0.45 * n)) - len(long_) - 2
+    fresh = sorted((j for j in range(1, n) if j not in long_),
+                   key=lambda j: (-float(shots[j].get("_strength", 0.0)), j))
+    holders = long_ + fresh[:max(0, room)]
+    unit = beat / 2
+    limits: list[str] = []
+    while excess > unit / 2:
+        grew = False
+        for j in holders:
+            if excess <= unit / 2:
+                break
+            # ...and no further than the clip has footage before its kill.
+            if length(j) + unit <= cap + 1e-6 and max_pre(shots[j], pre[j] + unit) >= pre[j] + unit - 1e-3:
+                pre[j] += unit
+                excess -= unit
+                grew = True
+        if not grew:
+            limits.append(f"the holds reached the references' longest usual shot ({cap:.1f} s) "
+                          f"with {excess:.1f} s still to fill, so the reel cuts faster than its references")
+            break
+    if excess < -mean:
+        limits.append(f"the shots' own kills need {-excess:.1f} s more than the references' cuts a minute "
+                      f"allow, so the reel cuts slower than its references")
+    for j in range(1, n):
+        shots[j]["_pre"] = round(pre[j], 5)             # the run-up asked for; see plan()
+        # ...and the least the gap into it may come out at, once it is on a hit:
+        # under that apply_marks has no run-up for it and skips the mark.
+        shots[j]["_gap_min"] = round(keep[j - 1] + min_run, 5)
+    return [keep[j - 1] + pre[j] for j in range(1, n)], limits
+
+
+def _paced_slots(hits: list[float], strengths: list[float], beats: list[float], *,
+                 first: float, gaps: list[float], end: float, tol: float = 0.12,
+                 mins: list[float] | None = None) -> list[float]:
+    """Kill times from `first`, each about its own gap after the last: on a hit, or on the grid.
+
+    The strongest hit within `tol` of a gap of where the kill belongs (half a beat
+    at the least); with none there, the quarter beat nearest it. _hit_slots looks
+    for the loudest hit in a window up to 1.5 gaps long, which on Skechers made a
+    0.9 s pace come out 1.21 s -- the pace is the style's, the hit is the song's.
+    """
+    has_s = len(strengths) == len(hits)
+    top = max(strengths) if has_s and strengths else 1.0
+    beat = (beats[-1] - beats[0]) / max(1, len(beats) - 1) if len(beats) > 1 else 0.5
+    out = [first]
+    t = first
+    for n_, g in enumerate(gaps):
+        aim = t + g
+        if aim > end + 1e-6:
+            break
+        least = t + max(0.5 * g, (mins[n_] if mins and n_ < len(mins) else 0.0))
+        reach = max(tol * g, beat / 8)
+        near = [i for i, h in enumerate(hits) if abs(h - aim) <= reach and h >= least - 1e-6]
+        if not near:
+            # No hit close by: the nearest within a quarter beat (or a fifth of the
+            # gap) still beats a grid point -- a kill on the music's own hit. Wider,
+            # and the hits set the pace instead of the references: half a beat moved
+            # Hype on El Alfa (90 BPM) from a 0.68 s median shot to 0.81.
+            wide = max(0.2 * g, beat / 4)
+            cands = [i for i, h in enumerate(hits) if abs(h - aim) <= wide and h >= least - 1e-6]
+            near = [min(cands, key=lambda i: abs(hits[i] - aim))] if cands else []
+        if near:
+            i = max(near, key=lambda i: ((strengths[i] / top if has_s and top > 0 else 1.0)
+                                        - abs(hits[i] - aim) / reach))
+            t = float(hits[i])
+        elif beats:
+            q = beat / 4
+            t = beats[0] + round((aim - beats[0]) / q) * q
+            if t < least - 1e-6:
+                t = beats[0] + math.ceil((least - beats[0]) / q - 1e-9) * q
+        else:
+            t = max(aim, least)
+        if t > end + 1e-6:
+            break
+        out.append(round(t, 4))
+    return out
 
 
 def _spread_slots(hits: list[float], strengths: list[float], big: list[float], *,
@@ -2061,8 +2219,15 @@ def fast_rules(style: "Style") -> "Style":
 
 
 def after_floor(project: dict) -> float:
-    """The least a kill may have after it in this reel, in seconds. The same for every style."""
-    return SLOW_AFTER
+    """The least a kill may have after it in this reel, in seconds.
+
+    SLOW_AFTER unless the plan set its style's own (`min_after`, Style): a style
+    whose references hold 0.63 s shots cannot spend 0.22 s of each on the fall.
+    """
+    try:
+        return max(0.1, float(project.get("min_after") or SLOW_AFTER))
+    except (TypeError, ValueError):
+        return SLOW_AFTER
 
 
 def drop_in(grid: "Grid", lo: float, hi: float) -> float | None:
@@ -2287,8 +2452,20 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # 117 s with a 3.1 s median shot against the references' 0.63 s. One number
     # now does both jobs, so the shots chosen are the shots that fit. In grid
     # steps, so it scales with the tempo; never closer than a run-up and a
-    # landing (MIN_KILL_GAP_SECONDS): under that a cut is a flicker, not a fight.
-    gap_style = max(rulebook.MIN_KILL_GAP_SECONDS, shot_beats * step)
+    # landing.
+    #
+    # ...AND THE MEDIAN ITSELF, NOT ROUNDED UP TO A STEP OR TO 0.75 S. Rounded, the
+    # v2 renders still came out at 1.5x their references' median (Hype 0.96 s
+    # against 0.63, Velocity 1.20 against 0.76), with cuts a minute right only
+    # because every shot was the same length. The kills now go on the song's hit
+    # NEAREST the median (_paced_slots), and the floor is this style's own
+    # shortest readable kill shot (Style.min_run + min_after), not one for all.
+    readable = style.min_run + style.min_after
+    gap_style = max(readable, want)
+    # The references' MEAN shot: a minute over their cuts. The reel is chosen to
+    # hold this many shots for its length, and the holds share out the
+    # difference between it and the median (_shot_gaps).
+    mean_shot = 60.0 / max(cpm, 1.0)
     # The opening hold is left on the beat: it already lands inside the
     # references' band on 20 of 24 reels, so only its unit changes.
     open_beats = _pow2_beats(max(meas.get("first_shot") or 4.0, 2.0), beat, lo=2, hi=16) * div
@@ -2477,8 +2654,12 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         moving = {m.clip["path"] for m in all_moments}
         left_out((p for p in with_moments if p not in moving),
                  "Nothing moves on screen around its kill (a death camera, or standing still).")
+    # Each moment is worth the references' MEAN shot of the reel's length: that
+    # is what makes N moments fill it at the references' cuts a minute.
     est = {id(m): (rulebook.FOLLOW_UP_BEATS * div if m.seq > 0 and not (style.drop and part_len)
                    else shot_beats) for m in all_moments}
+    if not style.drop:
+        est = {k: max(v, mean_shot / step) for k, v in est.items()}
     available = sum(est.values()) * step
     # The chosen part's end is the one length no setting may pass.
     hard = math.floor(part_len / beat + 1e-6) * beat if part_len else 0.0
@@ -2512,7 +2693,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     want_beats = int(round(target / step))
     if target:
         pool = rulebook.select(all_moments, target, lambda m: est[id(m)] * step)
-    min_gap = rulebook.MIN_KILL_GAP_SECONDS
+    min_gap = readable
     if keep_all:
         # KEEP EVERY KILL: nothing is left out to fit a length. The kills are
         # put closer together instead (see the marks below), down to
@@ -2814,12 +2995,22 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     if not (template and template.get("kill")):
         slowest = min(_detail(p) for p in set(pools["speed"]) | {style.hero_speed, style.speed})
 
+        sig_fams = {fam(p) for p in style.signature}
+        sig_detail = math.prod(_detail(p) for p in style.signature)
+
         def clear_fx(p: str) -> bool:
-            return fam(p) not in KILL_BLURS and _detail(p) * slowest >= SHARP_FLOOR
+            # The signature rides on every kill anyway (signature_fx); drawn as one of
+            # the reel's two kill effects as well, it would be half the variety -- and
+            # an effect too soft to sit under it would only be taken off again.
+            return (fam(p) not in KILL_BLURS and _detail(p) * slowest * sig_detail >= SHARP_FLOOR
+                    and fam(p) not in sig_fams)
         kept = [p for p in pools["kill"] if clear_fx(p)]
         pools["kill"] = kept or pools["kill"]
         for s in shots:
             s["fx"] = [f for f in s["fx"] if clear_fx(f)]
+    # No freeze on a kill whose speed is a shape (speed_curves): held, it is not slowed.
+    if style.speed_profile and not (template and template.get("hero")):
+        pools["hero"] = [h for h in pools["hero"] if fam(h) not in FREEZES] or pools["hero"]
     _vary(shots, pools, style, seed, "all", flash=0.0 if fast else None)
     rulebook.budget(shots, pools)
     mix_free = chosen_sets(template)
@@ -2833,7 +3024,9 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # THE CLIMAX STOPS TIME, and a fast-cut reel plays at real speed: one freeze and a
     # velocity ramp on the best shot is a second kind of effect and a late hit. Found on
     # headshot3, whose shot 20 came out with h02 and s04 in a reel built to have neither.
-    if not fast:
+    # ...nor in a style whose speed is a shape on every kill: a freeze and an s04 on the
+    # best shot would be the one kill without it.
+    if not fast and not style.speed_profile:
         rulebook.climax(shots, [m.strength for m in picked], pools, speed_ok=speed_ok)
     if build and shots:
         shots[0]["speed"] = "s05"
@@ -2981,8 +3174,27 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         plan_end = (offset + target - tail_s) if (target and fill != "part") else None
         extra = 0
         left_for_room: list[str] = []
+        # PACED TO THE REFERENCES' SPREAD, not one gap for every shot (_shot_gaps):
+        # the style's own length, every clip's own kills, no drop to build to.
+        paced = (not style.drop and not keep_all and fill != "part" and drop_t is None
+                 and bool(meas.get("median_shot")))
+        proj["min_run"], proj["min_after"] = round(style.min_run, 3), round(style.min_after, 3)
+        pace_limits: list[str] = []
         for _round in range(4 * len(shots) + 8):
             want_n = len(shots) + extra
+            if paced and len(shots) >= reelcheck.PACE_MIN_SHOTS:
+                # NO MORE THAN 35% OF THE SHOTS HOLD LATER KILLS OF THEIR OWN: each is a
+                # shot longer than the median, and with the opener and the closer past
+                # half of them the median is a multi-kill's length (Cinematic on
+                # Notorious: 11 of 21 shots over it). The weakest give theirs up first --
+                # every round, because leaving out the weakest shots leaves out singles.
+                multi = [s for s in shots if _own_after(s)]
+                allow = int(0.35 * len(shots))
+                for s in sorted(multi, key=lambda s: (float(s.get("_strength", 0.0)), s["clip"]))[:max(0, len(multi) - allow)]:
+                    for k in s["kills"]:
+                        if abs(float(k) - float(s["kill"])) > 1e-6:
+                            kill_why.setdefault((s["clip"], k), f"{style.label}'s pace holds only its strongest multi-kills")
+                    s["kills"] = [s["kill"]]
             last = spread_to(first, want_n)
             spread = last is not None
             # A FILLED PART ENDS ON ITS END, NOT PAST IT. A shot whose mark comes
@@ -2995,8 +3207,29 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             floor_last = first + (len(shots) - 1) * min_gap
             placed: list[int] = []
             for attempt in range(5):
-                slots = kill_slots(first, want_n, last, end=plan_end)
+                if paced:
+                    floor_ = after_floor(proj)
+                    gaps, pace_limits = _shot_gaps(
+                        shots, median=gap_style, mean=max(mean_shot / tw["pace"], gap_style),
+                        min_run=style.min_run, min_after=floor_, beat=grid.beat,
+                        lead=float(shots[0]["pre"]), tail=tail_s)
+                    # A mark a shot's own later kills pass by needs one more after it.
+                    slots = _paced_slots(grid.hits, grid.hit_strength, grid.beats, first=first,
+                                         gaps=gaps + [gap_style] * extra,
+                                         mins=[float(x.get("_gap_min", 0.0)) for x in shots[1:]],
+                                         end=plan_end if plan_end is not None else end_at)
+                else:
+                    slots = kill_slots(first, want_n, last, end=plan_end)
                 pool_shots = copy.deepcopy(shots)
+                if paced:
+                    # Each shot asks for the whole of its gap as run-up, less what the
+                    # shot before keeps after its own kill: the hold is the fight
+                    # building, not the frames after a kill.
+                    for j in range(1, min(len(pool_shots), len(slots))):
+                        if "_pre" in pool_shots[j]:
+                            pool_shots[j]["pre"] = pool_shots[j].pop("_pre")
+                            pool_shots[j].pop("led", None)
+                        pool_shots[j].pop("_gap_min", None)
                 order = list(range(len(pool_shots)))
                 if style.drop and drop_t is not None:
                     order, slots = clutch_take(pool_shots, slots, drop_t, part_start)
@@ -3046,6 +3279,30 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         # its own default pace -- not the marks this reel was actually cut to,
         # which is the only set worth checking a kill against.
         proj["song_marks"] = [round(t, 4) for t in slots]
+        if paced and len(slots) > PACE_SNAP_MIN:
+            # THE SONG'S OWN HITS ARE A LIMIT TOO. A kill goes on a hit near where it
+            # belongs, and where a song's hits sit on a coarser grid than the style's
+            # median (half beats at 125 BPM are 0.24 s apart; Chaos wants 0.62 s), the
+            # kills follow the hits. Said when it moves the typical gap more than 10%.
+            designed = sorted(gaps[:len(slots) - 1])
+            laid = sorted(b - a for a, b in zip(slots, slots[1:]))
+            if designed and laid:
+                drift = laid[len(laid) // 2] / max(1e-6, designed[len(designed) // 2]) - 1.0
+                if abs(drift) > 0.10:
+                    pace_limits = list(pace_limits) + [
+                        f"the song's hits put the typical kill {abs(drift):.0%} "
+                        f"{'further apart' if drift > 0 else 'closer together'} than {style.label}'s pace"]
+        if paced:
+            # What the reel was paced to, and anything that stopped it getting there:
+            # the gate's pace check reads both (reelcheck, "pace").
+            proj["pace"] = {"median": round(gap_style, 3), "cuts_per_min": round(60.0 / max(mean_shot, 1e-6), 1),
+                            "readable": round(readable, 3), "limits": list(dict.fromkeys(pace_limits))}
+            if want < readable - 1e-6:
+                proj["pace"]["limits"].append(
+                    f"{style.label}'s references cut every {want:.2f} s, under the {readable:.2f} s "
+                    f"its kill shots need to be read")
+            for lim in proj["pace"]["limits"]:
+                notes.append(f"Pace: {lim}.")
         notes += got_notes
         honest_captions(shots)
         if style.drop and drop_t is not None:
@@ -3093,9 +3350,25 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     rulebook.transitions(shots, starts_b, first_kill_beat=int(round(shots[0]["pre"] / step)) if shots else 0,
                          looks=clip_look, pools=pools, flash_share=flash_share, beat=step, div=div)
     calm_mix(shots, mix_free)
-    # Before the drop's flash goes on: that flash is the one effect asked for by name.
     # A drawer the player picked on the Make page -- one part or a set -- is theirs.
-    softened = sharp_kills(shots, pools, set(mix_free) | {k for k in POOL_KINDS if (template or {}).get(k)})
+    theirs_ = set(mix_free) | {k for k in POOL_KINDS if (template or {}).get(k)}
+    curved = speed_curves(shots, style, theirs_)
+    if curved["velocity"]:
+        notes.append(f"{curved['velocity']} kill(s) rush in, slow to {VEL_SLOW:g}x through the impact and rush "
+                     f"out" + (f"; {curved['short']} had too little footage for the full rush." if curved["short"] else "."))
+    if curved["ramped"]:
+        notes.append(f"{curved['ramped']} shot(s) are shorter than a readable run-up, so the fight before the "
+                     f"kill plays faster (at most {style.ramp_max:g}x), the kill itself at real speed"
+                     + (f"; {curved['squeezed']} still show less than {rulebook.MIN_RUN_SECONDS:g} s of it."
+                        if curved["squeezed"] else "."))
+    # The signature first, so what gives way for sharpness gives way round it. Before
+    # the drop's flash goes on: that flash is the one effect asked for by name.
+    signature_fx(shots, style, theirs_)
+    softened = sharp_kills(shots, pools, theirs_, fixed={fam(p) for p in style.signature})
+    guarded = signature_guard(shots, style)
+    if guarded:
+        notes.append(f"{guarded} kill(s) go without {style.label}'s {PART[style.signature[0]].label.lower()}: "
+                     f"with it the kill would be too soft to read.")
     if softened:
         notes.append(f"{softened} kill(s) had effects that together would wash the kill out; "
                      f"the softest of them gave way so every kill stays sharp.")
@@ -3172,6 +3445,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                          for c in offered]
     for s in proj["shots"]:
         s.pop("_strength", None)
+        s.pop("_pre", None)
+        s.pop("_gap_min", None)
     return proj, notes
 
 
@@ -3847,8 +4122,11 @@ def vary(project: dict, what: str = "all", seed: int | None = None) -> dict:
         calm_mix(project["shots"], set(project.get("mix_free") or ()), keep_cuts=what == "kill")
         # Only the drawers being mixed may give way: "mix the kill effects" must
         # leave the speeds as they were.
+        signature_fx(project["shots"], style, set(project.get("mix_free") or ()))
         sharp_kills(project["shots"], pools, set(project.get("mix_free") or ())
-                    | ({k for k in POOL_KINDS if k != kind} if kind != "all" else set()))
+                    | ({k for k in POOL_KINDS if k != kind} if kind != "all" else set()),
+                    fixed={fam(p) for p in style.signature})
+        signature_guard(project["shots"], style)
         if mix_of(project["shots"]) != was:
             break
         seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
@@ -3945,6 +4223,9 @@ KILL_DETAIL = {
     "c06": 0.60, "c01": 0.88, "c07": 0.88, "c03": 0.91, "c08": 0.93,
 }
 SHARP_FLOOR = 0.5
+# The velocity shape at the kill (0.6x by optical flow), against the same shot at real
+# speed: 0.87, 0.90 and 0.86 on three shots of the Velocity plan of Skechers.
+VEL_DETAIL = 0.88
 FREEZES = ("k04", "h02")     # the parts that stop time on the kill (see _freeze_of)
 
 
@@ -3954,13 +4235,189 @@ def _detail(pid: str) -> float:
 
 def kill_detail(shot: dict) -> float:
     """What share of the picture's detail this shot's effects leave on its kill (see KILL_DETAIL)."""
-    d = _detail(shot.get("speed") or "") * _detail(shot.get("camera") or "")
+    speed = shot.get("speed") or ""
+    if shot.get("anchors") and "kill" in shot and "pre" in shot:
+        # A shot timed by anchors is as soft as its rate at the kill: slowed, the
+        # velocity shape (VEL_DETAIL); at real speed, nothing.
+        ps = shot_pieces(shot)
+        p = float(shot["pre"])
+        r = (source_used(ps, p + 0.04) - source_used(ps, max(0.0, p - 0.04))) / 0.08
+        d = (VEL_DETAIL if r < 0.95 else 1.0) * _detail(shot.get("camera") or "")
+    else:
+        d = _detail(speed) * _detail(shot.get("camera") or "")
     for pid in list(shot.get("fx") or []) + list(shot.get("hero_fx") or []):
         d *= _detail(pid)
     return d
 
 
-def sharp_kills(shots: list[dict], pools: dict, free: set[str] | tuple = ()) -> int:
+# VELOCITY, AS A SHAPE ON EVERY KILL (Style.speed_profile "velocity"): rush in at
+# VEL_FAST, slow through the impact at VEL_SLOW from VEL_BEFORE before it to
+# VEL_AFTER after, rush out. ChatGPT's review of the v2 render: "a reel is not
+# Velocity just because it has flashes and kills on the beat" -- its presets hung
+# at 0.3x (s04) or ramped one side only (s02, s03), and 0 of 37 kills had a slow
+# window in the references' 0.5-0.7x. 0.6x is the bottom of the band fit_pieces
+# renders (RATE_MIN), 1.6x leaves the 1.3x the rule asks for some room.
+VEL_SLOW = 0.6
+VEL_FAST = 1.6
+VEL_FAST_MIN = 1.3
+VEL_BEFORE = 0.12
+VEL_AFTER = 0.14
+# The last stretch into a kill that a READABILITY ramp leaves at real speed (Hype,
+# Chaos, Short): the ramp squeezes the fight, never the kill frame.
+RAMP_REAL = 0.15
+PACE_SNAP_MIN = 8           # kills a reel needs before its typical gap means anything
+
+
+def _clip_room(shots: list[dict], i: int) -> tuple[float, float]:
+    """Source seconds shot i may use without replaying a frame another shot of its clip shows."""
+    lo, hi = 0.0, float(shots[i].get("clip_seconds") or 1e9)
+    k = float(shots[i]["kill"])
+    for j, o in enumerate(shots):
+        if j == i or o["clip"] != shots[i]["clip"]:
+            continue
+        a, b = _span(o)
+        if b <= k + 1e-6:
+            lo = max(lo, b)
+        elif a >= k - 1e-6:
+            hi = min(hi, a)
+    return lo, hi
+
+
+def speed_curves(shots: list[dict], style: "Style", free: set[str] | tuple = ()) -> dict:
+    """Give each shot the speed shape its style needs, as anchors. In place. -> what happened.
+
+    VELOCITY: every kill gets the velocity shape (VEL_*), fitted to its own run-up
+    and landing, so a 0.6 s shot (a kill a beat at 100 BPM) has it as much as a 2 s
+    one. The rush is as fast as the clip has footage for -- never into frames
+    another shot of the clip shows -- and a kill whose clip cannot give VEL_FAST_MIN
+    is counted as `short`, which the render gate reads.
+
+    READABILITY (every other style with ramp_max > 1): a run-up shorter than
+    MIN_RUN_SECONDS of output shows MIN_RUN_SECONDS of the fight anyway, squeezed
+    by a ramp of at most ramp_max that ends RAMP_REAL before the kill -- the kill
+    frame at real speed. The alternative to a 0.75 s floor on every shot. A shot
+    the ramp cannot reach is counted as `squeezed`, and said.
+
+    A drawer the player chose (`free` holding "speed") is left alone.
+    """
+    out = {"velocity": 0, "short": 0, "ramped": 0, "squeezed": 0}
+    if "speed" in free:
+        return out
+    for i, s in enumerate(shots):
+        if s.get("anchors") or s.get("stretch") or _freeze_of(s):
+            continue
+        pre, dur, k = float(s["pre"]), float(s["duration"]), float(s["kill"])
+        lo, hi = _clip_room(shots, i)
+        if style.speed_profile == "velocity":
+            wb = min(VEL_BEFORE, 0.45 * pre)
+            wa = min(VEL_AFTER, 0.45 * max(0.0, dur - pre))
+            if wb < ANCHOR_MIN_GAP + 0.01 or wa < ANCHOR_MIN_GAP + 0.01 or pre - wb < ANCHOR_MIN_GAP + 0.01:
+                out["short"] += 1
+                continue
+            own = _own_after(s)
+            before_out = pre - wb
+            room_before = k - wb * VEL_SLOW - lo
+            r_in = min(VEL_FAST, style.ramp_max, RATE_MAX,
+                       room_before / before_out if before_out > 1e-6 else VEL_FAST)
+            # Its own later kills play at REAL speed after the slow window, then it
+            # rushes out -- as much of them as the shot has room for.
+            tail_out = max(0.0, dur - pre - wa)
+            real_out = min(max(0.0, own - wa * VEL_SLOW), tail_out)
+            after_out = tail_out - real_out
+            room_after = hi - (k + wa * VEL_SLOW + real_out)
+            r_out = min(VEL_FAST, style.ramp_max, RATE_MAX,
+                        room_after / after_out if after_out > 1e-6 else VEL_FAST)
+            r_in, r_out = max(1.0, r_in), max(1.0, r_out)
+            if any(float(x) < k - 1e-3 for x in s.get("kills") or []):
+                r_in = 1.0                  # a kill of its own in the run-up plays at real speed
+            pts = [[round(k - wb * VEL_SLOW - before_out * r_in, 4), 0.0],
+                   [round(k - wb * VEL_SLOW, 4), round(pre - wb, 4)],
+                   [round(k + wa * VEL_SLOW, 4), round(pre + wa, 4)]]
+            at_src, at_out = k + wa * VEL_SLOW, pre + wa
+            if real_out > ANCHOR_MIN_GAP:
+                at_src, at_out = at_src + real_out, at_out + real_out
+                pts.append([round(at_src, 4), round(at_out, 4)])
+            elif real_out > 1e-3:
+                after_out, r_out = tail_out, 1.0                # too little to rush after
+            if after_out > ANCHOR_MIN_GAP:
+                pts.append([round(at_src + after_out * r_out, 4), round(dur, 4)])
+            elif real_out <= ANCHOR_MIN_GAP:
+                pts.append([round(at_src + after_out, 4), round(dur, 4)])
+            if pts[0][0] < lo - 1e-3:
+                out["short"] += 1
+                continue
+            # Rounded DOWN at the shot's end: an anchor a hair past it is dropped by
+            # shot_pieces, and the tail then plays at the slow rate.
+            end_ = math.floor(dur * 1e4) / 1e4
+            pts = [[p[0], min(p[1], end_)] for p in pts if 0.0 <= p[1] <= dur + 1e-3]
+            if real_out > ANCHOR_MIN_GAP and len(pts) > 3:
+                # Exactly real speed over its own later kills, whatever the rounding did.
+                pts[3][0] = pts[2][0] + (pts[3][1] - pts[2][1])
+            s["anchors"] = pts
+            s["speed"] = "s00"
+            out["velocity"] += 1
+            if min(r_in if before_out > 0.05 else VEL_FAST, r_out if after_out > 0.05 else VEL_FAST) < VEL_FAST_MIN - 1e-6:
+                out["short"] += 1
+        elif style.ramp_max > 1.0 + 1e-6 and pre < rulebook.MIN_RUN_SECONDS - 1e-3 and i > 0:
+            if s.get("speed") not in ("s00", None):
+                continue                                       # a ramp of its own already
+            real = min(RAMP_REAL, 0.5 * pre)
+            want_src = min(rulebook.MIN_RUN_SECONDS, k - lo)
+            rate = (want_src - real) / max(1e-6, pre - real)
+            if rate <= 1.0 + 1e-3:
+                continue
+            if rate > style.ramp_max + 1e-6:
+                rate = style.ramp_max
+                out["squeezed"] += 1
+            s["anchors"] = [[round(k - real - (pre - real) * rate, 4), 0.0], [round(k - real, 4), round(pre - real, 4)]]
+            out["ramped"] += 1
+    return out
+
+
+def signature_fx(shots: list[dict], style: "Style", free: set[str] | tuple = ()) -> dict:
+    """Put the style's signature effect on every kill. In place. -> {"on": n}
+
+    On top of the kill's own effect, last in its list (so the effect the reel
+    alternates is still first). A drifting camera move (c03, c06, c07) under a
+    shake becomes a still frame -- two kinds of motion over the target is what
+    hides it. sharp_kills then works ROUND the signature (`fixed`), and
+    signature_guard takes it off only where nothing else could give way.
+    """
+    out = {"on": 0}
+    if not style.signature or "kill" in free:
+        return out
+    sig = style.signature[0]
+    for s in shots:
+        s.pop("signature_off", None)
+        if not any(fam(f) == fam(sig) for f in s.get("fx") or []):
+            s["fx"] = list(s.get("fx") or []) + [sig]          # one the player drew is kept
+        if fam(sig) in ("k02", "k22") and fam(s.get("camera") or "") in ("c03", "c06", "c07"):
+            s["camera"] = "c00"
+        out["on"] += 1
+    return out
+
+
+def signature_guard(shots: list[dict], style: "Style") -> int:
+    """THE READABILITY GUARD: off the kills it would still leave too soft. -> how many.
+
+    Each is marked `signature_off` with the reason, which the render gate reads
+    (reelcheck, "signature") so a guarded kill is not counted as a missing one.
+    """
+    if not style.signature:
+        return 0
+    sig_fam = fam(style.signature[0])
+    off = 0
+    for s in shots:
+        if kill_detail(s) >= SHARP_FLOOR or not any(fam(f) == sig_fam for f in s.get("fx") or []):
+            continue
+        s["fx"] = [f for f in s["fx"] if fam(f) != sig_fam]
+        s["signature_off"] = "the kill would not stay sharp enough to read"
+        off += 1
+    return off
+
+
+def sharp_kills(shots: list[dict], pools: dict, free: set[str] | tuple = (),
+                fixed: set[str] | tuple = ()) -> int:
     """Take the softest effect off any kill whose stack would wash it out. In place. -> shots changed.
 
     EVERY KILL STAYS SHARP ENOUGH TO SEE (every style). While a shot's kill_detail
@@ -3975,20 +4432,27 @@ def sharp_kills(shots: list[dict], pools: dict, free: set[str] | tuple = ()) -> 
     pool. A drawer the player chose (`free`) is theirs and left alone.
 
     Never a freeze in place of what goes (k04, h02): this runs after the kills are
-    on their marks, and a freeze moves every later kill of the shot.
+    on their marks, and a freeze moves every later kill of the shot. The families in
+    `fixed` -- a style's signature -- are never touched: the rest gives way round them.
     """
-    used = list(dict.fromkeys(f for s in shots for f in (s.get("fx") or [])))
+    def own_fx(s: dict) -> list[str]:
+        return [f for f in s.get("fx") or [] if fam(f) not in fixed]
+
+    def with_fixed(s: dict, own: list[str]) -> list[str]:
+        return own + [f for f in s.get("fx") or [] if fam(f) in fixed]
+
+    used = list(dict.fromkeys(f for s in shots for f in own_fx(s)))
     ok = lambda p: fam(p) not in FREEZES                      # noqa: E731
     changed = 0
     for n, s in enumerate(shots):
         before = (list(s.get("fx") or []), list(s.get("hero_fx") or []), s.get("speed"), s.get("camera"))
         span = _span(s) if "kill" in s and "pre" in s else (-1e9, 1e9)
-        prev = (shots[n - 1].get("fx") or [""])[0] if n else ""
-        nxt = (shots[n + 1].get("fx") or [""])[0] if n + 1 < len(shots) else ""
+        prev = (own_fx(shots[n - 1]) or [""])[0] if n else ""
+        nxt = (own_fx(shots[n + 1]) or [""])[0] if n + 1 < len(shots) else ""
 
         def kill_swap(d: float, wide: bool) -> str | None:
             pool = [f for f in pools.get("kill") or [] if f not in used] if wide else used
-            better = [f for f in dict.fromkeys(pool) if _detail(f) > d and ok(f)]
+            better = [f for f in dict.fromkeys(pool) if _detail(f) > d and ok(f) and fam(f) not in fixed]
             fresh = [f for f in better if f not in (prev, nxt)]
             return max(fresh or better, key=_detail) if better else None
 
@@ -3998,7 +4462,7 @@ def sharp_kills(shots: list[dict], pools: dict, free: set[str] | tuple = ()) -> 
         for _ in range(12):
             if kill_detail(s) >= SHARP_FLOOR:
                 break
-            fx = list(s.get("fx") or [])
+            fx = own_fx(s)
             # (repeats a neighbour's effect, brings a third kind in, detail of what goes, apply):
             # the first move taken is the one breaking the fewest of the other rules.
             moves = []
@@ -4006,9 +4470,11 @@ def sharp_kills(shots: list[dict], pools: dict, free: set[str] | tuple = ()) -> 
                 for i, f in enumerate(fx):
                     if len(fx) > 1:
                         rest = fx[:i] + fx[i + 1:]
-                        moves.append((again(rest[0]), False, _detail(f), lambda rest=rest: s.__setitem__("fx", rest)))
+                        moves.append((again(rest[0]), False, _detail(f),
+                                      lambda rest=rest: s.__setitem__("fx", with_fixed(s, rest))))
                     elif (to := kill_swap(_detail(f), False)):
-                        moves.append((again(to), False, _detail(f), lambda to=to: s.__setitem__("fx", [to])))
+                        moves.append((again(to), False, _detail(f),
+                                      lambda to=to: s.__setitem__("fx", with_fixed(s, [to]))))
             if "hero" not in free:
                 for i, h in enumerate(s.get("hero_fx") or []):
                     better = [x for x in pools.get("hero") or [] if _detail(x) > _detail(h) and ok(x)]
@@ -4020,7 +4486,7 @@ def sharp_kills(shots: list[dict], pools: dict, free: set[str] | tuple = ()) -> 
             if "camera" not in free and _detail(s.get("camera") or "") < 1.0:
                 moves.append((False, False, _detail(s["camera"]), lambda: s.__setitem__("camera", "c00")))
             if "kill" not in free and len(fx) == 1 and (to := kill_swap(_detail(fx[0]), True)) and to not in used:
-                moves.append((again(to), True, _detail(fx[0]), lambda to=to: s.__setitem__("fx", [to])))
+                moves.append((again(to), True, _detail(fx[0]), lambda to=to: s.__setitem__("fx", with_fixed(s, [to]))))
             moves = [m for m in moves if m[2] < 1.0]
             # NO MOVE THAT REACHES FOR FOOTAGE THE SHOT DID NOT SHOW. This runs after the
             # cuts are set, and real speed in place of a ramp, or a freeze taken off,
@@ -4239,7 +4705,7 @@ def apply_marks(project: dict, marks: list[float], placed: list[int] | None = No
         # run-up grown to 4.08 s cut the opener 0.51 s after its first kill --
         # its second was never seen.
         keep = max(floor, _own_tail(prev, pres[j - 1]))
-        if keep > floor and gap - keep < rulebook.MIN_RUN_SECONDS:
+        if keep > floor and gap - keep < float(project.get("min_run") or rulebook.MIN_RUN_SECONDS):
             # ...and when the next mark comes too soon after them for this
             # shot to have any run-up at all, it takes the mark after. On
             # Aftrhrs a triple's tail needed 2.75 s and the next mark was
