@@ -165,10 +165,15 @@ DIRECTED = ("drop", "fasthead", "montage")   # planned by the director, to their
 VEL_SLOW_BAND = (0.45, 0.75)   # "roughly 0.5-0.7x" through the impact
 VEL_SLOW_SHARE = 0.90          # of the kills
 VEL_FAST = 1.3                 # the rush between kills, at least
-VEL_FAST_SHARE = 0.50          # of the time between them ("most")
+VEL_FAST_SHARE = 0.70          # of the time between them (ChatGPT's third review: 70%)
 VEL_WINDOW = 0.06              # s either side of the kill the slow rate is read over
 VEL_CLEAR = 0.20               # s either side of a kill that is not "between kills"
 SIGNATURE_SHARE = 0.95
+QUARTILE_TOLERANCE = 0.20      # provisional: each quartile within this of the references'
+KILL_BRIGHT_SHARE = 0.20       # of the gameplay pixels over BRIGHT_LEVEL...
+KILL_BRIGHT_FRAMES = 2         # ...for this many frames running, near a kill
+KILL_WINDOW = (6, 12)          # frames before and after a kill the brightness is read over
+INTENDED_BRIGHT = ("k03", "k16")   # kill effects meant to white out: the white flash, the flicker
 
 
 def _rate(pieces: list, t0: float, t1: float) -> float:
@@ -224,20 +229,26 @@ def style_findings(project: dict, derived: dict) -> list[Finding]:
             if lo_ <= _rate(ps, max(0.0, k - VEL_WINDOW), k + VEL_WINDOW) <= hi_:
                 slow += 1
             ks = [float(x) - float(r["start"]) for x in r.get("kills_reel") or []] or [k]
+            # A transition is centred on its cut: half of it at this shot's head, and
+            # half of the next one's at its tail.
+            head_t = float(s.get("tlen") or 0.0) / 2
+            nxt = shots[shots.index(s) + 1] if s is not shots[-1] else {}
+            tail_t = float(s["duration"]) - float(nxt.get("tlen") or 0.0) / 2
             t, step = 0.0, 1.0 / REEL_FPS
             while t < float(s["duration"]) - 1e-9:
-                if all(abs(t - x) > VEL_CLEAR for x in ks):
+                if all(abs(t - x) > VEL_CLEAR for x in ks) and head_t <= t <= tail_t:
                     between_t += step
                     if _rate(ps, t, t + step) >= VEL_FAST - 1e-6:
                         fast_t += step
                 t += step
+        # (the frames of a transition are excluded too: a cut is not footage between kills)
         if n and slow / n < VEL_SLOW_SHARE:
             out.append(Finding(HARD, "velocity-slow", f"{slow} of {n} kills slow to "
                                f"{VEL_SLOW_BAND[0]:g}-{VEL_SLOW_BAND[1]:g}x through the impact; Velocity needs "
                                f"{VEL_SLOW_SHARE:.0%}."))
         if between_t and fast_t / between_t < VEL_FAST_SHARE:
             out.append(Finding(HARD, "velocity-fast", f"{fast_t / between_t:.0%} of the footage between kills "
-                               f"runs at {VEL_FAST:g}x or more; Velocity needs most of it."))
+                               f"runs at {VEL_FAST:g}x or more; Velocity needs {VEL_FAST_SHARE:.0%}."))
     # THE SIGNATURE (Hype's shake) on every kill the readability guard allows.
     if st.signature:
         sig = studio.fam(st.signature[0])
@@ -246,6 +257,34 @@ def style_findings(project: dict, derived: dict) -> list[Finding]:
         if eligible and has / len(eligible) < SIGNATURE_SHARE:
             out.append(Finding(HARD, "signature", f"{has} of {len(eligible)} kills have {st.label}'s "
                                f"{studio.PART[st.signature[0]].label.lower()}."))
+    # THE GRADE ON EVERY SHOT, BY ITS ID (ChatGPT's third review of Hype, every style): read
+    # off what each shot's render is handed (segments), never off its colour -- the saturation
+    # trim and a clip's own colours move how graded a shot looks while it IS graded, and a
+    # colour test failed shots that were right. A shot handed another grade, or none, fails.
+    # The reel's grade is the style's unless the player chose another: that is said, not failed.
+    try:
+        graded = [g.grade for g in studio.segments(project, derived, has_audio=lambda p: True)]
+    except Exception as e:                                     # noqa: BLE001
+        out.append(Finding(HARD, "grade", f"The grade each shot is rendered with could not be read ({e})."))
+        graded = None
+    if graded is not None:
+        want = project.get("grade") or ""
+        wrong = sum(1 for g in graded if g != want) + abs(len(shots) - len(graded))
+        if want not in studio.PART or wrong:
+            out.append(Finding(HARD, "grade", f"{wrong or len(shots)} of {len(shots)} shots go out without "
+                               f"the reel's grade ({studio.PART[want].label if want in studio.PART else want or 'none'})."))
+        elif want != st.grade:
+            out.append(Finding(SOFT, "grade-chosen", f"Graded {studio.PART[want].label}, not {st.label}'s own "
+                               f"{studio.PART[st.grade].label}: the grade chosen for this reel."))
+    # QUARTILES (provisional): only where the references were measured for them.
+    if st.key not in DIRECTED and all(q in ref for q in studio_refs.QUARTILES) and len(shots) >= PACE_MIN_SHOTS:
+        beat = float(project.get("beat") or 0.5)
+        durs = sorted(float(s["duration"]) / beat for s in shots)
+        for q, f in zip(studio_refs.QUARTILES, (0.25, 0.5, 0.75)):
+            got = durs[min(len(durs) - 1, int(f * (len(durs) - 1) + 0.5))]
+            if abs(got / float(ref[q]) - 1) > QUARTILE_TOLERANCE:
+                out.append(Finding(SOFT, "pace-quartile", f"The {q[1:3]}th-percentile shot is {got:.2f} beats; "
+                                   f"the references' is {float(ref[q]):.2f}."))
     # THE KILL COUNTER ticks once for every kill the reel shows, and on it.
     if "o02" in (project.get("overlays") or []):
         shown = sorted(round(float(k), 3) for r in rows for k in r.get("kills_reel") or [])
@@ -315,6 +354,7 @@ def render_findings(mp4: Path, project: dict, derived: dict, ff: str = "ffmpeg")
         vertical = project.get("format") == "vertical"
         band = {"fit": 608, "near": 810}.get(project.get("vfit") or "") if vertical else None
         crop = f"crop=iw:iw*{band}/1080:0:(ih-iw*{band}/1080)/2" if band else "crop=iw:ih:0:0"
+        from . import studio
         frames = _frames(ff, mp4, crop, (540, 304))
         if not len(frames):
             return out + [Finding(HARD, "does-not-decode", "The reel could not be read back.")]
@@ -328,15 +368,22 @@ def render_findings(mp4: Path, project: dict, derived: dict, ff: str = "ffmpeg")
                 out.append(Finding(HARD, "black-frame", "A black frame flashes in the middle of the reel.",
                                    round(i / 60 - float(derived.get("offset") or 0.0), 3)))
                 break
-        hot = (frames > BRIGHT_LEVEL).mean(axis=(1, 2)) > BRIGHT_SHARE
+        hot_share = (frames > BRIGHT_LEVEL).mean(axis=(1, 2))
+        hot = hot_share > BRIGHT_SHARE
         # a white-flash transition is meant to be white: its frames are not a finding
         off = float(derived.get("offset") or 0.0)
         for s, r in zip(project.get("shots") or [], derived.get("shots") or []):
             if s.get("transition") == "t02" and float(s.get("tlen") or 0.0) > 0:
                 a = int((off + float(r["start"]) - float(s["tlen"]) / 2) * 60) - 1
                 hot[max(0, a):max(0, a + int(float(s["tlen"]) * 60) + 3)] = False
+        # The frames round each kill are the kill-readability check's below, which says why.
+        near_kill = np.zeros(n, bool)
+        for k in derived.get("kills") or []:
+            i = int(round((float(k) + off) * 60))
+            near_kill[max(0, i - KILL_WINDOW[0]):max(0, i + KILL_WINDOW[1] + 1)] = True
+        hot_away = hot & ~near_kill
         for i in range(n - BRIGHT_FRAMES + 1):
-            if hot[i:i + BRIGHT_FRAMES].all():
+            if hot_away[i:i + BRIGHT_FRAMES].all():
                 out.append(Finding(SOFT, "too-bright", "A moment of the reel is almost all white for two frames or more.",
                                    round(i / 60 - float(derived.get("offset") or 0.0), 3)))
                 break
@@ -344,11 +391,47 @@ def render_findings(mp4: Path, project: dict, derived: dict, ff: str = "ffmpeg")
             out.append(Finding(HARD, "white-ending", "The reel ends on a frame burnt almost white.",
                                round(n / 60 - float(derived.get("offset") or 0.0), 3)))
         med = float(np.median(lap)) or 1.0
+        # KILL READABILITY, every style (ChatGPT's third review). Two readings at each kill:
+        #   - its DETAIL: the hard one. A kill whose picture is gone cannot be read, whatever
+        #     did it -- the only hard fail.
+        #   - its LIGHT: over KILL_BRIGHT_SHARE of the game's pixels above BRIGHT_LEVEL for
+        #     KILL_BRIGHT_FRAMES frames running is a finding, soft, saying why. A flash meant
+        #     to white out (INTENDED_BRIGHT, or a white-flash cut) is not counted at all;
+        #     footage that is that bright away from its kill too -- a white wall -- is said
+        #     as the footage's, never the effect's; only what is left is the effect's.
+        # Measured on the v3 renders: Velocity's one too-bright kill was a white wall at 21%.
+        by_kill = []                                   # (kill reel time, shot, row)
+        for s, r in zip(project.get("shots") or [], derived.get("shots") or []):
+            for kk in r.get("kills_reel") or ([r["kill_reel"]] if r.get("kill_reel") is not None else []):
+                by_kill.append((float(kk), s, r))
         for k in derived.get("kills") or []:
-            i = int(round((float(k) + float(derived.get("offset") or 0.0)) * 60))
+            i = int(round((float(k) + off) * 60))
             win = lap[max(0, i - SHARP_RADIUS[0]):i + SHARP_RADIUS[1] + 1]
             if win and sorted(win)[len(win) // 2] / med < SHARP_MIN:
                 out.append(Finding(HARD, "kill-not-sharp", "A kill is blurred or washed out where it lands.", float(k)))
+            if not by_kill:
+                continue
+            _k, s, r = min(by_kill, key=lambda x: abs(x[0] - float(k)))
+            if any(studio.fam(f) in INTENDED_BRIGHT for f in s.get("fx") or []):
+                continue
+            # Only this shot's own frames, and none of a white-flash cut's: the next shot's
+            # cut is not this kill's light.
+            s0, s1 = int(round((float(r["start"]) + off) * 60)), int(round((float(r["end"]) + off) * 60))
+            a, b = max(i - KILL_WINDOW[0], s0, 0), min(i + KILL_WINDOW[1], s1 - 1, n - 1)
+            lit = (hot_share[a:b + 1] > KILL_BRIGHT_SHARE) & hot[a:b + 1]
+            run = best = 0
+            for h in lit:
+                run = run + 1 if h else 0
+                best = max(best, run)
+            if best < KILL_BRIGHT_FRAMES:
+                continue
+            rest = np.concatenate([hot_share[max(0, s0):a], hot_share[min(n, b + 20):max(0, min(n, s1))]])
+            if len(rest) and float(np.median(rest)) > KILL_BRIGHT_SHARE * 0.75:
+                why = "the footage is that bright (it is away from the kill too), not an effect"
+            else:
+                why = "an effect lifting the picture; take it off or give the kill another"
+            out.append(Finding(SOFT, "kill-bright", f"Over {KILL_BRIGHT_SHARE:.0%} of the game's picture is near-white "
+                               f"for {best} frames at a kill: {why}.", float(k)))
     except Exception as e:                                     # noqa: BLE001
         log.info("reel check could not run: %s", e)
         out.append(Finding(HARD, "check-failed", f"The reel could not be checked ({e})."))

@@ -45,6 +45,14 @@ EDITS: list[dict] = [
     {"id": "v9", "title": "AUTO_REEL_v9", "channel": "AutoStream", "views": 0, "cuts_per_min": 32.3, "median_shot": 1.07, "first_shot": 5.8, "flashes_per_min": 4.6, "fade_in": False, "fade_out": True, "cuts_on_beat": 0.1, "cuts_on_halfbeat": 0.19, "dur": 39.0},
 ]
 
+# SHOT-LENGTH QUARTILES, IN BEATS -- "p25_beats", "p50_beats", "p75_beats" on an
+# edit -- are NOT measured yet. The tooling that made the numbers above is not in
+# this repository and the edits are not on disk, so no edit carries them and none
+# is filled in by estimate: a quartile check run against an invented spread would
+# only be checking the estimate. summary() reports them where every edit of a
+# style has them, and reelcheck's quartile check runs only then (2026-10-23).
+QUARTILES = ("p25_beats", "p50_beats", "p75_beats")
+
 BY_ID = {e["id"]: e for e in EDITS}
 
 
@@ -70,4 +78,7 @@ def summary(ids) -> dict:
         "fade_in": round(sum(1 for e in got if e["fade_in"]) / len(got), 2),
         "fade_out": round(sum(1 for e in got if e["fade_out"]) / len(got), 2),
         "names": [e["title"] if e["id"] != "v9" else "reel v9" for e in got],
+        # Only where EVERY edit of the style was measured for them (see QUARTILES).
+        **({q: round(median([e[q] for e in got]), 2) for q in QUARTILES}
+           if all(all(q in e for q in QUARTILES) for e in got) else {}),
     }

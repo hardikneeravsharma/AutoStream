@@ -232,3 +232,43 @@ def test_a_kill_frame_burnt_white_reads_as_no_detail(tmp_path):
     studio._CLEAR_CACHE.clear()
     assert (studio.kill_clarity(str(ok), 1.0) or 0) >= studio.CLEAR_MIN
     assert studio.kill_clarity(str(burnt), 1.0) == 0.0
+
+
+def _white_at_kill(ff, path, vf_extra=""):
+    """4 s of test pattern, the picture near-white for six frames round a kill at 2.0 s."""
+    vf = "drawbox=x=0:y=0:w=iw:h=ih:color=white@1:t=fill:enable='between(t,1.95,2.05)'"
+    subprocess.run([ff, "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=60:duration=4",
+                    "-vf", (vf_extra + "," if vf_extra else "") + vf + ",format=yuv420p", str(path)],
+                   check=True, creationflags=rc._NO_WINDOW)
+
+
+def _one_shot(fx):
+    proj = {"format": "landscape", "shots": [{"clip": "C:/clips/a.mp4", "kill": 2.0, "pre": 2.0, "duration": 4.0,
+                                              "fx": fx, "transition": "t01"}]}
+    d = {"length": 4.0, "kills": [2.0], "shots": [{"index": 0, "start": 0.0, "end": 4.0, "kill_reel": 2.0,
+                                                   "kills_reel": [2.0]}]}
+    return proj, d
+
+
+def test_a_kill_lit_white_is_said_with_why_and_an_intended_flash_is_not_counted(tmp_path):
+    """ChatGPT's third review: >20% of the game's pixels over 245 for two frames at a kill is a
+    finding, soft; an intended white flash is not counted; bright footage is never the effect's."""
+    ff = _ff()
+    if not ff:
+        pytest.skip("no ffmpeg")
+    lit = tmp_path / "lit.mp4"
+    _white_at_kill(ff, lit)
+    proj, d = _one_shot(["k01"])
+    f = [x for x in rc.render_findings(lit, proj, d, ff) if x.code == "kill-bright"]
+    assert len(f) == 1 and f[0].level == rc.SOFT and "an effect" in f[0].message
+    assert not any(x.code == "too-bright" for x in rc.render_findings(lit, proj, d, ff)), \
+        "the kill's frames are the kill check's, said once"
+    # the white flash it was given: intended, not counted
+    proj, d = _one_shot(["k03"])
+    assert not any(x.code == "kill-bright" for x in rc.render_findings(lit, proj, d, ff))
+    # a white wall: the footage is that bright away from the kill too
+    wall = tmp_path / "wall.mp4"
+    _white_at_kill(ff, wall, "drawbox=x=0:y=0:w=iw*0.4:h=ih:color=white@1:t=fill")
+    proj, d = _one_shot(["k01"])
+    f = [x for x in rc.render_findings(wall, proj, d, ff) if x.code == "kill-bright"]
+    assert len(f) == 1 and f[0].level == rc.SOFT and "footage" in f[0].message
