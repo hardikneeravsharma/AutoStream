@@ -430,18 +430,23 @@ def test_the_prompt_hands_over_the_sign_in_link():
     assert got == ["https://x/y"]
 
 
-def test_song_marks_move_with_the_part():
-    """Moving the part from 2:12 to 0:56 left every mark at 2:12, outside the
-    part and drawn nowhere. The marks are song seconds that travel with a MOVE
-    of the part -- and only a move: resizing it by an edge used to drag every
-    mark off the beat it was tapped on."""
+def test_song_marks_stay_where_they_are_on_the_song_when_the_part_moves():
+    """THE RULE WAS TURNED ROUND (2026-10-23). Marks used to travel with a move of the part, a fixed
+    distance from its start -- so a part dragged from 0:00-0:44 to 0:59-2:07 took 21 kill marks off
+    every beat of the new section and nothing said so. A mark is a moment of the song: it stays at its
+    second, the reel's timing is stale until the player replans or re-times, and the one way to move
+    the player's own marks with the part is asking for it (Re-snap my marks). The browser half is
+    tests/verify/test_ui_studio_timing.py."""
     js = _ui("studio")
     i = js.index("function studio_sgMovePart(start)")
-    assert "sg.marks = sg.marks.map(m => Math.round((m + dt) * 1000) / 1000)" in js[i:i + 900]
-    # every whole-part move goes through it
-    for fn in ("function studio_sgNudge(", "function studio_sgSnapBar()", "function studio_sgAtDrop()",
-               "function studio_sgPointer("):
+    body = js[i:js.index("\n}\n", i)]
+    assert "marks" not in body and "hand" not in body, body
+    # every whole-part move goes through it, and the shared drag never touches a mark either
+    for fn in ("function studio_sgNudge(", "function studio_sgSnapBar()", "function studio_sgAtDrop()"):
         j = js.index(fn)
         assert "studio_sgMovePart(" in js[j:j + 2500], fn
+    k = js.index("function studio_tmPartPointer(")
+    drag = js[k:js.index("\n}\n", k)]
+    assert ".hand" not in drag and "marks" not in drag
     # and nothing infers a move from a changed start any more
     assert "marksAt" not in js

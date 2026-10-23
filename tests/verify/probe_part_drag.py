@@ -30,6 +30,8 @@ import appd  # noqa: E402
 from fakes import free_port  # noqa: E402
 
 BEAT = 0.5                                  # the click track is 120 BPM
+# The marks as the Song tab has them, before the fix (studio.sg.marks) and after it (the shared draft).
+MARKS = "(window.studio_tmKillList ? studio_tmKillList(studio.sg).map(k => k.t) : studio.sg.marks.slice())"
 
 
 def seed(home: Path, n: int = 10) -> tuple[list[str], Path]:
@@ -90,7 +92,7 @@ def main() -> int:
             assert ok.get("ok"), ok
             pg.wait_for_selector("#studio-sg-body:not(.hide)", state="attached", timeout=30_000)
             pg.wait_for_timeout(500)
-            before = pg.evaluate("({start: studio.sg.start, end: studio.sg.end, marks: studio.sg.marks.slice(),"
+            before = pg.evaluate("({start: studio.sg.start, end: studio.sg.end, marks: " + MARKS + ","
                                  " song: studio.sg.shape.seconds})")
             print("before:", round(before["start"], 2), "->", round(before["end"], 2),
                   len(before["marks"]), "marks:", [round(m, 2) for m in before["marks"]])
@@ -106,20 +108,24 @@ def main() -> int:
             pg.mouse.up()
             # ...then its end edge out to 2:07.
             mid = pg.evaluate("[studio.sg.start, studio.sg.end]")
+            # Measured again: a banner saying the timing is stale may have appeared above the song.
+            ov = pg.locator("#studio-sg-overview").bounding_box()
+            y = ov["y"] + ov["height"] / 2
             pg.mouse.move(px(mid[1]), y)
             pg.mouse.down()
             pg.mouse.move(px(127), y, steps=12)
             pg.mouse.up()
             pg.wait_for_timeout(300)
-            after = pg.evaluate("({start: studio.sg.start, end: studio.sg.end, marks: studio.sg.marks.slice()})")
+            after = pg.evaluate("({start: studio.sg.start, end: studio.sg.end, marks: " + MARKS + "})")
             print("after: ", round(after["start"], 2), "->", round(after["end"], 2),
                   len(after["marks"]), "marks:", [round(m, 2) for m in after["marks"]])
             moved = [round(a - b_, 3) for a, b_ in zip(after["marks"], before["marks"])]
             print("each mark moved by:", sorted(set(moved)))
             off = [m for m in after["marks"] if abs((m / BEAT) - round(m / BEAT)) > 0.02]
             print("marks off the new section's beats:", len(off), "of", len(after["marks"]))
-            span = (max(after["marks"]) - after["start"]) / (after["end"] - after["start"]) if after["marks"] else 0
-            print(f"the marks cover {span:.0%} of the part")
+            inside = [m for m in after["marks"] if after["start"] <= m <= after["end"]]
+            print(f"marks inside the new part: {len(inside)} of {len(after['marks'])} "
+                  f"(the rest wait, at their song times, for a replan or a re-time)")
             said = pg.evaluate("document.getElementById('studio-pane-song').innerText")
             print("the page says the timing is stale:", "stale" in said.lower() or "needs updating" in said.lower())
             print("render allowed while stale:", not pg.evaluate("studio_el('studio-render-btn').disabled"))

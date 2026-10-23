@@ -4747,3 +4747,64 @@ CSS += r"""
   .clip-part-time b{font-size:16px}
 }
 """
+
+# ONE REEL'S TIMING, AND WHERE IT STANDS (ui/studio.py: studio_flowDraw, studio_badgeDraw). The stale
+# banner has to be the thing nobody misses on the Song tab and beside Render: a warn edge and wash, the
+# way out as the page's primary button, and a slow glow on it -- which stops, and becomes a plain ring,
+# for anyone who has asked their system for less motion.
+CSS += r"""
+.studio-flow-host:empty{display:none}
+.studio-flow{display:flex;flex-direction:column;gap:var(--space-3);padding:var(--space-4) var(--space-5);
+  border:var(--border-hair) solid var(--border);border-left:4px solid var(--border-strong);
+  border-radius:var(--radius-md);background:var(--surface);margin:0 0 var(--space-4)}
+.studio-flow p{margin:0}
+.studio-flow ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:2px;font-size:12.5px}
+.studio-flow-head{font:650 14px/1.35 var(--font-text);color:var(--text-primary)}
+.studio-flow.is-stale{border-left-color:var(--warn);background:var(--warn-muted)}
+.studio-flow.is-bad{border-left-color:var(--danger);background:var(--danger-muted)}
+.studio-flow.is-busy{border-left-color:var(--accent)}
+.studio-flow.is-prop{border-left-color:var(--accent);background:var(--accent-muted)}
+.studio-flow.is-ask{border-left-color:var(--accent)}
+.studio-flow-acts{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}
+.studio-flow-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:var(--space-3)}
+.studio-flow-cols b{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-secondary)}
+.studio-flow-why{font-size:12.5px;color:var(--text-primary);font-weight:600}
+.studio-flow-room{font-size:12.5px;display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center}
+.studio-flow-choice{display:flex;flex-direction:column;gap:var(--space-2);padding:var(--space-3) 0;
+  border-top:var(--border-hair) solid var(--border-subtle)}
+.studio-attn{position:relative;box-shadow:0 0 0 2px var(--accent);animation:studio-attn var(--dur-pulse) var(--ease-standard) infinite}
+@keyframes studio-attn{0%,100%{box-shadow:0 0 0 2px var(--accent),0 0 0 0 var(--accent-muted)}
+  50%{box-shadow:0 0 0 2px var(--accent),0 0 0 7px var(--accent-muted)}}
+@media (prefers-reduced-motion:reduce){.studio-attn{animation:none;box-shadow:0 0 0 2px var(--accent),0 0 0 5px var(--accent-muted)}}
+.studio-attn:disabled{animation:none;box-shadow:none}
+.studio-badge{display:inline-flex;align-items:center;gap:6px;height:var(--h-control-sm);padding:0 10px;
+  border-radius:var(--radius-pill);border:var(--border-hair) solid var(--border);font:600 12px/1 var(--font-text);
+  color:var(--text-secondary);white-space:nowrap}
+.studio-badge:empty{display:none}
+.studio-badge-dot{width:var(--size-dot);height:var(--size-dot);border-radius:var(--radius-pill);background:var(--text-tertiary)}
+.studio-badge.is-stale,.studio-badge.is-changed{border-color:var(--warn);color:var(--text-primary);background:var(--warn-muted)}
+.studio-badge.is-stale .studio-badge-dot,.studio-badge.is-changed .studio-badge-dot{background:var(--warn)}
+.studio-badge.is-failed{border-color:var(--danger);color:var(--text-primary);background:var(--danger-muted)}
+.studio-badge.is-failed .studio-badge-dot{background:var(--danger)}
+.studio-badge.is-rendered,.studio-badge.is-ready{border-color:var(--ok);color:var(--text-primary)}
+.studio-badge.is-rendered .studio-badge-dot,.studio-badge.is-ready .studio-badge-dot{background:var(--ok)}
+.studio-badge.is-planning,.studio-badge.is-rendering{border-color:var(--accent);color:var(--text-primary)}
+.studio-badge.is-planning .studio-badge-dot,.studio-badge.is-rendering .studio-badge-dot{background:var(--accent)}
+.studio-sync.is-timing{border-left-color:var(--warn);background:var(--warn-muted)}
+.studio-sync.is-timing .studio-sync-dot{background:var(--warn)}
+.studio-acts3{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2)}
+.studio-ver-head{margin-top:var(--space-4)}
+.studio-ver-row{display:flex;flex-direction:column;gap:2px;padding:var(--space-2) 0;border-top:var(--border-hair) solid var(--border-subtle)}
+.studio-ver-row.is-current .studio-ver-name b{color:var(--accent-text)}
+.studio-ver-now{font-size:11px;color:var(--ok)}
+.studio-ver-bad{font-size:11px;color:var(--danger)}
+.studio-ver-acts{display:flex;gap:var(--space-2);flex-wrap:wrap}
+.mk-says{margin:0 0 var(--space-2);font-size:12px;color:var(--text-secondary)}
+.mk-says:empty{display:none}
+.mk-group{margin:0 0 var(--space-3);font:650 18px/1.2 var(--font-display);color:var(--text-primary)}
+.mk-bar-name{margin:0}
+.mk-bar-input{max-width:260px}
+.reel-chip.is-hand{border-color:var(--accent)}
+.reel-chip.is-ghost{opacity:.55;border-style:dashed}
+.studio-mk-dropsbox.is-flash{outline:2px solid var(--warn);outline-offset:4px;border-radius:var(--radius-md)}
+"""

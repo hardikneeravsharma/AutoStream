@@ -446,7 +446,9 @@ def retime(project: dict, derived: dict, shape, *, relax: str = "", resnap: bool
     start = max(0.0, min(spec["start"], seconds - 1.0))
     end = spec["end"] if spec["end"] > start else min(seconds, start + float(derived.get("length") or 30.0))
     end = min(end, seconds)
-    hits, beats = section_slots(shape, start, end)
+    # The song's own grid from the part's start on: a kill that falls past the end lands where its
+    # rhythm puts it, so a part too short is measured as too short rather than squeezed into it.
+    hits, beats = section_slots(shape, start, seconds)
     anchors = list(spec["anchors"])
     notes: list[str] = []
     conflicts: list[dict] = []
@@ -575,6 +577,11 @@ def retime(project: dict, derived: dict, shape, *, relax: str = "", resnap: bool
     else:
         p["hand_drops"] = drops
     pres = {id(s): round(_f(s.get("pre")), 3) for s in p["shots"]}
+    # EACH RUN-UP STAYS THE PLAYER'S. apply_marks leads every cut it lays a few frames before its hit
+    # and counts a run-up it led already as including that lead (studio.CUT_LEAD); marked so here, the
+    # run-up each shot has -- as planned, or as trimmed by hand -- is the run-up it keeps.
+    for s in p["shots"]:
+        s["led"] = True
     marks_now = targets[:len(p["shots"])]
     notes += studio.apply_song(p, shape, spec["song"], start, end, marks_now)
     kept_trim = sum(1 for s in p["shots"] if abs(round(_f(s.get("pre")), 3) - pres.get(id(s), -1)) <= 1.0 / 60)
@@ -730,4 +737,6 @@ def replan_request(project: dict, overrides: dict | None = None) -> dict:
     d = project.get("draft") or {}
     if "marks" in d:
         body["marks"] = list(d["marks"])        # the player's own list, deletions and all
+    elif spec["anchors"]:
+        body["anchors"] = list(spec["anchors"])  # the marks they placed: constraints the plan keeps
     return body

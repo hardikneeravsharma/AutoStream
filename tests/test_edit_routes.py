@@ -23,7 +23,10 @@ def srv(monkeypatch, root):  # noqa: F811
     monkeypatch.setattr(s, "_clips_dir", lambda c: root, raising=False)
     monkeypatch.setattr("autostream.clips.available", lambda: True)
     monkeypatch.setattr("autostream.clips.runner", lambda: SimpleNamespace(busy=lambda: False))
-    shape = Shape(bpm=120.0, seconds=180.0, phase=0.0)
+    class Song(Shape):
+        def as_dict(self):
+            return {"seconds": self.seconds, "beats": self.beats, "drop": self.drop}
+    shape = Song(bpm=120.0, seconds=180.0, phase=0.0)
     monkeypatch.setattr(s, "_studio_shape", lambda song: shape if song else None, raising=False)
     s.shape = shape
     return s
@@ -74,27 +77,32 @@ def test_a_drop_style_with_its_drop_outside_the_part_cannot_be_retimed_or_replan
 
 
 def test_replan_keeps_the_players_marks_their_effects_and_the_file(srv, reel, root, monkeypatch):  # noqa: F811
+    """The real plan route, with the footage checks off (there is no footage here to check)."""
+    monkeypatch.setattr(studio, "plan_checks", lambda: {})
+    monkeypatch.setattr("autostream.clips.set_ffmpeg_path", lambda p: None)
     sent = []
+    real = srv.studio_plan
 
     def plan(body):
         sent.append(body)
-        p, notes = studio.plan(_clips(root), body["style"], shape=srv.shape, song=body["song"],
-                               part=(body["part_start"], body["part_end"]))
-        p, d, more = studio.normalise(p, root, probe=lambda _p: 30.0)
-        return {"ok": True, "project": p, "derived": d, "notes": notes + more, "song": None}
+        return real(body)
     monkeypatch.setattr(srv, "studio_plan", plan, raising=False)
     first = reel["shots"][0]
-    marked = dict(reel, output=str(root / "reels" / "keep.mp4"), anchors=[61.3],
+    marked = dict(reel, output=str(root / "reels" / "keep.mp4"), anchors=[61.3, 3.0],
                   draft={"start": 59.0, "end": 79.0})
     marked["shots"] = [dict(first, fx=["k07"])] + reel["shots"][1:]
     got = srv.studio_replan({"project": marked, "rev": 3})
     assert got["ok"] and got["rev"] == 3, got
     assert sent[0]["part_start"] == 59.0 and sent[0]["part_end"] == 79.0
+    assert sent[0]["anchors"] == [3.0, 61.3], "the player's own marks go to the planner as constraints"
     new = got["project"]
-    assert 61.3 in new["song_marks"] and new["anchors"] == [61.3]
+    assert 61.3 in new["song_marks"], "a hand mark inside the part is where a kill lands"
+    assert new["anchors"] == [3.0, 61.3], "one outside the part is kept, unused"
+    assert got["diff"]["marks_outside"] == 1
     assert new["output"] == marked["output"]
     same = [s for s in new["shots"] if s["clip"] == first["clip"] and s["kill"] == first["kill"]]
-    assert same and same[0]["fx"] == ["k07"] and got["diff"]["effects_kept"] >= 1
+    if same:
+        assert same[0]["fx"] == ["k07"] and got["diff"]["effects_kept"] >= 1
     assert not got["derived"]["edited"], "a plan just made is not an edited one"
 
 

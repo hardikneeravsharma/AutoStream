@@ -4078,6 +4078,8 @@ class Server:
         # KILLS MARKED ON THE MAKE PAGE, in song seconds: where the player wants each kill to
         # land, edited on the song's waveform. Applied the way the Song tab applies them -- the
         # cuts move and the marks never do -- over the part that was planned.
+        from .clips import editflow
+
         hand = body.get("marks")
         if shape and isinstance(hand, list) and hand:
             marks = []
@@ -4093,6 +4095,25 @@ class Server:
                 end = float(proj.get("part_end") or 0.0)
                 notes = list(notes) + studio.apply_song(proj, shape, song, start, end, marks)
                 notes.append(f"{len(marks)} kill(s) were placed by hand on the song; the cuts moved to meet them.")
+                hand = True
+        # THE PLAYER'S OWN MARKS, as constraints on the plan rather than the whole list of where every
+        # kill goes (that is `marks`, above): each takes the place of the planner's mark nearest it, and
+        # the planner's are the ones that move (clips/editflow.py). Kept on the project, so they stay
+        # the player's through every later plan and re-time.
+        anchors = editflow._times(body.get("anchors")) if shape is not None else []
+        if anchors:
+            a0, a1 = editflow.plan_part(proj)
+            inside = [a for a in anchors if a0 - 1e-3 <= a <= (a1 or 1e9) + 1e-3]
+            if inside and not (isinstance(hand, bool) and hand):
+                merged = editflow.merge_anchors(proj.get("song_marks") or [], inside, start=a0, end=a1 or 1e9,
+                                                beat=float(proj.get("beat") or 0.5))
+                if merged != sorted(proj.get("song_marks") or []):
+                    notes = list(notes) + studio.apply_marks(proj, [m - a0 for m in merged])
+                    proj["song_marks"] = [round(m, 4) for m in merged]
+            if len(inside) < len(anchors):
+                notes = list(notes) + [f"{len(anchors) - len(inside)} of your own kill marks are outside this part, "
+                                       f"so the plan could not use them. They are kept."]
+            proj["anchors"] = anchors
         # The intro chosen on the Make dialog. It used to be reachable only
         # from the timeline, which meant the first render of every reel went
         # out without one and you had to render twice to open with an intro.
@@ -4545,16 +4566,8 @@ class Server:
         anchors = list(spec["anchors"])
         start, end = editflow.plan_part(new)
         inside = [a for a in anchors if start - 1e-3 <= a <= (end or 1e9) + 1e-3]
-        if inside and "marks" not in req:
-            # The player's own marks are constraints on the plan, not suggestions to it.
-            merged = editflow.merge_anchors(new.get("song_marks") or [], inside, start=start, end=end or 1e9,
-                                            beat=float(new.get("beat") or 0.5))
-            if merged != sorted(new.get("song_marks") or []):
-                notes += studio.apply_marks(new, [m - start for m in merged])
-                new["song_marks"] = [round(m, 4) for m in merged]
-        if len(inside) < len(anchors):
-            notes.append(f"{len(anchors) - len(inside)} of your own kill marks are outside this part, "
-                         f"so the plan could not use them. They are kept.")
+        # The player's own marks stay theirs through the plan, used or not -- whether they went to the
+        # planner as constraints or inside their whole list of marks.
         if anchors:
             new["anchors"] = anchors
         kept = editflow.carry_edits(proj, new)
