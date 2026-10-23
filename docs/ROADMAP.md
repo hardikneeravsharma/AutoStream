@@ -8,6 +8,28 @@ Keep it current: every feature that lands gets a row in [Progress](#progress),
 written the day it lands. A roadmap nobody updates is worse than none, because
 the next session trusts it.
 
+## In flight (2026-10-23, after v1.80.0)
+
+Three branches, none on `main` yet, to go out together as one release once the
+edit flow is done -- tests once, CI releases, the local app built with `-NoGate`:
+
+| Branch (worktree) | What | State |
+|---|---|---|
+| `fix/guide-all-clips` (`C:\autostream-next`) | The guide's Clips step browses every clip: thumbnail cards, ▶ play, ✎ edit (the Clips page's Trim and cut, and back), find, filters (favourites, session, map, game mode, kind, chosen), sort, 24 a page. UI-SCENARIOS 6.80-6.85 | **done**, `4f4509d`; offline 3492, browser 193 |
+| `fix/style-pace` on `fix/hype-velocity` (`C:\autostream-style`) | ChatGPT's pacing rules for the general planner: shots at the references' median with holds for cuts/min (62 of 64 style x song checks in range), per-style shortest shot, Velocity's slow-hit/rush-between shape as a hard check, Hype's shake on every kill | **done to round 2**, `08af2b1`; offline 3514. ChatGPT: Hype 7.6/10, Velocity 7.2/10, both **recommended** |
+| `feat/edit-flow` (`C:\autostream-edit`) | Editing a reel after it is made, four phases at once (ChatGPT's review of the whole flow): **A** one song/part/marks/drops editor in the guide, the Make page and the timeline's Song tab -- moving the part makes the timing stale (old marks ghosted, Render blocked) until the player clicks the highlighted **Replan for this section** (never automatic), or *Keep my shots, retime them*, or *Undo part change*; **B** Rebuild split into Re-render / Re-time / Replan, each saying what survives, and "Add clips" made explicit; **C** a state badge, renders to new versions with the old file kept, History with Restore / Save as new, one Undo; **D** the Make page grouped Music / Footage / Timing / Look. Also adds Hype and Velocity to the guide's recommended styles. Merges the two branches above | **building** |
+
+Left for a later session (needs the Chrome extension for ChatGPT): **round 3 of
+Hype and Velocity**, ChatGPT's last general rules -- Hype's grade on 100% of
+shots as a gate (by grade id, not saturation); Velocity's between-kill footage
+at >=1.3x on >=70% of eligible frames (64-81% measured), else other footage or
+a logged constraint; a shared kill-readability gate (>20% of gameplay pixels
+over 245 for two frames is a finding, a hard fail only when the impact is
+unreadable, intended white flashes told apart from bright footage); reference
+quartiles stored and checked at +-20% once the reference tooling can measure
+them (only median and cuts/min exist today). Then the next styles through the
+loop: Clean, Chaos, Short, Cinematic, Retro, Story.
+
 ---
 
 ## Where this comes from
@@ -101,7 +123,7 @@ is described to the player and waits for a yes before it is built.
 
 | # | Change | Status |
 |---|---|---|
-| F18 | **Each style through the Build-and-drop loop** (spec -> render -> ChatGPT review -> measure -> fix), then its own clip slots for step 3. One style at a time | **3 of 11** (v1.79.15): Build and drop; Fast-paced headshot (its own planner v1.79.0, clip slots v1.79.3, reviews to 7.4/10); Montage (its own planner v1.79.13, flashes v1.79.15, reviews 4.2 -> 7.2/10) |
+| F18 | **Each style through the Build-and-drop loop** (spec -> render -> ChatGPT review -> measure -> fix), then its own clip slots for step 3. One style at a time | **3 of 11** (v1.79.15): Build and drop; Fast-paced headshot (its own planner v1.79.0, clip slots v1.79.3, reviews to 7.4/10); Montage (its own planner v1.79.13, flashes v1.79.15, reviews 4.2 -> 7.2/10). **5 of 11 once the in-flight release lands:** Hype 6.4 -> 7.6/10 and Velocity 6.2 -> 7.2/10, both approved as recommended (v1.80.0 kept kills on their marks; `fix/style-pace` matched the references' pacing and each style's signature). Round 3's verification gates are open -- see *In flight* |
 | F19 | **Choose the shortcut's style for a song with no drop** -- only after F18. Replaces D4's "unconfirmed drop" decision: the check engine (F4) warns, and this picks the fallback | waiting on F18 |
 
 ### PREVIOUS TOP PRIORITY — the app makes the hand-cut Espresso reel itself (asked 2026-10-17)
