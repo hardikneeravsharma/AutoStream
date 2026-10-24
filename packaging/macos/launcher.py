@@ -30,7 +30,14 @@ def _app_home() -> str:
 
 
 os.environ.setdefault("AUTOSTREAM_APP_DIR", _app_home())
-if not getattr(sys, "frozen", False):
+if getattr(sys, "frozen", False):
+    # The bundled OpenSSL looks for CA certificates where the build machine's
+    # python.org Python keeps them, a folder a user's Mac does not have, so
+    # every HTTPS call -- the update check first -- failed CERTIFICATE_VERIFY_
+    # FAILED. The spec ships certifi's bundle for exactly this.
+    os.environ.setdefault("SSL_CERT_FILE",
+                          os.path.join(_app_home(), "certifi", "cacert.pem"))
+else:
     sys.path.insert(0, _app_home())
 
 from autostream.__main__ import main  # noqa: E402
