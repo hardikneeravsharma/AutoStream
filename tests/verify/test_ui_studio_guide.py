@@ -703,6 +703,30 @@ def test_add_the_best_keeps_the_build_clip_the_player_chose(rp):
     assert set(before) <= set(after["quick"]) and len(after["quick"]) > len(before)
 
 
+def test_add_adds_what_the_plan_is_short_and_a_far_apart_pair_counts_once(rp):
+    """JUST A BOY, 2026-10-24: "50 of 41" chosen, the plan 21 s of 30, and "Add the best" added
+    nothing, because 25 two-kill clips counted as 50 -- though 121 of the 127 on that machine
+    have their kills seconds apart and play once each. A pair counts as two only as a run, and
+    Add adds the clips the plan says it ran short by, whatever the page's own count says."""
+    _open(rp)
+    _style(rp, "drop")
+    rp.click("#studio-gd-next")
+    _song_named(rp, "drop song")
+    rp.click("#studio-gd-next")
+    w = rp.evaluate("() => [studio_gdWeight({kills: [3.5, 26.7]}, 'drop'), studio_gdWeight({kills: [3.5, 4.3]}, 'drop'),"
+                    " studio_gdWeight({kills: [3.5, 4.3]}, 'fasthead'), studio_gdWeight({kills: [3.5]}, 'drop')]")
+    assert w == [1, 2, 1, 1]
+    # every quick clip but three chosen, and the page's own estimate told it was met
+    rp.evaluate("() => { const q = studio_gdPools().quick.map(c => c.id); studio.gd.quick = q.slice(0, -3);"
+                " window.__need = studio_gdNeed; studio_gdNeed = () => 1; }")
+    before = rp.evaluate("() => studio.gd.quick.slice()")
+    rp.evaluate("() => { studio_gdPickAll(true); }")
+    assert rp.evaluate("() => studio.gd.quick.length") == len(before), "the page's own count is met: nothing to add"
+    rp.evaluate("() => { studio.gd.verdict = {level: 'warn', fix: 'pick-clips', more: 2}; studio_gdFix('pick-clips'); }")
+    after = rp.evaluate("() => studio.gd.quick.slice()")
+    assert set(before) <= set(after) and len(after) - len(before) >= 2
+
+
 def test_a_rebuild_asks_again_for_what_the_player_chose(rp):
     """M6: a rebuild of a Build and drop reel built on the best-scoring set-up, not the one chosen,
     held the page's part to an end, and lost Headshots only, the intro and drops marked by hand."""

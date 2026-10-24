@@ -12309,8 +12309,18 @@ function studio_gdNeed(d) {
   if (d.style === 'fasthead') return Math.max(8, Math.round((len > 4 ? len : 36) * 0.95));
   return Math.max(6, Math.round(((len > 4 ? len : 28) - 8.5) / 0.52));
 }
-/* what a clip counts for against that: a two-kill clip plays as a quick run, except in a style of one headshot a cut */
-function studio_gdWeight(c, style) { return style === 'fasthead' ? 1 : (c.kills || []).length >= 2 ? 2 : 1; }
+/* WHAT A CLIP COUNTS FOR AGAINST THAT: one quick kill -- every clip plays once -- and two only when
+   its last two kills are close enough to play as a run on two hits (director.PAIR_TOGETHER to about
+   1.6 s; further apart they are two fights, and the plan takes one). Every two-kill clip counted
+   as two, and on this machine 121 of 127 have their kills 2-52 s apart: "50 of 41" was 25 clips
+   that planned 21 s of a 30 s part, and Add the best added nothing, because 50 was already over 41. */
+const GD_RUN = [0.30, 1.6];
+function studio_gdWeight(c, style) {
+  const k = (c && c.kills) || [];
+  if (style === 'fasthead' || k.length < 2) return 1;
+  const gap = Number(k[k.length - 1]) - Number(k[k.length - 2]);
+  return gap >= GD_RUN[0] && gap <= GD_RUN[1] ? 2 : 1;
+}
 function studio_gdKillsIn(ids) {
   return ids.reduce((n, id) => n + (((studio.clipIndex[id] || {}).kills || []).length || 0), 0);
 }
@@ -12319,7 +12329,7 @@ function studio_gdKillsIn(ids) {
    and only adds -- the chip's "Add the best" -- where the button draws the clips again. Either way
    the build clip the player chose stays: a recommendation never overrules a pick, and "Pick the
    best" used to swap the ACE they had chosen for the clip that scored highest. */
-function studio_gdPickFor(d, top) {
+function studio_gdPickFor(d, top, more) {
   let setup = d.setup;
   if (d.style === 'drop') {
     const own = setup && studio.clipIndex[setup];
@@ -12329,12 +12339,15 @@ function studio_gdPickFor(d, top) {
       setup = best ? best.id : '';
     }
   }
-  const pools = studio_gdPools(d.style, setup), need = studio_gdNeed(d);
+  const pools = studio_gdPools(d.style, setup);
   const skip = id => d.style === 'drop' && id === setup;
   const quick = top ? d.quick.slice() : [];
   let n = quick.map(id => studio.clipIndex[id])
     .filter(c => c && !skip(c.id) && !studio_gdWhyNot(c, d.style))
     .reduce((s, c) => s + studio_gdWeight(c, d.style), 0);
+  /* `more`: the plan's own count of clips it ran short by (the verdict's), on top of what is chosen --
+     the page's estimate already met is no reason for "Add the best" to add nothing */
+  const need = more ? n + more : studio_gdNeed(d);
   for (const c of pools.quick) {
     if (n >= need) break;
     if (quick.indexOf(c.id) >= 0 || skip(c.id)) continue;
@@ -12343,7 +12356,7 @@ function studio_gdPickFor(d, top) {
   }
   return {setup: setup, quick: quick};
 }
-function studio_gdPickAll(top) { Object.assign(studio.gd, studio_gdPickFor(studio.gd, !!top)); }
+function studio_gdPickAll(top, more) { Object.assign(studio.gd, studio_gdPickFor(studio.gd, !!top, more || 0)); }
 
 /* THE ONE REQUEST. Built from the guide's spec and nothing else, for the verdict and the plan alike,
    so what the chip judged is what gets planned: the same clips, the same part (from the guide's own
@@ -12859,7 +12872,7 @@ function studio_gdDrawClips() {
       studio_gdBrowser('setup') + '</section>' : '') +
     '<section class="gd-slot"><div class="gd-slothead"><h4>' + (isBD ? 'After the drop: quick kills' : 'Your clips') + '</h4><span class="mono">' +
       (isBD ? have + ' of ' + need : quickIds.length + ' chosen' + (isMT ? ', at least 4' : '')) + '</span></div>' +
-    (isBD ? bar + '<p class="muted" style="margin:0">Headshots first. A two-kill clip counts as two: it plays as a quick run.</p>' : '') +
+    (isBD ? bar + '<p class="muted" style="margin:0">Headshots first. Each clip plays once; a two-kill clip counts as two only when its kills are under 1.6 s apart, so they play as a quick run.</p>' : '') +
     studio_gdBrowser('quick') + '</section>' + left;
 }
 
@@ -13247,7 +13260,10 @@ function studio_gdFix(fix) {
     if (add) add.focus();
     return;
   }
-  else if (fix === 'pick-clips') { studio_gdPickAll(true); gd.step = 2; }   /* adds; keeps what was chosen */
+  else if (fix === 'pick-clips') {   /* adds; keeps what was chosen -- as many more as the plan says it is short */
+    studio_gdPickAll(true, Number(gd.verdict && gd.verdict.more) || 0);
+    gd.step = 2;
+  }
   else if (fix === 'format:vertical') { gd.fmt = 'vertical'; }
   else if (fix === 'part:fit') {
     /* THE PART THE SONG CAN CARRY: the seconds the plan really covers (the verdict's span), made the
