@@ -100,7 +100,7 @@ def _shown(proj: dict) -> tuple[list[tuple[str, float]], dict]:
 
 # ------------------------------------------------------------------ the promises
 
-@pytest.mark.parametrize("style", ["hype", "story", "montage", "velocity"])
+@pytest.mark.parametrize("style", ["hype", "clean", "montage", "velocity"])
 def test_every_kill_of_a_multi_kill_clip_is_shown_once_in_order(style):
     proj, _ = _plan(style=style)
     shown, _d = _shown(proj)
@@ -124,7 +124,7 @@ def test_every_shot_kill_lands_on_a_hit_to_the_frame():
     assert d["on_marks"] == len(d["shots"])
 
 
-@pytest.mark.parametrize("style", ["hype", "velocity", "short", "chaos"])
+@pytest.mark.parametrize("style", ["hype", "velocity", "chaos"])
 def test_no_footage_plays_twice(style):
     proj, _ = _plan(style=style)
     d = studio.derive(proj)
@@ -137,7 +137,7 @@ def test_no_footage_plays_twice(style):
         assert overlap <= FRAME, f"shots {i} and {j} share {overlap:.3f} s of footage"
 
 
-@pytest.mark.parametrize("style", ["velocity", "short", "chaos", "story"])
+@pytest.mark.parametrize("style", ["velocity", "chaos", "clean"])
 def test_every_kill_has_a_run_up_and_plays_at_real_speed_or_slower(style):
     proj, _ = _plan(style=style)
     run_min = max(rulebook.MIN_RUN_BEATS * proj["beat"], rulebook.MIN_RUN_SECONDS)
@@ -283,7 +283,7 @@ def test_a_quiet_intro_is_built_over_at_half_speed():
     peaks = [0.2 if i * 120.0 / n < 16.0 else 1.0 for i in range(n)]
     shape = _song(drums_in=16.0)
     shape.peaks = peaks
-    proj, _ = _plan(style="story", shape=shape)
+    proj, _ = _plan(style="clean", shape=shape)
     assert proj["intro"] == "i12"
     assert proj["shots"][0]["speed"] == "s05"
     first = proj["song_offset"] + proj["shots"][0]["pre"]

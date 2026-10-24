@@ -47,6 +47,25 @@ def test_a_plan_that_runs_short_says_by_how_much():
     assert j(project={"shots": [{"duration": 1.0}] * 27}, part=(100.0, 128.0)).level == fz.OK
 
 
+def test_a_build_and_drop_reel_the_song_cuts_short_says_where_not_how_many_more():
+    """JUST A BOY, 2026-10-24: 33 or 48 clips both planned 21 s of a 30 s part -- the take was
+    4.5 s and the song's hits stopped at 0:34.8 -- yet the chip asked for 16 more quick kills."""
+    project = {"shots": [{"duration": 2.6}] + [{"duration": 0.6}] * 31, "song_offset": 13.6, "song_drop": 18.1}
+    v = j(project=project, part=(3.1, 33.1), notes=["Builds on x (3 kills in one take), its last kill on the drop."])
+    assert v.level == fz.WARN and v.fix == "part:fit"
+    assert "4.5 s before the drop" in v.text and "0:34.8" in v.text and "quick kills" not in v.text
+    assert v.span == (13.6, 34.8)                    # the part the page makes of it is what the plan covers
+    # ...and when the plan says its clips ran out, more clips are still the fix
+    v = j(project=project, part=(3.1, 33.1), notes=["The clips ran out 15 hits before the end of the part."])
+    assert v.fix == "pick-clips" and "quick kills" in v.text
+
+
+def test_a_montage_the_song_cuts_short_says_more_clips_will_not_lengthen_it():
+    project = {"shots": [{"duration": 1.0}] * 18, "song_offset": 40.0}
+    v = j(style=studio.STYLE["montage"], project=project, part=(40.0, 70.0))
+    assert v.level == fz.WARN and v.fix == "part:fit" and "0:58.0" in v.text and v.span == (40.0, 58.0)
+
+
 def test_no_shots_is_not_a_reel():
     assert j(project={"shots": []}).level == fz.BAD
     assert j(error="The song has no drum hits after this drop.").level == fz.BAD
@@ -79,7 +98,8 @@ def test_the_shortfall_is_counted_in_this_styles_own_kills():
     """It was 0.52 s a kill for every style -- Build and drop's quick kill -- so a montage of
     one-second cuts was told it needed twice the kills it did. The plan's middle shot says."""
     MT = studio.STYLE["montage"]
-    v = j(style=MT, project={"shots": [{"duration": 1.0}] * 10}, part=(0.0, 30.0))
+    v = j(style=MT, project={"shots": [{"duration": 1.0}] * 10}, part=(0.0, 30.0),
+          notes=["The clips ran out 20 hits before the end of the part."])
     assert v.level == fz.WARN and "about 20 more kills" in v.text, v.text
     v = j(project={"shots": [{"duration": 8.0}] + [{"duration": 0.5}] * 10}, part=(0.0, 30.0))
     assert "more quick kills" in v.text and "about 34 more" in v.text, v.text   # the take is not a kill's length

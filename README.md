@@ -148,6 +148,10 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
   screen. Pick any of them — one at a time, a range, a whole match or a whole run —
   choose a style and a song, and it builds the reel with every cut and every kill on
   the beat. The search box still looks through every folder at once.
+  - **Eight styles**: Build and drop, Fast-paced headshot, Montage, Hype and Velocity
+    (the five marked *Use this for best result*), then Clean, Chaos and Cinematic.
+    Retro, Story and Short were retired as near-copies of Cinematic, Montage and
+    Chaos; a reel saved in one opens in the style that replaced it.
   - **Your own clips too.** "Add your own clip…" takes any video you already have —
     saved by the game, by Medal, sent by a friend — and you mark its kills by pressing
     <kbd>K</kbd> as it plays (or let the Valorant / Counter-Strike detector find them),

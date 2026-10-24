@@ -88,7 +88,7 @@ def test_the_first_question_is_the_style_and_the_reviewed_one_says_so(pg):
     # the others are there, folded away, and say they are not reviewed
     assert not pg.evaluate("() => document.querySelector('.gd-more').open")
     assert "not reviewed" in pg.inner_text(".gd-more summary").lower()
-    assert pg.locator(".gd-more .gd-card").count() >= 6        # the eleven styles less the five recommended
+    assert pg.locator(".gd-more .gd-card").count() == 3        # the eight styles less the five recommended
     # nothing chosen: no way on, and the chip says why
     assert pg.is_disabled("#studio-gd-next")
     assert "warn" in chip(pg)["cls"] and "Pick a style" in chip(pg)["text"]
@@ -162,9 +162,9 @@ def test_when_no_recommended_style_works_it_says_why_and_offers_a_way_on(pg):
 
 
 def test_pick_for_me_fills_the_clips_and_the_counter_says_how_many(pg):
-    pg.click('.gd-card[data-key="story"]') if False else None
+    pg.click('.gd-card[data-key="clean"]') if False else None
     pg.evaluate("() => { const d = document.querySelector('.gd-more'); d.open = true; }")
-    pg.click('.gd-card[data-key="story"]')
+    pg.click('.gd-card[data-key="clean"]')
     pg.click("#studio-gd-next")
     pg.click('.gd-card[data-gd="song"]')
     pg.wait_for_function("() => studio.song", timeout=30_000)
@@ -180,7 +180,7 @@ def test_pick_for_me_fills_the_clips_and_the_counter_says_how_many(pg):
 
 def test_all_settings_opens_the_full_page_with_the_choices_in_it(pg):
     pg.evaluate("() => { document.querySelector('.gd-more').open = true; }")
-    pg.click('.gd-card[data-key="story"]')
+    pg.click('.gd-card[data-key="clean"]')
     pg.click("#studio-gd-next")
     pg.click('.gd-card[data-gd="song"]')
     pg.wait_for_function("() => studio.song", timeout=30_000)
@@ -188,7 +188,7 @@ def test_all_settings_opens_the_full_page_with_the_choices_in_it(pg):
     pg.click('[data-gd="pickall"]')
     pg.click('[data-gd="all"]')
     pg.wait_for_selector("#studio-make-scrim:not(.hide)")
-    assert pg.evaluate("() => studio.style") == "story"
+    assert pg.evaluate("() => studio.style") == "clean"
     assert pg.evaluate("() => studio.selected.length") >= 4
     assert pg.evaluate("() => document.getElementById('studio-guide-scrim').classList.contains('hide')")
 
@@ -211,6 +211,19 @@ def test_the_last_choices_are_remembered_as_intent_and_checked_again(pg, browser
     assert "gone" not in pg.evaluate("() => studio.gd.quick")
 
 
+@pytest.mark.parametrize("old, now", [("retro", "cinematic"), ("story", "montage"), ("short", "chaos")])
+def test_a_retired_style_remembered_by_the_guide_comes_back_as_its_replacement(pg, old, now):
+    """Retro, Story and Short were retired (2026-10-24). A guide that last chose one opens on the
+    style that replaced it -- the server's map, not a style card that is no longer there."""
+    pg.click('[data-gd="close"]')
+    pg.evaluate("""(old) => { localStorage.setItem('autostream.guide', JSON.stringify({style: old, fmt: 'vertical'}));
+        studio.gd.style = ''; studio.gd.quick = []; }""", old)
+    pg.click("#studio-gd-open")
+    pg.wait_for_selector("#studio-guide-scrim:not(.hide)")
+    assert pg.evaluate("() => studio.gd.style") == now
+    assert pg.locator(f'.gd-card[data-key="{old}"]').count() == 0
+
+
 def test_the_full_make_page_carries_the_same_chip(pg):
     """F5: the verdict is not only the guided maker's. Opened with Build and drop on a song
     with no drop, the full page says it will not work, in words, before anything is built."""
@@ -226,7 +239,7 @@ def test_the_full_make_page_carries_the_same_chip(pg):
     assert "drop" in text.lower() and "won" in text.lower(), text
 
 
-def _to_check(pg, style="story"):
+def _to_check(pg, style="clean"):
     pg.evaluate("() => { document.querySelector('.gd-more').open = true; }")
     pg.click(f'.gd-card[data-key="{style}"]')
     pg.click("#studio-gd-next")
@@ -243,7 +256,7 @@ def test_make_asks_the_name_and_opens_the_timeline_not_all_settings(pg):
     """Reported: the name was never asked (every reel "Build and drop reel"), and Make opened
     All settings with its button greyed for the minute the plan took."""
     _to_check(pg)
-    assert pg.get_attribute("#studio-gd-name", "placeholder") == "Length song story"
+    assert pg.get_attribute("#studio-gd-name", "placeholder") == "Length song clean"
     pg.fill("#studio-gd-name", "My first reel")
     pg.evaluate("""() => { window.__plans = []; window.__make = false; const real = API.post;
         new MutationObserver(() => { if (!document.getElementById('studio-make-scrim').classList.contains('hide')) window.__make = true; })
@@ -546,7 +559,7 @@ def _make(pg):
     return pg.evaluate("() => window.__plans.slice(-1)[0]")
 
 
-@pytest.mark.parametrize("style", ["drop", "fasthead", "montage", "story"])
+@pytest.mark.parametrize("style", ["drop", "fasthead", "montage", "clean"])
 def test_the_verdict_judges_exactly_the_body_the_plan_sends(rp, style):
     """Rule 2: verdict == plan. A vertical reel was judged on the Make page's 46 s landscape part
     and planned on 30 s; the build clip chosen never reached the verdict."""
@@ -575,7 +588,7 @@ def test_no_setting_left_on_the_make_page_reaches_a_guided_reel(rp):
         studio.buildClip = studio.clipIndex[Object.keys(studio.clipIndex)[5]].path;
         const hs = document.getElementById('studio-hs-only'); hs.checked = true;
         document.getElementById('studio-hs-row').classList.remove('hide');
-        studio.adding = {name: 'Old reel', output: 'C:/reels/old.mp4', style: 'story', keep: {handle: '@old'}}; }""")
+        studio.adding = {name: 'Old reel', output: 'C:/reels/old.mp4', style: 'clean', keep: {handle: '@old'}}; }""")
     assert rp.evaluate("() => studio_gdBody()") == clean
     # THE SONG'S TIMING IS ONE DRAFT (2026-10-23): a part chosen, a kill or a drop marked on All
     # settings is this reel's, so it IS in the guide's request -- the part as the player's own.
@@ -729,7 +742,7 @@ def test_a_rebuild_asks_again_for_what_the_player_chose(rp):
 def test_back_or_close_while_it_plans_leaves_a_guide_that_works(rp):
     """M4, L3: Back looked live and did nothing; closing left the guide ignoring every click, and
     when the plan came back the first step's button read "Make the reel"."""
-    _to_check_rich(rp, "story", "click song")
+    _to_check_rich(rp, "clean", "click song")
     rp.evaluate("() => { window.__holdPlan = true; }")
     rp.click("#studio-gd-next")
     rp.wait_for_function("() => studio.gd.busy && typeof window.__release === 'function'")
@@ -756,7 +769,7 @@ def test_back_or_close_while_it_plans_leaves_a_guide_that_works(rp):
 
 def test_a_render_in_progress_is_not_planned_over(rp):
     """M7: Make planned for a minute, replaced the timeline, then the server refused to render."""
-    _to_check_rich(rp, "story", "click song")
+    _to_check_rich(rp, "clean", "click song")
     rp.evaluate("() => { window.__job = {ok: true, state: 'running', id: 9, percent: 42, auto: false, message: 'Rendering'}; }")
     n = rp.evaluate("() => window.__plans.length")
     rp.click("#studio-gd-next")
@@ -771,7 +784,7 @@ def test_a_render_in_progress_is_not_planned_over(rp):
 def test_the_next_reel_gets_its_own_name_and_typing_it_is_not_interrupted(rp):
     """L1 and L7: the next reel opened with the last one's name; and the verdict landing redrew
     the step, taking the name field out from under the typing."""
-    _to_check_rich(rp, "story", "click song")
+    _to_check_rich(rp, "clean", "click song")
     rp.focus("#studio-gd-name")
     rp.keyboard.type("First")
     rp.evaluate("() => { studio.gd.verdict = null; studio_gdAsk(); }")

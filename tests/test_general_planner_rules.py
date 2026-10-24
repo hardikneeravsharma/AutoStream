@@ -19,7 +19,7 @@ from autostream.clips.rulebook import Moment
 
 from test_studio import Shape, _clips, _run
 
-GENERAL = ["hype", "velocity", "chaos", "short", "story", "clean", "cinematic", "retro"]
+GENERAL = ["hype", "velocity", "chaos", "clean", "cinematic"]
 TEMPOS = [90.0, 125.0, 174.0]
 HOLE = (50.0, 56.5)            # a breakdown: no hit at all for 6.5 s
 
@@ -107,14 +107,15 @@ def test_a_fast_style_cuts_at_its_references_median_shot(pile, style):
 
 
 def test_fast_cuts_keep_the_variety_their_pools_define(pile):
-    """(f): fast_rules takes out ramps, freezes, stacking and white-flash or slow cuts --
-    and keeps every other kill effect and camera. It used to cut each pool to one entry."""
+    """(f): fast_rules takes out ramps, stacking and white-flash or slow cuts -- and
+    keeps every other kill effect, camera and hero treatment. It used to cut each pool
+    to one entry."""
     st = studio.fast_rules(studio.STYLE["hype"])
     assert len(set(st.kill_pool)) > 3 and len(set(st.camera_pool)) > 1
     assert st.speed_pool == ("s00",) and st.energy == 0.0
     assert "t02" not in st.transition_pool and all(
         studio._cut_seconds(t) <= studio.FAST_CUT_SECONDS for t in st.transition_pool)
-    assert not any(studio.fam(h) == "h02" for h in st.hero_pool)
+    assert st.hero_pool == studio.STYLE["hype"].hero_pool
     proj, *_ = _planned(pile, "hype", 174.0)
     own = [[f for f in s["fx"] if studio.fam(f) != "k02"] for s in proj["shots"]]
     assert len({f[0] for f in own if f}) == studio.MAX_KILL_FX, own
@@ -202,14 +203,13 @@ def test_space_apart_breaks_a_b_a_b_and_keeps_each_clips_order():
 
 # ------------------------------------------------------------------ (d) sharp kills
 
-def test_the_washed_out_opener_is_made_sharp_without_a_freeze():
+def test_the_washed_out_opener_is_made_sharp():
     """Velocity's first kill: s04 + k06 + h01 + c08 read 0.26 of a plain frame."""
     shot = {"clip": "a.mp4", "kill": 3.0, "kills": [3.0], "pre": 1.5, "duration": 2.4, "clip_seconds": 20.0,
             "speed": "s04", "fx": ["k06"], "hero": True, "hero_fx": ["h01"], "camera": "c08"}
     assert studio.kill_detail(shot) < studio.SHARP_FLOOR
-    n = studio.sharp_kills([shot], {"kill": ["k06", "k01"], "hero": ["h01", "h02"]})
+    n = studio.sharp_kills([shot], {"kill": ["k06", "k01"], "hero": ["h01", "h03"]})
     assert n == 1 and studio.kill_detail(shot) >= studio.SHARP_FLOOR
-    assert studio._freeze_of(shot) == 0.0
 
 
 def test_a_drawer_the_player_chose_is_left_alone():
@@ -285,7 +285,7 @@ def test_each_style_reads_down_to_its_own_floor():
     for key in ("hype", "chaos", "velocity"):
         st = studio.STYLE[key]
         assert st.min_run + st.min_after <= 0.6, key
-    assert studio.STYLE["story"].min_run + studio.STYLE["story"].min_after == pytest.approx(
+    assert studio.STYLE["clean"].min_run + studio.STYLE["clean"].min_after == pytest.approx(
         rulebook.MIN_KILL_GAP_SECONDS)
 
 
@@ -385,18 +385,9 @@ def test_the_gate_refuses_a_hype_reel_without_its_shake(pile):
     assert "signature" in {f.code for f in reelcheck.plan_findings(got, studio.derive(got))}
 
 
-def test_the_kill_counter_ticks_once_for_every_kill_shown(pile):
-    """Rule 4: the counter is the shown kills, no more, no fewer."""
-    proj, notes, got, derived, found = _planned(pile, "hype", 125.0)
-    assert "kill-counter" not in {f.code for f in found}
-    assert len(derived["kills"]) == sum(len(r["kills_reel"]) for r in derived["shots"])
-    broken = dict(derived, kills=derived["kills"][:-1])
-    assert "kill-counter" in {f.code for f in reelcheck.style_findings(got, broken)}
-
-
 # ---------------------------------------------------------------- round 3 (ChatGPT's third review)
 
-@pytest.mark.parametrize("style", ["hype", "velocity", "clean", "story"])
+@pytest.mark.parametrize("style", ["hype", "velocity", "clean", "cinematic"])
 def test_every_shot_goes_out_in_the_reels_grade_by_id(pile, style):
     """The grade is checked by id on what each shot's render is handed, not by its colour."""
     proj, notes, got, derived, found = _planned(pile, style, 125.0)
@@ -433,3 +424,39 @@ def test_quartiles_are_checked_only_where_the_references_carry_them(pile, monkey
     real = studio_refs.summary
     monkeypatch.setattr(studio_refs, "summary", lambda ids: dict(real(ids), p25_beats=40.0, p50_beats=50.0, p75_beats=60.0))
     assert "pace-quartile" in {f.code for f in reelcheck.style_findings(got, derived)}
+
+
+# ---------------------------------------------------------------- Clean: restraint as a signature
+
+@pytest.mark.parametrize("bpm", PACE_TEMPOS)
+def test_clean_plays_real_speed_one_soft_treatment_and_a_camera_that_barely_breathes(pile, bpm):
+    """ChatGPT's review of Clean: >=90% of shots at real speed, one soft treatment a kill,
+    blends on <=15% of cuts, flashes no more often than 1.2x the references, ~1% camera."""
+    proj, notes, got, derived, found = _planned(pile, "clean", bpm)
+    st = studio.STYLE["clean"]
+    shots = got["shots"]
+    assert not {"calm-speed", "calm-effects", "calm-blends", "calm-camera", "flash-rate"} & {f.code for f in found}, \
+        [f.message for f in found]
+    assert sum(1 for s in shots if s["speed"] == "s00") >= st.real_speed * len(shots) - 1e-9
+    assert all(len(s["fx"]) <= 1 for s in shots)
+    assert all(studio.drift_of(s["camera"]) <= st.drift_max + 1e-9 for s in shots)
+
+
+def test_the_gate_refuses_a_clean_reel_that_ramps_stacks_and_moves(pile):
+    proj, notes, got, derived, found = _planned(pile, "clean", 125.0)
+    for s in got["shots"]:
+        s["speed"], s["camera"] = "s05", "c01soft"
+    got["shots"][0]["fx"] = ["k01soft", "k14soft"]
+    codes = {f.code for f in reelcheck.plan_findings(got, studio.derive(got))}
+    assert {"calm-speed", "calm-effects", "calm-camera"} <= codes
+
+
+def test_restraint_is_off_for_a_style_that_does_not_ask_for_it(pile):
+    proj, notes, got, derived, found = _planned(pile, "hype", 125.0)
+    assert not any(f.code.startswith("calm-") for f in found)
+
+
+def test_a_fade_from_black_shows_the_game_by_a_quarter_second():
+    """Every style opens with its fade capped at OPEN_FADE; one made to open slowly keeps it."""
+    assert studio.OPEN_FADE <= 0.4
+    assert not studio.STYLE["clean"].long_fade_in and studio.STYLE["cinematic"].long_fade_in

@@ -1197,13 +1197,13 @@ def _valid(shots: list[dict], i: int) -> bool:
 
 
 def _settle(shots: list[dict], notes: list[str], pool: list[str] | None = None) -> None:
-    """Take back any speed or freeze the effects pass gave a shot it cannot carry.
+    """Take back any speed the effects pass gave a shot it cannot carry.
 
     The speed the programme planned a shot at always fits -- that is what it
     planned. Anything else the effects pass gave it (the climax's rush, the
     closer's slow exit, budget()'s real speed where a slowed shot had less
     footage) is kept only where it still shows every kill once; otherwise the
-    planned speed comes back, and a freeze that no longer fits comes off.
+    planned speed comes back.
     """
     undone = 0
     for _ in range(3):
@@ -1222,10 +1222,8 @@ def _settle(shots: list[dict], notes: list[str], pool: list[str] | None = None) 
                 undone += 1
             if _valid(shots, i):
                 continue
-            # Not even the planned speed fits, so it is the freeze that does
-            # not: it comes off and the planned speed goes back on.
-            s["hero_fx"] = [h for h in s.get("hero_fx") or [] if studio.fam(h) != "h02"]
-            s["fx"] = [f for f in s.get("fx") or [] if studio.fam(f) != "k04"]
+            # No speed fits, so the one the programme planned goes back on:
+            # whatever the shot cannot carry, it is not something it planned.
             s["speed"] = planned
         if not changed:
             break

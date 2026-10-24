@@ -1,7 +1,7 @@
 r"""One short example of every part, cut from the player's own clips.
 
 WHY THIS EXISTS
-    The reel maker used to offer its parts as a list of names: "k04 Freeze",
+    The reel maker used to offer its parts as a list of names: "k02 Shake",
     "t05 Zoom through", "c04 Beat pulse". Nobody can pick an edit from a list
     of names -- an editor picks by watching. So every part the Studio can put
     in a reel has a two-second example beside it, playing on a loop, and a

@@ -212,12 +212,22 @@ def test_transitions_follow_the_music_and_the_places():
     assert shots[2]["transition"] in ("t06", "t01")
 
 
-def test_only_the_climax_freezes():
-    shots = [{"hero": True, "hero_fx": ["h02"], "speed": "s00"},
-             {"hero": True, "hero_fx": ["h01"], "speed": "s00"}]
-    rb.climax(shots, [1.0, 5.0], {"hero": ["h01", "h02", "h05"]})
-    assert "h02" not in shots[0]["hero_fx"] and "h02" in shots[1]["hero_fx"]
-    assert shots[1]["speed"] == "s04"
+def test_the_climax_never_freezes_and_is_still_the_slowed_big_moment():
+    """The freezes were taken out on 2026-10-24. The strongest hero moment still
+    rushes in and hangs on its kill, with the loudest hero treatment the pool has."""
+    shots = [{"hero": True, "hero_fx": ["h03"], "speed": "s00"},
+             {"hero": True, "hero_fx": ["h03"], "speed": "s00"}]
+    rb.climax(shots, [1.0, 5.0], {"hero": ["h03", "h01tight"]})
+    assert shots[1]["hero_fx"] == ["h01tight"] and shots[1]["speed"] == "s04"
+    assert shots[0] == {"hero": True, "hero_fx": ["h03"], "speed": "s00"}, "only the climax"
+    # A pool with only the spotlight gives the climax the spotlight, and one it
+    # already has stays as it is.
+    calm = [{"hero": True, "hero_fx": [], "speed": "s00"}]
+    rb.climax(calm, [1.0], {"hero": ["h03"]})
+    assert calm[0]["hero_fx"] == ["h03"] and calm[0]["speed"] == "s04"
+    kept = [{"hero": True, "hero_fx": ["h01wide"], "speed": "s00"}]
+    rb.climax(kept, [1.0], {"hero": ["h01", "h03"]})
+    assert kept[0]["hero_fx"] == ["h01wide"]
 
 
 def test_a_climax_without_run_up_footage_slows_in_instead_of_rushing():

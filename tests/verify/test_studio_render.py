@@ -6,7 +6,7 @@ nor a shot that lands a frame late, and both have happened while building this.
 
 The clips are synthetic and every frame carries its own index as a bar code,
 so where a source frame appears in the finished reel is read back exactly --
-through speed ramps, crossfades, flashes and freezes -- rather than judged by
+through speed ramps, crossfades, flashes and held frames -- rather than judged by
 eye.
 """
 from __future__ import annotations
@@ -116,7 +116,7 @@ def test_every_kill_lands_on_its_planned_frame(coded):
     proj.update(grade="g01", vignette=False, overlays=[], intro="i00", outro="e12")
     speeds = ["s04", "s02", "s00", "s03"]
     for i, s in enumerate(proj["shots"]):
-        s.update(fx=["k04"] if i == 2 else [], hero=False, hero_fx=[], camera="c00", speed=speeds[i])
+        s.update(fx=[], hero=False, hero_fx=[], camera="c00", speed=speeds[i])
     proj["shots"][1].update(transition="t04", tlen=0.5)
     proj["shots"][2].update(transition="t02", tlen=0.2)
     proj["shots"][3].update(transition="t06", tlen=0.3)

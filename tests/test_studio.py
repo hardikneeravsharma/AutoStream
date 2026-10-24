@@ -381,7 +381,7 @@ def test_flashes_come_at_the_reference_rate_on_the_grid(tmp_path):
 
 
 def test_without_a_song_the_reel_is_cut_to_120_bpm(root):
-    proj, _ = studio.plan(_clips(root), "story")
+    proj, _ = studio.plan(_clips(root), "clean")
     assert proj["beat"] == pytest.approx(0.5)
     assert proj["song"] == "" and proj["song_offset"] == 0.0
 
@@ -391,7 +391,7 @@ def test_the_reel_never_outlasts_the_song(tmp_path):
     _run(r, "2026-09-01_1200_VALORANT", "VALORANT",
          [{"start": 100.0 * i, "end": 100.0 * i + 12} for i in range(1, 25)],
          kills=[100.0 * i + 6 for i in range(1, 25)])
-    proj, notes = studio.plan(_clips(r), "story", shape=Shape(bpm=120.0, seconds=30.0), song="s.mp3")
+    proj, notes = studio.plan(_clips(r), "clean", shape=Shape(bpm=120.0, seconds=30.0), song="s.mp3")
     assert sum(s["duration"] for s in proj["shots"]) <= 30.0
     # A song this short is played whole (2026-10-17), and the reel says so.
     assert any("song ends" in n or "plays all of it" in n for n in notes)
@@ -522,27 +522,27 @@ def test_kills_marked_by_hand_are_remembered_as_marks(root):
 
 def test_the_first_kill_waits_for_the_song_to_start(root):
     """Skechers has no drums until 18 s and the player marked no kill before
-    19.5; a story reel opened at the first beat and cut its first kill at 7 s."""
+    19.5; a calm reel opened at the first beat and cut its first kill at 7 s."""
     shape = _song(hits_from=0.5, drums_in=18.0, big=[19.5, 40.0])
-    proj, _ = studio.plan(_clips(root), "story", shape=shape, song="s.mp3")
+    proj, _ = studio.plan(_clips(root), "clean", shape=shape, song="s.mp3")
     first = proj["song_offset"] + proj["shots"][0]["pre"]
     assert first == pytest.approx(19.5, abs=0.02)
     assert proj["song_offset"] > 0
 
 
 def test_a_fast_style_cuts_more_of_the_same_song(root):
-    """The player's rule: hype and velocity cut rapidly, story and montage
+    """The player's rule: hype and velocity cut rapidly, clean and montage
     leave the kills further apart -- on the same song."""
     shape = _song()
     gaps = {}
-    for style in ("story", "hype"):
+    for style in ("clean", "hype"):
         proj, _ = studio.plan(_clips(root), style, shape=shape, song="s.mp3")
         kills, t = [], 0.0
         for s in proj["shots"]:
             kills.append(t + s["pre"])
             t += s["duration"]
         gaps[style] = sorted(b - a for a, b in zip(kills, kills[1:]))[len(kills) // 2]
-    assert gaps["story"] > gaps["hype"] * 1.5, gaps
+    assert gaps["clean"] > gaps["hype"] * 1.5, gaps
 
 
 def test_the_same_clip_twice_is_one_clip(root):
@@ -550,8 +550,8 @@ def test_the_same_clip_twice_is_one_clip(root):
     the clip list, so a clip in nine shots arrived nine times and filled the
     reel with itself while the clips asked for once were left out."""
     clips = _clips(root)
-    proj, _ = studio.plan(clips * 3, "story", shape=Shape(bpm=120.0))
-    once, _ = studio.plan(clips, "story", shape=Shape(bpm=120.0))
+    proj, _ = studio.plan(clips * 3, "clean", shape=Shape(bpm=120.0))
+    once, _ = studio.plan(clips, "clean", shape=Shape(bpm=120.0))
     assert [s["clip"] for s in proj["shots"]] == [s["clip"] for s in once["shots"]]
     seen = [(s["clip"], s["kill"]) for s in proj["shots"]]
     assert len(seen) == len(set(seen)), "the same kill is in the reel twice"
@@ -647,7 +647,7 @@ def _built(root, **shot):
 
 def test_graphs_carry_no_escaped_commas_inside_quotes(root):
     got, derived, segs = _built(root, fx=["k01", "k02", "k03", "k07", "k11", "k15", "k16"],
-                                hero=True, hero_fx=["h01", "h02", "h03", "h05"], caption="ACE",
+                                hero=True, hero_fx=["h01", "h03", "h05"], caption="ACE",
                                 camera="c04", speed="s02")
     for seg in segs:
         argv = studio.segment_command(seg, Path("out.mp4"))
@@ -688,12 +688,23 @@ def test_a_projects_lyrics_settings_are_kept_and_clamped(root):
     assert [l["key"] for l in studio.catalog()["lyrics"]["looks"]] == list(studio.lyrics_mod.LOOKS)
 
 
-def test_a_freeze_never_changes_how_long_a_shot_is(root):
-    got, derived, segs = _built(root, fx=["k04"])
+def test_a_reel_saved_with_the_removed_freezes_and_counter_opens_and_renders_without_them(root):
+    """h02 (and its variants), k04 and o02 were taken out on 2026-10-24. A reel saved
+    with them still opens, and renders as if they had never been chosen."""
+    proj, _ = studio.plan(_clips(root), "montage", shape=Shape(bpm=120.0))
+    proj.update(song="", overlays=["o02", "o04"])
+    for i, s in enumerate(proj["shots"]):
+        s.update(fx=["k04", "k02"], hero=True, hero_fx=[("h02", "h02short", "h02long")[i % 3], "h01"])
+    got, derived, _ = studio.normalise(proj, root)
+    gone = {"h02", "h02short", "h02long", "k04", "o02"}
+    assert got["overlays"] == ["o04"]
+    assert all(not gone & set(s["fx"] + s["hero_fx"]) and s["fx"] == ["k02"] for s in got["shots"])
+    assert derived["length"] == pytest.approx(sum(s["duration"] for s in got["shots"]))
+    segs = studio.segments(got, derived, has_audio=lambda p: True, song_beats=derived["beats"])
     for seg in segs:
         argv = studio.segment_command(seg, Path("o.mp4"))
         assert argv[argv.index("-frames:v") + 1] == str(seg.frames)
-    assert derived["length"] == pytest.approx(sum(s["duration"] for s in got["shots"]))
+        assert "loop=loop=" not in argv[argv.index("-filter_complex") + 1]
 
 
 def test_a_variant_reaches_the_renderer_the_way_its_base_does(root):
@@ -705,10 +716,6 @@ def test_a_variant_reaches_the_renderer_the_way_its_base_does(root):
     a plain hard cut. A dead variant is still offered, picked and shipped in a
     built-in style -- montage uses c04hard -- so it fails silently.
     """
-    for part, hold in (("h02", 0.75), ("h02short", 0.35), ("h02long", 1.0)):
-        _, _, segs = _built(root, hero=True, hero_fx=[part])
-        assert [s.freeze for s in segs] == [pytest.approx(hold)] * len(segs), part
-        assert all(s.freeze_push for s in segs), part
     for part, amt in (("h03", 0.9), ("h03soft", 0.6), ("h03hard", 1.2)):
         _, _, segs = _built(root, hero=True, hero_fx=[part])
         assert all(s.hero_fx == [part] for s in segs), part
@@ -825,7 +832,7 @@ def test_every_generated_part_resolves_to_a_family():
     drawn = {"k01", "k02", "k03", "k06", "k07", "k08", "k11", "k12", "k14", "k15",
              "k16", "k17", "k18", "k19", "k20", "k21", "k22", "xfade", "tint",
              "c01", "c03", "c04", "c05", "c06", "c07", "c08",
-             "o01", "o04", "o05", "o08", "o09", "h01", "h02", "h03", "h05",
+             "o01", "o04", "o05", "o08", "o09", "h01", "h03", "h05",
              "fade_in", "fade_out"}
     for p in studio.PARTS:
         if p.base:
@@ -845,6 +852,30 @@ def test_the_catalog_is_what_the_page_reads():
         assert s["measured"]["edits"] >= 3 or s["provenance"], s["key"]
         assert not (s["measured"]["edits"] >= 3 and s["provenance"]), s["key"]
     assert all(s["pools"]["kill"] and s["pools"]["transition"] for s in cat["styles"])
+
+
+@pytest.mark.parametrize("old, now", [("retro", "cinematic"), ("story", "montage"), ("short", "chaos")])
+def test_a_reel_saved_with_a_retired_style_opens_as_the_one_that_replaced_it(root, old, now):
+    """Retro, Story and Short were retired (2026-10-24) as near-copies of Cinematic,
+    Montage and Chaos. A reel saved with one must still open -- as its nearest style,
+    not the default -- and plan again as that style, and the page is told the map."""
+    assert old not in studio.STYLE and now in studio.STYLE
+    proj, _ = studio.plan(_clips(root), "clean")
+    proj["style"] = old
+    opened, _, _ = studio.normalise(proj, root)
+    assert opened["style"] == now
+    again, _ = studio.plan(_clips(root), old)
+    assert again["style"] == now
+    assert studio.vary(dict(proj), "all", seed=1)["shots"]
+    assert studio.catalog()["retired_styles"][old] == now
+    assert studio.current_style("nonsense") == "nonsense", "an unknown key is the caller's to judge"
+
+
+def test_eight_styles_are_offered():
+    assert [s.key for s in studio.STYLES] == ["montage", "velocity", "drop", "fasthead", "hype",
+                                              "clean", "chaos", "cinematic"]
+    assert not set(studio.RETIRED_STYLES) & set(studio.STYLE)
+    assert set(studio.RETIRED_STYLES.values()) <= set(studio.STYLE)
 
 
 # ------------------------------------------------------------------ variety
@@ -953,7 +984,7 @@ def test_a_narrowed_pool_is_all_that_is_drawn(long_run):
 
 
 def test_pools_and_seed_survive_the_round_trip_and_junk_is_dropped(long_run):
-    proj, _ = studio.plan(_clips(long_run), "story", shape=Shape(bpm=128.0))
+    proj, _ = studio.plan(_clips(long_run), "clean", shape=Shape(bpm=128.0))
     proj["pools"]["kill"] = ["k01", "evil", "t04"]
     proj["seed"] = "not a number"
     got, _, _ = studio.normalise(proj, long_run)
@@ -964,7 +995,7 @@ def test_pools_and_seed_survive_the_round_trip_and_junk_is_dropped(long_run):
 # ------------------------------------------------------------------ the song part
 
 def test_a_marked_kill_lands_on_its_mark(long_run):
-    proj, _ = studio.plan(_clips(long_run)[:6], "story", shape=Shape(bpm=120.0))
+    proj, _ = studio.plan(_clips(long_run)[:6], "clean", shape=Shape(bpm=120.0))
     marks = [2.0, 3.5, 5.25, 7.0, 9.5]
     studio.apply_marks(proj, marks)
     got, derived, _ = studio.normalise(proj, long_run)
@@ -975,13 +1006,13 @@ def test_a_marked_kill_lands_on_its_mark(long_run):
 
 
 def test_more_marks_than_shots_says_so(long_run):
-    proj, _ = studio.plan(_clips(long_run)[:2], "story", shape=Shape(bpm=120.0))
+    proj, _ = studio.plan(_clips(long_run)[:2], "clean", shape=Shape(bpm=120.0))
     notes = studio.apply_marks(proj, [2.0, 4.0, 6.0])
     assert any("were not used" in n for n in notes)
 
 
 def test_a_mark_the_footage_cannot_reach_is_reported(long_run):
-    proj, _ = studio.plan(_clips(long_run)[:2], "story", shape=Shape(bpm=120.0))
+    proj, _ = studio.plan(_clips(long_run)[:2], "clean", shape=Shape(bpm=120.0))
     # 6 s of footage before the kill; even slowed to MIN_STRETCH it cannot
     # fill 60 s.
     notes = studio.apply_marks(proj, [60.0, 61.0])
@@ -991,7 +1022,7 @@ def test_a_mark_the_footage_cannot_reach_is_reported(long_run):
 def test_a_short_run_up_is_slowed_so_the_kill_still_lands_on_its_mark(long_run):
     """The mark is authoritative: too little footage stretches the approach,
     it never moves the kill."""
-    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=Shape(bpm=120.0))
+    proj, _ = studio.plan(_clips(long_run)[:4], "clean", shape=Shape(bpm=120.0))
     proj["shots"][0]["speed"] = "s00"
     marks = [10.0, 11.5, 13.0]                              # 6 s of footage before the kill
     notes = studio.apply_marks(proj, marks)
@@ -1010,7 +1041,7 @@ def test_a_short_run_up_is_slowed_so_the_kill_still_lands_on_its_mark(long_run):
 
 
 def test_past_the_slowest_stretch_the_opening_frame_is_held(long_run):
-    proj, _ = studio.plan(_clips(long_run)[:3], "story", shape=Shape(bpm=120.0))
+    proj, _ = studio.plan(_clips(long_run)[:3], "clean", shape=Shape(bpm=120.0))
     proj["shots"][0]["speed"] = "s00"
     studio.apply_marks(proj, [45.0, 46.5])                 # 6 s of footage before the kill
     got, derived, _ = studio.normalise(proj, long_run)
@@ -1024,7 +1055,7 @@ def test_past_the_slowest_stretch_the_opening_frame_is_held(long_run):
 
 
 def test_a_stretch_survives_the_round_trip_and_junk_is_dropped(long_run):
-    proj, _ = studio.plan(_clips(long_run)[:2], "story", shape=Shape(bpm=120.0))
+    proj, _ = studio.plan(_clips(long_run)[:2], "clean", shape=Shape(bpm=120.0))
     proj["shots"][0]["stretch"] = [0.5, 1.0]
     proj["shots"][1]["stretch"] = ["evil", None]
     got, _, _ = studio.normalise(proj, long_run)
@@ -1040,7 +1071,7 @@ def test_a_first_mark_out_of_reach_goes_to_the_next_shot(long_run):
     its kill, and the arrival -- the loudest thing in the part -- ended up with
     no cut on it at all while one shot stretched across it.
     """
-    proj, _ = studio.plan(_clips(long_run)[:6], "story", shape=Shape(bpm=120.0))
+    proj, _ = studio.plan(_clips(long_run)[:6], "clean", shape=Shape(bpm=120.0))
     # Straight speed, so the reach is the footage: a slowed opener spends its
     # 6 s over twelve and could reach the mark after all.
     proj["shots"][0]["speed"] = "s00"
@@ -1060,7 +1091,7 @@ def test_a_double_kill_keeps_its_second_kill_when_the_next_run_up_grows(long_run
     """ambiforcashlyrics: the opener's second kill came 0.84 s after its first,
     the next shot's run-up was allowed all but 0.22 s of the gap, and the cut
     fell 0.51 s after the first kill -- the second was never seen."""
-    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=Shape(bpm=120.0))
+    proj, _ = studio.plan(_clips(long_run)[:4], "clean", shape=Shape(bpm=120.0))
     s0, s1 = proj["shots"][0], proj["shots"][1]
     s0["speed"] = s1["speed"] = "s00"
     s0["kills"] = [s0["kill"], s0["kill"] + 0.84]
@@ -1087,13 +1118,13 @@ def test_the_openers_hit_may_sit_a_hair_before_its_run_up_ends(long_run, monkeyp
     monkeypatch.setattr(studio, "apply_marks", spy)
     hits = [10.0 + 0.5 * n - 0.026 for n in range(1, 60)]          # every beat, a hair early
     shape = Shape(bpm=120.0, seconds=120.0, phase=0.0, hits=hits)
-    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=shape, song="s.mp3", part=(10.0, 34.0))
+    proj, _ = studio.plan(_clips(long_run)[:4], "clean", shape=shape, song="s.mp3", part=(10.0, 34.0))
     assert seen["first"] == pytest.approx(seen["pre0"] - 0.026, abs=1e-3)
     assert not proj["shots"][0].get("stretch")
 
 
 def test_a_first_mark_within_reach_is_still_the_openers(long_run):
-    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=Shape(bpm=120.0))
+    proj, _ = studio.plan(_clips(long_run)[:4], "clean", shape=Shape(bpm=120.0))
     studio.apply_marks(proj, [4.0, 6.0, 8.0])
     got, derived, _ = studio.normalise(proj, long_run)
     assert not got["shots"][0].get("lead_in")
@@ -1102,7 +1133,7 @@ def test_a_first_mark_within_reach_is_still_the_openers(long_run):
 
 def test_the_lead_in_stretches_the_intro_over_itself(long_run):
     """A one-second fade over a nine-second hold does not look like a start."""
-    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=Shape(bpm=120.0))
+    proj, _ = studio.plan(_clips(long_run)[:4], "clean", shape=Shape(bpm=120.0))
     proj["intro"] = "i03"
     proj["shots"][0]["speed"] = "s00"
     studio.apply_marks(proj, [50.0, 51.5, 53.0])
@@ -1118,7 +1149,7 @@ def test_the_lead_in_stretches_the_intro_over_itself(long_run):
 
 def test_the_song_starts_exactly_where_it_was_fine_tuned(long_run):
     """10 ms nudges are the point of the control, so the start is not snapped."""
-    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=Shape(bpm=128.0))
+    proj, _ = studio.plan(_clips(long_run)[:4], "clean", shape=Shape(bpm=128.0))
     shape = Shape(bpm=128.0, seconds=90.0)
     studio.apply_song(proj, shape, "song.wav", 13.1061)
     assert proj["song_offset"] == pytest.approx(13.1061, abs=1e-4)
@@ -1126,7 +1157,7 @@ def test_the_song_starts_exactly_where_it_was_fine_tuned(long_run):
 
 
 def test_song_marks_are_song_seconds_and_outside_ones_are_ignored(long_run):
-    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=Shape(bpm=120.0))
+    proj, _ = studio.plan(_clips(long_run)[:4], "clean", shape=Shape(bpm=120.0))
     shape = Shape(bpm=120.0, seconds=90.0, phase=0.0)
     studio.apply_song(proj, shape, "song.wav", 20.0, 0.0, [3.0, 22.0, 24.0])
     got, derived, _ = studio.normalise(dict(proj, song=""), long_run)
@@ -1135,7 +1166,7 @@ def test_song_marks_are_song_seconds_and_outside_ones_are_ignored(long_run):
 
 
 def test_a_short_part_keeps_only_the_shots_it_holds(long_run):
-    proj, _ = studio.plan(_clips(long_run)[:8], "story", shape=Shape(bpm=120.0))
+    proj, _ = studio.plan(_clips(long_run)[:8], "clean", shape=Shape(bpm=120.0))
     n = len(proj["shots"])
     notes = studio.apply_song(proj, Shape(bpm=120.0, seconds=90.0), "song.wav", 10.0, 16.0)
     assert sum(s["duration"] for s in proj["shots"]) <= 6.0 + 1e-6
@@ -1269,7 +1300,7 @@ def test_a_chosen_part_is_where_the_reel_starts_and_how_long_it_is(long_run):
     """MONTERO at 72 BPM came out 24 s: the length rule snapped to one 8-bar
     phrase and left clips out. With the part chosen first it is the length."""
     shape = Shape(bpm=120.0, seconds=120.0, phase=0.0)
-    proj, notes = studio.plan(_clips(long_run)[:8], "story", shape=shape, song="s.mp3", part=(10.0, 34.0))
+    proj, notes = studio.plan(_clips(long_run)[:8], "clean", shape=shape, song="s.mp3", part=(10.0, 34.0))
     total = sum(s["duration"] for s in proj["shots"])
     assert proj["song_offset"] == pytest.approx(10.0)
     assert proj["part_end"] == pytest.approx(34.0)
@@ -1283,8 +1314,8 @@ def test_a_chosen_part_is_where_the_reel_starts_and_how_long_it_is(long_run):
 
 def test_clips_short_of_the_part_get_longer_run_ups_within_their_footage(long_run):
     shape = Shape(bpm=120.0, seconds=180.0, phase=0.0)
-    auto, _ = studio.plan(_clips(long_run)[:4], "story", shape=shape, song="s.mp3")
-    proj, notes = studio.plan(_clips(long_run)[:4], "story", shape=shape, song="s.mp3", part=(0.0, 30.0))
+    auto, _ = studio.plan(_clips(long_run)[:4], "clean", shape=shape, song="s.mp3")
+    proj, notes = studio.plan(_clips(long_run)[:4], "clean", shape=shape, song="s.mp3", part=(0.0, 30.0))
     assert sum(s["duration"] for s in proj["shots"]) > sum(s["duration"] for s in auto["shots"])
     assert any("longer run-ups" in n for n in notes)
     for s in proj["shots"]:
@@ -1295,14 +1326,14 @@ def test_clips_short_of_the_part_get_longer_run_ups_within_their_footage(long_ru
 
 def test_a_part_the_clips_cannot_fill_ends_early_and_says_so(long_run):
     shape = Shape(bpm=120.0, seconds=300.0, phase=0.0)
-    proj, notes = studio.plan(_clips(long_run)[:2], "story", shape=shape, song="s.mp3", part=(0.0, 120.0))
+    proj, notes = studio.plan(_clips(long_run)[:2], "clean", shape=shape, song="s.mp3", part=(0.0, 120.0))
     assert sum(s["duration"] for s in proj["shots"]) < 120.0
     assert any("ends early" in n for n in notes)
 
 
 def test_a_part_too_short_for_every_clip_says_which_were_left_out_and_why(long_run):
     shape = Shape(bpm=120.0, seconds=120.0, phase=0.0)
-    proj, _ = studio.plan(_clips(long_run), "story", shape=shape, song="s.mp3", part=(0.0, 8.0))
+    proj, _ = studio.plan(_clips(long_run), "clean", shape=shape, song="s.mp3", part=(0.0, 8.0))
     out = [x for x in proj["selection"] if x["why"]]
     assert out and len(proj["selection"]) == 24
     assert all(("part" in x["why"]) for x in out)
@@ -1336,9 +1367,9 @@ def quadra(tmp_path):
     return r
 
 
-def _quadra_first(r, *, hero_freeze=False):
+def _quadra_first(r, *, hero_rush=False):
     """The planned reel with the quadra's shots first, as the user's reel had them."""
-    proj, _ = studio.plan(_clips(r), "story", shape=Shape(bpm=110.0))
+    proj, _ = studio.plan(_clips(r), "clean", shape=Shape(bpm=110.0))
     shots = proj["shots"]
     q = [s for s in shots if s["clip_seconds"] == pytest.approx(26.4)]
     # The planner now plans two kills 1.9 s apart as ONE shot (rulebook.one_shot_per_fight:
@@ -1353,8 +1384,8 @@ def _quadra_first(r, *, hero_freeze=False):
     assert [s["kills"] for s in q] == [[3.567], [5.467], [17.6, 18.433]]
     for s in proj["shots"]:
         s["speed"], s["fx"], s["hero"], s["hero_fx"] = "s00", ["k15"], False, []
-    if hero_freeze:
-        q[2].update(speed="s04", hero=True, hero_fx=["h02"])
+    if hero_rush:
+        q[2].update(speed="s04", hero=True, hero_fx=["h01"])
     return proj, q
 
 
@@ -1388,18 +1419,19 @@ def test_a_follow_up_never_replays_the_footage_the_shot_before_showed(quadra):
     assert any("showing its kill twice" in n for n in notes), notes
 
 
-def test_a_freeze_on_the_kill_does_not_cut_off_the_shots_later_kill(quadra):
+def test_a_rushed_climax_does_not_cut_off_the_shots_later_kill(quadra):
     """Aftrhrs: the climax quadra froze 0.75 s on its third kill inside a
     1.10 s tail and rushed out at 2.2x; 0.11 s of footage followed the
-    freeze and the fourth kill, 0.83 s on, never appeared."""
-    proj, q = _quadra_first(quadra, hero_freeze=True)
+    freeze and the fourth kill, 0.83 s on, never appeared. The freeze is
+    gone (2026-10-24); the rush out of the kill is not."""
+    proj, q = _quadra_first(quadra, hero_rush=True)
     marks = [3.30, 7.70, 11.01, 13.80, 16.50]
     studio.apply_marks(proj, marks)
     got, derived, shown = _shown(proj, quadra)
     hero = next(i for i, s in enumerate(got["shots"]) if s.get("hero"))
     s, row = got["shots"][hero], derived["shots"][hero]
     assert 18.433 in [round(k, 3) for k in s["kills"]]
-    # Shown: what plays after the freeze reaches past the fourth kill, held.
+    # Shown: what plays after the kill reaches past the fourth kill, held.
     assert row["source_out"] >= 18.433 + studio.OWN_KILL_HOLD - 1e-3, row
     # ...at real speed, not rushed: the ramp out waits for it.
     k_src = 18.433 - row["source_in"]
@@ -1441,7 +1473,7 @@ def test_a_mark_too_soon_after_a_shots_later_kills_goes_to_the_next_shot(tmp_pat
          [{"start": 1000.0, "end": 1026.0, "kills": 3},
           {"start": 2000.0, "end": 2012.0}, {"start": 3000.0, "end": 3012.0}],
          kills=[1003.5, 1004.7, 1005.9, 2006.0, 3006.0])
-    proj, _ = studio.plan(_clips(r), "story", shape=Shape(bpm=110.0))
+    proj, _ = studio.plan(_clips(r), "clean", shape=Shape(bpm=110.0))
     tri = next(s for s in proj["shots"] if len(s["kills"]) == 3)
     proj["shots"] = [tri] + [s for s in proj["shots"] if s is not tri]
     for s in proj["shots"]:
@@ -1458,7 +1490,7 @@ def test_a_planned_reel_shows_every_kill_of_its_clips_once(quadra):
     """The whole plan, cut to a song's hits, keeps the rule end to end."""
     hits = [1.0 + 0.545 * n for n in range(1, 200)]
     shape = Shape(bpm=110.0, seconds=120.0, phase=0.0, hits=hits)
-    proj, _ = studio.plan(_clips(quadra), "story", shape=shape, song="s.mp3")
+    proj, _ = studio.plan(_clips(quadra), "clean", shape=shape, song="s.mp3")
     got, derived, shown = _shown(proj, quadra)
     for clip, spans in _spans_by_clip(got["shots"]).items():
         spans.sort()
@@ -1472,8 +1504,8 @@ def test_a_planned_reel_shows_every_kill_of_its_clips_once(quadra):
 
 def test_without_a_part_the_planner_chooses_as_before(long_run):
     shape = Shape(bpm=120.0, seconds=120.0, phase=0.0, drums_in=8.0)
-    a, _ = studio.plan(_clips(long_run)[:8], "story", shape=shape, song="s.mp3")
-    b, _ = studio.plan(_clips(long_run)[:8], "story", shape=shape, song="s.mp3", part=None)
+    a, _ = studio.plan(_clips(long_run)[:8], "clean", shape=shape, song="s.mp3")
+    b, _ = studio.plan(_clips(long_run)[:8], "clean", shape=shape, song="s.mp3", part=None)
     assert a["shots"] == b["shots"] and a["song_offset"] == b["song_offset"]
     assert "part_end" not in a
 
@@ -1482,7 +1514,7 @@ def test_without_a_part_the_planner_chooses_as_before(long_run):
 
 def test_the_selection_and_part_survive_a_save_and_a_removed_shot_is_explained(long_run):
     shape = Shape(bpm=120.0, seconds=120.0, phase=0.0)
-    proj, _ = studio.plan(_clips(long_run)[:4], "story", shape=shape, song="", part=None)
+    proj, _ = studio.plan(_clips(long_run)[:4], "clean", shape=shape, song="", part=None)
     proj["part_end"] = 30.0
     got, derived, _ = studio.normalise(proj, long_run)
     assert [x["clip"] for x in got["selection"]] == [c["path"] for c in _clips(long_run)[:4]]
@@ -1494,7 +1526,7 @@ def test_the_selection_and_part_survive_a_save_and_a_removed_shot_is_explained(l
 
 
 def test_an_edited_timeline_is_told_apart_from_an_untouched_one(long_run):
-    proj, _ = studio.plan(_clips(long_run)[:4], "story")
+    proj, _ = studio.plan(_clips(long_run)[:4], "clean")
     proj, derived, _ = studio.normalise(proj, long_run)
     proj["plan_sig"] = studio.signature(proj["shots"])
     proj, derived, _ = studio.normalise(proj, long_run)
@@ -1582,7 +1614,7 @@ def test_only_an_mp4_the_reels_folder_lists_can_be_deleted(root, tmp_path):
 def test_what_the_planner_said_stays_with_the_reel(long_run):
     """Said only in the reply to the plan, the notes were replaced by the render's
     reply a moment later, so "the weakest were left out" was never read."""
-    proj, _ = studio.plan(_clips(long_run)[:2], "story")
+    proj, _ = studio.plan(_clips(long_run)[:2], "clean")
     proj["plan_notes"] = ["Your clips fill 41 s of the 60 s part, so the reel ends early.", 7, ""]
     got, _, _ = studio.normalise(proj, long_run)
     assert got["plan_notes"] == ["Your clips fill 41 s of the 60 s part, so the reel ends early."]
@@ -1920,7 +1952,7 @@ def _long_reel(root, n):
     return got, derived, studio.segments(got, derived)
 
 
-def test_a_long_reel_still_fits_on_a_windows_command_line(root, tmp_path):
+def test_a_long_reel_still_fits_on_a_windows_command_line(root, tmp_path, monkeypatch):
     """MEASURED, not guessed: a real 50-shot reel built a 33,144-character
     command against CreateProcess's 32,767 limit and died with WinError 206
     AFTER encoding all fifty shots. MAX_SHOTS is 80, so the app was offering
@@ -1934,11 +1966,18 @@ def test_a_long_reel_still_fits_on_a_windows_command_line(root, tmp_path):
         assert length < 32_767, f"{n} shots: {length} characters is over the Windows limit"
         # Over the threshold it must be the file form, or the line would grow
         # with the shot count again the moment the graph did. Which spelling
-        # depends on the ffmpeg installed -- see tools.filter_script_flag.
-        assert any(x in argv for x in ("-filter_complex_script", "-/filter_complex")),             f"{n} shots: still inline"
+        # depends on the ffmpeg installed -- see tools.filter_script_flag. The
+        # threshold is lowered here: since the kill counter went (2026-10-24),
+        # a test reel's graph no longer reaches the real one by itself.
+        monkeypatch.setattr(studio, "CMDLINE_SAFE", 2_000)
+        argv = studio.assemble_command(got, derived, segs, files, tmp_path / "out.mp4",
+                                       textdir=tmp_path)
+        assert any(x in argv for x in ("-filter_complex_script", "-/filter_complex")), f"{n} shots: still inline"
+        monkeypatch.undo()
 
 
-def test_the_graph_in_the_script_file_is_the_graph_that_was_built(root, tmp_path):
+def test_the_graph_in_the_script_file_is_the_graph_that_was_built(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(studio, "CMDLINE_SAFE", 2_000)
     got, derived, segs = _long_reel(root, 50)
     files = [tmp_path / f"seg{i:03d}.mp4" for i in range(len(segs))]
     argv = studio.assemble_command(got, derived, segs, files, tmp_path / "out.mp4",
@@ -1984,7 +2023,7 @@ def test_the_library_carries_each_kills_headshot_reading(root):
 
 def test_headshots_only_keeps_only_kills_read_as_headshots(root):
     _with_headshots(root, {103.5: False, 203.0: True, 206.5: False})
-    proj, notes = studio.plan(_clips(root), "story", shape=Shape(bpm=120.0),
+    proj, notes = studio.plan(_clips(root), "clean", shape=Shape(bpm=120.0),
                               shape_it={"hs_only": True})
     assert proj["hs_only"] is True
     used = {(s["clip"].split("\\")[-1].split("/")[-1], round(s["kill"], 2)) for s in proj["shots"]}
@@ -1996,12 +2035,12 @@ def test_headshots_only_keeps_only_kills_read_as_headshots(root):
 
 def test_headshots_only_with_none_read_says_so(root):
     with pytest.raises(studio.ProjectError):
-        studio.plan(_clips(root), "story", shape=Shape(bpm=120.0), shape_it={"hs_only": True})
+        studio.plan(_clips(root), "clean", shape=Shape(bpm=120.0), shape_it={"hs_only": True})
 
 
 def test_without_the_option_every_kill_goes_in_as_before(root):
     _with_headshots(root, {103.5: False, 203.0: True, 206.5: False})
-    proj, _ = studio.plan(_clips(root), "story", shape=Shape(bpm=120.0))
+    proj, _ = studio.plan(_clips(root), "clean", shape=Shape(bpm=120.0))
     assert proj["hs_only"] is False
     assert len({s["clip"] for s in proj["shots"]}) == len(_clips(root))
 
@@ -2010,7 +2049,7 @@ def test_without_the_option_every_kill_goes_in_as_before(root):
 
 def test_a_recorded_kill_moves_onto_its_own_emblem():
     """Aftrhrs: Riot's time sat -0.17 to +0.53 s from the emblem on screen, so a
-    story reel's visible kills landed a quarter second after the beat."""
+    calm reel's visible kills landed a quarter second after the beat."""
     ks, n = studio._snap_recorded([3.50, 10.0], [3.78, 9.9])
     assert ks == [3.78, 9.9] and n == 2
 
@@ -2094,12 +2133,12 @@ def test_a_long_part_is_filled_even_at_a_fast_styles_pace(long_run):
 
 
 def test_every_clip_i_chose_puts_every_clip_in_at_the_styles_pace(long_run):
-    """A vertical story reel holds 48 s; twenty-four clips need more. The
+    """A vertical clean reel holds 48 s; twenty-four clips need more. The
     style's length leaves some out; "Every clip I chose" does not."""
     shape = _hit_shape()
-    styled, _ = studio.plan(_clips(long_run), "story", shape=shape, song=_song_file(long_run), fmt="vertical")
+    styled, _ = studio.plan(_clips(long_run), "clean", shape=shape, song=_song_file(long_run), fmt="vertical")
     assert any(x["why"] for x in styled["selection"])
-    proj, _ = studio.plan(_clips(long_run), "story", shape=shape, song=_song_file(long_run), fmt="vertical",
+    proj, _ = studio.plan(_clips(long_run), "clean", shape=shape, song=_song_file(long_run), fmt="vertical",
                           shape_it={"fill": "all"})
     assert all(x["why"] == "" for x in proj["selection"]), [x["why"] for x in proj["selection"] if x["why"]]
     assert len({s["clip"] for s in proj["shots"]}) == 24
@@ -2111,7 +2150,7 @@ def test_every_clip_i_chose_puts_every_clip_in_at_the_styles_pace(long_run):
 
 def test_the_styles_length_starts_on_the_part_and_never_passes_its_end(long_run):
     shape = _hit_shape()
-    proj, _ = studio.plan(_clips(long_run), "story", shape=shape, song=_song_file(long_run), fmt="vertical",
+    proj, _ = studio.plan(_clips(long_run), "clean", shape=shape, song=_song_file(long_run), fmt="vertical",
                           part=(20.0, 150.0), shape_it={"fill": "style"})
     total = sum(s["duration"] for s in proj["shots"])
     assert proj["song_offset"] == pytest.approx(20.0) and proj["part_end"] == pytest.approx(150.0)
@@ -2132,7 +2171,7 @@ def awkward(tmp_path):
 
 
 def test_without_keep_every_kill_a_kill_with_no_run_up_is_left_out_and_says_why(awkward):
-    proj, notes = studio.plan(_clips(awkward), "story", shape=_hit_shape(), song=_song_file(awkward))
+    proj, notes = studio.plan(_clips(awkward), "clean", shape=_hit_shape(), song=_song_file(awkward))
     rows = {Path(x["clip"]).name: x for x in proj["selection"]}
     assert "footage before its kill" in rows["VALORANT_00.mp4"]["why"]
     gone = rows["VALORANT_01.mp4"]["kills_out"]
@@ -2147,7 +2186,7 @@ def test_without_keep_every_kill_a_kill_with_no_run_up_is_left_out_and_says_why(
 def test_keep_every_kill_shows_a_kill_from_the_clips_first_frame(awkward):
     """Kept, the shot starts on the clip's first frame (or slows into the
     kill) instead of being dropped, and still lands on its hit."""
-    proj, notes = studio.plan(_clips(awkward), "story", shape=_hit_shape(), song=_song_file(awkward),
+    proj, notes = studio.plan(_clips(awkward), "clean", shape=_hit_shape(), song=_song_file(awkward),
                               shape_it={"keep_all": True})
     got, derived, _ = studio.normalise(proj, awkward)
     shown = {}
@@ -2171,9 +2210,9 @@ def test_keep_every_kill_keeps_a_still_moment(long_run):
     def measure(path, t0, t1):
         return {"action": 1.0 if path == still else 14.0}
     shape = _hit_shape()
-    proj, _ = studio.plan(clips, "story", shape=shape, song=_song_file(long_run), measure=measure)
+    proj, _ = studio.plan(clips, "clean", shape=shape, song=_song_file(long_run), measure=measure)
     assert "Nothing moves" in next(x["why"] for x in proj["selection"] if x["clip"] == still)
-    proj, _ = studio.plan(clips, "story", shape=shape, song=_song_file(long_run), measure=measure,
+    proj, _ = studio.plan(clips, "clean", shape=shape, song=_song_file(long_run), measure=measure,
                           shape_it={"keep_all": True})
     assert still in {s["clip"] for s in proj["shots"]}
 
@@ -2182,8 +2221,8 @@ def test_keep_every_kill_closes_the_kills_up_rather_than_leave_clips_out(long_ru
     """The style's length leaves the weakest out; keeping every kill puts the
     kills closer together instead, every one still on a hit."""
     shape = _hit_shape()
-    styled, _ = studio.plan(_clips(long_run), "story", shape=shape, song=_song_file(long_run), fmt="vertical")
-    kept, notes = studio.plan(_clips(long_run), "story", shape=shape, song=_song_file(long_run), fmt="vertical",
+    styled, _ = studio.plan(_clips(long_run), "clean", shape=shape, song=_song_file(long_run), fmt="vertical")
+    kept, notes = studio.plan(_clips(long_run), "clean", shape=shape, song=_song_file(long_run), fmt="vertical",
                               shape_it={"keep_all": True})
     assert len(kept["shots"]) > len(styled["shots"])
     assert all(x["why"] == "" for x in kept["selection"])
@@ -2276,7 +2315,7 @@ def test_a_cut_rounded_to_its_footage_does_not_lose_a_beat_off_the_shot():
     and every kill after it slid 0.55 s off its mark (17 of 43 on marks)."""
     shot = {"clip": "x.mp4", "kill": 17.6, "kills": [17.6, 18.433], "pre": 2.15599,
             "duration": 7.12081, "speed": "s04", "clip_seconds": 26.41, "fx": [], "hero": True,
-            "hero_fx": ["h02"]}
+            "hero_fx": ["h01"]}
     before = dict(shot)
     studio._fit(shot, 0.55077)
     assert shot["duration"] == before["duration"] and shot["pre"] == before["pre"]
@@ -2572,7 +2611,7 @@ def test_a_letterboxed_game_is_retimed_at_the_size_it_is_shown():
     seg = studio.Segment(index=0, clip="c.mp4", clip_mtime=0, width=1080, height=1920, fmt="vertical",
                          head=0, body=60, tail=0, src_start=0.0, pieces=[[0, 1, 0.5]], kill_at=0.5,
                          fx=[], hero_fx=[], camera="c00", grade="g01", vignette=False, caption="",
-                         beats=[], freeze=0.0, freeze_push=False, has_audio=True,
+                         beats=[], has_audio=True,
                          layout={"fit": "fit", "game": [0, 0, 1080, 1920]})
     assert studio.retime_height(seg) == 720
     seg.layout = {}

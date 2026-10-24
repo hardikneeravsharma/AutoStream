@@ -268,11 +268,13 @@ CUT_LENGTHS = [("q", "quick", 0.2), ("", "", 0.32), ("s", "slow", 0.55)]
 
 # --------------------------------------------------------------------- camera
 CAMERA = [
+    # "faint" is Clean's: about 1% over a shot, ChatGPT's cap for a camera that should
+    # read as still footage that breathes, not as a move (the review of Clean, 2026-10-24).
     ("c01", "push", "Push in", "Drifts steadily closer.", "amt", [
-        ("hair", "a hair", 0.04), ("soft", "a touch", 0.07), ("", "", 0.12),
+        ("faint", "barely", 0.012), ("hair", "a hair", 0.04), ("soft", "a touch", 0.07), ("", "", 0.12),
         ("far", "a long way", 0.20), ("deep", "deep", 0.30)]),
     ("c05", "pull", "Pull out", "Starts close and eases back.", "amt", [
-        ("hair", "a hair", 0.05), ("soft", "a touch", 0.08), ("", "", 0.14),
+        ("faint", "barely", 0.012), ("hair", "a hair", 0.05), ("soft", "a touch", 0.08), ("", "", 0.14),
         ("far", "a long way", 0.22), ("deep", "deep", 0.32)]),
     ("c08", "breathe", "Breathing zoom", "Eases in and out again.", "amt", [
         ("hair", "barely", 0.03), ("soft", "shallow", 0.05), ("", "", 0.07),
@@ -341,8 +343,6 @@ FADE_COLOURS = [("black", "black", "black"), ("white", "white", "white"),
 HERO = [
     ("h01", "double", "Double punch", "Two punches close together.", "gap",
      [("tight", "a tenth apart", 0.10), ("", "", 0.16), ("wide", "a quarter apart", 0.25)]),
-    ("h02", "freeze", "Freeze and push in", "Time stops while the camera pushes in.", "hold",
-     [("short", "briefly", 0.35), ("", "", 0.6), ("long", "a long beat", 1.0)]),
     ("h03", "spot", "Spotlight", "Everything but the centre drops away.", "amt",
      [("soft", "softly", 0.6), ("", "", 0.9), ("hard", "hard", 1.2)]),
 ]

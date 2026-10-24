@@ -73,19 +73,17 @@ def test_the_kill_plays_on_its_mark_at_every_speed(root, speed):
         assert at["src"] == pytest.approx(shot["kill"], abs=2e-3), (speed, row["index"])
 
 
-def test_a_freeze_holds_the_kill_and_what_follows_plays_late(root):
-    """k04 holds the kill's frame for 0.4 s and replaces footage rather than
-    lengthening the shot -- segment_command loops the frame at kill_at. The
-    preview pauses on it and then carries on from the next source second."""
+def test_an_old_reels_freeze_frame_no_longer_holds_the_kill(root):
+    """k04 (Freeze frame) was taken out on 2026-10-24. A reel saved with it
+    opens without it, and the preview plays straight through the kill at the
+    shot's own speed -- no held frame, nothing after it played late."""
     proj, derived = _project(root, fx=["k04"], speed="s00")
+    assert all("k04" not in s["fx"] for s in proj["shots"])
     row = derived["shots"][1]
-    assert row["freeze"] == pytest.approx(0.4)
+    assert "freeze" not in row
     kill = proj["shots"][1]["kill"]
-    held = studio.preview_at(derived, row["kill_reel"] + 0.2)
-    assert held == {"shot": 1, "src": pytest.approx(kill, abs=2e-3), "rate": 0.0}
-    d = min(0.1, (row["end"] - row["kill_reel"] - 0.4) / 2)
-    assert d > 0, "the shot ends inside its own freeze; pick another"
-    after = studio.preview_at(derived, row["kill_reel"] + 0.4 + d)
+    d = min(0.2, (row["end"] - row["kill_reel"]) / 2)
+    after = studio.preview_at(derived, row["kill_reel"] + d)
     assert after["shot"] == 1 and after["rate"] == 1.0
     assert after["src"] == pytest.approx(kill + d, abs=2e-3)
 

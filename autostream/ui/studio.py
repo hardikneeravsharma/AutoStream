@@ -259,7 +259,7 @@ STUDIO_HTML = r"""
                the video says it too, over its own top corner. -->
           <div class="studio-stale hide" id="studio-stale" aria-hidden="true"></div>
           <!-- THE HANDLE, WHERE IT WILL BE. Dragged on the picture itself,
-               because "a bit higher than the kill counter" is a place you
+               because "a bit higher than the minimap" is a place you
                point at, not a number. Shown while the Reel tab is open. -->
           <div class="ed-frame hide" id="studio-frame" aria-hidden="true">
             <span class="ed-handle" id="studio-handle-chip" title="Drag to move your handle"></span>
@@ -1037,7 +1037,7 @@ STUDIO_HTML = r"""
   <!-- CHOOSING AN EFFECT. A dialog and not a dropdown, because an effect is
        something you watch: every card plays its two-second example, the one
        under the pointer plays large beside the list, and a search box takes a
-       name or a code ("freeze", "K04"). A dropdown of "K04 · Freeze" lines, or
+       name or a code ("shake", "K02"). A dropdown of "K02 · Shake" lines, or
        a wall of forty checkboxes, asked people to pick from names they had
        never seen move. The inspector rebuilds its HTML on every edit, so the
        players live here, where they stay put. -->
@@ -1050,7 +1050,7 @@ STUDIO_HTML = r"""
       </div>
       <label class="sr-only" for="studio-fxp-q">Search by name or code</label>
       <input class="input studio-fxp-q" id="studio-fxp-q" type="search" autocomplete="off"
-             placeholder="Search by name or code, e.g. freeze or K04">
+             placeholder="Search by name or code, e.g. shake or K02">
     </div>
     <!-- THE EFFECT IS THE POINT, SO IT IS THE BIGGEST THING HERE. The list
          used to fill the dialog and the one being looked at sat in a 300 px
@@ -2572,7 +2572,8 @@ function studio_mkChip() {
     const v = got.verdict, label = {ok: 'Works', warn: 'Will work, but', bad: "Won't work"}[v.level];
     studio.mkVerdict = v;
     const act = {'pick-song': 'Choose another song above.', 'pick-clips': 'Go back and pick more clips.',
-                 'format:vertical': '', 'style:drop': 'Choose Build and drop above.'}[v.fix] || '';
+                 'format:vertical': '', 'style:drop': 'Choose Build and drop above.',
+                 'part:fit': 'Shorten the part under Music, or pick a longer build clip.'}[v.fix] || '';
     el.className = 'gd-chip ' + v.level;
     el.innerHTML = '<span class="gd-dot">' + label + '</span><p>' + esc(v.text) + (act ? ' ' + esc(act) : '') + '</p>' +
       (v.fix === 'format:vertical' ? '<button type="button" class="btn btn-primary btn-sm" data-act="studio-mk-chipfix">Use 9:16</button>' : '<span></span>');
@@ -2790,7 +2791,7 @@ function studio_sampleOwn(style) {
   return !!(sm.ready && sm.ready[style]);
 }
 
-/* Play the cards on screen, pause the rest: eleven loops decoding off screen is waste. */
+/* Play the cards on screen, pause the rest: eight loops decoding off screen is waste. */
 function studio_stylesWatch() {
   if (studio.styleObs) studio.styleObs.disconnect();
   const vids = document.querySelectorAll('#studio-styles video');
@@ -4099,7 +4100,7 @@ function studio_mkPartChanged(was) {
    THE PARTS BIN
    A reel is one pick from each drawer. Each pick is shown by a two-second
    example cut from this machine's own clips (clips/examples.py), so a choice
-   is made by watching rather than by reading "k04 Freeze" in a list. The
+   is made by watching rather than by reading "k02 Shake" in a list. The
    examples play only while they are on screen: sixty looping videos at once
    made the page stutter.
    ======================================================================= */
@@ -5213,7 +5214,7 @@ async function studio_verLoad() {
 /* What a render was made from, in a line. */
 function studio_verMade(m) {
   if (!m) return '';
-  const st = (studio.catalog ? studio.catalog.styles : []).find(s => s.key === m.style);
+  const st = (studio.catalog ? studio.catalog.styles : []).find(s => s.key === studio_styleNow(m.style));
   const bits = [st ? st.label : m.style, m.format === 'vertical' ? '9:16' : '16:9'];
   if (m.song) bits.push(m.song + (m.part ? ' ' + studio_partRange(m.part[0], m.part[1]) : ''));
   bits.push(m.shots + (m.shots === 1 ? ' shot' : ' shots'));
@@ -5717,7 +5718,10 @@ function studio_localDerive() {
                     anchored nothing -- found by a browser pressing the button,
                     which is the only place it could have been found. */
                  source_in: old.source_in, source_out: old.source_out,
-                 pieces: old.pieces || [[0, s.duration, 1]]};
+                 pieces: old.pieces || [[0, s.duration, 1]],
+                 /* Carried, not known: studio_pvInfo trusts only a row the
+                    server's derive made, and this says which these are. */
+                 estimate: true};
     t += s.duration;
     return row;
   });
@@ -5983,13 +5987,13 @@ function studio_pvUsed(ps, upto) {
    play the same seconds of the same clip. */
 function studio_pvKey(s) {
   return JSON.stringify([s.clip, s.kill, s.pre, s.duration, s.speed, s.stretch || null,
-                         s.kills || [], s.fx || [], !!s.hero, s.hero_fx || []]);
+                         s.kills || []]);
 }
 
-/* The server's account of shot i's footage: where it starts in the clip, its
-   speed map, and how long the kill's frame is held. Only the server's derive
-   carries them; while the page's own quick estimate stands in (a drag, the
-   quarter second before /check answers), a shot nothing has changed about
+/* The server's account of shot i's footage: where it starts in the clip and
+   its speed map. Only the server's derive knows them; while the page's own
+   quick estimate stands in (a drag, the quarter second before /check
+   answers -- its rows say `estimate`), a shot nothing has changed about
    keeps what the server said last time, and a shot being changed plays at
    real speed from where its kill puts it. */
 function studio_pvInfo(i) {
@@ -5997,13 +6001,13 @@ function studio_pvInfo(i) {
   const s = p && p.shots[i], r = d && d.shots[i];
   if (!s || !r) return null;
   const key = studio_pvKey(s);
-  if (r.source_in !== undefined && r.freeze !== undefined) {
-    const got = {source_in: r.source_in, pieces: r.pieces, freeze: r.freeze};
+  if (r.source_in !== undefined && r.pieces !== undefined && !r.estimate) {
+    const got = {source_in: r.source_in, pieces: r.pieces};
     studio.pv.info[key] = got;
     return got;
   }
   return studio.pv.info[key] ||
-    {source_in: Math.max(0, s.kill - s.pre), pieces: [[0, s.duration, 1]], freeze: 0};
+    {source_in: Math.max(0, s.kill - s.pre), pieces: [[0, s.duration, 1]]};
 }
 
 /* WHERE THE REEL IS AT REEL SECOND t: which shot, which second of its clip,
@@ -6018,13 +6022,8 @@ function studio_pvAt(t) {
   const r = rows[i], info = studio_pvInfo(i);
   const ps = info.pieces, dur = r.end - r.start;
   let u = t - r.start;
-  const pre = r.kill_reel - r.start, freeze = Number(info.freeze) || 0;
   const held = u >= dur;
   u = Math.min(u, dur);
-  if (freeze && u >= pre && u < pre + freeze) {
-    return {shot: i, src: info.source_in + studio_pvUsed(ps, pre), rate: 0};
-  }
-  if (freeze && u >= pre + freeze) u -= freeze;
   let rate = 0;
   if (!held) {
     const piece = ps.find(x => x[0] <= u && u < x[1]);
@@ -6393,7 +6392,7 @@ function studio_pvSync() {
      may be a different clip now, so nothing cued can be trusted. */
   const d = studio.derived, p = studio.project;
   const sig = JSON.stringify(d.shots.map((r, i) => [p.shots[i] && p.shots[i].clip, r.start, r.end,
-                                                     r.source_in, r.freeze])) + '|' + d.length;
+                                                     r.source_in])) + '|' + d.length;
   if (sig === pv.planSig) return;
   pv.planSig = sig;
   pv.shot = -1;
@@ -7764,7 +7763,7 @@ function studio_select(i) {
 /* ------------------------------------------------------------ inspector */
 
 /* ONE LINE PER CHOICE, AND A DIALOG TO MAKE IT. These used to be a dropdown
-   of "K04 · Freeze" lines and walls of forty checkboxes -- names nobody had
+   of "K02 · Shake" lines and walls of forty checkboxes -- names nobody had
    seen move. Now the inspector says what is chosen, and Change opens the
    picker (studio_fxpOpen), where every option plays. The button carries the
    old control's id, so its <label for> still names it. */
@@ -7957,7 +7956,7 @@ function studio_fxpDraw() {
     h += hits.length
       ? '<div class="bin-grid studio-fxp-grid" role="listbox" aria-label="' + (q ? 'Search results' : 'Every option') + '"' +
         ' aria-multiselectable="' + multi + '">' + hits.map(p => studio_fxpCard(p, !q)).join('') + '</div>'
-      : '<p class="muted studio-fxp-none">Nothing matches “' + esc(q) + '”. Try a shorter word, or a code like K04.</p>';
+      : '<p class="muted studio-fxp-none">Nothing matches “' + esc(q) + '”. Try a shorter word, or a code like K02.</p>';
   }
   host.innerHTML = h;
   host.scrollTop = top;
@@ -12117,7 +12116,7 @@ function studio_sgWire() {
 
 /* =====================================================================
    THE GUIDED MAKER: one question per screen.
-   The Make page asks everything at once -- eleven styles, six orders, three lengths, four dials
+   The Make page asks everything at once -- eight styles, six orders, three lengths, four dials
    -- and lets any style meet any song. A new player who touches nothing got the weakest pair.
    This asks one thing at a time, says after each whether the choices so far work together
    (clips/feasible.py: one verdict, one fix), and hands the answers to the Make page's own
@@ -12154,6 +12153,14 @@ studio.gd = {step: 0, style: '', auto: false, autoWhy: null, setup: '', quick: [
              /* the Clips step's browsers (studio_gdView), the clip playing over the guide, the one being trimmed */
              views: null, pv: null, editing: null};
 
+/* A STYLE KEY KEPT FROM BEFORE A STYLE WAS RETIRED means the style that replaced it -- the server's
+   own map (studio.RETIRED_STYLES), so the guide's memory and a render's history agree with what the
+   reel now opens as. */
+function studio_styleNow(k) {
+  const gone = (studio.catalog && studio.catalog.retired_styles) || {};
+  return Object.prototype.hasOwnProperty.call(gone, k) ? gone[k] : k;
+}
+
 /* WHAT WAS CHOSEN LAST TIME, remembered as intent -- the style, the shape, the framing -- and not as
    results: the song and the clips are checked again against what exists now, and the chip is asked
    again, so a remembered answer never skips the check. */
@@ -12168,7 +12175,8 @@ function studio_gdRecall() {
   try { m = JSON.parse(localStorage.getItem(GD_KEY) || 'null'); } catch (e) { m = null; }
   if (!m || typeof m !== 'object') return false;
   const gd = studio.gd, have = id => !!studio.clipIndex[id];
-  if (m.style && studio.catalog.styles.some(s => s.key === m.style)) gd.style = m.style;
+  const style = studio_styleNow(m.style);
+  if (style && studio.catalog.styles.some(s => s.key === style)) gd.style = style;
   if (m.fmt === 'vertical' || m.fmt === 'landscape') gd.fmt = m.fmt;
   if (['fit', 'near', 'zoom'].includes(m.fit)) gd.fit = m.fit;
   if (typeof m.lyrics === 'string' && (m.lyrics === 'off' || studio_gdLyricLooks().some(l => l.key === m.lyrics))) gd.lyrics = m.lyrics;
@@ -13239,6 +13247,12 @@ function studio_gdFix(fix) {
   }
   else if (fix === 'pick-clips') { studio_gdPickAll(true); gd.step = 2; }   /* adds; keeps what was chosen */
   else if (fix === 'format:vertical') { gd.fmt = 'vertical'; }
+  else if (fix === 'part:fit') {
+    /* THE PART THE SONG CAN CARRY: the seconds the plan really covers (the verdict's span), made the
+       player's own part -- so the reel is judged as what it is, not as a longer one it cannot be */
+    const sp = gd.verdict && gd.verdict.span, mk = studio.mk;
+    if (sp && sp[1] > sp[0]) { mk.mode = 'part'; mk.start = sp[0]; mk.end = sp[1]; mk.touched = true; }
+  }
   gd.verdict = null;
   studio_gdDraw();
 }

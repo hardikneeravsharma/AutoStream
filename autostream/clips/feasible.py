@@ -32,14 +32,20 @@ SHORT_BY = 0.15            # a reel under this share short of its part is not wo
 class Verdict:
     level: str
     text: str
-    fix: str = ""          # an action the page knows: "style:story", "pick-clips", "shorter", "format:vertical"
+    fix: str = ""          # an action the page knows: "style:drop", "pick-clips", "shorter", "format:vertical"
     fix_label: str = ""
     # The style could not plan itself here and the reel was planned the general way: a reel, but
     # not that style's. "Pick the style for me" never chooses a style on these terms.
     fallback: bool = False
+    # For fix "part:fit": the song seconds the plan actually covers, which the page makes the part.
+    span: tuple[float, float] | None = None
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+def _mmss(t: float) -> str:
+    return f"{int(t // 60)}:{t % 60:04.1f}"
 
 
 def judge(*, style, song: dict | None, clips: int, kills: int, has_setup: bool = True,
@@ -88,6 +94,27 @@ def judge(*, style, song: dict | None, clips: int, kills: int, has_setup: bool =
         if part and part[1] > part[0]:
             want = part[1] - part[0]
             if length < want * (1.0 - SHORT_BY) - 0.5:
+                # SAY WHERE THE REEL STOPS SHORT, NOT ONLY BY HOW MUCH. "About 16 more quick kills"
+                # was said of a Build and drop reel whose clips had already reached the last drum
+                # hit before the song's break, and whose build take was 4.5 s of a 15 s lead-in:
+                # adding clips -- or taking them away -- never moved it (JUST A BOY, 2026-10-24).
+                # More clips are the fix only when the plan says its clips ran out.
+                ran_out = any("clips ran out" in n for n in notes or [])
+                start = float(project.get("song_offset") or part[0])
+                end = start + length
+                span = (round(start, 3), round(end, 3))
+                if needs_drop and not ran_out and project.get("song_drop") is not None:
+                    drop = float(project["song_drop"])
+                    return Verdict(WARN, f"The song gives this reel {length:.0f} s, not {want:.0f}: the build clip "
+                                         f"covers {max(0.0, drop - start):.1f} s before the drop and the drums after "
+                                         f"it stop at {_mmss(end)}. More clips will not change that; a build clip "
+                                         f"that runs longer, or a part around another drop, would.",
+                                   "part:fit", f"Make the part {length:.0f} s", span=span)
+                if not ran_out and getattr(style, "key", "") == "montage":
+                    # Montage cuts its flurry on the drums the same way (director._after)
+                    return Verdict(WARN, f"The reel runs {length:.0f} s of the {want:.0f} s part: the song has no "
+                                         f"more hits for it after {_mmss(end)}, so more clips will not lengthen it.",
+                                   "part:fit", f"Make the part {length:.0f} s", span=span)
                 # HOW LONG A KILL RUNS IN THIS STYLE, from the plan itself: the middle shot, so a
                 # build-and-drop take of eight seconds does not count as a kill's length. It was
                 # 0.52 s for every style, which is Build and drop's quick kill and nobody else's.

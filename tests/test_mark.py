@@ -81,8 +81,7 @@ def _one_shot(tmp_path):
         index=0, clip=shot["clip"], clip_mtime=0, width=1920, height=1080,
         fmt="landscape", head=0, body=60, tail=0, src_start=0.0,
         pieces=((0.0, 2.0, 1.0),), kill_at=1.0, fx=(), hero_fx=(), camera="c00",
-        grade="g01", vignette=False, caption="", beats=(), freeze=0.0,
-        freeze_push=False, has_audio=False)
+        grade="g01", vignette=False, caption="", beats=(), has_audio=False)
     project = {"format": "landscape", "song": "", "song_offset": 0.0, "beat": 0.5,
                "intro": "i00", "outro": "e12", "grade": "g01", "vignette": False,
                "overlays": [], "handle": "", "music_db": 0.0, "game_db": 0.0,
