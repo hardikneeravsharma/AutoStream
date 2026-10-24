@@ -23,6 +23,12 @@ WHAT GOES WRONG, IN WORDS A PLAYER CAN ACT ON
         Failed to resolve ... getaddrinfo      no internet (DNS)
         Failed to establish a new connection   no internet (connection refused)
         Sign in to confirm your age            age-restricted
+        Sign in to confirm you're not a bot    YouTube wants a signed-in browser
+
+    The last is YouTube refusing a machine that is not signed in, often on a
+    shared or VPN address. yt-dlp can borrow a browser's YouTube login
+    (cookiesfrombrowser), so clips.song_cookies names the browser and the
+    message points at that setting.
 
     A playlist link is refused before yt-dlp sees it: given one, yt-dlp went
     and fetched an arbitrary song from the list.
@@ -102,6 +108,12 @@ def video_id(url: str) -> str:
 
 # Order matters: the first pattern that matches explains the error.
 _EXPLAIN: tuple[tuple[str, str], ...] = (
+    # First: reading the browser's login failed. Not "--cookies-from-browser",
+    # which yt-dlp's bot and age messages both suggest.
+    (r"cookies database|binarycookies|could not find .*cookies|failed to decrypt|keyring|keychain",
+     "AutoStream couldn't read the browser's YouTube login. Check that the browser chosen in Settings → Clips → "
+     "\"YouTube login for song links\" is the one you are signed in to YouTube with, or set it back to None. "
+     "On a Mac, Safari also needs AutoStream allowed under System Settings → Privacy & Security → Full Disk Access."),
     (r"getaddrinfo failed|Failed to resolve|NameResolutionError|Temporary failure in name resolution"
      r"|Failed to establish a new connection|WinError 1006[015]|WinError 10051|Network is unreachable"
      r"|timed out|Connection reset|Unable to connect to proxy|RemoteDisconnected",
@@ -110,8 +122,9 @@ _EXPLAIN: tuple[tuple[str, str], ...] = (
      "YouTube only plays this video to signed-in adults, so it can't be downloaded here. "
      "Choose another upload of the song."),
     (r"not a bot",
-     "YouTube is asking this computer to prove it isn't a bot, so it won't hand over the song right now. "
-     "Try again later, or download the song another way and use Choose a song…."),
+     "YouTube is asking this computer to prove it isn't a bot, so it won't hand over the song. "
+     "In Settings → Clips, set \"YouTube login for song links\" to the browser you are signed in to YouTube "
+     "with, then try again. Or download the song another way and use Choose a song…."),
     (r"members-only|Join this channel|requires payment|purchase",
      "This video is for paying members only, so it can't be downloaded. Choose another upload of the song."),
     (r"Private video|This video is private",
@@ -156,8 +169,8 @@ def _existing(vid: str) -> Path | None:
 class Fetch:
     """One download, run on its own thread, reporting as it goes."""
 
-    def __init__(self, url: str, vid: str):
-        self.url, self.vid = url, vid
+    def __init__(self, url: str, vid: str, browser: str = ""):
+        self.url, self.vid, self.browser = url, vid, browser
         self.id = int(time.time() * 1000)
         self._lock = threading.Lock()
         self._cancel = threading.Event()
@@ -247,6 +260,8 @@ class Fetch:
             # and the player gets explain()'s version instead.
             "logger": _Quiet(),
         }
+        if self.browser:
+            opts["cookiesfrombrowser"] = (self.browser,)
         self._set(state="reading")
         watch = f"https://www.youtube.com/watch?v={self.vid}"
         with ydl_factory(opts) as ydl:
@@ -335,12 +350,12 @@ class Runner:
         self._lock = threading.Lock()
         self.job: Fetch | None = None
 
-    def start(self, url: str) -> Fetch:
+    def start(self, url: str, browser: str = "") -> Fetch:
         vid = video_id(url)                                  # raises FetchError on a bad link
         with self._lock:
             if self.job is not None and self.job.running:
                 raise FetchError("A song is already downloading. Wait for it, or cancel it first.")
-            self.job = Fetch(url, vid)
+            self.job = Fetch(url, vid, browser)
             job = self.job
         threading.Thread(target=job.run, name="autostream-songfetch", daemon=True).start()
         return job
