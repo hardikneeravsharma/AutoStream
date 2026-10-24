@@ -283,19 +283,19 @@ def test_doubles_too_far_apart_for_a_run_still_fill_the_hits():
             assert not any(a < k < b for k in other), s
 
 
-def two_drops():
-    """Drops at 20 s and 50 s; the drums after the first stop at 27 s, after the second run on."""
+def two_drops(stop=27.0):
+    """Drops at 20 s and 50 s; the drums after the first stop at `stop`, after the second run on."""
     beats = [0.1 + i * BEAT for i in range(int(90 / BEAT))]
     shape = reel.Shape(path=Path("song.m4a"), seconds=90.0, bpm=174.0, phase=0.1, downbeat_pos=0,
                        drop=20.0, drums_in=8.0, beats=beats, drops=[20.0, 50.0])
-    hits = [b for b in beats if 8.0 <= b <= 27.0 or b >= 44.0]
+    hits = [b for b in beats if 8.0 <= b <= stop or b >= 44.0]
     layers = {"kick": rhythm.Layer("kick", hits, [0.9] * len(hits)),
               "snare": rhythm.Layer("snare", [b + BEAT / 2 for b in hits], [0.7] * len(hits)),
               "hats": rhythm.Layer("hats", [], [])}
     r = rhythm.Rhythm(seconds=90.0, beat=BEAT, phase=0.1, kick_phase=0.1, downbeat_pos=0, layers=layers,
                       cues=rhythm.cluster(layers), energy=[0.5] * 900,
-                      sections=[rhythm.Section(0.0, 20.0, "build", 0.6), rhythm.Section(20.0, 27.0, "drop", 0.9),
-                                rhythm.Section(27.0, 50.0, "verse", 0.3), rhythm.Section(50.0, 90.0, "drop", 0.9)])
+                      sections=[rhythm.Section(0.0, 20.0, "build", 0.6), rhythm.Section(20.0, stop, "drop", 0.9),
+                                rhythm.Section(stop, 50.0, "verse", 0.3), rhythm.Section(50.0, 90.0, "drop", 0.9)])
     return shape, r
 
 
@@ -312,6 +312,22 @@ def test_a_part_the_page_drew_moves_to_a_drop_its_plan_can_fill():
     assert loose.drop == pytest.approx(50.0)
     assert sum(s["duration"] for s in loose.shots) >= 30.0 * director.FILLS
     assert any("round the drop at 50.0 s" in n for n in loose.notes)
+
+
+def test_the_drop_a_loose_part_moves_to_does_not_change_with_the_clips():
+    """v1.83.2 kept the longest plan, so a clip more or less moved the reel between drops
+    and the chip read "1 more clip", "13 more", "This works", "1 more" as clips were
+    ticked. The song decides the drop; the clips only decide how much of it is filled,
+    and the count of hits still to fill only falls as clips are added."""
+    shape, r = two_drops(stop=33.0)          # round 20 s the song carries ~20 s of a 30 s part
+    part = (10.0, 40.0)
+    drops, short = set(), []
+    for n in (4, 8, 12, 16, 20, 30):
+        p = director.plan(library(singles=n, doubles=0), shape, r, seed=3, part=part, loose=True)
+        drops.add(round(p.drop, 2))
+        short.append(next((int(x.split("ran out ")[1].split()[0]) for x in p.notes if "ran out" in x), 0))
+    assert drops == {50.0}, drops
+    assert short == sorted(short, reverse=True) and short[0] > short[-1], short
 
 
 def test_an_untouched_part_is_a_length_not_an_end():
