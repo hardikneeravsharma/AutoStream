@@ -421,8 +421,65 @@ def take(b: Burst, drop_reel: float, lead_range: tuple[float, float] = TAKE_LEAD
     return out, begin
 
 
+FILLS = 0.85    # a loose part's plan this share of its length or more is full enough (feasible.SHORT_BY)
+
+
+def _length(p: Plan) -> float:
+    return sum(float(s["duration"]) for s in p.shots)
+
+
 def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None = None,
          seconds: float = REEL_SECONDS, seed: int = 0, build: str = "", loose: bool = False) -> Plan:
+    """`_plan`, and where the page drew the part itself, the drop its plan can fill.
+
+    THE PART WE PICK IS ONE OUR OWN PLAN CAN FILL. On JUST A BOY the page drew 30 s
+    round the first drop (0:18.1); the build take covered 4.5 s before it and the song's
+    hits after it stopped at 0:34.8, so every plan was 21 s, whatever was chosen, and
+    the guide said "about 16 more quick kills" (2026-10-24). A part the player drew is
+    theirs and is planned as drawn; a loose one is only a length and a place to start
+    looking, so the song's other drops are tried, the same part moved with each, and
+    the first that fills it -- else the longest -- is the reel.
+    """
+    first = None
+    try:
+        first = _plan(clips, shape, rhythm, part=part, seconds=seconds, seed=seed, build=build, loose=loose)
+    except ValueError:
+        if not (part and loose):
+            raise
+    if not (part and loose):
+        return first
+    want = float(part[1]) - float(part[0])
+    if first is not None and _length(first) >= want * FILLS:
+        return first
+    here = first.drop if first is not None else float(part[0])
+    drops = sorted(set([float(d) for d in (getattr(shape, "drops", None) or [])]
+                       + ([float(shape.drop)] if getattr(shape, "drop", None) else [])))
+    best = first
+    for d in sorted(drops, key=lambda d: (abs(d - here), d)):
+        if first is not None and abs(d - first.drop) < 0.05:
+            continue
+        lead = (first.drop - float(part[0])) if first is not None else want / 2
+        lo = max(0.0, d - lead)
+        moved = (lo, min(float(shape.seconds), lo + want))
+        try:
+            got = _plan(clips, shape, rhythm, part=moved, seconds=seconds, seed=seed, build=build, loose=True)
+        except ValueError:
+            continue
+        if best is None or _length(got) > _length(best) + 0.5:
+            best = got
+        if _length(got) >= want * FILLS:
+            break
+    if best is None:
+        raise ValueError("No drop in this song has room for a build before it.")
+    if best is not first:
+        best.notes.append(f"Planned round the drop at {best.drop:.1f} s: the part drawn round "
+                          + (f"{first.drop:.1f} s made only {_length(first):.0f} s of reel."
+                             if first is not None else "the first drop had no room for this build."))
+    return best
+
+
+def _plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None = None,
+          seconds: float = REEL_SECONDS, seed: int = 0, build: str = "", loose: bool = False) -> Plan:
     """Shots for a reel that builds on its best set-up into the drop, then cuts on the drums.
 
     `build` is the clip the player chose to build on: its best fight is the
