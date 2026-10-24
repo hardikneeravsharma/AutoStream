@@ -146,10 +146,25 @@ class Match:
     def kills(self) -> list[dict]:
         return [k for k in (self.data.get("kills") or []) if isinstance(k, dict)]
 
+    def my_kills(self, puuid: str) -> list[dict]:
+        """The kills this player made -- NOT every event naming them killer.
+
+        Riot also names the planter as the killer of a team-mate the spike
+        blew up, and of one who fell off the map. Those are not kills: the
+        record's own kill count leaves them out, and a "1 kill" clip of a
+        team-mate dying to the spike was cut from one. Measured on all 137
+        cached matches: in each of the 9 where the events and the count
+        differed, removing the own-team victims made them agree exactly.
+        """
+        team = {str(p.get("subject")): str(p.get("teamId") or "")
+                for p in (self.data.get("players") or [])}
+        mine = team.get(puuid, "")
+        return [k for k in self.kills() if k.get("killer") == puuid
+                and not (mine and team.get(str(k.get("victim"))) == mine)]
+
     def my_kill_times(self, puuid: str) -> list[float]:
         """Seconds from match start, for kills by this player."""
-        out = [float(k.get("gameTime") or 0) / 1000.0
-               for k in self.kills() if k.get("killer") == puuid]
+        out = [float(k.get("gameTime") or 0) / 1000.0 for k in self.my_kills(puuid)]
         return sorted(t for t in out if t > 0)
 
 
@@ -582,6 +597,28 @@ def merge_kills(detected: list[dict], recorded: list[dict],
     return merged, len(outside)
 
 
+# How long before the record's clock a match's "MATCH FOUND" screen can be up.
+PREGAME_SLACK = 15.0
+
+
+def pregame(match: Match, started: float, span: tuple[float, float]) -> tuple[float, float]:
+    """From MATCH FOUND to the first round: agent select and loading, where
+    nobody can be killed.
+
+    The record's clock is when the match was MADE -- the moment MATCH FOUND
+    comes up -- and the span starts at its game time 0, about 106 s later.
+    The emblem reader took MATCH FOUND's red banner for a kill, at the start
+    of each of the three matches after the first in one recording, and each
+    became a "1 kill" clip of the queue screen.
+    """
+    return (match.started - started - PREGAME_SLACK, span[0])
+
+
+def in_pregame(kill: dict, found: list[dict]) -> bool:
+    t = float(kill.get("time") or 0.0)
+    return any(lo <= t < hi for lo, hi in (g.get("pregame") or (0.0, 0.0) for g in found))
+
+
 def merge_matches(detected: list[dict], found: list[dict]) -> tuple[list[dict], list, list, int]:
     """Every lined-up record in a recording, merged over what the detector read.
 
@@ -594,6 +631,7 @@ def merge_matches(detected: list[dict], found: list[dict]) -> tuple[list[dict], 
     deathmatch has no rounds, so its kills are loose, and the competitive
     match is still cut round by round.
     """
+    detected = [k for k in detected if not in_pregame(k, found)]
     kills = list(detected)
     for g in found:
         kills, _ = merge_kills(kills, g["kills"], g["span"])
@@ -623,9 +661,7 @@ def rounds_usable(rounds: list) -> bool:
 def kills_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list[dict]:
     """Every kill by this player, on the recording's timeline."""
     out = []
-    for k in match.kills():
-        if k.get("killer") != puuid:
-            continue
+    for k in match.my_kills(puuid):
         at = sync.to_vod(float(k.get("gameTime") or 0) / 1000.0)
         if at <= 0:
             continue
@@ -681,6 +717,7 @@ def rounds_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list:
              for p in (match.data.get("players") or [])}
     me = teams.get(puuid, "")
     results = match.data.get("roundResults") or []
+    real = {id(k) for k in match.my_kills(puuid)}
     by_round: dict[int, list[dict]] = {}
     for k in match.kills():
         by_round.setdefault(int(k.get("round") or 0), []).append(k)
@@ -749,7 +786,7 @@ def rounds_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list:
         # (A quiet round placed above against one of those lands on 0, 0.)
         if first < 0 or last <= 0:
             continue
-        mine_k = [k for k in kills if k.get("killer") == puuid]
+        mine_k = [k for k in kills if id(k) in real]      # see Match.my_kills
         my_deaths = sum(1 for k in kills if k.get("victim") == puuid)
 
         rd = rounds_mod.Round(
