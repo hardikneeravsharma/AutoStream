@@ -133,6 +133,8 @@ class Plan:
     marks: list[float]                 # each shot's kill, song seconds
     kills: list[float] = field(default_factory=list)   # every kill shown, song seconds
     notes: list[str] = field(default_factory=list)
+    # how long the reel could run with clips enough for every hit: the song's limit here, not the clips'
+    reach: float = 0.0
 
 
 def bursts(clip: dict) -> list[Burst]:
@@ -437,8 +439,15 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
     hits after it stopped at 0:34.8, so every plan was 21 s, whatever was chosen, and
     the guide said "about 16 more quick kills" (2026-10-24). A part the player drew is
     theirs and is planned as drawn; a loose one is only a length and a place to start
-    looking, so the song's other drops are tried, the same part moved with each, and
-    the first that fills it -- else the longest -- is the reel.
+    looking, so the song's other drops are tried, the same part moved with each.
+
+    THE DROP IS CHOSEN BY THE SONG, NEVER BY HOW MANY CLIPS THERE ARE. v1.83.2 kept the
+    longest plan, so one clip more or less moved the reel between drops and the chip
+    went "1 more clip", "13 more", "This works", "1 more" as clips were ticked (JUST A
+    BOY: 22 clips planned round 0:18 three hits short of a song that ends there; 24
+    round 1:54, sixteen short). Each drop is judged by its `reach` -- how long the reel
+    could run there with a clip for every hit -- and the first, nearest the drawn one,
+    whose reach fills the part is the reel, whatever the clips; else the furthest reach.
     """
     first = None
     try:
@@ -449,7 +458,7 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
     if not (part and loose):
         return first
     want = float(part[1]) - float(part[0])
-    if first is not None and _length(first) >= want * FILLS:
+    if first is not None and first.reach >= want * FILLS:
         return first
     here = first.drop if first is not None else float(part[0])
     drops = sorted(set([float(d) for d in (getattr(shape, "drops", None) or [])]
@@ -465,16 +474,17 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
             got = _plan(clips, shape, rhythm, part=moved, seconds=seconds, seed=seed, build=build, loose=True)
         except ValueError:
             continue
-        if best is None or _length(got) > _length(best) + 0.5:
+        if got.reach >= want * FILLS:
             best = got
-        if _length(got) >= want * FILLS:
             break
+        if best is None or got.reach > best.reach + 0.5:
+            best = got
     if best is None:
         raise ValueError("No drop in this song has room for a build before it.")
     if best is not first:
-        best.notes.append(f"Planned round the drop at {best.drop:.1f} s: the part drawn round "
-                          + (f"{first.drop:.1f} s made only {_length(first):.0f} s of reel."
-                             if first is not None else "the first drop had no room for this build."))
+        best.notes.append(f"Planned round the drop at {best.drop:.1f} s: round "
+                          + (f"{first.drop:.1f} s the song has hits for only {first.reach:.0f} s of reel."
+                             if first is not None else "the first drop there is no room for this build."))
     return best
 
 
@@ -748,7 +758,8 @@ def _after(all_b, clips_by_path, setups, best, ks, take_shots, D, start, end, ga
             grow = max(0.0, min(want, room))
             last["duration"] = round(last["duration"] + grow, 5)
     return Plan(part=(round(start, 4), round(start + sum(s["duration"] for s in shots), 4)), drop=D,
-                shots=shots, marks=marks, notes=notes, kills=kills)
+                shots=shots, marks=marks, notes=notes, kills=kills,
+                reach=round(T[-1] + TAIL - start, 3))
 
 
 # ------------------------------------------------------------------ montage
