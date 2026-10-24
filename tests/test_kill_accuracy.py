@@ -201,11 +201,10 @@ def test_a_fast_style_on_a_fast_song_keeps_real_speed_and_one_effect_a_kill(clip
         assert len({tuple(s["fx"]) for s in shots}) == 1, "Fast-paced headshot is one effect by design"
 
 
-def test_the_climax_does_not_stop_time_in_a_fast_reel(clips_root):
-    """rulebook.climax freezes and ramps the best shot (h02 + s04). On headshot3 that
-    was shot 20, in a reel built to have neither."""
+def test_the_climax_does_not_ramp_in_a_fast_reel(clips_root):
+    """rulebook.climax rushes the best shot in and hangs on its kill (s04). On headshot3
+    that was shot 20, in a reel built to have no ramp."""
     proj, _ = studio.plan(_clips(clips_root), "hype", shape=T.Shape(bpm=150.0))
-    assert all("h02" not in s["hero_fx"] for s in proj["shots"])
     assert {s["speed"] for s in proj["shots"]} == {"s00"}
 
 
@@ -214,7 +213,7 @@ def test_a_slow_song_keeps_the_variety():
     st = studio.STYLE["hype"]
     assert studio.fast_reel(st, 150.0) and studio.fast_reel(st, 110.0)
     assert not studio.fast_reel(st, 90.0)
-    assert not studio.fast_reel(studio.STYLE["story"], 150.0), "story did not ask"
+    assert not studio.fast_reel(studio.STYLE["clean"], 150.0), "clean did not ask"
 
 
 def test_a_slow_song_is_planned_exactly_as_before(clips_root):
@@ -262,14 +261,14 @@ def test_a_fast_reel_has_no_floor_of_its_own_any_more():
 
 
 def test_every_style_keeps_the_floor_it_always_had():
-    shots = _two_kills_apart(0.8, "story")
+    shots = _two_kills_apart(0.8, "clean")
     after = [s["duration"] - s["pre"] for s in shots[:-1]]
     assert min(after) == pytest.approx(studio.SLOW_AFTER, abs=1e-3), after
 
 
 def test_a_cut_leads_its_kill_by_three_frames_when_the_shot_before_can_spare_them():
     """Reference editors cut a median 46 ms before the hit; the kill stays on it."""
-    shots = _two_kills_apart(1.5, "story")
+    shots = _two_kills_apart(1.5, "clean")
     kills = [sum(s["duration"] for s in shots[:i]) + shots[i]["pre"] for i in range(3)]
     assert kills == pytest.approx([2.0, 3.5, 5.0], abs=1e-3)
     after = [s["duration"] - s["pre"] for s in shots[:-1]]

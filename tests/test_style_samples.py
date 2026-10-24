@@ -33,9 +33,9 @@ def test_ready_lists_only_finished_non_empty_samples(tmp_path):
     d = ss.folder(tmp_path, key)
     d.mkdir(parents=True)
     (d / "hype.mp4").write_bytes(b"data")
-    (d / "story.mp4").write_bytes(b"")
-    assert ss.ready(tmp_path, key, ["hype", "story", "chaos"]) == {"hype": "hype.mp4"}
-    assert ss.path_for(tmp_path, key, "story") is None
+    (d / "clean.mp4").write_bytes(b"")
+    assert ss.ready(tmp_path, key, ["hype", "clean", "chaos"]) == {"hype": "hype.mp4"}
+    assert ss.path_for(tmp_path, key, "clean") is None
 
 
 def test_runner_with_nothing_missing_starts_nothing(tmp_path):

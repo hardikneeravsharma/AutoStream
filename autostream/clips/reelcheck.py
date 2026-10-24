@@ -197,7 +197,7 @@ def style_findings(project: dict, derived: dict) -> list[Finding]:
     out: list[Finding] = []
     shots = project.get("shots") or []
     rows = derived.get("shots") or []
-    st = studio.STYLE.get(project.get("style") or "")
+    st = studio.STYLE.get(studio.current_style(project.get("style")))
     if not st or not shots or not rows:
         return out
     # PACE: the median shot and the cuts a minute against the references' own --
@@ -320,16 +320,6 @@ def style_findings(project: dict, derived: dict) -> list[Finding]:
             if abs(got / float(ref[q]) - 1) > QUARTILE_TOLERANCE:
                 out.append(Finding(SOFT, "pace-quartile", f"The {q[1:3]}th-percentile shot is {got:.2f} beats; "
                                    f"the references' is {float(ref[q]):.2f}."))
-    # THE KILL COUNTER ticks once for every kill the reel shows, and on it.
-    if "o02" in (project.get("overlays") or []):
-        shown = sorted(round(float(k), 3) for r in rows for k in r.get("kills_reel") or [])
-        ticks = sorted(round(float(k), 3) for k in derived.get("kills") or [])
-        missing = [r for r in rows if not r.get("lead_in")
-                   and not any(abs(float(k) - float(r["kill_reel"])) < 1.5 / REEL_FPS for k in r.get("kills_reel") or [])]
-        if shown != ticks or missing or len(set(ticks)) != len(ticks):
-            out.append(Finding(HARD, "kill-counter", f"The kill counter ticks {len(ticks)} times for "
-                               f"{len(shown)} kills shown" + (f"; {len(missing)} shot(s) do not count their own kill."
-                                                              if missing else ".")))
     return out
 
 

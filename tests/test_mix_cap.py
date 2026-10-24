@@ -33,7 +33,7 @@ def _mix(proj):
     return trans, kills
 
 
-@pytest.mark.parametrize("style", ["montage", "velocity", "story", "chaos", "retro", "cinematic"])
+@pytest.mark.parametrize("style", ["montage", "velocity", "clean", "chaos", "cinematic"])
 def test_every_style_keeps_to_two_transitions_and_two_kill_effects(clips_root, style):
     proj, _ = studio.plan(T._clips(clips_root), style, shape=T.Shape(bpm=100.0))
     trans, kills = _mix(proj)
