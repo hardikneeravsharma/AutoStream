@@ -92,6 +92,14 @@ def test_the_launcher_ignores_a_finder_process_number():
     assert "~/Library/Logs/AutoStream" in src
 
 
+def test_the_frozen_app_trusts_the_certificates_it_ships():
+    # Without this every HTTPS call from the .app fails CERTIFICATE_VERIFY_FAILED:
+    # the bundled OpenSSL looks in the build machine's python.org folder.
+    assert 'collect_data_files("certifi")' in SPEC.read_text(encoding="utf-8")
+    src = LAUNCHER.read_text(encoding="utf-8")
+    assert '"SSL_CERT_FILE"' in src and '"certifi", "cacert.pem"' in src
+
+
 def test_mac_requirements_carry_nothing_windows_or_streaming():
     reqs = [ln.split("#")[0].strip().lower() for ln in REQS.read_text().splitlines()]
     names = {re.split(r"[<>=;\[ ]", r, maxsplit=1)[0] for r in reqs if r}
