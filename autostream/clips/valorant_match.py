@@ -66,10 +66,17 @@ _explained: bool | None = None       # read once, then trusted
 # client has closed. See paths.MATCHES_DIR.
 CACHE = paths.MATCHES_DIR
 
-# A record is only for this recording if the match started inside it. Slack at
-# each end for the gap between OBS being told to record and the file's first
-# frame, and for a match that was already running when recording began.
+# A record is for this recording if the match was being played during it.
+# Slack at each end for the gap between OBS being told to record and the
+# file's first frame.
 EDGE_SLACK = 90.0
+
+# How much of a match must fall inside the recording for the record to count.
+# A match that STARTED before the file used to count only within EDGE_SLACK of
+# it: a Competitive game recorded from 2-2 -- the file began ten minutes in --
+# was left out, and so was every ranked kill in the first 26 minutes of the
+# video. The floor keeps out a match whose end screen is all the file holds.
+MIN_OVERLAP = 60.0
 
 # How far the fingerprint may disagree with the wall clock before the pair is
 # treated as suspect rather than as a refinement.
@@ -246,6 +253,10 @@ def listing(started: float = 0.0, seconds: float = 0.0,
         row = summary(m)
         if m.id in here:
             row["at"] = max(0.0, m.started - started)
+            # Where it ENDS in the file, said outright: for a match already
+            # running when the file began, at + seconds runs on past its end
+            # and into whatever was played next.
+            row["until"] = m.started - started + max(m.seconds, 0.0)
         out.append(row)
     out.sort(key=lambda r: -r["started"])
     return out
@@ -418,12 +429,20 @@ def puuid_of(match: Match, name_hint: str = "") -> str:
 
 def for_recording(started: float, seconds: float,
                   matches: list[Match] | None = None) -> list[Match]:
-    """Cached matches that began inside this recording, oldest first."""
+    """Cached matches played during this recording, oldest first -- including
+    one already running when it began (see MIN_OVERLAP)."""
     if started <= 0:
         return []
     lo, hi = started - EDGE_SLACK, started + max(0.0, seconds) + EDGE_SLACK
+
+    def inside(m: Match) -> bool:
+        if lo <= m.started <= hi:
+            return True
+        # Began before the file: counts if enough of it was still to come.
+        return m.started < lo and m.started + max(m.seconds, 0.0) >= started + MIN_OVERLAP
+
     got = [m for m in (matches if matches is not None else cached())
-           if m.started and lo <= m.started <= hi]
+           if m.started and inside(m)]
     got.sort(key=lambda m: m.started)
     return got
 
@@ -724,6 +743,12 @@ def rounds_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list:
         if n not in spans:
             continue          # nothing anywhere to place this round against
         first, last = spans[n]
+        # Played before the file began -- a match already running when the
+        # recording started. Not even partly on screen to cut, and a round
+        # half on screen would be labelled with kills the video does not show.
+        # (A quiet round placed above against one of those lands on 0, 0.)
+        if first < 0 or last <= 0:
+            continue
         mine_k = [k for k in kills if k.get("killer") == puuid]
         my_deaths = sum(1 for k in kills if k.get("victim") == puuid)
 

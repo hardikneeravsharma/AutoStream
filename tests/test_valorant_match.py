@@ -108,6 +108,35 @@ def test_slack_covers_obs_starting_a_moment_late():
     assert vm.for_recording(m.started + 30, 600.0, [m]) == [m]
 
 
+def test_a_match_already_running_when_the_file_began_is_still_its_match():
+    """FROM THE APP: a Competitive game on Plummet was recorded from 2-2 -- the
+    file began ten minutes into it -- and was left out, because only a match
+    that STARTED inside the recording counted. Its 26 minutes went unclipped."""
+    m = _m()                                            # 600 s long
+    assert vm.for_recording(m.started + 300, 1800.0, [m]) == [m]
+    # Its end screen alone is not the match.
+    assert vm.for_recording(m.started + 570, 1800.0, [m]) == []
+
+
+def test_rounds_played_before_the_file_began_are_not_cut():
+    """Round one is over before the recording starts; round two is on it."""
+    m = _m()
+    sync = vm.align(m, ME, m.started + 60, [])
+    rds = vm.rounds_from(m, ME, sync)
+    assert [r.number for r in rds] == [2]
+    assert rds[0].started >= 0 and all(t > 0 for t in rds[0].kill_times)
+    assert all(k["time"] > 0 for k in vm.kills_from(m, ME, sync))
+
+
+def test_the_listing_says_where_an_already_running_match_ends(monkeypatch):
+    """The page clips [at, at + seconds]; for a match that began before the
+    file that runs past its end and into the next match."""
+    m = _m()
+    monkeypatch.setattr(vm, "cached", lambda: [m])
+    row = vm.listing(started=m.started + 300, seconds=1800.0)[0]
+    assert row["at"] == 0.0 and row["until"] == pytest.approx(300.0)
+
+
 # ------------------------------------------------------------ lining it up
 
 def test_the_clock_alone_lines_it_up_when_there_is_nothing_to_fingerprint():
