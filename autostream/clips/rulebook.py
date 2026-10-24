@@ -1091,7 +1091,7 @@ def transitions(shots: list[dict], starts: list[int], *, first_kill_beat: int,
     pool = set(order_)
     soft = [t for t in order_ if t not in ("t01", "t02")]
     # A style without a zoom or a whip marks phrases and places with its own
-    # soft transitions -- Story's crossfades and dips, not a hard cut forever.
+    # soft transitions -- Clean's crossfades and dips, not a hard cut forever.
     zoom = "t05" if "t05" in pool else ("t02" if "t02" in pool else (soft[-1] if soft else None))
     whip = "t06" if "t06" in pool else (soft[0] if soft else None)
     bar = 4 * div

@@ -199,7 +199,7 @@ def test_how_long_keep_every_kill_and_best_order_reach_the_plan_and_a_new_style_
     assert all(x["in"] for x in d["selection"])
 
     # --- a new style re-plans on the same part, with the same choices
-    appd.replan_as(pg, "story")
+    appd.replan_as(pg, "clean")
     sent = pg.evaluate("window.__plans")[-1]
     assert sent["part_start"] == pytest.approx(part[0], abs=0.01), "a new style dropped the part"
     assert sent["part_end"] == pytest.approx(part[1], abs=0.01), "a new style dropped the part"

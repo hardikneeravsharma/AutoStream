@@ -459,7 +459,7 @@ def test_headshots_only_is_offered_for_read_clips_and_keeps_only_headshots(ui, a
     assert row.is_visible(), "headshots only is not offered for clips that carry a reading"
     assert "2 of 3 kills were headshots" in row.inner_text()
     page.check("#studio-hs-only")
-    page.click('[data-act="studio-style"][data-style="story"]')
+    page.click('[data-act="studio-style"][data-style="clean"]')
     page.fill("#studio-name", "Headshots")
     page.click('[data-act="studio-build"]')
     page.wait_for_selector("#studio-pane-timeline:not(.hide)", timeout=60_000)
@@ -570,7 +570,7 @@ def test_a_reel_is_made_edited_and_rendered_again_in_the_studio(ui, app):
 
     _studio_run(app, "2026-09-14_1200_VALORANT", 3)
     page = ui.page
-    _studio_build(page, "12:00", 2, "story", "UI check")
+    _studio_build(page, "12:00", 2, "clean", "UI check")
 
     def rendered(what):
         _studio_rendered(page, what)
@@ -619,7 +619,7 @@ def test_an_edit_plays_at_once_and_renders_itself_in_the_background(ui, app):
 
     _studio_run(app, "2026-09-16_1415_VALORANT", 3)
     page = ui.page
-    _studio_build(page, "14:15", 3, "story", "Instant preview")
+    _studio_build(page, "14:15", 3, "clean", "Instant preview")
     _studio_rendered(page, "the first render")
     page.wait_for_function("!studio.pv.on && studio.project.shots.length === 3", timeout=30_000)
     before = page.evaluate("({len: studio.derived.length, clips: studio.project.shots.map(s => s.clip),"
@@ -712,7 +712,7 @@ def test_the_preview_has_its_own_play_bar(ui, app):
     app's own volume and speed, which the preview used to write over."""
     _studio_run(app, "2026-09-16_1445_VALORANT", 3)
     page = ui.page
-    _studio_build(page, "14:45", 3, "story", "Preview bar")
+    _studio_build(page, "14:45", 3, "clean", "Preview bar")
     _studio_rendered(page, "the first render")
     page.wait_for_function("!studio.pv.on && studio.project.shots.length === 3", timeout=30_000)
     # Hold the background render off, so the preview stays up to be pressed.
@@ -808,7 +808,7 @@ def test_the_preview_draws_the_lyrics_and_the_blurred_fit(ui, app, tmp_path):
     blurred copy of itself, as the render does."""
     _studio_run(app, "2026-09-16_1505_VALORANT", 3)
     page = ui.page
-    _studio_build(page, "15:05", 3, "story", "Preview looks")
+    _studio_build(page, "15:05", 3, "clean", "Preview looks")
     _studio_rendered(page, "the first render")
     page.wait_for_function("!studio.pv.on && studio.project.shots.length === 3", timeout=30_000)
     page.evaluate("studio.auto.idleMs = 3600000")       # an hour: keep the preview up
@@ -892,7 +892,7 @@ def test_the_effect_picker_shows_the_effect_large_in_the_middle(ui, app):
     # Longer than 4 s: examples are cut only from clips with room either side of the kill.
     _studio_run(app, "2026-09-16_1520_VALORANT", 3, seconds=6.0)
     page = ui.page
-    _studio_build(page, "15:20", 2, "story", "Picker stage")
+    _studio_build(page, "15:20", 2, "clean", "Picker stage")
     _studio_rendered(page, "the first render")
     page.locator(".st-shot").nth(1).click()
     page.click("#studio-f-speed")
@@ -960,7 +960,7 @@ def test_no_background_render_starts_while_a_render_you_started_runs(ui, app):
 
     _studio_run(app, "2026-09-16_1530_VALORANT", 3)
     page = ui.page
-    _studio_build(page, "15:30", 3, "story", "No second encode")
+    _studio_build(page, "15:30", 3, "clean", "No second encode")
     _studio_rendered(page, "the first render")
     sent = []
     page.on("request", lambda r: sent.append((time.time() * 1000, r.post_data or ""))
@@ -1024,7 +1024,7 @@ def test_the_effect_picker_searches_previews_remembers_and_applies(ui, app):
     what is not rendered yet."""
     _studio_run(app, "2026-09-14_1200_VALORANT", 3)
     page = ui.page
-    _studio_build(page, "12:00", 2, "story", "Picker check")
+    _studio_build(page, "12:00", 2, "clean", "Picker check")
     # Building starts a render; let it finish, or the next test's build finds
     # the studio busy and never gets a job of its own.
     _studio_rendered(page, "first render")
@@ -1097,7 +1097,7 @@ def test_the_change_count_is_what_differs_from_the_video_not_clicks(ui, app):
     badge over the player -- the three places that say it."""
     _studio_run(app, "2026-09-14_1200_VALORANT", 3)
     page = ui.page
-    _studio_build(page, "12:00", 2, "story", "Count check")
+    _studio_build(page, "12:00", 2, "clean", "Count check")
     _studio_rendered(page, "first render")
 
     def says(n: int) -> None:

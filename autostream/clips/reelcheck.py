@@ -193,7 +193,7 @@ def style_findings(project: dict, derived: dict) -> list[Finding]:
     out: list[Finding] = []
     shots = project.get("shots") or []
     rows = derived.get("shots") or []
-    st = studio.STYLE.get(project.get("style") or "")
+    st = studio.STYLE.get(studio.current_style(project.get("style")))
     if not st or not shots or not rows:
         return out
     # PACE: the median shot and the cuts a minute against the references' own --

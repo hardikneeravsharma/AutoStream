@@ -19,7 +19,7 @@ from autostream.clips.rulebook import Moment
 
 from test_studio import Shape, _clips, _run
 
-GENERAL = ["hype", "velocity", "chaos", "short", "story", "clean", "cinematic", "retro"]
+GENERAL = ["hype", "velocity", "chaos", "clean", "cinematic"]
 TEMPOS = [90.0, 125.0, 174.0]
 HOLE = (50.0, 56.5)            # a breakdown: no hit at all for 6.5 s
 
@@ -285,7 +285,7 @@ def test_each_style_reads_down_to_its_own_floor():
     for key in ("hype", "chaos", "velocity"):
         st = studio.STYLE[key]
         assert st.min_run + st.min_after <= 0.6, key
-    assert studio.STYLE["story"].min_run + studio.STYLE["story"].min_after == pytest.approx(
+    assert studio.STYLE["clean"].min_run + studio.STYLE["clean"].min_after == pytest.approx(
         rulebook.MIN_KILL_GAP_SECONDS)
 
 
@@ -396,7 +396,7 @@ def test_the_kill_counter_ticks_once_for_every_kill_shown(pile):
 
 # ---------------------------------------------------------------- round 3 (ChatGPT's third review)
 
-@pytest.mark.parametrize("style", ["hype", "velocity", "clean", "story"])
+@pytest.mark.parametrize("style", ["hype", "velocity", "clean", "cinematic"])
 def test_every_shot_goes_out_in_the_reels_grade_by_id(pile, style):
     """The grade is checked by id on what each shot's render is handed, not by its colour."""
     proj, notes, got, derived, found = _planned(pile, style, 125.0)

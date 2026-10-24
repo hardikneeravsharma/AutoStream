@@ -12,7 +12,7 @@ WHY THIS EXISTS
     samples is the style.
 
 STOCK SAMPLES SHIP WITH THE APP
-    Cutting all eleven takes several minutes, and until somebody pressed the button the
+    Cutting all eight takes several minutes, and until somebody pressed the button the
     page was a wall of "Not shown yet" -- on the one screen where a look is chosen. So a
     set cut from the maintainer's own VALORANT clips ships in clips/stock_samples (made by
     scripts/make_stock_samples.py), and every card plays one from the moment the page

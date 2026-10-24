@@ -32,7 +32,7 @@ SHORT_BY = 0.15            # a reel under this share short of its part is not wo
 class Verdict:
     level: str
     text: str
-    fix: str = ""          # an action the page knows: "style:story", "pick-clips", "shorter", "format:vertical"
+    fix: str = ""          # an action the page knows: "style:drop", "pick-clips", "shorter", "format:vertical"
     fix_label: str = ""
     # The style could not plan itself here and the reel was planned the general way: a reel, but
     # not that style's. "Pick the style for me" never chooses a style on these terms.

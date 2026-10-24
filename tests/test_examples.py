@@ -278,7 +278,7 @@ def test_a_style_is_already_a_template():
 
 
 def test_a_template_swaps_the_picks_and_nothing_else():
-    base = studio.STYLE["story"]
+    base = studio.STYLE["clean"]
     got = studio.templated(base, {"kill": "k04", "transition": "t05", "camera": "c04"})
     assert got.kill == ("k04",) and got.cuts == ("t05",)
     assert got.camera == "c04" and got.camera_pool == ("c04",)
@@ -322,7 +322,7 @@ def test_the_reel_is_built_from_the_template(root):
              "camera": "c04", "speed": "s02", "overlay": "o01"}
     # A fixed seed: the effect mix is seeded from the clip ids, which are
     # hashes of paths, and the paths are a new temp directory every run.
-    proj, _notes = studio.plan(_clips(r), "story", shape=Shape(bpm=120.0), template=picks, seed=7)
+    proj, _notes = studio.plan(_clips(r), "clean", shape=Shape(bpm=120.0), template=picks, seed=7)
     assert proj["intro"] == "i08" and proj["grade"] == "g08"
     assert proj["overlays"] == ["o01"]
     assert all(s["camera"] == "c04" for s in proj["shots"])
@@ -331,8 +331,8 @@ def test_the_reel_is_built_from_the_template(root):
     assert fx.count("k06") >= max(fx.count(x) for x in set(fx)), f"the dealt kill should lead: {fx}"
     assert all(a != b for a, b in zip(fx, fx[1:])), f"two kills running share an effect: {fx}"
     # ...and the same clips without a template keep the style's own picks
-    plain, _ = studio.plan(_clips(r), "story", shape=Shape(bpm=120.0), seed=7)
-    assert plain["intro"] == studio.STYLE["story"].intro
+    plain, _ = studio.plan(_clips(r), "clean", shape=Shape(bpm=120.0), seed=7)
+    assert plain["intro"] == studio.STYLE["clean"].intro
     assert "k06" not in [s["fx"][0] for s in plain["shots"]]
 
 

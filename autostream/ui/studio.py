@@ -2790,7 +2790,7 @@ function studio_sampleOwn(style) {
   return !!(sm.ready && sm.ready[style]);
 }
 
-/* Play the cards on screen, pause the rest: eleven loops decoding off screen is waste. */
+/* Play the cards on screen, pause the rest: eight loops decoding off screen is waste. */
 function studio_stylesWatch() {
   if (studio.styleObs) studio.styleObs.disconnect();
   const vids = document.querySelectorAll('#studio-styles video');
@@ -5213,7 +5213,7 @@ async function studio_verLoad() {
 /* What a render was made from, in a line. */
 function studio_verMade(m) {
   if (!m) return '';
-  const st = (studio.catalog ? studio.catalog.styles : []).find(s => s.key === m.style);
+  const st = (studio.catalog ? studio.catalog.styles : []).find(s => s.key === studio_styleNow(m.style));
   const bits = [st ? st.label : m.style, m.format === 'vertical' ? '9:16' : '16:9'];
   if (m.song) bits.push(m.song + (m.part ? ' ' + studio_partRange(m.part[0], m.part[1]) : ''));
   bits.push(m.shots + (m.shots === 1 ? ' shot' : ' shots'));
@@ -12117,7 +12117,7 @@ function studio_sgWire() {
 
 /* =====================================================================
    THE GUIDED MAKER: one question per screen.
-   The Make page asks everything at once -- eleven styles, six orders, three lengths, four dials
+   The Make page asks everything at once -- eight styles, six orders, three lengths, four dials
    -- and lets any style meet any song. A new player who touches nothing got the weakest pair.
    This asks one thing at a time, says after each whether the choices so far work together
    (clips/feasible.py: one verdict, one fix), and hands the answers to the Make page's own
@@ -12154,6 +12154,14 @@ studio.gd = {step: 0, style: '', auto: false, autoWhy: null, setup: '', quick: [
              /* the Clips step's browsers (studio_gdView), the clip playing over the guide, the one being trimmed */
              views: null, pv: null, editing: null};
 
+/* A STYLE KEY KEPT FROM BEFORE A STYLE WAS RETIRED means the style that replaced it -- the server's
+   own map (studio.RETIRED_STYLES), so the guide's memory and a render's history agree with what the
+   reel now opens as. */
+function studio_styleNow(k) {
+  const gone = (studio.catalog && studio.catalog.retired_styles) || {};
+  return Object.prototype.hasOwnProperty.call(gone, k) ? gone[k] : k;
+}
+
 /* WHAT WAS CHOSEN LAST TIME, remembered as intent -- the style, the shape, the framing -- and not as
    results: the song and the clips are checked again against what exists now, and the chip is asked
    again, so a remembered answer never skips the check. */
@@ -12168,7 +12176,8 @@ function studio_gdRecall() {
   try { m = JSON.parse(localStorage.getItem(GD_KEY) || 'null'); } catch (e) { m = null; }
   if (!m || typeof m !== 'object') return false;
   const gd = studio.gd, have = id => !!studio.clipIndex[id];
-  if (m.style && studio.catalog.styles.some(s => s.key === m.style)) gd.style = m.style;
+  const style = studio_styleNow(m.style);
+  if (style && studio.catalog.styles.some(s => s.key === style)) gd.style = style;
   if (m.fmt === 'vertical' || m.fmt === 'landscape') gd.fmt = m.fmt;
   if (['fit', 'near', 'zoom'].includes(m.fit)) gd.fit = m.fit;
   if (typeof m.lyrics === 'string' && (m.lyrics === 'off' || studio_gdLyricLooks().some(l => l.key === m.lyrics))) gd.lyrics = m.lyrics;

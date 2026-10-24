@@ -89,11 +89,11 @@ def test_a_long_dense_run_is_thinned_and_the_rest_are_accents():
 
 
 def test_the_style_sets_how_rapid_the_kills_are():
-    """The same song, cut for hype and for story: hype takes three times the
+    """The same song, cut for hype and for a calm style: hype takes three times the
     kills, and neither lands one off a hit."""
     hits = [1.0 + 0.2 * i for i in range(150)]
     fast, fast_acc = H.choose_kills(hits, target_gap=60.0 / 53.8)     # hype
-    slow, slow_acc = H.choose_kills(hits, target_gap=60.0 / 21.4)     # story
+    slow, slow_acc = H.choose_kills(hits, target_gap=60.0 / 21.4)     # a calm style
     assert len(fast) > len(slow) * 2
     assert float(np.median(np.diff(fast))) < float(np.median(np.diff(slow)))
     for got, acc in ((fast, fast_acc), (slow, slow_acc)):

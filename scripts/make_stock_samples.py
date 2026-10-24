@@ -51,7 +51,13 @@ def main() -> int:
         raise SystemExit(f"Need at least three {a.game} clips with a kill in {root}; found {len(picked)}.")
     print("cutting from:", ", ".join(c["name"] for c in picked), flush=True)
     shape = reel.analyse(Path(a.song))
-    styles = [s for s in a.only.split(",") if s] or [s.key for s in studio.STYLES]
+    # A retired key names the style that replaced it, so no sample is ever written
+    # under a name no card asks for.
+    styles = list(dict.fromkeys(studio.current_style(s) for s in a.only.split(",") if s)) \
+        or [s.key for s in studio.STYLES]
+    unknown = [s for s in styles if s not in studio.STYLE]
+    if unknown:
+        raise SystemExit(f"No such style: {', '.join(unknown)}")
     OUT.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="as-samples-"))
     failed = {}

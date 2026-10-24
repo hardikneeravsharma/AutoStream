@@ -4026,7 +4026,8 @@ class Server:
         if not clips_mod.available():
             return {"ok": False, "error": "ffmpeg is not available."}
         known = {s.key for s in studio.STYLES}
-        want = [str(x) for x in (body.get("styles") or []) if str(x) in known] or [s.key for s in studio.STYLES]
+        want = [studio.current_style(x) for x in (body.get("styles") or [])]
+        want = list(dict.fromkeys(k for k in want if k in known)) or [s.key for s in studio.STYLES]
         try:
             shape = self._studio_shape(song)
         except (FileNotFoundError, OSError, RuntimeError):
@@ -4038,6 +4039,7 @@ class Server:
         """One finished sample, by key and style -- names, never paths. Key "stock" is the shipped one."""
         from .clips import studio, style_samples as ss
 
+        style = studio.current_style(style)
         if style not in {s.key for s in studio.STYLES}:
             return None
         if key == "stock":
@@ -4174,7 +4176,7 @@ class Server:
 
         root = self._clips_dir(cfg.load())
         want = [str(p) for p in (body.get("clips") or []) if isinstance(p, str)][:studio.MAX_SHOTS]
-        style = studio.STYLE.get(str(body.get("style") or ""))
+        style = studio.STYLE.get(studio.current_style(body.get("style")))
         song = str(body.get("song") or "")
         try:
             shape = self._studio_shape(song)
@@ -4563,6 +4565,8 @@ class Server:
             return {"ok": False, "rev": rev, "error": str(e)}
         over = body.get("with") if isinstance(body.get("with"), dict) else {}
         over = {k: over[k] for k in ("style", "clips", "fill") if over.get(k)}
+        if "style" in over:
+            over["style"] = studio.current_style(over["style"])
         if "clips" in over:
             over["clips"] = [str(x) for x in over["clips"] if isinstance(x, str)][:studio.MAX_SHOTS]
         try:

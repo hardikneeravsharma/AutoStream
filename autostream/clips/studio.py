@@ -426,7 +426,7 @@ def reels(root: Path) -> list[dict]:
                     "project": str(proj) if meta else "", "when": when, "size": size,
                     "shots": len(shots),
                     "length": render.get("length"),
-                    "style": m.get("style", ""),
+                    "style": current_style(m.get("style", "")),
                     "format": m.get("format") if m.get("format") in SIZES else "",
                     "song": Path(str(m.get("song") or "")).stem if m.get("song") else "",
                     "lyrics": ((m.get("lyrics") or {}).get("look") or "") if isinstance(m.get("lyrics"), dict) else "",
@@ -1020,16 +1020,6 @@ class Style:
 
 
 STYLES: tuple[Style, ...] = (
-    Style("story", "Story",
-          "A calm held opening, fights with room to breathe, few flashes and a slow fade — "
-          "the shape of your reel v9.",
-          ("v9", "RjCsmKbYY7g", "yBvW49SD20Y", "8KKGT4JXPVY", "8bQ-8ZnHG4A"),
-          intro="i03", outro="e01", cuts=("t01", "t04", "t01"), kill=("k01",), hero=("h03",),
-          speed="s00", hero_speed="s01", camera="c01", grade="g01", vignette=False,
-          kill_pool=("k01", "k01", "k15", "k14", "k07", "k04", "k17", "k20"),
-          transition_pool=("t01", "t01", "t04", "t01", "t03", "t08", "t17"),
-          hero_pool=("h03", "h02"), camera_pool=("c01", "c03", "c00", "c05", "c08"),
-          speed_pool=("s00", "s00", "s00", "s02"), energy=0.15),
     Style("montage", "Montage",
           "The shape of the most-watched Valorant montages: a held opening, a punch on every kill, "
           "flashes on most cuts and the odd zoom-through.",
@@ -1107,7 +1097,7 @@ STYLES: tuple[Style, ...] = (
           # looked for; the soft one, so it never hides the target. 0 of 36 kills
           # of the v2 That Acid render had one.
           min_run=0.30, min_after=0.18, ramp_max=1.6, signature=("k02soft",)),
-    # ---- five more, each grouped by what its references MEASURE, not by taste.
+    # ---- three more, each grouped by what its references MEASURE, not by taste.
     Style("clean", "Clean",
           "The calm end of the shelf: long shots, almost no effects, the game's own "
           "colours. Modelled on the edits that cut 17-21 times a minute and flash barely at all.",
@@ -1133,18 +1123,6 @@ STYLES: tuple[Style, ...] = (
           camera_pool=("c04hard", "c04slam", "c00", "c06far"),
           speed_pool=("s04", "s04", "s03", "s02"), energy=0.9, fast_cuts=True,
           min_run=0.30, min_after=0.18, ramp_max=1.6),
-    Style("short", "Short", 
-          "Built for a Short: under half a minute, a cut a second, and the mark of the "
-          "vertical edits -- quick in, quick out, nothing held.",
-          ("H2N0eHGOi_w", "DrC9DxQ27lI", "prevxQTdkGo", "8bQ-8ZnHG4A"),
-          intro="i08", outro="e12", cuts=("t06", "t01", "t05"), kill=("k01hard", "k03"),
-          hero=("h02",), speed="s02", hero_speed="s04", camera="c00", grade="g08",
-          vignette=True, pre_share=0.45,
-          kill_pool=("k01hard", "k03", "k02fast", "k14", "k19", "k07hard", "k20blink"),
-          transition_pool=("t06", "t01", "t05", "t12", "t01"),
-          hero_pool=("h02", "h01"), camera_pool=("c00", "c00", "c04soft", "c08soft"),
-          speed_pool=("s02", "s04", "s00", "s03"), energy=0.6,
-          min_run=0.40, min_after=0.22, ramp_max=1.4),
     Style("cinematic", "Cinematic",
           "Bars, a graded picture and a camera that never stops moving. The slower "
           "references, played like a trailer rather than a montage.",
@@ -1157,20 +1135,27 @@ STYLES: tuple[Style, ...] = (
           hero_pool=("h02", "h03"),
           camera_pool=("c01soft", "c01in", "c05soft", "c08soft", "c06hair"),
           speed_pool=("s00", "s05", "s01", "s06"), energy=0.2),
-    Style("retro", "Retro",
-          "Grain, scanlines and faded colour over a mid-paced cut -- the look the "
-          "2010s montages had, on the references that sit nearest that pace.",
-          ("DM3eKiZD3XE", "qAlD8eNIfr8", "c1VjTbzcEds"),
-          intro="i05", outro="e01", cuts=("t01", "t16", "t04"), kill=("k01", "k16soft"),
-          hero=("h01",), speed="s00", hero_speed="s02", camera="c03soft", grade="g09",
-          vignette=True, overlays=("o04heavy",), pre_share=0.5,
-          kill_pool=("k01", "k16soft", "k06thin", "k12one", "k11flat", "k14", "k18faint"),
-          transition_pool=("t01", "t16", "t04", "t01", "t10", "t03"),
-          hero_pool=("h01", "h03"), camera_pool=("c03soft", "c00", "c01hair", "c03"),
-          speed_pool=("s00", "s00", "s01", "s02"), energy=0.35),
 )
 STYLE = {s.key: s for s in STYLES}
 DEFAULT_STYLE = "montage"
+# STYLES THAT WERE RETIRED, and the one each became. Eleven styles were three
+# too many: side by side on the same kills, Retro read as Cinematic with grain,
+# Short as Chaos and Hype cut shorter, and Story as Montage held longer -- a
+# choice between two of those is not a choice anybody can see. A reel saved
+# with one of them still opens, and plans again, as its nearest neighbour
+# rather than falling to the default: a Retro reel that came back as Montage
+# would lose the slow, graded feel it was made for. Every place a style key
+# comes IN -- a saved project, a request, the guide's memory -- goes through
+# current_style(), so this map is the only list of them.
+RETIRED_STYLES = {"retro": "cinematic", "story": "montage", "short": "chaos"}
+
+
+def current_style(key: Any) -> str:
+    """The style a key means now: a retired one is the style that replaced it.
+    Anything else comes back as it went, unknown keys included -- whether an
+    unknown key falls to DEFAULT_STYLE is each caller's own decision."""
+    k = str(key or "")
+    return RETIRED_STYLES.get(k, k)
 
 
 def favourite_parts() -> list[str]:
@@ -1227,6 +1212,9 @@ def catalog() -> dict:
                     "picks": picks_of(s)}
                    for s in STYLES],
         "default_style": DEFAULT_STYLE,
+        # For the page's own memory (the guide's last style): a key it kept
+        # from before a style was retired means the style that replaced it.
+        "retired_styles": dict(RETIRED_STYLES),
         "lyrics": lyrics_mod.catalog(),
     }
 
@@ -1480,7 +1468,7 @@ def output_at(ps: list[tuple[float, float, float]], src: float) -> float:
 # ============================================================== planning
 
 def _choose_offset(grid: Grid, first_kill_reel: float, style: Style,
-                   drop_kill_reel: float | None, energy=None, build: bool = False) -> float:
+                   drop_kill_reel: float | None, energy=None) -> float:
     """Where in the song reel time zero sits. Always exactly on a beat."""
     if not grid.beats:
         return 0.0
@@ -1489,8 +1477,6 @@ def _choose_offset(grid: Grid, first_kill_reel: float, style: Style,
         if off >= 0:
             i = grid.index_at_or_after(off)
             return grid.beats[i]
-    if style.key == "story" and not build:
-        return grid.beats[0]
     start = grid.drums_in or (rulebook.first_loud(energy, grid.beats, grid.beat, grid.downbeat_pos)
                               if energy is not None else grid.beats[0])
     i = grid.index_at_or_after(start)
@@ -2320,6 +2306,9 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     (How long: "style", "part", "all"; "" is the part when one was chosen) and
     `keep_all` (Keep every kill). All of them are kept on the project.
     """
+    # A retired style plans as the one that replaced it (RETIRED_STYLES): a
+    # rebuild of an old Retro reel is a Cinematic plan, not the default's.
+    style_key = current_style(style_key)
     if str((shape_it or {}).get("arrange") or "") == "fit":
         return _plan_fit(clips, style_key, shape=shape, song=song, fmt=fmt, name=name,
                          max_seconds=max_seconds, seed=seed, measure=measure, confirm=confirm,
@@ -2728,8 +2717,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     if part_len:
         offset = part_start
     else:
-        offset = _choose_offset(grid, max(run_b, open_beats - open_post) * step, style, None, energy,
-                                build) if song else 0.0
+        offset = _choose_offset(grid, max(run_b, open_beats - open_post) * step, style, None,
+                                energy) if song else 0.0
     idx0 = grid.index_at_or_after(offset) if (song and grid.beats) else 0
 
     first_kill_b = max(run_b, open_beats - open_post)
@@ -3041,8 +3030,9 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     if closer_post and len(shots) > 1 and _own_after(shots[-1]) < 1.0:
         # Slowed as it leaves, so the bar after the last kill has footage to fill.
         # NOT OVER KILLS OF ITS OWN still to come: at a third of real speed a
-        # second kill 2.5 s on is 7.4 s away, and Retro on El Alfa closed on a
-        # 10 s shot. A closer with a later kill of its own plays it as it happened.
+        # second kill 2.5 s on is 7.4 s away, and Retro (a style since retired) on
+        # El Alfa closed on a 10 s shot. A closer with a later kill of its own plays
+        # it as it happened.
         last = shots[-1]
         last["speed"] = "s06"
         last["duration"] = round(last["pre"] + (lens[-1][1] + closer_post) * step, 5)
@@ -3124,7 +3114,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                 # and Dracula's drop kill landed half a second after the drop.
                 offset = min(grid.beats, key=lambda b: abs(b - off))
         else:
-            offset = _choose_offset(grid, shots[0]["pre"], style, None, energy, build)
+            offset = _choose_offset(grid, shots[0]["pre"], style, None, energy)
     proj["song_offset"] = round(offset, 5) if song else 0.0
 
     # KILLS ON THE SONG'S BASS HITS, AT THIS STYLE'S PACE.
@@ -4125,7 +4115,7 @@ def _vary(shots: list[dict], pools: dict, style: "Style", seed: int, what: str =
 
 def vary(project: dict, what: str = "all", seed: int | None = None) -> dict:
     """Mix a timeline's effects again without touching its shots or timing."""
-    style = STYLE.get(project.get("style")) or STYLE[DEFAULT_STYLE]
+    style = STYLE.get(current_style(project.get("style"))) or STYLE[DEFAULT_STYLE]
     pools = project.get("pools") or {}
     if not any(pools.get(k) for k in POOL_KINDS):
         pools = _style_pools(style)
@@ -4297,7 +4287,7 @@ VEL_FAST_MIN = 1.3
 VEL_BEFORE = 0.12
 VEL_AFTER = 0.14
 # The last stretch into a kill that a READABILITY ramp leaves at real speed (Hype,
-# Chaos, Short): the ramp squeezes the fight, never the kill frame.
+# Chaos): the ramp squeezes the fight, never the kill frame.
 RAMP_REAL = 0.15
 PACE_SNAP_MIN = 8           # kills a reel needs before its typical gap means anything
 
@@ -5156,7 +5146,8 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
     out: dict[str, Any] = {
         "version": VERSION,
         "name": str(project.get("name") or "Reel")[:80],
-        "style": str(project.get("style") or DEFAULT_STYLE) if str(project.get("style") or "") in STYLE else DEFAULT_STYLE,
+        # A reel saved with a retired style opens as the style that replaced it.
+        "style": current_style(project.get("style")) if current_style(project.get("style")) in STYLE else DEFAULT_STYLE,
         "format": project.get("format") if project.get("format") in SIZES else "landscape",
         "song": "", "song_offset": 0.0,
         "intro": project.get("intro") if project.get("intro") in ids_of("intro") else "i00",
@@ -7185,7 +7176,7 @@ class StudioJob:
     def _check(self, ff: str, intro: float) -> list:
         """reelcheck's findings for the reel just written. Never raises."""
         try:
-            st = STYLE.get(self.project.get("style") or "")
+            st = STYLE.get(current_style(self.project.get("style")))
             fast = bool(st and (st.drop or getattr(st, "fast_cuts", False)))
             derived = dict(self.derived)
             derived["length"] = float(derived.get("length") or 0.0) + intro
