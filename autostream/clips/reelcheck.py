@@ -174,6 +174,10 @@ KILL_BRIGHT_SHARE = 0.20       # of the gameplay pixels over BRIGHT_LEVEL...
 KILL_BRIGHT_FRAMES = 2         # ...for this many frames running, near a kill
 KILL_WINDOW = (6, 12)          # frames before and after a kill the brightness is read over
 INTENDED_BRIGHT = ("k03", "k16")   # kill effects meant to white out: the white flash, the flicker
+REAL_SPEED = (0.95, 1.05)      # a rate that reads as real speed (Clean's review)
+OPEN_AT = 15                   # the frame a quarter of a second in, at REEL_FPS...
+OPEN_BLACK = 0.50              # ...no more than this share of the picture near-black...
+NEAR_BLACK = 24                # ...below this level of 255
 
 
 def _rate(pieces: list, t0: float, t1: float) -> float:
@@ -276,6 +280,37 @@ def style_findings(project: dict, derived: dict) -> list[Finding]:
         elif want != st.grade:
             out.append(Finding(SOFT, "grade-chosen", f"Graded {studio.PART[want].label}, not {st.label}'s own "
                                f"{studio.PART[st.grade].label}: the grade chosen for this reel."))
+    # RESTRAINT AS A SIGNATURE (Clean, from ChatGPT's review): what the style leaves out,
+    # measured the way Hype's shake and Velocity's shape are. studio.restrain_speed and
+    # restrain_look hold a plan to it, so a finding here is a plan that slipped past them.
+    if st.real_speed:
+        real = sum(1 for r in rows if all(rt == 0 or REAL_SPEED[0] <= rt <= REAL_SPEED[1]
+                                          for _a, _b, rt in r.get("pieces") or []))
+        if real / len(rows) < st.real_speed - 1e-9:
+            out.append(Finding(HARD, "calm-speed", f"{real} of {len(rows)} shots play at real speed; "
+                               f"{st.label} needs {st.real_speed:.0%}."))
+    if st.kill_fx_max:
+        heavy = sum(1 for s in shots if len(s.get("fx") or []) > st.kill_fx_max)
+        if heavy:
+            out.append(Finding(HARD, "calm-effects", f"{heavy} kill(s) carry more than {st.kill_fx_max} "
+                               f"effect(s); {st.label} gives each kill one soft treatment."))
+    cuts = shots[1:]
+    if cuts and st.crossfade_max < 1.0:
+        blends = sum(1 for s in cuts if s.get("transition") not in ("t01", "t02", None))
+        if blends / len(cuts) > st.crossfade_max + 1e-9:
+            out.append(Finding(HARD, "calm-blends", f"{blends} of {len(cuts)} cuts are blends; {st.label} "
+                               f"keeps them to {st.crossfade_max:.0%}."))
+    if cuts and st.flash_cap and ref.get("flashes_per_min") and float(derived.get("length") or 0.0) > 0:
+        rate = 60.0 * sum(1 for s in cuts if s.get("transition") == "t02") / float(derived["length"])
+        cap = float(ref["flashes_per_min"]) * st.flash_cap
+        if rate > cap + 1e-9:
+            out.append(Finding(SOFT, "flash-rate", f"{rate:.1f} white flashes a minute; {st.label}'s references "
+                               f"flash {float(ref['flashes_per_min']):.1f}, at most {cap:.1f}."))
+    if st.drift_max:
+        moving = sum(1 for s in shots if studio.drift_of(s.get("camera") or "c00") > st.drift_max + 1e-9)
+        if moving:
+            out.append(Finding(HARD, "calm-camera", f"{moving} shot(s) move the camera more than "
+                               f"{st.drift_max:.0%}; {st.label}'s camera barely breathes."))
     # QUARTILES (provisional): only where the references were measured for them.
     if st.key not in DIRECTED and all(q in ref for q in studio_refs.QUARTILES) and len(shots) >= PACE_MIN_SHOTS:
         beat = float(project.get("beat") or 0.5)
@@ -387,6 +422,16 @@ def render_findings(mp4: Path, project: dict, derived: dict, ff: str = "ffmpeg")
                 out.append(Finding(SOFT, "too-bright", "A moment of the reel is almost all white for two frames or more.",
                                    round(i / 60 - float(derived.get("offset") or 0.0), 3)))
                 break
+        # THE GAME BY A QUARTER OF A SECOND (ChatGPT's review of Clean, every style): more
+        # than half the picture near-black then is a fade that hides the hook. Only the
+        # fade's fault when the footage a second in is not that dark itself; a style made
+        # to open slowly (long_fade_in) is left alone.
+        st_ = studio.STYLE.get(project.get("style") or "")
+        if n > 60 and not (st_ and st_.long_fade_in):
+            dark_at = float((frames[OPEN_AT] < NEAR_BLACK).mean())
+            if dark_at > OPEN_BLACK and float((frames[60] < NEAR_BLACK).mean()) <= OPEN_BLACK:
+                out.append(Finding(SOFT, "opening-dark", f"{dark_at:.0%} of the picture is still black a "
+                                   f"quarter of a second in: the fade hides the hook.", 0.25))
         if luma[-1] > WHITE_END:
             out.append(Finding(HARD, "white-ending", "The reel ends on a frame burnt almost white.",
                                round(n / 60 - float(derived.get("offset") or 0.0), 3)))

@@ -2572,7 +2572,8 @@ function studio_mkChip() {
     const v = got.verdict, label = {ok: 'Works', warn: 'Will work, but', bad: "Won't work"}[v.level];
     studio.mkVerdict = v;
     const act = {'pick-song': 'Choose another song above.', 'pick-clips': 'Go back and pick more clips.',
-                 'format:vertical': '', 'style:drop': 'Choose Build and drop above.'}[v.fix] || '';
+                 'format:vertical': '', 'style:drop': 'Choose Build and drop above.',
+                 'part:fit': 'Shorten the part under Music, or pick a longer build clip.'}[v.fix] || '';
     el.className = 'gd-chip ' + v.level;
     el.innerHTML = '<span class="gd-dot">' + label + '</span><p>' + esc(v.text) + (act ? ' ' + esc(act) : '') + '</p>' +
       (v.fix === 'format:vertical' ? '<button type="button" class="btn btn-primary btn-sm" data-act="studio-mk-chipfix">Use 9:16</button>' : '<span></span>');
@@ -13239,6 +13240,12 @@ function studio_gdFix(fix) {
   }
   else if (fix === 'pick-clips') { studio_gdPickAll(true); gd.step = 2; }   /* adds; keeps what was chosen */
   else if (fix === 'format:vertical') { gd.fmt = 'vertical'; }
+  else if (fix === 'part:fit') {
+    /* THE PART THE SONG CAN CARRY: the seconds the plan really covers (the verdict's span), made the
+       player's own part -- so the reel is judged as what it is, not as a longer one it cannot be */
+    const sp = gd.verdict && gd.verdict.span, mk = studio.mk;
+    if (sp && sp[1] > sp[0]) { mk.mode = 'part'; mk.start = sp[0]; mk.end = sp[1]; mk.touched = true; }
+  }
   gd.verdict = null;
   studio_gdDraw();
 }
