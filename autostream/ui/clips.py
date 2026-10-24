@@ -6133,7 +6133,11 @@ function clip_matchSpans() {
   var here = (st.rows || []).filter(function (r) { return r.at != null; });
   var on = here.filter(function (r) { return !skip[r.id]; });
   if (!on.length || on.length === here.length) return null;
-  return on.map(function (r) { return [Math.max(0, r.at), r.at + r.seconds]; });
+  /* `until`, where given: a match already running when the file began ends
+     well before at + seconds, and that would take in the next match too. */
+  return on.map(function (r) {
+    return [Math.max(0, r.at), r.until != null ? r.until : r.at + r.seconds];
+  });
 }
 
 function clip_renderMatchList() {
