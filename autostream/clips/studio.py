@@ -619,6 +619,11 @@ def delete_clips(root: Path, paths: list[str], *, dry_run: bool = False) -> dict
 # hand-written parts stay here, beside the renderer that draws them.
 Part = parts_mod.Part
 
+# THREE IDS THAT ARE GONE AND STAY GONE: k04 (Freeze frame), h02 (Freeze and
+# push in, with its variants) and o02 (Kill counter), taken out on 2026-10-24
+# at the player's call. A reel saved with one still opens, plans and renders --
+# normalise() and templated() drop any id not in PART -- so none of the three
+# may ever be given to a new part: an old reel would quietly come back with it.
 PARTS: tuple[Part, ...] = (
     Part("i00", "intro", "Straight in", "No intro effect; the first shot simply starts."),
     Part("i03", "intro", "Fade up from black", "Black resolves into the first shot over a second."),
@@ -647,7 +652,6 @@ PARTS: tuple[Part, ...] = (
     Part("k01", "kill", "Zoom punch", "Jumps about 12% closer on the kill and settles."),
     Part("k02", "kill", "Screen shake", "The frame rattles for under half a second."),
     Part("k03", "kill", "White flash", "One or two frames blow out to white."),
-    Part("k04", "kill", "Freeze frame", "Time stops on the kill for a moment."),
     Part("k06", "kill", "RGB split", "Red and blue tear apart for a few frames."),
     Part("k07", "kill", "Saturation pop", "Muted colour until the kill, then it floods in."),
     Part("k08", "kill", "Colour hit", "A red wash flashes across the frame."),
@@ -664,7 +668,6 @@ PARTS: tuple[Part, ...] = (
     Part("k22", "kill", "Tilt shake", "Rattles up and down only, not side to side."),
 
     Part("h01", "hero", "Double punch", "Two punches a sixth of a second apart."),
-    Part("h02", "hero", "Freeze and push in", "Time stops while the camera pushes in."),
     Part("h03", "hero", "Spotlight", "Everything but the centre drops into darkness."),
 
     Part("s00", "speed", "Real speed", "Plays as recorded."),
@@ -704,7 +707,6 @@ PARTS: tuple[Part, ...] = (
     # every drawer, and most reels carry no overlay at all.
     Part("o00", "overlay", "No overlay", "Nothing over the picture."),
     Part("o01", "overlay", "Cinematic bars", "Black bars top and bottom (landscape only)."),
-    Part("o02", "overlay", "Kill counter", "A running count ticks up with each kill."),
     Part("o04", "overlay", "Film grain", "Fine moving grain over the whole reel."),
     Part("o05", "overlay", "Scanlines", "Fine horizontal lines, like an old monitor. "
          "Costs about a second of render for every second of reel."),
@@ -1028,19 +1030,19 @@ STYLES: tuple[Style, ...] = (
           hero=("h01",), speed="s00", hero_speed="s02", camera="c00", grade="g02", vignette=True,
           kill_pool=("k01", "k01", "k03", "k02", "k15", "k07", "k11", "k06", "k17", "k20"),
           transition_pool=("t01", "t01", "t05", "t06", "t01", "t06", "t15"),
-          hero_pool=("h01", "h02", "h03"), camera_pool=("c00", "c00", "c01", "c04", "c05"),
+          hero_pool=("h01", "h03"), camera_pool=("c00", "c00", "c01", "c04", "c05"),
           speed_pool=("s00", "s00", "s00", "s02"), energy=0.45),
     Style("velocity", "Velocity short",
           "Built like the short edits that go viral: every kill slows on its beat, everything "
           "between rushes, with flicker and hard flashes.",
           ("xrgExBQyHBc", "nqa8RP_R0cU", "Ro6MDXmB8uA", "oJDesm--wss", "H2N0eHGOi_w",
            "RmaACKww8do", "prevxQTdkGo", "-rkr4IpA3jM"),
-          intro="i08", outro="e12", cuts=("t06", "t05"), kill=("k01", "k16"), hero=("h02",),
+          intro="i08", outro="e12", cuts=("t06", "t05"), kill=("k01", "k16"), hero=("h01",),
           speed="s00", hero_speed="s00", camera="c00", grade="g05", vignette=True,
           overlays=("o01",),
           kill_pool=("k01", "k16", "k06", "k03", "k02", "k14", "k11", "k12", "k19", "k21"),
           transition_pool=("t06", "t05", "t01", "t06", "t02", "t12", "t13"),
-          hero_pool=("h02", "h01", "h03"), camera_pool=("c00", "c00", "c04", "c08"),
+          hero_pool=("h01", "h03"), camera_pool=("c00", "c00", "c04", "c08"),
           # THE SPEED IS THE STYLE, so it is a shape every kill gets (velocity_curves),
           # not a preset drawn per shot: s04 hung at 0.3x and s02/s03 only ramped one
           # side -- measured on the v2 render of Skechers, 0 of 37 kills had a slow
@@ -1056,7 +1058,7 @@ STYLES: tuple[Style, ...] = (
           speed="s00", hero_speed="s02", camera="c00", grade="g01", vignette=True, drop=True,
           kill_pool=("k01", "k01", "k03", "k15", "k02", "k07", "k20"),
           transition_pool=("t01", "t01", "t05", "t04", "t01", "t06", "t14"),
-          hero_pool=("h01", "h02"), camera_pool=("c00", "c01", "c00", "c05"),
+          hero_pool=("h01",), camera_pool=("c00", "c01", "c00", "c05"),
           speed_pool=("s00", "s00", "s02"), energy=0.35),
     # FAST-PACED HEADSHOT. Reverse-engineered from an anime edit, cut by hand
     # outside the app and measured until it matched; docs/STYLE-FAST-PACED-
@@ -1084,14 +1086,14 @@ STYLES: tuple[Style, ...] = (
           provenance="docs/STYLE-FAST-PACED-HEADSHOT.md", fast_cuts=True),
     Style("hype", "Hype",
           "Fast and loud like the busiest montages: a cut every couple of beats, shake on every "
-          "kill, crunchy colour and a kill counter.",
+          "kill and crunchy colour.",
           ("wlNmShwGaJY", "0OvnyxlKLeQ", "FEKdk-cPVmg", "66zl0-VoWbg"),
           intro="i08", outro="e05", cuts=("t01", "t01", "t05"), kill=("k01", "k02"),
           hero=("h01",), speed="s00", hero_speed="s02", camera="c04", grade="g05",
-          vignette=True, overlays=("o02",),
+          vignette=True,
           kill_pool=("k01", "k02", "k11", "k06", "k08", "k16", "k12", "k03", "k19", "k22", "k18"),
           transition_pool=("t01", "t05", "t01", "t06", "t02", "t12", "t13"),
-          hero_pool=("h01", "h02", "h03"), camera_pool=("c04", "c00", "c04", "c03", "c07"),
+          hero_pool=("h01", "h03"), camera_pool=("c04", "c00", "c04", "c03", "c07"),
           speed_pool=("s00", "s00", "s02", "s03"), energy=0.7, fast_cuts=True,
           # A SHAKE ON EVERY KILL is what the blurb promises and what the reviewer
           # looked for; the soft one, so it never hides the target. 0 of 36 kills
@@ -1107,7 +1109,7 @@ STYLES: tuple[Style, ...] = (
           vignette=False, pre_share=0.55,
           kill_pool=("k01soft", "k01", "k01soft", "k17soft", "k14soft", "k15soft"),
           transition_pool=("t01", "t01", "t01", "t04", "t08", "t17"),
-          hero_pool=("h03", "h02"), camera_pool=("c00", "c01soft", "c01hair", "c05soft"),
+          hero_pool=("h03",), camera_pool=("c00", "c01soft", "c01hair", "c05soft"),
           speed_pool=("s00", "s00", "s00", "s05"), energy=0.08),
     Style("chaos", "Chaos",
           "Everything at once, the way the busiest edits do it: 45-58 cuts a minute and "
@@ -1119,7 +1121,7 @@ STYLES: tuple[Style, ...] = (
           kill_pool=("k01snap", "k03wide", "k02hard", "k19hard", "k06wide", "k16hard",
                      "k21hard", "k12flash", "k22hard", "k18short"),
           transition_pool=("t02", "t06", "t13", "t12", "t05", "t01"),
-          hero_pool=("h01", "h02", "h03"),
+          hero_pool=("h01", "h03"),
           camera_pool=("c04hard", "c04slam", "c00", "c06far"),
           speed_pool=("s04", "s04", "s03", "s02"), energy=0.9, fast_cuts=True,
           min_run=0.30, min_after=0.18, ramp_max=1.6),
@@ -1128,11 +1130,11 @@ STYLES: tuple[Style, ...] = (
           "references, played like a trailer rather than a montage.",
           ("fAyUxeDzKlI", "8KKGT4JXPVY", "RjCsmKbYY7g"),
           intro="i03", outro="e02", cuts=("t04", "t01", "t17"), kill=("k01settle",),
-          hero=("h02",), speed="s00", hero_speed="s01", camera="c01soft", grade="g03",
+          hero=("h03",), speed="s00", hero_speed="s01", camera="c01soft", grade="g03",
           vignette=True, overlays=("o01",), pre_share=0.6,
           kill_pool=("k01settle", "k01soft", "k15soft", "k20slow", "k14breath", "k17slow"),
           transition_pool=("t04", "t01", "t17", "t08", "t01", "t03"),
-          hero_pool=("h02", "h03"),
+          hero_pool=("h03",),
           camera_pool=("c01soft", "c01in", "c05soft", "c08soft", "c06hair"),
           speed_pool=("s00", "s05", "s01", "s06"), energy=0.2),
 )
@@ -1414,22 +1416,6 @@ def _own_after(shot: dict) -> float:
             break
         last = k
     return last - k0 + OWN_KILL_HOLD if last > k0 else 0.0
-
-
-def _freeze_of(shot: dict) -> float:
-    """Seconds of freeze the render inserts at this shot's kill.
-
-    A freeze REPLACES footage -- the shot is not lengthened by it -- so it is
-    taken out of what plays after the kill, and the planner has to leave room
-    for it when the shot has later kills of its own to show.
-    """
-    freeze = 0.4 if "k04" in (shot.get("fx") or []) else 0.0
-    # By FAMILY, not by id: "h02" is only the middle of the freeze family,
-    # and an exact match left "Freeze and push in (a long beat)" offered,
-    # picked and doing nothing at all.
-    if shot.get("hero") and (pid := picked(shot.get("hero_fx") or [], "h02")):
-        freeze = max(freeze, knob(pid, "hold", 0.75))
-    return freeze
 
 
 def _stretch_of(shot: dict):
@@ -2169,8 +2155,8 @@ FAST_CUT_SECONDS = 0.3
 def fast_rules(style: "Style") -> "Style":
     """`style` with what a fast cut cannot carry taken out of its pools -- and the rest kept.
 
-    Taken out, each for a measured reason: speed ramps and the freeze (a slowed
-    or held kill lands its hit late -- headshot3's shot 20), stacked effects
+    Taken out, each for a measured reason: speed ramps (a slowed kill lands its
+    hit late -- headshot3's shot 20), stacked effects
     (energy 0: one effect a kill), the white-flash cut (a second flash on top of
     the kill's) and any transition longer than FAST_CUT_SECONDS. KEPT: every
     kill effect, camera and the other hero treatments the style's pools hold.
@@ -2200,7 +2186,7 @@ def fast_rules(style: "Style") -> "Style":
     trans = keep(style.transition_pool,
                  lambda p: p == "t01" or (p != "t02" and _cut_seconds(p) <= FAST_CUT_SECONDS + 1e-9), "t01")
     kills = keep(style.kill_pool, lambda p: fam(p) not in KILL_BLURS, style.kill[0])
-    heroes = keep(style.hero_pool, lambda p: fam(p) != "h02", style.hero[0])
+    heroes = keep(style.hero_pool, lambda p: True, style.hero[0])
     return dataclasses.replace(
         style,
         cuts=("t01",), transition_pool=trans,
@@ -3004,9 +2990,6 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         pools["kill"] = kept or pools["kill"]
         for s in shots:
             s["fx"] = [f for f in s["fx"] if clear_fx(f)]
-    # No freeze on a kill whose speed is a shape (speed_curves): held, it is not slowed.
-    if style.speed_profile and not (template and template.get("hero")):
-        pools["hero"] = [h for h in pools["hero"] if fam(h) not in FREEZES] or pools["hero"]
     _vary(shots, pools, style, seed, "all", flash=0.0 if fast else None)
     rulebook.budget(shots, pools)
     mix_free = chosen_sets(template)
@@ -3017,11 +3000,11 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         after = source_used(ps, shot["duration"]) - before
         return (before <= float(shot["kill"]) + 1e-6
                 and float(shot["kill"]) + after <= float(shot.get("clip_seconds") or 0.0) + 1e-6)
-    # THE CLIMAX STOPS TIME, and a fast-cut reel plays at real speed: one freeze and a
-    # velocity ramp on the best shot is a second kind of effect and a late hit. Found on
-    # headshot3, whose shot 20 came out with h02 and s04 in a reel built to have neither.
-    # ...nor in a style whose speed is a shape on every kill: a freeze and an s04 on the
-    # best shot would be the one kill without it.
+    # THE CLIMAX RUSHES IN AND HANGS ON ITS KILL, and a fast-cut reel plays at real
+    # speed: a velocity ramp on the best shot is a second kind of effect and a late hit.
+    # Found on headshot3, whose shot 20 came out with s04 in a reel built to have none.
+    # ...nor in a style whose speed is a shape on every kill: an s04 on the best shot
+    # would be the one kill without it.
     if not fast and not style.speed_profile:
         rulebook.climax(shots, [m.strength for m in picked], pools, speed_ok=speed_ok)
     if build and shots:
@@ -3738,8 +3721,8 @@ def _refine_kills(clips: list[dict], refine) -> tuple[list[dict], dict]:
     seen = 0
     shifts: list[float] = []
     # ONE EMBLEM PER KILL. Each kill is read on its own, so two kills of one fight could
-    # both reach the same emblem -- a 2-kill clip's 3.505 and 4.326 both became 3.45, and
-    # the kill counter ticked twice in one frame (Hype on That Acid, round 3). The nearer
+    # both reach the same emblem -- a 2-kill clip's 3.505 and 4.326 both became 3.45, two
+    # kills in one frame (Hype on That Acid, round 3). The nearer
     # kill takes the emblem; the other keeps the time it had.
     claim: dict[tuple[int, int], tuple[float, int]] = {}
     for (i, j, k), a in zip(jobs, found):
@@ -4201,15 +4184,6 @@ def calm_mix(shots: list[dict], free: set[str] | tuple = (), keep_cuts: bool = F
                 # choose from, the other one -- the reel alternates rather than repeats.
                 other = [f for f in keep if f != last]
                 kept = [other[0]] if other else keep[:1]
-            if (fam(kept[0]) in FREEZES and not any(fam(f) in FREEZES for f in fx)
-                    and _own_after(s) > 0):
-                # NOT A FREEZE PUT ON AFTER THE CUTS ARE SET, on a shot with a later
-                # kill of its own: the marks left that kill room at real speed, and
-                # 0.4 s of held frame took it -- the quadra's fourth kill went unseen
-                # in 7 of 40 plans of the same clips (test_a_planned_reel_shows_every_
-                # kill_of_its_clips_once, flaky before this).
-                calm = [f for f in keep if fam(f) not in FREEZES]
-                kept = calm[:1] or kept
             s["fx"] = kept
             last = kept[0]
     # A white cut straight into a bright kill is one flash on top of another; the
@@ -4242,7 +4216,7 @@ def calm_mix(shots: list[dict], free: set[str] | tuple = (), keep_cuts: bool = F
 KILL_DETAIL = {
     "k20": 0.10, "k08": 0.44, "k06": 0.53, "k19": 0.60, "k03": 0.76, "k17": 0.77,
     "k01": 0.79, "k15": 0.79, "k18": 0.83, "k02": 0.86, "k22": 0.88,
-    "h03": 0.59, "h01": 0.91, "h02": 0.98,
+    "h03": 0.59, "h01": 0.91,
     "s04": 0.83, "s03": 0.83, "s02": 0.84, "s01": 0.86,
     "c06": 0.60, "c01": 0.88, "c07": 0.88, "c03": 0.91, "c08": 0.93,
 }
@@ -4250,7 +4224,6 @@ SHARP_FLOOR = 0.5
 # The velocity shape at the kill (0.6x by optical flow), against the same shot at real
 # speed: 0.87, 0.90 and 0.86 on three shots of the Velocity plan of Skechers.
 VEL_DETAIL = 0.88
-FREEZES = ("k04", "h02")     # the parts that stop time on the kill (see _freeze_of)
 
 
 def _detail(pid: str) -> float:
@@ -4328,7 +4301,7 @@ def speed_curves(shots: list[dict], style: "Style", free: set[str] | tuple = ())
     if "speed" in free:
         return out
     for i, s in enumerate(shots):
-        if s.get("anchors") or s.get("stretch") or _freeze_of(s):
+        if s.get("anchors") or s.get("stretch"):
             continue
         pre, dur, k = float(s["pre"]), float(s["duration"]), float(s["kill"])
         lo, hi = _clip_room(shots, i)
@@ -4478,9 +4451,8 @@ def sharp_kills(shots: list[dict], pools: dict, free: set[str] | tuple = (),
     Only when none of those is left does a kill effect come from the rest of the
     pool. A drawer the player chose (`free`) is theirs and left alone.
 
-    Never a freeze in place of what goes (k04, h02): this runs after the kills are
-    on their marks, and a freeze moves every later kill of the shot. The families in
-    `fixed` -- a style's signature -- are never touched: the rest gives way round them.
+    The families in `fixed` -- a style's signature -- are never touched: the rest
+    gives way round them.
     """
     def own_fx(s: dict) -> list[str]:
         return [f for f in s.get("fx") or [] if fam(f) not in fixed]
@@ -4489,7 +4461,6 @@ def sharp_kills(shots: list[dict], pools: dict, free: set[str] | tuple = (),
         return own + [f for f in s.get("fx") or [] if fam(f) in fixed]
 
     used = list(dict.fromkeys(f for s in shots for f in own_fx(s)))
-    ok = lambda p: fam(p) not in FREEZES                      # noqa: E731
     changed = 0
     for n, s in enumerate(shots):
         before = (list(s.get("fx") or []), list(s.get("hero_fx") or []), s.get("speed"), s.get("camera"))
@@ -4499,7 +4470,7 @@ def sharp_kills(shots: list[dict], pools: dict, free: set[str] | tuple = (),
 
         def kill_swap(d: float, wide: bool) -> str | None:
             pool = [f for f in pools.get("kill") or [] if f not in used] if wide else used
-            better = [f for f in dict.fromkeys(pool) if _detail(f) > d and ok(f) and fam(f) not in fixed]
+            better = [f for f in dict.fromkeys(pool) if _detail(f) > d and fam(f) not in fixed]
             fresh = [f for f in better if f not in (prev, nxt)]
             return max(fresh or better, key=_detail) if better else None
 
@@ -4533,7 +4504,7 @@ def sharp_kills(shots: list[dict], pools: dict, free: set[str] | tuple = (),
                                       lambda to=to: s.__setitem__("fx", with_fixed(s, [to]))))
             if "hero" not in free:
                 for i, h in enumerate(s.get("hero_fx") or []):
-                    better = [x for x in pools.get("hero") or [] if _detail(x) > _detail(h) and ok(x)]
+                    better = [x for x in pools.get("hero") or [] if _detail(x) > _detail(h)]
                     hs = list(s["hero_fx"])
                     hs[i:i + 1] = [max(better, key=_detail)] if better else []
                     moves.append((False, False, _detail(h), lambda hs=hs: s.__setitem__("hero_fx", hs)))
@@ -4545,8 +4516,8 @@ def sharp_kills(shots: list[dict], pools: dict, free: set[str] | tuple = (),
                 moves.append((again(to), True, _detail(fx[0]), lambda to=to: s.__setitem__("fx", with_fixed(s, [to]))))
             moves = [m for m in moves if m[2] < 1.0]
             # NO MOVE THAT REACHES FOR FOOTAGE THE SHOT DID NOT SHOW. This runs after the
-            # cuts are set, and real speed in place of a ramp, or a freeze taken off,
-            # plays more of the clip after the kill -- into what the next shot of the
+            # cuts are set, and real speed in place of a ramp plays more of the clip
+            # after the kill -- into what the next shot of the
             # same clip shows (test_a_longer_run_up_never_shows_a_kill_twice caught it).
             for m in sorted(moves, key=lambda m: m[:3]):
                 snap = {k: copy.deepcopy(s.get(k)) for k in ("fx", "hero_fx", "speed", "camera")}
@@ -4797,15 +4768,14 @@ def apply_marks(project: dict, marks: list[float], placed: list[int] | None = No
             # before would still be playing footage this one starts in, the
             # cut moves to where they meet and this kill lands early instead.
             # A kill off its mark is a lesser fault than a kill seen twice.
-            fz = _freeze_of(prev)
             ps_prev = pieces(prev["speed"], cut - cuts[j - 1], pres[j - 1], own=_own_after(prev))
-            shown_to = float(prev["kill"]) + source_used(ps_prev, max(pres[j - 1], cut - cuts[j - 1] - fz)) \
+            shown_to = float(prev["kill"]) + source_used(ps_prev, max(pres[j - 1], cut - cuts[j - 1])) \
                 - source_used(ps_prev, pres[j - 1])
             starts = float(s["kill"]) - source_used(shot_pieces(s, 60.0 + pre, k - cut), k - cut)
             if shown_to > starts + 1.0 / FPS:
                 meet = min(float(s["kill"]), max(starts, float(prev["kill"]) + _own_after(prev)))
                 s.pop("stretch", None)
-                cut = prev_kill + _post_for(prev, pres[j - 1], meet - float(prev["kill"])) + fz
+                cut = prev_kill + _post_for(prev, pres[j - 1], meet - float(prev["kill"]))
                 cuts.append(cut)
                 pres.append(_pre_for(s, float(s["kill"]) - meet))
                 early += 1
@@ -4877,8 +4847,7 @@ def apply_marks(project: dict, marks: list[float], placed: list[int] | None = No
             # the gate's 0.3 (no-room-after-kill). OUTRO_AFTER_KILL of the reel's
             # own time after it, as far as the clip has footage.
             mine = _own_after(s)
-            # (a freeze on the kill puts everything after it that much later; see derive)
-            last_at = (_post_for(s, pres[i], mine - OWN_KILL_HOLD) + _freeze_of(s)) if mine else 0.0
+            last_at = _post_for(s, pres[i], mine - OWN_KILL_HOLD) if mine else 0.0
             if post < last_at + OUTRO_AFTER_KILL:
                 post = max(post, max_post(s, pres[i], last_at + OUTRO_AFTER_KILL))
             s["duration"] = round(pres[i] + post, 5)
@@ -4914,16 +4883,11 @@ def _own_tail(shot: dict, pre: float) -> float:
     """Reel seconds after the main kill needed to show the shot's own later kills.
 
     0 when it has none. Never more than its footage after the kill allows.
-
-    A FREEZE ON THE KILL COMES OUT OF THIS TAIL, so it is added to it. On
-    Aftrhrs the climax quadra froze 0.75 s on its third kill inside a tail of
-    1.10 s: 0.11 s of footage played after the freeze and the fourth kill,
-    0.83 s on, never appeared.
     """
     want_src = _own_after(shot)
     if not want_src:
         return 0.0
-    return _post_for(shot, pre, want_src) + _freeze_of(shot)
+    return _post_for(shot, pre, want_src)
 
 
 def _post_for(shot: dict, pre: float, src: float) -> float:
@@ -5496,14 +5460,10 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
 
 
 def _span(shot: dict) -> tuple[float, float]:
-    """Source seconds the shot's own (handle-free) footage covers.
-
-    A freeze on the kill replaces that much of what follows it, so the
-    footage ends that much sooner.
-    """
+    """Source seconds the shot's own (handle-free) footage covers."""
     ps = shot_pieces(shot)
     start = shot["kill"] - source_used(ps, shot["pre"])
-    end = max(float(shot["pre"]), float(shot["duration"]) - _freeze_of(shot))
+    end = max(float(shot["pre"]), float(shot["duration"]))
     return start, start + source_used(ps, end)
 
 
@@ -5529,22 +5489,18 @@ def derive(project: dict) -> dict:
     for i, (s, t0) in enumerate(zip(shots, starts)):
         ps = shot_pieces(s)
         a, b = _span(s)
-        freeze = _freeze_of(s)
         inside = []
         for k in s["kills"]:
             if a - 1e-6 <= k <= b + 1e-6:
-                later = freeze if k > float(s["kill"]) + 1e-6 else 0.0
-                inside.append(round(t0 + output_at(ps, k - a) + later, 4))
+                inside.append(round(t0 + output_at(ps, k - a), 4))
         kills_reel.extend(inside)
         rows.append({"index": i, "start": round(t0, 5), "end": round(t0 + s["duration"], 5),
                      "kill_reel": round(t0 + s["pre"], 5), "kills_reel": inside,
                      "lead_in": bool(s.get("lead_in")),
-                     "source_in": round(a, 4), "source_out": round(b, 4),
                      # The page's instant preview plays the clip files
-                     # themselves, so it has to know where the render holds
-                     # the kill's frame -- and that what follows plays this
-                     # much later. See preview_at().
-                     "freeze": round(freeze, 4),
+                     # themselves, so it has to know where the shot's footage
+                     # starts and the speed it plays at. See preview_at().
+                     "source_in": round(a, 4), "source_out": round(b, 4),
                      "pieces": [[round(x, 4), round(y, 4), r] for x, y, r in ps]})
     # A LONGER ENDING NEVER FADES THE LAST KILL. The fade runs over the last
     # `outro_len` seconds, and where the last shot ends sooner after its kill
@@ -5610,8 +5566,8 @@ def preview_at(derived: dict, t: float) -> dict:
     twenty seconds later.
 
     -> {"shot", "src", "rate"}: the shot index, the source second to show,
-    and the playback rate there -- 0 while a frame is held (a freeze on the
-    kill, a stretched run-up's held opening, a long ending's last frame).
+    and the playback rate there -- 0 while a frame is held (a stretched
+    run-up's held opening, a long ending's last frame).
     shot is -1 when the reel has no shots.
     """
     rows = derived.get("shots") or []
@@ -5625,16 +5581,8 @@ def preview_at(derived: dict, t: float) -> dict:
     dur = r["end"] - r["start"]
     u = t - r["start"]
     ps = [tuple(p) for p in r["pieces"]]
-    # Where the kill sits in the shot's own output time: the render's freeze
-    # starts there (segment_command loops the frame at kill_at).
-    pre = r["kill_reel"] - r["start"]
-    freeze = float(r.get("freeze") or 0.0)
     held = u >= dur                       # past the shot: the long ending's hold
     u = min(u, dur)
-    if freeze and pre <= u < pre + freeze:
-        return {"shot": i, "src": round(r["source_in"] + source_used(ps, pre), 4), "rate": 0.0}
-    if freeze and u >= pre + freeze:
-        u -= freeze
     rate = 0.0 if held else next((p[2] for p in ps if p[0] <= u < p[1]), ps[-1][2])
     if rate < PREVIEW_MIN_RATE:
         rate = 0.0
@@ -5898,8 +5846,6 @@ class Segment:
     vignette: bool
     caption: str
     beats: list        # beat times inside the segment, segment seconds
-    freeze: float      # seconds of freeze inserted at the kill
-    freeze_push: bool
     has_audio: bool
     outro_freeze: float = 0.0
     sat_trim: float = 1.0
@@ -6044,15 +5990,11 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
         seg_ps += [(a + hsec, b + hsec, r) for a, b, r in ps]
         if tail:
             seg_ps.append((hsec + dur, hsec + dur + tsec, 1.0))
-        freeze = _freeze_of(s)
-        push = bool(s["hero"] and picked(s["hero_fx"], "h02"))
         kill_at = hsec + pre_s
         # Every kill this shot shows, where it plays in the segment -- through
-        # the speed map, so a slowed kill is still gated at the right moment,
-        # and a kill after a freeze plays that much later.
+        # the speed map, so a slowed kill is still gated at the right moment.
         k_src = source_used(ps, pre_s)
-        kill_times = sorted({round(hsec + output_at(ps, max(0.0, k_src + (k - s["kill"])))
-                                   + (freeze if k > s["kill"] + 1e-6 else 0.0), 4)
+        kill_times = sorted({round(hsec + output_at(ps, max(0.0, k_src + (k - s["kill"]))), 4)
                              for k in s["kills"] if s["kill"] - 1e-6 <= k <= s["kill"] + dur})
         seg_beats = []
         if song_beats is not None:
@@ -6070,7 +6012,7 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
             camera=s["camera"], grade=project["grade"], vignette=project["vignette"],
             caption=s["caption"] if (s["hero"] and picked(s["hero_fx"], "h05")) else "",
             beats=seg_beats if fam(s["camera"]) == "c04" else [],
-            freeze=freeze, freeze_push=push, has_audio=has_audio(s["clip"]),
+            has_audio=has_audio(s["clip"]),
             outro_freeze=1.0 if (i == len(shots) - 1 and project["outro"] == "e02") else 0.0,
             sat_trim=float(project.get("saturation", 1.0)),
             kill_times=kill_times or [round(kill_at, 4)],
@@ -6118,7 +6060,7 @@ def _layout_graph(seg: Segment, time_ops: list[str], effects: list[str], end: st
     with its effects, the camera cut out and placed, one frame out.
 
     The camera goes through the same time map as the game -- speed ramps,
-    freezes, the held ending -- so a laugh stays with the kill that caused it.
+    held frames, the held ending -- so a laugh stays with the kill that caused it.
     Kill effects touch the game only: a zoom punch that also punched the
     streamer's face in was measured as the thing that made those reels look
     home-made.
@@ -6237,7 +6179,7 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     frame; a shot whose pieces leave real speed is rendered from it.
     """
     W, H, F = seg.width, seg.height, FPS
-    total = seg.frames                  # a freeze replaces footage; it never lengthens a shot
+    total = seg.frames                  # a held frame replaces footage; it never lengthens a shot
     total_s = total / F
     kt = seg.kill_at
     src_len = sum((b - a) * r for a, b, r in seg.pieces)
@@ -6247,9 +6189,6 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     vin = (2 if seg.cam_file else 1) if retimed else 0
 
     v = _time_ops(seg, bool(retimed), lead)
-    if seg.freeze > 0:
-        v.append(f"loop=loop={round(seg.freeze * F)}:size=1:start={round(kt * F)}")
-        v.append(f"setpts=N/{F}/TB")
     if seg.hold > 0:
         # A long ending: the footage has run out, so its last frame is held
         # while the picture and the song fade (the push-in is below).
@@ -6271,8 +6210,7 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     if not lay:
         v.append("setsar=1")
 
-    hold = seg.freeze
-    T = "in_time"                       # zoompan's clock; every other filter uses t
+    T = "in_time"                      # zoompan's clock; every other filter uses t
     z_terms = []
     if seg.hold > 0:
         # Held, not frozen: a slow push over the held frame, eased at both
@@ -6285,9 +6223,6 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
         gap = knob(pid, "gap", 0.16)
         z_terms.append(_pulse(T, kt, 0.10, 0.18))
         z_terms.append(_pulse(T, kt + gap, 0.16, 0.35))
-    if seg.freeze_push:
-        z_terms.append(f"if(between({T},{kt:.4f},{kt + hold:.4f}),0.4*({T}-{kt:.4f})/{hold:.4f},"
-                       f"{_pulse(T, kt + hold, 0.4, 0.25)})")
     if (pid := picked(seg.fx, "k17")):
         # Held close through the run-up and let go ON the kill: the release is
         # the beat, where k01's arrival is. A reel that only ever punches in
@@ -6477,13 +6412,7 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
             a_parts.append(f"aevalsrc=0|0:s=48000:d={n:.5f},aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[{lab}]")
         labels.append(f"[{lab}]")
     achain = ";".join(a_parts) + ";" + "".join(labels) + f"concat=n={len(labels)}:v=0:a=1[ac]"
-    if seg.freeze > 0:
-        achain += (f";[ac]asplit[aa][ab];[aa]atrim=0:{kt:.5f}[a1];"
-                   f"aevalsrc=0|0:s=48000:d={seg.freeze:.5f},aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[a2];"
-                   f"[ab]atrim=start={kt:.5f},asetpts=PTS-STARTPTS[a3];[a1][a2][a3]concat=n=3:v=0:a=1[ad]")
-        last = "[ad]"
-    else:
-        last = "[ac]"
+    last = "[ac]"
     if seg.game_gate:
         # THE KILL IS WHAT YOU HEAR. Game sound under the whole reel -- steps,
         # reloads, voice lines -- kept the music ducked all the time and left
@@ -6653,14 +6582,6 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         bar = round(H * knob(pid, "h", 0.125))
         post.append(f"drawbox=x=0:y=0:w=iw:h={bar}:color=black:t=fill,drawbox=x=0:y=ih-{bar}:w=iw:h={bar}:color=black:t=fill")
     font = _font()
-    if "o02" in ov and derived["kills"]:
-        ks = derived["kills"] + [L + 1]
-        size = max(24, round(H * 0.05))
-        for j in range(len(ks) - 1):
-            post.append(f"drawtext={font}expansion=none:textfile={_path_arg(text_file(textdir, f'x{j + 1}'))}:"
-                        f"fontsize={size}:fontcolor=white:borderw=2:"
-                        f"bordercolor=black@0.5:x=w-tw-{round(W * 0.03)}:y={round(H * 0.04)}:"
-                        f"enable='{_between(ks[j], ks[j + 1])}'")
     if "o07" in ov and project.get("handle"):
         size = max(18, round(H * 0.032))
         # Anywhere in the frame, as a share of the room the text leaves:

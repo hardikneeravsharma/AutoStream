@@ -107,14 +107,15 @@ def test_a_fast_style_cuts_at_its_references_median_shot(pile, style):
 
 
 def test_fast_cuts_keep_the_variety_their_pools_define(pile):
-    """(f): fast_rules takes out ramps, freezes, stacking and white-flash or slow cuts --
-    and keeps every other kill effect and camera. It used to cut each pool to one entry."""
+    """(f): fast_rules takes out ramps, stacking and white-flash or slow cuts -- and
+    keeps every other kill effect, camera and hero treatment. It used to cut each pool
+    to one entry."""
     st = studio.fast_rules(studio.STYLE["hype"])
     assert len(set(st.kill_pool)) > 3 and len(set(st.camera_pool)) > 1
     assert st.speed_pool == ("s00",) and st.energy == 0.0
     assert "t02" not in st.transition_pool and all(
         studio._cut_seconds(t) <= studio.FAST_CUT_SECONDS for t in st.transition_pool)
-    assert not any(studio.fam(h) == "h02" for h in st.hero_pool)
+    assert st.hero_pool == studio.STYLE["hype"].hero_pool
     proj, *_ = _planned(pile, "hype", 174.0)
     own = [[f for f in s["fx"] if studio.fam(f) != "k02"] for s in proj["shots"]]
     assert len({f[0] for f in own if f}) == studio.MAX_KILL_FX, own
@@ -202,14 +203,13 @@ def test_space_apart_breaks_a_b_a_b_and_keeps_each_clips_order():
 
 # ------------------------------------------------------------------ (d) sharp kills
 
-def test_the_washed_out_opener_is_made_sharp_without_a_freeze():
+def test_the_washed_out_opener_is_made_sharp():
     """Velocity's first kill: s04 + k06 + h01 + c08 read 0.26 of a plain frame."""
     shot = {"clip": "a.mp4", "kill": 3.0, "kills": [3.0], "pre": 1.5, "duration": 2.4, "clip_seconds": 20.0,
             "speed": "s04", "fx": ["k06"], "hero": True, "hero_fx": ["h01"], "camera": "c08"}
     assert studio.kill_detail(shot) < studio.SHARP_FLOOR
-    n = studio.sharp_kills([shot], {"kill": ["k06", "k01"], "hero": ["h01", "h02"]})
+    n = studio.sharp_kills([shot], {"kill": ["k06", "k01"], "hero": ["h01", "h03"]})
     assert n == 1 and studio.kill_detail(shot) >= studio.SHARP_FLOOR
-    assert studio._freeze_of(shot) == 0.0
 
 
 def test_a_drawer_the_player_chose_is_left_alone():
@@ -383,15 +383,6 @@ def test_the_gate_refuses_a_hype_reel_without_its_shake(pile):
     for s in got["shots"]:
         s["fx"] = [f for f in s["fx"] if studio.fam(f) != "k02"]
     assert "signature" in {f.code for f in reelcheck.plan_findings(got, studio.derive(got))}
-
-
-def test_the_kill_counter_ticks_once_for_every_kill_shown(pile):
-    """Rule 4: the counter is the shown kills, no more, no fewer."""
-    proj, notes, got, derived, found = _planned(pile, "hype", 125.0)
-    assert "kill-counter" not in {f.code for f in found}
-    assert len(derived["kills"]) == sum(len(r["kills_reel"]) for r in derived["shots"])
-    broken = dict(derived, kills=derived["kills"][:-1])
-    assert "kill-counter" in {f.code for f in reelcheck.style_findings(got, broken)}
 
 
 # ---------------------------------------------------------------- round 3 (ChatGPT's third review)

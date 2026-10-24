@@ -1140,26 +1140,35 @@ def transitions(shots: list[dict], starts: list[int], *, first_kill_beat: int,
             last_soft = t
 
 
+# THE CLIMAX'S HERO TREATMENT, loudest first: the double punch is two hits on
+# the one kill, the spotlight a quieter one. The first family the reel's pool
+# holds is the one the climax gets.
+CLIMAX_HEROES = ("h01", "h03")
+
+
 def climax(shots: list[dict], strengths: list[float], pools: dict[str, list[str]],
            speed_ok=None) -> None:
-    """The strongest hero moment stops time: a freeze with a push-in, slowed into its kill. In place.
+    """The strongest hero moment is the reel's big one: rushed in, slowed on its kill, and
+    given the loudest hero treatment the pool holds. In place.
 
     v1-v6 played the best kill at the speed of every other kill; the
-    references hold their big moment (still frames 5-15% of the edit).
+    references hold their big moment. It used to hold it by stopping time --
+    a freeze with a push-in -- until the player had the freezes taken
+    out on 2026-10-24. It never freezes now: what sets it apart is the speed,
+    the one run in the reel that accelerates and then hangs on its kill.
     """
     heroes = [i for i, s in enumerate(shots) if s.get("hero")]
     if not heroes:
         return
     best = max(heroes, key=lambda i: (strengths[i] if i < len(strengths) else 0.0, i))
-    # Only the climax freezes: v8 froze the opener's triple too, from the
-    # pool, and the climax stopped being the moment time stops.
-    others = [h for h in (pools.get("hero") or []) if h != "h02"] or ["h01"]
-    for i in heroes:
-        if i != best and "h02" in shots[i]["hero_fx"]:
-            shots[i]["hero_fx"] = [others[i % len(others)]] + [h for h in shots[i]["hero_fx"] if h not in ("h02", others[i % len(others)])]
     s = shots[best]
-    if "h02" not in s["hero_fx"]:
-        s["hero_fx"] = ["h02"] + (["h05"] if "h05" in s["hero_fx"] else [])
+    # The pool's own entry for the family, so a style that draws a variant
+    # (h01tight) gives the climax that one rather than the plain part.
+    pool = list(pools.get("hero") or [])
+    top = next((p for fam in CLIMAX_HEROES for p in pool if p[:3] == fam), "")
+    have = list(s.get("hero_fx") or [])
+    if top and not any(h[:3] == top[:3] for h in have):
+        s["hero_fx"] = [top] + (["h05"] if "h05" in have else [])
     # It rushes in and hangs on the kill: the run into the best moment is the
     # one place the reel accelerates (v8 ran into it at the speed of every
     # other shot). Rushing eats footage 2.2 times as fast, so a clip without

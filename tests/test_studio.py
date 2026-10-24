@@ -647,7 +647,7 @@ def _built(root, **shot):
 
 def test_graphs_carry_no_escaped_commas_inside_quotes(root):
     got, derived, segs = _built(root, fx=["k01", "k02", "k03", "k07", "k11", "k15", "k16"],
-                                hero=True, hero_fx=["h01", "h02", "h03", "h05"], caption="ACE",
+                                hero=True, hero_fx=["h01", "h03", "h05"], caption="ACE",
                                 camera="c04", speed="s02")
     for seg in segs:
         argv = studio.segment_command(seg, Path("out.mp4"))
@@ -688,12 +688,23 @@ def test_a_projects_lyrics_settings_are_kept_and_clamped(root):
     assert [l["key"] for l in studio.catalog()["lyrics"]["looks"]] == list(studio.lyrics_mod.LOOKS)
 
 
-def test_a_freeze_never_changes_how_long_a_shot_is(root):
-    got, derived, segs = _built(root, fx=["k04"])
+def test_a_reel_saved_with_the_removed_freezes_and_counter_opens_and_renders_without_them(root):
+    """h02 (and its variants), k04 and o02 were taken out on 2026-10-24. A reel saved
+    with them still opens, and renders as if they had never been chosen."""
+    proj, _ = studio.plan(_clips(root), "montage", shape=Shape(bpm=120.0))
+    proj.update(song="", overlays=["o02", "o04"])
+    for i, s in enumerate(proj["shots"]):
+        s.update(fx=["k04", "k02"], hero=True, hero_fx=[("h02", "h02short", "h02long")[i % 3], "h01"])
+    got, derived, _ = studio.normalise(proj, root)
+    gone = {"h02", "h02short", "h02long", "k04", "o02"}
+    assert got["overlays"] == ["o04"]
+    assert all(not gone & set(s["fx"] + s["hero_fx"]) and s["fx"] == ["k02"] for s in got["shots"])
+    assert derived["length"] == pytest.approx(sum(s["duration"] for s in got["shots"]))
+    segs = studio.segments(got, derived, has_audio=lambda p: True, song_beats=derived["beats"])
     for seg in segs:
         argv = studio.segment_command(seg, Path("o.mp4"))
         assert argv[argv.index("-frames:v") + 1] == str(seg.frames)
-    assert derived["length"] == pytest.approx(sum(s["duration"] for s in got["shots"]))
+        assert "loop=loop=" not in argv[argv.index("-filter_complex") + 1]
 
 
 def test_a_variant_reaches_the_renderer_the_way_its_base_does(root):
@@ -705,10 +716,6 @@ def test_a_variant_reaches_the_renderer_the_way_its_base_does(root):
     a plain hard cut. A dead variant is still offered, picked and shipped in a
     built-in style -- montage uses c04hard -- so it fails silently.
     """
-    for part, hold in (("h02", 0.75), ("h02short", 0.35), ("h02long", 1.0)):
-        _, _, segs = _built(root, hero=True, hero_fx=[part])
-        assert [s.freeze for s in segs] == [pytest.approx(hold)] * len(segs), part
-        assert all(s.freeze_push for s in segs), part
     for part, amt in (("h03", 0.9), ("h03soft", 0.6), ("h03hard", 1.2)):
         _, _, segs = _built(root, hero=True, hero_fx=[part])
         assert all(s.hero_fx == [part] for s in segs), part
@@ -825,7 +832,7 @@ def test_every_generated_part_resolves_to_a_family():
     drawn = {"k01", "k02", "k03", "k06", "k07", "k08", "k11", "k12", "k14", "k15",
              "k16", "k17", "k18", "k19", "k20", "k21", "k22", "xfade", "tint",
              "c01", "c03", "c04", "c05", "c06", "c07", "c08",
-             "o01", "o04", "o05", "o08", "o09", "h01", "h02", "h03", "h05",
+             "o01", "o04", "o05", "o08", "o09", "h01", "h03", "h05",
              "fade_in", "fade_out"}
     for p in studio.PARTS:
         if p.base:
@@ -1360,7 +1367,7 @@ def quadra(tmp_path):
     return r
 
 
-def _quadra_first(r, *, hero_freeze=False):
+def _quadra_first(r, *, hero_rush=False):
     """The planned reel with the quadra's shots first, as the user's reel had them."""
     proj, _ = studio.plan(_clips(r), "clean", shape=Shape(bpm=110.0))
     shots = proj["shots"]
@@ -1377,8 +1384,8 @@ def _quadra_first(r, *, hero_freeze=False):
     assert [s["kills"] for s in q] == [[3.567], [5.467], [17.6, 18.433]]
     for s in proj["shots"]:
         s["speed"], s["fx"], s["hero"], s["hero_fx"] = "s00", ["k15"], False, []
-    if hero_freeze:
-        q[2].update(speed="s04", hero=True, hero_fx=["h02"])
+    if hero_rush:
+        q[2].update(speed="s04", hero=True, hero_fx=["h01"])
     return proj, q
 
 
@@ -1412,18 +1419,19 @@ def test_a_follow_up_never_replays_the_footage_the_shot_before_showed(quadra):
     assert any("showing its kill twice" in n for n in notes), notes
 
 
-def test_a_freeze_on_the_kill_does_not_cut_off_the_shots_later_kill(quadra):
+def test_a_rushed_climax_does_not_cut_off_the_shots_later_kill(quadra):
     """Aftrhrs: the climax quadra froze 0.75 s on its third kill inside a
     1.10 s tail and rushed out at 2.2x; 0.11 s of footage followed the
-    freeze and the fourth kill, 0.83 s on, never appeared."""
-    proj, q = _quadra_first(quadra, hero_freeze=True)
+    freeze and the fourth kill, 0.83 s on, never appeared. The freeze is
+    gone (2026-10-24); the rush out of the kill is not."""
+    proj, q = _quadra_first(quadra, hero_rush=True)
     marks = [3.30, 7.70, 11.01, 13.80, 16.50]
     studio.apply_marks(proj, marks)
     got, derived, shown = _shown(proj, quadra)
     hero = next(i for i, s in enumerate(got["shots"]) if s.get("hero"))
     s, row = got["shots"][hero], derived["shots"][hero]
     assert 18.433 in [round(k, 3) for k in s["kills"]]
-    # Shown: what plays after the freeze reaches past the fourth kill, held.
+    # Shown: what plays after the kill reaches past the fourth kill, held.
     assert row["source_out"] >= 18.433 + studio.OWN_KILL_HOLD - 1e-3, row
     # ...at real speed, not rushed: the ramp out waits for it.
     k_src = 18.433 - row["source_in"]
@@ -1944,7 +1952,7 @@ def _long_reel(root, n):
     return got, derived, studio.segments(got, derived)
 
 
-def test_a_long_reel_still_fits_on_a_windows_command_line(root, tmp_path):
+def test_a_long_reel_still_fits_on_a_windows_command_line(root, tmp_path, monkeypatch):
     """MEASURED, not guessed: a real 50-shot reel built a 33,144-character
     command against CreateProcess's 32,767 limit and died with WinError 206
     AFTER encoding all fifty shots. MAX_SHOTS is 80, so the app was offering
@@ -1958,11 +1966,18 @@ def test_a_long_reel_still_fits_on_a_windows_command_line(root, tmp_path):
         assert length < 32_767, f"{n} shots: {length} characters is over the Windows limit"
         # Over the threshold it must be the file form, or the line would grow
         # with the shot count again the moment the graph did. Which spelling
-        # depends on the ffmpeg installed -- see tools.filter_script_flag.
-        assert any(x in argv for x in ("-filter_complex_script", "-/filter_complex")),             f"{n} shots: still inline"
+        # depends on the ffmpeg installed -- see tools.filter_script_flag. The
+        # threshold is lowered here: since the kill counter went (2026-10-24),
+        # a test reel's graph no longer reaches the real one by itself.
+        monkeypatch.setattr(studio, "CMDLINE_SAFE", 2_000)
+        argv = studio.assemble_command(got, derived, segs, files, tmp_path / "out.mp4",
+                                       textdir=tmp_path)
+        assert any(x in argv for x in ("-filter_complex_script", "-/filter_complex")), f"{n} shots: still inline"
+        monkeypatch.undo()
 
 
-def test_the_graph_in_the_script_file_is_the_graph_that_was_built(root, tmp_path):
+def test_the_graph_in_the_script_file_is_the_graph_that_was_built(root, tmp_path, monkeypatch):
+    monkeypatch.setattr(studio, "CMDLINE_SAFE", 2_000)
     got, derived, segs = _long_reel(root, 50)
     files = [tmp_path / f"seg{i:03d}.mp4" for i in range(len(segs))]
     argv = studio.assemble_command(got, derived, segs, files, tmp_path / "out.mp4",
@@ -2300,7 +2315,7 @@ def test_a_cut_rounded_to_its_footage_does_not_lose_a_beat_off_the_shot():
     and every kill after it slid 0.55 s off its mark (17 of 43 on marks)."""
     shot = {"clip": "x.mp4", "kill": 17.6, "kills": [17.6, 18.433], "pre": 2.15599,
             "duration": 7.12081, "speed": "s04", "clip_seconds": 26.41, "fx": [], "hero": True,
-            "hero_fx": ["h02"]}
+            "hero_fx": ["h01"]}
     before = dict(shot)
     studio._fit(shot, 0.55077)
     assert shot["duration"] == before["duration"] and shot["pre"] == before["pre"]
@@ -2596,7 +2611,7 @@ def test_a_letterboxed_game_is_retimed_at_the_size_it_is_shown():
     seg = studio.Segment(index=0, clip="c.mp4", clip_mtime=0, width=1080, height=1920, fmt="vertical",
                          head=0, body=60, tail=0, src_start=0.0, pieces=[[0, 1, 0.5]], kill_at=0.5,
                          fx=[], hero_fx=[], camera="c00", grade="g01", vignette=False, caption="",
-                         beats=[], freeze=0.0, freeze_push=False, has_audio=True,
+                         beats=[], has_audio=True,
                          layout={"fit": "fit", "game": [0, 0, 1080, 1920]})
     assert studio.retime_height(seg) == 720
     seg.layout = {}

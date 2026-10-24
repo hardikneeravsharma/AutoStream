@@ -341,8 +341,6 @@ FADE_COLOURS = [("black", "black", "black"), ("white", "white", "white"),
 HERO = [
     ("h01", "double", "Double punch", "Two punches close together.", "gap",
      [("tight", "a tenth apart", 0.10), ("", "", 0.16), ("wide", "a quarter apart", 0.25)]),
-    ("h02", "freeze", "Freeze and push in", "Time stops while the camera pushes in.", "hold",
-     [("short", "briefly", 0.35), ("", "", 0.6), ("long", "a long beat", 1.0)]),
     ("h03", "spot", "Spotlight", "Everything but the centre drops away.", "amt",
      [("soft", "softly", 0.6), ("", "", 0.9), ("hard", "hard", 1.2)]),
 ]

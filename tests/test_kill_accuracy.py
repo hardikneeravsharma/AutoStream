@@ -201,11 +201,10 @@ def test_a_fast_style_on_a_fast_song_keeps_real_speed_and_one_effect_a_kill(clip
         assert len({tuple(s["fx"]) for s in shots}) == 1, "Fast-paced headshot is one effect by design"
 
 
-def test_the_climax_does_not_stop_time_in_a_fast_reel(clips_root):
-    """rulebook.climax freezes and ramps the best shot (h02 + s04). On headshot3 that
-    was shot 20, in a reel built to have neither."""
+def test_the_climax_does_not_ramp_in_a_fast_reel(clips_root):
+    """rulebook.climax rushes the best shot in and hangs on its kill (s04). On headshot3
+    that was shot 20, in a reel built to have no ramp."""
     proj, _ = studio.plan(_clips(clips_root), "hype", shape=T.Shape(bpm=150.0))
-    assert all("h02" not in s["hero_fx"] for s in proj["shots"])
     assert {s["speed"] for s in proj["shots"]} == {"s00"}
 
 

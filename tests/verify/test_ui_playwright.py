@@ -651,7 +651,7 @@ def test_an_edit_plays_at_once_and_renders_itself_in_the_background(ui, app):
     print(f"\n  delete -> preview updated {got['sync']:.1f} ms, next shot's frame decoded {got['frame']:.0f} ms")
 
     # --- the page's arithmetic is the server's
-    page.wait_for_function("studio.derived.shots.every(r => r.source_in !== undefined && r.freeze !== undefined)",
+    page.wait_for_function("studio.derived.shots.every(r => r.source_in !== undefined && !r.estimate)",
                            timeout=15_000)
     derived = page.evaluate("studio.derived")
     ts = [round(derived["length"] * k / 23, 3) for k in range(24)] + \

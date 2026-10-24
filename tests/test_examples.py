@@ -43,30 +43,30 @@ def test_a_fresh_install_has_no_examples_and_says_which(root, stock):
 def test_an_example_is_found_by_its_part_id(root):
     f = examples.folder(root)
     f.mkdir(parents=True)
-    (f / "k04.mp4").write_bytes(b"not really a video")
-    assert examples.path_for(root, "k04") == f / "k04.mp4"
+    (f / "k12.mp4").write_bytes(b"not really a video")
+    assert examples.path_for(root, "k12") == f / "k12.mp4"
     m = examples.manifest(root)
-    assert m["examples"]["k04"]["type"] == "video/mp4"
-    assert m["examples"]["k04"]["bytes"] == 18
-    assert "k04" not in m["missing"]
+    assert m["examples"]["k12"]["type"] == "video/mp4"
+    assert m["examples"]["k12"]["bytes"] == 18
+    assert "k12" not in m["missing"]
 
 
 def test_a_new_user_sees_the_stock_example_until_they_cut_their_own(root, stock):
-    (stock / "k04.mp4").write_bytes(b"stock")
-    assert examples.path_for(root, "k04") == stock / "k04.mp4"
+    (stock / "k12.mp4").write_bytes(b"stock")
+    assert examples.path_for(root, "k12") == stock / "k12.mp4"
     m = examples.manifest(root)
-    assert m["examples"]["k04"]["stock"] is True
+    assert m["examples"]["k12"]["stock"] is True
     # Still missing: a stock card is not cut from their clips, and a rebuild
     # is what replaces it.
-    assert "k04" in m["missing"]
-    assert examples.path_for(root, "k04", stock=False) is None
+    assert "k12" in m["missing"]
+    assert examples.path_for(root, "k12", stock=False) is None
 
     f = examples.folder(root)
     f.mkdir(parents=True)
-    (f / "k04.mp4").write_bytes(b"theirs")
-    assert examples.path_for(root, "k04") == f / "k04.mp4"
+    (f / "k12.mp4").write_bytes(b"theirs")
+    assert examples.path_for(root, "k12") == f / "k12.mp4"
     m = examples.manifest(root)
-    assert m["examples"]["k04"]["stock"] is False and "k04" not in m["missing"]
+    assert m["examples"]["k12"]["stock"] is False and "k12" not in m["missing"]
 
 
 def test_a_stock_example_is_only_found_for_a_part_the_catalog_knows(root, stock):
@@ -82,21 +82,21 @@ def test_the_shipped_stock_set_covers_every_part_there_is_something_to_show():
 
 
 @pytest.mark.parametrize("asked", ["", "nonsense", "../../secrets/token",
-                                   "k04/../../config.yaml", "K04"])
+                                   "k12/../../config.yaml", "K12"])
 def test_only_a_part_the_catalog_knows_can_be_asked_for(root, asked):
     (examples.folder(root)).mkdir(parents=True)
-    (examples.folder(root) / "k04.mp4").write_bytes(b"x")
+    (examples.folder(root) / "k12.mp4").write_bytes(b"x")
     assert examples.path_for(root, asked) is None
 
 
 def test_taking_examples_rendered_elsewhere_ignores_anything_else(root, tmp_path):
     src = tmp_path / "elsewhere"
     src.mkdir()
-    for name in ("k04.gif", "t05.mp4", "nonsense.mp4", "k04.txt", "secrets.yaml"):
+    for name in ("k12.gif", "t05.mp4", "nonsense.mp4", "k12.txt", "secrets.yaml"):
         (src / name).write_bytes(b"x")
     got = examples.take_from(root, src)
-    assert got["ok"] and got["taken"] == ["k04", "t05"]
-    assert sorted(p.name for p in examples.folder(root).iterdir()) == ["k04.gif", "t05.mp4"]
+    assert got["ok"] and got["taken"] == ["k12", "t05"]
+    assert sorted(p.name for p in examples.folder(root).iterdir()) == ["k12.gif", "t05.mp4"]
 
 
 def _run_of(root, name, game, seconds):
@@ -223,8 +223,8 @@ def test_a_built_set_records_the_clips_it_was_cut_from(root, monkeypatch):
     r, by_len = _library(root)
     studio.set_favourite(r, [by_len[12]["path"], by_len[20]["path"]], on=True)
     _no_render(monkeypatch)
-    out = examples.build(r, ["k04"])
-    assert out["ok"] and out["made"] == ["k04"]
+    out = examples.build(r, ["k12"])
+    assert out["ok"] and out["made"] == ["k12"]
 
     got = examples.manifest(r)["cut_from"]
     assert got["clips"] == [Path(by_len[12]["path"]).name, Path(by_len[20]["path"]).name]
@@ -237,7 +237,7 @@ def test_the_key_changes_when_the_choice_of_clips_does(root, monkeypatch):
     """What makes a stale set noticeable: same key, same footage."""
     r, by_len = _library(root)
     _no_render(monkeypatch)
-    examples.build(r, ["k04"])
+    examples.build(r, ["k12"])
     was = examples.manifest(r)["cut_from"]["key"]
 
     studio.set_favourite(r, [by_len[20]["path"]], on=True)
@@ -250,7 +250,7 @@ def test_examples_taken_from_elsewhere_drop_the_note(root, tmp_path, monkeypatch
     """They were cut from somebody else's clips; no note beats a wrong one."""
     r, _ = _library(root)
     _no_render(monkeypatch)
-    examples.build(r, ["k04"])
+    examples.build(r, ["k12"])
     assert examples.manifest(r)["cut_from"]
 
     src = tmp_path / "elsewhere"
@@ -279,8 +279,8 @@ def test_a_style_is_already_a_template():
 
 def test_a_template_swaps_the_picks_and_nothing_else():
     base = studio.STYLE["clean"]
-    got = studio.templated(base, {"kill": "k04", "transition": "t05", "camera": "c04"})
-    assert got.kill == ("k04",) and got.cuts == ("t05",)
+    got = studio.templated(base, {"kill": "k12", "transition": "t05", "camera": "c04"})
+    assert got.kill == ("k12",) and got.cuts == ("t05",)
     assert got.camera == "c04" and got.camera_pool == ("c04",)
     # untouched drawers keep the style's own
     assert got.intro == base.intro and got.outro == base.outro and got.grade == base.grade
@@ -291,10 +291,10 @@ def test_a_picked_drawer_leads_but_is_not_emptied():
     """A kill effect is drawn once per SHOT. A pool of one put the same effect
     on all six kills of a montage, which no reference edit does."""
     base = studio.STYLE["montage"]
-    got = studio.templated(base, {"kill": "k04", "transition": "t05", "hero": "h02"})
-    for pool, pick, was in ((got.kill_pool, "k04", base.kill_pool),
+    got = studio.templated(base, {"kill": "k12", "transition": "t05", "hero": "h01tight"})
+    for pool, pick, was in ((got.kill_pool, "k12", base.kill_pool),
                             (got.transition_pool, "t05", base.transition_pool),
-                            (got.hero_pool, "h02", base.hero_pool)):
+                            (got.hero_pool, "h01tight", base.hero_pool)):
         assert pool[0] == pick
         assert pool.count(pick) >= 2, "the pick has to be the likeliest draw"
         assert len(set(pool)) >= 3, "_vary avoids the last two: fewer and it repeats"
