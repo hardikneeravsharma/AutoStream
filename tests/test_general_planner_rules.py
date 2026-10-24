@@ -433,3 +433,39 @@ def test_quartiles_are_checked_only_where_the_references_carry_them(pile, monkey
     real = studio_refs.summary
     monkeypatch.setattr(studio_refs, "summary", lambda ids: dict(real(ids), p25_beats=40.0, p50_beats=50.0, p75_beats=60.0))
     assert "pace-quartile" in {f.code for f in reelcheck.style_findings(got, derived)}
+
+
+# ---------------------------------------------------------------- Clean: restraint as a signature
+
+@pytest.mark.parametrize("bpm", PACE_TEMPOS)
+def test_clean_plays_real_speed_one_soft_treatment_and_a_camera_that_barely_breathes(pile, bpm):
+    """ChatGPT's review of Clean: >=90% of shots at real speed, one soft treatment a kill,
+    blends on <=15% of cuts, flashes no more often than 1.2x the references, ~1% camera."""
+    proj, notes, got, derived, found = _planned(pile, "clean", bpm)
+    st = studio.STYLE["clean"]
+    shots = got["shots"]
+    assert not {"calm-speed", "calm-effects", "calm-blends", "calm-camera", "flash-rate"} & {f.code for f in found}, \
+        [f.message for f in found]
+    assert sum(1 for s in shots if s["speed"] == "s00") >= st.real_speed * len(shots) - 1e-9
+    assert all(len(s["fx"]) <= 1 for s in shots)
+    assert all(studio.drift_of(s["camera"]) <= st.drift_max + 1e-9 for s in shots)
+
+
+def test_the_gate_refuses_a_clean_reel_that_ramps_stacks_and_moves(pile):
+    proj, notes, got, derived, found = _planned(pile, "clean", 125.0)
+    for s in got["shots"]:
+        s["speed"], s["camera"] = "s05", "c01soft"
+    got["shots"][0]["fx"] = ["k01soft", "k14soft"]
+    codes = {f.code for f in reelcheck.plan_findings(got, studio.derive(got))}
+    assert {"calm-speed", "calm-effects", "calm-camera"} <= codes
+
+
+def test_restraint_is_off_for_a_style_that_does_not_ask_for_it(pile):
+    proj, notes, got, derived, found = _planned(pile, "hype", 125.0)
+    assert not any(f.code.startswith("calm-") for f in found)
+
+
+def test_a_fade_from_black_shows_the_game_by_a_quarter_second():
+    """Every style opens with its fade capped at OPEN_FADE; one made to open slowly keeps it."""
+    assert studio.OPEN_FADE <= 0.4
+    assert not studio.STYLE["clean"].long_fade_in and studio.STYLE["cinematic"].long_fade_in

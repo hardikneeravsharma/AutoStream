@@ -268,11 +268,13 @@ CUT_LENGTHS = [("q", "quick", 0.2), ("", "", 0.32), ("s", "slow", 0.55)]
 
 # --------------------------------------------------------------------- camera
 CAMERA = [
+    # "faint" is Clean's: about 1% over a shot, ChatGPT's cap for a camera that should
+    # read as still footage that breathes, not as a move (the review of Clean, 2026-10-24).
     ("c01", "push", "Push in", "Drifts steadily closer.", "amt", [
-        ("hair", "a hair", 0.04), ("soft", "a touch", 0.07), ("", "", 0.12),
+        ("faint", "barely", 0.012), ("hair", "a hair", 0.04), ("soft", "a touch", 0.07), ("", "", 0.12),
         ("far", "a long way", 0.20), ("deep", "deep", 0.30)]),
     ("c05", "pull", "Pull out", "Starts close and eases back.", "amt", [
-        ("hair", "a hair", 0.05), ("soft", "a touch", 0.08), ("", "", 0.14),
+        ("faint", "barely", 0.012), ("hair", "a hair", 0.05), ("soft", "a touch", 0.08), ("", "", 0.14),
         ("far", "a long way", 0.22), ("deep", "deep", 0.32)]),
     ("c08", "breathe", "Breathing zoom", "Eases in and out again.", "amt", [
         ("hair", "barely", 0.03), ("soft", "shallow", 0.05), ("", "", 0.07),

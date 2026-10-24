@@ -1017,6 +1017,21 @@ class Style:
     # An effect EVERY kill carries on top of its own, the thing the style is named
     # for (Hype's shake). Only the readability guard takes it off (see signature_fx).
     signature: tuple[str, ...] = ()
+    # RESTRAINT AS A SIGNATURE (Clean, from ChatGPT's review: a calm style is named for
+    # what it leaves out, so that is what is measured). Each is off at its default.
+    # `real_speed`: the share of shots that play at real speed (0.95-1.05x) throughout;
+    # `kill_fx_max`: kill effects a kill may carry; `crossfade_max`: the share of cuts
+    # that may be a blend; `flash_cap`: white flashes a minute, as a multiple of the
+    # references' own rate -- fewer is always allowed; `drift_max`: how far a camera
+    # move may zoom over a shot. restrain() holds a plan to them; reelcheck says so.
+    real_speed: float = 0.0
+    kill_fx_max: int = 0
+    crossfade_max: float = 1.0
+    flash_cap: float = 0.0
+    drift_max: float = 0.0
+    # AN OPENING THAT TAKES ITS TIME. Every other style is showing the game within a
+    # quarter of a second (see OPEN_FADE); a style made like a trailer may fade up slowly.
+    long_fade_in: bool = False
 
 
 STYLES: tuple[Style, ...] = (
@@ -1113,12 +1128,13 @@ STYLES: tuple[Style, ...] = (
           "colours. Modelled on the edits that cut 17-21 times a minute and flash barely at all.",
           ("RjCsmKbYY7g", "yBvW49SD20Y", "8KKGT4JXPVY"),
           intro="i03", outro="e01", cuts=("t01", "t01", "t04"), kill=("k01soft",),
-          hero=("h03",), speed="s00", hero_speed="s01", camera="c01soft", grade="g01",
+          hero=("h03",), speed="s00", hero_speed="s01", camera="c01faint", grade="g01",
           vignette=False, pre_share=0.55,
           kill_pool=("k01soft", "k01", "k01soft", "k17soft", "k14soft", "k15soft"),
           transition_pool=("t01", "t01", "t01", "t04", "t08", "t17"),
-          hero_pool=("h03", "h02"), camera_pool=("c00", "c01soft", "c01hair", "c05soft"),
-          speed_pool=("s00", "s00", "s00", "s05"), energy=0.08),
+          hero_pool=("h03", "h02"), camera_pool=("c00", "c01faint", "c00", "c05faint"),
+          speed_pool=("s00", "s00", "s00", "s05"), energy=0.08,
+          real_speed=0.90, kill_fx_max=1, crossfade_max=0.15, flash_cap=1.2, drift_max=0.012),
     Style("chaos", "Chaos",
           "Everything at once, the way the busiest edits do it: 45-58 cuts a minute and "
           "40-79 flashes. Loud on purpose, and not for every song.",
@@ -1156,7 +1172,7 @@ STYLES: tuple[Style, ...] = (
           transition_pool=("t04", "t01", "t17", "t08", "t01", "t03"),
           hero_pool=("h02", "h03"),
           camera_pool=("c01soft", "c01in", "c05soft", "c08soft", "c06hair"),
-          speed_pool=("s00", "s05", "s01", "s06"), energy=0.2),
+          speed_pool=("s00", "s05", "s01", "s06"), energy=0.2, long_fade_in=True),
     Style("retro", "Retro",
           "Grain, scanlines and faded colour over a mid-paced cut -- the look the "
           "2010s montages had, on the references that sit nearest that pace.",
@@ -2142,6 +2158,7 @@ def fast_reel(style, bpm: float | None) -> bool:
 # over, and its last second.
 SHORT_SONG_SECONDS = 45.0
 DROP_FLASH = "k03"          # the white flash the kill on the drop gets
+OPEN_FADE = 0.40            # the longest fade from black, so the game shows by 0.25 s (see the intro)
 DROP_KILL_GAP = 0.55        # about how far apart the drop's kills are: the hand-cut reel's beat at 104 BPM
 DROP_LEAD_BARS = 4          # Build and drop on a long song: this much build before the drop...
 DROP_AFTER_BEATS = 32       # ...and this much after it, or up to the next drop if that is nearer
@@ -3373,6 +3390,9 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     calm_mix(shots, mix_free)
     # A drawer the player picked on the Make page -- one part or a set -- is theirs.
     theirs_ = set(mix_free) | {k for k in POOL_KINDS if (template or {}).get(k)}
+    if restrain_speed(shots, style, speed_ok, theirs_):
+        notes.append(f"{sum(1 for s in shots if (s.get('speed') or 's00') == 's00')} of {len(shots)} shots play at "
+                     f"real speed: {style.label} plays the game as it happened.")
     curved = speed_curves(shots, style, theirs_)
     if curved["velocity"]:
         notes.append(f"{curved['velocity']} kill(s) rush in, slow to {VEL_SLOW:g}x through the impact and rush "
@@ -3393,6 +3413,9 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     if softened:
         notes.append(f"{softened} kill(s) had effects that together would wash the kill out; "
                      f"the softest of them gave way so every kill stays sharp.")
+    if style.kill_fx_max or style.crossfade_max < 1.0 or style.flash_cap or style.drift_max:
+        ref_fl = float((studio_refs.summary(style.refs) if style.refs else {}).get("flashes_per_min") or 0.0)
+        restrain_look(shots, style, ref_fl, sum(float(s["duration"]) for s in shots), theirs_)
     if drop_shot is not None and drop_shot < len(shots) and DROP_FLASH not in shots[drop_shot]["fx"]:
         # THE DROP FLASHES WHITE, as the reference edits do on theirs: on the kill that
         # lands on it, on top of that kill's own effect. After the mix is held to two
@@ -4471,6 +4494,89 @@ def signature_guard(shots: list[dict], style: "Style") -> int:
         s["signature_off"] = "the kill would not stay sharp enough to read"
         off += 1
     return off
+
+
+# The camera moves that travel, by family, and the knob that says how far.
+DRIFT_KNOB = {"c01": "amt", "c05": "amt", "c08": "amt", "c04": "amt"}
+
+
+def drift_of(cam: str) -> float:
+    """How far a camera move zooms over a shot (0 for none); a sway or a roll counts as 1."""
+    f = fam(cam or "c00")
+    if f == "c00":
+        return 0.0
+    if f in DRIFT_KNOB:
+        return float(knob(cam, DRIFT_KNOB[f], 1.0))
+    return 1.0
+
+
+def restrain_speed(shots: list[dict], style: "Style", speed_ok, free: set[str] | tuple = ()) -> int:
+    """Real speed on at least `style.real_speed` of the shots. In place. -> shots put back.
+
+    THE CALM STYLE PLAYS THE GAME AS IT HAPPENED (Clean's review: at least 90% of
+    shots at 0.95-1.05x). Its pool draws a gentle ramp one time in four and the
+    climax and the closer slow down too, which came to 17-39% of the shots. The
+    climax keeps its slow motion first; a shot whose footage would not fill it at
+    real speed keeps its own. Nothing the player chose is touched.
+    """
+    if not style.real_speed or "speed" in free or not shots:
+        return 0
+    allowed = int(math.floor((1.0 - style.real_speed) * len(shots) + 1e-9))
+    slowed = [i for i, s in enumerate(shots) if (s.get("speed") or "s00") != "s00"]
+    # A shot whose footage cannot fill it at real speed (an opener held over a long
+    # run-up) stays slow whatever the budget, so it is spent on those first and the
+    # climax keeps its slow motion only with what is left.
+    stuck = [i for i in slowed if not speed_ok(shots[i], "s00")]
+    free_ = sorted((i for i in slowed if i not in stuck),
+                   key=lambda i: ("h02" not in (shots[i].get("hero_fx") or []), i))
+    keep = set(free_[:max(0, allowed - len(stuck))])
+    n = 0
+    for i in free_:
+        if i not in keep:
+            shots[i]["speed"] = "s00"
+            n += 1
+    return n
+
+
+def restrain_look(shots: list[dict], style: "Style", ref_flashes: float, length: float,
+                  free: set[str] | tuple = ()) -> int:
+    """Hold a plan to its style's restraint: kill effects, blends, flashes, camera. -> changes.
+
+    The rest of Clean's signature (see Style.real_speed): one soft treatment a kill,
+    blends on at most `crossfade_max` of the cuts, white flashes no more often than
+    `flash_cap` times the references' rate -- fewer is always allowed, a calm style
+    is never handed a flash to meet a quota -- and a camera that zooms no further
+    than `drift_max` over a shot. In place; a drawer the player chose is theirs.
+    """
+    n = 0
+    if style.kill_fx_max and "kill" not in free:
+        for s in shots:
+            if len(s.get("fx") or []) > style.kill_fx_max:
+                s["fx"] = list(s["fx"][:style.kill_fx_max])
+                n += 1
+    if "transition" not in free and len(shots) > 1:
+        cuts = shots[1:]
+        if style.crossfade_max < 1.0:
+            blends = [s for s in cuts if s.get("transition") not in ("t01", "t02", None)]
+            for s in blends[int(math.floor(style.crossfade_max * len(cuts) + 1e-9)):]:
+                s["transition"], s["tlen"] = "t01", 0.0
+                n += 1
+        if style.flash_cap and ref_flashes:
+            room = int(math.floor(ref_flashes * style.flash_cap * length / 60.0 + 1e-9))
+            flashes = [s for s in cuts if s.get("transition") == "t02"]
+            # the flashes that go are spread over the reel, not all taken from its end
+            if len(flashes) > room:
+                step = len(flashes) / max(1, len(flashes) - room)
+                for k in range(len(flashes) - room):
+                    s = flashes[min(len(flashes) - 1, int(k * step))]
+                    s["transition"], s["tlen"] = "t01", 0.0
+                    n += 1
+    if style.drift_max and "camera" not in free:
+        for s in shots:
+            if drift_of(s.get("camera") or "c00") > style.drift_max + 1e-9:
+                s["camera"] = "c00"
+                n += 1
+    return n
 
 
 def sharp_kills(shots: list[dict], pools: dict, free: set[str] | tuple = (),
@@ -6596,18 +6702,27 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
     def over(own: float, share: float, cap: float) -> float:
         return round(min(max(own, lead * share), cap), 3)
 
+    # THE GAME BY A QUARTER OF A SECOND (ChatGPT's review of Clean, every style): a
+    # one-second fade from black left most of the first quarter-second black, the
+    # softest possible hook. A fade from black is at most OPEN_FADE long, however long
+    # the run-up -- unless the style is made to open slowly (Style.long_fade_in).
+    slow = (STYLE.get(project.get("style") or "") or STYLE[DEFAULT_STYLE]).long_fade_in
+
+    def dark(d: float) -> float:
+        return d if slow else round(min(d, OPEN_FADE), 3)
+
     if fam(intro) == "fade_in":
-        post.append(f"fade=in:st=0:d={over(_fade_seconds(intro, 0.7), 0.6, 3.0)}"
+        post.append(f"fade=in:st=0:d={dark(over(_fade_seconds(intro, 0.7), 0.6, 3.0))}"
                     f":color={_fade_colour(intro)}")
     elif intro == "i03":
-        post.append(f"fade=in:st=0:d={over(1.0, 0.6, 3.0)}")
+        post.append(f"fade=in:st=0:d={dark(over(1.0, 0.6, 3.0))}")
     elif intro == "i08":
         d = over(0.35, 0.25, 1.2)
         post.append(_toward_white(f"max(0,{FLASH_PEAK}*(1-t/{d}))"))
     elif intro == "i12":
         k1 = derived["kills"][0] if derived["kills"] else 0.0
         post.append(f"eq=saturation='if(lt(t,{k1:.4f}),0.15,1)':eval=frame")
-        post.append(f"fade=in:st=0:d={over(0.6, 0.5, 2.5)}")
+        post.append(f"fade=in:st=0:d={dark(over(0.6, 0.5, 2.5))}")
     end_fade = rulebook.ending_fade(project["beat"])
     # THE ENDING'S OWN LENGTH, when one was chosen: every fading ending runs
     # for it, the song fades with it, and derive() has held the last frame
