@@ -57,13 +57,26 @@ def test_a_build_and_drop_reel_the_song_cuts_short_says_where_not_how_many_more(
     assert v.span == (13.6, 34.8)                    # the part the page makes of it is what the plan covers
     # ...and when the plan says its clips ran out, more clips are still the fix
     v = j(project=project, part=(3.1, 33.1), notes=["The clips ran out 15 hits before the end of the part."])
-    assert v.fix == "pick-clips" and "quick kills" in v.text
+    assert v.fix == "pick-clips" and "15 more clips" in v.text and v.more == 15
 
 
 def test_a_montage_the_song_cuts_short_says_more_clips_will_not_lengthen_it():
     project = {"shots": [{"duration": 1.0}] * 18, "song_offset": 40.0}
     v = j(style=studio.STYLE["montage"], project=project, part=(40.0, 70.0))
     assert v.level == fz.WARN and v.fix == "part:fit" and "0:58.0" in v.text and v.span == (40.0, 58.0)
+
+
+def test_more_clips_are_counted_from_where_the_plan_ran_out_in_clips_not_kills():
+    """JUST A BOY: "about 11 more quick kills", then "This works" once ONE two-kill clip
+    was ticked -- one clip worth eleven kills. The plan counts the hits its clips ran out
+    before the end, each takes one more clip, and "Add" adds that many."""
+    project = {"shots": [{"duration": 2.6}] + [{"duration": 0.6}] * 35, "song_offset": 13.6, "song_drop": 18.1}
+    v = j(project=project, part=(3.1, 33.1), notes=["The clips ran out 6 hits before the end of the part; x."])
+    assert v.level == fz.WARN and "6 more clips" in v.text and "kills" not in v.text
+    assert v.more == 6 and v.fix == "pick-clips" and v.fix_label == "Add 6 more"
+    # inside the margin it works -- and says how long the reel is, so the change is not a mystery
+    ok = j(project={"shots": [{"duration": 2.6}] + [{"duration": 0.6}] * 40}, part=(3.1, 33.1))
+    assert ok.level == fz.OK and "27 s of the 30 s part" in ok.text
 
 
 def test_no_shots_is_not_a_reel():
@@ -97,9 +110,7 @@ def test_fast_paced_headshot_counts_headshots_and_is_not_rushed_by_a_slow_song()
 def test_the_shortfall_is_counted_in_this_styles_own_kills():
     """It was 0.52 s a kill for every style -- Build and drop's quick kill -- so a montage of
     one-second cuts was told it needed twice the kills it did. The plan's middle shot says."""
-    MT = studio.STYLE["montage"]
-    v = j(style=MT, project={"shots": [{"duration": 1.0}] * 10}, part=(0.0, 30.0),
-          notes=["The clips ran out 20 hits before the end of the part."])
+    v = j(style=studio.STYLE["clean"], project={"shots": [{"duration": 1.0}] * 10}, part=(0.0, 30.0))
     assert v.level == fz.WARN and "about 20 more kills" in v.text, v.text
     v = j(project={"shots": [{"duration": 8.0}] + [{"duration": 0.5}] * 10}, part=(0.0, 30.0))
     assert "more quick kills" in v.text and "about 34 more" in v.text, v.text   # the take is not a kill's length

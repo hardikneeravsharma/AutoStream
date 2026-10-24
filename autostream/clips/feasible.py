@@ -21,6 +21,7 @@ tempo), and both are the style's own declared needs.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, asdict
 
 OK, WARN, BAD = "ok", "warn", "bad"
@@ -39,6 +40,8 @@ class Verdict:
     fallback: bool = False
     # For fix "part:fit": the song seconds the plan actually covers, which the page makes the part.
     span: tuple[float, float] | None = None
+    # For fix "pick-clips": how many more clips the plan says it is short, which "Add" adds.
+    more: int = 0
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -86,6 +89,7 @@ def judge(*, style, song: dict | None, clips: int, kills: int, has_setup: bool =
                        "pick-clips", "Pick the best")
     if error:
         return Verdict(BAD, error)
+    works = "This works."
     if project is not None:
         shots = project.get("shots") or []
         if not shots:
@@ -115,6 +119,19 @@ def judge(*, style, song: dict | None, clips: int, kills: int, has_setup: bool =
                     return Verdict(WARN, f"The reel runs {length:.0f} s of the {want:.0f} s part: the song has no "
                                          f"more hits for it after {_mmss(end)}, so more clips will not lengthen it.",
                                    "part:fit", f"Make the part {length:.0f} s", span=span)
+                # THE PLAN'S OWN COUNT, IN CLIPS. It was seconds short over a kill's length, said
+                # as kills: "about 11 more quick kills" on JUST A BOY turned into "This works" when
+                # ONE two-kill clip was ticked, which read as one clip being worth eleven
+                # (2026-10-24). The plan says how many hits it ran out before the end, and each
+                # takes one more clip -- every clip plays once, and a two-kill clip is one quick
+                # kill unless its kills are close enough to be a run.
+                hits = [int(m.group(1)) for n in notes or [] if (m := re.search(r"ran out (\d+) hits", n))]
+                if hits:
+                    short = max(1, hits[0])
+                    return Verdict(WARN, f"The reel runs {length:.0f} s of the {want:.0f} s part: the clips ran out "
+                                         f"{short} hit{'s' if short != 1 else ''} before its end, so about {short} more "
+                                         f"clip{'s' if short != 1 else ''} would fill it. Each clip plays once.",
+                                   "pick-clips", f"Add {short} more", more=short)
                 # HOW LONG A KILL RUNS IN THIS STYLE, from the plan itself: the middle shot, so a
                 # build-and-drop take of eight seconds does not count as a kill's length. It was
                 # 0.52 s for every style, which is Build and drop's quick kill and nobody else's.
@@ -124,11 +141,15 @@ def judge(*, style, song: dict | None, clips: int, kills: int, has_setup: bool =
                 what = ("quick kills" if needs_drop else
                         "headshots" if getattr(style, "key", "") == "fasthead" else "kills")
                 return Verdict(WARN, f"The reel runs {length:.0f} s of the {want:.0f} s part: about {short} more {what} would fill it.",
-                               "pick-clips", "Add the best")
+                               "pick-clips", "Add the best", more=short)
+            if length < want - 1.0:
+                # within SHORT_BY: it works -- and says by how much, so a warning that clears
+                # when one clip is added is not a mystery
+                works = f"This works: the reel runs {length:.0f} s of the {want:.0f} s part."
         for n in notes or []:
             if "usual build-and-drop way" in n or "planned the usual way" in n or "planned without one" in n:
                 return Verdict(WARN, f"{name} could not follow the song here, so it was planned the usual way: " + n.split(". ")[0] + ".",
                                fallback=True)
     if fmt != "vertical":
         return Verdict(WARN, "A Short or Reel is vertical; this shape shows black bars on a phone.", "format:vertical", "Use 9:16")
-    return Verdict(OK, "This works.")
+    return Verdict(OK, works)
