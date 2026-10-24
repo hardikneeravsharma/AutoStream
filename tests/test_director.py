@@ -283,6 +283,37 @@ def test_doubles_too_far_apart_for_a_run_still_fill_the_hits():
             assert not any(a < k < b for k in other), s
 
 
+def two_drops():
+    """Drops at 20 s and 50 s; the drums after the first stop at 27 s, after the second run on."""
+    beats = [0.1 + i * BEAT for i in range(int(90 / BEAT))]
+    shape = reel.Shape(path=Path("song.m4a"), seconds=90.0, bpm=174.0, phase=0.1, downbeat_pos=0,
+                       drop=20.0, drums_in=8.0, beats=beats, drops=[20.0, 50.0])
+    hits = [b for b in beats if 8.0 <= b <= 27.0 or b >= 44.0]
+    layers = {"kick": rhythm.Layer("kick", hits, [0.9] * len(hits)),
+              "snare": rhythm.Layer("snare", [b + BEAT / 2 for b in hits], [0.7] * len(hits)),
+              "hats": rhythm.Layer("hats", [], [])}
+    r = rhythm.Rhythm(seconds=90.0, beat=BEAT, phase=0.1, kick_phase=0.1, downbeat_pos=0, layers=layers,
+                      cues=rhythm.cluster(layers), energy=[0.5] * 900,
+                      sections=[rhythm.Section(0.0, 20.0, "build", 0.6), rhythm.Section(20.0, 27.0, "drop", 0.9),
+                                rhythm.Section(27.0, 50.0, "verse", 0.3), rhythm.Section(50.0, 90.0, "drop", 0.9)])
+    return shape, r
+
+
+def test_a_part_the_page_drew_moves_to_a_drop_its_plan_can_fill():
+    """JUST A BOY: 30 s drawn round a drop whose drums stopped 7 s on made a 21 s reel
+    whatever was chosen, and the guide asked for 16 more quick kills. The page's own
+    part moves to the drop that fills it; a part the player drew stays where it is."""
+    shape, r = two_drops()
+    part = (10.0, 40.0)
+    fixed = director.plan(library(), shape, r, seed=3, part=part)
+    loose = director.plan(library(), shape, r, seed=3, part=part, loose=True)
+    assert fixed.drop == pytest.approx(20.0)
+    assert sum(s["duration"] for s in fixed.shots) < 30.0 * director.FILLS
+    assert loose.drop == pytest.approx(50.0)
+    assert sum(s["duration"] for s in loose.shots) >= 30.0 * director.FILLS
+    assert any("round the drop at 50.0 s" in n for n in loose.notes)
+
+
 def test_an_untouched_part_is_a_length_not_an_end():
     """The page's own 30 s part, drawn 15 s before the drop, made a 22 s reel of an ACE
     whose take needs 9 s: the reel starts where the take does and still runs 30 s."""
