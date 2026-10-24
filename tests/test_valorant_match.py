@@ -849,3 +849,37 @@ def test_picked_matches_come_back_oldest_first(monkeypatch):
     recs = [_rec("b", 9000.0), _rec("a", 1000.0), _rec("c", 5000.0)]
     monkeypatch.setattr(vm, "cached", lambda: list(recs))
     assert [m.id for m in vm.by_ids(["a", "b", "nope"])] == ["a", "b"]
+
+
+# ------------------------------------------- what is not a kill, or a match
+
+def test_a_team_mate_the_spike_killed_is_not_the_planters_kill():
+    """FROM THE APP: Riot names the planter as the killer of a team-mate the
+    spike blew up, and a "1 kill" clip was cut of it. The record's own count
+    leaves it out; on all 137 cached matches, dropping own-team victims made
+    the events agree with that count every time."""
+    data = _match()
+    data["kills"].append(_kill(1, 120.0, ME, MATE, [ME, MATE]))
+    data["kills"][-1]["finishingDamage"] = {"damageType": "Bomb"}
+    m = _m(data)
+    assert len(m.my_kills(ME)) == 4
+    assert 120.0 not in m.my_kill_times(ME)
+    assert all(k["time"] != pytest.approx(120.0 + 60.0) for k in vm.kills_from(m, ME, _sync(m)))
+    assert sum(r.my_kills for r in vm.rounds_from(m, ME, _sync(m))) == 4
+
+
+def test_the_match_found_screen_is_not_a_kill():
+    """FROM THE APP: the emblem reader took MATCH FOUND's banner for a kill at
+    the start of three matches, each a "1 kill" clip of the queue screen. The
+    record's clock is that moment; nobody can die before game time 0."""
+    m = _m()
+    rec_start = m.started - 1000.0
+    span = (1106.0, 1706.0)                       # game time 0 is 106 s later
+    found = [{"kills": [], "rounds": [], "span": span,
+              "pregame": vm.pregame(m, rec_start, span)}]
+    detected = [{"time": 1000.3}, {"time": 1050.0}, {"time": 1200.0}, {"time": 400.0}]
+    kills, _rounds, _spans, outside = vm.merge_matches(detected, found)
+    times = [k["time"] for k in kills]
+    assert 1000.3 not in times and 1050.0 not in times
+    assert 400.0 in times, "a kill well before the match is not touched"
+    assert outside == 1

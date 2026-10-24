@@ -1607,6 +1607,10 @@ class ClipJob:
                 "kills": got_kills,
                 "rounds": got_rounds,
                 "span": vmatch.span_of(m, sync),
+                # Only on a clock the file carries: a guessed one cannot say
+                # where MATCH FOUND was.
+                **({"pregame": vmatch.pregame(m, started, vmatch.span_of(m, sync))}
+                   if exact else {}),
                 # The MAP, so a recording with two matches in it can name
                 # them in its chapters. "Round 1" appearing twice in one
                 # video with nothing to tell them apart is worse than no
