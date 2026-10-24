@@ -179,6 +179,10 @@ DEFAULTS: dict[str, Any] = {
         # instant preview has been watched. Never while live, recording or
         # cutting clips -- see webui.studio_auto_held.
         "auto_render": True,
+        # The browser whose YouTube login a song link is fetched with, "" for
+        # none. YouTube refuses a machine it thinks is a bot until it is
+        # signed in -- see clips/songfetch.py.
+        "song_cookies": "",
         "promo_caption":"LIVE MOST EVENINGS \U0001F3AE",
     },
     # The three screen savers. AutoStream builds the OBS scenes itself from

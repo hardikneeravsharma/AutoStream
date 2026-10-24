@@ -61,6 +61,12 @@ def test_a_link_that_is_not_one_video_is_refused_before_anything_is_fetched(url,
     ("ERROR: [youtube] OT2IKn6ycbA: Sign in to confirm your age. Use --cookies-from-browser", "signed-in adults"),
     ("ERROR: [youtube] jfKfPfyJRdk: This live stream recording is not available.", "live stream"),
     ("ERROR: unable to download video data: HTTP Error 403: Forbidden", "may need an update"),
+    ("ERROR: [youtube] 0o7OW1oOtFk: Sign in to confirm you're not a bot. Use --cookies-from-browser or "
+     "--cookies for the authentication.", "YouTube login for song links"),
+    ("could not find chrome cookies database in \"/Users/x/Library/Application Support/Google/Chrome\"",
+     "couldn't read the browser's YouTube login"),
+    ("[Errno 1] Operation not permitted: '/Users/x/Library/Containers/com.apple.Safari/Data/Library/"
+     "Cookies/Cookies.binarycookies'", "Full Disk Access"),
     ("ERROR: something nobody has seen before", "didn't hand over this song"),
 ])
 def test_errors_are_said_in_words_a_player_can_act_on(raw, says):
@@ -120,6 +126,20 @@ def _run(url, factory):
         seen.append(job.snapshot()["state"])
         time.sleep(0.001)
     return job.snapshot(), seen
+
+
+@pytest.mark.parametrize("browser, want", [("", None), ("chrome", ("chrome",))])
+def test_the_chosen_browser_login_is_handed_to_yt_dlp(browser, want):
+    seen = {}
+
+    class Spy(_fresh()):
+        def __init__(self, opts):
+            super().__init__(opts)
+            seen.update(opts)
+
+    job = sf.Fetch("https://youtu.be/nsXwi67WgOo", "nsXwi67WgOo", browser)
+    job.run(ydl_factory=Spy)
+    assert job.snapshot()["state"] == "done" and seen.get("cookiesfrombrowser") == want
 
 
 def test_a_song_downloads_into_the_songs_folder_and_reports_progress(home):

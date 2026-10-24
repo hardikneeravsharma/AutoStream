@@ -921,7 +921,7 @@ STUDIO_HTML = r"""
       <label class="field-label" for="studio-yt-url">YouTube link</label>
       <input class="input" id="studio-yt-url" type="url" inputmode="url" autocomplete="off" spellcheck="false"
              placeholder="https://www.youtube.com/watch?v=…">
-      <p class="muted studio-yt-hint">Only the song's audio is downloaded, into <span class="mono">Videos\AutoStream\songs</span>,
+      <p class="muted studio-yt-hint">Only the song's audio is downloaded, into <span class="mono" id="studio-yt-folder">Videos\AutoStream\songs</span>,
         and a link you have used before is not downloaded again. Use songs you are allowed to use: YouTube can mute or
         claim a video that has someone else's music in it.</p>
       <div class="studio-yt-progress hide" id="studio-yt-progress">
@@ -3932,6 +3932,8 @@ function studio_mkSeekInput() {
 function studio_ytOpen(target) {
   const yt = studio.yt;
   yt.target = target === 'song' || target === 'guide' ? target : 'make';
+  /* The Mac keeps footage in ~/Movies (macos/paths.py), not Videos. */
+  if (window.BOOT && BOOT.platform === 'macos') studio_el('studio-yt-folder').textContent = '~/Movies/AutoStream/songs';
   if (!yt.running) {
     studio_el('studio-yt-url').value = '';
     studio_show('studio-yt-progress', false);

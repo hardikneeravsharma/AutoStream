@@ -4896,7 +4896,8 @@ class Server:
         from .clips import songfetch
 
         try:
-            job = songfetch.runner().start(str(body.get("url") or ""))
+            job = songfetch.runner().start(str(body.get("url") or ""),
+                                           str(cfg.load().clips.get("song_cookies") or ""))
         except songfetch.FetchError as e:
             return {"ok": False, "error": str(e)}
         return {"ok": True, "fetch": job.snapshot()}

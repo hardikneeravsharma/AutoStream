@@ -1072,6 +1072,23 @@ CONFIG_SCHEMA: list[Section] = [
                 "toggle",
             ),
             _field(
+                "clips.song_cookies",
+                "YouTube login for song links",
+                "When YouTube asks this computer to prove it isn't a bot, a song link "
+                "is downloaded with this browser's YouTube login instead. Choose the "
+                "browser you are signed in to YouTube with. Chrome may ask once to use "
+                "the keychain; Safari needs AutoStream allowed under Full Disk Access.",
+                "select",
+                options=_opts(
+                    ("", "None"),
+                    ("chrome", "Chrome"),
+                    ("safari", "Safari"),
+                    ("firefox", "Firefox"),
+                    ("edge", "Edge"),
+                    ("brave", "Brave"),
+                ),
+            ),
+            _field(
                 "clips.sounds_dir",
                 "Sound effects folder",
                 "Drop .mp3, .wav, .m4a or .ogg files in here and they can be "
