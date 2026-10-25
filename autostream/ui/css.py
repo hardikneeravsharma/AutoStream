@@ -3914,6 +3914,20 @@ STUDIO_CSS = r"""
 .gd-main{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--warn)}
 .gd-droptools{display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end}
 @media (max-width:639px){.gd-droprow{grid-template-columns:3em 6em minmax(0,1fr)}.gd-droprow .gd-who,.gd-droprow .gd-main{display:none}}
+.gd-partrow{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--space-2)}
+.gd-howlong{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-2)}
+.gd-lenopt{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:var(--space-2) var(--space-3);
+  border:var(--border-hair) solid var(--border);border-radius:var(--radius-md);background:var(--surface);color:var(--text-primary);
+  font:inherit;text-align:left;cursor:pointer}
+.gd-lenopt:hover{border-color:var(--border-strong)}
+.gd-lenopt.is-on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);background:var(--accent-muted)}
+.gd-lenopt span{font-size:12px}
+.gd-marks{display:flex;flex-direction:column;gap:var(--space-2)}
+.gd-marks summary{cursor:pointer;font-weight:600}
+.gd-marks[open]{display:flex}
+.gd-marklist{list-style:none;margin:0;padding:0;display:grid;gap:4px}
+.gd-marklist li{display:grid;grid-template-columns:3em 6em minmax(0,1fr);align-items:center;gap:var(--space-2);border-bottom:1px solid var(--border-subtle)}
+@media (max-width:639px){.gd-howlong{grid-template-columns:1fr}}
 .gd-chip{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)}
 .gd-chip p{margin:0;min-width:0}
 .gd-dot{font-size:12px;font-weight:700;letter-spacing:.05em;padding:3px 8px;border-radius:4px;text-transform:uppercase;white-space:nowrap}

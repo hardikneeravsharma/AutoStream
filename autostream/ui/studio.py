@@ -12390,13 +12390,28 @@ function studio_gdHsDouble(c) {
 /* THE DROP AND THE PART THE GUIDE PLANS ON: the guide's drops -- the song's own, or the player's --
    for the guide's own shape and style. */
 function studio_gdMainDrop(d) { return studio_dropsMain((d || studio.gd).drops, studio.songShape); }
-function studio_gdPart(d) {
+function studio_gdDrawn(d) {
   d = d || studio.gd;
   const sh = studio.songShape, mk = studio.mk;
   if (!studio.song || !sh || !sh.seconds) return null;
-  /* the part the player chose on All settings is the draft's, and the guide's too */
+  /* the part the player chose -- dragged on the Song step, or on All settings -- is the draft's */
   if (mk.touched && mk.mode === 'part' && mk.end > mk.start) return [mk.start, mk.end];
   return studio_partFor(sh, d.fmt, d.style === 'drop' ? studio_gdMainDrop(d) : null);
+}
+/* HOW LONG, said on the Song step (`len`): the part as drawn ("fill the part"), the style's own length
+   from where it starts, or on to the song's end with every clip in ("every clip": the plan is told
+   so, and the reel is as long as the clips make it -- never called short of a part). The length is
+   applied to the part itself, so the drawing, the chip, the request and All settings all see one part. */
+function studio_gdPart(d) {
+  d = d || studio.gd;
+  const p = studio_gdDrawn(d), sh = studio.songShape;
+  if (!p) return null;
+  if (d.len === 'style') {
+    const rec = studio_partFor(sh, d.fmt, d.style === 'drop' ? studio_gdMainDrop(d) : null);
+    return [p[0], Math.min(sh.seconds, p[0] + (rec[1] - rec[0]))];
+  }
+  if (d.len === 'all') return [p[0], sh.seconds];
+  return p;
 }
 function studio_gdKillsIn(ids) {
   return ids.reduce((n, id) => n + (((studio.clipIndex[id] || {}).kills || []).length || 0), 0);
@@ -12483,8 +12498,11 @@ function studio_gdBody(draft) {
     /* drawn by the guide, never moved: Build and drop takes it as a length -- unless the player chose it */
     if (!studio.mk.touched) body.shaping.part_auto = true;
   }
+  if (d.len === 'all') body.shaping.fill = 'all';
   /* kill marks the player placed on All settings are this draft's too */
   if (studio.song && studio.mk.edited && studio.mk.hand.length) body.marks = studio.mk.hand.map(k => Math.round(k.t * 1000) / 1000);
+  /* ...and the kills marked on the Song step: each lands where it was put, the plan around them */
+  else if (studio.song && (d.anchors || []).length) body.anchors = d.anchors.map(t => Math.round(t * 1000) / 1000);
   /* the drops as the player marked them on the Song step; none sent while they are the song's own */
   if (studio.song && d.drops) body.drops = studio_dropsSent(d.drops);
   if (d.lyrics && d.lyrics !== 'off') body.keep = {lyrics: {look: d.lyrics}};
@@ -12504,7 +12522,8 @@ function studio_gdHandOff(body) {
   studio.adding = null; studio.picks = null; studio.order = 'chosen';
   studio.shaping = {length: 1, pace: 1, effects: 1, flash: 1};
   studio.arrange = 'build'; studio.pins = {}; studio.shuffleSeed = 0;
-  studio.fill = ''; studio.keepAll = false;
+  studio.fill = gd.len === 'all' ? 'all' : ''; studio.keepAll = false;
+  studio.mkAnchors = (gd.anchors || []).length && !(mk.edited && mk.hand.length) ? gd.anchors.slice() : null;
   studio.mkIntro = {path: '', audio: false};
   studio.mkKeep = b.keep ? JSON.parse(JSON.stringify(b.keep)) : null;
   const hs = studio_el('studio-hs-only');
@@ -12788,6 +12807,7 @@ function studio_gdDropView() {
     '<label class="gd-vol"><span class="muted">Volume</span><input type="range" id="studio-gd-vol" min="0" max="1" step="0.05" value="' + (a ? a.volume : 0.8) + '" aria-label="Volume"></label>' +
     '<button type="button" class="btn btn-sm" data-act="studio-gd" data-gd="drop-into" data-t="' + (main == null ? '' : main) + '"' + (main == null ? ' disabled' : '') + '>Play into the drop</button>' +
     '</div>' +
+    studio_gdPartHtml() +
     '<div class="gd-acts">' +
     '<button type="button" class="btn btn-sm" data-act="studio-gd" data-gd="drop-add" id="studio-gd-dropadd">Mark a drop at the playhead</button>' +
     '<label class="gd-snap"><input type="checkbox" id="studio-gd-snap"' + (gd.snap ? ' checked' : '') + '> Snap to the beat</label>' +
@@ -12795,6 +12815,7 @@ function studio_gdDropView() {
     '</div>' +
     (list.length ? '<ol class="gd-droplist" id="studio-gd-droplist">' + list.map(row).join('') + '</ol>'
                  : '<p class="gd-note" id="studio-gd-droplist">' + (gd.drops ? 'No drops: every one was removed.' : 'AutoStream found no drop in this song.') + ' Mark one where you hear the bass come in.</p>') +
+    studio_gdMarksHtml() +
     '</section>';
 }
 
@@ -12812,11 +12833,19 @@ function studio_gdDropDraw() {
   const X = t => t / sh.seconds * W, top = GD_DROP_PARTS + GD_DROP_LANE, base = H - 4;
   const warn = studio_tok('--warn'), ok = studio_tok('--ok'), faint = studio_tok('--text-tertiary');
   /* the part the guide plans on */
-  const part = studio_gdPart();
+  const pd = gd.partDrag, part0 = studio_gdPart();
+  const part = part0 && pd && pd.moved ? (pd.edge === 'start' ? [pd.t, part0[1]] : [part0[0], pd.t]) : part0;
   if (part) {
     x.fillStyle = studio_tok('--accent'); x.globalAlpha = 0.1;
     x.fillRect(X(part[0]), GD_DROP_PARTS, X(part[1]) - X(part[0]), H - GD_DROP_PARTS);
     x.globalAlpha = 1;
+    /* its edges, to be dragged: a line and a grip on each */
+    x.fillStyle = studio_tok('--accent');
+    [part[0], part[1]].forEach(t => {
+      const xx = X(t);
+      x.fillRect(xx - 1, GD_DROP_PARTS, 2, H - GD_DROP_PARTS);
+      x.fillRect(xx - 4, (GD_DROP_PARTS + H) / 2 - 12, 8, 24);
+    });
   }
   /* the parts, named */
   const p = gd.parts && gd.parts.song === studio.song ? gd.parts : null;
@@ -12855,6 +12884,12 @@ function studio_gdDropDraw() {
     x.fillStyle = warn; x.font = '10px monospace';
     x.fillText(isMain ? 'D' + (i + 1) + ' main' : 'D' + (i + 1), xx + 10, GD_DROP_PARTS + 13);
   });
+  /* the kills marked by hand: a diamond each along the foot */
+  x.fillStyle = studio_tok('--ok');
+  (gd.anchors || []).forEach(t => {
+    const xx = X(t), y = H - 9;
+    x.beginPath(); x.moveTo(xx, y - 6); x.lineTo(xx + 5, y); x.lineTo(xx, y + 6); x.lineTo(xx - 5, y); x.closePath(); x.fill();
+  });
   /* the playhead */
   x.fillStyle = studio_tok('--bad');
   x.fillRect(X(studio_gdNow()) - 1, GD_DROP_PARTS, 2, H - GD_DROP_PARTS);
@@ -12874,18 +12909,36 @@ function studio_gdDropWire() {
     studio_gdDropList().forEach(d => { const g = Math.abs(d.t / sh.seconds * r.width - px); if (g < gap) { gap = g; best = d; } });
     return best;
   };
+  const edge = e => {
+    const r = cv.getBoundingClientRect(), px = e.clientX - r.left, p = studio_gdPart(), sh = studio.songShape;
+    if (!p) return null;
+    const ds = Math.abs(p[0] / sh.seconds * r.width - px), de = Math.abs(p[1] / sh.seconds * r.width - px);
+    return Math.min(ds, de) > 7 ? null : (ds <= de ? 'start' : 'end');
+  };
   cv.addEventListener('pointerdown', e => {
     const d = near(e);
     if (d) { gd.dropDrag = {id: d.id, t: d.t, from: e.clientX, moved: false}; cv.setPointerCapture(e.pointerId); return; }
+    const g = edge(e);
+    if (g) { gd.partDrag = {edge: g, t: at(e), from: e.clientX, moved: false}; cv.setPointerCapture(e.pointerId); return; }
     studio_gdSeek(at(e));
   });
   cv.addEventListener('pointermove', e => {
+    const pd = gd.partDrag;
+    if (pd) {
+      if (Math.abs(e.clientX - pd.from) > 3) pd.moved = true;
+      if (pd.moved) { pd.t = at(e); studio_gdDropDraw(); }
+      return;
+    }
+    cv.style.cursor = near(e) || edge(e) ? 'ew-resize' : '';
     const g = gd.dropDrag;
     if (!g) return;
     if (Math.abs(e.clientX - g.from) > 3) g.moved = true;
     if (g.moved) { g.t = at(e); studio_gdDropDraw(); }
   });
   const up = e => {
+    const pd = gd.partDrag;
+    gd.partDrag = null;
+    if (pd) { if (pd.moved) studio_gdSetPart(pd.edge, studio_mkSnap(at(e), 'studio-gd-snap')); else studio_gdSeek(pd.t); return; }
     const g = gd.dropDrag;
     gd.dropDrag = null;
     if (!g) return;
@@ -12896,7 +12949,7 @@ function studio_gdDropWire() {
     studio_gdDropsChanged();
   };
   cv.addEventListener('pointerup', up);
-  cv.addEventListener('pointercancel', () => { gd.dropDrag = null; studio_gdDropDraw(); });
+  cv.addEventListener('pointercancel', () => { gd.dropDrag = null; gd.partDrag = null; studio_gdDropDraw(); });
   cv.addEventListener('dblclick', e => { if (!near(e)) studio_gdAddDrop(at(e)); });
   const sk = studio_el('studio-gd-seek');
   if (sk) sk.addEventListener('input', () => studio_gdSeek(Number(sk.value) / 1000 * studio.songShape.seconds));
@@ -12927,10 +12980,99 @@ function studio_gdAudioWire() {
   a.addEventListener('seeked', studio_gdDropDraw);
 }
 
+/* ===== THE SONG STEP'S OWN CONTROLS (step 3 of the guide plan, agreed with ChatGPT on 2026-10-24) =====
+   A different part, a longer or shorter reel and kills marked by hand all needed All settings, a page
+   the guide does not show. Now, on the song itself:
+     the part      its edges are dragged on the drawing; "Use recommended part" puts AutoStream's back.
+                   A part the player drew is theirs: the plan never moves it to another drop.
+     how long      the style's own length, the part as drawn, or every clip -- each saying how long the
+                   reel will be (the plan's own length once clips are chosen).
+     marks         optional: a kill marked at the playhead lands there, and the plan works around it.
+   Each is part of the guide's spec (studio_gdBody), so the chip judges it and the plan makes it. */
+const GD_LENS = [['style', 'The style’s length'], ['part', 'Fill the part'], ['all', 'Every clip']];
+
+/* An edge dragged to `t`: the part becomes the player's, never shorter than two bars. */
+function studio_gdSetPart(edge, t) {
+  const gd = studio.gd, mk = studio.mk, sh = studio.songShape, p = studio_gdDrawn();
+  if (!p || !sh) return;
+  const room = 8 * (sh.beat || 60 / sh.bpm);
+  const a = edge === 'start' ? Math.max(0, Math.min(t, p[1] - room)) : p[0];
+  const b = edge === 'end' ? Math.min(sh.seconds, Math.max(t, p[0] + room)) : (gd.len === 'all' ? sh.seconds : p[1]);
+  mk.mode = 'part'; mk.start = Math.round(a * 1000) / 1000; mk.end = Math.round(b * 1000) / 1000; mk.touched = true;
+  /* dragging the end is choosing the length: the part as drawn */
+  if (edge === 'end') gd.len = 'part';
+  gd.verdict = null;
+  studio_gdDraw();
+}
+
+function studio_gdMark(t) {
+  const gd = studio.gd, sh = studio.songShape;
+  if (!sh) return;
+  const at = studio_mkSnap(Math.max(0, Math.min(sh.seconds, t)), 'studio-gd-snap');
+  /* two marks closer than a quarter of a second are one */
+  gd.anchors = (gd.anchors || []).filter(x => Math.abs(x - at) >= 0.25).concat([at]).sort((p, q) => p - q);
+  gd.verdict = null;
+  studio_gdDraw();
+}
+
+/* How long each choice makes the reel: the plan's own length when there are clips to plan with
+   (a dry plan each, asked once per spec), the length aimed at when there are none yet. */
+function studio_gdLenSays(v) {
+  const gd = studio.gd, sh = studio.songShape, d = Object.assign({}, gd, {len: v}), p = studio_gdPart(d);
+  if (!p || !sh) return '';
+  if (studio_gdIds(d).length) {
+    const key = JSON.stringify(studio_gdBody(d)), got = (gd.lens || {})[v];
+    if (got && got.key === key) return got.length != null ? 'about ' + Math.round(got.length) + ' s' : '';
+    studio_gdLenAsk(v, d, key);
+    return 'working it out…';
+  }
+  return v === 'all' ? 'as long as your clips run' : Math.round(p[1] - p[0]) + ' s';
+}
+async function studio_gdLenAsk(v, d, key) {
+  const gd = studio.gd;
+  gd.lens = gd.lens || {};
+  if (gd.lens[v] && gd.lens[v].key === key) return;
+  gd.lens[v] = {key: key, length: null};
+  const got = await API.post('/api/studio/feasible', studio_gdBody(d)).catch(() => null);
+  if (!gd.lens[v] || gd.lens[v].key !== key) return;
+  gd.lens[v].length = got && got.ok && got.verdict && got.verdict.planned ? got.verdict.length : null;
+  const el = studio_el('studio-gd-len-' + v);
+  if (el) el.textContent = studio_gdLenSays(v);
+}
+
+function studio_gdPartHtml() {
+  const gd = studio.gd, mk = studio.mk, p = studio_gdPart();
+  if (!p) return '';
+  const len = gd.len || 'part';
+  return '<div class="gd-partrow" id="studio-gd-part"><span><b>Part</b> <span class="mono">' + esc(studio_secs(p[0])) + ' &rarr; ' +
+      esc(studio_secs(p[1])) + '</span> <span class="muted">(' + Math.round(p[1] - p[0]) + ' s, ' + (mk.touched ? 'yours' : 'recommended') + ')</span></span>' +
+    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="part-reset"' + (mk.touched || len !== 'part' ? '' : ' disabled') + '>Use recommended part</button></div>' +
+    '<div class="gd-howlong" role="radiogroup" aria-label="How long the reel is">' + GD_LENS.map(([k, label]) =>
+      '<button type="button" class="gd-lenopt' + (k === len ? ' is-on' : '') + '" role="radio" aria-checked="' + (k === len ? 'true' : 'false') +
+      '" data-act="studio-gd" data-gd="len" data-v="' + k + '"><b>' + esc(label) + '</b><span class="muted" id="studio-gd-len-' + k + '">' +
+      esc(studio_gdLenSays(k)) + '</span></button>').join('') + '</div>';
+}
+
+function studio_gdMarksHtml() {
+  const gd = studio.gd, marks = gd.anchors || [];
+  const row = (t, i) => '<li><span class="mono">K' + (i + 1) + '</span><span class="mono">' + esc(studio_secs(t)) + '</span>' +
+    '<span class="gd-droptools">' +
+    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="mark-nudge" data-i="' + i + '" data-by="-0.1" aria-label="Move kill mark ' + (i + 1) + ' a tenth of a second earlier">&minus;0.1</button>' +
+    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="mark-nudge" data-i="' + i + '" data-by="0.1" aria-label="Move kill mark ' + (i + 1) + ' a tenth of a second later">+0.1</button>' +
+    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="mark-del" data-i="' + i + '" aria-label="Remove kill mark ' + (i + 1) + '">Remove</button>' +
+    '</span></li>';
+  return '<details class="gd-marks" id="studio-gd-marks"' + (marks.length ? ' open' : '') + '><summary>Mark kills by hand <span class="muted">(optional)</span></summary>' +
+    '<p class="muted" style="margin:0">Play the song and mark where a kill should land. Each kill you mark lands where you put it; the plan places the others around it.</p>' +
+    '<div class="gd-acts"><button type="button" class="btn btn-sm" data-act="studio-gd" data-gd="mark-add" id="studio-gd-markadd">Mark a kill at the playhead</button>' +
+    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="mark-clear"' + (marks.length ? '' : ' disabled') + '>Clear my marks</button></div>' +
+    (marks.length ? '<ol class="gd-marklist" id="studio-gd-marklist">' + marks.map(row).join('') + '</ol>' : '') +
+    '</details>';
+}
+
 function studio_gdDrawSong() {
   const sh = studio.songShape, list = studio.songList || [], part = studio_gdPart();
   const drops = sh ? (sh.drops && sh.drops.length ? sh.drops : (sh.drop ? [sh.drop] : [])) : [];
-  return '<div class="gd-q"><h3>Which song?</h3><p class="muted">We pick the best part of it for ' + esc((studio_gdStyle() || {label: 'the style'}).label) + '. You can change it under All settings.</p></div>' +
+  return '<div class="gd-q"><h3>Which song?</h3><p class="muted">We pick the best part of it for ' + esc((studio_gdStyle() || {label: 'the style'}).label) + '. Drag its edges on the song to choose another, and say how long the reel should be.</p></div>' +
     '<div class="gd-grid">' + list.map(s => '<button type="button" class="gd-card' + (studio.song && s.path.toLowerCase() === studio.song.toLowerCase() ? ' is-on' : '') +
       '" data-act="studio-gd" data-gd="song" data-path="' + esc(s.path) + '" data-name="' + esc(s.name) + '"><span class="gd-card-name">' + esc(s.name) + '</span></button>').join('') + '</div>' +
     '<div class="gd-acts"><button type="button" class="btn" data-act="studio-gd" data-gd="pick-song">Choose a song file&hellip;</button>' +
@@ -13371,7 +13513,7 @@ async function studio_gdUseSong(path, name) {
   if (!ok) { if (msg) msg.textContent = 'Could not read that song.'; return false; }
   const gd = studio.gd;
   gd.verdict = null;
-  if (was !== studio.song) { gd.drops = null; gd.head = 0; }   /* a drop belongs to the song it was marked on */
+  if (was !== studio.song) { gd.drops = null; gd.head = 0; gd.anchors = []; }   /* drops and marks belong to the song they were marked on */
   if (gd.auto) {
     gd.step = 0; gd.style = ''; gd.autoWhy = null;
     studio_gdDraw();
@@ -13500,6 +13642,18 @@ function studio_gdAct(b) {
   if (what === 'drop-del') return studio_gdDelDrop(b.getAttribute('data-id'));
   if (what === 'drop-nudge') return studio_gdNudgeDrop(b.getAttribute('data-id'), Number(b.getAttribute('data-by')));
   if (what === 'drop-reset') { gd.drops = null; gd.verdict = null; return studio_gdDraw(); }
+  /* the Song step's part, length and marks (studio_gdPartHtml, studio_gdMarksHtml) */
+  if (what === 'part-reset') { studio.mk.touched = false; gd.len = 'part'; gd.verdict = null; return studio_gdDraw(); }
+  if (what === 'len') { gd.len = b.getAttribute('data-v'); gd.verdict = null; return studio_gdDraw(); }
+  if (what === 'mark-add') return studio_gdMark(studio_gdNow());
+  if (what === 'mark-del') { gd.anchors = (gd.anchors || []).filter((t, i) => i !== Number(b.getAttribute('data-i'))); gd.verdict = null; return studio_gdDraw(); }
+  if (what === 'mark-nudge') {
+    const i = Number(b.getAttribute('data-i')), by = Number(b.getAttribute('data-by'));
+    gd.anchors = (gd.anchors || []).map((t, j) => j === i ? Math.max(0, Math.round((t + by) * 1000) / 1000) : t).sort((p, q) => p - q);
+    gd.verdict = null;
+    return studio_gdDraw();
+  }
+  if (what === 'mark-clear') { gd.anchors = []; gd.verdict = null; return studio_gdDraw(); }
   if (what === 'step') { gd.step = Number(b.getAttribute('data-i')); }
   else if (what === 'back') { gd.step = Math.max(0, gd.step - 1); }
   else if (what === 'next') { if (gd.step === 4) return studio_gdMake(); gd.step++; }

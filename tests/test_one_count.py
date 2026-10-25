@@ -154,3 +154,38 @@ def test_pick_for_me_starts_from_nothing_and_stops_when_full(srv):
     v = srv.studio_feasible(dict(b, clips=got["added"]))["verdict"]
     assert v["fix"] != "pick-clips", v
     assert len(got["added"]) < len(offered)          # it stopped when the plan was full
+
+
+def test_every_clip_is_never_called_short_of_a_part(srv):
+    """The Song step's "Every clip": the part runs to the song's end so the clips can, and the reel
+    is as long as they make it -- judged against that part, every such reel was "short"."""
+    chosen = [srv.lib[0]] + quick(srv)[:6]
+    b = body(srv, "drop", chosen)
+    assert srv.studio_feasible(b)["verdict"]["fix"] == "pick-clips"
+    b["part_end"] = 80.0
+    b["shaping"] = dict(b["shaping"], fill="all")
+    v = srv.studio_feasible(b)["verdict"]
+    assert v["fix"] != "pick-clips" and v["more"] == 0 and v["planned"], v
+
+
+def test_a_kill_marked_by_hand_lands_where_it_was_put(srv):
+    """The Song step's "Mark kills by hand": each mark takes the place of the plan's nearest, and stays
+    on the reel as the player's -- never moved by a later plan."""
+    chosen = [srv.lib[0]] + quick(srv)[:30]
+    b = body(srv, "drop", chosen)
+    plan = srv.studio_plan(dict(b, dry=True))
+    marks = plan["project"]["song_marks"]
+    want = round(marks[len(marks) // 2] + 0.12, 3)                  # a little off the plan's own
+    got = srv.studio_plan(dict(b, dry=True, anchors=[want]))
+    assert got["project"]["anchors"] == [want]
+    assert any(abs(m - want) < 0.005 for m in got["project"]["song_marks"]), got["project"]["song_marks"]
+    off = got["project"]["song_offset"]
+    landed = [off + r["kill_reel"] for r in got["derived"]["shots"]]
+    assert any(abs(t - want) < 0.02 for t in landed), (want, landed)
+
+
+def test_a_mark_outside_the_part_is_said_not_dropped_in_silence(srv):
+    chosen = [srv.lib[0]] + quick(srv)
+    b = body(srv, "drop", chosen)
+    v = srv.studio_feasible(dict(b, anchors=[2.0]))["verdict"]
+    assert v["level"] == "warn" and "outside this part" in v["text"], v
