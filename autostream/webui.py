@@ -4213,6 +4213,11 @@ class Server:
                 part = (p0, p1)
         except (TypeError, ValueError):
             part = None
+        # "EVERY CLIP" HAS NO LENGTH TO FALL SHORT OF: the part runs on to the song's end so the
+        # clips can, and the reel is as long as they make it. Judged against that part, every such
+        # reel was "short" and asked for more clips (the guide's Song step, 2026-10-25).
+        if str(shaping.get("fill") or "") == "all":
+            part = None
         facts = dict(style=style, song=shape.as_dict() if shape else None, clips=len(chosen), kills=kills,
                      has_setup=has_setup, part=part, fmt=str(body.get("format") or "vertical"), headshots=headshots)
         pre = feasible.judge(**facts)

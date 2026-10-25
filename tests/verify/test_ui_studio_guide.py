@@ -832,6 +832,65 @@ def test_replace_and_remove_keep_every_other_kill_on_its_beat(rp):
     rp.wait_for_function("(n) => studio.project.shots.length === n", arg=shots, timeout=10_000)
 
 
+def test_the_song_step_moves_the_part_sets_the_length_and_marks_kills(rp):
+    """Step 3 of the guide plan (ChatGPT, 2026-10-24): a different part, a longer or shorter reel and
+    kills marked by hand, all on the Song step without All settings -- and nothing the player chose
+    is moved: the dragged part is sent as theirs, and a marked kill lands where it was put."""
+    _open(rp)
+    _style(rp, "montage")
+    rp.click("#studio-gd-next")
+    _song_named(rp, "drop song")
+    rp.wait_for_selector("#studio-gd-part")
+    rec = rp.evaluate("() => studio_gdPart()")
+    secs = rp.evaluate("() => studio.songShape.seconds")
+    assert "recommended" in rp.inner_text("#studio-gd-part")
+    assert rp.is_disabled('[data-gd="part-reset"]')
+    # --- drag the part's end edge on the song
+    box = rp.locator("#studio-gd-dropcv").bounding_box()
+    x_end, y = box["x"] + rec[1] / secs * box["width"], box["y"] + box["height"] / 2
+    rp.mouse.move(x_end, y)
+    rp.mouse.down()
+    rp.mouse.move(x_end - box["width"] * 0.1, y, steps=8)
+    rp.mouse.up()
+    part = rp.evaluate("() => studio_gdPart()")
+    body = rp.evaluate("() => studio_gdBody()")
+    assert rp.evaluate("() => studio.mk.touched") and part[1] < rec[1] - 1.0 and abs(part[0] - rec[0]) < 0.01
+    assert body["part_end"] == part[1] and not body["shaping"].get("part_auto"), body   # the player's, never moved
+    assert "yours" in rp.inner_text("#studio-gd-part")
+    # --- and back to AutoStream's
+    rp.click('[data-gd="part-reset"]')
+    assert rp.evaluate("() => studio_gdPart()") == rec and not rp.evaluate("() => studio.mk.touched")
+    # --- how long: every clip runs on to the song's end and says so to the plan; the style's length
+    rp.click('[data-gd="len"][data-v="all"]')
+    body = rp.evaluate("() => studio_gdBody()")
+    assert body["shaping"]["fill"] == "all" and abs(body["part_end"] - secs) < 0.01
+    assert rp.get_attribute('[data-gd="len"][data-v="all"]', "aria-checked") == "true"
+    assert "as long as your clips run" in rp.inner_text('[data-gd="len"][data-v="all"]')
+    rp.click('[data-gd="len"][data-v="part"]')
+    assert rp.evaluate("() => studio_gdBody().shaping.fill") == ""
+    # --- mark a kill at the playhead
+    rp.click("#studio-gd-marks summary")
+    at = rec[0] + 10.0
+    rp.evaluate("(t) => studio_gdSeek(t)", at)
+    rp.click("#studio-gd-markadd")
+    anchors = rp.evaluate("() => studio_gdBody().anchors")
+    assert anchors and len(anchors) == 1 and abs(anchors[0] - at) < 0.6, anchors
+    assert rp.locator("#studio-gd-marklist li").count() == 1
+    # --- the reel made keeps it where it was put
+    rp.click("#studio-gd-next")
+    rp.click('[data-gd="pickall"]')
+    _filled(rp)
+    rp.click("#studio-gd-next")
+    rp.click("#studio-gd-next")
+    rp.wait_for_selector("#studio-gd-name")
+    _settled(rp)
+    sent = _make(rp)
+    assert sent["anchors"] == anchors
+    proj = rp.evaluate("() => studio.project")
+    assert proj["anchors"] == anchors
+    assert any(abs(m - anchors[0]) < 0.01 for m in proj["song_marks"]), proj["song_marks"]
+
+
 def test_a_rebuild_asks_again_for_what_the_player_chose(rp):
     """M6: a rebuild of a Build and drop reel built on the best-scoring set-up, not the one chosen,
     held the page's part to an end, and lost Headshots only, the intro and drops marked by hand."""

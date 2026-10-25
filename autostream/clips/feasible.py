@@ -158,6 +158,10 @@ def _judge(*, style, song, clips, kills, has_setup, project, notes, part, fmt, e
                 # when one clip is added is not a mystery
                 works = f"This works: the reel runs {length:.0f} s of the {want:.0f} s part."
         for n in notes or []:
+            # A KILL THE PLAYER MARKED IS NEVER DROPPED IN SILENCE: one outside the part cannot be used,
+            # and the chip says so rather than "This works" over a mark that did nothing.
+            if "kill marks are outside this part" in n:
+                return Verdict(WARN, n.replace(" They are kept.", "") + " Move the part, or the marks, to use them.")
             if "usual build-and-drop way" in n or "planned the usual way" in n or "planned without one" in n:
                 return Verdict(WARN, f"{name} could not follow the song here, so it was planned the usual way: " + n.split(". ")[0] + ".",
                                fallback=True)
