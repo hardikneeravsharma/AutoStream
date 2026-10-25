@@ -4098,15 +4098,19 @@ class Server:
         # The rulebook's action and colour checks look at the footage around
         # every kill; without ffmpeg the plan is made without them.
         picks = body.get("template")
+        shaping = dict(body["shaping"]) if isinstance(body.get("shaping"), dict) else None
+        if part and isinstance(body.get("marks"), list):
+            # Kills marked by hand are the slots the plan fills, so every mark gets a kill.
+            inside = [m for m in body["marks"] if isinstance(m, (int, float)) and part[0] <= m <= part[1]]
+            if inside:
+                shaping = dict(shaping or {}, marks=inside)
         proj, notes = studio.plan(chosen, str(body.get("style") or studio.DEFAULT_STYLE),
                                   template=picks if isinstance(picks, dict) else None,
                                   shape=shape, song=song if shape else "",
                                   fmt=str(body.get("format") or "landscape"),
                                   name=str(body.get("name") or ""), max_seconds=max_s,
                                   checks=not body.get("dry"),
-                                  part=part,
-                                  shape_it=body.get("shaping")
-                                  if isinstance(body.get("shaping"), dict) else None)
+                                  part=part, shape_it=shaping)
         # KILLS MARKED ON THE MAKE PAGE, in song seconds: where the player wants each kill to
         # land, edited on the song's waveform. Applied the way the Song tab applies them -- the
         # cuts move and the marks never do -- over the part that was planned.
