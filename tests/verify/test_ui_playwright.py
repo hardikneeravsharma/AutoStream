@@ -617,7 +617,8 @@ def test_an_edit_plays_at_once_and_renders_itself_in_the_background(ui, app):
 
     from autostream.clips import studio as studio_mod
 
-    _studio_run(app, "2026-09-16_1415_VALORANT", 3)
+    # long enough that the shots either side of the one removed have the footage to close its gap
+    _studio_run(app, "2026-09-16_1415_VALORANT", 3, seconds=12.0)
     page = ui.page
     _studio_build(page, "14:15", 3, "clean", "Instant preview")
     _studio_rendered(page, "the first render")
@@ -716,7 +717,8 @@ def test_the_preview_has_its_own_play_bar(ui, app):
     bar is pressed here the way a person would: play and pause from it and
     from the picture, a seek to three quarters, mute, fullscreen -- and the
     app's own volume and speed, which the preview used to write over."""
-    _studio_run(app, "2026-09-16_1445_VALORANT", 3)
+    # long enough that the shots either side of the one removed have the footage to close its gap
+    _studio_run(app, "2026-09-16_1445_VALORANT", 3, seconds=12.0)
     page = ui.page
     _studio_build(page, "14:45", 3, "clean", "Preview bar")
     _studio_rendered(page, "the first render")

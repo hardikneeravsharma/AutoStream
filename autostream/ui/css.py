@@ -4775,7 +4775,8 @@ CSS += r"""
 .studio-slot{padding:var(--space-3) var(--space-4);margin:var(--space-2) 0}
 .studio-slot-head{display:flex;justify-content:space-between;align-items:center;gap:var(--space-2)}
 .studio-flow ul.studio-slot-list{list-style:none;padding:0;gap:var(--space-1);max-height:260px;overflow:auto}
-.studio-slot-list li{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:var(--space-2);align-items:center}
+.studio-slot-list li{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,auto) auto;gap:var(--space-2);align-items:center}
+.studio-slot-list li .mono{font-size:11px;white-space:normal;text-align:right}
 .studio-flow-choice button{align-self:flex-start}
 .studio-attn{position:relative;box-shadow:0 0 0 2px var(--accent);animation:studio-attn var(--dur-pulse) var(--ease-standard) infinite}
 @keyframes studio-attn{0%,100%{box-shadow:0 0 0 2px var(--accent),0 0 0 0 var(--accent-muted)}
