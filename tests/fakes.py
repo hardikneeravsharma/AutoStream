@@ -107,6 +107,20 @@ class FakeObs:
         # answer (no frame available) and not a case worth faking pixels for.
         return None
 
+    def camera_pictures(self, level=6.0):
+        # None is "cannot tell", like screenshot() above: the webcam
+        # watchdog then does nothing, which is the honest answer here.
+        return None
+
+    def restart_input(self, name):
+        return True
+
+    def cap_stream_output(self, max_height=0, max_kbps=0):
+        return {}
+
+    def restore_stream_output(self, saved):
+        return {}
+
     def set_scene(self, scene):
         self.scene = scene
 
