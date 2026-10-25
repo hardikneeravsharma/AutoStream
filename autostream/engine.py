@@ -25,7 +25,7 @@ from .youtube import DAILY_QUOTA, NotAuthorised, QuotaExhausted, YouTube
 
 log = logging.getLogger("autostream.engine")
 
-SESSION_COST = 250   # insert + bind + 2 transitions + complete
+SESSION_COST = 251   # insert + bind + ingest lookup + 2 transitions + complete
 
 
 def _build_platform(config, yt):
@@ -660,10 +660,11 @@ class Engine:
             bid = self.session.handle
             self.state.broadcast_id = bid
             self.state.save()
-            # WHERE OBS PUSHES, when the platform says. YouTube binds an
-            # ingest object and leaves this empty because OBS is already
-            # configured for the service; Twitch and Kick hand back a server
-            # and a key, and pushing to them IS going live.
+            # WHERE OBS PUSHES, every session. YouTube used to leave this empty
+            # on the theory that OBS was already set up for it -- untrue after
+            # a Twitch or Kick session had written its own server there, so a
+            # switch back streamed to the old service. Twitch and Kick hand
+            # back a server and a key, and pushing to them IS going live.
             if self.session.stream_key:
                 self.obs.configure_stream(self.session.ingest_server,
                                           self.session.stream_key)

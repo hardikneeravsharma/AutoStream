@@ -413,7 +413,8 @@ class Obs:
     # ---------------- setup-time ----------------
 
     def configure_stream(self, ingestion_address: str, stream_key: str) -> None:
-        """Written ONCE at setup. Never touched at runtime."""
+        """Where OBS pushes. Written at setup, and again by every session,
+        because the platforms share OBS's one stream target."""
         self.connect(wait=True)
         if self.cfg.obs.service_mode == "rtmp_common":
             self.ws.set_stream_service_settings(
