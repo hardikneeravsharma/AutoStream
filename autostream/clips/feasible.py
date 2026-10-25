@@ -18,10 +18,17 @@ verdict with one fix. The page's chips are this and nothing else, so what a chip
 is what the planner will do: the only rules here that are not the planner's own are the
 two that cannot be learned by planning (a style that needs a drop, a style that needs
 tempo), and both are the style's own declared needs.
+
+ONE COUNT. How many more clips a reel needs is the planner's number (`fill["missing"]`:
+the hits, or the shots at the style's pace, it had no clip for) and nothing else's. The
+clip counter, the chip and "Add the best" each used to estimate it their own way -- a
+two-kill clip as two kills, missing seconds over a kill's length -- and on JUST A BOY the
+three disagreed: "50 of 41" chosen, "about 13 more", and a button that added nothing
+(2026-10-24). The verdict carries the plan's length, its target and the clips it used,
+so the counter is drawn from the same plan the chip judged.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, asdict
 
 OK, WARN, BAD = "ok", "warn", "bad"
@@ -42,6 +49,12 @@ class Verdict:
     span: tuple[float, float] | None = None
     # For fix "pick-clips": how many more clips the plan says it is short, which "Add" adds.
     more: int = 0
+    # What the plan made, when one was made: the counter on the Clips step is drawn from these,
+    # never from an estimate of its own. `used` is the clips the reel plays.
+    length: float = 0.0
+    want: float = 0.0
+    used: int = 0
+    planned: bool = False
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -53,8 +66,25 @@ def _mmss(t: float) -> str:
 
 def judge(*, style, song: dict | None, clips: int, kills: int, has_setup: bool = True,
           project: dict | None = None, notes: list[str] | None = None, part: tuple[float, float] | None = None,
-          fmt: str = "vertical", error: str = "", headshots: int | None = None) -> Verdict:
-    """The verdict for these choices. `style` is a studio.Style (or None)."""
+          fmt: str = "vertical", error: str = "", headshots: int | None = None,
+          fill: dict | None = None) -> Verdict:
+    """The verdict for these choices. `style` is a studio.Style (or None).
+
+    `fill` is the planner's own account of what it could not fill (`missing`), beside the
+    `project` it made; absent, the plan is taken to have had a clip for everything."""
+    v = _judge(style=style, song=song, clips=clips, kills=kills, has_setup=has_setup, project=project,
+               notes=notes, part=part, fmt=fmt, error=error, headshots=headshots, fill=fill)
+    if project is not None and project.get("shots"):
+        shots = project["shots"]
+        v.planned = True
+        v.length = round(sum(float(s.get("duration") or 0.0) for s in shots), 2)
+        v.want = round(part[1] - part[0], 2) if part and part[1] > part[0] else 0.0
+        v.used = len({s.get("clip") for s in shots if s.get("clip")})
+    return v
+
+
+def _judge(*, style, song, clips, kills, has_setup, project, notes, part, fmt, error, headshots,
+           fill) -> Verdict:
     name = getattr(style, "label", "This style")
     if style is None:
         return Verdict(WARN, "Pick a style, or pick a song and we will choose one.")
@@ -73,17 +103,11 @@ def judge(*, style, song: dict | None, clips: int, kills: int, has_setup: bool =
                            "Use Build and drop" if drops else "Choose another song")
     if clips <= 0:
         return Verdict(BAD, "No clips are chosen yet.", "pick-clips", "Pick for me")
-    # Fast-paced headshot is headshots only (clips/fasthead.py): body kills never fill in.
-    if getattr(style, "key", "") == "fasthead" and headshots is not None:
-        if headshots < 8:
-            return Verdict(BAD, f"{name} is headshots only, and {headshots} of these clips have a headshot; "
-                                f"it needs at least 8.", "pick-clips", "Pick for me")
-        # about one headshot a second, against the part that will be planned -- "rather than 36"
-        # was said of a 30 s part as readily as of a 46 s one
-        want = (part[1] - part[0]) if part and part[1] > part[0] else 36.0
-        if headshots < 20:
-            return Verdict(WARN, f"Only {headshots} of these clips have a headshot, so the reel will be about "
-                                 f"{headshots} s rather than {want:.0f}.", "pick-clips", "Pick for me")
+    # Fast-paced headshot is headshots only (clips/fasthead.py): body kills never fill in, and its
+    # planner will not start on fewer than eight. How many more it wants beyond that is the plan's.
+    if getattr(style, "key", "") == "fasthead" and headshots is not None and headshots < 8:
+        return Verdict(BAD, f"{name} is headshots only, and {headshots} of these clips have a headshot; "
+                            f"it needs at least 8.", "pick-clips", "Pick for me")
     if needs_drop and not has_setup:
         return Verdict(BAD, "Build and drop needs a clutch, an ace or three kills in one clip to build with.",
                        "pick-clips", "Pick the best")
@@ -95,53 +119,40 @@ def judge(*, style, song: dict | None, clips: int, kills: int, has_setup: bool =
         if not shots:
             return Verdict(BAD, "These choices make no shots. Pick more clips or another part of the song.", "pick-clips", "Pick for me")
         length = sum(float(s.get("duration") or 0.0) for s in shots)
+        missing = max(0, int((fill or {}).get("missing") or 0))
         if part and part[1] > part[0]:
             want = part[1] - part[0]
             if length < want * (1.0 - SHORT_BY) - 0.5:
+                # THE PLAN'S OWN COUNT, IN CLIPS. It was seconds short over a kill's length, said
+                # as kills: "about 11 more quick kills" on JUST A BOY turned into "This works" when
+                # ONE two-kill clip was ticked, which read as one clip being worth eleven
+                # (2026-10-24). The plan says how many hits it had no clip for, and each takes one
+                # more clip -- every clip plays once, and a two-kill clip is one quick kill unless
+                # its kills are close enough to be a run.
+                if missing:
+                    return Verdict(WARN, f"The reel runs {length:.0f} s of the {want:.0f} s part: the clips ran out "
+                                         f"{missing} {'hit' if missing == 1 else 'hits'} before its end, so about "
+                                         f"{missing} more clip{'s' if missing != 1 else ''} would fill it. "
+                                         f"Each clip plays once.",
+                                   "pick-clips", f"Add {missing} more", more=missing)
                 # SAY WHERE THE REEL STOPS SHORT, NOT ONLY BY HOW MUCH. "About 16 more quick kills"
                 # was said of a Build and drop reel whose clips had already reached the last drum
                 # hit before the song's break, and whose build take was 4.5 s of a 15 s lead-in:
                 # adding clips -- or taking them away -- never moved it (JUST A BOY, 2026-10-24).
-                # More clips are the fix only when the plan says its clips ran out.
-                ran_out = any("clips ran out" in n for n in notes or [])
+                # The plan had a clip for every hit, so more clips are never the fix here.
                 start = float(project.get("song_offset") or part[0])
                 end = start + length
                 span = (round(start, 3), round(end, 3))
-                if needs_drop and not ran_out and project.get("song_drop") is not None:
+                if needs_drop and project.get("song_drop") is not None:
                     drop = float(project["song_drop"])
                     return Verdict(WARN, f"The song gives this reel {length:.0f} s, not {want:.0f}: the build clip "
                                          f"covers {max(0.0, drop - start):.1f} s before the drop and the drums after "
                                          f"it stop at {_mmss(end)}. More clips will not change that; a build clip "
                                          f"that runs longer, or a part around another drop, would.",
                                    "part:fit", f"Make the part {length:.0f} s", span=span)
-                if not ran_out and getattr(style, "key", "") == "montage":
-                    # Montage cuts its flurry on the drums the same way (director._after)
-                    return Verdict(WARN, f"The reel runs {length:.0f} s of the {want:.0f} s part: the song has no "
-                                         f"more hits for it after {_mmss(end)}, so more clips will not lengthen it.",
-                                   "part:fit", f"Make the part {length:.0f} s", span=span)
-                # THE PLAN'S OWN COUNT, IN CLIPS. It was seconds short over a kill's length, said
-                # as kills: "about 11 more quick kills" on JUST A BOY turned into "This works" when
-                # ONE two-kill clip was ticked, which read as one clip being worth eleven
-                # (2026-10-24). The plan says how many hits it ran out before the end, and each
-                # takes one more clip -- every clip plays once, and a two-kill clip is one quick
-                # kill unless its kills are close enough to be a run.
-                hits = [int(m.group(1)) for n in notes or [] if (m := re.search(r"ran out (\d+) hits", n))]
-                if hits:
-                    short = max(1, hits[0])
-                    return Verdict(WARN, f"The reel runs {length:.0f} s of the {want:.0f} s part: the clips ran out "
-                                         f"{short} hit{'s' if short != 1 else ''} before its end, so about {short} more "
-                                         f"clip{'s' if short != 1 else ''} would fill it. Each clip plays once.",
-                                   "pick-clips", f"Add {short} more", more=short)
-                # HOW LONG A KILL RUNS IN THIS STYLE, from the plan itself: the middle shot, so a
-                # build-and-drop take of eight seconds does not count as a kill's length. It was
-                # 0.52 s for every style, which is Build and drop's quick kill and nobody else's.
-                durs = sorted(float(s.get("duration") or 0.0) for s in shots)
-                per = max(0.3, min(4.0, durs[len(durs) // 2] if durs else 0.52))
-                short = int(max(1, round((want - length) / per)))
-                what = ("quick kills" if needs_drop else
-                        "headshots" if getattr(style, "key", "") == "fasthead" else "kills")
-                return Verdict(WARN, f"The reel runs {length:.0f} s of the {want:.0f} s part: about {short} more {what} would fill it.",
-                               "pick-clips", "Add the best", more=short)
+                return Verdict(WARN, f"The reel runs {length:.0f} s of the {want:.0f} s part: the song has no "
+                                     f"more hits for it after {_mmss(end)}, so more clips will not lengthen it.",
+                               "part:fit", f"Make the part {length:.0f} s", span=span)
             if length < want - 1.0:
                 # within SHORT_BY: it works -- and says by how much, so a warning that clears
                 # when one clip is added is not a mystery

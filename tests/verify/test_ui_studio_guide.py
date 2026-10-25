@@ -172,10 +172,15 @@ def test_pick_for_me_fills_the_clips_and_the_counter_says_how_many(pg):
     pg.wait_for_selector('[data-gd="pickall"]')
     assert pg.is_disabled("#studio-gd-next")
     pg.click('[data-gd="pickall"]')
+    _filled(pg)
     chosen = pg.evaluate("() => studio.gd.quick.length")
     assert chosen >= 4, chosen
     assert pg.is_enabled("#studio-gd-next")
-    assert f"{chosen} chosen" in pg.inner_text(".gd-slothead .mono")
+    # ONE COUNT: the counter is the plan's -- the clips it plays, its length -- the verdict's numbers
+    _settled(pg)
+    v = pg.evaluate("() => studio.gd.verdict")
+    assert v["planned"], v
+    assert pg.inner_text("#studio-gd-count").startswith(f"{v['used']} of {chosen} in the reel, {round(v['length'])} of ")
 
 
 def test_all_settings_opens_the_full_page_with_the_choices_in_it(pg):
@@ -186,6 +191,7 @@ def test_all_settings_opens_the_full_page_with_the_choices_in_it(pg):
     pg.wait_for_function("() => studio.song", timeout=30_000)
     pg.click("#studio-gd-next")
     pg.click('[data-gd="pickall"]')
+    _filled(pg)
     pg.click('[data-gd="all"]')
     pg.wait_for_selector("#studio-make-scrim:not(.hide)")
     assert pg.evaluate("() => studio.style") == "clean"
@@ -231,7 +237,7 @@ def test_the_full_make_page_carries_the_same_chip(pg):
     pg.click("#studio-gd-next")
     pg.click('.gd-card[data-gd="song"]')
     pg.wait_for_function("() => studio.song", timeout=30_000)
-    pg.evaluate("() => { studio_gdPickAll(); if (!studio.gd.quick.length) studio.gd.quick = Object.keys(studio.clipIndex).slice(0, 4); }")
+    pg.evaluate("async () => { await studio_gdPickAll(); if (!studio.gd.quick.length) studio.gd.quick = Object.keys(studio.clipIndex).slice(0, 4); }")
     pg.click('[data-gd="all"]')
     pg.wait_for_selector("#studio-make-scrim:not(.hide)")
     pg.wait_for_function("() => { const c = document.getElementById('studio-mk-chip'); return c && !c.hidden; }", timeout=30_000)
@@ -247,6 +253,7 @@ def _to_check(pg, style="clean"):
     pg.wait_for_function("() => studio.song", timeout=30_000)
     pg.click("#studio-gd-next")
     pg.click('[data-gd="pickall"]')
+    _filled(pg)
     pg.click("#studio-gd-next")
     pg.click("#studio-gd-next")
     pg.wait_for_selector("#studio-gd-name")
@@ -311,6 +318,7 @@ def test_fast_paced_headshot_offers_and_picks_headshots_only(pg):
     offered = pg.evaluate("() => [...document.querySelectorAll('.gd-clip')].map(b => b.getAttribute('data-id'))")
     assert sorted(offered) == sorted(ids)
     pg.click('[data-gd="pickall"]')
+    _filled(pg)
     assert sorted(pg.evaluate("() => studio.gd.quick")) == sorted(ids)
     text = pg.inner_text("#studio-gd-body")
     assert "Headshots only" in text and f"{len(ids)} of " in text and "single kill" in text
@@ -482,10 +490,17 @@ def rich_app(tmp_path_factory):
 
 # Every plan and verdict asked for is kept; a render is never started.
 SPY = """() => { if (window.__spied) return; window.__spied = true; window.__plans = []; window.__feas = [];
+  window.__judged = [];
   const post = API.post, get = API.get;
   API.post = function (u, b) {
     if (u === '/api/studio/plan') window.__plans.push(JSON.parse(JSON.stringify(b)));
-    if (u === '/api/studio/feasible') window.__feas.push(JSON.parse(JSON.stringify(b)));
+    if (u === '/api/studio/feasible') { window.__feas.push(JSON.parse(JSON.stringify(b))); window.__judged.push(JSON.parse(JSON.stringify(b))); }
+    /* Pick for me and Add: the server judges the clips sent and the ones it added -- that is the body judged */
+    if (u === '/api/studio/fill') return post.apply(this, arguments).then(r => {
+      const j = JSON.parse(JSON.stringify(b));
+      delete j.candidates;
+      if (r && r.ok) { j.clips = j.clips.concat(r.added || []); window.__judged.push(j); }
+      return r; });
     if (u === '/api/studio/render') return Promise.resolve({ok: false, error: 'not rendered in this test'});
     if (u === '/api/studio/plan' && window.__holdPlan)
       return new Promise(res => { window.__release = () => post.apply(this, [u, b]).then(res); });
@@ -532,6 +547,11 @@ def _song_named(pg, name):
     pg.wait_for_function("(n) => studio.song && studio.song.indexOf(n) >= 0 && studio.songShape", arg=name, timeout=60_000)
 
 
+def _filled(pg):
+    """Pick for me and "Add N more" ask the server, which plans until the reel is full: wait for it"""
+    pg.wait_for_function("() => !studio.gd.filling", timeout=120_000)
+
+
 def _settled(pg):
     """the chip's verdict on what is chosen now"""
     pg.wait_for_function("() => { const gd = studio.gd; return gd.verdict && gd.judged && "
@@ -545,6 +565,7 @@ def _to_check_rich(pg, style, song="drop song"):
     _song_named(pg, song)
     pg.click("#studio-gd-next")
     pg.click('[data-gd="pickall"]')
+    _filled(pg)
     pg.click("#studio-gd-next")
     pg.click("#studio-gd-next")
     pg.wait_for_selector("#studio-gd-name")
@@ -565,7 +586,7 @@ def test_the_verdict_judges_exactly_the_body_the_plan_sends(rp, style):
     and planned on 30 s; the build clip chosen never reached the verdict."""
     _to_check_rich(rp, style)
     judged = rp.evaluate("() => studio.gd.judged")
-    assert rp.evaluate("() => window.__feas.slice(-1)[0]") == judged
+    assert rp.evaluate("() => window.__judged.slice(-1)[0]") == judged
     sent = _make(rp)
     assert sent == judged
     assert sent["shaping"]["arrange"] == "build" and sent["format"] == "vertical"
@@ -620,6 +641,7 @@ def test_all_settings_hands_the_same_spec_over_as_a_new_reel(rp):
     _style(rp, "drop")
     rp.click('[data-gd="step"][data-i="2"]')
     rp.click('[data-gd="pickall"]')
+    _filled(rp)
     _settled(rp)
     spec = rp.evaluate("() => studio_gdBody()")
     rp.click('[data-gd="all"]')
@@ -638,7 +660,8 @@ def test_changing_style_recomputes_which_chosen_clips_count(rp):
     rp.click("#studio-gd-next")
     _song_named(rp, "drop song")
     rp.click("#studio-gd-next")
-    rp.click('[data-gd="pickall"]')
+    # every clip Montage can use, body kills among them -- Pick for me now takes only what the plan needs
+    rp.evaluate("() => { studio.gd.quick = studio_gdPools().quick.map(c => c.id); studio_gdDraw(); }")
     chosen = rp.evaluate("() => studio.gd.quick.slice()")
     body_ids = set(chosen)
     rp.click('[data-gd="step"][data-i="0"]')
@@ -654,7 +677,7 @@ def test_changing_style_recomputes_which_chosen_clips_count(rp):
     assert set(got["kept"]) == body_ids                                       # the selection is the player's
     assert got["sent_hs"] and all(got["sent_hs"])                             # only headshots reach the plan
     assert got["left"] and all("not a headshot" in x for x in got["left"])
-    assert got["counter"].startswith(f"{got['ids']} of ")
+    assert got["counter"].startswith(f"{got['ids']} chosen") or f" of {got['ids']} in the reel" in got["counter"]
     assert len(got["left"]) + got["ids"] == len(chosen)
     rp.click('.gd-leftlist [data-gd="unpick"]')                               # and one can be taken out
     assert rp.evaluate("() => studio.gd.quick.length") == len(chosen) - 1
@@ -698,33 +721,43 @@ def test_add_the_best_keeps_the_build_clip_the_player_chose(rp):
     assert fix == "pick-clips", rp.evaluate("() => studio.gd.verdict")
     before = rp.evaluate("() => studio.gd.quick.slice()")
     rp.click('#studio-gd-chip [data-gd="fix"]')
+    _filled(rp)
     after = rp.evaluate("() => ({setup: studio.gd.setup, quick: studio.gd.quick.slice()})")
     assert after["setup"] == mine
     assert set(before) <= set(after["quick"]) and len(after["quick"]) > len(before)
 
 
-def test_add_adds_what_the_plan_is_short_and_a_far_apart_pair_counts_once(rp):
-    """JUST A BOY, 2026-10-24: "50 of 41" chosen, the plan 21 s of 30, and "Add the best" added
-    nothing, because 25 two-kill clips counted as 50 -- though 121 of the 127 on that machine
-    have their kills seconds apart and play once each. A pair counts as two only as a run, and
-    Add adds the clips the plan says it ran short by, whatever the page's own count says."""
+def test_add_n_more_does_what_it_says_and_the_counter_is_the_plans(rp):
+    """JUST A BOY, 2026-10-24: "50 of 41" chosen, the plan 21 s of 30, "about 13 more", and "Add
+    the best" added nothing -- the counter, the chip and the button each counted their own way, and
+    the browser test of the day checked the button responded, not that it did what it promised.
+    Compared before and after the press: the chip's number is the plan's, the button adds clips the
+    plan then plays -- no more than it asked for -- and the reel is no longer short of clips."""
     _open(rp)
     _style(rp, "drop")
     rp.click("#studio-gd-next")
     _song_named(rp, "drop song")
     rp.click("#studio-gd-next")
-    w = rp.evaluate("() => [studio_gdWeight({kills: [3.5, 26.7]}, 'drop'), studio_gdWeight({kills: [3.5, 4.3]}, 'drop'),"
-                    " studio_gdWeight({kills: [3.5, 4.3]}, 'fasthead'), studio_gdWeight({kills: [3.5]}, 'drop')]")
-    assert w == [1, 2, 1, 1]
-    # every quick clip but three chosen, and the page's own estimate told it was met
-    rp.evaluate("() => { const q = studio_gdPools().quick.map(c => c.id); studio.gd.quick = q.slice(0, -3);"
-                " window.__need = studio_gdNeed; studio_gdNeed = () => 1; }")
+    rp.evaluate("() => { studio.gd.setup = studio_gdPools().setups[0].id;"
+                " studio.gd.quick = studio_gdPools().quick.slice(0, 3).map(c => c.id); studio_gdDraw(); }")
+    _settled(rp)
+    v0 = rp.evaluate("() => studio.gd.verdict")
+    assert v0["fix"] == "pick-clips" and v0["more"] > 0 and v0["fix_label"] == f"Add {v0['more']} more", v0
+    assert rp.inner_text("#studio-gd-count").endswith(f"{v0['more']} more needed")
     before = rp.evaluate("() => studio.gd.quick.slice()")
-    rp.evaluate("() => { studio_gdPickAll(true); }")
-    assert rp.evaluate("() => studio.gd.quick.length") == len(before), "the page's own count is met: nothing to add"
-    rp.evaluate("() => { studio.gd.verdict = {level: 'warn', fix: 'pick-clips', more: 2}; studio_gdFix('pick-clips'); }")
+    rp.click('#studio-gd-chip [data-gd="fix"]')
+    _filled(rp)
+    _settled(rp)
     after = rp.evaluate("() => studio.gd.quick.slice()")
-    assert set(before) <= set(after) and len(after) - len(before) >= 2
+    added = [x for x in after if x not in before]
+    assert set(before) <= set(after) and 0 < len(added) <= v0["more"], (v0, len(added))
+    v1 = rp.evaluate("() => studio.gd.verdict")
+    assert v1["fix"] != "pick-clips" or v1.get("why"), v1
+    # every clip added is one the plan plays, asked of the server afresh
+    used = rp.evaluate("async () => (await API.post('/api/studio/feasible', Object.assign(studio_gdBody(), {want_used: true}))).used")
+    paths = rp.evaluate("(ids) => ids.map(id => studio.clipIndex[id].path)", added)
+    assert set(paths) <= set(used)
+    assert rp.inner_text("#studio-gd-count").startswith(f"{v1['used']} of {len(after) + 1} in the reel, {round(v1['length'])} of ")
 
 
 def test_a_rebuild_asks_again_for_what_the_player_chose(rp):
@@ -736,6 +769,7 @@ def test_a_rebuild_asks_again_for_what_the_player_chose(rp):
     _song_named(rp, "drop song")
     rp.click("#studio-gd-next")
     rp.click('[data-gd="pickall"]')
+    _filled(rp)
     mine = rp.evaluate("() => studio_gdPools().setups.map(c => c.id).find(id => id !== studio.gd.setup)")
     rp.click(f'[data-gd="setup"][data-id="{mine}"]')
     rp.click("#studio-gd-next")
@@ -832,6 +866,7 @@ def test_lyrics_are_offered_as_used_if_found_and_montage_says_its_minimum(rp):
     rp.click("#studio-gd-next")
     assert "at least four clips" in rp.inner_text("#studio-gd-body")
     rp.click('[data-gd="pickall"]')
+    _filled(rp)
     rp.click("#studio-gd-next")
     if rp.locator('[data-gd="set"][data-k="lyrics"]').count():
         assert "if this song’s lyrics are found" in rp.inner_text("#studio-gd-body")
@@ -882,6 +917,7 @@ def test_a_drop_marked_on_a_song_with_none_is_judged_and_planned(rp):
     assert rp.evaluate("() => studio.gd.drops.map(d => d.t)") == [30]
     rp.click("#studio-gd-next")
     rp.click('[data-gd="pickall"]')
+    _filled(rp)
     _settled(rp)
     assert rp.evaluate("() => studio.gd.judged.drops") == [30]
     assert rp.evaluate("() => studio.gd.verdict.level") != "bad", rp.evaluate("() => studio.gd.verdict")
@@ -924,6 +960,7 @@ def test_drops_move_and_go_and_come_back_and_all_settings_takes_them(rp):
     # All settings hands them over
     rp.click('[data-gd="step"][data-i="2"]')
     rp.click('[data-gd="pickall"]')
+    _filled(rp)
     rp.click('[data-gd="all"]')
     rp.wait_for_selector("#studio-make-scrim:not(.hide)")
     assert rp.evaluate("() => studio_planBody(false).drops") == [t1]
@@ -1190,6 +1227,11 @@ def test_map_and_game_mode_come_from_the_match_records(rp):
     assert "mtch00" in rp.evaluate(f"() => [...document.querySelectorAll('{QUICK}')].map(e => studio.clipIndex[e.dataset.id].name)")
 
 
+def _two_chosen(text):
+    """the counter counts every chosen clip: before the plan is back, and as the plan's own clips after"""
+    return text == "2 chosen" or text.startswith("2 of 2 in the reel, ")
+
+
 def test_choices_survive_paging_and_filtering_and_no_view_asks_the_verdict_again(rp):
     _many_clips(rp)
     _to_clips(rp)
@@ -1202,11 +1244,11 @@ def test_choices_survive_paging_and_filtering_and_no_view_asks_the_verdict_again
     _settled(rp)
     asked, body = rp.evaluate("() => [window.__feas.length, JSON.stringify(studio_gdBody())]")
     head = "#studio-gd-body .gd-slot .gd-slothead .mono"
-    assert rp.inner_text(head) == "2 chosen, at least 4"
+    assert _two_chosen(rp.inner_text(head))
     # every kind of view, with both chosen clips out of sight in most of them
     rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Page 3"]')
     rp.click('#studio-gd-browse-quick [data-k="fav"][data-v="fav"]')
-    assert rp.inner_text(head) == "2 chosen, at least 4"
+    assert _two_chosen(rp.inner_text(head))
     assert rp.inner_text('#studio-gd-browse-quick [data-k="chosen"]') == "Chosen only (2)"
     rp.click('#studio-gd-browse-quick [data-k="fav"][data-v="any"]')
     _pick_view(rp, "run", "18 Oct 2026")
@@ -1227,7 +1269,7 @@ def test_choices_survive_paging_and_filtering_and_no_view_asks_the_verdict_again
     assert rp.evaluate("() => JSON.stringify(studio_gdBody())") == body
     assert rp.evaluate("() => !!studio.gd.verdict")
     assert sorted(rp.evaluate("() => studio.gd.quick")) == sorted([a, b])
-    assert rp.inner_text(head) == "2 chosen, at least 4"
+    assert _two_chosen(rp.inner_text(head))
 
 
 def test_play_opens_the_clip_over_the_guide_and_chooses_it_there(rp):

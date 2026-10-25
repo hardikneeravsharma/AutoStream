@@ -147,6 +147,8 @@ def plan(clips: list[dict], shape, rhythm=None, *, part: tuple[float, float] | N
     singles = len(pool) - (1 if finale else 0)
     n_burst = BURST_SHOTS
     spare = singles - (BUILD_KILLS + 1)              # the build and the slow-motion kill
+    # the headshot clips the shape is short of, which the page's "Add N more" adds (director.Plan.missing)
+    missing = max(0, n_body + n_burst - spare)
     if spare < n_body + n_burst:
         n_burst = max(0, min(n_burst, spare // 3))
         n_body = max(1, spare - n_burst)
@@ -188,7 +190,7 @@ def plan(clips: list[dict], shape, rhythm=None, *, part: tuple[float, float] | N
                      + ("the burst is shorter" if n_bu else "there is no burst")
                      + ("" if has_slow else " and there is no slow-motion kill") + ".")
     return Plan(part=(round(start, 4), round(end, 4)), drop=beats[iD], shots=shots, marks=marks,
-                kills=kills, notes=notes)
+                kills=kills, notes=notes, missing=missing)
 
 
 def _try(pool, finale, beats, beat, downbeats, iD, unit, n_body, n_burst, rng, part, loose, slow=True):

@@ -40,10 +40,13 @@ def test_nothing_to_build_with_is_named_and_fixable():
     assert j(clips=0).level == fz.BAD
 
 
-def test_a_plan_that_runs_short_says_by_how_much():
-    project = {"shots": [{"duration": 0.52}] * 20}
-    v = j(project=project, part=(100.0, 128.0))
+def test_a_plan_that_runs_short_says_by_how_much_and_the_count_is_the_plans():
+    project = {"shots": [{"duration": 0.52, "clip": f"c{i}"} for i in range(20)]}
+    v = j(project=project, part=(100.0, 128.0), fill={"missing": 34})
     assert v.level == fz.WARN and "10 s of the 28 s" in v.text and v.fix == "pick-clips"
+    assert v.more == 34 and v.fix_label == "Add 34 more"
+    # the counter's facts come from the same plan
+    assert (v.planned, v.used, v.want, v.length) == (True, 20, 28.0, 10.4)
     assert j(project={"shots": [{"duration": 1.0}] * 27}, part=(100.0, 128.0)).level == fz.OK
 
 
@@ -56,7 +59,7 @@ def test_a_build_and_drop_reel_the_song_cuts_short_says_where_not_how_many_more(
     assert "4.5 s before the drop" in v.text and "0:34.8" in v.text and "quick kills" not in v.text
     assert v.span == (13.6, 34.8)                    # the part the page makes of it is what the plan covers
     # ...and when the plan says its clips ran out, more clips are still the fix
-    v = j(project=project, part=(3.1, 33.1), notes=["The clips ran out 15 hits before the end of the part."])
+    v = j(project=project, part=(3.1, 33.1), fill={"missing": 15})
     assert v.fix == "pick-clips" and "15 more clips" in v.text and v.more == 15
 
 
@@ -71,7 +74,7 @@ def test_more_clips_are_counted_from_where_the_plan_ran_out_in_clips_not_kills()
     was ticked -- one clip worth eleven kills. The plan counts the hits its clips ran out
     before the end, each takes one more clip, and "Add" adds that many."""
     project = {"shots": [{"duration": 2.6}] + [{"duration": 0.6}] * 35, "song_offset": 13.6, "song_drop": 18.1}
-    v = j(project=project, part=(3.1, 33.1), notes=["The clips ran out 6 hits before the end of the part; x."])
+    v = j(project=project, part=(3.1, 33.1), fill={"missing": 6})
     assert v.level == fz.WARN and "6 more clips" in v.text and "kills" not in v.text
     assert v.more == 6 and v.fix == "pick-clips" and v.fix_label == "Add 6 more"
     # inside the margin it works -- and says how long the reel is, so the change is not a mystery
@@ -101,25 +104,25 @@ def test_no_style_asks_for_one():
 
 def test_fast_paced_headshot_counts_headshots_and_is_not_rushed_by_a_slow_song():
     FH = studio.STYLE["fasthead"]
-    assert j(style=FH, headshots=5).level == fz.BAD
-    v = j(style=FH, headshots=12)
-    assert v.level == fz.WARN and "12" in v.text and v.fix == "pick-clips"
+    assert j(style=FH, headshots=5).level == fz.BAD                # its planner will not start on fewer than 8
     assert j(style=FH, headshots=40, song={"bpm": 90.0, "drops": [30.0]}).level == fz.OK
+    # how many more it wants beyond that is the plan's, not a headshot a second guessed here
+    assert j(style=FH, headshots=12).level == fz.OK
+    v = j(style=FH, headshots=12, project={"shots": [{"duration": 0.7}] * 12}, part=(40.0, 70.0),
+          fill={"missing": 9})
+    assert v.fix == "pick-clips" and v.more == 9 and "9 more clips" in v.text
 
 
-def test_the_shortfall_is_counted_in_this_styles_own_kills():
-    """It was 0.52 s a kill for every style -- Build and drop's quick kill -- so a montage of
-    one-second cuts was told it needed twice the kills it did. The plan's middle shot says."""
-    v = j(style=studio.STYLE["clean"], project={"shots": [{"duration": 1.0}] * 10}, part=(0.0, 30.0))
-    assert v.level == fz.WARN and "about 20 more kills" in v.text, v.text
-    v = j(project={"shots": [{"duration": 8.0}] + [{"duration": 0.5}] * 10}, part=(0.0, 30.0))
-    assert "more quick kills" in v.text and "about 34 more" in v.text, v.text   # the take is not a kill's length
-
-
-def test_fast_paced_headshot_says_the_part_it_is_short_of():
-    FH = studio.STYLE["fasthead"]
-    assert "rather than 30" in j(style=FH, headshots=12, part=(40.0, 70.0)).text
-    assert "rather than 36" in j(style=FH, headshots=12).text
+def test_no_shortfall_is_guessed_from_a_shots_length():
+    """It was missing seconds over the plan's middle shot, said as kills -- a second estimate
+    beside the plan's, and the two disagreed. A short plan that had a clip for every hit is
+    the song's limit, and more clips are not offered."""
+    v = j(style=studio.STYLE["clean"], project={"shots": [{"duration": 1.0}] * 10, "song_offset": 0.0},
+          part=(0.0, 30.0))
+    assert v.fix == "part:fit" and v.more == 0 and "more clips will not lengthen it" in v.text, v.text
+    v = j(style=studio.STYLE["clean"], project={"shots": [{"duration": 1.0}] * 10}, part=(0.0, 30.0),
+          fill={"missing": 14})
+    assert v.fix_label == "Add 14 more" and v.more == 14
 
 
 def _feasible_server(monkeypatch, tmp_path, analysed):

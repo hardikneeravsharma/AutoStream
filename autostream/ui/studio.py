@@ -12301,62 +12301,68 @@ function studio_gdPart(d) {
   if (mk.touched && mk.mode === 'part' && mk.end > mk.start) return [mk.start, mk.end];
   return studio_partFor(sh, d.fmt, d.style === 'drop' ? studio_gdMainDrop(d) : null);
 }
-/* how many quick kills the part wants after a build of about eight seconds, half a second apart --
-   or, for Fast-paced headshot, one headshot a second or so */
-function studio_gdNeed(d) {
-  d = d || studio.gd;
-  const p = studio_gdPart(d), len = p ? p[1] - p[0] : 0;
-  if (d.style === 'fasthead') return Math.max(8, Math.round((len > 4 ? len : 36) * 0.95));
-  return Math.max(6, Math.round(((len > 4 ? len : 28) - 8.5) / 0.52));
-}
-/* WHAT A CLIP COUNTS FOR AGAINST THAT: one quick kill -- every clip plays once -- and two only when
-   its last two kills are close enough to play as a run on two hits (director.PAIR_TOGETHER to about
-   1.6 s; further apart they are two fights, and the plan takes one). Every two-kill clip counted
-   as two, and on this machine 121 of 127 have their kills 2-52 s apart: "50 of 41" was 25 clips
-   that planned 21 s of a 30 s part, and Add the best added nothing, because 50 was already over 41. */
-const GD_RUN = [0.30, 1.6];
-function studio_gdWeight(c, style) {
-  const k = (c && c.kills) || [];
-  if (style === 'fasthead' || k.length < 2) return 1;
-  const gap = Number(k[k.length - 1]) - Number(k[k.length - 2]);
-  return gap >= GD_RUN[0] && gap <= GD_RUN[1] ? 2 : 1;
-}
 function studio_gdKillsIn(ids) {
   return ids.reduce((n, id) => n + (((studio.clipIndex[id] || {}).kills || []).length || 0), 0);
 }
 
-/* WHAT PICK FOR ME CHOOSES, without choosing it, for any draft. `top` keeps every clip already chosen
-   and only adds -- the chip's "Add the best" -- where the button draws the clips again. Either way
-   the build clip the player chose stays: a recommendation never overrules a pick, and "Pick the
-   best" used to swap the ACE they had chosen for the clip that scored highest. */
-function studio_gdPickFor(d, top, more) {
+/* ONE COUNT, AND IT IS THE PLAN'S. How many clips a reel needs was estimated three ways -- the
+   counter here (a quick kill every 0.52 s, a two-kill clip as two), the chip (missing seconds over a
+   kill's length) and "Add the best" (the counter's number) -- and on JUST A BOY they disagreed: "50 of
+   41" chosen, "about 13 more", and a button that added nothing (2026-10-24). Now the page never
+   counts: what the plan made and what it is short come back with the verdict (clips/feasible.py),
+   and adding is done by the server, which plans again and keeps only the clips the plan plays.
+
+   WHAT PICK FOR ME OFFERS THE PLAN, for any draft: the build clip -- the player's, whatever the
+   scores say, unless it cannot be in this reel at all ("Pick the best" used to swap the ACE they had
+   chosen for the clip that scored highest) -- and every other clip the style can use, best first. */
+function studio_gdOffer(d) {
   let setup = d.setup;
   if (d.style === 'drop') {
     const own = setup && studio.clipIndex[setup];
-    /* theirs, whatever the scores say -- unless it cannot be in this reel at all */
     if (!own || studio_gdWhyNot(own, 'drop')) {
       const best = studio_gdPools('drop', '').setups[0];
       setup = best ? best.id : '';
     }
   }
-  const pools = studio_gdPools(d.style, setup);
-  const skip = id => d.style === 'drop' && id === setup;
-  const quick = top ? d.quick.slice() : [];
-  let n = quick.map(id => studio.clipIndex[id])
-    .filter(c => c && !skip(c.id) && !studio_gdWhyNot(c, d.style))
-    .reduce((s, c) => s + studio_gdWeight(c, d.style), 0);
-  /* `more`: the plan's own count of clips it ran short by (the verdict's), on top of what is chosen --
-     the page's estimate already met is no reason for "Add the best" to add nothing */
-  const need = more ? n + more : studio_gdNeed(d);
-  for (const c of pools.quick) {
-    if (n >= need) break;
-    if (quick.indexOf(c.id) >= 0 || skip(c.id)) continue;
-    quick.push(c.id);
-    n += studio_gdWeight(c, d.style);
-  }
+  const quick = studio_gdPools(d.style, setup).quick.filter(c => !(d.style === 'drop' && c.id === setup)).map(c => c.id);
   return {setup: setup, quick: quick};
 }
-function studio_gdPickAll(top, more) { Object.assign(studio.gd, studio_gdPickFor(studio.gd, !!top, more || 0)); }
+/* PICK FOR ME (`top` false: from nothing) AND "ADD N MORE" (`top`: every clip chosen stays). The
+   server adds the next clips the verdict asks for, plans again, keeps only those the plan plays, and
+   repeats until it is full -- or says why it cannot be. -> {setup, quick, verdict} for the draft, or
+   null when it could not be asked. */
+async function studio_gdFill(d, top) {
+  const o = studio_gdOffer(d);
+  const draft = Object.assign({}, d, {setup: o.setup, quick: top ? d.quick.slice() : []});
+  const body = studio_gdBody(draft), byPath = {};
+  body.candidates = o.quick.filter(id => draft.quick.indexOf(id) < 0).map(id => {
+    const p = studio.clipIndex[id].path;
+    byPath[p] = id;
+    return p;
+  });
+  const got = await API.post('/api/studio/fill', body).catch(() => null);
+  if (!got || !got.ok) return null;
+  draft.quick = draft.quick.concat((got.added || []).map(p => byPath[p]).filter(Boolean));
+  const v = Object.assign({}, got.verdict, {length: got.length});
+  if (got.why) v.why = got.why;
+  return {setup: draft.setup, quick: draft.quick, verdict: v, judged: studio_gdBody(draft), added: (got.added || []).length};
+}
+async function studio_gdPickAll(top) {
+  const gd = studio.gd, ticket = gd.fillAsked = (gd.fillAsked || 0) + 1, was = JSON.stringify([gd.style, gd.setup, gd.quick]);
+  clearTimeout(gd.timer);
+  gd.filling = true;
+  gd.verdict = {level: 'ok', text: top ? 'Adding the clips the plan is short of…' : 'Picking the clips the plan needs…'};
+  studio_gdDraw();
+  const got = await studio_gdFill(gd, !!top);
+  if (ticket !== gd.fillAsked) return;
+  gd.filling = false;
+  /* a clip chosen or a style changed while it planned: the answer is to another question */
+  if (JSON.stringify([gd.style, gd.setup, gd.quick]) !== was) { gd.verdict = null; return studio_gdDraw(); }
+  if (!got) { gd.verdict = {level: 'warn', text: 'Could not check this against your clips just now.'}; return studio_gdDraw(); }
+  gd.setup = got.setup; gd.quick = got.quick;
+  gd.verdict = got.verdict; gd.judged = got.judged;
+  studio_gdDraw();
+}
 
 /* THE ONE REQUEST. Built from the guide's spec and nothing else, for the verdict and the plan alike,
    so what the chip judged is what gets planned: the same clips, the same part (from the guide's own
@@ -12547,13 +12553,17 @@ async function studio_gdAutoStyle() {
   const ticket = ++gd.autoAsked;
   const keys = GD_BEST.filter(k => studio.catalog.styles.some(s => s.key === k));
   const drafts = keys.map(k => {
-    const d = Object.assign({}, gd, {style: k, quick: gd.quick.slice()});
-    if (k !== 'drop' && d.setup && d.quick.indexOf(d.setup) < 0) d.quick.unshift(d.setup);
-    if (!mine) Object.assign(d, studio_gdPickFor(d, false));
+    const d = Object.assign({}, gd, {style: k, quick: mine ? gd.quick.slice() : []});
+    if (mine && k !== 'drop' && d.setup && d.quick.indexOf(d.setup) < 0) d.quick.unshift(d.setup);
     return d;
   });
-  const got = await Promise.all(drafts.map(d => studio_gdNone(d) ? Promise.resolve({ok: true, verdict: studio_gdNone(d)})
-    : API.post('/api/studio/feasible', studio_gdBody(d)).catch(() => null)));
+  /* nothing chosen yet: each style is judged on the clips the plan itself would pick for it */
+  const got = await Promise.all(drafts.map(d => {
+    const none = studio_gdNone(d);
+    if (none && (mine || !studio_gdOffer(d).quick.length)) return Promise.resolve({ok: true, verdict: none});
+    if (!mine) return studio_gdFill(d, false).then(f => f ? (Object.assign(d, {setup: f.setup, quick: f.quick}), {ok: true, verdict: f.verdict}) : null);
+    return API.post('/api/studio/feasible', studio_gdBody(d)).catch(() => null);
+  }));
   if (ticket !== gd.autoAsked || !gd.auto) return;
   const rank = {ok: 0, warn: 1};
   const tried = drafts.map((d, i) => ({d: d, v: got[i] && got[i].ok ? got[i].verdict : {level: 'bad', text: 'It could not be checked just now.'}}));
@@ -12837,20 +12847,43 @@ function studio_gdDrawSong() {
       studio_gdDropView() : '');
 }
 
+/* THE COUNTER, FROM THE PLAN THE CHIP JUDGED: how many of the chosen clips the reel plays, how long it
+   runs of its part, and how many more it is short -- the verdict's own numbers, never the page's
+   estimate. Until that plan is back it says only what is chosen. Redrawn alone when a verdict lands. */
+function studio_gdPlanned() {
+  const gd = studio.gd, v = gd.verdict;
+  return !gd.filling && v && v.planned && gd.judged && JSON.stringify(gd.judged) === JSON.stringify(studio_gdBody()) ? v : null;
+}
+function studio_gdCount() {
+  const gd = studio.gd, v = studio_gdPlanned(), ids = studio_gdIds();
+  const txt = !v ? ids.length + ' chosen' + (gd.filling ? ', planning…' : '')
+    : v.used + ' of ' + ids.length + ' in the reel, ' + Math.round(v.length) + ' of ' + Math.round(v.want || v.length) + ' s' +
+      (v.more ? ', ' + v.more + ' more needed' : '');
+  return '<span class="mono" id="studio-gd-count">' + esc(txt) + '</span>';
+}
+function studio_gdBar() {
+  const v = studio_gdPlanned();
+  const pct = v ? Math.min(100, Math.round(v.length / Math.max(1, v.want || v.length) * 100)) : 0;
+  return '<div class="gd-bar" id="studio-gd-bar" aria-hidden="true"><i style="width:' + pct + '%"></i></div>';
+}
+function studio_gdRecount() {
+  const c = studio_el('studio-gd-count'), b = studio_el('studio-gd-bar');
+  if (c) c.outerHTML = studio_gdCount();
+  if (b) b.outerHTML = studio_gdBar();
+}
+
 function studio_gdDrawClips() {
-  const gd = studio.gd, pools = studio_gdPools(), need = studio_gdNeed();
+  const gd = studio.gd, pools = studio_gdPools();
   const isBD = gd.style === 'drop', isFH = gd.style === 'fasthead', isMT = gd.style === 'montage';
   const ids = studio_gdIds(), out = studio_gdLeftOut();
   const quickIds = ids.filter(id => !(isBD && id === gd.setup));
-  const have = quickIds.reduce((n, id) => n + studio_gdWeight(studio.clipIndex[id], gd.style), 0);
-  const bar = '<div class="gd-bar" aria-hidden="true"><i style="width:' + Math.min(100, Math.round(have / Math.max(1, need) * 100)) + '%"></i></div>';
   const label = (studio_gdStyle() || {label: 'this'}).label;
   const left = out.length ? '<section class="gd-slot gd-left"><div class="gd-slothead"><h4>Chosen, but not in a ' + esc(label) + ' reel</h4>' +
     '<span class="mono">' + out.length + ' left out</span></div><ul class="gd-leftlist">' + out.map(x =>
       '<li><span class="mono">' + esc(x.c.name || x.c.id) + '</span><span class="muted">' + esc(x.why) + '</span>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="unpick" data-id="' + esc(x.c.id) + '">Remove</button></li>').join('') +
     '</ul></section>' : '';
-  const pick = '<div><button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="pickall">Pick for me</button></div>';
+  const pick = '<div><button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="pickall"' + (gd.filling ? ' disabled' : '') + '>Pick for me</button></div>';
   /* SAID AS IT IS: every clip is here, a page at a time, the best -- favourites first -- on the first
      page. Only the best 48 used to be drawn, so a player with more favourites than that saw nothing
      else and read it as "only my favourites are offered"; Pick for me drew on all of them anyway. */
@@ -12859,7 +12892,7 @@ function studio_gdDrawClips() {
     const doubles = quickIds.filter(id => studio_gdHsDouble(studio.clipIndex[id] || {})).length;
     return '<div class="gd-q"><h3>Pick the clips, by what they do</h3><p class="muted">Headshots only: a clip with none has nothing for this style. All ' +
       pools.quick.length + ' of your clips with a headshot' + paged + '</p></div>' + pick +
-      '<section class="gd-slot"><div class="gd-slothead"><h4>Headshots, one a cut</h4><span class="mono">' + have + ' of ' + need + '</span></div>' + bar +
+      '<section class="gd-slot"><div class="gd-slothead"><h4>Headshots, one a cut</h4>' + studio_gdCount() + '</div>' + studio_gdBar() +
       '<p class="muted" style="margin:0">' + (doubles ? 'The finale: ' + doubles + ' chosen clip' + (doubles > 1 ? 's have' : ' has') + ' two headshots close together.'
         : 'No chosen clip has two headshots close together, so the reel ends on a single kill, not a multi-kill.') + '</p>' +
       studio_gdBrowser('quick') + '</section>' + left;
@@ -12870,9 +12903,9 @@ function studio_gdDrawClips() {
     (isMT ? ' A montage needs at least four clips with a kill: with fewer it is planned the usual way, not to the song.' : '') + '</p></div>' + pick +
     (isBD ? '<section class="gd-slot"><div class="gd-slothead"><h4>The build: a clutch, an ace or a multi-kill</h4><span class="mono">' + (gd.setup && ids.indexOf(gd.setup) >= 0 ? '1 of 1' : '0 of 1') + '</span></div>' +
       studio_gdBrowser('setup') + '</section>' : '') +
-    '<section class="gd-slot"><div class="gd-slothead"><h4>' + (isBD ? 'After the drop: quick kills' : 'Your clips') + '</h4><span class="mono">' +
-      (isBD ? have + ' of ' + need : quickIds.length + ' chosen' + (isMT ? ', at least 4' : '')) + '</span></div>' +
-    (isBD ? bar + '<p class="muted" style="margin:0">Headshots first. Each clip plays once; a two-kill clip counts as two only when its kills are under 1.6 s apart, so they play as a quick run.</p>' : '') +
+    '<section class="gd-slot"><div class="gd-slothead"><h4>' + (isBD ? 'After the drop: quick kills' : 'Your clips') + (isMT ? ' <span class="muted">(at least 4)</span>' : '') + '</h4>' +
+      studio_gdCount() + '</div>' + studio_gdBar() +
+    (isBD ? '<p class="muted" style="margin:0">Headshots first. Each clip plays once; a two-kill clip plays both kills only when they are under 1.6 s apart, as a quick run.</p>' : '') +
     studio_gdBrowser('quick') + '</section>' + left;
 }
 
@@ -13187,8 +13220,9 @@ function studio_gdChip() {
   /* A STYLE THAT NEEDS A DROP, ON A SONG WITHOUT ONE: the drop may be there and missed, and the
      player can hear it. Marking it is offered first; another song is still offered beside it. */
   const markIt = v.fix === 'pick-song' && studio.songShape && (studio_gdStyle() || {}).drop && studio_gdMainDrop() == null;
-  const fix = v.fix ? '<button type="button" class="btn ' + (markIt ? '' : 'btn-primary ') + 'btn-sm" data-act="studio-gd" data-gd="fix" data-fix="' + esc(v.fix) + '">' + esc(v.fix_label || 'Fix it') + '</button>' : '';
-  el.innerHTML = '<span class="gd-dot">' + esc(label) + '</span><p>' + esc(v.text) + '</p>' +
+  /* `why`: Add or Pick for me could not fill it, and says so -- with no button that would add nothing */
+  const fix = v.fix && !(v.why && v.fix === 'pick-clips') ? '<button type="button" class="btn ' + (markIt ? '' : 'btn-primary ') + 'btn-sm" data-act="studio-gd" data-gd="fix" data-fix="' + esc(v.fix) + '">' + esc(v.fix_label || 'Fix it') + '</button>' : '';
+  el.innerHTML = '<span class="gd-dot">' + esc(label) + '</span><p>' + esc(v.text) + (v.why ? ' ' + esc(v.why) : '') + '</p>' +
     (markIt ? '<span class="gd-acts"><button type="button" class="btn btn-primary btn-sm" data-act="studio-gd" data-gd="fix" data-fix="mark-drop">Mark the drop yourself</button>' + fix + '</span>'
             : fix || '<span></span>');
 }
@@ -13211,6 +13245,9 @@ function studio_gdAsk() {
   const gd = studio.gd;
   clearTimeout(gd.timer);
   if (!gd.style || !studio.song) { gd.verdict = null; studio_gdChip(); return; }
+  if (gd.filling) return;                  /* the fill answers with its own verdict */
+  /* the verdict already in hand judged exactly this request: asking again plans the same reel */
+  if (gd.verdict && gd.verdict.planned && gd.judged && JSON.stringify(gd.judged) === JSON.stringify(studio_gdBody())) return;
   const ticket = ++gd.asked;
   gd.timer = setTimeout(async () => {
     const body = studio_gdBody(), none = studio_gdNone(gd);
@@ -13220,6 +13257,7 @@ function studio_gdAsk() {
                                : {level: 'warn', text: 'Could not check this against your clips just now.'};
     gd.judged = body;
     studio_gdChip();
+    if (gd.step === 2) studio_gdRecount();
     if (gd.step === 4) {
       const f = studio_el('studio-gd-facts');
       if (f) f.outerHTML = studio_gdFacts();
@@ -13260,9 +13298,9 @@ function studio_gdFix(fix) {
     if (add) add.focus();
     return;
   }
-  else if (fix === 'pick-clips') {   /* adds; keeps what was chosen -- as many more as the plan says it is short */
-    studio_gdPickAll(true, Number(gd.verdict && gd.verdict.more) || 0);
+  else if (fix === 'pick-clips') {   /* adds; keeps what was chosen -- what the plan says it is short, chosen by the plan */
     gd.step = 2;
+    return studio_gdPickAll(true);
   }
   else if (fix === 'format:vertical') { gd.fmt = 'vertical'; }
   else if (fix === 'part:fit') {
@@ -13376,7 +13414,7 @@ function studio_gdAct(b) {
   }
   else if (what === 'auto') { gd.auto = true; gd.style = ''; gd.autoWhy = null; gd.step = 1; gd.verdict = null; }
   else if (what === 'setup' || what === 'quick' || what === 'unpick') studio_gdToggle(what, b.getAttribute('data-id'));
-  else if (what === 'pickall') { studio_gdPickAll(false); gd.verdict = null; }
+  else if (what === 'pickall') return studio_gdPickAll(false);
   else if (what === 'set') { gd[b.getAttribute('data-k')] = b.getAttribute('data-v'); gd.verdict = null; }
   studio_gdDraw();
 }
