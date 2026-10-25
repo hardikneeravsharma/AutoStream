@@ -189,6 +189,11 @@ def _float(value, fallback: float) -> float:
         return fallback
 
 
+def _same_path(p: str) -> str:
+    """A clip path as two requests can agree on it, however each spelled it."""
+    return os.path.normcase(os.path.abspath(str(p)))
+
+
 def tail_lines(path, n: int) -> list[str]:
     """Last `n` lines of a file, read by seeking from the end.
 
@@ -989,6 +994,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_check(b))
             elif p == "/api/studio/feasible":
                 self._json(self.app.studio_feasible(b))
+            elif p == "/api/studio/fill":
+                self._json(self.app.studio_fill(b))
             elif p == "/api/studio/songparts":
                 self._json(self.app.studio_songparts(b))
             elif p == "/api/studio/render":
@@ -4153,6 +4160,8 @@ class Server:
         # The drops the player marked, on the reel, so a rebuild asks for them again.
         if shape is not None and isinstance(body.get("drops"), list):
             proj["hand_drops"] = list(getattr(shape, "drops", None) or [])
+        # the planner's own shortfall: said beside the reel, not kept on it (feasible.judge)
+        fill = proj.pop("fill", None) or {}
         try:
             proj, derived, more = studio.normalise(proj, root)
         except studio.ProjectError as e:
@@ -4163,7 +4172,7 @@ class Server:
         proj["plan_notes"] = list(dict.fromkeys(notes + more))[:20]
         derived = studio.derive(proj)
         return {"ok": True, "project": proj, "derived": derived, "notes": notes + more,
-                "song": shape.as_dict() if shape else None}
+                "song": shape.as_dict() if shape else None, "fill": fill}
 
     def studio_feasible(self, body: dict) -> dict:
         """Will these choices make a good reel? One verdict and one fix (clips/feasible.py).
@@ -4175,6 +4184,7 @@ class Server:
         from .clips import director, feasible, studio
 
         root = self._clips_dir(cfg.load())
+        want_used = bool(body.get("want_used"))
         want = [str(p) for p in (body.get("clips") or []) if isinstance(p, str)][:studio.MAX_SHOTS]
         style = studio.STYLE.get(studio.current_style(body.get("style")))
         song = str(body.get("song") or "")
@@ -4210,9 +4220,62 @@ class Server:
         if not planned.get("ok"):
             facts["error"] = str(planned.get("error") or "These choices could not be planned.")
             return {"ok": True, "verdict": feasible.judge(**facts).as_dict()}
-        v = feasible.judge(**facts, project=planned.get("project"), notes=planned.get("notes"))
-        return {"ok": True, "verdict": v.as_dict(), "shots": len((planned.get("project") or {}).get("shots") or []),
-                "length": (planned.get("derived") or {}).get("length")}
+        v = feasible.judge(**facts, project=planned.get("project"), notes=planned.get("notes"),
+                           fill=planned.get("fill"))
+        out = {"ok": True, "verdict": v.as_dict(), "shots": len((planned.get("project") or {}).get("shots") or []),
+               "length": (planned.get("derived") or {}).get("length")}
+        if want_used:
+            out["used"] = sorted({str(s.get("clip")) for s in (planned.get("project") or {}).get("shots") or []})
+        return out
+
+    def studio_fill(self, body: dict) -> dict:
+        """ADD WHAT THE PLAN IS SHORT, CHOSEN BY THE PLAN. -> {"ok", "added", "verdict", "why"}
+
+        The guide's "Add N more" and "Pick for me". `candidates` are the clips the page offers
+        for the style, best first; `clips` are kept as chosen. The page used to pick N by its
+        own count of what a clip is worth, and on JUST A BOY "Add the best" added nothing
+        (2026-10-24). Here the next N the verdict asks for go in, the plan is made again, and
+        only those it actually plays are kept -- a clip the plan cannot place is not "added".
+        Repeated until the plan is full, more clips stop being the fix, or none are left;
+        `why` says which, in words, whenever the reel is still short.
+        """
+        from .clips import feasible, studio
+
+        keep = [str(p) for p in (body.get("clips") or []) if isinstance(p, str)]
+        offered = [str(p) for p in (body.get("candidates") or []) if isinstance(p, str)]
+        left = [p for p in dict.fromkeys(offered) if p not in keep]
+        # Pick for me starts from nothing: a first handful to plan with, which is pruned like the rest
+        start = int(body.get("seed_n") or (0 if keep else 8))
+        added: list[str] = left[:start]
+        left = left[start:]
+        got = None
+        for _round in range(12):
+            if len(keep) + len(added) > studio.MAX_SHOTS:
+                added = added[:max(0, studio.MAX_SHOTS - len(keep))]
+                left = []
+            got = self.studio_feasible(dict(body, clips=keep + added, want_used=True))
+            used = {_same_path(p) for p in got.get("used") or []}
+            lost = [p for p in added if used and _same_path(p) not in used]
+            if lost:
+                # A clip that went in but plays nowhere was not usable; it goes back, and the plan is
+                # made again without it -- what is answered is always a plan of exactly these clips.
+                added = [p for p in added if p not in lost]
+                continue
+            v = got.get("verdict") or {}
+            more = int(v.get("more") or 0) if v.get("fix") == "pick-clips" else 0
+            if not more or not left:
+                break
+            added += left[:more]
+            left = left[more:]
+        v = (got or {}).get("verdict") or {}
+        why = ""
+        if v.get("fix") == "pick-clips" and int(v.get("more") or 0):
+            why = (f"Every other clip of yours that this style can use is in, and the reel is still "
+                   f"{int(v['more'])} short. A shorter part, or more clips recorded, would fill it.")
+        elif v.get("fix") == "part:fit":
+            why = "More clips will not lengthen this reel: " + str(v.get("text") or "")
+        return {"ok": True, "added": added, "verdict": v, "why": why,
+                "length": (got or {}).get("length")}
 
     def studio_check(self, body: dict) -> dict:
         """The timeline after an edit: clamped, and with every derived time."""

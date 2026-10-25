@@ -20,7 +20,7 @@ from pathlib import Path
 
 import appd
 import pytest
-from test_ui_studio_guide import _drop_song, _rich_clips
+from test_ui_studio_guide import _drop_song, _filled, _rich_clips
 
 pytestmark = pytest.mark.ui
 
@@ -610,6 +610,7 @@ def test_the_same_draft_and_editor_in_the_guide_the_make_page_and_the_song_tab(p
     assert 22.5 in pg.evaluate("studio.mk.drops.map(d => d.t)"), "the guide's drop is not the draft's"
     pg.click("#studio-gd-next")
     pg.click('[data-gd="pickall"]')
+    _filled(pg)
     pg.click('[data-act="studio-gd"][data-gd="all"]')
     pg.wait_for_selector("#studio-make-scrim:not(.hide)")
     assert "22.5" in pg.inner_text("#studio-mk-droplist").replace(":", "") or \
@@ -677,6 +678,7 @@ def test_all_settings_returns_to_the_same_step_with_what_was_chosen(pg):
     pg.wait_for_function("() => studio.songShape && studio.song.indexOf('long click') >= 0", timeout=60_000)
     pg.click("#studio-gd-next")
     pg.click('[data-gd="pickall"]')
+    _filled(pg)
     quick = pg.evaluate("studio.gd.quick.slice()")
     assert pg.evaluate("studio.gd.step") == 2
     pg.click('[data-act="studio-gd"][data-gd="all"]')

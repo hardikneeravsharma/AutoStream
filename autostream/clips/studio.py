@@ -2061,6 +2061,7 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
         proj["build_clip"] = build           # a rebuild builds on it again (normalise keeps it)
     if loose:
         proj["part_auto"] = True
+    proj["fill"] = {"missing": int(got.missing), "reach": float(got.reach)}
     proj["intro"] = "i00"                    # the take is the opening; nothing is laid over it
     # THE LAST KILL IS NOT FADED. The style's fade is most of a bar (1.2-2.2 s) and
     # ran over the last kill of two of the first four reels; a short one, which
@@ -3409,6 +3410,15 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         left_out((c for c in before if c not in kept_clips),
                  "The song ends before this clip." if fill == "all" else "The song part ends before this clip.")
         have = sum(s["duration"] for s in proj["shots"])
+        # THE PLAN'S OWN SHORTFALL, in shots as long as this plan's own -- what the chip asks for
+        # and "Add N more" adds (director.Plan.missing). Not the style's pace: a part short of
+        # kills is spread over (see `spread`), every shot already as long as its footage lets
+        # it be, and each clip more adds about one of those. The page estimated it from a shot's
+        # median length, the chip's way, and the clip counter its own way again.
+        if fills_part and proj["shots"] and have < part_len - 0.5:
+            per = max(have / len(proj["shots"]), gap_style, 0.3)
+            proj["fill"] = {"missing": int(math.ceil((part_len - have) / per - 1e-6)),
+                            "reach": round(part_len, 3)}
         if fills_part and grid.hits and have < part_len - 4 * beat:
             notes.append(f"Your clips fill {have:.0f} s of the {part_len:.0f} s part, even with every "
                          f"kill given as much run-up as its footage allows, so the reel ends early. "

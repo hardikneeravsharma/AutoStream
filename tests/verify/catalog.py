@@ -617,6 +617,11 @@ CONTROLS: list[Control] = [
             why="one verdict and one fix for a style, a song and clips -- made from "
                 "a real plan without the slow footage checks, so a chip says what the "
                 "planner will do; no song or no clips is a verdict of its own, not an error"),
+    Control("/api/studio/fill", "POST", CALL, "Add N more / Pick for me: the clips the plan is short", "studio",
+            body={"clips": [], "candidates": [], "style": "drop", "song": ""}, expect=_has("ok", "added", "verdict"),
+            acts=("studio-gd",),
+            why="the plan chooses how many clips go in and keeps only those it plays, so the "
+                "button adds what the chip asked for or says why it cannot"),
     Control("/api/studio/songparts", "POST", CALL, "the guide's drop view: the song's parts", "studio",
             body={"song": ""}, expect=_has("ok"),
             acts=("studio-gd",),

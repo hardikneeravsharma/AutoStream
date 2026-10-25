@@ -135,6 +135,10 @@ class Plan:
     notes: list[str] = field(default_factory=list)
     # how long the reel could run with clips enough for every hit: the song's limit here, not the clips'
     reach: float = 0.0
+    # THE PLAN'S OWN SHORTFALL: the hits inside the part no clip was left to fill. The page's
+    # chip, its clip counter and "Add N more" all read this one number (feasible.judge); each
+    # used to estimate it its own way, and the three disagreed (JUST A BOY, 2026-10-24).
+    missing: int = 0
 
 
 def bursts(clip: dict) -> list[Burst]:
@@ -640,6 +644,7 @@ def _after(all_b, clips_by_path, setups, best, ks, take_shots, D, start, end, ga
         last_path = pick.path
         pair_room -= 1
         j += 1
+    missing = len(T) - j
     if j < len(T):
         notes.append(f"The clips ran out {len(T) - j} hits before the end of the part; "
                      f"the reel ends on the last one they reach.")
@@ -666,6 +671,7 @@ def _after(all_b, clips_by_path, setups, best, ks, take_shots, D, start, end, ga
         if id(b) in seen:                  # the swap ran out of room: end before the repeat
             notes.append(f"The reel ends {len(flurry) - i} hits early: no other clip had the footage "
                          f"to fill them.")
+            missing += sum(len(ts) for _b, _ks, ts in flurry[i:])
             flurry = flurry[:i]
             break
         seen.add(id(b))
@@ -759,7 +765,7 @@ def _after(all_b, clips_by_path, setups, best, ks, take_shots, D, start, end, ga
             last["duration"] = round(last["duration"] + grow, 5)
     return Plan(part=(round(start, 4), round(start + sum(s["duration"] for s in shots), 4)), drop=D,
                 shots=shots, marks=marks, notes=notes, kills=kills,
-                reach=round(T[-1] + TAIL - start, 3))
+                reach=round(T[-1] + TAIL - start, 3), missing=missing)
 
 
 # ------------------------------------------------------------------ montage
