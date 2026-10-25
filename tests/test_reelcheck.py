@@ -272,3 +272,99 @@ def test_a_kill_lit_white_is_said_with_why_and_an_intended_flash_is_not_counted(
     proj, d = _one_shot(["k01"])
     f = [x for x in rc.render_findings(wall, proj, d, ff) if x.code == "kill-bright"]
     assert len(f) == 1 and f[0].level == rc.SOFT and "footage" in f[0].message
+
+
+# ----------------------------------------------------- a stall on the impact
+#
+# ChatGPT's general rule from the Clean v2 review: two or more identical frames at a
+# kill, the footage under them moving and nothing in the plan holding a frame, is said
+# (soft) in every style. Each case renders a 4 s, 60 fps source and a "reel" cut from it
+# with frames repeated by ffmpeg's loop filter -- what a stalled render looks like.
+
+def _lavfi(ff, path, src, vf=""):
+    subprocess.run([ff, "-v", "error", "-y", "-f", "lavfi", "-i", src, "-vf",
+                    (vf + "," if vf else "") + "format=yuv420p", "-t", "4", "-r", "60", str(path)],
+                   check=True, creationflags=rc._NO_WINDOW)
+
+
+def _repeat(ff, src, path, frame, extra):
+    """`src` with frame `frame` shown `extra` more times, cut back to 4 s."""
+    subprocess.run([ff, "-v", "error", "-y", "-i", str(src), "-vf",
+                    f"loop=loop={extra}:size=1:start={frame},setpts=N/60/TB,format=yuv420p",
+                    "-t", "4", "-r", "60", str(path)], check=True, creationflags=rc._NO_WINDOW)
+
+
+def _stall_plan(src, kill, pieces=None, stretch=None):
+    shot_ = {"clip": str(src), "kill": kill, "pre": kill, "duration": 4.0, "fx": ["k01"], "transition": "t01"}
+    if stretch:
+        shot_["stretch"] = stretch
+    proj = {"format": "landscape", "shots": [shot_]}
+    d = {"length": 4.0, "kills": [kill], "shots": [{"index": 0, "start": 0.0, "end": 4.0, "kill_reel": kill,
+                                                    "kills_reel": [kill], "source_in": 0.0,
+                                                    "pieces": pieces or [[0.0, 4.0, 1.0]]}]}
+    return proj, d
+
+
+def _stalls(mp4, proj, d, ff):
+    return [x for x in rc.render_findings(mp4, proj, d, ff) if x.code == "kill-dup-frames"]
+
+
+def test_a_duplicated_pair_at_a_kill_over_moving_footage_is_said_but_does_not_block(tmp_path):
+    ff = _ff()
+    if not ff:
+        pytest.skip("no ffmpeg")
+    src, reel = tmp_path / "src.mp4", tmp_path / "reel.mp4"
+    _lavfi(ff, src, "testsrc2=size=640x360:rate=60:duration=4")
+    _repeat(ff, src, reel, 120, 1)                     # frame 120 -- the kill at 2.0 s -- twice
+    proj, d = _stall_plan(src, 2.0)
+    f = _stalls(reel, proj, d, ff)
+    assert len(f) == 1 and f[0].level == rc.SOFT and f[0].at == 2.0 and f[0].message.startswith("2 identical")
+    # the footage itself, uncut, has no stall to find
+    assert not _stalls(src, proj, d, ff)
+
+
+def test_a_still_source_is_not_a_stall(tmp_path, monkeypatch):
+    """A scene that does not move repeats its picture because it is still, not because the render caught."""
+    ff = _ff()
+    if not ff:
+        pytest.skip("no ffmpeg")
+    src, reel = tmp_path / "still.mp4", tmp_path / "reel.mp4"
+    _lavfi(ff, src, "testsrc2=size=640x360:rate=60:duration=0.05", "loop=loop=-1:size=1:start=0,setpts=N/60/TB")
+    _repeat(ff, src, reel, 120, 2)
+    proj, d = _stall_plan(src, 2.0)
+    assert not _stalls(reel, proj, d, ff)
+    # ...and it is the footage's stillness that excused it, not some other gap in the check
+    monkeypatch.setattr(rc, "SOURCE_MOVING", -1.0)
+    monkeypatch.setattr(rc, "REAL_SPEED", (9.0, 9.0))
+    assert _stalls(reel, proj, d, ff)
+
+
+def test_a_stretched_run_ups_held_frame_is_intended_and_not_a_stall(tmp_path):
+    """stretch[2]: the opening frame held before the run-up plays. The plan holds it on purpose."""
+    ff = _ff()
+    if not ff:
+        pytest.skip("no ffmpeg")
+    src, reel = tmp_path / "src.mp4", tmp_path / "reel.mp4"
+    _lavfi(ff, src, "testsrc2=size=640x360:rate=60:duration=4")
+    _repeat(ff, src, reel, 0, 9)                       # frame 0 held for 0.15 s, the kill at 0.2 s
+    stretch = [1.0, 0.05, 0.15]
+    pieces = [list(p) for p in studio.pieces("s00", 4.0, 0.2, stretch)]
+    assert pieces[0][2] < studio.PREVIEW_MIN_RATE, "the plan holds the opening frame"
+    proj, d = _stall_plan(src, 0.2, pieces, stretch)
+    assert not _stalls(reel, proj, d, ff)
+    # the same frames with no hold in the plan are a stall: the plan is what excused them
+    proj, d = _stall_plan(src, 0.2)
+    assert _stalls(reel, proj, d, ff)
+
+
+def test_a_duplicated_pair_away_from_any_kill_is_not_this_finding(tmp_path):
+    ff = _ff()
+    if not ff:
+        pytest.skip("no ffmpeg")
+    src, reel = tmp_path / "src.mp4", tmp_path / "reel.mp4"
+    _lavfi(ff, src, "testsrc2=size=640x360:rate=60:duration=4")
+    _repeat(ff, src, reel, 60, 2)                      # at 1.0 s; the kill is at 3.0 s
+    proj, d = _stall_plan(src, 3.0)
+    assert not _stalls(reel, proj, d, ff)
+    proj, d = _stall_plan(src, 1.0)                    # the same frames under a kill are one
+    assert _stalls(reel, proj, d, ff)

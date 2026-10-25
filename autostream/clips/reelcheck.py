@@ -178,6 +178,17 @@ REAL_SPEED = (0.95, 1.05)      # a rate that reads as real speed (Clean's review
 OPEN_AT = 15                   # the frame a quarter of a second in, at REEL_FPS...
 OPEN_BLACK = 0.50              # ...no more than this share of the picture near-black...
 NEAR_BLACK = 24                # ...below this level of 255
+# A PICTURE THAT STALLS ON ITS IMPACT (ChatGPT's general rule from the Clean v2 review,
+# every style): two or more identical frames running at a kill, while the footage under
+# them moves and nothing in the plan holds a frame, is a stutter the viewer reads as the
+# render catching -- since v1.83.0 no style has a freeze, so no style allows one.
+# Measured on real 60 fps Valorant footage at the check's 540x304: consecutive frames
+# differ by a median of 2.4-6.4 (0-255 mean absolute), and an encoded repeat by < 0.1.
+DUP_MAD = 0.3                  # two frames closer than this are the same picture
+DUP_FRAMES = 2                 # ...and this many of them running is a stall
+SOURCE_MOVING = 1.0            # the footage moves when its frames, at the speed the reel plays
+                               # them, differ by a median of at least this
+SOURCE_AROUND = 0.1            # s of footage either side of the stall that median is read over
 
 
 def _rate(pieces: list, t0: float, t1: float) -> float:
@@ -357,6 +368,115 @@ def _frames(ff: str, mp4: Path, crop: str, size: tuple[int, int]):
     return np.frombuffer(raw[:n * w * h], np.uint8).reshape(n, h, w).astype(np.float32)
 
 
+def _source_frames(ff: str, clip: str, t0: float, t1: float):
+    """The clip's own frames over [t0, t1] source seconds at its own rate -> (frames, fps, first frame's time)."""
+    import numpy as np
+    from .tools import media_info
+
+    fps = float(media_info(clip).get("fps") or 0.0)
+    t0 = max(0.0, t0)
+    if fps <= 0 or t1 <= t0:
+        return None
+    w, h = 540, 304
+    raw = subprocess.run([ff, "-v", "error", "-nostdin", "-ss", f"{t0:.4f}", "-i", str(clip), "-t", f"{t1 - t0:.4f}",
+                          "-vf", f"scale={w}:{h},format=gray", "-f", "rawvideo", "-"],
+                         capture_output=True, creationflags=_NO_WINDOW, timeout=120).stdout
+    n = len(raw) // (w * h)
+    return np.frombuffer(raw[:n * w * h], np.uint8).reshape(n, h, w).astype(np.float32), fps, t0
+
+
+def _kill_stalls(frames, lap, med: float, project: dict, derived: dict, by_kill: list, ff: str) -> list[Finding]:
+    """`kill-dup-frames` (see DUP_MAD): a stall on an impact. Soft, every style.
+
+    Only said when it is the render's: the footage under the stall must be moving at
+    the speed the reel plays it, and no frame of it may be one the plan holds. A kill
+    whose footage cannot be read is left unsaid -- this is a diagnostic, not the gate.
+    """
+    import numpy as np
+    from . import studio
+
+    out: list[Finding] = []
+    off = float(derived.get("offset") or 0.0)
+    n = len(frames)
+    rows = derived.get("shots") or []
+    for k in derived.get("kills") or []:
+        if not by_kill:
+            break
+        _k, s, r = min(by_kill, key=lambda x: abs(x[0] - float(k)))
+        if r.get("source_in") is None or not s.get("clip"):
+            continue                                   # nothing to say whether the footage moved
+        i = int(round((float(k) + off) * REEL_FPS))
+        s0, s1 = int(round((float(r["start"]) + off) * REEL_FPS)), int(round((float(r["end"]) + off) * REEL_FPS))
+        a, b = max(i - KILL_WINDOW[0], s0, 0), min(i + KILL_WINDOW[1], s1 - 1, n - 1)
+        ps = [tuple(p) for p in r.get("pieces") or [[0.0, float(r["end"]) - float(r["start"]), 1.0]]]
+
+        def u_of(f: int) -> float:                     # the shot's own output seconds at reel frame f
+            return f / REEL_FPS - off - float(r["start"])
+
+        def rate_at(u: float) -> float:
+            u = max(0.0, u)
+            return next((p[2] for p in ps if p[0] <= u < p[1]), ps[-1][2])
+
+        # INTENDED HOLDS ARE THE PLAN'S, never a finding: a stretched run-up's held opening
+        # frame (a piece at HOLD_RATE -- stretch[2]) and the frame after it, which starts
+        # from the held picture; and the "Freeze and fade colour" ending's last second.
+        freeze_from = (float(r["end"]) - 1.0) if (rows and r is rows[-1] and project.get("outro") == "e02") else None
+
+        def held(f: int) -> bool:
+            u = u_of(f)
+            if rate_at(u) < studio.PREVIEW_MIN_RATE or rate_at(u - 1.0 / REEL_FPS) < studio.PREVIEW_MIN_RATE:
+                return True
+            return freeze_from is not None and u + float(r["start"]) >= freeze_from - 1.0 / REEL_FPS
+
+        # A flat frame -- a white flash, a black dip -- is identical to its neighbour without
+        # being a stall; the light checks above say those.
+        ok = {f for f in range(a, b + 1) if not held(f) and lap[f] / med >= SHARP_MIN}
+        best = run = 0
+        at = start = a
+        for f in range(a, b):
+            if f in ok and f + 1 in ok and float(np.abs(frames[f + 1] - frames[f]).mean()) < DUP_MAD:
+                run += 1
+                start = f if run == 1 else start
+                if run + 1 > best:
+                    best, at = run + 1, start
+            else:
+                run = 0
+        if best < DUP_FRAMES:
+            continue
+        u0, u1 = max(0.0, u_of(at)), max(0.0, u_of(at + best - 1))
+        src0 = float(r["source_in"]) + studio.source_used(ps, u0)
+        src1 = float(r["source_in"]) + studio.source_used(ps, u1)
+        rate = rate_at(u0)
+        try:
+            got = _source_frames(ff, s["clip"], src0 - SOURCE_AROUND, src1 + SOURCE_AROUND)
+        except Exception as e:                                 # noqa: BLE001
+            log.info("stall check could not read %s: %s", s["clip"], e)
+            continue
+        if not got or len(got[0]) < 3:
+            continue
+        sf, sfps, t0 = got
+        # Moving AT THE SPEED THE REEL PLAYS IT: slowed to 0.3x, each of the reel's frames
+        # shows a third of the footage's own frame-to-frame change (and a 30 fps recording's
+        # change is spread over two of the reel's 60), so a scene that barely moves, slowed,
+        # differs by less than DUP_MAD frame to frame without anything having stalled.
+        moves = float(np.median(np.abs(np.diff(sf, axis=0)).mean(axis=(1, 2))))
+        if moves * rate * sfps / REEL_FPS < SOURCE_MOVING:
+            continue
+        # AT REAL SPEED THE FOOTAGE'S OWN REPEATS ARE ITS OWN: a 30 fps recording shows each
+        # frame twice in a 60 fps reel, and a recording that dropped a frame repeats one. The
+        # stall is the render's only when the footage differs between the instants its first
+        # and last frames show. Slowed or sped, a shot is re-timed by optical flow (retime.py),
+        # which makes a new picture for every frame of the reel -- a repeat there is the render's.
+        if REAL_SPEED[0] <= rate <= REAL_SPEED[1]:
+            j0 = min(len(sf) - 1, max(0, int(round((src0 - t0) * sfps))))
+            j1 = min(len(sf) - 1, max(0, int(round((src1 - t0) * sfps))))
+            if j0 == j1 or float(np.abs(sf[j1] - sf[j0]).mean()) < DUP_MAD:
+                continue
+        out.append(Finding(SOFT, "kill-dup-frames", f"{best} identical frames at a kill while the footage moves: "
+                           f"the picture stalls on the impact.", float(k)))
+    return out
+
+
 def render_findings(mp4: Path, project: dict, derived: dict, ff: str = "ffmpeg") -> list[Finding]:
     """Checks on the finished file. Any failure to check is itself a hard finding."""
     out: list[Finding] = []
@@ -467,6 +587,7 @@ def render_findings(mp4: Path, project: dict, derived: dict, ff: str = "ffmpeg")
                 why = "an effect lifting the picture; take it off or give the kill another"
             out.append(Finding(SOFT, "kill-bright", f"Over {KILL_BRIGHT_SHARE:.0%} of the game's picture is near-white "
                                f"for {best} frames at a kill: {why}.", float(k)))
+        out += _kill_stalls(frames, lap, med, project, derived, by_kill, ff)
     except Exception as e:                                     # noqa: BLE001
         log.info("reel check could not run: %s", e)
         out.append(Finding(HARD, "check-failed", f"The reel could not be checked ({e})."))
