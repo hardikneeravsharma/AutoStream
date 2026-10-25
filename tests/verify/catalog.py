@@ -845,6 +845,8 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-select": "selects a shot, or the reel, in the inspector",
     "studio-edit-song": "opens the Song tab",
     "studio-sg-play": "plays or pauses the chosen part of the song",
+    "studio-sg-start": "puts the song back at the start of the chosen part",
+    "studio-sg-end": "skips the song to the end of the chosen part",
     "studio-sg-mark": "adds a kill mark at the playhead; sent with Use this part",
     "studio-sg-fromkills": "fills the marks from where this reel's kills already are",
     "studio-sg-marknudge": "moves the chosen mark by half a beat or a beat",

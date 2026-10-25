@@ -1271,6 +1271,9 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     # while the song played and every still-frame check passed anyway. Play it
     # and watch the window advance.
     page.wait_for_function("() => studio.sv && studio.sv.meta && studio.sv.bytes", timeout=120_000)
+    assert not page.evaluate("() => document.querySelectorAll('#studio-sg-lanes .studio-sg-lane').length"), \
+        "the lanes are Advanced and must start off"
+    page.check("#studio-sg-adv")
     lanes = page.evaluate("() => [...document.querySelectorAll('#studio-sg-lanes .studio-sg-lane')]"
                           ".map(l => l.getAttribute('data-lane'))")
     assert lanes, "the song has no views at all"

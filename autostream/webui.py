@@ -3671,6 +3671,8 @@ class Server:
         have = set(ss.stock([s["key"] for s in cat["styles"]]))
         for s in cat["styles"]:
             s["stock_sample"] = s["key"] in have
+        # Read per load, so the Settings toggle holds from the next Studio visit.
+        cat["previews"] = bool(getattr(cfg.load().ui, "preview_clips", True))
         return cat
 
     def studio_export(self, body: dict) -> dict:
@@ -4096,15 +4098,19 @@ class Server:
         # The rulebook's action and colour checks look at the footage around
         # every kill; without ffmpeg the plan is made without them.
         picks = body.get("template")
+        shaping = dict(body["shaping"]) if isinstance(body.get("shaping"), dict) else None
+        if part and isinstance(body.get("marks"), list):
+            # Kills marked by hand are the slots the plan fills, so every mark gets a kill.
+            inside = [m for m in body["marks"] if isinstance(m, (int, float)) and part[0] <= m <= part[1]]
+            if inside:
+                shaping = dict(shaping or {}, marks=inside)
         proj, notes = studio.plan(chosen, str(body.get("style") or studio.DEFAULT_STYLE),
                                   template=picks if isinstance(picks, dict) else None,
                                   shape=shape, song=song if shape else "",
                                   fmt=str(body.get("format") or "landscape"),
                                   name=str(body.get("name") or ""), max_seconds=max_s,
                                   checks=not body.get("dry"),
-                                  part=part,
-                                  shape_it=body.get("shaping")
-                                  if isinstance(body.get("shaping"), dict) else None)
+                                  part=part, shape_it=shaping)
         # KILLS MARKED ON THE MAKE PAGE, in song seconds: where the player wants each kill to
         # land, edited on the song's waveform. Applied the way the Song tab applies them -- the
         # cuts move and the marks never do -- over the part that was planned.
@@ -4450,10 +4456,17 @@ class Server:
         # whatever the page believed: a part moved and never planned for is not
         # rendered as if the old kill timing belonged to it.
         from .clips import editflow
+        # Not the kill count: marks past the chosen clips' kills are said at the plan, never a refusal here.
         why = editflow.can_render(proj)
         if why:
             run.release(claim)
             return {"ok": False, "error": why, "stale": editflow.stale(proj)}
+        # A SHOT EDITED AFTER THE PLAN GETS ITS STYLE'S SPEED SHAPE BACK. Replacing a shot's clip or
+        # sliding its footage drops the shape, and only the plan made it: six such shots on a Velocity
+        # reel played their kills at 1x and failed its check on every render. Shapes already there stay.
+        style = studio.STYLE.get(proj.get("style") or "")
+        if style and style.speed_profile and studio.speed_curves(proj["shots"], style, set(proj.get("mix_free") or []))["velocity"]:
+            derived = studio.derive(proj)
         outdir = root / "reels"
         outdir.mkdir(parents=True, exist_ok=True)
         out = Path(proj["output"]) if proj.get("output") else \
@@ -4648,6 +4661,14 @@ class Server:
             return {"ok": True, "rev": rev, "conflicts": [conflict], "notes": [], "project": None}
         rep = editflow.retime(proj, derived, shape, relax=str(body.get("relax") or ""),
                               resnap=bool(body.get("resnap")))
+        if self._marks_conflict(root, proj) or any(c.get("kind") == "marks-more-than-shots" for c in rep["conflicts"]):
+            # MORE MARKS THAN SHOTS: the player's marks win. Planned again from the clips they chose, so
+            # every mark gets a kill until those clips run out -- never a refusal to press through.
+            got = self.studio_replan({"project": proj, "rev": rev})
+            if got.get("ok") and got.get("project"):
+                got["notes"] = ["You marked more kills than the reel had shots, so it was planned again "
+                                "from the clips you chose, a shot on every mark."] + list(got.get("notes") or [])
+            return got
         if rep["conflicts"]:
             return {"ok": True, "rev": rev, "conflicts": rep["conflicts"], "notes": rep["notes"], "project": None}
         new = rep["project"]
@@ -4694,6 +4715,21 @@ class Server:
         notes = studio.apply_song(proj, shape, str(proj.get("song") or ""), start, end, marks)
         return [f"{len(add)} shot(s) from the reel's pool fill the rest of the part."] + notes
 
+    def _selection_kills(self, root: Path, proj: dict) -> int | None:
+        """How many kills the reel's chosen clips hold; None when none of them can be found."""
+        paths = [r["clip"] for r in proj.get("selection") or [] if isinstance(r, dict) and r.get("clip")] \
+            or list(dict.fromkeys(s["clip"] for s in proj.get("shots") or []))
+        chosen = self._studio_chosen(root, paths)
+        return sum(int(c.get("kill_count") or 0) for c in chosen) if chosen else None
+
+    def _marks_conflict(self, root: Path, proj: dict, clips=None) -> dict | None:
+        """More kills marked than the chosen clips hold: a conflict with no fix but fewer marks or more clips."""
+        from .clips import editflow
+
+        kills = self._selection_kills(root, dict(proj, selection=[{"clip": c} for c in clips]) if clips else proj)
+        why = editflow.kills_short(proj, kills) if kills is not None else ""
+        return {"kind": "too-many-marks", "text": why, "fixes": []} if why else None
+
     def studio_replan(self, body: dict) -> dict:
         """REPLAN, as a dry run: the style's real planner on the spec as it is now -- the new
         part, the drops, the player's own marks as constraints -- and what it would change.
@@ -4722,12 +4758,17 @@ class Server:
                                               spec["start"], spec["end"])
             if conflict:
                 return {"ok": True, "rev": rev, "conflicts": [conflict], "notes": [], "project": None}
+        # More marks than the chosen clips have kills: every kill goes on a mark and the rest are said, not refused.
+        short = self._marks_conflict(root, proj, over.get("clips"))
         req = editflow.replan_request(proj, over)
         got = self.studio_plan(req)
         if not got.get("ok"):
             return {"ok": False, "rev": rev, "error": got.get("error") or "That reel could not be planned."}
         new = got["project"]
         notes = list(got.get("notes") or [])
+        if short:
+            notes.insert(0, short["text"].split(". ")[0] + ": every kill they have is on one of your marks, "
+                            "and the marks after them have none. Add clips to fill those.")
         new["output"] = proj.get("output") or ""
         anchors = list(spec["anchors"])
         start, end = editflow.plan_part(new)

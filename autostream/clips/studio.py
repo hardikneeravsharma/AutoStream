@@ -2894,14 +2894,43 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     # of the phrase, drop the weakest middle one while it runs a shot over.
     # A drop needs its build: the fourth shot is the one on the drop.
     min_groups = 5 if style.drop else 3
-    for _ in range(24 if target and not keep_all and not drop_count else 0):
+    # A FILLED PART IS SIZED BY HOW MANY KILLS IT HOLDS AT THE STYLE'S PACE, NOT BY THE WALK: its
+    # kills are spread over the whole part (spread_to), so the walk's compact length never plays.
+    # Settled on the walk, 20 clips on a 15 s Velocity part kept 7 shots of 4 clips, cut every 2.2 s.
+    # KILLS THE PLAYER MARKED ON THE PART ARE ITS SLOTS: as many kills as marks, from the first mark --
+    # not the style's own opener and pace, whose extra shots were then cut off the part's end.
+    hand = sorted(float(m) for m in ((shape_it or {}).get("marks") or [])[:MAX_SHOTS * 2]
+                  if isinstance(m, (int, float)) and part_len and part_start <= m <= end_at)
+    if hand and fill == "part":
+        first0 = hand[0]
+    room_n = ((len(hand) or int((end_at - tail_s - first0) / max(gap_style, 1e-3)) + 1)
+              if fill == "part" and part_len and first0 else 0)
+
+    def held(ms) -> int:
+        return sum(len(m.kills) for m in ms) if hand else len(ms)
+    if room_n:
+        # ONE SHOT A CLIP BEFORE TWO FROM ANY: a clip's fights are one group, taken whole, so the
+        # same part filled from 6 clips of three fights each while 14 chosen clips sat out.
+        per = max(1, room_n // max(1, len({m.group for m in all_moments})))
+        capped_out: list[tuple[str, float]] = []
+        fair = rulebook.cap_per_clip(all_moments, per, capped_out)
+        if len({m.group for m in fair}) > len({m.group for m in picked}):
+            for key in capped_out:
+                kill_why.setdefault(key, f"the part has room for {per} shot(s) a clip, so every clip gets one first")
+            picked = rulebook.order(rulebook.select(fair, target, lambda m: est[id(m)] * step),
+                                    looks, opener_ok, **arrangement)
+            spare = [m for m in fair if m not in picked]
+            lens, hero_set = plan_walk(picked)
+    for _ in range(4 * len(all_moments) + 24 if target and not keep_all and not drop_count else 0):
         total = sum(sum(x) for x in lens)
-        if total < want_beats - 1 and spare:
+        short = held(picked) < room_n if room_n else total < want_beats - 1
+        over = held(picked) > room_n if room_n else total > want_beats + shot_beats
+        if short and spare:
             nxt = max(spare, key=lambda m: m.strength)
             grp = [m for m in spare if m.group == nxt.group]
             spare = [m for m in spare if m.group != nxt.group]
             picked = rulebook.order(picked + grp, looks, opener_ok, **arrangement)
-        elif total > want_beats + shot_beats and len({m.group for m in picked}) > min_groups:
+        elif over and len({m.group for m in picked}) > min_groups:
             # Whole sequences only, and never the opener's, the closer's or
             # the climax's: taking "the middle shots" once split the opener's
             # triple kill and left its last shot opening the reel alone,
@@ -3231,7 +3260,7 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
                                          mins=[float(x.get("_gap_min", 0.0)) for x in shots[1:]],
                                          end=plan_end if plan_end is not None else end_at)
                 else:
-                    slots = kill_slots(first, want_n, last, end=plan_end)
+                    slots = list(hand) if hand and fill == "part" else kill_slots(first, want_n, last, end=plan_end)
                 pool_shots = copy.deepcopy(shots)
                 if paced:
                     # Each shot asks for the whole of its gap as run-up, less what the

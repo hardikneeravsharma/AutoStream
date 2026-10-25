@@ -111,6 +111,8 @@ ui:
   theme: midnight
   # Off means AutoStream starts quietly in the notification area and you open this window from the tray icon when you want it.
   open_window: true
+  # Off means the Studio's style cards and effect pickers load no preview clips until you press Play on one. Turn it off on a Mac or a slow PC if that page stutters or freezes.
+  preview_clips: true
 
 logging:
   # Info is the right everyday setting. Debug is loud, but it is what shows you why detection or ingestion is misbehaving.
