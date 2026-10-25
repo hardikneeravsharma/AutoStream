@@ -1152,7 +1152,10 @@ def _assemble(fit: Fitter, ev, path, style, grid, tw, arrangement, hs_only, fmt,
     studio.speed_curves(shots, style)
     studio.signature_fx(shots, style)
     studio.signature_guard(shots, style)
-    marks = [round(float(T[p]), 4) for _a, _r, p in anchors]
+    # ...and no effect that whites a kill out, as studio.plan turns them down.
+    if (whited := studio.no_whiteout(shots, pools, fixed={studio.fam(p) for p in style.signature})):
+        notes.append(studio.whiteout_note(whited))
+    marks =[round(float(T[p]), 4) for _a, _r, p in anchors]
     return {
         "version": studio.VERSION, "name": name or f"{style.label} reel",
         "style": style.key, "format": fmt if fmt in studio.SIZES else "landscape",
