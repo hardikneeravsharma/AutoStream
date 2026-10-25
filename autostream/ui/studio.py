@@ -5528,7 +5528,7 @@ function studio_flowAddHtml() {
       studio_flowBtn('studio-add-how', 'Pick clips for the pool', {how: 'pool'}) + '</div>' +
     '<div class="studio-flow-choice"><b>Replace ' + (shot ? esc(studio_shotName(i)) + '’s clip' : 'a shot’s clip') + '</b>' +
       '<p class="muted studio-small">' + (shot ? 'Keeps its place, its length and its effects (' + esc(shot.name || '') +
-        ' now); its kill is re-timed onto its mark. The shots around it do not change.' : 'Select a shot on the timeline first.') + '</p>' +
+        ' now), from the clips that can land a kill on its beat. No other kill moves.' : 'Select a shot on the timeline first.') + '</p>' +
       studio_flowBtn('studio-add-how', 'Pick its new clip', {how: 'replace', disabled: !shot, title: shot ? '' : 'Select a shot on the timeline first.'}) + '</div>' +
     '<div class="studio-flow-choice"><b>Replan with these clips</b>' +
       '<p class="muted studio-small">' + esc(rp.says ? rp.says[0].toUpperCase() + rp.says.slice(1) : 'Plans the reel again') + ', with every setting on the Make page.' +
@@ -6841,6 +6841,102 @@ function studio_addGo() {
   studio.adding = null; studio.selected = []; studio_syncSelection();
   studio_renderTray();
   studio_tab('timeline');
+}
+
+/* ------------------------------------------------------------ shots as slots
+
+   REPLACE OR REMOVE ONE SHOT, AND NO OTHER KILL MOVES (clips/slots.py, /api/studio/slot). Every shot
+   is a fixed slot on the song. Remove used to splice the list and lay every later kill back one hit
+   along; Replace took any clip and re-laid the marks. Agreed with ChatGPT on 2026-10-24:
+     Replace   only the clips that can land a kill on this shot's beat, with the footage its run-up
+               and tail need, best first -- for the build, only takes that land on the drop;
+     Remove    "Close the gap" (the shots either side stretch over it) or "Fill with the next best
+               clip"; when neither can be done, "End the reel before this shot".
+   Each choice is worked out by the server before it is offered, so a choice that cannot be done says
+   why instead of being pressed, and applying one is a single step of undo. */
+function studio_slotOn(i, mode) { const s = studio.slot; return !!(s && s.shot === i && s.mode === mode); }
+
+async function studio_slotOpen(mode) {
+  const p = studio.project, i = studio.sel;
+  if (!p || !(i >= 0 && i < p.shots.length)) return;
+  if (studio_slotOn(i, mode)) { studio.slot = null; studio_drawInspector(); return; }
+  const gen = studio.gen, body = extra => Object.assign({project: p, shot: i}, extra);
+  studio.slot = {shot: i, mode: mode, gen: gen, busy: true};
+  studio_drawInspector();
+  const ask = extra => API.post('/api/studio/slot', body(extra))
+    .catch(() => ({ok: false, error: 'AutoStream could not be reached just now.'}));
+  const got = mode === 'replace' ? {opts: await ask({do: 'options'})}
+    : await Promise.all([ask({do: 'options'}), ask({do: 'close'}), ask({do: 'fill'}), ask({do: 'shorten'})])
+        .then(r => ({opts: r[0], close: r[1], fill: r[2], shorten: r[3]}));
+  /* the reel changed while it was worked out: the answer is about another reel */
+  if (!studio_slotOn(i, mode) || studio.gen !== gen) return;
+  Object.assign(studio.slot, got, {busy: false});
+  studio_drawInspector();
+}
+
+function studio_slotApply(got, label) {
+  const s = studio.slot, i = s ? s.shot : studio.sel;
+  if (!got || !got.ok || !got.project) { toast((got && got.error) || 'That could not be done.', 'warn'); return; }
+  studio.slot = null;
+  studio.sel = Math.min(i, got.project.shots.length - 1);
+  studio_forgetShots();
+  studio_change(pr => { Object.keys(pr).forEach(k => { delete pr[k]; }); Object.assign(pr, JSON.parse(JSON.stringify(got.project))); },
+                label, studio.sel);
+  if (got.moved) toast(got.moved + (got.moved === 1 ? ' other kill' : ' other kills') + ' moved off ' +
+                       (got.moved === 1 ? 'its' : 'their') + ' beat: the footage could not be kept as it was.', 'warn');
+}
+
+async function studio_slotDo(what, b) {
+  const s = studio.slot;
+  if (!s || s.busy) return;
+  const name = studio_shotName(s.shot);
+  if (what === 'use') {
+    s.busy = true;
+    studio_drawInspector();
+    const got = await API.post('/api/studio/slot', {project: studio.project, shot: s.shot, do: 'replace',
+      clip: b.getAttribute('data-clip'), kill: b.hasAttribute('data-kill') ? Number(b.getAttribute('data-kill')) : null}).catch(() => null);
+    if (studio.slot !== s) return;
+    s.busy = false;
+    if (!got || !got.ok) { studio_drawInspector(); toast((got && got.error) || 'That clip could not be used.', 'warn'); return; }
+    return studio_slotApply(got, name + ': its clip replaced');
+  }
+  if (what === 'close') return studio_slotApply(s.close, name + ' removed, the gap closed');
+  if (what === 'fill') return studio_slotApply(s.fill, name + ': filled with the next best clip');
+  if (what === 'shorten') return studio_slotApply(s.shorten, 'The reel ends before ' + name);
+}
+
+function studio_slotHtml(i) {
+  const s = studio.slot;
+  if (!s || s.shot !== i) return '';
+  const x = '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-slot-x" aria-label="Close">✕</button>';
+  if (s.busy) return '<div class="studio-flow is-ask studio-slot" id="studio-slot" aria-busy="true"><p class="muted studio-small">Working out what fits this shot’s place on the song…</p></div>';
+  const o = s.opts || {}, list = o.clips || [];
+  const row = c => '<li><span class="truncate" title="' + esc(c.name) + '">' + esc(c.name) + '</span><span class="muted mono">' +
+    (o.take ? c.kills + ' kills' + (c.later > 0.05 ? ', starts ' + c.later.toFixed(1) + ' s later' : '')
+            : 'kill at ' + Number(c.kill).toFixed(2) + ' s' + (c.hs ? ' · headshot' : '')) + '</span>' +
+    '<button type="button" class="btn btn-sm" data-act="studio-slot-do" data-do="use" data-clip="' + esc(c.clip) + '"' +
+    (o.take ? '' : ' data-kill="' + c.kill + '"') + '>Use</button></li>';
+  if (s.mode === 'replace') {
+    return '<div class="studio-flow is-ask studio-slot" id="studio-slot" role="region" aria-label="Replace this shot’s clip">' +
+      '<div class="studio-slot-head"><p class="studio-flow-head">' + (o.take ? 'Takes that land on the drop' : 'Clips that land a kill on this beat') + '</p>' + x + '</div>' +
+      (o.ok === false ? '<p class="studio-flow-why">' + esc(o.error || 'It could not be worked out.') + '</p>' :
+       '<p class="muted studio-small">' + (o.take ? 'The build is one take: another clutch, ace or multi-kill whose last kill lands on the drop. Nothing after it moves.'
+         : 'Each has the footage this shot’s run-up and tail need. Its place, length and effects stay; no other kill moves.') + '</p>' +
+       (list.length ? '<ul class="studio-slot-list">' + list.map(row).join('') + '</ul>' : '<p class="studio-flow-why">' + esc(o.why || 'Nothing fits.') + '</p>')) +
+      '</div>';
+  }
+  const best = list[0];
+  const opt = (what, label, got, says) => '<div class="studio-flow-choice"><b>' + esc(label) + '</b><p class="muted studio-small">' +
+    esc(got && got.ok ? says : ((got && got.error) || 'It cannot be done here.')) + '</p>' +
+    '<button type="button" class="btn btn-sm' + (what === 'close' ? ' btn-primary' : '') + '" data-act="studio-slot-do" data-do="' + what + '"' +
+    (got && got.ok ? '' : ' disabled') + '>' + esc(label) + '</button></div>';
+  const neither = !(s.close && s.close.ok) && !(s.fill && s.fill.ok);
+  return '<div class="studio-flow is-ask studio-slot" id="studio-slot" role="region" aria-label="Remove this shot">' +
+    '<div class="studio-slot-head"><p class="studio-flow-head">Remove ' + esc(studio_shotName(i)) + '</p>' + x + '</div>' +
+    opt('close', 'Close the gap', s.close, 'The shots either side stretch to cover it. Every other kill stays where it is on the song.') +
+    opt('fill', 'Fill with the next best clip', s.fill, best ? best.name + (o.take ? ' takes the build, its last kill on the drop.' : ' goes into the same place, its kill on the same beat.') : '') +
+    (neither ? opt('shorten', 'End the reel before this shot', s.shorten, 'A shorter reel: the shot before it runs on to the beat. Nothing before it moves.') : '') +
+    '</div>';
 }
 
 /* ------------------------------------------------------------ deleting clips */
@@ -8626,7 +8722,9 @@ function studio_drawInspectorBody() {
       '<div class="studio-insp-head"><strong>Shot ' + (i + 1) + ' of ' + p.shots.length + '</strong>' +
       '<span class="field-inline"><button type="button" class="btn btn-ghost btn-sm" data-act="studio-move" data-d="-1"' + (i ? '' : ' disabled') + ' aria-label="Move earlier">◀</button>' +
       '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-move" data-d="1"' + (i < p.shots.length - 1 ? '' : ' disabled') + ' aria-label="Move later">▶</button>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-remove">Remove</button></span></div>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-replace" aria-expanded="' + (studio_slotOn(i, 'replace') ? 'true' : 'false') + '">Replace…</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-remove" aria-expanded="' + (studio_slotOn(i, 'remove') ? 'true' : 'false') + '">Remove…</button></span></div>' +
+      studio_slotHtml(i) +
       '<p class="muted truncate" title="' + esc(s.name) + '">' + esc(s.name) + '</p>' +
       studio_pinRow(s.clip) +
       studio_inspNav(STUDIO_SHOT_BLOCKS) +
@@ -10710,6 +10808,8 @@ function studio_wire() {
     else if (act === 'studio-yt-go') studio_ytGo();
     else if (act === 'studio-yt-close') studio_ytClose();
     else if (act === 'studio-add') studio_flowAsk('add');
+    /* a shot's clip is replaced in its slot, from the clips that land on its beat (studio_slotOpen) */
+    else if (act === 'studio-add-how' && b.getAttribute('data-how') === 'replace') { studio.flow.ask = ''; studio_drawAll(); studio_slotOpen('replace'); }
     else if (act === 'studio-add-how') studio_addClips(b.getAttribute('data-how'));
     else if (act === 'studio-add-go') studio_addGo();
     else if (act === 'studio-flow') studio_flowAct(b);
@@ -10831,12 +10931,11 @@ function studio_wire() {
     }
     else if (act === 'studio-remove' && p) {
       if (p.shots.length <= 1) { toast('A reel needs at least one shot.', 'warn'); return; }
-      const i = studio.sel;
-      const gone = studio_shotName(i);
-      studio_forgetShots();
-      studio_change(pr => { pr.shots.splice(i, 1); studio_remark(pr); }, gone + ' removed');
-      studio.sel = Math.min(i, p.shots.length - 1); studio_drawAll();
+      studio_slotOpen('remove');
     }
+    else if (act === 'studio-replace' && p) studio_slotOpen('replace');
+    else if (act === 'studio-slot-do' && p) studio_slotDo(b.getAttribute('data-do'), b);
+    else if (act === 'studio-slot-x') { studio.slot = null; studio_drawInspector(); }
     else if (act === 'studio-lock' && p) studio_lockAct();
     else if (act === 'studio-insp-jump') {
       const blk = studio_el('studio-blk-' + b.getAttribute('data-blk'));
@@ -11302,11 +11401,9 @@ function studio_wire() {
     else if (e.key === '-' || e.key === '_') { e.preventDefault(); studio_zoomAt(studio.pps / 1.5, studio_anchorX()); }
     else if (e.key === '0') { e.preventDefault(); studio_fit(); studio_drawTimeline(); }
     else if ((e.key === 'Delete' || e.key === 'Backspace') && studio.sel >= 0 && studio.project.shots.length > 1) {
+      /* the same choice as Remove: taking a shot out never quietly moves the other kills */
       e.preventDefault();
-      const i = studio.sel, gone = studio_shotName(i);
-      studio_forgetShots();
-      studio_change(pr => { pr.shots.splice(i, 1); studio_remark(pr); }, gone + ' removed');
-      studio.sel = Math.min(i, studio.project.shots.length - 1); studio_drawAll();
+      studio_slotOpen('remove');
     }
   });
   window.addEventListener('resize', () => { if (studio.project && shell_page === 'studio') studio_drawTimeline(); });
