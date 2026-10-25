@@ -339,13 +339,27 @@ def stale_text(project: dict) -> str:
     return STALE_SAYS[why[0]] + " — kill timing needs updating"
 
 
-def can_render(project: dict) -> str:
+def kills_short(project: dict, kills: int) -> str:
+    """Why the player's marks cannot all land: more marks in the part than kills in the chosen clips."""
+    spec = timing_spec(project)
+    marks = spec["marks"] if "marks" in (project.get("draft") or {}) else spec["anchors"]
+    hi = spec["end"] if spec["end"] > spec["start"] else 1e9
+    n = sum(1 for m in marks if spec["start"] - 1e-3 <= m <= hi + 1e-3)
+    if n <= kills:
+        return ""
+    return (f"You marked {n} kills in this part, but the clips you chose have {kills}. "
+            f"Remove {n - kills} mark(s) or add clips, then try again.")
+
+
+def can_render(project: dict, kills: int | None = None) -> str:
     """Why this project must not be rendered now; "" when it may.
 
     Checked by the server immediately before a render, whatever the page
     thought: a page that missed a draft still cannot render the old plan as if
-    it were the new one.
+    it were the new one. `kills` is how many the chosen clips hold, when known.
     """
+    if kills is not None and (why := kills_short(project, kills)):
+        return why
     why = stale_text(project)
     if why:
         return why + ". Replan for this section, keep your shots and re-time them, or undo the change, then render."
@@ -496,6 +510,13 @@ def retime(project: dict, derived: dict, shape, *, relax: str = "", resnap: bool
     if explicit is not None and not part_moved:
         # Only the marks changed: they are the player's list, laid on as they are.
         targets = [m for m in sorted(explicit) if start - 1e-3 <= m <= end + 1e-3]
+        if len(targets) > len(shots):
+            # Re-timing never adds shots: laid on, the extra marks would be cut off and the draft dropped.
+            conflicts.append({
+                "kind": "marks-more-than-shots",
+                "text": f"You marked {len(targets)} kills; this reel has {len(shots)} shots. "
+                        f"Re-time keeps the shots it has.",
+                "fixes": [{"fix": "replan-marks", "label": "Plan again with a shot on every mark"}]})
     else:
         # Each kill keeps its place in the rhythm, counted on the new section's beats.
         targets = []
@@ -600,10 +621,10 @@ def retime(project: dict, derived: dict, shape, *, relax: str = "", resnap: bool
                 break
             extra.append(round(t, 4))
         if extra:
-            p["song_marks"] = sorted(set(list(p.get("song_marks") or []) + extra))
+            # Only said, never marked: a mark nobody placed is a kill nobody asked for.
             report["room"] = {"marks": len(extra), "seconds": round(spare, 1)}
-            notes.append(f"The part runs {spare:.0f} s past the last kill: {len(extra)} more mark(s) are on the "
-                         f"song for more shots. Add shots, or replan for this section, to fill it.")
+            notes.append(f"The part runs {spare:.0f} s past the last kill, room for about {len(extra)} more "
+                         f"shot(s). Add shots, or replan for this section, to fill it.")
     p["anchors"] = [a for a in anchors if start - 1e-3 <= a <= end + 1e-3] if relax == "all" else anchors
     p.pop("draft", None)
     report["notes"] = notes
@@ -718,8 +739,12 @@ def replan_request(project: dict, overrides: dict | None = None) -> dict:
     clips = o.get("clips") or [r["clip"] for r in project.get("selection") or [] if isinstance(r, dict) and r.get("clip")] \
         or list(dict.fromkeys(s["clip"] for s in project.get("shots") or []))
     shaping = dict(project.get("shaping") or {})
+    fill = o.get("fill", project.get("fill") or "")
+    # A part the player picked is how long the reel is: "the style's length" would plan 4-8 s inside it.
+    if fill == "style" and "fill" not in o and ("start" in (project.get("draft") or {}) or project.get("part_end")):
+        fill = "part"
     shaping.update(arrange=project.get("arrange") or "build", pins=project.get("pins") or {},
-                   hs_only=bool(project.get("hs_only")), fill=o.get("fill", project.get("fill") or ""),
+                   hs_only=bool(project.get("hs_only")), fill=fill,
                    keep_all=bool(project.get("keep_all")))
     if project.get("build_clip"):
         shaping["build_clip"] = project["build_clip"]

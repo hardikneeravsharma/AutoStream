@@ -279,3 +279,26 @@ def test_a_replan_asks_for_everything_the_reel_asked_for():
     assert req["shaping"]["fill"] == "part" and req["shaping"]["keep_all"] is True
     assert req["shaping"]["arrange"] == "hits" and req["shaping"]["build_clip"] == "C:/b.mp4"
     assert req["keep"]["lyrics"] == {"look": "pop"}
+
+
+def test_more_marks_than_kills_is_refused_and_a_picked_part_fills():
+    from autostream.clips import editflow
+    proj = {"song_offset": 10.0, "part_end": 25.0, "anchors": [11.0, 12.0, 13.0], "fill": "style", "shots": []}
+    assert editflow.kills_short(proj, 3) == ""
+    assert "3 kills" in editflow.can_render(proj, 2)
+    assert editflow.can_render(proj) == ""
+    proj["draft"] = {"start": 12.0, "end": 30.0}
+    assert editflow.replan_request(proj)["shaping"]["fill"] == "part"
+
+
+def test_retime_with_more_marks_than_shots_is_a_conflict_not_a_silent_cut():
+    from types import SimpleNamespace
+    from autostream.clips import editflow
+    shots = [{"clip": f"c{i}.mp4", "duration": 1.0, "pre": 0.5, "name": f"s{i}"} for i in range(7)]
+    marks = [10.0 + i for i in range(10)]
+    proj = {"song": "s.wav", "song_offset": 10.0, "part_end": 25.0, "beat": 0.5, "shots": shots,
+            "draft": {"marks": marks}}
+    shape = SimpleNamespace(beat=0.5, seconds=60.0, beats=[0.5 * i for i in range(120)], hits=[], drop=None)
+    rep = editflow.retime(proj, {"shots": [{"kill_reel": float(i)} for i in range(7)], "length": 7.0}, shape)
+    assert [c["kind"] for c in rep["conflicts"]] == ["marks-more-than-shots"]
+    assert proj["draft"]["marks"] == marks

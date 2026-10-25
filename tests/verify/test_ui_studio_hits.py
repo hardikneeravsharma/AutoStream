@@ -116,6 +116,7 @@ def pg(browser, app):
     page.evaluate(PROJECT)
     page.evaluate("(p) => studio_sgUseSong(p)", str(song))
     page.wait_for_function("studio.sv && studio.sv.meta", timeout=60_000)
+    page.check("#studio-sg-adv")    # the lanes are under Advanced, off until asked for
     page.song = song
     yield page
     assert not trouble, trouble

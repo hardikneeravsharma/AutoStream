@@ -261,6 +261,8 @@ COMMANDS: list[dict] = [
 
     # -- the song pane -----------------------------------------------------
     _c("song.play", "Play the part", "song", "studio-sg-play", keys=("Space",)),
+    _c("song.tostart", "Back to the start of the part", "song", "studio-sg-start"),
+    _c("song.toend", "Skip to the end of the part", "song", "studio-sg-end"),
     _c("song.mark", "Mark a kill here", "song", "studio-sg-mark", keys=("K",)),
     _c("song.unmark", "Undo the last mark", "song", "studio-sg-unmark",
        why="There is no mark to undo."),

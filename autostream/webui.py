@@ -4456,7 +4456,7 @@ class Server:
         # whatever the page believed: a part moved and never planned for is not
         # rendered as if the old kill timing belonged to it.
         from .clips import editflow
-        why = editflow.can_render(proj)
+        why = editflow.can_render(proj, self._selection_kills(root, proj))
         if why:
             run.release(claim)
             return {"ok": False, "error": why, "stale": editflow.stale(proj)}
@@ -4652,6 +4652,9 @@ class Server:
         conflict = editflow.drop_conflict(bool(style and style.drop), spec["drops"], shape.drop, spec["start"], end)
         if conflict:
             return {"ok": True, "rev": rev, "conflicts": [conflict], "notes": [], "project": None}
+        short = self._marks_conflict(root, proj)
+        if short:
+            return {"ok": True, "rev": rev, "conflicts": [short], "notes": [], "project": None}
         rep = editflow.retime(proj, derived, shape, relax=str(body.get("relax") or ""),
                               resnap=bool(body.get("resnap")))
         if rep["conflicts"]:
@@ -4700,6 +4703,21 @@ class Server:
         notes = studio.apply_song(proj, shape, str(proj.get("song") or ""), start, end, marks)
         return [f"{len(add)} shot(s) from the reel's pool fill the rest of the part."] + notes
 
+    def _selection_kills(self, root: Path, proj: dict) -> int | None:
+        """How many kills the reel's chosen clips hold; None when none of them can be found."""
+        paths = [r["clip"] for r in proj.get("selection") or [] if isinstance(r, dict) and r.get("clip")] \
+            or list(dict.fromkeys(s["clip"] for s in proj.get("shots") or []))
+        chosen = self._studio_chosen(root, paths)
+        return sum(int(c.get("kill_count") or 0) for c in chosen) if chosen else None
+
+    def _marks_conflict(self, root: Path, proj: dict, clips=None) -> dict | None:
+        """More kills marked than the chosen clips hold: a conflict with no fix but fewer marks or more clips."""
+        from .clips import editflow
+
+        kills = self._selection_kills(root, dict(proj, selection=[{"clip": c} for c in clips]) if clips else proj)
+        why = editflow.kills_short(proj, kills) if kills is not None else ""
+        return {"kind": "too-many-marks", "text": why, "fixes": []} if why else None
+
     def studio_replan(self, body: dict) -> dict:
         """REPLAN, as a dry run: the style's real planner on the spec as it is now -- the new
         part, the drops, the player's own marks as constraints -- and what it would change.
@@ -4728,6 +4746,9 @@ class Server:
                                               spec["start"], spec["end"])
             if conflict:
                 return {"ok": True, "rev": rev, "conflicts": [conflict], "notes": [], "project": None}
+        short = self._marks_conflict(root, proj, over.get("clips"))
+        if short:
+            return {"ok": True, "rev": rev, "conflicts": [short], "notes": [], "project": None}
         req = editflow.replan_request(proj, over)
         got = self.studio_plan(req)
         if not got.get("ok"):

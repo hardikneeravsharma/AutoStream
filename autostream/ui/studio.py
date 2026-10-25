@@ -538,14 +538,17 @@ STUDIO_HTML = r"""
         double-click to mark a kill (or a drop, on the top lane), drag a mark to move it</p>
       <canvas class="studio-sg-wave studio-sg-detail" id="studio-sg-detail" height="140"
               aria-label="The chosen part: drops along the top, kills below. Click a mark to select it, drag to move it, double-click to add or remove"></canvas>
+      <div class="studio-sg-transport" role="group" aria-label="Play the part">
+        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-start" id="studio-sg-tostart" aria-label="Back to the start of the part" title="Back to the start of the part">&#9198;</button>
+        <button type="button" class="btn btn-sm studio-transport" data-act="studio-sg-play" id="studio-sg-play" aria-label="Play the part" title="Play or pause the part">&#9654;</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-end" id="studio-sg-toend" aria-label="Skip to the end of the part" title="Skip to the end of the part">&#9197;</button>
+      </div>
       <!-- WAYS OF SEEING IT. A waveform shows loudness and nothing else; a
            kill goes on a kick or a hat, and those are only visible once the
            bands are separated (clips/songview.py). The detector's own kills
            are drawn above them, so what it would cut to can be judged against
            what is marked by hand. -->
       <div class="studio-sg-viewbar" id="studio-sg-viewbar">
-        <span class="field-label">Show</span>
-        <div class="studio-sg-toggles" id="studio-sg-toggles"></div>
         <span class="field-label">Zoom</span>
         <span class="seg" role="group" aria-label="Zoom">
           <button type="button" class="seg-btn" data-act="studio-sg-win" data-win="2">2 s</button>
@@ -553,13 +556,17 @@ STUDIO_HTML = r"""
           <button type="button" class="seg-btn is-active" data-act="studio-sg-win" data-win="8">8 s</button>
           <button type="button" class="seg-btn" data-act="studio-sg-win" data-win="16">16 s</button>
         </span>
-        <label class="studio-check"><input type="checkbox" id="studio-sg-showdet" checked> The detector's kills</label>
+        <label class="studio-check"><input type="checkbox" id="studio-sg-adv"> Advanced</label>
+      </div>
+      <div class="studio-sg-viewbar hide" id="studio-sg-advbar">
+        <span class="field-label">Show</span>
+        <div class="studio-sg-toggles" id="studio-sg-toggles"></div>
+        <label class="studio-check"><input type="checkbox" id="studio-sg-showdet"> The detector's kills</label>
         <span class="muted" id="studio-sg-detnote"></span>
       </div>
       <div class="studio-sg-lanes" id="studio-sg-lanes"></div>
       <audio id="studio-sg-audio" preload="auto"></audio>
       <div class="studio-tl-bar">
-        <button type="button" class="btn btn-sm studio-transport studio-transport-wide" data-act="studio-sg-play" id="studio-sg-play">Play the part</button>
         <label class="studio-check"><input type="checkbox" id="studio-sg-loop" checked> Loop</label>
         <span class="mono studio-clock" id="studio-sg-clock">0:00.00</span>
         <span class="muted" id="studio-sg-range"></span>
@@ -5461,6 +5468,7 @@ function studio_flowResnap() {
 function studio_flowFix(fix, el) {
   const f = studio.flow, sg = studio.sg;
   f.conflicts = null;
+  if (fix === 'replan-marks') { studio_flowStart('replan'); return; }
   if (fix === 'resnap') { studio_flowResnap(); studio_flowStart(f.last || 'retime'); return; }
   if (fix === 'forget-outside') {
     studio_change(p => { p.anchors = (p.anchors || []).filter(a => a >= sg.start - 1e-3 && a <= sg.end + 1e-3); }, 'Your marks outside the part forgotten');
@@ -11112,6 +11120,8 @@ function studio_wire() {
     else if (act === 'studio-sg-pick') studio_sgPick();
     else if (act === 'studio-sg-none') studio_sgNoSong();
     else if (act === 'studio-sg-play') studio_sgPlay();
+    else if (act === 'studio-sg-start') studio_sgToStart();
+    else if (act === 'studio-sg-end') studio_sgToEnd();
     else if (act === 'studio-sg-mark') studio_sgMark();
     else if (act === 'studio-sg-fromkills') studio_sgFromKills();
     else if (act === 'studio-sg-marknudge') studio_sgNudgeMark(b.getAttribute('data-d'));
@@ -11186,6 +11196,11 @@ function studio_wire() {
   if (iname) iname.addEventListener('input', () => { studio.imp.dirty = true; });
   const fv = studio_el('studio-fc-game');
   if (fv) fv.addEventListener('seeked', () => { const c = studio_el('studio-fc-cam'); if (c && fv.paused) c.currentTime = Math.max(0, studio_fcCamTime()); studio_fcClock(); });
+  /* Advanced is off until asked for: the lanes and the detector's kills are for people who want them. */
+  ['studio-sg-adv', 'studio-sg-showdet'].forEach(id => {
+    const el = studio_el(id);
+    if (el) el.addEventListener('change', studio_svBuild);
+  });
   document.addEventListener('change', e => {
     const b = e.target && e.target.closest ? e.target.closest('[data-act="studio-bin-slot"]') : null;
     if (!b) return;
@@ -11539,7 +11554,9 @@ async function studio_svLoad(song) {
 function studio_svBuild() {
   const box = studio_el('studio-sg-lanes');
   if (!box) return;
-  if (!studio.sv || !studio.sv.meta) { box.innerHTML = ''; studio_el('studio-sg-toggles').innerHTML = ''; return; }
+  const adv = studio_el('studio-sg-adv').checked;
+  studio_show('studio-sg-advbar', adv);
+  if (!adv || !studio.sv || !studio.sv.meta) { box.innerHTML = ''; studio_el('studio-sg-toggles').innerHTML = ''; return; }
   studio.svShow = studio.svShow || {wave: true, hits: true, bands: true, flux: false, spec: true};
   if (!studio.svShow.hasOwnProperty('hits')) studio.svShow.hits = true;
   studio_el('studio-sg-toggles').innerHTML = SG_LANES.map(l =>
@@ -11932,6 +11949,32 @@ function studio_sgFit() {
   studio_sgPart(was);
 }
 
+/* One button starts and stops; its glyph and name say which it will do next. */
+function studio_sgPlayIcon(playing) {
+  const b = studio_el('studio-sg-play');
+  b.innerHTML = playing ? '&#9208;' : '&#9654;';
+  b.setAttribute('aria-label', playing ? 'Pause the part' : 'Play the part');
+  if (playing) requestAnimationFrame(studio_sgTick); else studio_sgDrawWaves();
+}
+
+/* Back: the start of the part the player picked, playing or not. */
+function studio_sgToStart() {
+  const a = studio_el('studio-sg-audio'), sg = studio.sg;
+  if (!sg.shape || !a.src) return;
+  a.currentTime = sg.start; sg.ticked = {};
+  studio_sgDrawWaves();
+}
+
+/* Next: the end of the part, where it stops -- looping would send it straight back. */
+function studio_sgToEnd() {
+  const a = studio_el('studio-sg-audio'), sg = studio.sg;
+  if (!sg.shape || !a.src) return;
+  a.pause();
+  a.currentTime = sg.end;
+  studio_el('studio-sg-clock').textContent = studio_secs(sg.end);
+  studio_sgDrawWaves();
+}
+
 function studio_sgPlay() {
   const a = studio_el('studio-sg-audio'), sg = studio.sg;
   if (!sg.shape || !a.src) return;
@@ -12230,8 +12273,8 @@ function studio_sgWire() {
     /* "Pause the part", not "Pause": a button that renames itself must not
        resize itself under the pointer that just pressed it, and two labels of
        the same length cannot. The min-width in the CSS is the belt to this. */
-    a.addEventListener('play', () => { studio_el('studio-sg-play').textContent = 'Pause the part'; requestAnimationFrame(studio_sgTick); });
-    a.addEventListener('pause', () => { studio_el('studio-sg-play').textContent = 'Play the part'; studio_sgDrawWaves(); });
+    a.addEventListener('play', () => studio_sgPlayIcon(true));
+    a.addEventListener('pause', () => studio_sgPlayIcon(false));
     a.addEventListener('seeked', studio_sgDrawWaves);
   }
   document.addEventListener('click', e => {
