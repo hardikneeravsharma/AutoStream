@@ -3604,6 +3604,9 @@ STUDIO_CSS = r"""
 .bin-card:hover{border-color:var(--border-strong)}
 .bin-card.is-on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .bin-shot{position:relative;aspect-ratio:16/9;background:var(--surface-sunken);overflow:hidden}
+.studio-pvplay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;cursor:pointer;
+  color:var(--text-muted);font-size:20px;background:var(--surface-sunken)}
+.studio-pvplay:hover,.studio-pvplay:focus-visible{color:var(--text-primary)}
 .bin-shot video,.bin-shot img{width:100%;height:100%;object-fit:cover;display:block}
 .bin-shot .bin-none{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   color:var(--text-tertiary);font:500 11px var(--font-mono);letter-spacing:.1em;text-transform:uppercase;

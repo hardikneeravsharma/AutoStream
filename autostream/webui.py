@@ -3671,6 +3671,8 @@ class Server:
         have = set(ss.stock([s["key"] for s in cat["styles"]]))
         for s in cat["styles"]:
             s["stock_sample"] = s["key"] in have
+        # Read per load, so the Settings toggle holds from the next Studio visit.
+        cat["previews"] = bool(getattr(cfg.load().ui, "preview_clips", True))
         return cat
 
     def studio_export(self, body: dict) -> dict:

@@ -2791,6 +2791,35 @@ function studio_sampleOwn(style) {
   return !!(sm.ready && sm.ready[style]);
 }
 
+/* ui.preview_clips off (a Mac or slow PC): no preview loads until its Play is pressed. */
+function studio_previewsOn() { return !(studio.catalog && studio.catalog.previews === false); }
+
+function studio_lazyPlayBtn(src, gif) {
+  return '<span class="studio-pvplay" role="button" tabindex="0" aria-label="Play preview" data-src="' + esc(src) +
+    '"' + (gif ? ' data-gif="1"' : '') + '>&#9654;</span>';
+}
+
+/* Capture phase so the press never reaches the card (a pick) or the bin card (a pick) it sits on. */
+function studio_lazyPlayLoad(e) {
+  if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
+  const b = e.target.closest && e.target.closest('.studio-pvplay');
+  if (!b) return;
+  e.stopPropagation(); e.preventDefault();
+  const src = b.getAttribute('data-src');
+  let el;
+  if (b.getAttribute('data-gif')) { el = document.createElement('img'); el.alt = ''; el.src = src; }
+  else {
+    el = document.createElement('video');
+    el.muted = true; el.loop = true; el.autoplay = true; el.playsInline = true;
+    el.setAttribute('data-knobs', 'off'); el.setAttribute('aria-hidden', 'true');
+    el.src = src;
+    const q = el.play(); if (q && q.catch) q.catch(() => {});
+  }
+  b.replaceWith(el);
+}
+document.addEventListener('click', studio_lazyPlayLoad, true);
+document.addEventListener('keydown', studio_lazyPlayLoad, true);
+
 /* Play the cards on screen, pause the rest: eight loops decoding off screen is waste. */
 function studio_stylesWatch() {
   if (studio.styleObs) studio.styleObs.disconnect();
@@ -2819,8 +2848,10 @@ function studio_renderStyles() {
     const failed = sm.state && sm.state.failed && sm.state.failed[s.key];
     return '<div class="studio-style-card' + (on ? ' is-on' : '') + '" data-style="' + esc(s.key) + '">' +
       '<div class="studio-style-media">' +
-      (url ? '<video muted loop playsinline autoplay preload="auto" src="' + esc(url) + '" aria-label="' + esc(s.label) +
-             (studio_sampleOwn(s.key) ? ' on your kills' : ' on sample kills') + '"></video>' +
+      (url ? (studio_previewsOn()
+               ? '<video muted loop playsinline autoplay preload="auto" src="' + esc(url) + '" aria-label="' + esc(s.label) +
+                 (studio_sampleOwn(s.key) ? ' on your kills' : ' on sample kills') + '"></video>'
+               : studio_lazyPlayBtn(url)) +
              (studio_sampleOwn(s.key) ? '<span class="studio-style-own">Your kills</span>' : '') +
              (cutting ? '<span class="studio-style-own">Cutting on your kills&hellip;</span>' : '')
            : '<span class="studio-style-none">' + (cutting ? 'Cutting this one now&hellip;' : failed ? 'Could not be cut.' : 'Not shown yet') + '</span>') +
@@ -4137,7 +4168,8 @@ function studio_binShot(id) {
   }
   const src = '/api/studio/example?k=' + encodeURIComponent(SHELL_K) +
     '&id=' + encodeURIComponent(id) + '&v=' + (ex.when || 0);
-  const media = ex.type === 'image/gif'
+  const media = !studio_previewsOn() ? studio_lazyPlayBtn(src, ex.type === 'image/gif')
+    : ex.type === 'image/gif'
     ? '<img src="' + src + '" alt="" loading="lazy">'
     : '<video src="' + src + '" muted loop playsinline preload="none" aria-hidden="true" data-knobs="off"></video>';
   const sample = ex.stock ? '<span class="bin-sample" title="Shown on sample footage until it is cut from your own clips">sample</span>' : '';

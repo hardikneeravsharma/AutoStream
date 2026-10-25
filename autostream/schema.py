@@ -119,6 +119,15 @@ CONFIG_SCHEMA: list[Section] = [
                 "toggle",
                 restart=True,
             ),
+            _field(
+                "ui.preview_clips",
+                "Play preview clips automatically",
+                "Off means the Studio's style cards and effect pickers load no "
+                "preview clips until you press Play on one. Turn it off on a Mac "
+                "or a slow PC if that page stutters or freezes. Takes effect the "
+                "next time the dashboard is reloaded.",
+                "toggle",
+            ),
         ],
     },
     {
