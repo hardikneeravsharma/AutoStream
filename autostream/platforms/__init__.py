@@ -87,9 +87,9 @@ class Session:
 
     handle: str
     watch_url: str = ""
-    # Where OBS should push, when the platform wants to be told. YouTube
-    # leaves this empty: it binds an ingest object and OBS is already
-    # configured for the service.
+    # Where OBS should push. Every platform fills it in -- YouTube too, since
+    # a Twitch or Kick session before it may have left OBS pointed elsewhere.
+    # Empty only when the platform could not find out.
     ingest_server: str = ""
     stream_key: str = ""
     extra: dict = field(default_factory=dict)

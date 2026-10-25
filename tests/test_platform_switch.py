@@ -472,3 +472,51 @@ def test_an_unconfigured_install_is_not_marked_done_by_starting(no_creds):
     (no_creds / "config" / "config.yaml").write_text(
         yaml.safe_dump({"youtube": {"enabled": True, "platform": "twitch"}}), encoding="utf-8")
     assert webui.is_configured() is False   # __main__ only calls remember_setup_done when configured
+
+
+# ------------------------------------------- OBS follows the platform back
+
+class _Yt:
+    """Just enough YouTube for `start`: a broadcast, a bind, the ingest."""
+
+    def __init__(self, ingest):
+        self.ingest = ingest
+
+    def create_broadcast(self, title, description, privacy="public"):
+        return "b1"
+
+    def bind(self, bid, stream_id):
+        pass
+
+    def watch_url(self, bid):
+        return f"https://youtu.be/{bid}"
+
+    def find_reusable_stream(self, stream_id):
+        if isinstance(self.ingest, Exception):
+            raise self.ingest
+        return self.ingest
+
+
+def test_youtube_hands_obs_its_ingest_every_session(home):
+    """2026-10-25: a Twitch session left OBS pushing to live.twitch.tv, the
+    platform was switched back to YouTube, and three sessions streamed to
+    Twitch while YouTube waited -- "YouTube never saw our ingestion", then the
+    engine paused itself. YouTube now says where OBS should push, like the
+    others, so a switch back rewrites the target."""
+    from autostream.platforms.youtube_platform import YouTubePlatform
+
+    _write(home, "youtube")
+    yt = _Yt({"id": "x", "stream_key": "yt-key",
+              "ingestion_address": "rtmps://a.rtmps.youtube.com/live2"})
+    s = YouTubePlatform(cfg.load(), yt).start("t")
+    assert (s.ingest_server, s.stream_key) == (
+        "rtmps://a.rtmps.youtube.com/live2", "yt-key")
+
+
+@pytest.mark.parametrize("answer", [None, RuntimeError("network")])
+def test_a_failed_lookup_still_starts_on_what_obs_has(home, answer):
+    from autostream.platforms.youtube_platform import YouTubePlatform
+
+    _write(home, "youtube")
+    s = YouTubePlatform(cfg.load(), _Yt(answer)).start("t")
+    assert s.handle == "b1" and s.stream_key == ""

@@ -122,7 +122,33 @@ class YouTubePlatform:
             raise PlatformError(str(e)) from e
         except NotAuthorised as e:
             raise NotConfigured(str(e)) from e
-        return Session(handle=bid, watch_url=self.yt.watch_url(bid))
+        server, key = self._ingest_pair()
+        return Session(handle=bid, watch_url=self.yt.watch_url(bid),
+                       ingest_server=server, stream_key=key)
+
+    def _ingest_pair(self) -> tuple[str, str]:
+        """-> (server, key) of the reusable ingest, read back from YouTube.
+
+        HANDED TO THE ENGINE EVERY SESSION, because "OBS is already set up for
+        YouTube" stopped being true the day a second platform arrived. A
+        Twitch or Kick session writes its own server into OBS, and switching
+        back to YouTube wrote nothing -- so OBS pushed to Twitch while YouTube
+        waited for video that never came, three times, and the engine paused
+        itself on "YouTube never saw our ingestion". One list call, 1 unit.
+
+        NOT FATAL. If the lookup fails the session goes ahead on whatever OBS
+        already has, which is what every session did before this.
+        """
+        try:
+            info = self.yt.find_reusable_stream(self.cfg.youtube.stream_id)
+        except Exception as e:                               # noqa: BLE001
+            log.warning("could not read the YouTube ingest back: %s", e)
+            return "", ""
+        if not info or not info.get("stream_key"):
+            log.warning("YouTube ingest %s not found; OBS keeps its own target",
+                        self.cfg.youtube.stream_id)
+            return "", ""
+        return info["ingestion_address"], info["stream_key"]
 
     def ingest_live(self, session: Session) -> bool:
         status, health = self.yt.stream_status(self.cfg.youtube.stream_id)
