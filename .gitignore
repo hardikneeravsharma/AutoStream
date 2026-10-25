@@ -17,6 +17,10 @@
 **/state.json
 **/config/index.cache.json
 NOSTREAM
+# Written beside the app by a run from a checkout on a Mac: the one-instance lock
+# and where the window was left. Neither belongs to anybody else's clone.
+.autostream.lock
+window.json
 
 # The session journal is personal history: broadcast ids, watch URLs, what was
 # played and when.

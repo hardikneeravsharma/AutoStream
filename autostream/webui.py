@@ -4456,10 +4456,17 @@ class Server:
         # whatever the page believed: a part moved and never planned for is not
         # rendered as if the old kill timing belonged to it.
         from .clips import editflow
-        why = editflow.can_render(proj, self._selection_kills(root, proj))
+        # Not the kill count: marks past the chosen clips' kills are said at the plan, never a refusal here.
+        why = editflow.can_render(proj)
         if why:
             run.release(claim)
             return {"ok": False, "error": why, "stale": editflow.stale(proj)}
+        # A SHOT EDITED AFTER THE PLAN GETS ITS STYLE'S SPEED SHAPE BACK. Replacing a shot's clip or
+        # sliding its footage drops the shape, and only the plan made it: six such shots on a Velocity
+        # reel played their kills at 1x and failed its check on every render. Shapes already there stay.
+        style = studio.STYLE.get(proj.get("style") or "")
+        if style and style.speed_profile and studio.speed_curves(proj["shots"], style, set(proj.get("mix_free") or []))["velocity"]:
+            derived = studio.derive(proj)
         outdir = root / "reels"
         outdir.mkdir(parents=True, exist_ok=True)
         out = Path(proj["output"]) if proj.get("output") else \
@@ -4652,11 +4659,16 @@ class Server:
         conflict = editflow.drop_conflict(bool(style and style.drop), spec["drops"], shape.drop, spec["start"], end)
         if conflict:
             return {"ok": True, "rev": rev, "conflicts": [conflict], "notes": [], "project": None}
-        short = self._marks_conflict(root, proj)
-        if short:
-            return {"ok": True, "rev": rev, "conflicts": [short], "notes": [], "project": None}
         rep = editflow.retime(proj, derived, shape, relax=str(body.get("relax") or ""),
                               resnap=bool(body.get("resnap")))
+        if self._marks_conflict(root, proj) or any(c.get("kind") == "marks-more-than-shots" for c in rep["conflicts"]):
+            # MORE MARKS THAN SHOTS: the player's marks win. Planned again from the clips they chose, so
+            # every mark gets a kill until those clips run out -- never a refusal to press through.
+            got = self.studio_replan({"project": proj, "rev": rev})
+            if got.get("ok") and got.get("project"):
+                got["notes"] = ["You marked more kills than the reel had shots, so it was planned again "
+                                "from the clips you chose, a shot on every mark."] + list(got.get("notes") or [])
+            return got
         if rep["conflicts"]:
             return {"ok": True, "rev": rev, "conflicts": rep["conflicts"], "notes": rep["notes"], "project": None}
         new = rep["project"]
@@ -4746,15 +4758,17 @@ class Server:
                                               spec["start"], spec["end"])
             if conflict:
                 return {"ok": True, "rev": rev, "conflicts": [conflict], "notes": [], "project": None}
+        # More marks than the chosen clips have kills: every kill goes on a mark and the rest are said, not refused.
         short = self._marks_conflict(root, proj, over.get("clips"))
-        if short:
-            return {"ok": True, "rev": rev, "conflicts": [short], "notes": [], "project": None}
         req = editflow.replan_request(proj, over)
         got = self.studio_plan(req)
         if not got.get("ok"):
             return {"ok": False, "rev": rev, "error": got.get("error") or "That reel could not be planned."}
         new = got["project"]
         notes = list(got.get("notes") or [])
+        if short:
+            notes.insert(0, short["text"].split(". ")[0] + ": every kill they have is on one of your marks, "
+                            "and the marks after them have none. Add clips to fill those.")
         new["output"] = proj.get("output") or ""
         anchors = list(spec["anchors"])
         start, end = editflow.plan_part(new)

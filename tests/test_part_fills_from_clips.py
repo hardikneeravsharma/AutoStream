@@ -75,3 +75,49 @@ def test_marks_placed_by_hand_are_the_slots_and_the_part_stays_full(srv):
     assert proj["song_marks"] == pytest.approx(sorted(marks), abs=1e-3), "only the player's marks, none added"
     assert len(proj["shots"]) >= len(marks) - 3
     assert float(proj["song_offset"]) + derived["length"] >= marks[-1], "the reel runs on to the last mark"
+
+
+def test_a_shot_edited_after_the_plan_renders_with_its_velocity_shape(srv, monkeypatch):
+    """Replacing a shot's clip or sliding its footage drops its speed shape; render puts it back."""
+    from autostream import clips as clips_mod
+    from autostream.clips import reelcheck
+
+    proj, _ = plan(srv)
+    for s in proj["shots"][::2]:
+        s.pop("anchors", None)                  # what the page's replace and slip do
+    started = {}
+
+    class Run:
+        def busy(self): return False
+        def yield_auto(self): return True
+        def claim(self): return 1
+        def release(self, c): pass
+        def start(self, job, c): started["job"] = job; return ""
+
+    class Job:
+        id, version, vfile = 1, 1, "v1.mp4"
+
+        def __init__(self, proj, derived, root, out, auto=False):
+            self.proj, self.derived = proj, derived
+
+    monkeypatch.setattr(clips_mod, "available", lambda: True)
+    monkeypatch.setattr(clips_mod, "set_ffmpeg_path", lambda p: None)
+    monkeypatch.setattr(studio, "runner", lambda: Run())
+    monkeypatch.setattr(studio, "StudioJob", Job)
+    got = srv.studio_render({"project": proj})
+    assert got["ok"], got
+    job = started["job"]
+    assert all(s.get("anchors") for s in job.proj["shots"])
+    assert not [f for f in reelcheck.style_findings(job.proj, job.derived) if f.code.startswith("velocity-")]
+
+
+def test_more_marks_than_shots_plans_again_instead_of_refusing(srv):
+    """The player's marks win: Re-time with more marks than shots plans again from the chosen clips."""
+    proj, _ = plan(srv)
+    hits = [t for t in srv.shape.hits if PART[0] + 1.0 <= t <= PART[1] - 1.5]
+    marks = [hits[round(i * (len(hits) - 1) / (len(proj["shots"]) + 5))] for i in range(len(proj["shots"]) + 6)]
+    proj["draft"] = {"marks": sorted(set(marks))}
+    got = srv.studio_retime({"project": proj, "rev": 1})
+    assert got["ok"] and not got.get("conflicts"), got.get("conflicts")
+    assert len(got["project"]["shots"]) > len(proj["shots"])
+    assert got["project"]["song_marks"] == pytest.approx(sorted(set(marks)), abs=1e-3)
