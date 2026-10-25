@@ -996,6 +996,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_feasible(b))
             elif p == "/api/studio/fill":
                 self._json(self.app.studio_fill(b))
+            elif p == "/api/studio/slot":
+                self._json(self.app.studio_slot(b))
             elif p == "/api/studio/songparts":
                 self._json(self.app.studio_songparts(b))
             elif p == "/api/studio/render":
@@ -4276,6 +4278,79 @@ class Server:
             why = "More clips will not lengthen this reel: " + str(v.get("text") or "")
         return {"ok": True, "added": added, "verdict": v, "why": why,
                 "length": (got or {}).get("length")}
+
+    def studio_slot(self, body: dict) -> dict:
+        """REPLACE OR REMOVE ONE SHOT, AND NO OTHER KILL MOVES (clips/slots.py).
+
+        `do` is "options" (the clips that can fill the shot's slot, best first), "replace" (with
+        `clip`, and `kill` if one was chosen), "fill" (the best of those), "close" (taken out, the
+        shots either side stretched over it) or "shorten" (the reel ends before it). -> {"ok",
+        "project", "derived", "notes", "moved"} where `moved` counts the other kills that are no
+        longer on their song second -- 0, or the page says so -- or {"ok": False, "error"} saying
+        why in words. The project is the page's, normalised; nothing is saved here.
+        """
+        from .clips import slots, studio
+
+        root = self._clips_dir(cfg.load())
+        try:
+            proj, _derived, _notes = studio.normalise(body.get("project"), root)
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        try:
+            i = int(body.get("shot"))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Select a shot first."}
+        do = str(body.get("do") or "options")
+        # the clips this machine has, of the reel's own game: a slot is only offered a clip that is
+        # in the library, never a path from the request
+        games, rows = {}, []
+        for g in studio.library(root)["games"]:
+            for f in g["folders"]:
+                for clip in f["clips"]:
+                    games[str(clip["path"]).lower()] = g.get("game") or g.get("name") or ""
+                    rows.append(dict(clip, game=g.get("game") or g.get("name") or ""))
+        mine = {games.get(str(s["clip"]).lower()) for s in proj["shots"]} - {None}
+        rows = [r for r in rows if not mine or r["game"] in mine]
+        by_path = {str(r["path"]).lower(): r for r in rows}
+        kills = {str(r["path"]).lower(): [float(k) for k in r.get("kills") or []] for r in rows}
+        take = slots.take_shots(proj)
+        try:
+            if do == "options":
+                return {"ok": True, **slots.options(proj, i, rows)}
+            before = slots.song_kills(proj)
+            if do in ("replace", "fill"):
+                if do == "fill":
+                    offer = slots.options(proj, i, rows)
+                    if not offer["clips"]:
+                        raise slots.SlotError(offer["why"])
+                    want, kill = offer["clips"][0]["clip"], offer["clips"][0].get("kill")
+                else:
+                    want, kill = str(body.get("clip") or ""), body.get("kill")
+                row = by_path.get(want.lower())
+                if row is None:
+                    raise slots.SlotError("That clip is not in the clips folder.")
+                if i in take:
+                    new = slots.swap_take(proj, row)
+                    keep = before[len(take):]
+                else:
+                    new = slots.replace(proj, i, row, None if kill is None else float(kill))
+                    keep = before
+            elif do == "close":
+                new = slots.close(proj, i, kills)
+                keep = [t for j, t in enumerate(before) if j != i]
+            elif do == "shorten":
+                new = slots.shorten(proj, i)
+                keep = before[:i]
+            else:
+                return {"ok": False, "error": f"Unknown slot action: {do}."}
+        except slots.SlotError as e:
+            return {"ok": False, "error": str(e)}
+        try:
+            new, derived, notes = studio.normalise(new, root)
+        except studio.ProjectError as e:
+            return {"ok": False, "error": str(e)}
+        return {"ok": True, "project": new, "derived": derived, "notes": notes,
+                "moved": len(slots.moved(keep, slots.song_kills(new)))}
 
     def studio_check(self, body: dict) -> dict:
         """The timeline after an edit: clamped, and with every derived time."""

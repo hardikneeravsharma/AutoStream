@@ -492,16 +492,18 @@ def test_add_clips_to_the_pool_or_one_shot_or_a_replan(pg):
     pg.evaluate("studio_select(2)")
     before = pg.evaluate("studio.project.shots[2]")
     pg.click('#studio-why [data-act="studio-add"]')
+    # ...from the clips that land a kill on its beat (clips/slots.py), on the timeline itself
     pg.click('[data-act="studio-add-how"][data-how="replace"]')
-    pg.wait_for_selector("#studio-pane-clips:not(.hide)")
-    new = pg.evaluate("() => Object.keys(studio.clipIndex).sort()[12]")
-    pg.evaluate("(id) => { studio.selected = [id]; studio_syncSelection(); }", new)
-    assert pg.inner_text("#studio-make-btn") == "Use this clip for Shot 3"
-    pg.click("#studio-make-btn")
-    pg.wait_for_selector("#studio-pane-timeline:not(.hide)")
+    pg.wait_for_selector("#studio-slot:not([aria-busy])", timeout=30_000)
+    assert pg.is_visible("#studio-pane-timeline")
+    use = pg.query_selector('#studio-slot [data-do="use"]')
+    assert use, pg.inner_text("#studio-slot")
+    want = use.get_attribute("data-clip")
+    use.click()
+    pg.wait_for_function("(c) => studio.project.shots[2].clip === c", arg=want, timeout=30_000)
     pg.wait_for_timeout(800)
     after = pg.evaluate("studio.project.shots[2]")
-    assert after["clip"] == pg.evaluate("(id) => studio.clipIndex[id].path", new)
+    assert after["clip"] == want
     assert after["fx"] == before["fx"] and after["transition"] == before["transition"]
     assert pg.evaluate("studio.project.shots.length") == len(json.loads(shots))
     # a replan opens the Make page, which says what it keeps

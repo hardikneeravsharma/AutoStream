@@ -760,6 +760,78 @@ def test_add_n_more_does_what_it_says_and_the_counter_is_the_plans(rp):
     assert rp.inner_text("#studio-gd-count").startswith(f"{v1['used']} of {len(after) + 1} in the reel, {round(v1['length'])} of ")
 
 
+SONG_KILLS = "() => studio.derived.shots.map(r => r.kill_reel + studio.project.song_offset)"
+
+
+def _same_kills(a, b):
+    return len(a) == len(b) and all(abs(x - y) < 0.011 for x, y in zip(a, b))
+
+
+def _slot_ready(pg):
+    pg.wait_for_selector("#studio-slot:not([aria-busy])", timeout=30_000)
+
+
+def _count_checks(pg):
+    pg.evaluate("""() => { if (window.__checks !== undefined) return; window.__checks = 0;
+        const c = studio_check; window.studio_check = async function () { await c.apply(this, arguments); window.__checks++; }; }""")
+
+
+def _checked(pg, n):
+    """the server's own answer to the edit is back (studio_check), not only the page's estimate"""
+    pg.wait_for_function("(n) => window.__checks >= n", arg=n, timeout=30_000)
+
+
+def test_replace_and_remove_keep_every_other_kill_on_its_beat(rp):
+    """Step 2 of the guide plan (ChatGPT, 2026-10-24): every shot is a slot on the song. Replace
+    offers only clips that land a kill on the same beat; Remove closes the gap or fills it -- and
+    in every case no other kill moves, and nothing leaves a black gap."""
+    _to_check_rich(rp, "drop")
+    _make(rp)
+    rp.evaluate("() => studio_tab('timeline')")
+    rp.wait_for_function("() => studio.derived && studio.derived.shots.length >= 6", timeout=60_000)
+    _count_checks(rp)
+    before = rp.evaluate(SONG_KILLS)
+    length = rp.evaluate("() => studio.derived.length")
+    i = rp.evaluate("() => { const p = studio.project, b = String(p.build_clip || p.shots[0].clip).toLowerCase();"
+                    " return p.shots.findIndex((s, j) => j >= 4 && String(s.clip).toLowerCase() !== b); }")
+    assert i >= 4
+    # --- Replace: only clips that fit, and the one used lands on the same beat
+    rp.evaluate("(i) => studio_select(i)", i)
+    rp.click('#studio-insp [data-act="studio-replace"]')
+    _slot_ready(rp)
+    use = rp.query_selector('#studio-slot [data-do="use"]')
+    assert use, rp.inner_text("#studio-slot")
+    want = use.get_attribute("data-clip")
+    n = rp.evaluate("() => window.__checks")
+    use.click()
+    rp.wait_for_function("([i, c]) => studio.project.shots[i].clip === c", arg=[i, want], timeout=30_000)
+    _checked(rp, n + 1)
+    after = rp.evaluate(SONG_KILLS)
+    assert _same_kills(after, before), (before, after)
+    assert abs(rp.evaluate("() => studio.derived.length") - length) < 0.02
+    # --- Remove: the choices are worked out first; whichever is offered, no other kill moves
+    rp.evaluate("(i) => studio_select(i)", i)
+    rp.click('#studio-insp [data-act="studio-remove"]')
+    _slot_ready(rp)
+    close_ok = rp.is_enabled('#studio-slot [data-do="close"]')
+    fill_ok = rp.is_enabled('#studio-slot [data-do="fill"]')
+    assert close_ok or fill_ok, rp.inner_text("#studio-slot")
+    shots = rp.evaluate("() => studio.project.shots.length")
+    n = rp.evaluate("() => window.__checks")
+    rp.click('#studio-slot [data-do="%s"]' % ("close" if close_ok else "fill"))
+    _checked(rp, n + 1)
+    got = rp.evaluate(SONG_KILLS)
+    if close_ok:
+        assert rp.evaluate("() => studio.project.shots.length") == shots - 1
+        assert _same_kills(got, before[:i] + before[i + 1:]), (before, got)
+    else:
+        assert _same_kills(got, before), (before, got)
+    assert abs(rp.evaluate("() => studio.derived.length") - length) < 0.02      # no black gap, nothing shorter
+    # one step of undo puts it back
+    rp.click('[data-act="studio-undo"]')
+    rp.wait_for_function("(n) => studio.project.shots.length === n", arg=shots, timeout=10_000)
+
+
 def test_a_rebuild_asks_again_for_what_the_player_chose(rp):
     """M6: a rebuild of a Build and drop reel built on the best-scoring set-up, not the one chosen,
     held the page's part to an end, and lost Headshots only, the intro and drops marked by hand."""

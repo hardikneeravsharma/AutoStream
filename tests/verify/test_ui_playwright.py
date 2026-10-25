@@ -617,7 +617,8 @@ def test_an_edit_plays_at_once_and_renders_itself_in_the_background(ui, app):
 
     from autostream.clips import studio as studio_mod
 
-    _studio_run(app, "2026-09-16_1415_VALORANT", 3)
+    # long enough that the shots either side of the one removed have the footage to close its gap
+    _studio_run(app, "2026-09-16_1415_VALORANT", 3, seconds=12.0)
     page = ui.page
     _studio_build(page, "14:15", 3, "clean", "Instant preview")
     _studio_rendered(page, "the first render")
@@ -625,12 +626,17 @@ def test_an_edit_plays_at_once_and_renders_itself_in_the_background(ui, app):
     before = page.evaluate("({len: studio.derived.length, clips: studio.project.shots.map(s => s.clip),"
                            " out: studio.output, at: studio.renderedAt})")
 
-    # --- delete the middle shot and time how long the player takes to show it
+    # --- delete the middle shot and time how long the player takes to show it. Remove offers its
+    # choices worked out already (clips/slots.py): the one pressed is applied in the same frame.
     page.locator(".st-shot").nth(1).click()
     page.wait_for_selector('#studio-insp [data-act="studio-remove"]', timeout=15_000)
-    got = page.evaluate("""async () => {
+    page.click('#studio-insp [data-act="studio-remove"]')
+    page.wait_for_selector('#studio-slot [data-do="close"]', timeout=15_000)
+    how = "close"
+    assert page.is_enabled('#studio-slot [data-do="close"]'), page.inner_text("#studio-slot")
+    got = page.evaluate("""async (how) => {
         const t0 = performance.now(), wall = Date.now();
-        document.querySelector('#studio-insp [data-act="studio-remove"]').click();
+        document.querySelector('#studio-slot [data-do="' + how + '"]').click();
         const sync = performance.now() - t0;
         const rows = studio.derived.shots.length, len = studio.derived.length, on = studio.pv.on;
         /* and until a frame of the edit is on screen: the cued player at the
@@ -640,11 +646,12 @@ def test_an_edit_plays_at_once_and_renders_itself_in_the_background(ui, app):
         while (!ready() && performance.now() - t0 < 10000) await new Promise(r => requestAnimationFrame(r));
         return {sync: sync, frame: performance.now() - t0, rows: rows, len: len, on: on, wall: wall,
                 clips: studio.project.shots.map(s => s.clip), ready: ready()};
-    }""")
+    }""", how)
     edited_at = got["wall"]
     assert got["on"], "the player is still on the old render after a shot was deleted"
+    # the gap closed: the shots either side cover it, so the reel keeps its length and no kill moves
     assert got["rows"] == 2 and got["clips"] == [before["clips"][0], before["clips"][2]]
-    assert got["len"] < before["len"] - 0.5, f"the reel did not get shorter: {before['len']} -> {got['len']}"
+    assert abs(got["len"] - before["len"]) < 0.05, f"closing the gap changed the length: {before['len']} -> {got['len']}"
     assert got["ready"], "the shot after the cut never loaded in the preview"
     assert got["sync"] < 100, f"the preview took {got['sync']:.0f} ms to take the edit"
     assert page.is_visible("#studio-pv-tag") and not page.is_visible("#studio-video")
@@ -710,7 +717,8 @@ def test_the_preview_has_its_own_play_bar(ui, app):
     bar is pressed here the way a person would: play and pause from it and
     from the picture, a seek to three quarters, mute, fullscreen -- and the
     app's own volume and speed, which the preview used to write over."""
-    _studio_run(app, "2026-09-16_1445_VALORANT", 3)
+    # long enough that the shots either side of the one removed have the footage to close its gap
+    _studio_run(app, "2026-09-16_1445_VALORANT", 3, seconds=12.0)
     page = ui.page
     _studio_build(page, "14:45", 3, "clean", "Preview bar")
     _studio_rendered(page, "the first render")
@@ -721,6 +729,8 @@ def test_the_preview_has_its_own_play_bar(ui, app):
     page.locator(".st-shot").nth(1).click()
     page.wait_for_selector('#studio-insp [data-act="studio-remove"]', timeout=15_000)
     page.click('#studio-insp [data-act="studio-remove"]')
+    page.wait_for_selector('#studio-slot [data-do="close"]', timeout=15_000)
+    page.click('#studio-slot [data-do="close"]')
     page.wait_for_function("studio.pv.on", timeout=10_000)
     bar = page.locator("#studio-pv-bar")
     opacity = "() => getComputedStyle(document.getElementById('studio-pv-bar')).opacity"

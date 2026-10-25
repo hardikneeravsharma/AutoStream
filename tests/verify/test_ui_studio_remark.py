@@ -1,4 +1,4 @@
-r"""Tier 7: a shot taken out or moved closes up on the song's hits.
+r"""Tier 7: a shot moved closes up on the song's hits; a shot taken out moves nothing.
 
 WHAT WAS WRONG. "4Raws X valorant: when I removed the first clip the
 remaining reel should have adjusted according to the beat; instead all of it
@@ -10,8 +10,15 @@ whenever the two shots differed in length.
 Chosen 2026-10-19 between two rendered versions: each shot after the change
 moves up one hit and the last hit goes unused. The server lays the marks back
 on (`studio.normalise`, tested offline); what only a browser can show is that
-every gesture that removes or reorders a shot asks for it -- and that nothing
-else does, since re-timing on every edit would undo every cut moved by hand.
+every gesture that reorders a shot asks for it -- and that nothing else does,
+since re-timing on every edit would undo every cut moved by hand.
+
+REMOVING CHANGED ON 2026-10-25 (step 2 of the guide plan agreed with ChatGPT):
+every shot is a slot on the song, and taking one out never moves another kill.
+Remove and the Delete key offer "Close the gap" (the shots either side stretch
+over it) or "Fill with the next best clip", worked out by the server
+(clips/slots.py, tested offline); here the server's answer is stubbed, and what
+is checked is that the page applies it without asking for the hits again.
 """
 from __future__ import annotations
 
@@ -86,6 +93,21 @@ SETUP = """(marked) => {
   studio.pps = 100;
   window.__sent = [];
   window.studio_check = () => { window.__sent.push(!!studio.project.remark); };
+  /* the slot answers, as the server would give them: closing the gap lets the shot before run on */
+  window.__slot = [];
+  const post = API.post;
+  API.post = function (u, b) {
+    if (u !== '/api/studio/slot') return post.apply(this, arguments);
+    window.__slot.push(b.do);
+    if (b.do === 'close') {
+      const q = JSON.parse(JSON.stringify(b.project)), i = b.shot, gone = q.shots[i];
+      if (i > 0) q.shots[i - 1].duration += gone.duration; else q.song_offset += gone.duration;
+      q.shots.splice(i, 1);
+      return Promise.resolve({ok: true, project: q, moved: 0});
+    }
+    if (b.do === 'options') return Promise.resolve({ok: true, clips: [], take: false, why: 'Nothing fits.'});
+    return Promise.resolve({ok: false, error: 'Not in this test.'});
+  };
   studio_select(0);
   return true;
 }"""
@@ -139,8 +161,10 @@ def _clips(pg):
 
 
 def _remove_button(pg, i):
+    """Remove, then the choice it offers: close the gap"""
     pg.evaluate("(i) => studio_select(i)", i)
     pg.click('#studio-insp [data-act="studio-remove"]')
+    pg.click('#studio-slot [data-do="close"]:not([disabled])')
 
 
 def _drag_shot(pg, i, by_px):
@@ -156,18 +180,25 @@ def _drag_shot(pg, i, by_px):
     pg.mouse.up()
 
 
-def test_the_remove_button_asks_for_the_hits(pg):
-    _remove_button(pg, 0)
-    assert _clips(pg) == ["c1", "c2", "c3"]
-    assert _sent(pg)[-1] is True, "the shot went but nothing asked for the reel to close up on the hits"
+def test_closing_the_gap_applies_the_servers_answer_and_asks_for_no_hits(pg):
+    kills = pg.evaluate("studio.derived.shots.slice(2).map(r => r.kill_reel + studio.project.song_offset)")
+    _remove_button(pg, 1)
+    assert _clips(pg) == ["c0", "c2", "c3"]
+    assert _sent(pg)[-1] is False, "closing the gap asked for every later kill to move up a hit"
+    assert pg.evaluate("studio.derived.shots.slice(1).map(r => r.kill_reel + studio.project.song_offset)") == kills
+    assert pg.evaluate("window.__slot").count("close") == 1
 
 
-def test_the_delete_key_asks_for_the_hits(pg):
+def test_the_delete_key_offers_the_same_choice_and_removes_nothing_by_itself(pg):
     pg.evaluate("studio_select(1)")
     pg.evaluate("document.activeElement && document.activeElement.blur()")
     pg.keyboard.press("Delete")
-    assert _clips(pg) == ["c0", "c2", "c3"]
-    assert _sent(pg)[-1] is True
+    pg.wait_for_selector('#studio-slot [data-do="close"]')
+    assert _clips(pg) == ["c0", "c1", "c2", "c3"]
+    assert pg.is_disabled('#studio-slot [data-do="fill"]')          # it says why instead
+    assert "Not in this test." in pg.inner_text("#studio-slot")
+    pg.click('#studio-slot [data-act="studio-slot-x"]')
+    assert not pg.query_selector("#studio-slot")
 
 
 def test_moving_a_shot_asks_for_the_hits(pg):
@@ -186,7 +217,8 @@ def test_dragging_a_shot_to_another_place_asks_for_the_hits(pg):
 def test_the_request_is_said_once_not_kept(pg):
     """It must not count as a change of its own, or the page would call the
     reel edited for a flag the server's answer drops."""
-    _remove_button(pg, 0)
+    pg.evaluate("studio_select(0)")
+    pg.click('#studio-insp [data-act="studio-move"][data-d="1"]')
     _sent(pg)
     assert pg.evaluate("studio_isEdit(['remark'])") is False
 
