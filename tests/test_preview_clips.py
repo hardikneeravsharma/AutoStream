@@ -10,7 +10,7 @@ def test_default_on_and_in_the_schema():
 
 
 def test_page_gates_both_preview_grids_on_the_setting():
-    src = studio.__dict__.get("PAGE") or open(studio.__file__).read()
+    src = studio.STUDIO_JS
     assert "studio_previewsOn()" in src
     # style cards and the parts bin both route through the Play placeholder
     assert src.count("studio_lazyPlayBtn(") >= 3
