@@ -169,6 +169,26 @@ def test_the_transport_is_a_media_player_and_the_toolbar_is_quiet(pg):
     assert pg.get_attribute("#studio-play-btn", "aria-label") == "Play"
     pg.evaluate("() => { studio.pv.on = true; studio.pv.playing = true; studio_playGlyph(); studio.pv.playing = false; studio.pv.on = false; }")
     assert pg.get_attribute("#studio-play-btn", "aria-label") == "Pause"
+    # A press as slow as a person's still lands while it plays. The glyph used to be rebuilt every frame of
+    # playback, so the press went down on one icon and up on another and was no click at all: Pause did nothing.
+    pg.evaluate("""() => {
+        studio.pv.on = true; studio.pv.playing = true; studio_playGlyph();
+        const b = document.getElementById('studio-play-btn');
+        window.__pb = {clicks: 0, spin: true, icon: b.querySelector('svg')};
+        b.addEventListener('click', e => { e.stopPropagation(); window.__pb.clicks++; }, {capture: true, once: true});
+        const spin = () => { studio_playGlyph(); if (window.__pb.spin) requestAnimationFrame(spin); };
+        requestAnimationFrame(spin);
+    }""")
+    p = pg.locator("#studio-play-btn").bounding_box()
+    pg.mouse.move(p["x"] + p["width"] / 2, p["y"] + p["height"] / 2)
+    pg.mouse.down()
+    pg.wait_for_timeout(150)
+    pg.mouse.up()
+    held = pg.evaluate("""() => { window.__pb.spin = false; studio.pv.playing = false; studio.pv.on = false;
+        const b = document.getElementById('studio-play-btn');
+        return {clicks: window.__pb.clicks, same: b.querySelector('svg') === window.__pb.icon}; }""")
+    assert held == {"clicks": 1, "same": True}, held
+    pg.evaluate("() => studio_playGlyph()")
     # the play button sits in the middle of the bar
     box = pg.evaluate("""() => { const b = document.querySelector('.ed-player-bar').getBoundingClientRect(),
         p = document.getElementById('studio-play-btn').getBoundingClientRect();
