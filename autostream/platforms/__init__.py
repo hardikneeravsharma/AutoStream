@@ -69,6 +69,19 @@ class Capabilities:
     has_quota: bool = False
     has_chat: bool = False
     has_thumbnail: bool = False
+    # Tags and a category set on the session's video after it goes live.
+    # YouTube's alone: elsewhere the handle is a channel, not a video.
+    has_video_tags: bool = False
+    # A broadcast is made for each session, and a start that fails leaves one
+    # to delete. YouTube's alone: on Twitch and Kick the session's handle is
+    # the channel, and asking YouTube to delete it is a request about nothing.
+    makes_broadcast: bool = False
+    # The most the platform will play to viewers, 0 for no limit. Twitch
+    # passes the stream through untranscoded for most channels, and above
+    # 1080p or 6,000 kbps its player stalls. Applied to OBS per session by
+    # obs.cap_stream_output and put back when the session ends.
+    max_height: int = 0
+    max_video_kbps: int = 0
     # The stream key is fetched over the API rather than typed in. True for
     # Kick, which grants a `streamkey:read` scope; false for Twitch, which
     # has no such endpoint, and for YouTube, which binds an ingest object

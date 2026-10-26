@@ -153,6 +153,14 @@ class Engine:
         # the metering thread is already smoothing over individual samples.
         self._silent_said = False
         self._quiet_said: set[str] = set()
+        # Webcam watchdog; see _check_camera. None while not looking.
+        self._camera_next: float | None = None
+        self._camera_until = 0.0
+        self._camera_tries: dict[str, int] = {}
+        self._camera_settled: set[str] = set()
+        # Last try at putting OBS's stream settings back; see
+        # _retry_stream_restore.
+        self._restore_tried = 0.0
         # A recording the user stopped by hand mid-session. Kept so the journal
         # can still name the file; see toggle_recording.
         self._stopped_recording: str | None = None
@@ -567,6 +575,7 @@ class Engine:
 
     def _tick_idle(self) -> None:
         self._prune_intents()
+        self._retry_stream_restore()
         hit = self.watcher.active_game()
         if hit is None:
             if self.blocked_reason:
@@ -668,6 +677,9 @@ class Engine:
             if self.session.stream_key:
                 self.obs.configure_stream(self.session.ingest_server,
                                           self.session.stream_key)
+            # And how big and how fast, where the platform has a ceiling --
+            # before any output starts, since OBS will not resize under one.
+            self._apply_stream_limits()
             # Open ON the starting card where there is one. Starting on the
             # game scene and switching a moment later shows the game for a
             # frame or two at the top of every stream -- which is the one
@@ -862,6 +874,7 @@ class Engine:
         """
         if not getattr(self.cfg.record, "replay_enabled", False):
             return
+        self._replay_asked = True
         try:
             secs = int(getattr(self.cfg.record, "replay_seconds", 30) or 30)
             self.obs.set_replay_seconds(secs)
@@ -871,6 +884,13 @@ class Engine:
             log.warning("instant replay is off for this session: %s", e)
 
     def _stop_replay_buffer(self) -> None:
+        # Only a buffer this session asked for. With instant replay off,
+        # asking OBS about a buffer it has switched off came back as code 604
+        # and an ERROR with a traceback at the end of every session.
+        if not (getattr(self, "_replay_asked", False)
+                or getattr(self.cfg.record, "replay_enabled", False)):
+            return
+        self._replay_asked = False
         try:
             self.obs.stop_replay_buffer()
         except Exception as e:  # noqa: BLE001
@@ -1156,6 +1176,12 @@ class Engine:
             quiet = self.obs.quiet_inputs(self.QUIET_INPUT_AFTER)
         except Exception:  # noqa: BLE001
             return
+        if quiet is None:
+            # The whole mix is quiet -- between rounds, a menu. That says
+            # nothing about any one source, so what has been said stands:
+            # clearing it here and re-arming at the next sound is how one
+            # warning became ten on 2026-10-24.
+            return
         gone = set(quiet)
         if gone == self._quiet_said:
             return                        # already said, and nothing changed
@@ -1170,14 +1196,144 @@ class Engine:
             log.info("%r is audible again", name)
         self._quiet_said = gone
 
+    # ---- the webcam --------------------------------------------------
+    #
+    # OBS opened by AutoStream alongside a game can fail to open the webcam:
+    # "DShow: Run failed (0x800705AA): Insufficient system resources" in
+    # OBS's log on 2026-10-24, and the facecam frame stayed empty until the
+    # player re-applied the source's settings by hand. So, once live, each
+    # camera on air is looked at; one with no picture is reopened, a bounded
+    # number of times, and if that does not bring it back it is said once
+    # and left alone. Never a loop: the check ends for good when every
+    # camera has a picture, has used its tries, or the window has passed.
+    CAMERA_FIRST = 15.0       # after going live: OBS opens devices slowly
+    CAMERA_EVERY = 15.0       # between a restart and looking again
+    CAMERA_TRIES = 3          # restarts per camera per session
+    CAMERA_WINDOW = 600.0     # stop looking this long after going live
+
+    def _arm_camera_check(self) -> None:
+        now = time.monotonic()
+        self._camera_next = now + self.CAMERA_FIRST
+        self._camera_until = now + self.CAMERA_WINDOW
+        self._camera_tries = {}
+        self._camera_settled = set()
+
+    def _check_camera(self) -> None:
+        nxt = getattr(self, "_camera_next", None)
+        if nxt is None:
+            return
+        now = time.monotonic()
+        if now < nxt:
+            return
+        if now > self._camera_until:
+            self._camera_next = None
+            return
+        self._camera_next = now + self.CAMERA_EVERY
+        try:
+            seen = self.obs.camera_pictures()
+        except Exception:  # noqa: BLE001
+            seen = None
+        if not seen:
+            return            # cannot tell, or no camera on air yet
+        for name, ok in sorted(seen.items()):
+            if name in self._camera_settled:
+                continue
+            tries = self._camera_tries.get(name, 0)
+            if ok:
+                if tries:
+                    log.info("camera %r has a picture after %d restart(s)",
+                             name, tries)
+                self._camera_settled.add(name)
+                continue
+            if tries >= self.CAMERA_TRIES:
+                log.warning("camera %r still has no picture after %d "
+                            "restarts; leaving it alone. Check it in OBS -- "
+                            "another app may be holding the device.",
+                            name, tries)
+                notify.toast("AutoStream: no picture from " + name,
+                             "The webcam would not start. Check it in OBS.")
+                self._camera_settled.add(name)
+                continue
+            self._camera_tries[name] = tries + 1
+            log.warning("camera %r has no picture; restarting it (%d of %d)",
+                        name, tries + 1, self.CAMERA_TRIES)
+            try:
+                self.obs.restart_input(name)
+            except Exception as e:  # noqa: BLE001
+                log.warning("could not restart camera %r: %s", name, e)
+        if all(n in self._camera_settled for n in seen):
+            self._camera_next = None
+
+    # ---- a platform's ceiling on the stream ---------------------------
+
+    def _apply_stream_limits(self) -> None:
+        """Hold OBS under this platform's ceiling for the session, or put
+        back what an earlier session's ceiling changed. Never raises."""
+        caps = self.platform.caps
+        h = int(getattr(caps, "max_height", 0) or 0)
+        k = int(getattr(caps, "max_video_kbps", 0) or 0)
+        try:
+            if not (h or k):
+                if self.state.output_restore:
+                    self._restore_stream_limits()
+                return
+            saved = self.obs.cap_stream_output(h, k) or {}
+            if saved:
+                # What is already stored is the player's own setting from
+                # before an earlier capped session; it wins over today's
+                # reading, which may be that session's cap.
+                self.state.output_restore = {**saved, **self.state.output_restore}
+                self.state.save()
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not apply %s's stream limits: %s",
+                        self.platform.label, e)
+
+    def _restore_stream_limits(self) -> None:
+        if not getattr(self.state, "output_restore", None):
+            return
+        try:
+            left = self.obs.restore_stream_output(self.state.output_restore) or {}
+        except Exception as e:  # noqa: BLE001
+            log.debug("could not put the stream settings back yet: %s", e)
+            return
+        if left != self.state.output_restore:
+            self.state.output_restore = left
+            self.state.save()
+
+    RESTORE_EVERY = 15.0
+
+    def _retry_stream_restore(self) -> None:
+        """A video reset is refused while an output is still closing, so
+        what the session's end could not put back is tried again from IDLE."""
+        if not getattr(self.state, "output_restore", None):
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_restore_tried", 0.0) < self.RESTORE_EVERY:
+            return
+        self._restore_tried = now
+        # Not with OBS closed: a refused connection is a traceback in the log
+        # every fifteen seconds, and the next session's start puts it back.
+        from .obs import _obs_process_alive
+
+        if not _obs_process_alive():
+            return
+        self._restore_stream_limits()
+
     def _set_thumbnail(self) -> None:
         """Compose a thumbnail from the live picture and upload it.
 
         Runs AFTER the transition to live, never before: the frame has to show
         the game actually rendering, and nothing here is worth delaying a
         broadcast for. Every failure is contained -- the stream is already up.
+
+        Only where the platform has thumbnails. On 2026-10-24 a Twitch session
+        uploaded one to YouTube addressed by the Twitch channel id
+        (`thumbnails/set?videoId=589697189`, a 500) -- the capability flag
+        said Twitch has none, and nothing here was reading it.
         """
         if not self.cfg.thumbnail.enabled or not self.state.broadcast_id:
+            return
+        if not getattr(self.platform.caps, "has_thumbnail", False):
             return
         try:
             from . import thumbnail
@@ -1353,7 +1509,7 @@ class Engine:
 
     def _abandon_start(self) -> None:
         self._start_failures += 1
-        if self.state.broadcast_id:
+        if self.state.broadcast_id and getattr(self.platform.caps, "makes_broadcast", False):
             try:
                 self.yt.delete_broadcast(self.state.broadcast_id)
             except Exception:  # noqa: BLE001
@@ -1363,6 +1519,7 @@ class Engine:
             self.obs.stop()
         except Exception:  # noqa: BLE001
             pass
+        self._restore_stream_limits()
         self.state.reset_session()
         self.state.save()
         self._goto(st.IDLE)
@@ -1454,11 +1611,16 @@ class Engine:
         log.info("LIVE: %s", url)
         notify.toast("AutoStream is live", self.state.current_game or "", url)
         self._set_thumbnail()
-        try:
-            self.yt.set_video_meta(self.state.broadcast_id,
-                                   list(self.cfg.description.tags or []))
-        except Exception:  # noqa: BLE001
-            pass
+        self._arm_camera_check()
+        # Tags and category live on a YouTube video. Elsewhere the handle is
+        # a channel id, and asking YouTube for it spent quota on a lookup of
+        # a video that does not exist.
+        if getattr(self.platform.caps, "has_video_tags", False):
+            try:
+                self.yt.set_video_meta(self.state.broadcast_id,
+                                       list(self.cfg.description.tags or []))
+            except Exception:  # noqa: BLE001
+                pass
 
     # ---- screen savers ----------------------------------------------
 
@@ -1527,6 +1689,7 @@ class Engine:
             return
 
         self._check_picture()
+        self._check_camera()
         self._check_audio()
         self._tick_screen()
 
@@ -1830,6 +1993,10 @@ class Engine:
                 self.obs.stop()
             except Exception as e:  # noqa: BLE001
                 log.warning("OBS stop failed: %s", e)
+            # OBS back as the player had it before a platform's ceiling.
+            # A resize refused while the outputs close is retried from IDLE.
+            self._restore_stream_limits()
+        self._camera_next = None
         if bid:
             try:
                 url = self._watch_url()

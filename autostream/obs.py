@@ -23,6 +23,27 @@ class ObsUnavailable(RuntimeError):
     pass
 
 
+class _quiet_requests:
+    """Keep obsws-python from logging an expected refusal as an ERROR.
+
+    The library logs every refused request with a traceback before raising
+    it, so a question whose "no" is an ordinary answer -- a camera that has
+    no picture to screenshot, a video reset refused while an output closes --
+    put a red traceback in the log each time. The caller still gets the
+    exception and decides what it means.
+    """
+
+    def __enter__(self):
+        self._lg = logging.getLogger("obsws_python")
+        self._was = self._lg.level
+        self._lg.setLevel(logging.CRITICAL)
+        return self
+
+    def __exit__(self, *exc):
+        self._lg.setLevel(self._was)
+        return False
+
+
 def _obs_process_alive() -> bool:
     for p in psutil.process_iter(["name"]):
         try:
@@ -213,6 +234,10 @@ class Obs:
         # When each input was last heard, so one dead source among several is
         # distinguishable from the whole stream being silent.
         self._audio_by_input: dict[str, float] = {}
+        # Each input's kind, so a webcam's unused meter is not taken for a
+        # dead microphone; see quiet_inputs.
+        self._audio_kinds_seen: dict[str, str] = {}
+        self._audio_kinds_at = float("-inf")
         # When to stop believing OBS is unreachable; see connect().
         self._down_until = 0.0
         self._audio_since = 0.0
@@ -427,6 +452,160 @@ class Obs:
                 "rtmp_custom", {"server": server, "key": stream_key, "use_auth": False})
         log.info("OBS stream service configured (%s)", self.cfg.obs.service_mode)
 
+    # ---------------- a platform's ceiling on the stream ----------------
+    #
+    # Twitch does not transcode for most channels: what OBS sends is what
+    # viewers get, and above 1080p or 6,000 kbps its player stalls or refuses
+    # it. A 2026-10-24 test stream went out at 2560x1440 and 9,000 kbps and
+    # did not play until the output was turned down by hand mid-session.
+    #
+    # The platform declares the ceiling (Capabilities.max_height and
+    # max_video_kbps); this applies it to OBS for one session and hands back
+    # exactly what it changed, so the session's end -- or the next session,
+    # after a crash -- can put OBS back as the player had it. Nothing is
+    # written unless it is over the ceiling.
+    #
+    # WHERE EACH VALUE LIVES. Simple output mode keeps the stream bitrate in
+    # the profile (SimpleOutput/VBitrate) and has no stream-only rescale, so
+    # the canvas's OUTPUT resolution is lowered -- which the recording shares
+    # for that session. Advanced mode has a stream-only rescale
+    # (AdvOut/Rescale, RescaleRes), so the recording keeps its size; its
+    # bitrate lives in the stream encoder's own json, which obs-websocket
+    # cannot reach, so that one is said rather than set.
+
+    def _profile(self, section: str, key: str) -> str:
+        with _quiet_requests():
+            r = self.ws.get_profile_parameter(section, key)
+        return str(getattr(r, "parameter_value", "") or "")
+
+    @staticmethod
+    def _scaled(w: int, h: int, max_h: int) -> tuple[int, int]:
+        """(w, h) brought down to max_h tall, same shape, even sizes."""
+        return int(round(w * max_h / h / 2.0)) * 2, max_h
+
+    def cap_stream_output(self, max_height: int = 0, max_kbps: int = 0) -> dict:
+        """Hold the stream under a platform's ceiling. -> what was changed.
+
+        The answer is what `restore_stream_output` needs to undo it: {} when
+        nothing was over the ceiling. Never raises -- a stream at the wrong
+        size still reaches the platform, and refusing to start over it would
+        lose the session to save the picture.
+        """
+        if not (max_height or max_kbps):
+            return {}
+        saved: dict = {}
+        try:
+            self.connect(wait=True)
+            mode = self._profile("Output", "Mode") or "Simple"
+            saved["mode"] = mode
+            if mode == "Advanced":
+                if max_height:
+                    v = self.ws.get_video_settings()
+                    ow, oh = int(v.output_width), int(v.output_height)
+                    on = self._profile("AdvOut", "Rescale").lower() == "true"
+                    res = self._profile("AdvOut", "RescaleRes")
+                    h = oh
+                    if on and "x" in res:
+                        try:
+                            ow, h = (int(n) for n in res.lower().split("x", 1))
+                        except ValueError:
+                            h = oh
+                    if h > max_height:
+                        nw, nh = self._scaled(ow, h, max_height)
+                        self.ws.set_profile_parameter("AdvOut", "Rescale", "true")
+                        self.ws.set_profile_parameter("AdvOut", "RescaleRes",
+                                                      f"{nw}x{nh}")
+                        saved["adv_rescale"] = "true" if on else "false"
+                        saved["adv_rescale_res"] = res
+                        log.info("stream rescaled to %dx%d for this platform "
+                                 "(the recording keeps its size)", nw, nh)
+                if max_kbps:
+                    log.info("OBS is in Advanced output mode, whose stream "
+                             "bitrate AutoStream cannot set: keep it at or "
+                             "under %d kbps in Settings -> Output -> "
+                             "Streaming for this platform", max_kbps)
+                return saved if len(saved) > 1 else {}
+
+            if max_kbps:
+                try:
+                    kbps = int(float(self._profile("SimpleOutput", "VBitrate") or 0))
+                except ValueError:
+                    kbps = 0
+                if kbps > max_kbps:
+                    self.ws.set_profile_parameter("SimpleOutput", "VBitrate",
+                                                  str(max_kbps))
+                    saved["kbps"] = kbps
+                    log.info("stream bitrate %d -> %d kbps for this platform",
+                             kbps, max_kbps)
+            if max_height:
+                v = self.ws.get_video_settings()
+                ow, oh = int(v.output_width), int(v.output_height)
+                if oh > max_height:
+                    nw, nh = self._scaled(ow, oh, max_height)
+                    try:
+                        self.ws.set_video_settings(
+                            int(v.fps_numerator), int(v.fps_denominator),
+                            int(v.base_width), int(v.base_height), nw, nh)
+                        saved["output"] = [ow, oh]
+                        log.info("stream output %dx%d -> %dx%d for this "
+                                 "platform (the recording shares it in Simple "
+                                 "output mode)", ow, oh, nw, nh)
+                    except Exception as e:  # noqa: BLE001
+                        # OBS refuses a video reset while any output runs --
+                        # a recording adopted from before the session.
+                        log.warning("could not lower the stream to %dp (%s); "
+                                    "it goes out at %dx%d", max_height, e, ow, oh)
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not apply the platform's stream limits: %s", e)
+        return saved if len(saved) > 1 else {}
+
+    def restore_stream_output(self, saved: dict) -> dict:
+        """Put back what cap_stream_output changed. -> what is still to do.
+
+        {} when everything went back. A video reset is refused while an output
+        is still closing, so whatever could not be restored is handed back to
+        be tried again rather than forgotten.
+        """
+        left = dict(saved or {})
+        if len(left) <= 1:
+            return {}
+        try:
+            self.connect()
+        except Exception:  # noqa: BLE001
+            return left
+        if "kbps" in left:
+            try:
+                self.ws.set_profile_parameter("SimpleOutput", "VBitrate",
+                                              str(int(left["kbps"])))
+                log.info("stream bitrate put back to %s kbps", left["kbps"])
+                left.pop("kbps")
+            except Exception as e:  # noqa: BLE001
+                log.debug("could not put the stream bitrate back: %s", e)
+        if "adv_rescale" in left:
+            try:
+                self.ws.set_profile_parameter("AdvOut", "Rescale",
+                                              str(left["adv_rescale"]))
+                self.ws.set_profile_parameter("AdvOut", "RescaleRes",
+                                              str(left.get("adv_rescale_res") or ""))
+                log.info("stream rescale put back as it was")
+                left.pop("adv_rescale")
+                left.pop("adv_rescale_res", None)
+            except Exception as e:  # noqa: BLE001
+                log.debug("could not put the stream rescale back: %s", e)
+        if "output" in left:
+            try:
+                ow, oh = (int(n) for n in left["output"])
+                v = self.ws.get_video_settings()
+                with _quiet_requests():
+                    self.ws.set_video_settings(
+                        int(v.fps_numerator), int(v.fps_denominator),
+                        int(v.base_width), int(v.base_height), ow, oh)
+                log.info("stream output put back to %dx%d", ow, oh)
+                left.pop("output")
+            except Exception as e:  # noqa: BLE001
+                log.debug("could not put the output resolution back yet: %s", e)
+        return left if len(left) > 1 else {}
+
     def scene_names(self) -> list[str]:
         self.connect()
         r = self.ws.get_scene_list()
@@ -560,6 +739,7 @@ class Obs:
         self._audio_heard = None
         self._audio_ok = False
         self._audio_by_input = {}
+        self._audio_kinds_at = float("-inf")   # a new scene may have new inputs
         # The clock silence is measured against until the first sound lands.
         self._audio_since = time.monotonic()
         self._audio_thread = threading.Thread(
@@ -624,7 +804,7 @@ class Obs:
             except Exception:  # noqa: BLE001
                 pass
 
-    def quiet_inputs(self, floor: float = 30.0) -> list[str]:
+    def quiet_inputs(self, floor: float = 30.0) -> list[str] | None:
         """Audio sources that have been silent while others were not.
 
         The silence watchdog asks whether ANY sound is reaching the encoder, so
@@ -635,21 +815,64 @@ class Obs:
 
         -> the names that have carried nothing for `floor` seconds while some
         other input has. Empty when nothing is provably wrong, including when
-        metering never came up.
+        metering never came up. None when the WHOLE mix is quiet: that says
+        nothing about any one source either way, and answering [] there read
+        as "every source is audible again" -- so on 2026-10-24 each quiet
+        stretch between rounds cleared the warning and the next sound re-armed
+        it, and the same three pop-ups came back ten times in one session.
+
+        ONLY SOURCES THAT CARRY AUDIO. OBS meters every input that COULD carry
+        sound -- a webcam, a game capture, a browser source -- and most of
+        them never do: their sound is off, or arrives through Desktop Audio.
+        A microphone or desktop-audio device is always expected to carry
+        sound, so one that never has is named. Any other source is named only
+        once it has been heard this session and then fell silent; a facecam,
+        a game capture and a rank-bar page that never made a sound were the
+        three false alarms of that session.
         """
         if not self._audio_ok or not self._audio_by_input:
             return []
         now = time.monotonic()
         heard = [t for t in self._audio_by_input.values() if t]
         if not heard or now - max(heard) > 5.0:
-            return []                  # everything is quiet: that is silence,
+            return None                # everything is quiet: that is silence,
                                        # not one broken source
+        kinds = self._audio_kinds()
         out = []
         for name, when in self._audio_by_input.items():
+            if not when and kinds.get(name, "") not in self.AUDIO_KINDS:
+                continue               # never carried sound, and not made to
             since = now - (when or self._audio_since)
             if since >= floor:
                 out.append(name)
         return sorted(out)
+
+    # Sources whose whole job is sound. Windows, macOS, Linux.
+    AUDIO_KINDS = ("wasapi_input_capture", "wasapi_output_capture",
+                   "wasapi_process_output_capture",
+                   "coreaudio_input_capture", "coreaudio_output_capture",
+                   "sck_audio_capture", "pulse_input_capture",
+                   "pulse_output_capture", "alsa_input_capture",
+                   "jack_output_capture")
+    AUDIO_KINDS_EVERY = 60.0
+
+    def _audio_kinds(self) -> dict[str, str]:
+        """{input name: kind}, asked of OBS at most once a minute.
+
+        Kept from the last answer when OBS cannot be asked: a source that
+        cannot be told apart is treated like a webcam -- named only after it
+        has been heard -- because a missed warning costs less than a false
+        one repeated all evening.
+        """
+        now = time.monotonic()
+        if now - self._audio_kinds_at >= self.AUDIO_KINDS_EVERY:
+            self._audio_kinds_at = now
+            try:
+                if self.ws is not None:
+                    self._audio_kinds_seen = self._input_kinds()
+            except Exception:  # noqa: BLE001
+                pass
+        return self._audio_kinds_seen
 
     def silent_for(self) -> float | None:
         """Seconds since OBS last carried audible sound.
@@ -1142,6 +1365,83 @@ class Obs:
             log.warning("could not grab an OBS screenshot: %s", e)
             return None
 
+    # ---------------- cameras ----------------
+    #
+    # A webcam OBS opens in the same breath as the game can fail to start:
+    # on 2026-10-24 OBS logged "DShow: Run failed (0x800705AA): Insufficient
+    # system resources" for the Facecam as AutoStream launched it, and the
+    # stream went out with an empty frame where the face goes until the
+    # player re-applied the source's settings by hand two minutes later.
+    # Re-applying the settings is what reopens the device, so that is what
+    # restart_input does.
+
+    CAMERA_KINDS = ("dshow_input", "av_capture_input", "macos-avcapture",
+                    "v4l2_input")
+
+    def camera_pictures(self, level: float = 6.0) -> dict[str, bool] | None:
+        """{camera source on air: does it show a picture}, or None.
+
+        None when it cannot be told -- OBS unreachable or Pillow missing --
+        which must not read as "every camera is fine" OR as "every camera is
+        dead". A camera not on air is left out: one that is switched off
+        until a scene shows it is black for a reason, and the starting card
+        hides the facecam for its first seconds.
+        """
+        try:
+            from PIL import Image
+        except ImportError:
+            return None
+        import base64
+        import io
+
+        try:
+            self.connect()
+            names = [str(i.get("inputName") or "")
+                     for i in self.ws.get_input_list().inputs
+                     if str(i.get("inputKind") or "") in self.CAMERA_KINDS]
+        except Exception:  # noqa: BLE001
+            return None
+        out: dict[str, bool] = {}
+        for name in names:
+            if not name:
+                continue
+            try:
+                if not bool(getattr(self.ws.get_source_active(name),
+                                    "video_active", False)):
+                    continue
+            except Exception:  # noqa: BLE001
+                continue
+            try:
+                # A device that never opened has no size, and OBS refuses
+                # to screenshot it -- which is the same answer as black.
+                with _quiet_requests():
+                    shot = self.ws.get_source_screenshot(name, "png", 64, 36, -1)
+                data = getattr(shot, "image_data", "") or ""
+                if "," in data:
+                    data = data.split(",", 1)[1]
+                im = Image.open(io.BytesIO(base64.b64decode(data))).convert("L")
+                mean = float(im.resize((1, 1)).getpixel((0, 0)))
+            except Exception:  # noqa: BLE001
+                mean = 0.0
+            out[name] = mean >= level
+        return out
+
+    def restart_input(self, name: str) -> bool:
+        """Reopen a source's device by re-applying its own settings. -> sent.
+
+        What the player did by hand on 2026-10-24, and what OBS's own
+        properties dialog does on OK: the source tears the device down and
+        opens it again. Nothing about the source changes.
+        """
+        try:
+            self.connect()
+            settings = self.ws.get_input_settings(name).input_settings or {}
+            self.ws.set_input_settings(name, dict(settings), True)
+            return True
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not restart %r: %s", name, e)
+            return False
+
     def record_directory(self) -> str | None:
         """Where OBS is currently set to write recordings."""
         try:
@@ -1244,7 +1544,11 @@ class Obs:
     def replay_active(self) -> bool:
         try:
             self.connect()
-            return bool(self.ws.get_replay_buffer_status().output_active)
+            # 604 "Replay buffer is not available" is OBS saying the buffer
+            # is switched off in its settings -- an answer, not a fault, and
+            # it was an ERROR with a traceback at the end of every session.
+            with _quiet_requests():
+                return bool(self.ws.get_replay_buffer_status().output_active)
         except Exception:  # noqa: BLE001
             return False
 

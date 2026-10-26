@@ -1059,7 +1059,8 @@ def ending_fade(beat: float) -> float:
 
 def transitions(shots: list[dict], starts: list[int], *, first_kill_beat: int,
                 looks: dict[str, list[float] | None], pools: dict[str, list[str]],
-                flash_share: float = 0.0, beat: float = 0.5, div: int = 1) -> None:
+                flash_share: float = 0.0, beat: float = 0.5, div: int = 1,
+                flash_ok=None) -> None:
     """Choose each cut's transition from where it falls in the music and what it joins. In place.
 
     - A follow-up in a sequence is a hard jump cut.
@@ -1117,8 +1118,17 @@ def transitions(shots: list[dict], starts: list[int], *, first_kill_beat: int,
         b = starts[i]
         owed += flash_share
         on_bar = b % unit == first_kill_beat % unit
-        near_bright = ((any(k in BRIGHT_KILL for k in prev["fx"]) and prev["duration"] - prev["pre"] < BRIGHT_GAP)
-                       or (any(k in BRIGHT_KILL for k in s["fx"]) and s["pre"] < BRIGHT_GAP))
+        if flash_ok is not None:
+            # A style that flashes at every tempo measures the clean picture either side of
+            # the flash instead of keeping a second from any bright kill (studio.flash_clear),
+            # and flashes on any cut, not only one on the beat: its cuts are on the song's
+            # hits already, and at 100 BPM most of them fall on the off-beat -- 7 flashes on
+            # 41 cuts of Skechers, against 28 on 32 at 160 BPM.
+            near_bright = not flash_ok(i)
+            on_bar = True
+        else:
+            near_bright = ((any(k in BRIGHT_KILL for k in prev["fx"]) and prev["duration"] - prev["pre"] < BRIGHT_GAP)
+                           or (any(k in BRIGHT_KILL for k in s["fx"]) and s["pre"] < BRIGHT_GAP))
         other_place = look_similarity(looks.get(prev["clip"]), looks.get(s["clip"])) < LOOK_SAME
         if prev["clip"] == s["clip"]:
             t = "t01"

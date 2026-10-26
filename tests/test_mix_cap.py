@@ -37,8 +37,10 @@ def _mix(proj):
 def test_every_style_keeps_to_two_transitions_and_two_kill_effects(clips_root, style):
     proj, _ = studio.plan(T._clips(clips_root), style, shape=T.Shape(bpm=100.0))
     trans, kills = _mix(proj)
-    assert len(trans | {"t01"}) <= studio.MAX_TRANSITIONS, trans
-    assert len(kills) <= studio.MAX_KILL_FX, kills
+    # (a style that flashes at every tempo keeps its white flash beside the one other: Style.fast_flash)
+    assert len((trans | {"t01"}) - ({"t02"} if studio.STYLE[style].fast_flash else set())) <= studio.MAX_TRANSITIONS, trans
+    # Chaos alternates its own number (Style.kill_mix: variety is its signature).
+    assert len(kills) <= (studio.STYLE[style].kill_mix or studio.MAX_KILL_FX), kills
 
 
 def test_mix_them_up_keeps_to_it_too(clips_root):

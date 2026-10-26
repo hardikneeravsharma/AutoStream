@@ -113,6 +113,11 @@ class Twitch:
         has_chat=False,
         has_thumbnail=False,
         fetches_stream_key=False,
+        # Twitch's own ceiling for a channel without guaranteed transcoding.
+        # A 2026-10-24 test stream at 2560x1440 and 9,000 kbps did not play
+        # to viewers until it was turned down by hand.
+        max_height=1080,
+        max_video_kbps=6000,
     )
 
     def __init__(self, config=None) -> None:
