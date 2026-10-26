@@ -78,6 +78,30 @@ def chip(pg):
                        "return {cls: c.className, text: c.innerText}; }")
 
 
+def _next(pg):
+    pg.click("#studio-gd-next")
+
+
+def _pick_for_me(pg):
+    pg.click('[data-gd="pickall"]')
+    _filled(pg)
+
+
+def _clips_then_song(pg):
+    """THE ORDER IS STYLE, CLIPS, SONG (#260): from the style, Pick for me on the clips -- no song yet,
+    so the best of what the style takes -- and on to the song."""
+    _next(pg)
+    _pick_for_me(pg)
+    _next(pg)
+
+
+def _fill_for_song(pg):
+    """With the song chosen, the clips the plan needs for it: what the verdict's "Add N more" does,
+    from the song step."""
+    pg.evaluate("() => studio_gdPickAll(true)")
+    _filled(pg)
+
+
 def test_the_first_question_is_the_style_and_the_reviewed_one_says_so(pg):
     assert "What kind of reel?" in pg.inner_text("#studio-gd-body")
     best = pg.locator('.gd-card[data-key="drop"]')
@@ -99,7 +123,7 @@ def test_the_first_question_is_the_style_and_the_reviewed_one_says_so(pg):
 
 def test_a_style_that_needs_a_drop_on_a_song_without_one_is_refused_in_words_with_a_fix(pg):
     pg.click('.gd-card[data-key="drop"]')
-    pg.click("#studio-gd-next")
+    _clips_then_song(pg)
     pg.wait_for_selector('.gd-card[data-gd="song"]')
     pg.click('.gd-card[data-gd="song"]')
     pg.wait_for_function("() => studio.song && studio.songShape", timeout=30_000)
@@ -119,6 +143,9 @@ def test_give_us_a_song_chooses_the_style_that_works_and_says_why_not_the_others
     and not Fast-paced headshot. Montage, Hype and Velocity (recommended since their review) can
     all cut it; the one chosen is one that works without a but, in the recommended order."""
     pg.click(".gd-auto")
+    assert pg.evaluate("() => studio.gd.step") == 1            # the clips come first
+    _pick_for_me(pg)
+    _next(pg)
     pg.wait_for_selector('.gd-card[data-gd="song"]')
     pg.click('.gd-card[data-gd="song"]')
     pg.wait_for_function("() => studio.gd.step === 0 && studio.song && studio.gd.autoWhy", timeout=60_000)
@@ -147,7 +174,7 @@ def test_when_no_recommended_style_works_it_says_why_and_offers_a_way_on(pg):
             if (u === '/api/studio/feasible' && b && (b.style === 'hype' || b.style === 'velocity'))
                 return Promise.resolve({ok: true, verdict: {level: 'bad', text: 'Two clips are too few for this style.'}});
             return real.apply(this, arguments); }; }""")
-    pg.evaluate("() => { studio.gd.auto = true; studio.gd.step = 1; studio_gdDraw(); }")
+    pg.evaluate("() => { studio.gd.auto = true; studio.gd.step = GD.song; studio_gdDraw(); }")
     pg.click('.gd-card[data-gd="song"]')
     pg.wait_for_function("() => studio.gd.step === 0 && studio.gd.autoWhy", timeout=60_000)
     why = pg.evaluate("() => studio.gd.autoWhy")
@@ -156,42 +183,44 @@ def test_when_no_recommended_style_works_it_says_why_and_offers_a_way_on(pg):
     assert pg.evaluate("() => studio.gd.style") == ""
     body = pg.inner_text("#studio-gd-body")
     assert "None of the recommended styles works" in body
-    assert pg.locator('.gd-acts [data-gd="step"][data-i="1"]').inner_text() == "Choose another song"
+    assert pg.locator('.gd-acts [data-gd="step"][data-i="2"]').inner_text() == "Choose another song"
     pg.click('.gd-acts [data-gd="more"]')
     assert pg.evaluate("() => document.querySelector('.gd-more').open")
 
 
 def test_pick_for_me_fills_the_clips_and_the_counter_says_how_many(pg):
-    pg.click('.gd-card[data-key="clean"]') if False else None
     pg.evaluate("() => { const d = document.querySelector('.gd-more'); d.open = true; }")
     pg.click('.gd-card[data-key="clean"]')
-    pg.click("#studio-gd-next")
-    pg.click('.gd-card[data-gd="song"]')
-    pg.wait_for_function("() => studio.song", timeout=30_000)
-    pg.click("#studio-gd-next")
+    _next(pg)
     pg.wait_for_selector('[data-gd="pickall"]')
-    assert pg.is_disabled("#studio-gd-next")
+    assert pg.is_disabled("#studio-gd-next")              # the song step needs clips: none chosen yet
+    # no song yet: the best the style takes, so there is something to judge the song against
     pg.click('[data-gd="pickall"]')
     _filled(pg)
+    assert pg.evaluate("() => studio.gd.quick.length") >= 4
+    assert pg.is_enabled("#studio-gd-next")
+    _next(pg)
+    pg.click('.gd-card[data-gd="song"]')
+    pg.wait_for_function("() => studio.song", timeout=30_000)
+    # the song says how many more it needs, and Add does it from here
+    _fill_for_song(pg)
     chosen = pg.evaluate("() => studio.gd.quick.length")
     assert chosen >= 4, chosen
-    assert pg.is_enabled("#studio-gd-next")
     # ONE COUNT: the counter is the plan's -- the clips it plays, its length -- the verdict's numbers
     _settled(pg)
     v = pg.evaluate("() => studio.gd.verdict")
     assert v["planned"], v
+    pg.click('[data-gd="step"][data-i="1"]')
     assert pg.inner_text("#studio-gd-count").startswith(f"{v['used']} of {chosen} in the reel, {round(v['length'])} of ")
 
 
 def test_all_settings_opens_the_full_page_with_the_choices_in_it(pg):
     pg.evaluate("() => { document.querySelector('.gd-more').open = true; }")
     pg.click('.gd-card[data-key="clean"]')
-    pg.click("#studio-gd-next")
+    _clips_then_song(pg)
     pg.click('.gd-card[data-gd="song"]')
     pg.wait_for_function("() => studio.song", timeout=30_000)
-    pg.click("#studio-gd-next")
-    pg.click('[data-gd="pickall"]')
-    _filled(pg)
+    _fill_for_song(pg)
     pg.click('[data-gd="all"]')
     pg.wait_for_selector("#studio-make-scrim:not(.hide)")
     assert pg.evaluate("() => studio.style") == "clean"
@@ -201,7 +230,7 @@ def test_all_settings_opens_the_full_page_with_the_choices_in_it(pg):
 
 def test_the_last_choices_are_remembered_as_intent_and_checked_again(pg, browser, app):
     pg.click('.gd-card[data-key="drop"]')
-    pg.click("#studio-gd-next")
+    _clips_then_song(pg)
     pg.click('.gd-card[data-gd="song"]')
     pg.wait_for_function("() => studio.song", timeout=30_000)
     kept = pg.evaluate("() => JSON.parse(localStorage.getItem('autostream.guide'))")
@@ -234,7 +263,7 @@ def test_the_full_make_page_carries_the_same_chip(pg):
     """F5: the verdict is not only the guided maker's. Opened with Build and drop on a song
     with no drop, the full page says it will not work, in words, before anything is built."""
     pg.click('.gd-card[data-key="drop"]')
-    pg.click("#studio-gd-next")
+    _clips_then_song(pg)
     pg.click('.gd-card[data-gd="song"]')
     pg.wait_for_function("() => studio.song", timeout=30_000)
     pg.evaluate("async () => { await studio_gdPickAll(); if (!studio.gd.quick.length) studio.gd.quick = Object.keys(studio.clipIndex).slice(0, 4); }")
@@ -248,14 +277,12 @@ def test_the_full_make_page_carries_the_same_chip(pg):
 def _to_check(pg, style="clean"):
     pg.evaluate("() => { document.querySelector('.gd-more').open = true; }")
     pg.click(f'.gd-card[data-key="{style}"]')
-    pg.click("#studio-gd-next")
+    _clips_then_song(pg)
     pg.click('.gd-card[data-gd="song"]')
     pg.wait_for_function("() => studio.song", timeout=30_000)
-    pg.click("#studio-gd-next")
-    pg.click('[data-gd="pickall"]')
-    _filled(pg)
-    pg.click("#studio-gd-next")
-    pg.click("#studio-gd-next")
+    _fill_for_song(pg)
+    _next(pg)
+    _next(pg)
     pg.wait_for_selector("#studio-gd-name")
 
 
@@ -290,7 +317,7 @@ def test_the_build_clip_chosen_is_sent_and_an_untouched_part_holds_the_drop(pg):
     gone = pg.evaluate("""(ids) => { studio.selected = [ids[0]]; return studio_planBody(false).shaping.build_clip; }""", ids)
     assert gone is None                       # not among the clips any more: not sent
     pg.click('.gd-card[data-key="drop"]')
-    pg.click("#studio-gd-next")
+    _clips_then_song(pg)
     pg.click('.gd-card[data-gd="song"]')
     pg.wait_for_function("() => studio.songShape", timeout=30_000)
     part = pg.evaluate("""() => { studio.songShape.drop = 40; studio.mk.drops = null; studio.mk.touched = false;
@@ -310,10 +337,7 @@ def test_fast_paced_headshot_offers_and_picks_headshots_only(pg):
         return ids.filter((id, i) => i % 2 === 0); }""")
     pg.evaluate("() => { document.querySelector('.gd-more').open = true; }")
     pg.click('.gd-card[data-key="fasthead"]')
-    pg.click("#studio-gd-next")
-    pg.click('.gd-card[data-gd="song"]')
-    pg.wait_for_function("() => studio.song", timeout=30_000)
-    pg.click("#studio-gd-next")
+    _next(pg)
     pg.wait_for_selector('[data-gd="pickall"]')
     offered = pg.evaluate("() => [...document.querySelectorAll('.gd-clip')].map(b => b.getAttribute('data-id'))")
     assert sorted(offered) == sorted(ids)
@@ -561,13 +585,11 @@ def _settled(pg):
 def _to_check_rich(pg, style, song="drop song"):
     _open(pg)
     _style(pg, style)
-    pg.click("#studio-gd-next")
+    _clips_then_song(pg)
     _song_named(pg, song)
-    pg.click("#studio-gd-next")
-    pg.click('[data-gd="pickall"]')
-    _filled(pg)
-    pg.click("#studio-gd-next")
-    pg.click("#studio-gd-next")
+    _fill_for_song(pg)
+    _next(pg)
+    _next(pg)
     pg.wait_for_selector("#studio-gd-name")
     _settled(pg)
 
@@ -586,7 +608,7 @@ def test_the_verdict_judges_exactly_the_body_the_plan_sends(rp, style):
     and planned on 30 s; the build clip chosen never reached the verdict."""
     _to_check_rich(rp, style)
     judged = rp.evaluate("() => studio.gd.judged")
-    assert rp.evaluate("() => window.__judged.slice(-1)[0]") == judged
+    assert judged in rp.evaluate("() => window.__judged")      # the length options ask too: not always the last
     sent = _make(rp)
     assert sent == judged
     assert sent["shaping"]["arrange"] == "build" and sent["format"] == "vertical"
@@ -639,7 +661,7 @@ def test_all_settings_hands_the_same_spec_over_as_a_new_reel(rp):
     rp.wait_for_function("() => !!studio.adding")
     _open(rp)
     _style(rp, "drop")
-    rp.click('[data-gd="step"][data-i="2"]')
+    rp.click('[data-gd="step"][data-i="1"]')
     rp.click('[data-gd="pickall"]')
     _filled(rp)
     _settled(rp)
@@ -657,16 +679,16 @@ def test_changing_style_recomputes_which_chosen_clips_count(rp):
     count, the verdict and the plan, and shown with why -- not hidden and counted."""
     _open(rp)
     _style(rp, "montage")
-    rp.click("#studio-gd-next")
-    _song_named(rp, "drop song")
-    rp.click("#studio-gd-next")
+    _next(rp)
     # every clip Montage can use, body kills among them -- Pick for me now takes only what the plan needs
     rp.evaluate("() => { studio.gd.quick = studio_gdPools().quick.map(c => c.id); studio_gdDraw(); }")
     chosen = rp.evaluate("() => studio.gd.quick.slice()")
     body_ids = set(chosen)
+    _next(rp)
+    _song_named(rp, "drop song")
     rp.click('[data-gd="step"][data-i="0"]')
     _style(rp, "fasthead")
-    rp.click('[data-gd="step"][data-i="2"]')
+    rp.click('[data-gd="step"][data-i="1"]')
     rp.wait_for_selector('[data-gd="pickall"]')
     got = rp.evaluate("""() => { const body = studio_gdBody(), byPath = {};
         Object.values(studio.clipIndex).forEach(c => { byPath[c.path] = c; });
@@ -693,9 +715,9 @@ def test_a_clip_of_another_game_or_one_deleted_is_shown_or_dropped_never_hidden(
         return [all.find(c => /Counter/.test(c.game)).id].concat(all.filter(c => c.game === 'VALORANT').slice(6, 12).map(c => c.id)); }""")
     rp.evaluate("(ids) => { studio.gd.style = 'montage'; return studio_gdOpenWith(ids); }", ids)
     rp.wait_for_selector("#studio-guide-scrim:not(.hide)")
-    rp.click('[data-gd="step"][data-i="1"]')
-    _song_named(rp, "drop song")
     rp.click('[data-gd="step"][data-i="2"]')
+    _song_named(rp, "drop song")
+    rp.click('[data-gd="step"][data-i="1"]')
     left = rp.inner_text(".gd-leftlist")
     assert "another game" in left
     assert ids[0] not in rp.evaluate("() => studio_gdIds()")
@@ -709,12 +731,13 @@ def test_add_the_best_keeps_the_build_clip_the_player_chose(rp):
     verdict never heard which clip was chosen."""
     _open(rp)
     _style(rp, "drop")
-    rp.click("#studio-gd-next")
-    _song_named(rp, "drop song")
-    rp.click("#studio-gd-next")
+    _next(rp)
     mine = rp.evaluate("() => studio_gdPools().setups[2].id")
     rp.click(f'[data-gd="setup"][data-id="{mine}"]')
     rp.evaluate("() => { const q = studio_gdPools().quick.slice(-3).map(c => c.id); studio.gd.quick = q; studio_gdDraw(); }")
+    _next(rp)
+    _song_named(rp, "drop song")
+    rp.click('[data-gd="step"][data-i="1"]')
     _settled(rp)
     assert rp.evaluate("() => studio.gd.judged.shaping.build_clip") == rp.evaluate("(id) => studio.clipIndex[id].path", mine)
     fix = rp.evaluate("() => studio.gd.verdict.fix")
@@ -735,11 +758,12 @@ def test_add_n_more_does_what_it_says_and_the_counter_is_the_plans(rp):
     plan then plays -- no more than it asked for -- and the reel is no longer short of clips."""
     _open(rp)
     _style(rp, "drop")
-    rp.click("#studio-gd-next")
-    _song_named(rp, "drop song")
-    rp.click("#studio-gd-next")
+    _next(rp)
     rp.evaluate("() => { studio.gd.setup = studio_gdPools().setups[0].id;"
                 " studio.gd.quick = studio_gdPools().quick.slice(0, 3).map(c => c.id); studio_gdDraw(); }")
+    _next(rp)
+    _song_named(rp, "drop song")
+    rp.click('[data-gd="step"][data-i="1"]')
     _settled(rp)
     v0 = rp.evaluate("() => studio.gd.verdict")
     assert v0["fix"] == "pick-clips" and v0["more"] > 0 and v0["fix_label"] == f"Add {v0['more']} more", v0
@@ -838,7 +862,7 @@ def test_the_song_step_moves_the_part_sets_the_length_and_marks_kills(rp):
     is moved: the dragged part is sent as theirs, and a marked kill lands where it was put."""
     _open(rp)
     _style(rp, "montage")
-    rp.click("#studio-gd-next")
+    _clips_then_song(rp)
     _song_named(rp, "drop song")
     rp.wait_for_selector("#studio-gd-part")
     rec = rp.evaluate("() => studio_gdPart()")
@@ -881,11 +905,9 @@ def test_the_song_step_moves_the_part_sets_the_length_and_marks_kills(rp):
     assert anchors and len(anchors) == 1 and abs(anchors[0] - at) < 0.6, anchors
     assert rp.locator("#studio-gd-marklist li").count() == 1
     # --- the reel made keeps it where it was put
-    rp.click("#studio-gd-next")
-    rp.click('[data-gd="pickall"]')
-    _filled(rp)
-    rp.click("#studio-gd-next")
-    rp.click("#studio-gd-next")
+    _fill_for_song(rp)
+    _next(rp)
+    _next(rp)
     rp.wait_for_selector("#studio-gd-name")
     _settled(rp)
     sent = _make(rp)
@@ -900,15 +922,15 @@ def test_a_rebuild_asks_again_for_what_the_player_chose(rp):
     held the page's part to an end, and lost Headshots only, the intro and drops marked by hand."""
     _open(rp)
     _style(rp, "drop")
-    rp.click("#studio-gd-next")
-    _song_named(rp, "drop song")
-    rp.click("#studio-gd-next")
-    rp.click('[data-gd="pickall"]')
-    _filled(rp)
+    _next(rp)
+    _pick_for_me(rp)
     mine = rp.evaluate("() => studio_gdPools().setups.map(c => c.id).find(id => id !== studio.gd.setup)")
     rp.click(f'[data-gd="setup"][data-id="{mine}"]')
-    rp.click("#studio-gd-next")
-    rp.click("#studio-gd-next")
+    _next(rp)
+    _song_named(rp, "drop song")
+    _fill_for_song(rp)
+    _next(rp)
+    _next(rp)
     rp.wait_for_selector("#studio-gd-name")
     _settled(rp)
     _make(rp)
@@ -996,13 +1018,12 @@ def test_the_next_reel_gets_its_own_name_and_typing_it_is_not_interrupted(rp):
 def test_lyrics_are_offered_as_used_if_found_and_montage_says_its_minimum(rp):
     _open(rp)
     _style(rp, "montage")
-    rp.click("#studio-gd-next")
-    _song_named(rp, "click song")
-    rp.click("#studio-gd-next")
+    _next(rp)
     assert "at least four clips" in rp.inner_text("#studio-gd-body")
-    rp.click('[data-gd="pickall"]')
-    _filled(rp)
-    rp.click("#studio-gd-next")
+    _pick_for_me(rp)
+    _next(rp)
+    _song_named(rp, "click song")
+    _next(rp)
     if rp.locator('[data-gd="set"][data-k="lyrics"]').count():
         assert "if this song’s lyrics are found" in rp.inner_text("#studio-gd-body")
 
@@ -1013,7 +1034,7 @@ def test_lyrics_are_offered_as_used_if_found_and_montage_says_its_minimum(rp):
 def _drop_view(pg, style, song):
     _open(pg)
     _style(pg, style)
-    pg.click("#studio-gd-next")
+    _clips_then_song(pg)
     _song_named(pg, song)
     pg.wait_for_selector("#studio-gd-dropcv")
 
@@ -1046,18 +1067,16 @@ def test_a_drop_marked_on_a_song_with_none_is_judged_and_planned(rp):
     rp.wait_for_function("() => studio.gd.verdict && studio.gd.verdict.level === 'bad'", timeout=60_000)
     assert "drop" in rp.inner_text("#studio-gd-chip")
     rp.click('#studio-gd-chip [data-fix="mark-drop"]')
-    assert rp.evaluate("() => studio.gd.step") == 1
+    assert rp.evaluate("() => studio.gd.step") == 2
     rp.evaluate("() => studio_gdSeek(30)")
     rp.click("#studio-gd-dropadd")
     assert rp.evaluate("() => studio.gd.drops.map(d => d.t)") == [30]
-    rp.click("#studio-gd-next")
-    rp.click('[data-gd="pickall"]')
-    _filled(rp)
+    _fill_for_song(rp)
     _settled(rp)
     assert rp.evaluate("() => studio.gd.judged.drops") == [30]
     assert rp.evaluate("() => studio.gd.verdict.level") != "bad", rp.evaluate("() => studio.gd.verdict")
-    rp.click("#studio-gd-next")
-    rp.click("#studio-gd-next")
+    _next(rp)
+    _next(rp)
     rp.wait_for_selector("#studio-gd-name")
     _settled(rp)
     judged = rp.evaluate("() => studio.gd.judged")
@@ -1093,7 +1112,7 @@ def test_drops_move_and_go_and_come_back_and_all_settings_takes_them(rp):
     _settled(rp)
     assert rp.evaluate("() => studio.gd.judged.drops") == [t1]
     # All settings hands them over
-    rp.click('[data-gd="step"][data-i="2"]')
+    rp.click('[data-gd="step"][data-i="1"]')
     rp.click('[data-gd="pickall"]')
     _filled(rp)
     rp.click('[data-gd="all"]')
@@ -1102,7 +1121,7 @@ def test_drops_move_and_go_and_come_back_and_all_settings_takes_them(rp):
     # back in the guide: Back to AutoStream's sends none
     rp.click("#studio-mk-guide")                        # Back to the steps: the same draft
     rp.wait_for_selector("#studio-guide-scrim:not(.hide)")
-    rp.click('[data-gd="step"][data-i="1"]')
+    rp.click('[data-gd="step"][data-i="2"]')
     rp.click('#studio-gd-drops [data-gd="drop-reset"]')
     assert rp.evaluate("() => studio.gd.drops") is None
     assert "drops" not in rp.evaluate("() => studio_gdBody()")
@@ -1122,7 +1141,7 @@ def test_a_youtube_link_from_the_guide_chooses_the_song_there(rp, rich_app):
     shutil.copy(songs / "drop song.wav", got)
     _open(rp)
     _style(rp, "drop")
-    rp.click("#studio-gd-next")
+    _clips_then_song(rp)
     rp.evaluate("""(path) => { const post = API.post, get = API.get; window.__ytPolls = 0;
         API.post = function (u, b) {
             if (u === '/api/studio/songfetch') return Promise.resolve(b.url.indexOf('bad') >= 0
@@ -1144,7 +1163,7 @@ def test_a_youtube_link_from_the_guide_chooses_the_song_there(rp, rich_app):
     rp.wait_for_function("(p) => studio.song === p && studio.songShape", arg=str(got), timeout=60_000)
     rp.wait_for_selector("#studio-yt-scrim.hide", state="attached")
     assert not rp.evaluate("() => document.getElementById('studio-guide-scrim').classList.contains('hide')")
-    assert rp.evaluate("() => studio.gd.step") == 1
+    assert rp.evaluate("() => studio.gd.step") == 2
     rp.wait_for_selector("#studio-gd-dropcv")
     assert rp.locator('.gd-card[data-gd="song"].is-on').inner_text().startswith("Fetched tune")
 
@@ -1176,9 +1195,10 @@ def _many_clips(pg, extra=40, favs=5):
 def _to_clips(pg, style="montage", song="click song"):
     _open(pg)
     _style(pg, style)
-    pg.click("#studio-gd-next")
-    _song_named(pg, song)
-    pg.click("#studio-gd-next")
+    _next(pg)
+    # the clips step, with the song already chosen: the browser tests judge against it
+    pg.evaluate("async (n) => { const s = studio.songList.find(x => x.name.indexOf(n) >= 0); await studio_gdUseSong(s.path, s.name); }", song)
+    pg.wait_for_function("() => studio.song && studio.songShape", timeout=60_000)
     pg.wait_for_selector("#studio-gd-browse-quick")
 
 
@@ -1446,7 +1466,7 @@ def test_play_opens_the_clip_over_the_guide_and_chooses_it_there(rp):
     # the quick kills' Play chooses into the quick kills
     rp.keyboard.press("Escape")
     rp.wait_for_selector("#studio-preview-scrim.hide", state="attached")
-    assert rp.is_visible("#studio-guide-scrim") and rp.evaluate("() => studio.gd.step") == 2
+    assert rp.is_visible("#studio-guide-scrim") and rp.evaluate("() => studio.gd.step") == 1
     _more(rp)
     page = _count(rp)
     q = rp.locator(QUICK).nth(25)
@@ -1490,7 +1510,7 @@ def test_edit_opens_trim_and_cut_and_comes_back_with_the_choices(rp, rich_app):
     # Back: the guide on its step, its search and its choices
     rp.click("#clip-play-close")
     rp.wait_for_selector("#view-studio.is-active")
-    assert rp.is_visible("#studio-guide-scrim") and rp.evaluate("() => studio.gd.step") == 2
+    assert rp.is_visible("#studio-guide-scrim") and rp.evaluate("() => studio.gd.step") == 1
     assert rp.input_value("#studio-gd-find-quick") == "mtch0"
     assert rp.evaluate("() => studio.gd.quick") == [other, target]
     assert not rp.evaluate("() => document.getElementById('view-clips').classList.contains('is-visit')")
@@ -1510,7 +1530,7 @@ def test_edit_opens_trim_and_cut_and_comes_back_with_the_choices(rp, rich_app):
         now = rp.evaluate("() => Object.values(studio.clipIndex).find(c => c.name === 'mtch03b').id")
         assert now != target
         rp.wait_for_function("([a, b]) => JSON.stringify(studio.gd.quick) === JSON.stringify([a, b])", arg=[other, now], timeout=30_000)
-        assert rp.evaluate("() => studio.gd.step") == 2
+        assert rp.evaluate("() => studio.gd.step") == 1
         card = rp.locator(f'{QUICK}.is-on[data-id="{now}"]')
         assert card.count() == 1 and "6s" in card.inner_text()
         assert "mtch03b" in card.locator("img.gd-thumbimg").get_attribute("src")
@@ -1523,7 +1543,7 @@ def test_edit_opens_trim_and_cut_and_comes_back_with_the_choices(rp, rich_app):
 
 
 def test_the_look_step_frames_the_reel_live_and_sends_what_was_chosen(rp, rich_app):
-    """6.111: three framings were the only choice. Now a live 9:16 preview and three numbers under
+    """6.116: three framings were the only choice. Now a live 9:16 preview and three numbers under
     it, the presets values of them, and what is behind the band: the game blurred, black, a colour
     or one of the player's own backgrounds."""
     import shutil
@@ -1583,3 +1603,38 @@ def test_the_look_step_frames_the_reel_live_and_sends_what_was_chosen(rp, rich_a
     # remembered for the next reel
     rp.evaluate("() => { studio_gdRemember(); studio.gd.fit = 'near'; studio.gd.frame = null; studio_gdRecall(); }")
     assert rp.evaluate("() => studio.gd.fit") == "custom" and rp.evaluate("() => studio.gd.frame.keep") == 0.6
+
+
+def test_the_song_step_is_icons_two_word_titles_and_a_question_mark(rp):
+    """#260: the Song step speaks the Song tab's language -- titles of two words with a ? for the
+    paragraph, the part, drops and kill marks as icon tools with their words on hover, and the same
+    player bar as the timeline's."""
+    _drop_view(rp, "drop", "drop song")
+    titles = rp.evaluate("() => [...document.querySelectorAll('#studio-gd-body .sg-title')].map(h => h.firstChild.textContent.trim())")
+    assert titles == ["Song", "Drops"], titles
+    assert all(len(t.split()) <= 2 for t in titles)
+    assert "About the song" in rp.get_attribute("#studio-gd-body .studio-help", "aria-label")
+    # kill timing is a mode in the toolbar: automatic shows no marker, marking by hand does
+    assert rp.get_attribute('[data-gd="timing"][data-v="auto"]', "aria-pressed") == "true"
+    assert not rp.query_selector("#studio-gd-markadd")
+    rp.keyboard.press("k")
+    assert rp.evaluate("() => (studio.gd.anchors || []).length") == 0      # K marks only when marking by hand
+    rp.click('[data-gd="timing"][data-v="manual"]')
+    for sel, words in (("#studio-gd-markadd", "kill"), ("#studio-gd-dropadd", "drop"), ('[data-gd="mark-clear"]', "Clear")):
+        assert rp.inner_text(sel).strip() == "" and words in rp.get_attribute(sel, "title"), sel
+    assert not rp.query_selector("#studio-gd-marks"), "the kill marks are a toolbar now, not a folded section"
+    assert rp.is_visible(".gd-transport.ed-player-bar .ed-pb-btn.is-play")
+    # Clear marks: disabled until there is one, and takes every mark of the player's
+    assert rp.is_disabled('[data-gd="mark-clear"]')
+    rp.evaluate("() => studio_gdSeek(30)")
+    rp.click("#studio-gd-markadd")
+    assert rp.evaluate("() => studio.gd.anchors.length") == 1
+    rp.click('[data-gd="mark-clear"]')
+    assert rp.evaluate("() => studio.gd.anchors.length") == 0
+    # back to automatic with a mark asks: keep it (not used) or clear it
+    rp.click("#studio-gd-markadd")
+    rp.click('[data-gd="timing"][data-v="auto"]')
+    rp.wait_for_selector("#studio-gd-timingask")
+    rp.click('#studio-gd-timingask [data-keep="1"]')
+    assert rp.evaluate("() => studio.gd.anchors.length") == 1 and "anchors" not in rp.evaluate("() => studio_gdBody()")
+    assert "kept, not used" in rp.inner_text("#studio-gd-drops")

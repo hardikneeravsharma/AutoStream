@@ -75,7 +75,7 @@ def _nav_button(page: str, ico: str, label: str) -> str:
 
 
 _RAIL = (
-    '<aside class="rail">'
+    '<aside class="rail" id="rail">'
     '<div class="rail-logo">'
     + LOGO_MARK
     + '<span class="rail-word">AutoStream</span>'
@@ -104,6 +104,15 @@ _RAIL = (
 
 _TOPBAR = (
     '<header class="topbar">'
+    # Collapses the rail to its icon strip. Open by default on the Dashboard only;
+    # see shell_rail.
+    '<button type="button" class="btn btn-ghost btn-sm topbar-rail" id="rail-toggle"'
+    ' aria-expanded="true" aria-controls="rail" aria-label="Collapse the sidebar"'
+    ' title="Collapse the sidebar">'
+    '<svg class="icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">'
+    '<rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/>'
+    '<path d="M9 4v16" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>'
+    "</button>"
     '<h1 class="topbar-title" id="topbar-title">Dashboard</h1>'
     '<div class="topbar-meta">'
     # aria-live so a phase change is announced without the user hunting for it;
@@ -178,6 +187,7 @@ const SHELL_PAGE_OBJ = {dash: 'PAGE_DASH', library: 'PAGE_LIBRARY',
 const SHELL_POLL_MS = 2000;
 const SHELL_FAIL_LIMIT = 3;   /* misses before we admit we are disconnected */
 const SHELL_STORE_KEY = 'autostream.page';
+const SHELL_RAIL_KEY = 'autostream.rail';   // 'open' | 'min': the player's own choice, once made
 
 /* Engine phase -> pill modifier + wordmark. Colour is never the only channel:
    the wordmark always rides along with the dot. */
@@ -350,6 +360,41 @@ function shell_doc_title() {
                    (SHELL_TITLES[shell_page] || 'Dashboard') + ' - AutoStream';
 }
 
+/* THE RAIL IS AN ICON STRIP EXCEPT ON THE DASHBOARD, until the player says otherwise: the other pages
+   want the width, and the choice they make with the toggle then holds on every page. */
+function shell_rail() {
+  let pref = null;
+  try { pref = localStorage.getItem(SHELL_RAIL_KEY); } catch (e) { /* private mode */ }
+  const min = window.innerWidth < 900 || (pref ? pref === 'min' : shell_page !== 'dash');
+  const app = document.querySelector('.app'), t = shell_$('rail-toggle');
+  if (app) { app.classList.toggle('rail-min', min); if (!min) app.classList.remove('rail-peek'); }
+  if (t) {
+    const say = min ? 'Expand the sidebar' : 'Collapse the sidebar';
+    t.setAttribute('aria-expanded', String(!min));
+    t.setAttribute('aria-label', say);
+    t.title = say;
+  }
+  return min;
+}
+
+/* THE STRIP OPENS ON HOVER (or keyboard focus), the page making room, and closes when the pointer leaves.
+   Not below 900px, where the strip is the layout and the labels are gone for good. */
+let shell_peekTimer = 0;
+function shell_railPeek(on) {
+  clearTimeout(shell_peekTimer);
+  const app = document.querySelector('.app');
+  if (!app) return;
+  if (!on) { app.classList.remove('rail-peek'); return; }
+  if (!app.classList.contains('rail-min') || window.innerWidth < 900) return;
+  shell_peekTimer = setTimeout(() => app.classList.add('rail-peek'), 120);
+}
+
+function shell_railToggle() {
+  const next = shell_rail() ? 'open' : 'min';
+  try { localStorage.setItem(SHELL_RAIL_KEY, next); } catch (e) { /* the choice lasts until reload */ }
+  shell_rail();
+}
+
 function go(page) {
   if (SHELL_PAGES.indexOf(page) < 0) page = SHELL_BOOT.home || 'dash';
   shell_page = page;
@@ -365,6 +410,7 @@ function go(page) {
     else btns[i].removeAttribute('aria-current');
   }
   shell_setText(shell_$('topbar-title'), SHELL_TITLES[page]);
+  shell_rail();
   try { sessionStorage.setItem(SHELL_STORE_KEY, page); } catch (e) { /* private mode */ }
   shell_doc_title();
 
@@ -549,6 +595,16 @@ function shell_bind() {
   }
   const q = shell_$('rail-quit');
   if (q) q.addEventListener('click', shell_quit);
+  window.addEventListener('resize', shell_rail);
+  const rt = shell_$('rail-toggle');
+  if (rt) rt.addEventListener('click', shell_railToggle);
+  const rail = shell_$('rail');
+  if (rail) {
+    rail.addEventListener('mouseenter', () => shell_railPeek(true));
+    rail.addEventListener('mouseleave', () => shell_railPeek(false));
+    rail.addEventListener('focusin', () => shell_railPeek(true));
+    rail.addEventListener('focusout', e => { if (!rail.contains(e.relatedTarget)) shell_railPeek(false); });
+  }
   const tog = shell_$('top-toggle');
   if (tog) tog.addEventListener('click', shell_toggle_pause);
 

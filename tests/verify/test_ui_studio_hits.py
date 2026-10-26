@@ -116,7 +116,8 @@ def pg(browser, app):
     page.evaluate(PROJECT)
     page.evaluate("(p) => studio_sgUseSong(p)", str(song))
     page.wait_for_function("studio.sv && studio.sv.meta", timeout=60_000)
-    page.check("#studio-sg-adv")    # the lanes are under Advanced, off until asked for
+    page.click("#studio-sg-advwrap summary")    # the lanes are under Advanced, off until asked for
+    page.wait_for_selector("#studio-sg-lanes .studio-sg-lane", state="attached")
     page.song = song
     yield page
     assert not trouble, trouble
@@ -168,3 +169,26 @@ def test_the_lane_hides_and_comes_back(pg):
     assert not pg.is_visible('#studio-sg-lanes .studio-sg-lane[data-lane="hits"]')
     pg.click(toggle)
     assert pg.is_visible('#studio-sg-lanes .studio-sg-lane[data-lane="hits"]')
+
+
+def test_the_whole_song_zooms_around_the_part_and_dragging_follows_the_window(pg):
+    """The - and + beside the title zoom the whole-song graph; the part's edges are still where they are drawn."""
+    assert pg.evaluate("studio_sgOvView().w") == pytest.approx(pg.evaluate("studio.sg.shape.seconds"))
+    pg.click('[data-act="studio-sg-ovzoom"][data-z="1"]')
+    pg.click('[data-act="studio-sg-ovzoom"][data-z="1"]')
+    v = pg.evaluate("studio_sgOvView()")
+    secs = pg.evaluate("studio.sg.shape.seconds")
+    assert v["w"] < secs * 0.5 and 0 <= v["t0"] <= secs - v["w"] + 1e-6
+    sg = pg.evaluate("[studio.sg.start, studio.sg.end]")
+    box = pg.locator("#studio-sg-overview").bounding_box()
+    x = box["x"] + (sg[1] - v["t0"]) / v["w"] * box["width"]
+    if sg[1] > v["t0"] + v["w"]:                     # the end is outside this stretch: nothing to grab
+        x = box["x"] + box["width"] - 3
+    pg.mouse.move(x, box["y"] + box["height"] / 2)
+    pg.mouse.down()
+    pg.mouse.move(x - 40, box["y"] + box["height"] / 2, steps=6)
+    pg.mouse.up()
+    assert pg.evaluate("studio.sg.end") < sg[1]
+    pg.click('[data-act="studio-sg-ovzoom"][data-z="-1"]')
+    pg.click('[data-act="studio-sg-ovzoom"][data-z="-1"]')
+    assert pg.evaluate("studio.sg.ovZoom || 1") == 1
