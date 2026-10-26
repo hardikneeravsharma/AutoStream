@@ -325,6 +325,7 @@ STUDIO_HTML = r"""
           <summary class="btn btn-sm" title="Choose what the timeline shows">Show</summary>
           <div class="studio-menu-pop" role="group" aria-label="What the timeline shows">
             <label class="studio-check"><input type="checkbox" data-lane="video" checked> Video</label>
+            <label class="studio-check"><input type="checkbox" data-lane="game" checked> Game audio</label>
             <label class="studio-check"><input type="checkbox" data-lane="trans" checked> Transitions</label>
             <label class="studio-check"><input type="checkbox" data-lane="fx" checked> Effects</label>
             <label class="studio-check"><input type="checkbox" data-lane="speed" checked> Speed</label>
@@ -379,6 +380,7 @@ STUDIO_HTML = r"""
         <!-- THE HOW-TO, ON REQUEST. A paragraph under the tracks, read once and then in the way. -->
         <span class="studio-help" tabindex="0" role="note" aria-label="How the timeline works" id="studio-help">?
           <span class="studio-help-pop" role="tooltip">Drag a shot to move it. Drag either edge to move that cut &mdash; the shots either side give and take, so every kill stays on its beat; Shift-drag to push everything after it. Its diamond moves the kill.
+            The yellow lines are the song's and the game's volume: drag one up or down, click it to add a keyframe, drag a keyframe to move it, double-click or right-click it to take it off.
             Ctrl+wheel zooms. Arrow keys move between shots, Space plays.</span>
         </span>
       </div>
@@ -386,6 +388,7 @@ STUDIO_HTML = r"""
         <div class="studio-labels" aria-hidden="true">
           <div class="st-lab st-lab-ruler"></div>
           <div class="st-lab">Video</div>
+          <div class="st-lab">Game audio</div>
           <div class="st-lab">Transitions</div>
           <div class="st-lab">Effects</div>
           <div class="st-lab">Speed</div>
@@ -6156,8 +6159,10 @@ function studio_pvLevels(vol) {
   const pv = studio.pv, p = studio.project;
   if (typeof vol !== 'number' || isNaN(vol)) vol = studio_pvKnobs().vol;
   const el = studio_pvEls()[pv.act], a = studio_el('studio-pv-song');
-  if (el && p) { el.muted = pv.muted; el.volume = Math.max(0, Math.min(1, studio_dbGain(p.game_db) * vol)); }
-  if (a && p) { a.muted = pv.muted; a.volume = Math.max(0, Math.min(1, studio_dbGain(p.music_db) * vol)); }
+  /* the volume lines at the reel second on screen: the preview plays what the render will */
+  const t = studio_pvTime();
+  if (el && p) { el.muted = pv.muted; el.volume = Math.max(0, Math.min(1, studio_dbGain(studio_volAt(p, 'game', t)) * vol)); }
+  if (a && p) { a.muted = pv.muted; a.volume = Math.max(0, Math.min(1, studio_dbGain(studio_volAt(p, 'music', t)) * vol)); }
   const m = studio_el('studio-pv-mute');
   if (m) {
     m.innerHTML = pv.muted ? '&#128263;' : '&#128266;';
@@ -6388,6 +6393,7 @@ function studio_pvTick() {
   }
   studio_pvSongSync(t, true);
   studio_pvLyrClock(t, true);
+  if (studio.project && (studio.project.music_keys || studio.project.game_keys)) studio_pvLevels();
   studio_pvBg();
   studio_playhead();
   pv.raf = requestAnimationFrame(studio_pvTick);
@@ -7053,9 +7059,38 @@ async function studio_slotDo(what, b) {
     if (!got || !got.ok) { studio_drawInspector(); toast((got && got.error) || 'That clip could not be used.', 'warn'); return; }
     return studio_slotApply(got, name + ': its clip replaced');
   }
+  if (what === 'swap') {
+    /* ONE UNDO STEP FOR BOTH SHOTS: a swap is one decision, and undoing half of it would leave
+       one clip in two places. studio_slotApply hands the server's whole project to studio_change. */
+    const j = Number(b.getAttribute('data-with'));
+    s.busy = true;
+    studio_drawInspector();
+    const got = await API.post('/api/studio/slot', {project: studio.project, shot: s.shot, do: 'exchange', with: j}).catch(() => null);
+    if (studio.slot !== s) return;
+    s.busy = false;
+    if (!got || !got.ok) { studio_drawInspector(); toast((got && got.error) || 'Those two shots could not be swapped.', 'warn'); return; }
+    return studio_slotApply(got, name + ' and ' + studio_shotName(j) + ': their clips swapped');
+  }
   if (what === 'close') return studio_slotApply(s.close, name + ' removed, the gap closed');
   if (what === 'fill') return studio_slotApply(s.fill, name + ': filled with the next best clip');
   if (what === 'shorten') return studio_slotApply(s.shorten, 'The reel ends before ' + name);
+}
+
+/* THE FIND BOX FILTERS IN PLACE. Redrawing the inspector per keystroke would take the caret out of
+   the box it is typing in; hiding rows keeps it there, and studio.slot.q keeps the filter across a
+   redraw that something else causes. */
+function studio_slotHides(c, q) {
+  q = String(q || '').trim().toLowerCase();
+  return !!q && ((c.name || '') + ' ' + (c.game || '')).toLowerCase().indexOf(q) < 0;
+}
+
+function studio_slotFind(e) {
+  if (!e.target || e.target.id !== 'studio-slot-q' || !studio.slot) return;
+  studio.slot.q = e.target.value;
+  const q = studio.slot.q.trim().toLowerCase();
+  document.querySelectorAll('#studio-slot li[data-find]').forEach(li => {
+    li.hidden = !!q && li.getAttribute('data-find').indexOf(q) < 0;
+  });
 }
 
 function studio_slotHtml(i) {
@@ -7064,21 +7099,55 @@ function studio_slotHtml(i) {
   const x = '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-slot-x" aria-label="Close">✕</button>';
   if (s.busy) return '<div class="studio-flow is-ask studio-slot" id="studio-slot" aria-busy="true"><p class="muted studio-small">Working out what fits this shot’s place on the song…</p></div>';
   const o = s.opts || {}, list = o.clips || [];
-  const row = c => '<li><span class="truncate" title="' + esc(c.name) + '">' + esc(c.name) + '</span><span class="muted mono">' +
+  /* the game beside the name, because the list is every game's clips now: a Valorant kill
+     offered for a CS2 reel is allowed, but it should never be a surprise */
+  const game = c => c.game ? '<span class="studio-slot-game">' + esc(c.game) + '</span>' : '';
+  const find = c => esc(((c.name || '') + ' ' + (c.game || '')).toLowerCase());
+  const hide = c => studio_slotHides(c, s.q) ? ' hidden' : '';
+  const row = c => '<li data-find="' + find(c) + '"' + hide(c) + '><span class="truncate" title="' + esc(c.name) + '">' + esc(c.name) + game(c) + '</span><span class="muted mono">' +
     (o.take ? c.kills + ' kills' + (c.later > 0.05 ? ', starts ' + c.later.toFixed(1) + ' s later' : '')
             : 'kill at ' + Number(c.kill).toFixed(2) + ' s' + (c.hs ? ' · headshot' : '')) + '</span>' +
     '<button type="button" class="btn btn-sm" data-act="studio-slot-do" data-do="use" data-clip="' + esc(c.clip) + '"' +
     (o.take ? '' : ' data-kill="' + c.kill + '"') + '>Use</button></li>';
   if (s.mode === 'replace') {
+    if (o.ok === false) {
+      return '<div class="studio-flow is-ask studio-slot" id="studio-slot" role="region" aria-label="Replace this shot’s clip">' +
+        '<div class="studio-slot-head"><p class="studio-flow-head">Replace ' + esc(studio_shotName(i)) + '</p>' + x + '</div>' +
+        '<p class="studio-flow-why">' + esc(o.error || 'It could not be worked out.') + '</p></div>';
+    }
+    /* THREE PLACES A BETTER CLIP CAN COME FROM, nearest first. A strong clip already in the reel is
+       the cheapest fix -- trade it in, and the weak one goes to its slot -- so the swaps lead; then
+       every clip that lands a kill on this beat; then, folded away, the ones that cannot, each with
+       why, so a clip the player knows they have is never simply missing. None of the three moves
+       any other kill on the song. */
+    const swaps = o.swaps || [], others = o.others || [];
+    const swapRow = w => '<li' + (w.ok ? '' : ' class="is-off"') + '><span class="truncate" title="' + esc(w.name) + '">' +
+      esc(studio_shotName(w.shot)) + ' · ' + esc(w.name) + '</span><span class="muted mono">' +
+      (w.ok ? 'kill at ' + Number(w.kill_here).toFixed(2) + ' s here' : esc(w.why)) + '</span>' +
+      '<button type="button" class="btn btn-sm" data-act="studio-slot-do" data-do="swap" data-with="' + w.shot + '"' +
+      (w.ok ? '' : ' disabled title="' + esc(w.why) + '"') + '>Swap</button></li>';
+    const offRow = c => '<li class="is-off" data-find="' + find(c) + '"' + hide(c) + '><span class="truncate" title="' + esc(c.name) + '">' + esc(c.name) + game(c) +
+      '</span><span class="muted mono">' + esc(c.why || 'does not fit this beat') + '</span><span></span></li>';
+    const q = s.q || '';
+    const swapPart = o.take ? '' :
+      '<p class="studio-flow-head studio-slot-sub">Swap with a shot in this reel</p>' +
+      '<p class="muted studio-small">The two clips trade places; both slots keep their place, length and effects, and each kill lands on the other’s beat.</p>' +
+      (swaps.length ? '<ul class="studio-slot-list" id="studio-slot-swaps">' + swaps.map(swapRow).join('') + '</ul>' : '') +
+      (swaps.some(w => w.ok) ? '' : '<p class="studio-flow-why">' + esc(o.swap_why || 'No shot can swap with this one.') + '</p>');
     return '<div class="studio-flow is-ask studio-slot" id="studio-slot" role="region" aria-label="Replace this shot’s clip">' +
-      '<div class="studio-slot-head"><p class="studio-flow-head">' + (o.take ? 'Takes that land on the drop' : 'Clips that land a kill on this beat') + '</p>' + x + '</div>' +
-      (o.ok === false ? '<p class="studio-flow-why">' + esc(o.error || 'It could not be worked out.') + '</p>' :
-       '<p class="muted studio-small">' + (o.take ? 'The build is one take: another clutch, ace or multi-kill whose last kill lands on the drop. Nothing after it moves.'
-         : 'Each has the footage this shot’s run-up and tail need. Its place, length and effects stay; no other kill moves.') + '</p>' +
-       (list.length ? '<ul class="studio-slot-list">' + list.map(row).join('') + '</ul>' : '<p class="studio-flow-why">' + esc(o.why || 'Nothing fits.') + '</p>')) +
+      '<div class="studio-slot-head"><p class="studio-flow-head">Replace ' + esc(studio_shotName(i)) + '</p>' + x + '</div>' +
+      swapPart +
+      '<p class="studio-flow-head studio-slot-sub">' + (o.take ? 'Takes that land on the drop' : 'Clips that land a kill on this beat') + '</p>' +
+      '<p class="muted studio-small">' + (o.take ? 'The build is one take: another clutch, ace or multi-kill whose last kill lands on the drop. Nothing after it moves.'
+         : 'From every game. Each has the footage this shot’s run-up and tail need. Its place, length and effects stay; no other kill moves.') + '</p>' +
+      (list.length + others.length > 6 ? '<input type="search" class="input studio-slot-q" id="studio-slot-q" placeholder="Find a clip or game" aria-label="Find a clip or game" value="' + esc(q) + '">' : '') +
+      (list.length ? '<ul class="studio-slot-list" id="studio-slot-clips">' + list.map(row).join('') + '</ul>' : '<p class="studio-flow-why">' + esc(o.why || 'Nothing fits.') + '</p>') +
+      (others.length ? '<details class="studio-slot-others" id="studio-slot-others"><summary>Clips that don’t fit this beat (' + others.length + ')</summary>' +
+        '<ul class="studio-slot-list">' + others.map(offRow).join('') + '</ul></details>' : '') +
       '</div>';
   }
-  const best = list[0];
+  /* the clip "fill" will use: the server's choice, which stays in the reel's own game when it can */
+  const best = list.find(c => c.own !== false) || list[0];
   const opt = (what, label, got, says) => '<div class="studio-flow-choice"><b>' + esc(label) + '</b><p class="muted studio-small">' +
     esc(got && got.ok ? says : ((got && got.error) || 'It cannot be done here.')) + '</p>' +
     '<button type="button" class="btn btn-sm' + (what === 'close' ? ' btn-primary' : '') + '" data-act="studio-slot-do" data-do="' + what + '"' +
@@ -7487,7 +7556,7 @@ async function studio_reelDeleteGo() {
    waveform, and the reel's kills under them. The row height is the sum, so
    moving a band never leaves the lane and its label disagreeing. */
 const STUDIO_MUSIC = {marks: 15, spec: 55, wave: 18, kills: 18};
-const STUDIO_ROW = {ruler: 26, video: 64, trans: 30, fx: 34, speed: 38, text: 30,
+const STUDIO_ROW = {ruler: 26, video: 64, game: 48, trans: 30, fx: 34, speed: 38, text: 30,
                     music: STUDIO_MUSIC.marks + STUDIO_MUSIC.spec + STUDIO_MUSIC.wave + STUDIO_MUSIC.kills};
 /* Pixels a second: from the whole reel on one screen to a frame being three
    pixels wide, which is what checking a kill against a hit by eye needs. */
@@ -7718,14 +7787,250 @@ function studio_drawTimeline() {
       'px" title="' + esc(t[2]) + '">' + esc(t[2]) + '</button>';
   });
 
+  /* game audio: where each shot's own sound plays, under the line that sets how loud */
+  if (STUDIO_ROW.game) {
+    p.shots.forEach((s, i) => {
+      const r = d.shots[i];
+      if (r) h += '<i class="st-gblock" style="left:' + X(r.start) + 'px;top:' + (rows.game + 3) + 'px;width:' +
+        Math.max(2, (r.end - r.start) * pps - 2).toFixed(1) + 'px;height:' + (STUDIO_ROW.game - 6) + 'px"></i>';
+    });
+  }
+  studio.volRows = {game: [rows.game, STUDIO_ROW.game], music: [rows.music, STUDIO_ROW.music]};
+  h += studio_volSvg('game', W);
+
   /* music */
   h += '<canvas class="st-music" id="studio-wave" style="top:' + rows.music + 'px;height:' + STUDIO_ROW.music + 'px"></canvas>';
+  h += studio_volSvg('music', W);
   h += '<div class="st-ph" id="studio-ph" style="height:' + top + 'px"></div>';
   h += '</div>';
   host.innerHTML = h;
   studio_drawWave();
   studio_syncNote();
   studio_playhead();
+}
+
+/* =======================================================================
+   THE VOLUME LINES (2026-10-27)
+   The song's level on the Music lane and the game's on the Game audio lane,
+   each a line with keyframes, as in any editor (filmcraft's Volume line was
+   the model). The line IS the level: it replaced the two dB sliders, so a
+   reel with no keyframes is a flat line at music_db / game_db, which is what
+   it always rendered. Straight in dB between keyframes and flat past the
+   ends -- the render's vol_filter draws the same line (studio.vol_at).
+
+     drag the line         up or down: the level (with keyframes, the two
+                           either side of the pointer move together)
+     click the line        a keyframe there, at the level the line is at
+     drag a keyframe       its time and its level
+     double/right-click    takes the keyframe off
+   ======================================================================= */
+const STUDIO_VOL = {floor: -60, top: 12, pad: 5, max: 64,
+  /* the fader law: most of the height around 0 dB, where the ear tells levels apart */
+  taper: [[-60, 0], [-40, 0.12], [-30, 0.24], [-20, 0.38], [-12, 0.52], [-6, 0.64], [0, 0.76], [6, 0.88], [12, 1]]};
+const STUDIO_VOL_LINES = {music: {keys: 'music_keys', flat: 'music_db', name: 'Song level'},
+                          game: {keys: 'game_keys', flat: 'game_db', name: 'Game sound level'}};
+
+function studio_volPos(db) {
+  const tp = STUDIO_VOL.taper;
+  if (db <= tp[0][0]) return 0;
+  for (let i = 1; i < tp.length; i++) {
+    if (db <= tp[i][0]) return tp[i - 1][1] + (tp[i][1] - tp[i - 1][1]) * (db - tp[i - 1][0]) / (tp[i][0] - tp[i - 1][0]);
+  }
+  return 1;
+}
+
+function studio_volDb(pos) {
+  const tp = STUDIO_VOL.taper, q = Math.max(0, Math.min(1, pos));
+  for (let i = 1; i < tp.length; i++) {
+    if (q <= tp[i][1]) return tp[i - 1][0] + (tp[i][0] - tp[i - 1][0]) * (q - tp[i - 1][1]) / (tp[i][1] - tp[i - 1][1]);
+  }
+  return STUDIO_VOL.top;
+}
+
+function studio_volKeys(p, kind) { return (p && p[STUDIO_VOL_LINES[kind].keys]) || []; }
+
+/* The level a line plays at reel second t: the page's copy of studio.vol_at. */
+function studio_volAt(p, kind, t) {
+  const ks = studio_volKeys(p, kind);
+  if (!ks.length) return Number(p[STUDIO_VOL_LINES[kind].flat]) || 0;
+  if (t <= ks[0][0]) return ks[0][1];
+  for (let i = 1; i < ks.length; i++) {
+    if (t <= ks[i][0]) return ks[i - 1][1] + (ks[i][1] - ks[i - 1][1]) * (t - ks[i - 1][0]) / Math.max(1e-9, ks[i][0] - ks[i - 1][0]);
+  }
+  return ks[ks.length - 1][1];
+}
+
+function studio_volText(db) { return db <= STUDIO_VOL.floor + 0.05 ? '-∞ dB' : (db > 0 ? '+' : '') + db.toFixed(1) + ' dB'; }
+
+function studio_volY(kind, db) {
+  const row = (studio.volRows || {})[kind], H = row ? row[1] : 0;
+  return STUDIO_VOL.pad + (1 - studio_volPos(db)) * Math.max(1, H - 2 * STUDIO_VOL.pad);
+}
+
+function studio_volSvg(kind, W) {
+  const p = studio.project, d = studio.derived, row = (studio.volRows || {})[kind];
+  if (!p || !d || !row || !row[1] || (kind === 'music' && !p.song)) return '';
+  const pps = studio.pps, H = row[1], L = d.length, ks = studio_volKeys(p, kind);
+  const pts = [[0, studio_volAt(p, kind, 0)]].concat(ks.filter(k => k[0] > 0 && k[0] < L), [[L, studio_volAt(p, kind, L)]]);
+  const path = 'M' + pts.map(q => (q[0] * pps).toFixed(1) + ',' + studio_volY(kind, q[1]).toFixed(1)).join(' L');
+  const name = STUDIO_VOL_LINES[kind].name;
+  let h = '<svg class="st-vol st-vol-' + kind + '" id="studio-vol-' + kind + '" style="top:' + row[0] + 'px;height:' + H +
+    'px;width:' + W + 'px" viewBox="0 0 ' + W + ' ' + H + '">' +
+    '<path class="st-vol-line" d="' + path + '"></path>' +
+    '<path class="st-vol-hit" data-vol="' + kind + '" d="' + path + '"><title>' + esc(name) +
+    ': drag up or down, click to add a keyframe</title></path>';
+  ks.forEach((k, i) => {
+    if (k[0] > L + 1e-6) return;
+    h += '<circle class="st-vol-key' + (studio.vdrag && studio.vdrag.kind === kind && studio.vdrag.k === i ? ' is-drag' : '') +
+      '" data-vol="' + kind + '" data-k="' + i + '" cx="' + (k[0] * pps).toFixed(1) + '" cy="' + studio_volY(kind, k[1]).toFixed(1) +
+      '" r="5"><title>' + esc(name) + ' ' + studio_volText(k[1]) + ' at ' + studio_secs(k[0]) +
+      ' — drag to move, double-click to remove</title></circle>';
+  });
+  return h + '</svg>';
+}
+
+/* While a line is dragged only it is drawn again: the timeline under it has not changed. */
+function studio_volRedraw(kind) {
+  const el = studio_el('studio-vol-' + kind), d = studio.derived;
+  if (!el || !d) return;
+  const W = Math.ceil(d.length * studio.pps) + 24;
+  const t = document.createElement('div');
+  t.innerHTML = studio_volSvg(kind, W);
+  if (t.firstChild) el.replaceWith(t.firstChild);
+}
+
+function studio_volTip(text, x, y) {
+  let tip = document.getElementById('studio-vol-tip');
+  if (!text) { if (tip) tip.remove(); return; }
+  if (!tip) { tip = document.createElement('div'); tip.id = 'studio-vol-tip'; tip.className = 'st-vol-tip'; document.body.appendChild(tip); }
+  tip.textContent = text;
+  tip.style.left = (x + 14) + 'px'; tip.style.top = (y - 26) + 'px';
+}
+
+/* The line's keyframes and flat level, set the one way every edit is: through studio_change, so
+   Undo takes it back and the render card lists it. */
+function studio_volSet(kind, keys, flat, label) {
+  const L = STUDIO_VOL_LINES[kind];
+  studio_change(pr => {
+    if (keys && keys.length) pr[L.keys] = keys.map(k => [Math.round(k[0] * 1000) / 1000, Math.round(k[1] * 10) / 10]);
+    else delete pr[L.keys];
+    if (typeof flat === 'number') pr[L.flat] = Math.round(flat * 10) / 10;
+  }, label);
+}
+
+function studio_volDown(e) {
+  const el = e.target && e.target.closest ? e.target.closest('[data-vol]') : null;
+  if (!el || !studio.project || !studio.derived || e.button !== 0) return false;
+  e.preventDefault(); e.stopPropagation();
+  const kind = el.getAttribute('data-vol'), L = STUDIO_VOL_LINES[kind], p = studio.project;
+  const svg = el.ownerSVGElement || el, box = svg.getBoundingClientRect();
+  const k = el.hasAttribute('data-k') ? Number(el.getAttribute('data-k')) : -1;
+  const t = Math.max(0, Math.min(studio.derived.length, (e.clientX - box.left) / studio.pps));
+  const ks = studio_volKeys(p, kind).map(x => x.slice());
+  let after = ks.findIndex(x => x[0] > t);
+  if (after < 0) after = ks.length;
+  studio.vdrag = {kind: kind, k: k, x0: e.clientX, y0: e.clientY, box: box, t: t, moved: false,
+    pointer: e.pointerId, keys: ks, flat: Number(p[L.flat]) || 0, from: studio_volAt(p, kind, t),
+    /* a drag on the line between two keyframes moves both: the stretch keeps its shape */
+    pair: [after - 1, after].filter(j => j >= 0 && j < ks.length)};
+  studio_volTip(studio_volText(k >= 0 ? ks[k][1] : studio.vdrag.from), e.clientX, e.clientY);
+  return true;
+}
+
+function studio_volMove(e) {
+  const g = studio.vdrag;
+  if (!g || (g.pointer !== undefined && e.pointerId !== g.pointer)) return;
+  if (!g.moved && Math.abs(e.clientX - g.x0) + Math.abs(e.clientY - g.y0) < 3) return;
+  g.moved = true;
+  const p = studio.project, L = STUDIO_VOL_LINES[g.kind], H = studio.volRows[g.kind][1] - 2 * STUDIO_VOL.pad;
+  const clamp = db => Math.max(STUDIO_VOL.floor, Math.min(STUDIO_VOL.top, db));
+  const keys = g.keys.map(x => x.slice());
+  let flat = g.flat, say;
+  if (g.k >= 0) {
+    /* a keyframe goes no nearer its neighbours than a frame or two, and never past them */
+    const lo = g.k > 0 ? keys[g.k - 1][0] + 0.04 : 0;
+    const hi = g.k < keys.length - 1 ? keys[g.k + 1][0] - 0.04 : studio.derived.length;
+    const t = Math.max(lo, Math.min(hi, (e.clientX - g.box.left) / studio.pps));
+    const db = clamp(studio_volDb(1 - (e.clientY - g.box.top - STUDIO_VOL.pad) / H));
+    keys[g.k] = [t, db];
+    say = studio_volText(db) + '  ' + studio_secs(t);
+  } else {
+    const db = clamp(studio_volDb(studio_volPos(g.from) + (g.y0 - e.clientY) / H));
+    const by = db - g.from;
+    if (!keys.length) flat = clamp(g.flat + by);
+    g.pair.forEach(j => { keys[j][1] = clamp(g.keys[j][1] + by); });
+    say = studio_volText(db);
+  }
+  if (keys.length) p[L.keys] = keys; else delete p[L.keys];
+  p[L.flat] = flat;
+  g.now = {keys: keys, flat: flat};
+  studio_volRedraw(g.kind);
+  studio_volTip(say, e.clientX, e.clientY);
+  studio_pvLevels();
+}
+
+function studio_volUp(e, cancel) {
+  const g = studio.vdrag;
+  if (!g || (e && g.pointer !== undefined && e.pointerId !== g.pointer)) return;
+  studio.vdrag = null;
+  studio_volTip('');
+  const p = studio.project, L = STUDIO_VOL_LINES[g.kind];
+  /* the line back as it was first, so the edit below is one step that Undo takes back */
+  if (g.keys.length) p[L.keys] = g.keys; else delete p[L.keys];
+  p[L.flat] = g.flat;
+  if (cancel || (e && e.type === 'pointercancel')) { studio_volRedraw(g.kind); studio_pvLevels(); return; }
+  if (!g.moved) {
+    /* a keyframe pressed and let go: nothing, and the circle stays the same node for a double-click */
+    if (g.k >= 0) return;
+    /* a click on the line: a keyframe there, at the level the line already has, so nothing is heard to change */
+    const keys = g.keys.filter(k => Math.abs(k[0] - g.t) > 0.02).concat([[g.t, g.from]]).sort((a, b) => a[0] - b[0]);
+    if (keys.length > STUDIO_VOL.max) { toast('A line has at most ' + STUDIO_VOL.max + ' keyframes.', 'warn'); return; }
+    studio_volSet(g.kind, keys, undefined, L.name + ' · keyframe added');
+    return;
+  }
+  const now = g.now || {keys: g.keys, flat: g.flat};
+  studio_volSet(g.kind, now.keys, now.flat, L.name + (g.k >= 0 ? ' · keyframe moved' : ''));
+}
+
+function studio_volRemove(kind, k) {
+  const p = studio.project, L = STUDIO_VOL_LINES[kind];
+  const ks = studio_volKeys(p, kind).map(x => x.slice());
+  if (!(k >= 0 && k < ks.length)) return;
+  const gone = ks.splice(k, 1)[0];
+  /* the last keyframe off: the line stays flat where that keyframe had it, rather than jumping */
+  studio_volSet(kind, ks, ks.length ? undefined : gone[1], L.name + ' · keyframe removed');
+}
+
+/* A keyframe at the playhead, from the inspector -- the keyboard's way to the same edit. */
+function studio_volAddAt(kind) {
+  const p = studio.project, L = STUDIO_VOL_LINES[kind];
+  if (!p || !studio.derived) return;
+  const t = Math.max(0, Math.min(studio.derived.length, studio_now()));
+  const ks = studio_volKeys(p, kind).filter(k => Math.abs(k[0] - t) > 0.02);
+  if (ks.length >= STUDIO_VOL.max) { toast('A line has at most ' + STUDIO_VOL.max + ' keyframes.', 'warn'); return; }
+  studio_volSet(kind, ks.concat([[t, studio_volAt(p, kind, t)]]).sort((a, b) => a[0] - b[0]), undefined,
+                L.name + ' · keyframe added');
+}
+
+/* The inspector's half of the lines: where each is at the playhead, and the two edits a keyboard can make. */
+function studio_volHtml(p, kind) {
+  const L = STUDIO_VOL_LINES[kind], n = studio_volKeys(p, kind).length;
+  const off = kind === 'music' && !p.song;
+  return '<div class="studio-vol-row" data-vol-row="' + kind + '"><span class="field-label">' + L.name + '</span>' +
+    '<span class="mono muted">' + (off ? 'no song' : (n ? n + (n === 1 ? ' keyframe' : ' keyframes')
+      : 'flat at ' + studio_volText(Number(p[L.flat]) || 0))) + '</span>' +
+    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-vol-add" data-vol-kind="' + kind + '"' +
+    (off ? ' disabled' : '') + ' title="A keyframe on the ' + (kind === 'music' ? 'song' : 'game sound') +
+    ' line at the playhead">Keyframe at playhead</button>' +
+    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-vol-flat" data-vol-kind="' + kind + '"' +
+    (n ? '' : ' disabled') + ' title="Take every keyframe off: the line goes flat at the level it has at the playhead">Flat again</button></div>';
+}
+
+/* Every keyframe off; the line flat at the level it had where the playhead is, which is what was being heard. */
+function studio_volFlat(kind) {
+  const p = studio.project;
+  if (!p || !studio_volKeys(p, kind).length) return;
+  studio_volSet(kind, [], studio_volAt(p, kind, studio_now()), STUDIO_VOL_LINES[kind].name + ' · flat again');
 }
 
 /* =======================================================================
@@ -9045,10 +9350,11 @@ function studio_drawInspectorBody() {
       (p.song ? '<span class="field-inline"><button type="button" class="btn btn-ghost btn-sm" data-act="studio-offset" data-d="-4">−1 bar</button>' +
         '<span class="mono">starts at ' + studio_secs(p.song_offset) + '</span>' +
         '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-offset" data-d="4">+1 bar</button></span>' : '') +
-      '<label class="field-label" for="studio-r-music">Music ' + p.music_db.toFixed(0) + ' dB</label>' +
-      '<input type="range" id="studio-r-music" min="-20" max="6" step="1" value="' + p.music_db + '"' + (p.song ? '' : ' disabled') + '>' +
-      '<label class="field-label" for="studio-r-game">Game sound ' + p.game_db.toFixed(0) + ' dB</label>' +
-      '<input type="range" id="studio-r-game" min="-20" max="12" step="1" value="' + p.game_db + '">' +
+      /* THE LEVELS ARE THE YELLOW LINES on the timeline now (studio_volSvg); the two sliders they
+         replaced set one level for the whole reel, which a line with no keyframes still is. */
+      '<p class="muted studio-small">The yellow lines on the Music and Game audio lanes are the levels: drag one up or down, ' +
+      'click it to add a keyframe, drag a keyframe to move it, double-click it to take it off.</p>' +
+      studio_volHtml(p, 'music') + studio_volHtml(p, 'game') +
       '<label class="studio-check"><input type="checkbox" id="studio-r-duck"' + (p.duck ? ' checked' : '') + '> Duck the music under gunfire</label></div>');
   /* IN THE ORDER A NEW EDITOR THINKS OF THEM, each its own block with a header
      that says what is set. They used to be seven identical folds in a column,
@@ -9096,8 +9402,6 @@ function studio_inspectorInput(e) {
       pr.overlays = t.checked ? ov.concat(['o07']) : ov;
     }, t.checked ? 'Your handle · shown' : 'Your handle · hidden'),
     'studio-r-handle': () => studio_change(pr => { pr.handle = t.value; }, 'Your handle'),
-    'studio-r-music': () => studio_change(pr => { pr.music_db = Number(t.value); }, 'Music level'),
-    'studio-r-game': () => studio_change(pr => { pr.game_db = Number(t.value); }, 'Game sound level'),
     'studio-r-duck': () => studio_change(pr => { pr.duck = t.checked; }, 'Ducking the music under gunfire'),
     'studio-r-lyrics': () => studio_change(pr => { pr.lyrics = Object.assign({}, pr.lyrics, {look: t.value}); },
       t.value === 'off' ? 'Lyrics · off' : 'Lyrics · ' + t.options[t.selectedIndex].text),
@@ -9891,7 +10195,7 @@ function studio_syncFold() {
 }
 
 /* THE LANES: which rows of the timeline are shown. A hidden lane takes no room; the rows under it move up. */
-const STUDIO_LANES = ['video', 'trans', 'fx', 'speed', 'text', 'music'];
+const STUDIO_LANES = ['video', 'game', 'trans', 'fx', 'speed', 'text', 'music'];
 const STUDIO_ROW_BASE = Object.assign({}, STUDIO_ROW);
 function studio_lanesOff() {
   try { return JSON.parse(studio_pref('lanes', '[]')).filter(k => STUDIO_LANES.indexOf(k) >= 0); } catch (e) { return []; }
@@ -11202,6 +11506,8 @@ function studio_wire() {
     else if (act === 'studio-side') studio_sideToggle();
     else if (act === 'studio-sync-fold') studio_syncFold();
     else if (act === 'studio-pv-mute') { studio.pv.muted = !studio.pv.muted; studio_pvLevels(); }
+    else if (act === 'studio-vol-add') studio_volAddAt(b.getAttribute('data-vol-kind'));
+    else if (act === 'studio-vol-flat') studio_volFlat(b.getAttribute('data-vol-kind'));
     else if (act === 'studio-pv-full') studio_pvFull();
     else if (act === 'studio-zoom') {
       const z = Number(b.getAttribute('data-z'));
@@ -11391,6 +11697,7 @@ function studio_wire() {
   document.addEventListener('input', studio_camInput);
   document.addEventListener('input', e => { if (e.target && e.target.id === 'studio-gd-name') studio.gd.name = e.target.value; });
   document.addEventListener('input', studio_gdFind);
+  document.addEventListener('input', studio_slotFind);
   document.addEventListener('change', studio_gdViewChange);
   document.addEventListener('input', studio_gdLookInput);
   document.addEventListener('change', studio_gdLookInput);
@@ -11573,6 +11880,20 @@ function studio_wire() {
 
   const pn = studio_el('studio-pname');
   if (pn) pn.addEventListener('change', () => { if (studio.project) studio_change(pr => { pr.name = pn.value.trim() || pr.name; }, 'Reel name'); });
+  /* the volume lines first: a press on one is never also a press on what is under it */
+  document.addEventListener('pointerdown', studio_volDown);
+  document.addEventListener('pointermove', studio_volMove);
+  document.addEventListener('pointerup', studio_volUp);
+  document.addEventListener('pointercancel', studio_volUp);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && studio.vdrag) { e.preventDefault(); studio_volUp(null, true); } });
+  const volKey = e => {
+    const k = e.target && e.target.closest ? e.target.closest('.st-vol-key') : null;
+    if (!k) return;
+    e.preventDefault(); e.stopPropagation();
+    studio_volRemove(k.getAttribute('data-vol'), Number(k.getAttribute('data-k')));
+  };
+  document.addEventListener('dblclick', volKey);
+  document.addEventListener('contextmenu', volKey);
   document.addEventListener('pointerdown', studio_pointerDown);
   document.addEventListener('pointermove', studio_pointerMove);
   document.addEventListener('pointerup', studio_pointerUp);

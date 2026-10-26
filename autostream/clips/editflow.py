@@ -147,6 +147,7 @@ FIELDS = {
     "build_clip": "length", "part_auto": "length",
     "grade": "look", "vignette": "look", "overlays": "look", "saturation": "look", "handle": "look",
     "handle_pos": "look", "cam": "look", "music_db": "look", "game_db": "look", "duck": "look",
+    "music_keys": "look", "game_keys": "look",
     "kill_sound": "look", "groove": "look",
     "format": "framing", "vfit": "framing",
     "lyrics": "lyrics",

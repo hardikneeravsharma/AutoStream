@@ -5471,6 +5471,60 @@ def _num(v, lo: float, hi: float, default: float) -> float:
     return max(lo, min(hi, f))
 
 
+# THE VOLUME LINES (2026-10-27, asked for after the timeline grew a song lane): the
+# song's level and the game's level, each a line over the reel with keyframes on it,
+# as in any editor (filmcraft's Volume line was the model). The line IS the level --
+# it replaced the two dB sliders -- so a reel with no keyframes is a flat line at
+# music_db / game_db, which is exactly what every reel before it rendered.
+#
+# Straight in dB between keyframes, held flat before the first and after the last: a
+# fade drawn as a straight line sounds like one, where a straight line in gain dies
+# away at the end. VOL_FLOOR is the bottom of the lane; at -60 dB nothing is heard.
+VOL_FLOOR = -60.0
+VOL_TOP = 12.0
+VOL_KEYS = 64          # past this a hand-drawn line is noise, and the expression grows long
+
+
+def vol_keys(v) -> list[list[float]]:
+    """A line's keyframes from the page: [[reel seconds, dB], ...], sorted, one per time."""
+    out: dict[float, float] = {}
+    for k in v if isinstance(v, list) else []:
+        if not isinstance(k, (list, tuple)) or len(k) != 2:
+            continue
+        t = _num(k[0], 0.0, 36000.0, float("nan"))
+        db = _num(k[1], VOL_FLOOR, VOL_TOP, float("nan"))
+        if math.isfinite(t) and math.isfinite(db):
+            out[round(t, 3)] = round(db, 2)
+    return [[t, out[t]] for t in sorted(out)][:VOL_KEYS]
+
+
+def vol_at(keys: list, flat: float, t: float) -> float:
+    """The level, in dB, a line plays at reel second `t`."""
+    if not keys:
+        return float(flat)
+    if t <= keys[0][0]:
+        return float(keys[0][1])
+    for (t0, d0), (t1, d1) in zip(keys, keys[1:]):
+        if t <= t1:
+            return float(d0) + (float(d1) - float(d0)) * (t - t0) / max(t1 - t0, 1e-9)
+    return float(keys[-1][1])
+
+
+def vol_filter(keys: list, flat: float) -> str:
+    """The ffmpeg volume filter for a line: a constant without keyframes, else an expression.
+
+    One clip() ramp per stretch between two keyframes, summed -- the same line as vol_at,
+    with no nesting however many keyframes there are."""
+    if not keys:
+        return f"volume={float(flat)}dB"
+    e = f"{float(keys[0][1]):.2f}"
+    for (t0, d0), (t1, d1) in zip(keys, keys[1:]):
+        step = float(d1) - float(d0)
+        if abs(step) > 1e-6:
+            e += f"+({step:.2f})*clip((t-{t0:.3f})/{max(t1 - t0, 1e-3):.3f},0,1)"
+    return f"volume='pow(10,({e})/20)':eval=frame"
+
+
 def _probe_seconds(path: Path) -> float:
     try:
         from .tools import media_info
@@ -5646,8 +5700,8 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
         # the last frame, easing in, while the picture and the song fade.
         "outro_len": round(_num(project.get("outro_len"), 0.0, 8.0, 0.0), 2),
         "cam": facecam.settings(project.get("cam")),
-        "music_db": _num(project.get("music_db"), -30, 12, 0.0),
-        "game_db": _num(project.get("game_db"), -30, 12, 0.0),
+        "music_db": _num(project.get("music_db"), VOL_FLOOR, VOL_TOP, 0.0),
+        "game_db": _num(project.get("game_db"), VOL_FLOOR, VOL_TOP, 0.0),
         "duck": bool(project.get("duck", True)),
         "saturation": round(_num(project.get("saturation"), 0.3, 1.5, 1.0), 3),
         "kill_sound": bool(project.get("kill_sound", True)),
@@ -5664,6 +5718,12 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
     # on -- so that is the default, and trimming a shot never knocks it off its
     # own grid.
     out["step"] = _grid_step(project.get("step"), out["beat"])
+    # The volume lines' keyframes, only when there are any: without them the line is flat
+    # at music_db / game_db and the reel saves as it always did.
+    for k in ("music_keys", "game_keys"):
+        keys = vol_keys(project.get(k))
+        if keys:
+            out[k] = keys
     # The hand-set frame and what is behind the band (FRAME_DEFAULT, BG_KINDS): kept
     # only where they differ from what every reel did before, so an old reel saves
     # and renders as it always did.
@@ -7242,7 +7302,8 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
         g.append(f"[{i}:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
                  f"adelay=delays={round(at * 1000)}:all=1[g{i}]")
     game = "".join(f"[g{i}]" for i in range(n))
-    g.append(f"{game}amix=inputs={n}:normalize=0:duration=longest,volume={project['game_db']}dB,"
+    g.append(f"{game}amix=inputs={n}:normalize=0:duration=longest,"
+             f"{vol_filter(project.get('game_keys') or [], project['game_db'])},"
              f"apad=whole_dur={L:.4f},atrim=0:{L:.4f}[game]")
     if song:
         fades = []
@@ -7284,7 +7345,8 @@ def assemble_command(project: dict, derived: dict, segs: list[Segment], files: l
                 terms.append(f"{1 - rulebook.HERO_DIP:.3f}*({anyof(holes)})")
             dip = f",volume='max({rulebook.HERO_DIP},1-{'-'.join(terms)})':eval=frame"
         mchain = (f"[{n}:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
-                  f"atrim=0:{L:.4f},asetpts=PTS-STARTPTS,volume={project['music_db']}dB" + dip
+                  f"atrim=0:{L:.4f},asetpts=PTS-STARTPTS,"
+                  f"{vol_filter(project.get('music_keys') or [], project['music_db'])}" + dip
                   + ("," + ",".join(fades) if fades else "") + "[music]")
         g.append(mchain)
         if project.get("duck", True) and not project.get("kill_sound", True):
@@ -7376,7 +7438,8 @@ def intro_head_command(project: dict, head: Path, ff: str = "ffmpeg",
         delay = f"adelay={int(pad * 1000)}:all=1," if pad > 0.001 else ""
         afilter = (f"[1:a]aformat=sample_fmts=fltp:sample_rates=48000:"
                    f"channel_layouts=stereo,asetpts=PTS-STARTPTS,{delay}"
-                   f"volume={project.get('music_db', 0.0)}dB,"
+                   # the song's level where the reel starts: the line is in reel seconds
+                   f"volume={round(vol_at(project.get('music_keys') or [], project.get('music_db', 0.0), 0.0), 2)}dB,"
                    f"apad=whole_dur={seconds:.4f},atrim=0:{seconds:.4f}[ia]")
     else:
         # The reel always carries exactly one stereo track, so a silent intro

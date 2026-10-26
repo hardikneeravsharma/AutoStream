@@ -215,15 +215,15 @@ def test_the_transport_is_a_media_player_and_the_toolbar_is_quiet(pg):
 
 
 def test_a_lane_can_be_put_away_and_comes_back(pg):
-    assert pg.is_visible('.studio-labels .st-lab:nth-child(4)')
+    assert pg.is_visible('.studio-labels .st-lab:nth-child(5)')
     pg.click("#studio-lanes summary")
     pg.uncheck('#studio-lanes [data-lane="fx"]')
     assert pg.evaluate("() => STUDIO_ROW.fx") == 0
     assert pg.evaluate("() => document.getElementById('studio-tracks').classList.contains('off-fx')")
-    assert not pg.is_visible('.studio-labels .st-lab:nth-child(4)')
+    assert not pg.is_visible('.studio-labels .st-lab:nth-child(5)')
     pg.check('#studio-lanes [data-lane="fx"]')
     assert pg.evaluate("() => STUDIO_ROW.fx") > 0
-    assert pg.is_visible('.studio-labels .st-lab:nth-child(4)')
+    assert pg.is_visible('.studio-labels .st-lab:nth-child(5)')
     # a press anywhere else shuts the menu
     pg.mouse.click(5, 5)
     assert not pg.evaluate("() => document.getElementById('studio-lanes').open")

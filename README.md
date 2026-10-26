@@ -186,6 +186,11 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     re-encoded. Zoom with the − / Fit / + buttons, Ctrl+wheel or the `+` `-` `0` keys:
     whatever is under the pointer stays where it is, right down to a frame being three
     pixels wide.
+  - **The song's and the game's volume are yellow lines** on the Music and Game audio
+    lanes, as in any editor. Drag a line up or down to set the level; click it to add a
+    keyframe, drag a keyframe in time and level, double-click or right-click it to take it
+    off. A line without keyframes is one level for the whole reel; the preview plays the
+    lines and the render follows them exactly.
   - **It always says whether the video is what you have edited.** The panel beside the
     player is either green — *the video matches your edits* — or amber, naming every
     change that has not reached it yet (*shot 4 trimmed*, *music level*), with the

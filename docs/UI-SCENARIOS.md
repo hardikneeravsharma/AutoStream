@@ -313,6 +313,7 @@ One editor for the part, the marks and the drops wherever they are edited; nothi
 | 6.114 | Fold the render card, then render | A chip above shows a yellow pulsing dot and `5/6`; the same dot rides on the side-panel button while the panel is closed; the chip opens the card again | yes (`test_ui_studio_layout`) |
 | 6.115 | The guide's Clips step for Build and drop: the summary, the build strip and *See all*, the chips (*Favourites*, *Headshots*, *Multi-kills*, *Chosen only*), *Filters*, *Show more*, a card's *...*, the chosen tray | One summary in sight -- the build, the plan's count and length, Pick for me; the build as its six best, every build a click away; one row of tools, session / map / mode / kind folded under Filters and each one in force a chip that takes it off; 24 more at a time, never a pager; a card is its frame with what it is over it, one line of where and when, the file name and Edit behind *...*; the tray shows every chosen clip whatever the grid shows, each a click from taken out | yes (`test_ui_studio_guide`) |
 | 6.116 | The guide's Look step, 9:16: each framing, then *Custom* with the zoom, left-right and up-down sliders; behind the picture *Blurred game* (blur, darken), *Black*, *Colour*, *Your own* (a tile, *Add your own...*) | The preview is the reel's 9:16 frame on a chosen clip and follows every slider without redrawing; it says how much of the width is shown; a slider makes the framing *Custom*; the request carries `vfit: custom` and the frame, and a background other than the default blur; the last frame and background are where the next reel starts; *Add your own* opens no dialog in a test run | yes (`test_ui_studio_guide`; the render offline in `test_facecam`) |
+| 6.117 | A shot's *Replace...* on the timeline: read the three sections, type in *Find a clip or game*, open *Clips that don't fit this beat*, press *Swap* on a shot of the reel, then Undo | *Swap with a shot in this reel* lists every other shot (not the build take): one that cannot trade is greyed, its Swap disabled, and says which clip lacks what footage; the clips that land on this beat come from every game, each labelled with its game, the reel's own game first at an equal score; the find box hides rows in place and keeps the caret; the misfits are folded, each with why; Swap trades the two clips in one step -- both slots keep their place and length, the panel closes, the timeline shows both -- and one Undo puts both back | yes (`test_ui_studio_swap`; every rule offline in `test_slots`) |
 
 6.5 is worth a real test: the beat grid was drawn nowhere for a long time and
 nothing noticed.
@@ -335,6 +336,20 @@ nothing noticed.
 | 8.1 | Rows render and HTML is escaped | A `<b>` in a log line is text | **gap** |
 | 8.2 | Level filter | Client-side, no refetch | sweep |
 | 8.3 | The timer stops when the page is left | No polling off-page | **gap** |
+
+
+## 6h · The volume lines (2026-10-27)
+
+The song's and the game's level as yellow lines with keyframes on the Music and Game audio lanes. The line is absolute: it replaced the two dB sliders.
+
+| # | Scenario | Must be true | Covered |
+|---|---|---|---|
+| 6.118 | Open a reel with no keyframes | Both lines drawn flat at the reel's level; no Music or Game sound slider in the inspector; a *Game audio* lane under Video that the Show menu can hide | yes (`test_ui_studio_volume`) |
+| 6.119 | Drag a flat line up, then down; Undo twice | Up is louder, down quieter, still no keyframes; each drag is one Undo step back to where it was | yes (`test_ui_studio_volume`) |
+| 6.120 | Click the song line twice, drag the second keyframe down and later, drag it past its neighbour, double-click the first | Each click adds a keyframe at the level the line had (nothing heard changes); the line between falls straight in dB and is flat after the last; a keyframe never passes its neighbour; double-click takes it off, Undo puts it back | yes (`test_ui_studio_volume`) |
+| 6.121 | Drag the line between two keyframes | Both move together; a keyframe outside that stretch does not | yes (`test_ui_studio_volume`) |
+| 6.122 | *Keyframe at playhead*, *Flat again* | A keyframe at the playhead on that line; Flat again takes every keyframe off and leaves the line at the level it had at the playhead | yes (`test_ui_studio_volume`) |
+| 6.123 | Play the preview over a keyframed line | The players' volume follows the line at the reel second on screen | yes (`test_ui_studio_volume`) |
 
 ---
 

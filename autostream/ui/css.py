@@ -4248,11 +4248,12 @@ STUDIO_CSS = r"""
 .studio-labels{flex:none;width:88px;border-right:var(--border-hair) solid var(--border-subtle);background:var(--surface)}
 .st-lab{display:flex;align-items:center;padding:0 10px;font-size:11px;color:var(--text-tertiary);
   text-transform:uppercase;letter-spacing:.05em;border-bottom:var(--border-hair) solid var(--border-subtle)}
-.st-lab:nth-child(1){height:26px}.st-lab:nth-child(2){height:64px}.st-lab:nth-child(3){height:30px}
-.st-lab:nth-child(4){height:34px}.st-lab:nth-child(5){height:38px}.st-lab:nth-child(6){height:30px}
+.st-lab:nth-child(1){height:26px}.st-lab:nth-child(2){height:64px}.st-lab:nth-child(3){height:48px}
+.st-lab:nth-child(4){height:30px}.st-lab:nth-child(5){height:34px}.st-lab:nth-child(6){height:38px}
+.st-lab:nth-child(7){height:30px}
 /* The heights here are only what the labels are before the first draw: the
    timeline sets each one from STUDIO_ROW, which is where they are decided. */
-.st-lab:nth-child(7){height:106px;border-bottom:0}
+.st-lab:nth-child(8){height:106px;border-bottom:0}
 .studio-scroll{flex:1;overflow-x:auto;overflow-y:hidden;min-width:0}
 .st-area{position:relative;margin-right:24px;user-select:none;touch-action:pan-x}
 .st-ruler{position:absolute;left:0;right:0;cursor:pointer;border-bottom:var(--border-hair) solid var(--border-subtle)}
@@ -4309,6 +4310,18 @@ STUDIO_CSS = r"""
   background:var(--surface);color:var(--text-secondary);font-size:11px;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;text-align:left;cursor:pointer}
 .st-music{position:absolute;left:0;display:block}
+/* THE VOLUME LINES: yellow, as the editor they are copied from draws them, and only the line
+   and its keyframes take the pointer -- the lane under them keeps its own clicks. */
+.st-vol{position:absolute;left:0;overflow:visible;pointer-events:none;z-index:3}
+.st-vol-line{fill:none;stroke:#f2c94c;stroke-width:2;filter:drop-shadow(0 1px 0 rgba(0,0,0,.7))}
+.st-vol-hit{fill:none;stroke:transparent;stroke-width:12;pointer-events:stroke;cursor:ns-resize}
+.st-vol-key{fill:#f2c94c;stroke:#1a1300;stroke-width:1.5;pointer-events:all;cursor:move}
+.st-vol-key:hover,.st-vol-key.is-drag{fill:#fff}
+.st-gblock{position:absolute;border-radius:3px;background:var(--surface-2,rgba(127,127,127,.12));
+  border:var(--border-hair) solid var(--border-subtle);pointer-events:none}
+.st-vol-tip{position:fixed;z-index:50;padding:2px 6px;border-radius:4px;background:#111;color:#f2c94c;
+  font:600 11px/1.3 var(--font-mono);pointer-events:none;white-space:pre}
+.studio-vol-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
 .st-ph{position:absolute;top:0;width:2px;margin-left:-1px;background:var(--danger);pointer-events:none}
 .studio-insp{position:sticky;top:var(--space-4)}
 .studio-insp-tabs{margin:var(--space-4) var(--space-4) 0}
@@ -4556,7 +4569,7 @@ EDITOR_CSS = r"""
 .ed-stage .studio-player.is-vertical{aspect-ratio:9/16}
 .ed-stage .studio-player video{width:100%;height:100%}
 .ed-transport{flex:none}
-.ed-main .studio-tl{flex:none;max-height:340px}
+.ed-main .studio-tl{flex:none;max-height:392px}
 .ed-side{display:flex;flex-direction:column;gap:var(--space-4);min-height:0;overflow:hidden}
 .ed-side .studio-sync{flex:none;padding:var(--space-4)}
 .ed-side .studio-pending{max-height:96px;overflow:auto}
@@ -4846,7 +4859,8 @@ LAYOUT_CSS = r"""
 /* a lane put away: its rows go, and the rest move up (studio_drawTimeline sets the rows) */
 .studio-tracks.off-video .st-shot,.studio-tracks.off-video .st-introclip,.studio-tracks.off-video .st-lockband,
 .studio-tracks.off-trans .st-tr,.studio-tracks.off-fx .st-fx,.studio-tracks.off-speed .st-speed,
-.studio-tracks.off-text .st-text,.studio-tracks.off-music .st-music{display:none}
+.studio-tracks.off-text .st-text,.studio-tracks.off-music .st-music,.studio-tracks.off-music .st-vol-music,
+.studio-tracks.off-game .st-gblock,.studio-tracks.off-game .st-vol-game{display:none}
 """
 
 LAYOUT_CSS += r"""
@@ -5042,6 +5056,13 @@ CSS += r"""
 .studio-flow ul.studio-slot-list{list-style:none;padding:0;gap:var(--space-1);max-height:260px;overflow:auto}
 .studio-slot-list li{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,auto) auto;gap:var(--space-2);align-items:center}
 .studio-slot-list li .mono{font-size:11px;white-space:normal;text-align:right}
+.studio-slot-list li[hidden]{display:none}
+.studio-slot-list li.is-off{opacity:.55}
+.studio-slot-sub{margin-top:var(--space-3)}
+.studio-slot-game{margin-left:var(--space-2);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--text-tertiary)}
+.studio-slot-q{width:100%}
+.studio-slot-others summary{cursor:pointer;font-size:12.5px;color:var(--text-secondary);padding:var(--space-2) 0}
 .studio-flow-choice button{align-self:flex-start}
 .studio-attn{position:relative;box-shadow:0 0 0 2px var(--accent);animation:studio-attn var(--dur-pulse) var(--ease-standard) infinite}
 @keyframes studio-attn{0%,100%{box-shadow:0 0 0 2px var(--accent),0 0 0 0 var(--accent-muted)}
