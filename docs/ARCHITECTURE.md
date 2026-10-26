@@ -262,6 +262,19 @@ the picture and nothing else. With no card configured there is nothing to
 switch to, so it stops instead — a paused stream still showing the game is not
 paused, it is unattended.
 
+**Outside those holds no card belongs on air.** A card is an ordinary OBS scene,
+so it stays up until something switches away -- and a recording-only session
+never calls `obs.start()`, the one place a broadcast picks its scene. On
+2026-10-26 that recorded a whole Valorant match as the previous night's ending
+card. So: a recording-only session puts the game scene up before `StartRecord`
+(and skips the starting card, which nobody would see); STOPPING takes the card
+down with the broadcast; the idle Record button does the same; and a LIVE
+session that is not paused and has no starting card due checks every
+`SCENE_EVERY` seconds and switches a card back to the game, loudly. The game
+scene is the game's own, else `obs.default_scene`, else the first OBS scene
+that is not a card. Only AutoStream's cards are ever moved off; a scene of the
+player's own is never touched. `tests/test_recording_scene.py` is the matrix.
+
 That left the kill-switch hotkey holding a stream up rather than ending one,
 which is not a kill switch. It now sends `kill`, a separate command that pauses
 *and* stops. The `rules.paused_flag_file` is unchanged: it is a "do not stream"

@@ -82,6 +82,15 @@ def scene_name(cfg, which: str) -> str:
     return f"{prefix} {SCREENS[which]['suffix']}"
 
 
+def all_scene_names(cfg) -> set[str]:
+    """Every card's scene name, configured or not.
+
+    Not filtered by `configured()`: a card switched off today may still be the
+    scene OBS was left on by a session that ran when it was on.
+    """
+    return {scene_name(cfg, which) for which in SCREENS}
+
+
 def source_name(cfg, which: str) -> str:
     return f"{scene_name(cfg, which)} media"
 
