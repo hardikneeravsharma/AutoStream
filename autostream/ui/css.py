@@ -4248,11 +4248,12 @@ STUDIO_CSS = r"""
 .studio-labels{flex:none;width:88px;border-right:var(--border-hair) solid var(--border-subtle);background:var(--surface)}
 .st-lab{display:flex;align-items:center;padding:0 10px;font-size:11px;color:var(--text-tertiary);
   text-transform:uppercase;letter-spacing:.05em;border-bottom:var(--border-hair) solid var(--border-subtle)}
-.st-lab:nth-child(1){height:26px}.st-lab:nth-child(2){height:64px}.st-lab:nth-child(3){height:30px}
-.st-lab:nth-child(4){height:34px}.st-lab:nth-child(5){height:38px}.st-lab:nth-child(6){height:30px}
+.st-lab:nth-child(1){height:26px}.st-lab:nth-child(2){height:64px}.st-lab:nth-child(3){height:48px}
+.st-lab:nth-child(4){height:30px}.st-lab:nth-child(5){height:34px}.st-lab:nth-child(6){height:38px}
+.st-lab:nth-child(7){height:30px}
 /* The heights here are only what the labels are before the first draw: the
    timeline sets each one from STUDIO_ROW, which is where they are decided. */
-.st-lab:nth-child(7){height:106px;border-bottom:0}
+.st-lab:nth-child(8){height:106px;border-bottom:0}
 .studio-scroll{flex:1;overflow-x:auto;overflow-y:hidden;min-width:0}
 .st-area{position:relative;margin-right:24px;user-select:none;touch-action:pan-x}
 .st-ruler{position:absolute;left:0;right:0;cursor:pointer;border-bottom:var(--border-hair) solid var(--border-subtle)}
@@ -4568,7 +4569,7 @@ EDITOR_CSS = r"""
 .ed-stage .studio-player.is-vertical{aspect-ratio:9/16}
 .ed-stage .studio-player video{width:100%;height:100%}
 .ed-transport{flex:none}
-.ed-main .studio-tl{flex:none;max-height:340px}
+.ed-main .studio-tl{flex:none;max-height:392px}
 .ed-side{display:flex;flex-direction:column;gap:var(--space-4);min-height:0;overflow:hidden}
 .ed-side .studio-sync{flex:none;padding:var(--space-4)}
 .ed-side .studio-pending{max-height:96px;overflow:auto}
