@@ -639,7 +639,7 @@ CONTROLS: list[Control] = [
             acts=("studio-gd",),
             why="the song's parts and loudness for the drawing on the guide's Song step; a song "
                 "AutoStream has not read is refused rather than read from any path"),
-    Control("/api/studio/slot", "POST", CALL, "Replace... / Remove...: one shot, no other kill moved", "studio",
+    Control("/api/studio/slot", "POST", CALL, "Replace... / Remove... / Swap: one shot, no other kill moved", "studio",
             body={"project": None, "shot": 0}, expect=_has("ok"),
             reject={"project": None, "shot": 0}, reject_soft=True,
             acts=("studio-replace", "studio-remove", "studio-slot-do"),

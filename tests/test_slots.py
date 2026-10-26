@@ -204,3 +204,134 @@ def test_the_endpoint_offers_applies_and_counts_what_moved(monkeypatch, tmp_path
     assert closed["ok"] is False or closed["moved"] == 0
     refused = srv.studio_slot({"project": proj, "shot": i, "do": "replace", "clip": "C:/elsewhere/x.mp4"})
     assert refused["ok"] is False and "clips folder" in refused["error"]
+
+
+# ------------------------------------------------------------------ exchange and every game's clips
+
+def test_exchange_trades_two_clips_and_keeps_every_kill_on_its_second():
+    """Clips swap, slots stay: each clip's kill lands on the other's beat; nothing else moves."""
+    proj, lib = reel()
+    rows = {c["path"].lower(): c for c in lib}
+    fl = flurry(proj)
+    i, j = fl[1], fl[5]
+    before = slots.song_kills(proj)
+    a, b = proj["shots"][i], proj["shots"][j]
+    new = slots.exchange(proj, i, j, rows)
+    assert slots.song_kills(new) == before
+    assert new["shots"][i]["clip"] == b["clip"] and new["shots"][j]["clip"] == a["clip"]
+    for k in ("pre", "duration", "speed", "fx", "transition"):         # the slot is the slot's
+        assert new["shots"][i].get(k) == a.get(k) and new["shots"][j].get(k) == b.get(k)
+    assert all(slots._footage_ok(s) for s in new["shots"])
+    assert length(new) == pytest.approx(length(proj))
+    assert proj["shots"][i]["clip"] == a["clip"]                       # the input is not touched
+
+
+def test_exchange_options_list_every_other_shot_and_say_why_one_cannot_trade():
+    proj, lib = reel()
+    rows = {c["path"].lower(): c for c in lib}
+    i = flurry(proj)[2]
+    # a shot whose clip has no run-up at all cannot take shot i's place
+    j = flurry(proj)[6]
+    proj["shots"][j] = dict(proj["shots"][j], clip="C:/clips/bare.mp4", name="bare", kill=0.05, kills=[0.05],
+                            pre=0.0, clip_seconds=2.0)
+    rows["c:/clips/bare.mp4"] = clip("bare", [0.05], seconds=2.0)
+    got = slots.exchange_options(proj, i, rows)
+    shots = [w["shot"] for w in got["swaps"]]
+    take = slots.take_shots(proj)
+    assert i not in shots and not set(take) & set(shots)
+    assert any(w["ok"] for w in got["swaps"])
+    bare = next(w for w in got["swaps"] if w["shot"] == j)
+    assert not bare["ok"] and "bare" in bare["why"] and "before its kill" in bare["why"]
+    with pytest.raises(slots.SlotError) as e:
+        slots.exchange(proj, i, j, rows)
+    assert "before its kill" in str(e.value)
+
+
+def test_the_build_take_is_never_exchanged_and_says_why():
+    proj, lib = reel()
+    rows = {c["path"].lower(): c for c in lib}
+    take = slots.take_shots(proj)
+    got = slots.exchange_options(proj, take[0], rows)
+    assert got["swaps"] == [] and "take" in got["why"]
+    with pytest.raises(slots.SlotError) as e:
+        slots.exchange(proj, flurry(proj)[0], take[1], rows)
+    assert "take" in str(e.value)
+
+
+def test_exchange_falls_back_on_what_the_shot_knows_when_its_clip_is_not_in_the_library():
+    proj, _ = reel()
+    fl = flurry(proj)
+    before = slots.song_kills(proj)
+    new = slots.exchange(proj, fl[0], fl[3], {})
+    assert slots.song_kills(new) == before
+    assert new["shots"][fl[0]]["clip"] == proj["shots"][fl[3]]["clip"]
+
+
+def test_options_offer_every_game_own_game_first_and_the_misfits_with_reasons():
+    proj, lib = reel()
+    i = flurry(proj)[4]
+    b, a = slots.need(proj["shots"][i])
+    rows = [dict(c, game="VALORANT") for c in spares(proj, lib)]
+    cs2 = dict(clip("cs2-one", [3.5]), game="Counter-Strike 2")
+    short = dict(clip("short", [0.05]), game="Counter-Strike 2")
+    crowded = dict(clip("crowded", [3.5, 3.5 + a / 2]), game="VALORANT")
+    got = slots.options(proj, i, rows + [cs2, short, crowded], limit=None, games={"VALORANT"})
+    names = [c["name"] for c in got["clips"]]
+    assert "cs2-one" in names                                          # any game is offered
+    # at an equal score the reel's own game comes first
+    sc = next(c["score"] for c in got["clips"] if c["name"] == "cs2-one")
+    same = [c for c in got["clips"] if c["score"] == sc]
+    assert same[-1]["name"] == "cs2-one" and all(c["own"] for c in same[:-1])
+    others = {c["name"]: c for c in got["others"]}
+    assert set(others) == {"short", "crowded"}
+    assert "before its kill" in others["short"]["why"]
+    assert "another kill" in others["crowded"]["why"]
+    # never offered: using one would break the beat
+    with pytest.raises(slots.SlotError):
+        slots.replace(proj, i, short)
+
+
+def test_the_endpoint_exchanges_and_fill_stays_in_the_reels_game(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from autostream import webui
+
+    proj, lib = reel()
+    for c in lib:
+        p = tmp_path / Path(c["path"]).name
+        p.write_bytes(b"x")
+        old = c["path"]
+        c["path"] = str(p)
+        for s in proj["shots"]:
+            if s["clip"] == old:
+                s["clip"] = str(p)
+        if proj["build_clip"] == old:
+            proj["build_clip"] = str(p)
+    # a better clip in another game's folder: offered first, but not what "fill" picks for the player
+    star = clip("star", [3.5], labels=["CLOSER"])
+    star["path"] = str(tmp_path / "star.mp4")
+    (tmp_path / "star.mp4").write_bytes(b"x")
+    srv = webui.Server.__new__(webui.Server)
+    monkeypatch.setattr(webui.cfg, "load", lambda: SimpleNamespace())
+    monkeypatch.setattr(webui.Server, "_clips_dir", staticmethod(lambda c: tmp_path))
+    monkeypatch.setattr(studio, "library", lambda root: {"games": [
+        {"game": "VALORANT", "folders": [{"clips": lib}]},
+        {"game": "Counter-Strike 2", "folders": [{"clips": [star]}]}]})
+    real = studio.normalise
+    monkeypatch.setattr(studio, "normalise", lambda p, root, probe=None: real(p, root, probe=lambda x: 12.0))
+    fl = flurry(proj)
+    i, j = fl[1], fl[5]
+    got = srv.studio_slot({"project": proj, "shot": i, "do": "options"})
+    assert got["ok"] and got["swaps"] and "others" in got
+    assert got["clips"][0]["name"] == "star" and got["clips"][0]["game"] == "Counter-Strike 2"
+    assert any(w["shot"] == j and w["ok"] for w in got["swaps"])
+    swapped = srv.studio_slot({"project": proj, "shot": i, "do": "exchange", "with": j})
+    assert swapped["ok"] and swapped["moved"] == 0, swapped.get("error")
+    assert swapped["project"]["shots"][i]["clip"] == proj["shots"][j]["clip"]
+    assert swapped["project"]["shots"][j]["clip"] == proj["shots"][i]["clip"]
+    filled = srv.studio_slot({"project": proj, "shot": i, "do": "fill"})
+    assert filled["ok"] and filled["project"]["shots"][i]["clip"] != star["path"]
+    used = srv.studio_slot({"project": proj, "shot": i, "do": "replace", "clip": star["path"]})
+    assert used["ok"] and used["moved"] == 0 and used["project"]["shots"][i]["clip"] == star["path"]
+    nowith = srv.studio_slot({"project": proj, "shot": i, "do": "exchange"})
+    assert nowith["ok"] is False

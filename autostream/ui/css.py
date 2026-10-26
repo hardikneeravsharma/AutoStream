@@ -5042,6 +5042,13 @@ CSS += r"""
 .studio-flow ul.studio-slot-list{list-style:none;padding:0;gap:var(--space-1);max-height:260px;overflow:auto}
 .studio-slot-list li{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,auto) auto;gap:var(--space-2);align-items:center}
 .studio-slot-list li .mono{font-size:11px;white-space:normal;text-align:right}
+.studio-slot-list li[hidden]{display:none}
+.studio-slot-list li.is-off{opacity:.55}
+.studio-slot-sub{margin-top:var(--space-3)}
+.studio-slot-game{margin-left:var(--space-2);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--text-tertiary)}
+.studio-slot-q{width:100%}
+.studio-slot-others summary{cursor:pointer;font-size:12.5px;color:var(--text-secondary);padding:var(--space-2) 0}
 .studio-flow-choice button{align-self:flex-start}
 .studio-attn{position:relative;box-shadow:0 0 0 2px var(--accent);animation:studio-attn var(--dur-pulse) var(--ease-standard) infinite}
 @keyframes studio-attn{0%,100%{box-shadow:0 0 0 2px var(--accent),0 0 0 0 var(--accent-muted)}

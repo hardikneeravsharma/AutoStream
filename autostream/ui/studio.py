@@ -7053,9 +7053,38 @@ async function studio_slotDo(what, b) {
     if (!got || !got.ok) { studio_drawInspector(); toast((got && got.error) || 'That clip could not be used.', 'warn'); return; }
     return studio_slotApply(got, name + ': its clip replaced');
   }
+  if (what === 'swap') {
+    /* ONE UNDO STEP FOR BOTH SHOTS: a swap is one decision, and undoing half of it would leave
+       one clip in two places. studio_slotApply hands the server's whole project to studio_change. */
+    const j = Number(b.getAttribute('data-with'));
+    s.busy = true;
+    studio_drawInspector();
+    const got = await API.post('/api/studio/slot', {project: studio.project, shot: s.shot, do: 'exchange', with: j}).catch(() => null);
+    if (studio.slot !== s) return;
+    s.busy = false;
+    if (!got || !got.ok) { studio_drawInspector(); toast((got && got.error) || 'Those two shots could not be swapped.', 'warn'); return; }
+    return studio_slotApply(got, name + ' and ' + studio_shotName(j) + ': their clips swapped');
+  }
   if (what === 'close') return studio_slotApply(s.close, name + ' removed, the gap closed');
   if (what === 'fill') return studio_slotApply(s.fill, name + ': filled with the next best clip');
   if (what === 'shorten') return studio_slotApply(s.shorten, 'The reel ends before ' + name);
+}
+
+/* THE FIND BOX FILTERS IN PLACE. Redrawing the inspector per keystroke would take the caret out of
+   the box it is typing in; hiding rows keeps it there, and studio.slot.q keeps the filter across a
+   redraw that something else causes. */
+function studio_slotHides(c, q) {
+  q = String(q || '').trim().toLowerCase();
+  return !!q && ((c.name || '') + ' ' + (c.game || '')).toLowerCase().indexOf(q) < 0;
+}
+
+function studio_slotFind(e) {
+  if (!e.target || e.target.id !== 'studio-slot-q' || !studio.slot) return;
+  studio.slot.q = e.target.value;
+  const q = studio.slot.q.trim().toLowerCase();
+  document.querySelectorAll('#studio-slot li[data-find]').forEach(li => {
+    li.hidden = !!q && li.getAttribute('data-find').indexOf(q) < 0;
+  });
 }
 
 function studio_slotHtml(i) {
@@ -7064,21 +7093,55 @@ function studio_slotHtml(i) {
   const x = '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-slot-x" aria-label="Close">✕</button>';
   if (s.busy) return '<div class="studio-flow is-ask studio-slot" id="studio-slot" aria-busy="true"><p class="muted studio-small">Working out what fits this shot’s place on the song…</p></div>';
   const o = s.opts || {}, list = o.clips || [];
-  const row = c => '<li><span class="truncate" title="' + esc(c.name) + '">' + esc(c.name) + '</span><span class="muted mono">' +
+  /* the game beside the name, because the list is every game's clips now: a Valorant kill
+     offered for a CS2 reel is allowed, but it should never be a surprise */
+  const game = c => c.game ? '<span class="studio-slot-game">' + esc(c.game) + '</span>' : '';
+  const find = c => esc(((c.name || '') + ' ' + (c.game || '')).toLowerCase());
+  const hide = c => studio_slotHides(c, s.q) ? ' hidden' : '';
+  const row = c => '<li data-find="' + find(c) + '"' + hide(c) + '><span class="truncate" title="' + esc(c.name) + '">' + esc(c.name) + game(c) + '</span><span class="muted mono">' +
     (o.take ? c.kills + ' kills' + (c.later > 0.05 ? ', starts ' + c.later.toFixed(1) + ' s later' : '')
             : 'kill at ' + Number(c.kill).toFixed(2) + ' s' + (c.hs ? ' · headshot' : '')) + '</span>' +
     '<button type="button" class="btn btn-sm" data-act="studio-slot-do" data-do="use" data-clip="' + esc(c.clip) + '"' +
     (o.take ? '' : ' data-kill="' + c.kill + '"') + '>Use</button></li>';
   if (s.mode === 'replace') {
+    if (o.ok === false) {
+      return '<div class="studio-flow is-ask studio-slot" id="studio-slot" role="region" aria-label="Replace this shot’s clip">' +
+        '<div class="studio-slot-head"><p class="studio-flow-head">Replace ' + esc(studio_shotName(i)) + '</p>' + x + '</div>' +
+        '<p class="studio-flow-why">' + esc(o.error || 'It could not be worked out.') + '</p></div>';
+    }
+    /* THREE PLACES A BETTER CLIP CAN COME FROM, nearest first. A strong clip already in the reel is
+       the cheapest fix -- trade it in, and the weak one goes to its slot -- so the swaps lead; then
+       every clip that lands a kill on this beat; then, folded away, the ones that cannot, each with
+       why, so a clip the player knows they have is never simply missing. None of the three moves
+       any other kill on the song. */
+    const swaps = o.swaps || [], others = o.others || [];
+    const swapRow = w => '<li' + (w.ok ? '' : ' class="is-off"') + '><span class="truncate" title="' + esc(w.name) + '">' +
+      esc(studio_shotName(w.shot)) + ' · ' + esc(w.name) + '</span><span class="muted mono">' +
+      (w.ok ? 'kill at ' + Number(w.kill_here).toFixed(2) + ' s here' : esc(w.why)) + '</span>' +
+      '<button type="button" class="btn btn-sm" data-act="studio-slot-do" data-do="swap" data-with="' + w.shot + '"' +
+      (w.ok ? '' : ' disabled title="' + esc(w.why) + '"') + '>Swap</button></li>';
+    const offRow = c => '<li class="is-off" data-find="' + find(c) + '"' + hide(c) + '><span class="truncate" title="' + esc(c.name) + '">' + esc(c.name) + game(c) +
+      '</span><span class="muted mono">' + esc(c.why || 'does not fit this beat') + '</span><span></span></li>';
+    const q = s.q || '';
+    const swapPart = o.take ? '' :
+      '<p class="studio-flow-head studio-slot-sub">Swap with a shot in this reel</p>' +
+      '<p class="muted studio-small">The two clips trade places; both slots keep their place, length and effects, and each kill lands on the other’s beat.</p>' +
+      (swaps.length ? '<ul class="studio-slot-list" id="studio-slot-swaps">' + swaps.map(swapRow).join('') + '</ul>' : '') +
+      (swaps.some(w => w.ok) ? '' : '<p class="studio-flow-why">' + esc(o.swap_why || 'No shot can swap with this one.') + '</p>');
     return '<div class="studio-flow is-ask studio-slot" id="studio-slot" role="region" aria-label="Replace this shot’s clip">' +
-      '<div class="studio-slot-head"><p class="studio-flow-head">' + (o.take ? 'Takes that land on the drop' : 'Clips that land a kill on this beat') + '</p>' + x + '</div>' +
-      (o.ok === false ? '<p class="studio-flow-why">' + esc(o.error || 'It could not be worked out.') + '</p>' :
-       '<p class="muted studio-small">' + (o.take ? 'The build is one take: another clutch, ace or multi-kill whose last kill lands on the drop. Nothing after it moves.'
-         : 'Each has the footage this shot’s run-up and tail need. Its place, length and effects stay; no other kill moves.') + '</p>' +
-       (list.length ? '<ul class="studio-slot-list">' + list.map(row).join('') + '</ul>' : '<p class="studio-flow-why">' + esc(o.why || 'Nothing fits.') + '</p>')) +
+      '<div class="studio-slot-head"><p class="studio-flow-head">Replace ' + esc(studio_shotName(i)) + '</p>' + x + '</div>' +
+      swapPart +
+      '<p class="studio-flow-head studio-slot-sub">' + (o.take ? 'Takes that land on the drop' : 'Clips that land a kill on this beat') + '</p>' +
+      '<p class="muted studio-small">' + (o.take ? 'The build is one take: another clutch, ace or multi-kill whose last kill lands on the drop. Nothing after it moves.'
+         : 'From every game. Each has the footage this shot’s run-up and tail need. Its place, length and effects stay; no other kill moves.') + '</p>' +
+      (list.length + others.length > 6 ? '<input type="search" class="input studio-slot-q" id="studio-slot-q" placeholder="Find a clip or game" aria-label="Find a clip or game" value="' + esc(q) + '">' : '') +
+      (list.length ? '<ul class="studio-slot-list" id="studio-slot-clips">' + list.map(row).join('') + '</ul>' : '<p class="studio-flow-why">' + esc(o.why || 'Nothing fits.') + '</p>') +
+      (others.length ? '<details class="studio-slot-others" id="studio-slot-others"><summary>Clips that don’t fit this beat (' + others.length + ')</summary>' +
+        '<ul class="studio-slot-list">' + others.map(offRow).join('') + '</ul></details>' : '') +
       '</div>';
   }
-  const best = list[0];
+  /* the clip "fill" will use: the server's choice, which stays in the reel's own game when it can */
+  const best = list.find(c => c.own !== false) || list[0];
   const opt = (what, label, got, says) => '<div class="studio-flow-choice"><b>' + esc(label) + '</b><p class="muted studio-small">' +
     esc(got && got.ok ? says : ((got && got.error) || 'It cannot be done here.')) + '</p>' +
     '<button type="button" class="btn btn-sm' + (what === 'close' ? ' btn-primary' : '') + '" data-act="studio-slot-do" data-do="' + what + '"' +
@@ -11391,6 +11454,7 @@ function studio_wire() {
   document.addEventListener('input', studio_camInput);
   document.addEventListener('input', e => { if (e.target && e.target.id === 'studio-gd-name') studio.gd.name = e.target.value; });
   document.addEventListener('input', studio_gdFind);
+  document.addEventListener('input', studio_slotFind);
   document.addEventListener('change', studio_gdViewChange);
   document.addEventListener('input', studio_gdLookInput);
   document.addEventListener('change', studio_gdLookInput);

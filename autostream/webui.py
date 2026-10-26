@@ -4343,7 +4343,10 @@ class Server:
 
         `do` is "options" (the clips that can fill the shot's slot, best first), "replace" (with
         `clip`, and `kill` if one was chosen), "fill" (the best of those), "close" (taken out, the
-        shots either side stretched over it) or "shorten" (the reel ends before it). -> {"ok",
+        shots either side stretched over it), "shorten" (the reel ends before it) or "exchange"
+        (with `with`, another shot's index: the two trade clips and keep their slots). "options"
+        also carries `swaps` (the shots it can trade with, each usable or not and why) and `others`
+        (the clips that cannot land on this beat, and why). -> {"ok",
         "project", "derived", "notes", "moved"} where `moved` counts the other kills that are no
         longer on their song second -- 0, or the page says so -- or {"ok": False, "error"} saying
         why in words. The project is the page's, normalised; nothing is saved here.
@@ -4360,29 +4363,40 @@ class Server:
         except (TypeError, ValueError):
             return {"ok": False, "error": "Select a shot first."}
         do = str(body.get("do") or "options")
-        # the clips this machine has, of the reel's own game: a slot is only offered a clip that is
-        # in the library, never a path from the request
+        # the clips this machine has, of every game: a slot is only offered a clip that is in the
+        # library, never a path from the request. Any game, because the strong clip a player is
+        # after may be in another game's folder; the reel's own game still comes first at an equal
+        # score, and "fill" -- the choice made for them -- stays in it when it can.
         games, rows = {}, []
         for g in studio.library(root)["games"]:
             for f in g["folders"]:
                 for clip in f["clips"]:
                     games[str(clip["path"]).lower()] = g.get("game") or g.get("name") or ""
                     rows.append(dict(clip, game=g.get("game") or g.get("name") or ""))
-        mine = {games.get(str(s["clip"]).lower()) for s in proj["shots"]} - {None}
-        rows = [r for r in rows if not mine or r["game"] in mine]
+        mine = {games.get(str(s["clip"]).lower()) for s in proj["shots"]} - {None, ""}
         by_path = {str(r["path"]).lower(): r for r in rows}
         kills = {str(r["path"]).lower(): [float(k) for k in r.get("kills") or []] for r in rows}
         take = slots.take_shots(proj)
         try:
             if do == "options":
-                return {"ok": True, **slots.options(proj, i, rows)}
+                offer = slots.options(proj, i, rows, limit=None, games=mine)
+                swaps = slots.exchange_options(proj, i, by_path)
+                return {"ok": True, **offer, "swaps": swaps["swaps"], "swap_why": swaps["why"]}
             before = slots.song_kills(proj)
-            if do in ("replace", "fill"):
+            if do == "exchange":
+                try:
+                    j = int(body.get("with"))
+                except (TypeError, ValueError):
+                    return {"ok": False, "error": "Choose the shot to swap with."}
+                new = slots.exchange(proj, i, j, by_path)
+                keep = before
+            elif do in ("replace", "fill"):
                 if do == "fill":
-                    offer = slots.options(proj, i, rows)
+                    offer = slots.options(proj, i, rows, limit=None, games=mine)
                     if not offer["clips"]:
                         raise slots.SlotError(offer["why"])
-                    want, kill = offer["clips"][0]["clip"], offer["clips"][0].get("kill")
+                    pick = next((c for c in offer["clips"] if c.get("own", True)), offer["clips"][0])
+                    want, kill = pick["clip"], pick.get("kill")
                 else:
                     want, kill = str(body.get("clip") or ""), body.get("kill")
                 row = by_path.get(want.lower())
