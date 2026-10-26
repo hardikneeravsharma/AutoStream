@@ -44,6 +44,9 @@ class FakeObs:
         self.audio_watching = False
         self.started = self.stopped = 0
         self.scene = None
+        self.default_scene = None
+        # What OBS has, in its own order: scene_names() answers from this.
+        self.scenes = ["Scene"]
         self.built = []
         # False stands in for an OBS that is not answering at all -- closed,
         # crashed, or mid-restart -- as distinct from one that answers and
@@ -122,7 +125,17 @@ class FakeObs:
         return {}
 
     def set_scene(self, scene):
-        self.scene = scene
+        # A falsy scene is a no-op, as in the real one: set_scene(None) must
+        # not read as "switched to nothing" and pass a test it should fail.
+        if scene:
+            self.scene = scene
+
+    def current_scene(self):
+        return self.scene or ""
+
+    def scene_names(self):
+        self.connect()
+        return list(self.scenes)
 
     def ensure_media_scene(self, scene, source, path, loop=True):
         self.built.append(("media", scene, path))
@@ -133,7 +146,10 @@ class FakeObs:
         return True
 
     def start(self, scene=None, overlay=None):
+        # The real start() puts a scene up before the output starts, falling
+        # back to obs.default_scene -- which the fake holds as an attribute.
         self.started += 1
+        self.set_scene(scene or self.default_scene)
         self.streaming = True
 
     def stop(self):
@@ -209,6 +225,7 @@ def engine(phase: str = IDLE, paused: bool = False,
     eng._last_title = None
     eng._blank_checked = 0.0
     eng._blank_strikes = 0
+    eng._scene_checked = 0.0
     eng._disk_checked = 0.0
     eng.disk_free_gb = None
     eng._disk_warned = False

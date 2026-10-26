@@ -143,6 +143,8 @@ class Engine:
         # Black-output watchdog; see _check_picture.
         self._blank_checked = 0.0
         self._blank_strikes = 0
+        # Card-on-air watchdog; see _check_scene.
+        self._scene_checked = 0.0
         # Recording-drive watchdog; see _check_disk.
         self._disk_checked = 0.0
         # Free space where the recording is written, and whether the warning
@@ -782,10 +784,21 @@ class Engine:
         and TESTING have nothing to do -- and a phase that exists only to be
         skipped is a phase somebody will one day debug for an hour.
         """
+        # THE GAME, BEFORE THE FIRST FRAME. A broadcast picks its scene in
+        # obs.start(), which this path never calls -- so the recording began on
+        # whatever OBS was last showing, and after a stream that was the
+        # ending card: an hour and twelve minutes of "Stream ended" in place of
+        # a Valorant match. And no starting card either: nobody is watching a
+        # recording begin, so it would only be the first seconds of every file
+        # the clips are cut from.
         try:
+            self.obs.connect(wait=True)
+            self.obs.set_scene(self._game_scene(hit))
             self.obs.set_overlay_text(hit.name)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            # Not fatal here: _start_recording reaches OBS on its own, and if
+            # it cannot either, the session is abandoned just below.
+            log.warning("could not put the game scene up: %s", e)
         self._start_recording()
         if not self.state.recording:
             # The whole point of the session is the recording. Without one
@@ -797,7 +810,6 @@ class Engine:
             return
         self._start_failures = 0
         self._goto(st.LIVE)
-        self._show_starting()
         self.obs.audio_watch_start()
         log.info("recording session #%d: %s", self.state.session_number, hit.name)
         notify.toast("AutoStream is recording", hit.name)
@@ -1638,11 +1650,79 @@ class Engine:
         """Put the game scene back on air and forget any screen deadline."""
         self._screen_until = None
         hit = self.watcher.active_game()
-        scene = (hit.scene if hit else None) or self.cfg.obs.default_scene or None
+        scene = self._game_scene(hit)
         if scene:
             self.obs.set_scene(scene)
         if hit:
             self.obs.set_overlay_text(hit.name)
+
+    def _game_scene(self, hit: GameHit | None) -> str | None:
+        """The scene that shows the game: the game's own, the configured
+        default, or failing both the first scene in OBS that is not a card.
+
+        The last is a guess, and still the right one for a stranger who never
+        set obs.default_scene: any scene of theirs is closer to the game than
+        a card that says the stream has ended.
+        """
+        from . import screens
+
+        scene = (hit.scene if hit else None) or self.cfg.obs.default_scene or None
+        if scene:
+            return scene
+        cards = screens.all_scene_names(self.cfg)
+        try:
+            return next((n for n in self.obs.scene_names() if n not in cards),
+                        None)
+        except Exception:  # noqa: BLE001
+            return None
+
+    # How often a LIVE session asks OBS what it is showing. One websocket
+    # round trip; a card recorded for ten seconds is a trim, for an hour a
+    # lost match.
+    SCENE_EVERY = 10.0
+
+    def _off_the_cards(self, why: str) -> bool:
+        """If one of AutoStream's cards is on air, put the game back.
+
+        -> whether it had to. Only the cards: a scene of the player's own is
+        theirs, whatever it shows. The caller decides whether a card could be
+        legitimately up at this moment -- this only looks and switches.
+        """
+        from . import screens
+
+        try:
+            now = self.obs.current_scene()
+            if not now or now not in screens.all_scene_names(self.cfg):
+                return False
+            try:
+                hit = self.watcher.active_game()
+            except Exception:  # noqa: BLE001
+                hit = None
+            scene = self._game_scene(hit)
+            if not scene or scene == now:
+                return False
+            log.warning("%s: OBS was showing %r with no card due -- switching "
+                        "to %r so the game is what gets recorded", why, now,
+                        scene)
+            self.obs.set_scene(scene)
+            return True
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not check which scene OBS is showing: %s", e)
+            return False
+
+    def _check_scene(self) -> None:
+        """A LIVE session, not paused, with no starting card due: no card
+        belongs on air. OBS restarted onto one, or one was clicked by mistake,
+        and nothing else would ever notice."""
+        if self._screen_until is not None:
+            return
+        now = time.monotonic()
+        if now - getattr(self, "_scene_checked", 0.0) < self.SCENE_EVERY:
+            return
+        self._scene_checked = now
+        if self._off_the_cards("watchdog"):
+            notify.toast("AutoStream", "OBS was showing a screen saver; "
+                                       "switched back to the game.")
 
     def _tick_screen(self) -> None:
         """Hand the picture back to the game once the starting card is done.
@@ -1692,6 +1772,7 @@ class Engine:
         self._check_camera()
         self._check_audio()
         self._tick_screen()
+        self._check_scene()
 
         # OBS health: only give up after a sustained outage, let OBS reconnect
         # first. With streaming off the output to watch is the RECORDING --
@@ -1996,6 +2077,10 @@ class Engine:
             # OBS back as the player had it before a platform's ceiling.
             # A resize refused while the outputs close is retried from IDLE.
             self._restore_stream_limits()
+        # THE CARD COMES DOWN WITH THE BROADCAST. Left up, it was waiting for
+        # the next thing OBS recorded -- which, with streaming off, nothing
+        # moved it off: a whole match recorded as "Stream ended".
+        self._off_the_cards("session over")
         self._camera_next = None
         if bid:
             try:
@@ -2173,6 +2258,9 @@ class Engine:
                      "nothing to start")
             notify.toast("AutoStream", "Turn on Settings > Recording first.")
             return False
+        if self.state.phase in (st.IDLE, st.ARMING):
+            # No session is holding a card up, so one on air is left over.
+            self._off_the_cards("record button")
         self._start_recording()
         if self.state.recording:
             if self.state.phase in (st.IDLE, st.ARMING):
