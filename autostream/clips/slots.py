@@ -14,7 +14,10 @@ fills it -- and
               the one before runs on, the one after starts sooner. Every other
               kill stays where it is on the song;
     fill      the next best clip into the same slot (replace, chosen for you);
-    shorten   when neither works: the reel ends before the shot, on the beat.
+    shorten   when neither works: the reel ends before the shot, on the beat;
+    exchange  two shots of the reel trade clips and keep their slots: each clip's
+              kill moves onto the other's beat, so a weak clip early in the reel
+              can change places with a strong one later without a replan.
 
 The build take of a Build and drop reel is one slot whose last kill is ON the
 drop: it is only ever swapped for another take that lands there (`build_options`).
@@ -109,24 +112,60 @@ def _in_reel(project: dict) -> set[str]:
 
 # ------------------------------------------------------------------ replace
 
-def options(project: dict, i: int, rows: list[dict], *, limit: int = 12) -> dict:
-    """The clips that can fill shot i's slot, best first. -> {"slot", "clips", "take", "why"}
+def misfit(row: dict, before: float, after: float) -> str:
+    """Why no kill of this clip can fill a slot that needs this footage, in words: the nearest miss."""
+    secs = _seconds(row)
+    ks = [float(k) for k in row.get("kills") or []]
+    if not ks:
+        return "has no kill read in it"
+    best = None
+    for k in ks:
+        short_b = max(0.0, (before + EDGE) - k)
+        short_a = max(0.0, k + after - (secs - EDGE))
+        near = [float(x) for x in ks if abs(float(x) - k) > SAME_KILL and k - before - CLEAR < float(x) < k + after + CLEAR]
+        if short_b > 1e-6:
+            why = f"needs {before:.1f} s before its kill, has {max(0.0, k - EDGE):.1f} s"
+        elif short_a > 1e-6:
+            why = f"needs {after:.1f} s after its kill, has {max(0.0, secs - EDGE - k):.1f} s"
+        elif near:
+            d = min(near, key=lambda x: abs(x - k)) - k
+            why = f"shows another kill {abs(d):.1f} s {'after' if d > 0 else 'before'} it"
+        else:
+            continue
+        # the nearest miss is the one worth naming; a crowded window counts as half a second short
+        cost = short_b + short_a if short_b + short_a > 1e-6 else 0.5
+        if best is None or cost < best[0]:
+            best = (cost, why)
+    return best[1] if best else ""
 
-    One clip, one place: a clip already in the reel is not offered. The kill offered from each
-    clip is its best one that fits -- a headshot before a body kill."""
+
+def options(project: dict, i: int, rows: list[dict], *, limit: int | None = 12,
+            games: set[str] | None = None) -> dict:
+    """The clips that can fill shot i's slot, best first. -> {"slot", "clips", "others", "take", "why"}
+
+    One clip, one place: a clip already in the reel is not offered here (it is exchanged instead).
+    The kill offered from each clip is its best one that fits -- a headshot before a body kill.
+    Every game's clips are offered; at an equal score the reel's own `games` come first, so "fill"
+    stays in the reel's game while a player can still reach for another. `others` are the clips that
+    cannot land a kill on this beat, each with why in words: a clip missing from the usable list is
+    never a mystery, and never offered, since using it would break the beat."""
     shots = project["shots"]
     if not 0 <= i < len(shots):
         raise SlotError("That shot is not in the reel any more.")
     if i in take_shots(project):
-        return build_options(project, rows, limit=limit)
+        return build_options(project, rows, limit=limit or 12)
     shot = shots[i]
     before, after = need(shot)
     have = _in_reel(project)
-    got = []
+    mine = {str(g).lower() for g in games or ()}
+    got, others = [], []
     for row in rows:
         path = str(row.get("path") or "")
         if not path or path.lower() in have:
             continue
+        name = str(row.get("name") or Path(path).stem)
+        game = str(row.get("game") or "")
+        own = not mine or game.lower() in mine
         ks = [float(k) for k in row.get("kills") or []]
         hs = [bool(h) for h in row.get("hs") or []] + [False] * len(ks)
         best = None
@@ -136,14 +175,17 @@ def options(project: dict, i: int, rows: list[dict], *, limit: int = 12) -> dict
                 if best is None or sc > best[0]:
                     best = (sc, k, h)
         if best:
-            got.append({"clip": path, "name": str(row.get("name") or Path(path).stem), "kill": round(best[1], 3),
+            got.append({"clip": path, "name": name, "game": game, "own": own, "kill": round(best[1], 3),
                         "hs": best[2], "score": round(best[0], 2)})
-    got.sort(key=lambda c: (-c["score"], c["name"]))
+        else:
+            others.append({"clip": path, "name": name, "game": game, "own": own, "why": misfit(row, before, after)})
+    got.sort(key=lambda c: (-c["score"], not c["own"], c["name"]))
+    others.sort(key=lambda c: (not c["own"], c["name"]))
     mark = song_kills(project)[i]
     why = "" if got else (f"None of your other clips has a kill with {before:.1f} s of footage before it and "
                           f"{after:.1f} s after it, which this shot's place on the song needs.")
     return {"slot": {"index": i, "mark": mark, "before": round(before, 3), "after": round(after, 3)},
-            "clips": got[:limit], "take": False, "why": why}
+            "clips": got[:limit] if limit else got, "others": others, "take": False, "why": why}
 
 
 def replace(project: dict, i: int, row: dict, kill: float | None = None) -> dict:
@@ -169,12 +211,110 @@ def replace(project: dict, i: int, row: dict, kill: float | None = None) -> dict
         raise SlotError(f"That kill needs {before:.1f} s of footage before it and {after:.1f} s after it, "
                         f"and the clip does not have them.")
     out = copy.deepcopy(project)
-    s = out["shots"][i]
+    _put(out["shots"][i], row, kill)
+    out.pop("remark", None)
+    return out
+
+
+def _put(s: dict, row: dict, kill: float) -> None:
+    """This clip's kill into slot `s`, in place: the slot's timing, speed and effects stay.
+
+    A run's second kill (anchors) and its stretch belong to the clip that is leaving."""
+    path = str(row.get("path") or "")
     for k in ("anchors", "stretch", "led"):
         s.pop(k, None)
     s.update({"clip": path, "clip_id": str(row.get("id") or ""), "name": str(row.get("name") or Path(path).stem),
               "clip_seconds": round(_seconds(row), 3), "kill": round(kill, 3), "kills": [round(kill, 3)],
               "clip_mtime": 0})
+
+
+# ------------------------------------------------------------------ exchange
+
+def _row_of(shot: dict, rows_by_path: dict | None) -> dict:
+    """The library's row for a shot's clip, or what the shot itself knows of it when the clip is
+    not in the library rows: its length and the kills it was planned with."""
+    row = (rows_by_path or {}).get(str(shot["clip"]).lower())
+    if row is not None:
+        return row
+    return {"path": shot["clip"], "id": shot.get("clip_id") or "", "name": shot.get("name") or Path(str(shot["clip"])).stem,
+            "clip_seconds": float(shot.get("clip_seconds") or 0.0),
+            "kills": [float(k) for k in (shot.get("kills") or [shot["kill"]])], "hs": []}
+
+
+def _kill_for(row: dict, own: float, slot: dict) -> float | None:
+    """The kill of this clip that fills `slot`: the one it was showing if that fits, else the
+    nearest that does (a headshot first) -- the clip should still show the kill it was chosen for."""
+    before, after = need(slot)
+    if fits(row, own, before, after):
+        return own
+    ks = [float(k) for k in row.get("kills") or []]
+    hs = [bool(h) for h in row.get("hs") or []] + [False] * len(ks)
+    ok = [(k, h) for k, h in zip(ks, hs) if fits(row, k, before, after)]
+    if not ok:
+        return None
+    return min(ok, key=lambda x: (not x[1], abs(x[0] - own)))[0]
+
+
+def _exchange_plan(project: dict, i: int, j: int, rows_by_path: dict | None):
+    """(i's row, its kill into j, j's row, its kill into i), or a SlotError naming the side that cannot go."""
+    shots = project["shots"]
+    if not (0 <= i < len(shots) and 0 <= j < len(shots)):
+        raise SlotError("That shot is not in the reel any more.")
+    if i == j:
+        raise SlotError("A shot cannot be swapped with itself.")
+    take = take_shots(project)
+    if i in take or j in take:
+        raise SlotError("The build is one take into the drop: swap it for another take, not with a shot.")
+    a, b = shots[i], shots[j]
+    if str(a["clip"]).lower() == str(b["clip"]).lower():
+        raise SlotError("Both shots are the same clip: swapping them changes nothing.")
+    ra, rb = _row_of(a, rows_by_path), _row_of(b, rows_by_path)
+    ka = _kill_for(ra, float(a["kill"]), b)      # i's clip, into j's slot
+    kb = _kill_for(rb, float(b["kill"]), a)      # j's clip, into i's slot
+    if ka is None or kb is None:
+        # which side, and the footage it lacks: "cannot" alone sends the player guessing
+        row, slot, here = (ra, b, j) if ka is None else (rb, a, i)
+        bf, af = need(slot)
+        raise SlotError(f"{row.get('name') or Path(str(row['path'])).stem} cannot fill shot {here + 1}: "
+                        f"it {misfit(row, bf, af) or 'has no kill that fits there'}.")
+    return ra, ka, rb, kb
+
+
+def exchange_options(project: dict, i: int, rows_by_path: dict | None = None) -> dict:
+    """Every other shot of the reel that shot i can trade clips with. -> {"swaps", "why"}
+
+    A pair that cannot trade is listed anyway, with why: the player looking for the strong clip
+    later in the reel has to see that it is there and what stops it."""
+    shots = project["shots"]
+    if not 0 <= i < len(shots):
+        raise SlotError("That shot is not in the reel any more.")
+    take = take_shots(project)
+    if i in take:
+        return {"swaps": [], "why": "The build is one take into the drop: it is swapped for another take, not with a shot."}
+    out = []
+    for j, s in enumerate(shots):
+        if j == i or j in take or str(s["clip"]).lower() == str(shots[i]["clip"]).lower():
+            continue
+        item = {"shot": j, "name": str(s.get("name") or Path(str(s["clip"])).stem)}
+        try:
+            _ra, ka, _rb, kb = _exchange_plan(project, i, j, rows_by_path)
+            item.update(ok=True, why="", kill_here=round(kb, 3), kill_there=round(ka, 3))
+        except SlotError as e:
+            item.update(ok=False, why=str(e))
+        out.append(item)
+    why = "" if any(x["ok"] for x in out) else ("No other shot's clip has the footage this shot's place needs."
+                                                  if out else "There is no other shot in the reel to swap with.")
+    return {"swaps": out, "why": why}
+
+
+def exchange(project: dict, i: int, j: int, rows_by_path: dict | None = None) -> dict:
+    """Shots i and j trade clips; each slot keeps its place, length, speed and effects. -> project
+
+    Each kill lands on the other's beat, so every kill of the reel stays on its song second."""
+    ra, ka, rb, kb = _exchange_plan(project, i, j, rows_by_path)
+    out = copy.deepcopy(project)
+    _put(out["shots"][i], rb, kb)
+    _put(out["shots"][j], ra, ka)
     out.pop("remark", None)
     return out
 
