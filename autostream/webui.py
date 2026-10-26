@@ -253,7 +253,9 @@ _CONTENT_TYPES = {
     ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm",
     ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4",
     ".ogg": "audio/ogg", ".opus": "audio/ogg", ".flac": "audio/flac",
-    ".aac": "audio/aac",
+    ".aac": "audio/aac", ".mov": "video/quicktime", ".mkv": "video/x-matroska",
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
+    ".bmp": "image/bmp",
 }
 
 
@@ -846,6 +848,21 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json({"error": err}, 400)
             else:
                 self._send_cached(blob, ctype)
+        elif u.path == "/api/studio/backgrounds":
+            # the player's own backgrounds, from their folders -- names and paths, never a file's bytes
+            from .clips import studio as _st
+
+            self._json({"ok": True, "items": _st.backgrounds(), "folder": str(_st.bg_dirs()[0])})
+        elif u.path == "/api/studio/bgfile":
+            # one background, only from a backgrounds folder, for the Look step's preview
+            from .clips import studio as _st
+
+            f = _st.bg_allowed((parse_qs(u.query).get("path") or [""])[0])
+            if f is None:
+                self._json({"error": "Not a background in your backgrounds folder."}, 400)
+            else:
+                home = next(d for d in _st.bg_dirs() if f.is_relative_to(d.resolve()))
+                self._media(str(f), home, _st.BG_VIDEO + _st.BG_IMAGE, "background")
         elif u.path == "/api/studio/thumb":
             q = parse_qs(u.query)
             jpg, err = self.app.studio_thumb((q.get("path") or [""])[0],
@@ -996,6 +1013,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.studio_feasible(b))
             elif p == "/api/studio/fill":
                 self._json(self.app.studio_fill(b))
+            elif p == "/api/studio/backgrounds/add":
+                self._json(self.app.studio_bg_add())
             elif p == "/api/studio/slot":
                 self._json(self.app.studio_slot(b))
             elif p == "/api/studio/songparts":
@@ -4159,10 +4178,14 @@ class Server:
             proj["intro_clip"] = ic
         if body.get("vfit") in studio.VFITS:
             proj["vfit"] = body["vfit"]
+        # The frame set by hand and what is behind the band, from the guide's Look step.
+        for k in ("frame", "bg"):
+            if isinstance(body.get(k), dict):
+                proj[k] = body[k]
         # Rebuilding a reel keeps what belongs to the reel rather than to the
         # plan. Untouched here: normalise clamps every one of them.
         keep = body.get("keep") if isinstance(body.get("keep"), dict) else {}
-        for k in ("cam", "vfit", "handle", "handle_pos", "outro_len", "overlays", "lyrics"):
+        for k in ("cam", "vfit", "frame", "bg", "handle", "handle_pos", "outro_len", "overlays", "lyrics"):
             if keep.get(k) is not None:
                 proj[k] = keep[k]
         # The drops the player marked, on the reel, so a rebuild asks for them again.
@@ -4289,6 +4312,31 @@ class Server:
             why = "More clips will not lengthen this reel: " + str(v.get("text") or "")
         return {"ok": True, "added": added, "verdict": v, "why": why,
                 "length": (got or {}).get("length")}
+
+    def studio_bg_add(self) -> dict:
+        """"Add your own" background: picked with the OS dialog, copied into the backgrounds
+        folder so the reel never depends on where it was downloaded. -> {"ok", "item"} or {"error"}."""
+        import shutil
+
+        from .clips import studio
+
+        got = self.clips_pick("background")
+        if got.get("error") or not got.get("path"):
+            return got if got.get("error") else {"ok": True, "item": None}
+        src = Path(got["path"])
+        if src.suffix.lower() not in studio.BG_VIDEO + studio.BG_IMAGE:
+            return {"error": "A background is an image or a video."}
+        home = studio.bg_dirs()[0]
+        try:
+            home.mkdir(parents=True, exist_ok=True)
+            dst = home / src.name
+            if studio.bg_allowed(str(src)) is None:     # already in a backgrounds folder: used where it is
+                shutil.copy2(src, dst)
+            else:
+                dst = src
+        except OSError as e:
+            return {"error": f"Could not copy it into your backgrounds folder: {e}"}
+        return {"ok": True, "item": next((i for i in studio.backgrounds() if Path(i["path"]) == dst), None)}
 
     def studio_slot(self, body: dict) -> dict:
         """REPLACE OR REMOVE ONE SHOT, AND NO OTHER KILL MOVES (clips/slots.py).
@@ -4603,8 +4651,8 @@ class Server:
                 "song": song, "format": proj.get("format"), "name": proj.get("name"),
                 "part_start": start, "part_end": end, "shaping": shaping,
                 "intro_clip": proj.get("intro_clip"), "vfit": proj.get("vfit"),
-                "keep": {k: proj.get(k) for k in ("cam", "vfit", "handle", "handle_pos", "outro_len",
-                                                  "overlays", "lyrics")}})
+                "keep": {k: proj.get(k) for k in ("cam", "vfit", "frame", "bg", "handle", "handle_pos",
+                                                  "outro_len", "overlays", "lyrics")}})
             if r.get("ok"):
                 said = (f"The part is {end - start:.0f} s and the reel was {now['length']:.0f} s, "
                         f"so it was planned again to fill the part.")
@@ -5444,6 +5492,10 @@ class Server:
                 title = "Choose a GIF or video for the intro"
                 types = [("Video or GIF", " ".join("*" + t for t in intros.TYPES)),
                          ("All files", "*.*")]
+            elif kind == "background":
+                title = "Choose a background image or video"
+                types = [("Image or video", "*.jpg *.jpeg *.png *.webp *.mp4 *.mov *.webm *.mkv *.m4v"),
+                         ("All files", "*.*")]
             elif kind == "outro":
                 title = "Choose your channel's outro video"
                 types = [("Video", "*.mp4 *.mov *.mkv *.webm"), ("All files", "*.*")]
@@ -5495,7 +5547,7 @@ class Server:
         # An intro is measured by intros.add() a moment later, and clips_probe
         # also goes looking for a matching replay -- work with no answer to
         # give about a GIF.
-        if kind not in ("intro", "outro"):
+        if kind not in ("intro", "outro", "background"):
             out.update(self.clips_probe({"path": str(path)}))
         return out
 

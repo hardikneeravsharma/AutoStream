@@ -202,6 +202,13 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
     and the player changes over to the real video when it is ready. It waits while you
     are live, recording or cutting clips, never starts beside a render you pressed, and
     can be switched off beside the player or in Settings › Clips.
+  - **Frame it yourself, over what you like.** The Look step shows the reel's 9:16
+    frame live, on one of your chosen clips: zoom in or out, slide the crop left or
+    right, move the game up or down -- Whole picture, Near fit and Zoom to fill are only
+    starting points. Behind the game: the game blurred (how much, and how dark), black,
+    a colour, or an image or looping video of your own from
+    `Videos\AutoStream\backgrounds`. *Add your own* copies one in; nothing in that
+    folder ever leaves your computer.
   - **Your own GIF or video over the slow start.** Some songs take nine seconds to
     arrive, and AutoStream will not spend the first kill on a mark the opening shot
     cannot reach — so the reel holds on one shot until the music gets there. Drop in

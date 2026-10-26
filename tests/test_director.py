@@ -481,3 +481,77 @@ def test_a_montage_flashes_about_half_its_cuts_and_never_over_a_kill():
     assert 0.40 <= share <= 0.60, share
     assert all(s["pre"] - s["tlen"] / 2 >= director.FLASH_CLEAR - 1e-9 for s in flashed)
     assert p.shots[0]["transition"] == "t01"
+
+
+# ------------------------------------------------------------------ on past the break
+
+def song_with_break(second=60.0, hole=None):
+    """174 BPM, drums everywhere but a break before a second drop."""
+    hole = hole or (52.0, second)
+    shape, r = song()
+    shape.drops = [DROP, second]
+    keep = [c for c in r.cues if not (hole[0] < float(c["t"]) < hole[1])]
+    r.cues = keep
+    return shape, r
+
+
+def lib_long(n=60):
+    out = [clip("clutch", [3.5, 5.0, 7.2], labels=["CLUTCH 1v3"], seconds=12.0),
+           clip("ace", [4.0, 5.2, 6.1, 7.0], labels=["ACE"], seconds=12.0)]
+    out += [clip(f"multi{i}", [4.0, 5.0, 6.0], labels=["3-KILLS"], seconds=12.0) for i in range(4)]
+    out += [clip(f"one{i}", [6.0], seconds=12.0) for i in range(n)]
+    return out
+
+
+def test_one_drop_stops_at_the_break():
+    """The plan without room: the flurry ends at the first hole in the drums."""
+    shape, r = song_with_break()
+    p = director._plan(lib_long(), shape, r, part=(30.0, 75.0), loose=True)
+    assert p.part[1] < 54.0
+
+
+def test_a_long_part_gets_a_second_build_into_the_next_drop():
+    shape, r = song_with_break()
+    p = director.plan(lib_long(), shape, r, part=(30.0, 75.0))
+    assert p.part[1] > 64.0, p.notes
+    assert any("second build at 60.0" in n for n in p.notes), p.notes
+    # one clip, one place, across the whole reel; every kill on a mark; the reel is continuous
+    assert len({s["clip"] for s in p.shots}) == len(p.shots) - (len([s for s in p.shots if s["name"] in ("clutch", "ace")]) - 2)
+    names = [s["name"] for s in p.shots]
+    assert names.count("ace") >= 2 and names.count("clutch") >= 2
+    t = p.part[0]
+    for s in p.shots:
+        t += s["duration"]
+    assert abs(t - p.part[1]) < 1e-3
+    # the second take's last kill is on the second drop
+    assert 60.0 in [round(m, 3) for m in p.marks]
+
+
+def test_a_short_take_is_slowed_within_limits_and_the_rest_is_slower_kills():
+    """A take with little footage before its first kill: its approach is slowed, never below
+    STRETCH_FLOOR, and what it cannot cover is filled with kills a bar or two apart."""
+    shape, r = song_with_break()
+    lib = [clip("clutch", [3.5, 5.0, 7.2], labels=["CLUTCH 1v3"], seconds=12.0),
+           clip("tight", [1.2, 3.5], labels=["CLUTCH 1v2"], seconds=6.0)]
+    lib += [clip(f"one{i}", [6.0], seconds=12.0) for i in range(60)]
+    p = director.plan(lib, shape, r, part=(30.0, 75.0))
+    slow = [s for s in p.shots if s["name"] == "tight" and len(s.get("anchors") or []) == 2]
+    assert slow, p.notes
+    s0 = slow[0]
+    (a, o0), (b, o1) = s0["anchors"]
+    assert (b - a) / (o1 - o0) >= director.STRETCH_FLOOR - 1e-6
+    assert any("slowed" in n for n in p.notes)
+
+
+def test_no_second_drop_means_slower_kills_to_the_end():
+    shape, r = song_with_break(second=200.0, hole=(52.0, 56.0))
+    p = director.plan(lib_long(), shape, r, part=(30.0, 75.0))
+    assert any("slower kills" in n for n in p.notes), p.notes
+    assert p.part[1] > 58.0
+
+
+def test_a_part_the_reel_already_fills_is_left_alone():
+    shape, r = song_with_break()
+    a = director._plan(lib_long(), shape, r, part=(30.0, 50.0), loose=True)
+    b = director.plan(lib_long(), shape, r, part=(30.0, 50.0), loose=True)
+    assert [s["clip"] for s in a.shots] == [s["clip"] for s in b.shots]

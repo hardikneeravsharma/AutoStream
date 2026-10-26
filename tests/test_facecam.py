@@ -332,3 +332,101 @@ def test_an_unknown_framing_is_zoom(root):
             "shots": [{"clip": str(clip), "kills": [4.0], "kill": 4.0, "duration": 3.0, "pre": 1.5}]}
     got, _, _ = studio.normalise(proj, root, probe=lambda p: 10.0)
     assert got["vfit"] == "zoom"
+
+
+# ------------------------------------------------------------------ the frame set by hand, and what is behind it
+
+def _vertical(root, **extra):
+    clip = _run(root, "r")
+    proj = {"format": "vertical", "shots": [{"clip": str(clip), "kills": [4.0], "kill": 4.0, "duration": 3.0, "pre": 1.5}],
+            **extra}
+    got, derived, notes = studio.normalise(proj, root, probe=lambda p: 10.0)
+    return got, studio.segments(got, derived), notes
+
+
+def test_a_hand_set_frame_crops_the_width_it_keeps_from_where_it_was_put(root):
+    """keep 0.6 of the width, from its left third, the band a third of the way down"""
+    got, segs, _ = _vertical(root, vfit="custom", frame={"keep": 0.6, "x": 0.3, "y": 0.35})
+    assert got["vfit"] == "custom" and got["frame"] == {"keep": 0.6, "x": 0.3, "y": 0.35}
+    seg = segs[0]
+    assert seg.layout["fit"] == "custom" and seg.layout["frame"]["keep"] == 0.6
+    cmd = " ".join(studio.segment_command(seg, Path("o.mp4")))
+    assert "crop=iw*0.6000:ih*1.0000:(iw-iw*0.6000)*0.3000" in cmd
+    h = 1012                                     # 1080 * 9/16 / 0.6, to an even pixel
+    assert f"scale=1080:{h}" in cmd and f"overlay=0:{round((1920 - h) * 0.35)}" in cmd
+    assert studio.game_band(got) == (round((1920 - h) * 0.35), h)
+
+
+def test_a_frame_zoomed_past_filling_crops_rows_too_and_fills_the_frame(root):
+    got, segs, _ = _vertical(root, vfit="custom", frame={"keep": 0.25})
+    cmd = " ".join(studio.segment_command(segs[0], Path("o.mp4")))
+    assert "scale=1080:1920" in cmd and "overlay=0:0" in cmd
+    assert studio.game_band(got) is None         # the game is the whole frame
+    assert studio.retime_height(segs[0]) == 1080
+
+
+def test_junk_frames_are_clamped(root):
+    got, _, _ = _vertical(root, vfit="custom", frame={"keep": "x", "x": 9, "y": -3})
+    assert got["frame"] == {"keep": studio.NEAR_KEEP, "x": 1.0, "y": 0.0}
+
+
+def test_the_presets_render_exactly_as_before_and_carry_no_background(root):
+    for fit in ("fit", "near"):
+        got, segs, _ = _vertical(root / fit, vfit=fit)
+        assert "bg" not in got and "frame" not in got and "bg" not in segs[0].layout
+        assert "boxblur=24:2,eq=brightness=-0.12:saturation=0.8" in " ".join(studio.segment_command(segs[0], Path("o.mp4")))
+
+
+@pytest.mark.parametrize("bg,want", [({"kind": "black"}, "color=c=0x000000"),
+                                     ({"kind": "color", "color": "#203040"}, "color=c=0x203040"),
+                                     ({"kind": "blur", "blur": 8, "dim": 0.3}, "boxblur=8:2,eq=brightness=-0.300")])
+def test_behind_the_band_is_what_was_chosen(root, bg, want):
+    got, segs, _ = _vertical(root, vfit="near", bg=bg)
+    assert got["bg"]["kind"] == bg["kind"]
+    cmd = " ".join(studio.segment_command(segs[0], Path("o.mp4")))
+    assert want in cmd and cmd.count(" -i ") == 1          # no file of its own
+
+
+def test_a_motion_background_loops_on_across_the_cuts(root, tmp_path, monkeypatch):
+    home = tmp_path / "videos"
+    (home / "backgrounds").mkdir(parents=True)
+    loop = home / "backgrounds" / "waves.mp4"
+    loop.write_bytes(b"x")
+    from autostream import paths
+    monkeypatch.setattr(paths, "VIDEO_HOME", home)
+    clip = _run(root, "r")
+    shot = {"clip": str(clip), "kills": [4.0], "kill": 4.0, "duration": 3.0, "pre": 1.5}
+    proj = {"format": "vertical", "vfit": "near", "bg": {"kind": "file", "file": str(loop)}, "shots": [dict(shot), dict(shot)]}
+    got, derived, notes = studio.normalise(proj, root, probe=lambda p: 10.0 if p == loop.resolve() else 10.0)
+    assert got["bg"]["file"] == str(loop.resolve()) and got["bg"]["dim"] == studio.BG_FILE_DIM and not notes
+    segs = studio.segments(got, derived)
+    cmd = studio.segment_command(segs[1], Path("o.mp4"))
+    at = segs[1].layout["bg"]["at"]
+    assert 2.9 < at < 3.1                                   # the second shot starts 3 s into the reel
+    i = cmd.index(str(loop.resolve()))
+    assert cmd[i - 5:i] == ["-ss", f"{at:.3f}", "-t", cmd[i - 2], "-i"] and cmd[i - 7:i - 5] == ["-stream_loop", "-1"]
+    assert "[1:v]fps=60" in " ".join(cmd)                    # the loop's own input, after the clip
+
+
+def test_a_background_outside_the_folder_falls_back_and_says_so(root, tmp_path, monkeypatch):
+    from autostream import paths
+    monkeypatch.setattr(paths, "VIDEO_HOME", tmp_path / "videos")
+    stray = tmp_path / "secret.mp4"
+    stray.write_bytes(b"x")
+    got, segs, notes = _vertical(root, vfit="near", bg={"kind": "file", "file": str(stray)})
+    assert "bg" not in got and any("backgrounds folder" in n for n in notes)
+    assert str(stray) not in " ".join(studio.segment_command(segs[0], Path("o.mp4")))
+
+
+def test_backgrounds_are_listed_only_from_their_folders(tmp_path, monkeypatch):
+    from autostream import paths
+    home = tmp_path / "videos"
+    for d, f in (("backgrounds", "a.png"), ("assets/backgrounds", "b.mp4"), ("songs", "c.mp4")):
+        (home / d).mkdir(parents=True, exist_ok=True)
+        (home / d / f).write_bytes(b"x")
+    (home / "backgrounds" / "notes.txt").write_text("x")
+    monkeypatch.setattr(paths, "VIDEO_HOME", home)
+    got = studio.backgrounds()
+    assert [(i["name"], i["kind"]) for i in got] == [("a", "image"), ("b", "video")]
+    assert studio.bg_allowed(str(home / "songs" / "c.mp4")) is None
+    assert studio.bg_allowed(str(home / "backgrounds" / "notes.txt")) is None

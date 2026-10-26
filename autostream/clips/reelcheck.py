@@ -537,10 +537,10 @@ def render_findings(mp4: Path, project: dict, derived: dict, ff: str = "ffmpeg")
         if abs(dur - float(derived.get("length") or 0.0)) > LENGTH_TOLERANCE:
             out.append(Finding(HARD, "wrong-length", f"The reel is {dur:.1f} s; the plan was {float(derived['length']):.1f} s."))
         # the game's own picture sits in the middle band of a 9:16 fit layout; in a plain frame it is the frame
-        vertical = project.get("format") == "vertical"
-        band = {"fit": 608, "near": 810}.get(project.get("vfit") or "") if vertical else None
-        crop = f"crop=iw:iw*{band}/1080:0:(ih-iw*{band}/1080)/2" if band else "crop=iw:ih:0:0"
+        # (top, height) at 1080 wide: where a fit, near or hand-set frame put the band
         from . import studio
+        band = studio.game_band(project)
+        crop = (f"crop=iw:iw*{band[1]}/1080:0:iw*{band[0]}/1080" if band else "crop=iw:ih:0:0")
         frames = _frames(ff, mp4, crop, (540, 304))
         if not len(frames):
             return out + [Finding(HARD, "does-not-decode", "The reel could not be read back.")]
