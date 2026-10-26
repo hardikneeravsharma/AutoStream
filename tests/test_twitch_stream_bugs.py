@@ -261,6 +261,25 @@ def test_a_youtube_session_still_does(thumbs):
     assert eng.yt.thumbs == ["589697189"]
 
 
+class _Deletes:
+    def __init__(self):
+        self.deleted = []
+
+    def delete_broadcast(self, bid):
+        self.deleted.append(bid)
+
+
+@pytest.mark.parametrize("platform, deleted", [("twitch", []), ("youtube", ["589697189"])])
+def test_a_failed_start_deletes_a_broadcast_only_where_one_was_made(platform, deleted):
+    """Same class as the thumbnail: an abandoned Twitch start asked YouTube to
+    delete "broadcast" 589697189 -- the Twitch channel id."""
+    eng = _thumb_engine(platform)
+    eng.yt = _Deletes()
+    eng._stop_recording = lambda *a, **k: None
+    eng._abandon_start()
+    assert eng.yt.deleted == deleted
+
+
 # ================================================================ 3. sound
 
 def _metered(**heard) -> obsmod.Obs:

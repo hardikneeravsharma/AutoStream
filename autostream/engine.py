@@ -1509,7 +1509,7 @@ class Engine:
 
     def _abandon_start(self) -> None:
         self._start_failures += 1
-        if self.state.broadcast_id:
+        if self.state.broadcast_id and getattr(self.platform.caps, "makes_broadcast", False):
             try:
                 self.yt.delete_broadcast(self.state.broadcast_id)
             except Exception:  # noqa: BLE001
