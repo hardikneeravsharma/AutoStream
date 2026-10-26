@@ -44,6 +44,9 @@ def _cfg(tmp_path, default_scene="Scene", **files):
         card.write_bytes(b"a file")
         data["screens"][f"{which}_file"] = str(card)
     data["rules"] = dict(data["rules"], quiet_hours=[], require_ac_power=False)
+    # Set here, not taken from whatever config the machine has: the example
+    # config ships with recording off, and the Record button then does nothing.
+    data["record"] = dict(data["record"], enabled=True)
     return cfgmod.Config(data)
 
 
@@ -182,7 +185,6 @@ def test_a_stream_opens_on_its_starting_card(tmp_path):
 
 def test_record_pressed_on_the_idle_dashboard_takes_the_game(tmp_path):
     eng, began_on = _recording_only(tmp_path, left_on=ENDING)
-    eng.cfg.record.enabled = True
     eng.toggle_recording("record button")
     assert began_on == ["Scene"]
 
@@ -336,7 +338,6 @@ def test_a_stream_ending_while_the_recording_carries_on(tmp_path):
     """The record button keeps a recording past its session; it must not
     carry on recording the ending card."""
     eng, began_on = _streaming(tmp_path, left_on="Scene", ending="e.mp4")
-    eng.cfg.record.enabled = True
     eng.state.phase = STOPPING
     eng.state.broadcast_id = "b1"
     eng.session = eng.platform.start("t", "d")
