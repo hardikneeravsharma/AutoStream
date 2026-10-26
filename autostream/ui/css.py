@@ -4309,6 +4309,18 @@ STUDIO_CSS = r"""
   background:var(--surface);color:var(--text-secondary);font-size:11px;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;text-align:left;cursor:pointer}
 .st-music{position:absolute;left:0;display:block}
+/* THE VOLUME LINES: yellow, as the editor they are copied from draws them, and only the line
+   and its keyframes take the pointer -- the lane under them keeps its own clicks. */
+.st-vol{position:absolute;left:0;overflow:visible;pointer-events:none;z-index:3}
+.st-vol-line{fill:none;stroke:#f2c94c;stroke-width:2;filter:drop-shadow(0 1px 0 rgba(0,0,0,.7))}
+.st-vol-hit{fill:none;stroke:transparent;stroke-width:12;pointer-events:stroke;cursor:ns-resize}
+.st-vol-key{fill:#f2c94c;stroke:#1a1300;stroke-width:1.5;pointer-events:all;cursor:move}
+.st-vol-key:hover,.st-vol-key.is-drag{fill:#fff}
+.st-gblock{position:absolute;border-radius:3px;background:var(--surface-2,rgba(127,127,127,.12));
+  border:var(--border-hair) solid var(--border-subtle);pointer-events:none}
+.st-vol-tip{position:fixed;z-index:50;padding:2px 6px;border-radius:4px;background:#111;color:#f2c94c;
+  font:600 11px/1.3 var(--font-mono);pointer-events:none;white-space:pre}
+.studio-vol-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
 .st-ph{position:absolute;top:0;width:2px;margin-left:-1px;background:var(--danger);pointer-events:none}
 .studio-insp{position:sticky;top:var(--space-4)}
 .studio-insp-tabs{margin:var(--space-4) var(--space-4) 0}
@@ -4846,7 +4858,8 @@ LAYOUT_CSS = r"""
 /* a lane put away: its rows go, and the rest move up (studio_drawTimeline sets the rows) */
 .studio-tracks.off-video .st-shot,.studio-tracks.off-video .st-introclip,.studio-tracks.off-video .st-lockband,
 .studio-tracks.off-trans .st-tr,.studio-tracks.off-fx .st-fx,.studio-tracks.off-speed .st-speed,
-.studio-tracks.off-text .st-text,.studio-tracks.off-music .st-music{display:none}
+.studio-tracks.off-text .st-text,.studio-tracks.off-music .st-music,.studio-tracks.off-music .st-vol-music,
+.studio-tracks.off-game .st-gblock,.studio-tracks.off-game .st-vol-game{display:none}
 """
 
 LAYOUT_CSS += r"""

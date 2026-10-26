@@ -395,6 +395,19 @@ its controls were outside the sweep however the states were written. Five
 controls were unreachable because of a product gap, not a test one -- which is
 the sort of thing a coverage number is for.
 
+## 6h · The volume lines (2026-10-27)
+
+The song's and the game's level as yellow lines with keyframes on the Music and Game audio lanes. The line is absolute: it replaced the two dB sliders.
+
+| # | Scenario | Must be true | Covered |
+|---|---|---|---|
+| 6.102 | Open a reel with no keyframes | Both lines drawn flat at the reel's level; no Music or Game sound slider in the inspector; a *Game audio* lane under Video that the Show menu can hide | yes (`test_ui_studio_volume`) |
+| 6.103 | Drag a flat line up, then down; Undo twice | Up is louder, down quieter, still no keyframes; each drag is one Undo step back to where it was | yes (`test_ui_studio_volume`) |
+| 6.104 | Click the song line twice, drag the second keyframe down and later, drag it past its neighbour, double-click the first | Each click adds a keyframe at the level the line had (nothing heard changes); the line between falls straight in dB and is flat after the last; a keyframe never passes its neighbour; double-click takes it off, Undo puts it back | yes (`test_ui_studio_volume`) |
+| 6.105 | Drag the line between two keyframes | Both move together; a keyframe outside that stretch does not | yes (`test_ui_studio_volume`) |
+| 6.106 | *Keyframe at playhead*, *Flat again* | A keyframe at the playhead on that line; Flat again takes every keyframe off and leaves the line at the level it had at the playhead | yes (`test_ui_studio_volume`) |
+| 6.107 | Play the preview over a keyframed line | The players' volume follows the line at the reel second on screen | yes (`test_ui_studio_volume`) |
+
 ## The 73 still out of reach
 
 | group | n | controls |
