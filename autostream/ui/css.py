@@ -4813,7 +4813,9 @@ LAYOUT_CSS = r"""
 .ed-pb-right{display:flex;align-items:center;justify-content:flex-end;min-width:0}
 .ed-pb-btn{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;
   border:0;border-radius:var(--radius-pill);background:transparent;color:var(--text-secondary);cursor:pointer}
-.ed-pb-btn svg{width:18px;height:18px;fill:currentColor}
+/* The icon is never the click target: a glyph swapped mid-press (play to pause as the song starts) would
+   take the press with it, and the browser drops a click whose down and up land on different nodes. */
+.ed-pb-btn svg{width:18px;height:18px;fill:currentColor;pointer-events:none}
 .ed-pb-btn:hover,.ed-pb-btn:focus-visible{background:var(--surface-hover);color:var(--text-primary)}
 .ed-pb-btn.is-play{width:44px;height:44px;background:var(--accent);color:var(--text-on-accent)}
 .ed-pb-btn.is-play svg{width:22px;height:22px}

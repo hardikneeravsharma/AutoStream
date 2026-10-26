@@ -6419,7 +6419,13 @@ function studio_playGlyph() {
   /* From what is actually playing, not from the event that asked: the preview and the rendered file hand
      over to each other, and a glyph set by whichever event came last could say the opposite. */
   const playing = studio.pv.on ? studio.pv.playing : !!(v && v.src && !v.paused);
-  b.innerHTML = playing ? STUDIO_GLYPH.pause : STUDIO_GLYPH.play;
+  /* ONLY WHEN IT CHANGES. This runs every frame of playback, and a new <svg> every frame meant a press
+     went down on one icon and came up on another -- which the browser does not count as a click, so
+     Pause did nothing while Play, pressed on a still icon, always worked. */
+  const want = playing ? 'pause' : 'play';
+  if (b.getAttribute('data-glyph') === want) return;
+  b.setAttribute('data-glyph', want);
+  b.innerHTML = STUDIO_GLYPH[want];
   b.setAttribute('aria-label', playing ? 'Pause' : 'Play');
   b.title = playing ? 'Pause (Space)' : 'Play (Space)';
 }
