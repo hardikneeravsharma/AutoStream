@@ -45,6 +45,11 @@ class State:
     # True when OBS was ALREADY recording as the session began, so the file
     # covers footage this session knows nothing about.
     recording_adopted: bool = False
+    # What a platform's stream ceiling changed in OBS (obs.cap_stream_output),
+    # kept until it has been put back. On disk, so a crash mid-Twitch-session
+    # does not leave the next YouTube stream at 1080p and 6,000 kbps. Not
+    # cleared by reset_session: it outlives the session on purpose.
+    output_restore: dict = field(default_factory=dict)
 
     # ---------- persistence ----------
 

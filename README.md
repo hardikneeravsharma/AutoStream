@@ -1061,6 +1061,8 @@ inside it.
 | **Can't reach OBS** | Is OBS running? WebSocket enabled? Password right? Did you click **Apply** in that dialog? |
 | **Stuck on "Starting", then gives up** | YouTube is not receiving video. Confirm live streaming is actually enabled on the channel (can take 24h), then re-run setup to rewrite the stream key. |
 | **Broadcast stuck live after a crash** | Restart it — it sweeps orphans on startup. Or run `-m autostream stop`. |
+| **The webcam frame is empty after AutoStream opens OBS** | Windows sometimes refuses the camera while the game is starting ("Insufficient system resources" in OBS's log). Once live, AutoStream looks at each camera on air and reopens one with no picture, up to three times; if it still has none it says so once. Another app holding the camera is the usual reason it stays dark. |
+| **Twitch streams come out at 1080p even though OBS is set to 1440p** | Intended. Twitch does not play more than 1080p or 6,000 kbps to most channels' viewers, so a Twitch session holds OBS under that and puts your own settings back when it ends. In Simple output mode the recording shares the lower size for that session; in Advanced mode only the stream is rescaled, and the bitrate there is yours to keep at 6,000 or under. YouTube sessions are not touched. |
 | **It doesn't start at login** | `Get-ScheduledTaskInfo -TaskName AutoStream`. `0x0` or `0x41301` is healthy; anything else, check `logs\autostream.log`. |
 | **It won't start at all** | Read `logs\autostream.log` and `logs\crash.log` next to the exe. |
 

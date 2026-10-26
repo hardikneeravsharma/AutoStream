@@ -460,3 +460,36 @@ def test_a_fade_from_black_shows_the_game_by_a_quarter_second():
     """Every style opens with its fade capped at OPEN_FADE; one made to open slowly keeps it."""
     assert studio.OPEN_FADE <= 0.4
     assert not studio.STYLE["clean"].long_fade_in and studio.STYLE["cinematic"].long_fade_in
+
+
+# ---------------------------------------------------------------- Chaos: variety and flashes as a signature
+
+@pytest.mark.parametrize("bpm", TEMPOS)
+def test_chaos_holds_three_kinds_of_kill_effect_in_every_eight_kills_and_flashes_at_every_tempo(pile, bpm):
+    """ChatGPT's first review of Chaos (6.5/10): two kill effects alternating "becomes
+    repetitive", and no flash cut above 110 BPM made it "a restricted, less-shake-heavy
+    Hype". Both held at every tempo, with no white-out on a kill (no_whiteout)."""
+    proj, notes, got, derived, found = _planned(pile, "chaos", bpm)
+    firsts = [studio.fam(s["fx"][0]) for s in got["shots"] if s["fx"]]
+    w = reelcheck.CHAOS_WINDOW
+    assert min(len(set(firsts[i:i + w])) for i in range(len(firsts) - w + 1)) >= reelcheck.CHAOS_FAMILIES, firsts
+    assert "chaos-variety" not in {f.code for f in found}
+    cuts = got["shots"][1:]
+    assert sum(1 for s in cuts if s["transition"] == "t02") >= 0.5 * len(cuts), [s["transition"] for s in cuts]
+    # ...and the flashes are cuts, never a white-out on a kill (bar the drop's own flash)
+    assert all(studio.kill_light(dict(s, fx=[f for f in s["fx"] if f != studio.DROP_FLASH])) <= studio.WHITE_CEIL + 1e-9
+               for s in got["shots"])
+
+
+def test_the_gate_fails_chaos_with_two_kill_effects_and_says_a_thin_pool_is_constrained():
+    shots = [{"clip": f"{i}.mp4", "duration": 0.62, "kills": [3.0], "transition": "t01",
+              "fx": ["k02hard" if i % 2 else "k19hard"]} for i in range(30)]
+    rows = [{"kill_reel": 0.62 * i + 0.4, "start": 0.62 * i, "drift": 0.0, "kills_reel": [0.62 * i + 0.4],
+             "pieces": [[0.0, 0.62, 1.0]]} for i in range(30)]
+    derived = {"shots": rows, "length": 0.62 * 30}
+    found = {f.code: f for f in reelcheck.style_findings({"style": "chaos", "shots": shots, "grade": "g05"}, derived)}
+    assert found["chaos-variety"].level == reelcheck.HARD
+    assert found["flash-rate"].level == reelcheck.SOFT and "0 white on cuts" in found["flash-rate"].message
+    thin = {"style": "chaos", "shots": shots, "grade": "g05", "pools": {"kill": ["k02hard", "k19hard"]}}
+    found = {f.code: f for f in reelcheck.style_findings(thin, derived)}
+    assert found["chaos-variety"].level == reelcheck.SOFT and "constrained" in found["chaos-variety"].message

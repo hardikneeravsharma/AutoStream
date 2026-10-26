@@ -95,6 +95,9 @@ ON_BEAT = 0.025            # s: a cue this near a beat is on it
 # seven frames of the kill at 21.2 s; an inversion every 5 s turned the kill at
 # 17.4 s into a white frame. Both read in review as the footage failing. A zoom
 # punch or a shake leaves the hit visible; the inversion is kept for one moment.
+# That moment is a kill too, and the planner turns down anything that whites a kill
+# out (studio.no_whiteout: an inversion put 26.6% of a dark frame over the gate's
+# line), so it gives way there with a plan note -- the rule lives in one place.
 FX_CYCLE = ("k01", "k02", "", "k01", "", "k02")         # zoom punch, shake, none
 INVERT = "k12"
 # Not "KILLS": every multi-kill file is named N-KILLS, so it made each double a

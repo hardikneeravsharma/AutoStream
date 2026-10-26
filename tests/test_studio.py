@@ -911,8 +911,9 @@ def test_no_two_shots_running_get_the_same_kill_effect(long_run, style):
         assert set(firsts) == pool, firsts
         return
     assert all(a != b for a, b in zip(firsts, firsts[1:])), firsts
-    # Mixed, but never more than MAX_KILL_FX kinds in one reel (asked 2026-10-17).
-    assert len(set(firsts)) == min(studio.MAX_KILL_FX, len(pool)), firsts
+    # Mixed, but never more than MAX_KILL_FX kinds in one reel (asked 2026-10-17) -- or the
+    # style's own number, where variety is the style (Chaos, Style.kill_mix).
+    assert len(set(firsts)) == min(st.kill_mix or studio.MAX_KILL_FX, len(pool)), firsts
 
 
 def test_no_seed_puts_one_kill_effect_on_two_shots_running(long_run):
@@ -928,7 +929,7 @@ def test_no_seed_puts_one_kill_effect_on_two_shots_running(long_run):
             proj, _ = studio.plan(clips, st.key, shape=Shape(bpm=128.0), seed=seed)
             firsts = [s["fx"][0] for s in proj["shots"] if s["fx"]]
             assert all(a != b for a, b in zip(firsts, firsts[1:])), (st.key, seed, firsts)
-            assert len(set(firsts)) == min(studio.MAX_KILL_FX, len(pool)), (st.key, seed, firsts)
+            assert len(set(firsts)) == min(st.kill_mix or studio.MAX_KILL_FX, len(pool)), (st.key, seed, firsts)
 
 
 @pytest.mark.parametrize("style", [s.key for s in studio.STYLES])
@@ -941,7 +942,8 @@ def test_transitions_are_mixed_too(long_run, style):
         assert set(cuts) <= pool, cuts
         return
     assert len(set(cuts)) >= 2, cuts
-    assert len(set(cuts) | {"t01"}) <= studio.MAX_TRANSITIONS, cuts
+    # (Chaos keeps its white flash beside the one other: Style.fast_flash, flash_rhythm)
+    assert len((set(cuts) | {"t01"}) - ({"t02"} if st.fast_flash else set())) <= studio.MAX_TRANSITIONS, cuts
     soft = [t for t in cuts if t not in ("t01", "t02")]
     assert all(a != b for a, b in zip(soft, soft[1:])) or len(set(soft)) <= 1, cuts
 

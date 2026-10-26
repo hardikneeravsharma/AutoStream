@@ -24,8 +24,16 @@ from autostream.engine import Engine                             # noqa: E402
 from autostream.state import LIVE, State                         # noqa: E402
 
 
+KINDS = {"Desktop Audio": "wasapi_output_capture",
+         "Mic": "wasapi_input_capture",
+         "Facecam": "dshow_input",
+         "Game Capture": "game_capture",
+         "Rank Bar": "browser_source"}
+
+
 def an_obs(**heard):
-    """An Obs whose metering is up, with each input last heard N seconds ago."""
+    """An Obs whose metering is up, with each input last heard N seconds ago
+    (None: never), and each input's kind already known."""
     o = obsmod.Obs(cfg.load())
     o._audio_ok = True
     now = obsmod.time.monotonic()
@@ -33,6 +41,8 @@ def an_obs(**heard):
     o._audio_by_input = {n: (now - ago if ago is not None else 0.0)
                          for n, ago in heard.items()}
     o._audio_heard = now - min(a for a in heard.values() if a is not None)
+    o._audio_kinds_seen = {n: KINDS.get(n, "") for n in heard}
+    o._audio_kinds_at = now              # known: nothing asks OBS
     return o
 
 
@@ -50,7 +60,7 @@ def test_a_wholly_silent_stream_is_not_reported_here():
     """That is silence, and silent_for already covers it. Naming every source
     would double the alarm and point at the wrong thing."""
     o = an_obs(**{"Desktop Audio": 400, "Mic": 400})
-    assert o.quiet_inputs(300.0) == []
+    assert not o.quiet_inputs(300.0)
 
 
 def test_metering_that_never_came_up_reports_nothing():
