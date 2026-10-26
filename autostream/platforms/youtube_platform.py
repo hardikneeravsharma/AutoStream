@@ -43,6 +43,7 @@ class YouTubePlatform:
         has_quota=True,
         has_chat=True,
         has_thumbnail=True,
+        has_video_tags=True,
         # YouTube binds an ingest object rather than handing over a key.
         fetches_stream_key=False,
     )

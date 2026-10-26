@@ -60,7 +60,7 @@ and reopening it every 15 seconds per tab flashed "connected"/"disconnected" all
 | [`engine.py`](../autostream/engine.py) | The state machine — the only place a broadcast is started/retitled/stopped |
 | [`watcher.py`](../autostream/watcher.py) | Process polling + foreground-window/Steam-registry signals → resolves the "active game", no network I/O |
 | [`gameindex.py`](../autostream/gameindex.py) | exe→game-name resolution: `games.yaml` overrides + Discord detectable-apps list + Steam applist, cached to `index.cache.json` |
-| [`obs.py`](../autostream/obs.py) | obs-websocket v5 client wrapper: connect/launch OBS, configure stream service, start/stop, **pause/resume recording**, scene switching, health |
+| [`obs.py`](../autostream/obs.py) | obs-websocket v5 client wrapper: connect/launch OBS, configure stream service, start/stop, **pause/resume recording**, scene switching, health. A platform's stream ceiling (`cap_stream_output`/`restore_stream_output`, from `Capabilities.max_height`/`max_video_kbps`; what was changed is kept in `state.output_restore` until it is put back), the webcam check (`camera_pictures`, `restart_input`), and per-input silence that names only sources that carry sound (`quiet_inputs`) |
 | [`youtube.py`](../autostream/youtube.py) | YouTube Data API v3 wrapper: OAuth, quota accounting, reusable-stream + broadcast lifecycle, chat, orphan sweep |
 | [`titles.py`](../autostream/titles.py) | Pure string templating for stream title/description |
 | [`notify.py`](../autostream/notify.py) | Windows toast notifications (no-ops if `winotify` missing) |
