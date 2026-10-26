@@ -57,8 +57,17 @@ STUDIO_HTML = r"""
          editor's toolbar because the actions it lists are not only the
          timeline's. -->
     <button type="button" class="btn btn-sm studio-palbtn" data-act="studio-palette"
-            id="studio-palbtn" title="Run a command (Ctrl+K)">
-      <span aria-hidden="true">&#9906;</span> Actions <kbd>Ctrl K</kbd>
+            id="studio-palbtn" aria-label="Actions" title="Actions: run any command (Ctrl+K)">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><rect x="2.5" y="6" width="19" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+      <kbd>Ctrl K</kbd>
+    </button>
+    <!-- THE SIDE PANEL, ON DEMAND. Open by default; the editor's timeline takes the whole width when it
+         is not wanted. Only on the Timeline tab, the one with a panel to hide. -->
+    <button type="button" class="btn btn-sm btn-ghost studio-sidebtn hide" data-act="studio-side"
+            id="studio-sidebtn" aria-expanded="true" aria-controls="studio-side"
+            aria-label="Hide the side panel" title="Hide the side panel">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15 4v16" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+      <i class="studio-chip-dot" id="studio-sidebtn-dot" aria-hidden="true"></i>
     </button>
   </header>
 
@@ -169,11 +178,19 @@ STUDIO_HTML = r"""
        page jumped every time the inspector redrew. Every id below is the one
        the old layout had; only where things sit has changed. -->
   <section id="studio-pane-timeline" class="hide studio-editor" aria-label="Timeline">
+    <!-- THE EDGE: with the panel put away, resting the pointer here opens it, and leaving it closes it again;
+         the button above is what keeps it open. -->
+    <div class="ed-side-edge" id="studio-side-edge" aria-hidden="true" title="Edit panel: hover to open, or use the button at the top right to keep it open">
+      <span class="ed-side-tab"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Edit</span></span>
+      <span class="ed-side-hint" role="status">Effects, speed and music for the shot you pick: hover here</span>
+    </div>
     <div class="ed-main">
       <div class="ed-toolbar">
         <label class="sr-only" for="studio-pname">Reel name</label>
         <input class="input ed-name" id="studio-pname" maxlength="80" placeholder="Reel name">
         <p class="muted studio-facts ed-facts" id="studio-facts"></p>
+        <!-- WHAT THE REEL USES OF WHAT WAS CHOSEN, as two pills (studio_syncNote). -->
+        <span class="sy-chips" id="studio-tl-sync" role="status" aria-live="polite"></span>
         <span class="studio-spacer"></span>
         <div class="field-inline studio-acts">
           <!-- WHERE THE REEL STANDS, in one word, always in view: Changed, Timing stale, Planning,
@@ -242,8 +259,6 @@ STUDIO_HTML = r"""
                  disappeared"). This one drives the reel's clock, so a seek
                  lands on the shot the timeline has there. -->
             <div class="studio-pv-bar" id="studio-pv-bar">
-              <button type="button" class="studio-pv-btn" data-act="studio-play" id="studio-pv-play"
-                      title="Play (space)" aria-label="Play">&#9654;</button>
               <span class="mono studio-pv-time" id="studio-pv-time">0:00 / 0:00</span>
               <input type="range" class="studio-pv-seek" id="studio-pv-seek" min="0" max="1000" step="1" value="0"
                      aria-label="Seek">
@@ -276,18 +291,51 @@ STUDIO_HTML = r"""
         </div>
       </div>
 
+      <!-- THE PLAYER'S TRANSPORT, laid out like any media player: the clock on the left, previous shot,
+           play and next shot in the middle, volume and speed on the right. One button plays and pauses;
+           its glyph says which it will do. -->
+      <div class="ed-player-bar" role="group" aria-label="Player">
+        <span class="ed-pb-left">
+          <span class="mono studio-clock" id="studio-clock">0:00.00</span>
+          <span class="mono studio-shuttle" id="studio-shuttle-lab"
+                role="status" aria-live="polite"></span>
+        </span>
+        <span class="ed-pb-mid">
+          <button type="button" class="ed-pb-btn" data-act="studio-prev-shot" id="studio-prev-btn"
+                  aria-label="Previous shot" title="Previous shot (back to this shot's start first)">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg>
+          </button>
+          <button type="button" class="ed-pb-btn is-play" data-act="studio-play" id="studio-play-btn"
+                  aria-label="Play" title="Play (Space)">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg>
+          </button>
+          <button type="button" class="ed-pb-btn" data-act="studio-next-shot" id="studio-next-btn"
+                  aria-label="Next shot" title="Next shot">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg>
+          </button>
+        </span>
+        <span class="ed-pb-right"><span class="media-knobs" data-for="studio-video"></span></span>
+      </div>
+
       <div class="studio-tl-bar ed-transport">
-        <button type="button" class="btn btn-sm studio-transport" data-act="studio-play" id="studio-play-btn">Play</button>
-        <span class="mono studio-clock" id="studio-clock">0:00.00</span>
-        <span class="mono studio-shuttle" id="studio-shuttle-lab"
-              role="status" aria-live="polite"></span>
-        <span class="media-knobs" data-for="studio-video"></span>
-        <label class="studio-check"><input type="checkbox" id="studio-snap" checked> Keep cuts on the beat</label>
-        <!-- WHAT THE MUSIC LANE SHOWS. Loudness alone cannot say whether a kill
-             landed on the kick it was aimed at; the colour view and the song's
-             own hit marks can, so both are on and either can be turned off. -->
-        <label class="studio-check"><input type="checkbox" id="studio-tl-spec" checked> Show the music</label>
-        <label class="studio-check"><input type="checkbox" id="studio-tl-marks" checked> Mark the beats</label>
+        <!-- WHAT THE TIMELINE SHOWS. Each lane can be put away, and the music lane's colour view and beat
+             marks with it: loudness alone cannot say whether a kill landed on the kick it was aimed at,
+             so those two start on. -->
+        <details class="studio-menu" id="studio-lanes">
+          <summary class="btn btn-sm" title="Choose what the timeline shows">Show</summary>
+          <div class="studio-menu-pop" role="group" aria-label="What the timeline shows">
+            <label class="studio-check"><input type="checkbox" data-lane="video" checked> Video</label>
+            <label class="studio-check"><input type="checkbox" data-lane="trans" checked> Transitions</label>
+            <label class="studio-check"><input type="checkbox" data-lane="fx" checked> Effects</label>
+            <label class="studio-check"><input type="checkbox" data-lane="speed" checked> Speed</label>
+            <label class="studio-check"><input type="checkbox" data-lane="text" checked> Text</label>
+            <label class="studio-check"><input type="checkbox" data-lane="music" checked> Music</label>
+            <label class="studio-check studio-menu-sub"><input type="checkbox" id="studio-tl-spec" checked> Colour view</label>
+            <label class="studio-check studio-menu-sub"><input type="checkbox" id="studio-tl-marks" checked> Beat marks</label>
+            <hr class="studio-menu-rule">
+            <label class="studio-check"><input type="checkbox" id="studio-snap" checked> Keep cuts on the beat</label>
+          </div>
+        </details>
         <!-- SHOTS LOCKED TOGETHER move as one when the cut before them moves:
              shift- or ctrl-click shots to pick several, then lock them. -->
         <button type="button" class="btn btn-sm" data-act="studio-lock" id="studio-lock-btn" disabled
@@ -324,11 +372,15 @@ STUDIO_HTML = r"""
                   title="Take every mark off">No marks</button>
         </span>
         <span class="studio-spacer"></span>
-        <span class="muted studio-hint" id="studio-tl-sync" role="status" aria-live="polite"></span>
-        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-zoom" data-z="-1" aria-label="Zoom out">−</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-zoom" data-z="0">Fit</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-zoom" data-z="1" aria-label="Zoom in">+</button>
-        <span class="mono studio-zoomlab" id="studio-zoomlab" aria-hidden="true"></span>
+        <button type="button" class="btn btn-ghost btn-sm studio-zoombtn" data-act="studio-zoom" data-z="-1"
+                aria-label="Zoom out" title="Zoom out (-, or Ctrl+wheel). Double-click to fit the whole reel (0)">&minus;</button>
+        <button type="button" class="btn btn-ghost btn-sm studio-zoombtn" data-act="studio-zoom" data-z="1"
+                aria-label="Zoom in" title="Zoom in (+, or Ctrl+wheel). Double-click to fit the whole reel (0)">+</button>
+        <!-- THE HOW-TO, ON REQUEST. A paragraph under the tracks, read once and then in the way. -->
+        <span class="studio-help" tabindex="0" role="note" aria-label="How the timeline works" id="studio-help">?
+          <span class="studio-help-pop" role="tooltip">Drag a shot to move it. Drag either edge to move that cut &mdash; the shots either side give and take, so every kill stays on its beat; Shift-drag to push everything after it. Its diamond moves the kill.
+            Ctrl+wheel zooms. Arrow keys move between shots, Space plays.</span>
+        </span>
       </div>
       <div class="studio-tl" id="studio-tl" tabindex="0" aria-label="Timeline, use arrow keys to move between shots">
         <div class="studio-labels" aria-hidden="true">
@@ -348,11 +400,16 @@ STUDIO_HTML = r"""
           <div class="studio-tracks" id="studio-tracks"></div>
         </div>
       </div>
-      <p class="muted studio-hint ed-hint">Drag a shot to move it. Drag either edge to move that cut &mdash; the shots either side give and take, so every kill stays on its beat; Shift-drag to push everything after it. Its diamond moves the kill.
-        Ctrl+wheel zooms. Arrow keys move between shots, Space plays.</p>
     </div>
 
-    <aside class="ed-side" aria-label="Inspector">
+    <aside class="ed-side" id="studio-side" aria-label="Inspector">
+      <!-- THE RENDER, FOLDED: a dot and a count above the card, the way a CI check reads. Shown only while
+           the card below is folded away (studio_drawSync). -->
+      <button type="button" class="studio-chip hide" data-act="studio-sync-fold" id="studio-chip"
+              aria-expanded="false" aria-controls="studio-sync" title="Show the render status">
+        <i class="studio-chip-dot" aria-hidden="true"></i>
+        <span class="studio-chip-text" id="studio-chip-text"></span>
+      </button>
       <!-- DOES THE VIDEO MATCH THE TIMELINE? The one question the page was
            unable to answer: "Render changes" against "Render again" is a
            two-word difference nobody reads, so an edit could sit unrendered
@@ -363,6 +420,10 @@ STUDIO_HTML = r"""
         <p class="studio-sync-line">
           <span class="studio-sync-dot" aria-hidden="true"></span>
           <span class="studio-sync-head" id="studio-sync-head">Not rendered yet</span>
+          <button type="button" class="studio-sync-fold" data-act="studio-sync-fold" aria-expanded="true"
+                  aria-controls="studio-sync" aria-label="Fold the render status away" title="Fold this away">
+            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false"><path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
         </p>
         <!-- studio-state is the job's own words (Ready, Cancelled, the
              error). Kept as its own node: it is what the render tests read. -->
@@ -530,25 +591,92 @@ STUDIO_HTML = r"""
            top, in words nobody can miss, with the way to resolve it -- studio_flowDraw. Nothing is
            re-planned or re-timed until the player picks one. -->
       <div class="studio-flow-host" id="studio-sg-stale"></div>
-      <p class="field-label">The whole song &mdash; drag the lit-up part to move it, or its edges to resize.
-        The faint lines are the beat; bright ones start a bar. The kill marks stay where they are on the
-        song: moving the part never moves them.</p>
+      <!-- TITLES ARE TWO WORDS; what used to be a paragraph above each graph is the ? beside it. -->
+      <h3 class="sg-title">Whole song
+        <span class="studio-help" tabindex="0" role="note" aria-label="About the whole song">?<span class="studio-help-pop" role="tooltip">Drag the lit-up part to move it, or its edges to resize. The faint lines are the beat; bright ones start a bar. The kill marks stay where they are on the song: moving the part never moves them. Every change here is on the reel at once, and undo takes it back; a part, song or marks the kills are not timed for yet are said above, with how to update them.</span></span>
+        <span class="sg-range" title="The part the reel uses: where it starts and where it ends">
+          <span class="mono" id="studio-sg-start">0:00.00</span><i aria-hidden="true">&rarr;</i><span class="mono" id="studio-sg-end">0:00.00</span>
+        </span>
+        <span class="sg-spacer"></span>
+        <button type="button" class="sg-ic sg-zoom" data-act="studio-sg-ovzoom" data-z="-1" aria-label="Zoom out" title="Zoom out of the whole song">&minus;</button>
+        <button type="button" class="sg-ic sg-zoom" data-act="studio-sg-ovzoom" data-z="1" aria-label="Zoom in" title="Zoom in on the part">+</button>
+      </h3>
       <canvas class="studio-sg-wave" id="studio-sg-overview" height="90" aria-label="Whole song"></canvas>
-      <p class="field-label">The part you picked, up close, on its own beats &mdash; click to hear it from there,
-        double-click to mark a kill (or a drop, on the top lane), drag a mark to move it</p>
+      <!-- THE PART, ON THE GRAPH THAT SHOWS IT: its ends are dragged on the graph and read in the pill by the
+           title; here it is snapped to a bar, built into the drop, or fitted to the reel. -->
+      <div class="sg-bar" role="group" aria-label="Part">
+        <button type="button" class="sg-ic" data-act="studio-sg-snapbar" aria-label="Snap the start to the nearest bar" title="Snap the start to the nearest bar">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6v12M20 6v12M8 12h8M8 12l2-2M8 12l2 2M16 12l-2-2M16 12l-2 2"/></svg></button>
+        <button type="button" class="sg-ic" data-act="studio-sg-atdrop" id="studio-sg-atdrop" aria-label="Build into the drop" title="Build into the drop: start the part so it arrives at the song's drop">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14L12 18z"/></svg></button>
+        <button type="button" class="sg-ic" data-act="studio-sg-fit" id="studio-sg-fitbtn" aria-label="Fit the timeline" title="Fit the timeline: make the part as long as the reel">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16M4 12l3-3M4 12l3 3M20 12l-3-3M20 12l-3 3M4 5v14M20 5v14"/></svg></button>
+        <span class="sr-only" id="studio-sg-fitnote"></span>
+        <span class="sr-only" id="studio-sg-range"></span>
+      </div>
+
+      <h3 class="sg-title">Close-up
+        <span class="studio-help" tabindex="0" role="note" aria-label="About the close-up">?<span class="studio-help-pop" role="tooltip">The part you picked, on its own beats. Click to hear it from there, double-click to mark a kill (or a drop, on the top lane), drag a mark to move it. Play the part and press K on every beat a kill should land on: shot 1&rsquo;s kill lands on mark 1, shot 2&rsquo;s on mark 2, and so on, and the cuts move to fit. Space plays and pauses.</span></span>
+      </h3>
+      <!-- THE KILL MARKS, ON THE GRAPH THEY ARE MARKED ON: every control is an icon with its words on hover. -->
+      <div class="sg-bar" role="group" aria-label="Kill marks">
+        <button type="button" class="sg-ic is-main" data-act="studio-sg-mark" aria-label="Mark a kill here" title="Mark a kill here (K)">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l6 6-6 6-6-6zM12 17v4M10 19h4"/></svg></button>
+        <button type="button" class="sg-ic" data-act="studio-sg-unmark" aria-label="Undo the last mark" title="Undo the last mark">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+        <button type="button" class="sg-ic" data-act="studio-sg-fromkills" id="studio-sg-fromkills" aria-label="Where the kills are now" title="Where the kills are now: make the reel's own kill positions marks you can move">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
+        <button type="button" class="sg-ic" data-act="studio-sg-clearmarks" aria-label="Clear every mark" title="Clear every mark, AutoStream's too">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
+        <span class="sg-sep" aria-hidden="true"></span>
+        <label class="sg-tog" title="Snap marks to the beat"><input type="checkbox" id="studio-sg-snap" aria-label="Snap marks to the beat">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4v8a6 6 0 0 0 12 0V4M6 8h4M14 8h4"/></svg></label>
+        <label class="sg-tog" title="Click on each mark as it plays"><input type="checkbox" id="studio-sg-click" checked aria-label="Click on each mark as it plays">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9v6h4l5 4V5L9 9zM17.5 9a4 4 0 0 1 0 6"/></svg></label>
+        <span class="sg-info muted" id="studio-sg-marksinfo"></span>
+      </div>
+      <!-- A mark is chosen by clicking it on the graph; these move the chosen one. Hidden until there is one. -->
+      <div class="sg-bar hide" id="studio-sg-marknudge" role="group" aria-label="The chosen mark">
+        <span class="sg-lab">Mark <b id="studio-sg-marknum">1</b></span>
+        <button type="button" class="sg-ic" data-act="studio-sg-marknudge" data-d="-beat" aria-label="1 beat earlier" title="1 beat earlier">&laquo;</button>
+        <button type="button" class="sg-ic" data-act="studio-sg-marknudge" data-d="-half" aria-label="Half a beat earlier" title="Half a beat earlier">&lsaquo;</button>
+        <span class="mono sg-time" id="studio-sg-marktime">0:00.00</span>
+        <button type="button" class="sg-ic" data-act="studio-sg-marknudge" data-d="half" aria-label="Half a beat later" title="Half a beat later">&rsaquo;</button>
+        <button type="button" class="sg-ic" data-act="studio-sg-marknudge" data-d="beat" aria-label="1 beat later" title="1 beat later">&raquo;</button>
+        <button type="button" class="sg-ic" data-act="studio-sg-markplay" aria-label="Hear it" title="Hear it"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5v14l11-7z"/></svg></button>
+        <button type="button" class="sg-ic" data-act="studio-sg-markdrop" aria-label="Remove this mark" title="Remove this mark"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
       <canvas class="studio-sg-wave studio-sg-detail" id="studio-sg-detail" height="140"
               aria-label="The chosen part: drops along the top, kills below. Click a mark to select it, drag to move it, double-click to add or remove"></canvas>
-      <div class="studio-sg-transport" role="group" aria-label="Play the part">
-        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-start" id="studio-sg-tostart" aria-label="Back to the start of the part" title="Back to the start of the part">&#9198;</button>
-        <button type="button" class="btn btn-sm studio-transport" data-act="studio-sg-play" id="studio-sg-play" aria-label="Play the part" title="Play or pause the part">&#9654;</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-end" id="studio-sg-toend" aria-label="Skip to the end of the part" title="Skip to the end of the part">&#9197;</button>
-      </div>
       <!-- WAYS OF SEEING IT. A waveform shows loudness and nothing else; a
            kill goes on a kick or a hat, and those are only visible once the
            bands are separated (clips/songview.py). The detector's own kills
            are drawn above them, so what it would cut to can be judged against
            what is marked by hand. -->
-      <div class="studio-sg-viewbar" id="studio-sg-viewbar">
+      <audio id="studio-sg-audio" preload="auto"></audio>
+      <!-- THE SAME PLAYER BAR AS THE TIMELINE'S: clock, previous / play / next, then loop, volume and speed. -->
+      <div class="ed-player-bar" role="group" aria-label="Player">
+        <span class="ed-pb-left"><span class="mono studio-clock" id="studio-sg-clock">0:00.00</span></span>
+        <span class="ed-pb-mid">
+          <button type="button" class="ed-pb-btn" data-act="studio-sg-start" id="studio-sg-tostart" aria-label="Back to the start of the part" title="Back to the start of the part">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+          <button type="button" class="ed-pb-btn is-play" data-act="studio-sg-play" id="studio-sg-play" aria-label="Play the part" title="Play or pause the part (Space)">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg></button>
+          <button type="button" class="ed-pb-btn" data-act="studio-sg-end" id="studio-sg-toend" aria-label="Skip to the end of the part" title="Skip to the end of the part">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
+        </span>
+        <span class="ed-pb-right">
+          <label class="sg-tog" title="Loop the part"><input type="checkbox" id="studio-sg-loop" checked aria-label="Loop the part">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3"/></svg></label>
+          <span class="media-knobs" data-for="studio-sg-audio"></span>
+        </span>
+      </div>
+      <!-- ADVANCED, A BAR AT THE FOOT: closed it is one line under the player; opened it holds the ways of
+           seeing the song (the lanes) and the detector's own kills. -->
+      <details class="sg-adv" id="studio-sg-advwrap">
+        <summary><span>Advanced</span></summary>
+      <div class="studio-sg-viewbar" id="studio-sg-advbar">
+        <!-- ZOOM, with the other ways of seeing the song: the close-up's width in seconds, and the whole-song graph. -->
         <span class="field-label">Zoom</span>
         <span class="seg" role="group" aria-label="Zoom">
           <button type="button" class="seg-btn" data-act="studio-sg-win" data-win="2">2 s</button>
@@ -556,85 +684,14 @@ STUDIO_HTML = r"""
           <button type="button" class="seg-btn is-active" data-act="studio-sg-win" data-win="8">8 s</button>
           <button type="button" class="seg-btn" data-act="studio-sg-win" data-win="16">16 s</button>
         </span>
-        <label class="studio-check"><input type="checkbox" id="studio-sg-adv"> Advanced</label>
-      </div>
-      <div class="studio-sg-viewbar hide" id="studio-sg-advbar">
         <span class="field-label">Show</span>
         <div class="studio-sg-toggles" id="studio-sg-toggles"></div>
         <label class="studio-check"><input type="checkbox" id="studio-sg-showdet"> The detector's kills</label>
         <span class="muted" id="studio-sg-detnote"></span>
       </div>
       <div class="studio-sg-lanes" id="studio-sg-lanes"></div>
-      <audio id="studio-sg-audio" preload="auto"></audio>
-      <div class="studio-tl-bar">
-        <label class="studio-check"><input type="checkbox" id="studio-sg-loop" checked> Loop</label>
-        <span class="mono studio-clock" id="studio-sg-clock">0:00.00</span>
-        <span class="muted" id="studio-sg-range"></span>
-        <span class="media-knobs" data-for="studio-sg-audio"></span>
-      </div>
-      <div class="studio-sg-grid">
-        <div class="card"><div class="card-body studio-sg-card">
-          <h3 class="studio-h">Where the reel starts</h3>
-          <div class="field-inline studio-nudge">
-            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="start" data-d="-bar">−1 bar</button>
-            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="start" data-d="-beat">−1 beat</button>
-            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="start" data-d="-ms">−10 ms</button>
-            <span class="mono" id="studio-sg-start">0:00.00</span>
-            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="start" data-d="ms">+10 ms</button>
-            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="start" data-d="beat">+1 beat</button>
-            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="start" data-d="bar">+1 bar</button>
-          </div>
-          <div class="field-inline">
-            <button type="button" class="btn btn-sm" data-act="studio-sg-snapbar">Snap to the nearest bar</button>
-            <button type="button" class="btn btn-sm" data-act="studio-sg-atdrop" id="studio-sg-atdrop">Build into the drop</button>
-          </div>
-          <h3 class="studio-h">Where it ends</h3>
-          <div class="field-inline studio-nudge">
-            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="end" data-d="-bar">−1 bar</button>
-            <span class="mono" id="studio-sg-end">0:00.00</span>
-            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-nudge" data-what="end" data-d="bar">+1 bar</button>
-            <button type="button" class="btn btn-sm" data-act="studio-sg-fit">Fit the timeline</button>
-          </div>
-          <p class="muted" id="studio-sg-fitnote"></p>
-        </div></div>
-        <div class="card"><div class="card-body studio-sg-card">
-          <h3 class="studio-h">Mark the kills <span class="muted">(optional)</span></h3>
-          <p class="muted">Play the part and press <kbd>K</kbd> on every beat a kill should land on.
-             Shot 1's kill lands on mark 1, shot 2's on mark 2, and so on; the cuts move to fit.
-             <kbd>Space</kbd> plays and pauses. "Where the kills are now" fills these in from the
-             reel as it stands, so the marks AutoStream chose can be moved rather than retapped.</p>
-          <div class="field-inline">
-            <button type="button" class="btn btn-primary" data-act="studio-sg-mark">Mark a kill here (K)</button>
-            <button type="button" class="btn btn-ghost" data-act="studio-sg-fromkills" id="studio-sg-fromkills">Where the kills are now</button>
-            <button type="button" class="btn btn-ghost" data-act="studio-sg-unmark">Undo mark</button>
-            <button type="button" class="btn btn-ghost" data-act="studio-sg-clearmarks">Clear marks</button>
-          </div>
-          <div class="field-inline">
-            <label class="studio-check"><input type="checkbox" id="studio-sg-snap"> Snap marks to the beat</label>
-            <label class="studio-check"><input type="checkbox" id="studio-sg-click" checked> Click on each mark as it plays</label>
-          </div>
-          <div class="reel-chips" id="studio-sg-chips"></div>
-          <!-- A mark is chosen by clicking its chip; these move the chosen one.
-               Hidden until there is one, so the row does not sit empty. -->
-          <div class="field-inline studio-nudge hide" id="studio-sg-marknudge">
-            <span class="muted">Mark <b id="studio-sg-marknum">1</b></span>
-            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-marknudge" data-d="-beat">−1 beat</button>
-            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-marknudge" data-d="-half">−½</button>
-            <span class="mono" id="studio-sg-marktime">0:00.00</span>
-            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-marknudge" data-d="half">+½</button>
-            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-marknudge" data-d="beat">+1 beat</button>
-            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-markplay">Hear it</button>
-            <button type="button" class="btn btn-ghost btn-sm" data-act="studio-sg-markdrop">Remove</button>
-          </div>
-          <p class="muted" id="studio-sg-marksinfo"></p>
-        </div></div>
-      </div>
-      <!-- NO "USE THIS PART" ANY MORE. Every change here is already on the reel, as an edit undo can
-           take back; what it does to the kill timing is the banner's to resolve, by the player. -->
-      <div class="studio-sg-apply">
-        <span class="muted" id="studio-sg-msg">A change here is on the reel at once, and undo takes it back. A part,
-          song or marks the kills are not timed for yet are said above, with how to update them.</span>
-      </div>
+      </details>
+      <span class="sr-only" id="studio-sg-msg" role="status"></span>
     </div>
   </section>
 
@@ -3582,15 +3639,16 @@ function studio_tmKillPointer(v, e, seek) {
 function studio_tmPartPointer(e, o) {
   const T = o.T, sh = o.sh, cv = o.cv;
   if (!sh || !cv) return;
+  const win = o.view ? o.view() : {t0: 0, w: sh.seconds};      // what the graph shows: all of the song, or a stretch
   if (e.type === 'pointerdown' && o.seekOnly) {
     const r = cv.getBoundingClientRect();
-    o.seek((e.clientX - r.left) / r.width * sh.seconds);
+    o.seek(win.t0 + (e.clientX - r.left) / r.width * win.w);
     return;
   }
   if (e.type === 'pointerdown') {
     const r = cv.getBoundingClientRect();
-    const t = (e.clientX - r.left) / r.width * sh.seconds;
-    const edge = 6 / r.width * sh.seconds;
+    const t = win.t0 + (e.clientX - r.left) / r.width * win.w;
+    const edge = 6 / r.width * win.w;
     const kind = Math.abs(t - T.start) < edge ? 'start' : Math.abs(t - T.end) < edge ? 'end'
       : (t > T.start && t < T.end) ? 'move' : 'jump';
     const was = {start: T.start, end: T.end};
@@ -3601,14 +3659,14 @@ function studio_tmPartPointer(e, o) {
       o.commit(was);
       return;
     }
-    T.drag = {kind: kind, x0: e.clientX, start: T.start, end: T.end, w: r.width, pointer: e.pointerId, was: was};
+    T.drag = {kind: kind, x0: e.clientX, start: T.start, end: T.end, w: r.width, span: win.w, pointer: e.pointerId, was: was};
     try { cv.setPointerCapture(e.pointerId); } catch (err) { /* fine without */ }
     e.preventDefault();
     return;
   }
   const g = T.drag;
   if (!g || e.pointerId !== g.pointer) return;
-  const dt = (e.clientX - g.x0) / g.w * sh.seconds;
+  const dt = (e.clientX - g.x0) / g.w * (g.span || sh.seconds);
   if (e.type === 'pointermove') {
     if (g.kind === 'start') T.start = Math.max(0, Math.min(T.end - 1, g.start + dt));
     else if (g.kind === 'end') T.end = Math.max(T.start + 1, Math.min(sh.seconds, g.end + dt));
@@ -4093,7 +4151,7 @@ async function studio_ytPoll() {
   if (yt.target === 'guide') {
     const r = await API.get('/api/studio/songs').catch(() => null);
     if (r && r.ok) studio.songList = r.songs || [];
-    studio.gd.step = 1;
+    studio.gd.step = GD.song;
   }
   const ok = yt.target === 'song' ? await studio_sgUseSong(f.path)
     : yt.target === 'guide' ? await studio_gdUseSong(f.path, f.title || '')
@@ -5881,8 +5939,9 @@ async function studio_poll() {
   const mine = ++studio.pollTok;
   const j = await API.get('/api/studio/job');
   if (mine !== studio.pollTok) return;
-  if (!j || j.state === 'idle') { studio_busy(false); studio.auto.running = false; studio_drawRenderCard(); return; }
+  if (!j || j.state === 'idle') { studio.prog = null; studio_busy(false); studio.auto.running = false; studio_drawRenderCard(); return; }
   const running = j.state === 'running' || j.state === 'queued';
+  studio.prog = running ? {done: j.done || 0, total: j.total || 0} : null;
   /* A background render does not take the Render button away: pressing it
      replaces the background one. */
   const bg = !!j.auto;
@@ -6203,14 +6262,9 @@ function studio_pvBar() {
   if (tm) tm.textContent = mmss(t) + ' / ' + mmss(len);
   const sk = studio_el('studio-pv-seek');
   if (sk && !pv.scrub) sk.value = String(len > 0 ? Math.round(t / len * 1000) : 0);
-  const b = studio_el('studio-pv-play');
-  if (b) {
-    b.innerHTML = pv.playing ? '&#10073;&#10073;' : '&#9654;';
-    b.setAttribute('aria-label', pv.playing ? 'Pause' : 'Play');
-    b.title = (pv.playing ? 'Pause' : 'Play') + ' (space)';
-  }
   const box = studio_el('studio-pv');
   if (box) box.classList.toggle('is-playing', pv.playing);
+  studio_playGlyph();
 }
 
 /* Fullscreen takes the whole player, not the preview alone: the render can
@@ -6354,6 +6408,36 @@ function studio_pvShow(t) {
   studio_playhead();
 }
 
+/* THE ONE PLAY BUTTON: its glyph is what it will do next, and its name says so for a screen reader. */
+const STUDIO_GLYPH = {
+  play: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5v14l11-7z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>'
+};
+function studio_playGlyph() {
+  const b = studio_el('studio-play-btn'), v = studio_el('studio-video');
+  if (!b) return;
+  /* From what is actually playing, not from the event that asked: the preview and the rendered file hand
+     over to each other, and a glyph set by whichever event came last could say the opposite. */
+  const playing = studio.pv.on ? studio.pv.playing : !!(v && v.src && !v.paused);
+  b.innerHTML = playing ? STUDIO_GLYPH.pause : STUDIO_GLYPH.play;
+  b.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+  b.title = playing ? 'Pause (Space)' : 'Play (Space)';
+}
+
+/* PREVIOUS AND NEXT SHOT, as a media player's previous and next: a seek to a shot's start. Previous goes back
+   to the start of the shot you are in, and only from there to the one before it. */
+function studio_stepShot(dir) {
+  const d = studio.derived;
+  if (!d || !(d.shots || []).length) return;
+  const t = studio_now(), starts = d.shots.map(r => r.start);
+  let i = 0;
+  starts.forEach((st, k) => { if (st <= t + 0.001) i = k; });
+  let to;
+  if (dir < 0) to = t - starts[i] > 0.4 ? starts[i] : starts[Math.max(0, i - 1)];
+  else to = i + 1 < starts.length ? starts[i + 1] : d.length;
+  studio_seekTo(to);
+}
+
 function studio_pvPlay() {
   const pv = studio.pv, d = studio.derived;
   if (!pv.on || !d || pv.playing) return;
@@ -6361,7 +6445,7 @@ function studio_pvPlay() {
   pv.rate = studio_pvKnobs().rate || 1;
   pv.base = pv.t; pv.t0 = performance.now(); pv.playing = true;
   pv.shot = -1;               /* the first frame re-takes the shot it is in */
-  studio_el('studio-play-btn').textContent = 'Pause';
+  studio_playGlyph(true);
   studio_pvBar();
   pv.raf = requestAnimationFrame(studio_pvTick);
 }
@@ -6375,8 +6459,7 @@ function studio_pvPause() {
   studio_pvEls().forEach(v => { if (v && !v.paused) v.pause(); });
   studio_pvSongSync(pv.t, false);
   studio_pvLyrClock(pv.t, false);
-  const b = studio_el('studio-play-btn');
-  if (b) b.textContent = 'Play';
+  studio_playGlyph(false);
   studio_playhead();
   studio_pvBar();
 }
@@ -6618,9 +6701,9 @@ function studio_drawRenderCard() {
   const p = studio.project, d = studio.derived;
   if (!p || !d) return;
   const st = (studio.catalog ? studio.catalog.styles : []).find(s => s.key === p.style);
-  studio_el('studio-facts').textContent = studio_dur(d.length) + ' · ' + p.shots.length + ' shots · ' +
-    Math.round(d.bpm) + ' BPM grid · ' + (st ? st.label : p.style) + ' · ' +
-    (p.format === 'vertical' ? '9:16' : '16:9') + (p.song ? '' : ' · no song');
+  /* The length and the style, as pills. The shot count, the grid and the aspect were noise. */
+  studio_el('studio-facts').innerHTML = '<span class="sy-pill is-len">' + esc(studio_dur(d.length)) + '</span>' +
+    '<span class="sy-pill is-style">' + esc(st ? st.label : p.style) + '</span>' + (p.song ? '' : '<span class="sy-pill is-none">no song</span>');
   studio_drawSync();
   /* Each button names the step it would cross, so "Undo" is never a guess.
      The title is where it goes: the strip is already crowded, and a label
@@ -6650,6 +6733,28 @@ function studio_drawRenderCard() {
    one per line, however many clicks it took to get there. */
 function studio_pendingCount() {
   return studio.pending.length;
+}
+
+/* THE CHIP: what the folded render card still says, in a few words -- a dot in the card's colour
+   (yellow and pulsing while it renders) and, then, how many shots are done. The same dot rides on the
+   side-panel button while that panel is closed, so the answer is never out of sight. */
+function studio_chipDraw(kind, head, n, folded) {
+  const chip = studio_el('studio-chip'), dot = studio_el('studio-sidebtn-dot'), pr = studio.prog;
+  const text = {
+    busy: pr && pr.total ? 'Rendering ' + pr.done + '/' + pr.total : 'Rendering',
+    ok: 'Up to date', bad: 'Failed', none: 'Not rendered', timing: 'Needs re-time',
+    stale: n ? n + (n === 1 ? ' change' : ' changes') + ' not in the video' : 'Changes not in the video'
+  }[kind] || head;
+  if (chip) {
+    chip.className = 'studio-chip is-' + kind + (folded ? '' : ' hide');
+    chip.setAttribute('aria-expanded', String(!folded));
+    studio_el('studio-chip-text').textContent = text;
+    chip.title = head + ' — click to show the render status';
+  }
+  const pane = studio_el('studio-pane-timeline');
+  if (dot) {
+    dot.className = 'studio-chip-dot is-' + kind + (pane && pane.classList.contains('side-off') ? '' : ' hide');
+  }
 }
 
 /* THE ANSWER TO "IS WHAT I AM WATCHING WHAT I HAVE EDITED?", in one strip:
@@ -6702,7 +6807,9 @@ function studio_drawSync() {
     const ago = studio.renderedAt ? studio_ago(studio.renderedAt) : '';
     sub = (ago && ago !== 'just now') ? 'Rendered ' + ago + '.' : '';
   }
-  box.className = 'studio-sync is-' + kind;
+  const folded = studio_pref('sync', 'open') === 'fold';
+  box.className = 'studio-sync is-' + kind + (folded ? ' is-folded' : '');
+  studio_chipDraw(kind, head, n, folded);
   studio_el('studio-sync-head').textContent = head;
   studio_el('studio-sync-sub').textContent = sub;
   studio_show('studio-sync-sub', !!sub);
@@ -7455,13 +7562,20 @@ function studio_drawTimeline() {
   studio_lockBtn();
   const pps = studio.pps, L = d.length, W = Math.ceil(L * pps) + 24;
   const X = (t) => (t * pps).toFixed(1);
+  const off = studio_lanesOff();
+  Object.keys(STUDIO_ROW).forEach(k => { STUDIO_ROW[k] = off.indexOf(k) >= 0 ? 0 : STUDIO_ROW_BASE[k]; });
+  STUDIO_LANES.forEach(k => host.classList.toggle('off-' + k, off.indexOf(k) >= 0));
   let top = 0;
   const rows = {};
   Object.keys(STUDIO_ROW).forEach(k => { rows[k] = top; top += STUDIO_ROW[k]; });
   /* The label beside each track is the same height as the track, always: the
      two were written down twice and the music lane grew out of its label. */
   const labs = document.querySelectorAll('#view-studio .studio-labels .st-lab');
-  Object.keys(STUDIO_ROW).forEach((k, i) => { if (labs[i]) labs[i].style.height = STUDIO_ROW[k] + 'px'; });
+  Object.keys(STUDIO_ROW).forEach((k, i) => {
+    if (!labs[i]) return;
+    labs[i].style.height = STUDIO_ROW[k] + 'px';
+    labs[i].style.display = STUDIO_ROW[k] ? '' : 'none';
+  });
   let h = '<div class="st-area" style="width:' + W + 'px;height:' + top + 'px">';
 
   /* ruler: seconds, bars and beats */
@@ -7603,8 +7717,6 @@ function studio_drawTimeline() {
   h += '<div class="st-ph" id="studio-ph" style="height:' + top + 'px"></div>';
   h += '</div>';
   host.innerHTML = h;
-  const zl = studio_el('studio-zoomlab');
-  if (zl) zl.textContent = pps >= 100 ? Math.round(pps) + ' px/s' : pps.toFixed(1) + ' px/s';
   studio_drawWave();
   studio_syncNote();
   studio_playhead();
@@ -7631,6 +7743,7 @@ function studio_drawWave() {
   const p = studio.project, d = studio.derived, sh = studio.songShape;
   if (!cv || !box || !p || !d) return;
   const pps = studio.pps, H = STUDIO_ROW.music;
+  if (!H) return;
   const W = Math.ceil(d.length * pps) + 24;
   const x0 = Math.max(0, Math.min(box.scrollLeft, Math.max(0, W - 1)));
   const vw = Math.max(1, Math.min(box.clientWidth || W, W - x0));
@@ -7813,24 +7926,54 @@ function studio_syncNote() {
   const el = studio_el('studio-tl-sync');
   const p = studio.project, d = studio.derived;
   if (!el || !p || !d) return;
-  const mk = studio_marks();
-  if (!p.song || !mk) { el.textContent = ''; return; }
-  const win = d.on_mark_window || 0.05;
-  let on = 0, have = 0, worst = 0;
-  (d.shots || []).forEach(r => {
-    const near = studio_nearMark(mk, r, r.kill_reel);
-    if (near === null) return;
-    have++;
-    const drift = r.kill_reel - near;
-    if (Math.abs(drift) <= win) on++;
-    else if (Math.abs(drift) > Math.abs(worst)) worst = drift;
+  /* WHAT THE REEL USES OF WHAT WAS CHOSEN: clips in it out of the clips selected, and its kills (headshots
+     among them, where the clips carry a reading) out of every kill those clips hold. */
+  const byPath = {};
+  Object.keys(studio.clipIndex || {}).forEach(id => { const c = studio.clipIndex[id]; if (c && c.path) byPath[String(c.path).toLowerCase()] = c; });
+  const rows = (d.selection || []);
+  const chosen = rows.length ? rows : (p.shots || []).map(s => ({clip: s.clip, in: true}));
+  const total = chosen.length, used = chosen.filter(r => r.in !== false).length;
+  const hsOf = (c, k) => { const i = (c.kills || []).findIndex(x => Math.abs(Number(x) - Number(k)) < 0.06); return i >= 0 && (c.hs || [])[i] === true; };
+  let all = 0, hsAll = 0, known = false;
+  chosen.forEach(r => {
+    const c = byPath[String(r.clip || '').toLowerCase()];
+    if (!c) return;
+    all += c.kill_count || (c.kills || []).length;
+    if (c.hs && c.hs.length) { known = true; hsAll += c.hs.filter(h => h === true).length; }
   });
-  if (!have) { el.textContent = ''; return; }
-  el.textContent = on + ' of ' + have + ' kills land on ' +
-    (mk.what === 'planned' ? 'the hit they were cut to'
-      : mk.what === 'detector' ? "the hits the Song tab marks" : "the song's own hits") +
-    ' (±' + win.toFixed(2) + ' s)' +
-    (worst ? '; the furthest is ' + Math.abs(worst).toFixed(2) + ' s ' + (worst > 0 ? 'late' : 'early') : '') + '.';
+  let hs = 0;
+  (p.shots || []).forEach(sh => {
+    const c = studio.clipIndex[sh.clip_id] || byPath[String(sh.clip || '').toLowerCase()];
+    if (c) (sh.kills || [sh.kill]).forEach(k => { if (hsOf(c, k)) hs++; });
+  });
+  const kills = (d.kills || []).length;
+  el.innerHTML = total
+    ? '<span class="sy-pill is-clips">' + used + '/' + total + ' clips</span>' +
+      '<span class="sy-pill is-kills">' + kills + (all ? '/' + all : '') + ' kills</span>' +
+      (known ? '<span class="sy-pill is-hs">' + hs + ' HS</span>' : '')
+    : '';
+  /* The beat check this line used to be is still here, on hover. */
+  const mk = studio_marks();
+  let tip = '';
+  if (p.song && mk) {
+    const win = d.on_mark_window || 0.05;
+    let on = 0, have = 0, worst = 0;
+    (d.shots || []).forEach(r => {
+      const near = studio_nearMark(mk, r, r.kill_reel);
+      if (near === null) return;
+      have++;
+      const drift = r.kill_reel - near;
+      if (Math.abs(drift) <= win) on++;
+      else if (Math.abs(drift) > Math.abs(worst)) worst = drift;
+    });
+    if (have) tip = '. ' + on + ' of ' + have + ' kills land on ' +
+      (mk.what === 'planned' ? 'the hit they were cut to'
+        : mk.what === 'detector' ? "the hits the Song tab marks" : "the song's own hits") +
+      ' (\u00b1' + win.toFixed(2) + ' s)' +
+      (worst ? '; the furthest is ' + Math.abs(worst).toFixed(2) + ' s ' + (worst > 0 ? 'late' : 'early') : '') + '.';
+  }
+  el.title = total ? used + ' of the ' + total + ' clips you chose are in the reel; ' + kills +
+    ' kills in it' + (known ? ', ' + hs + ' of them headshots' : '') + (all ? ', out of ' + all + ' in those clips' : '') + tip : '';
 }
 
 /* The whole song as one image, built once and cut out of at every zoom.
@@ -9664,6 +9807,7 @@ function studio_tab(which) {
   const a = studio_el('studio-sg-audio');
   if (which !== 'song' && a && !a.paused) a.pause();
   if (which !== 'timeline' && studio.pv.playing) studio_pvPause();
+  studio_sideApply(which);
   if (which === 'timeline') { studio_fitEditor(); studio_fit(); studio_drawAll(); }
   if (which === 'song') studio_sgOpen();
   if (which === 'facecam') studio_fcOpen();
@@ -9672,6 +9816,90 @@ function studio_tab(which) {
 }
 
 /* ------------------------------------------------------------ the editor */
+
+/* A choice of layout, kept in this browser. Never load-bearing: the page works without it. */
+function studio_pref(key, fallback) {
+  try { const v = localStorage.getItem('autostream.studio.' + key); return v === null ? fallback : v; } catch (e) { return fallback; }
+}
+function studio_prefSet(key, v) {
+  try { localStorage.setItem('autostream.studio.' + key, v); } catch (e) { /* the choice lasts until reload */ }
+}
+
+/* THE SIDE PANEL: open unless the player closed it. Closed, resting on its edge opens it for as long as the
+   pointer stays; the button is what pins it open. Its button is on the Timeline tab only. */
+function studio_sideApply(tab) {
+  const pane = studio_el('studio-pane-timeline'), b = studio_el('studio-sidebtn');
+  if (!pane || !b) return;
+  const off = studio_pref('side', 'off') === 'off';
+  if (tab) studio_show('studio-sidebtn', tab === 'timeline');
+  if (tab === 'timeline') studio_sideHint(off);
+  pane.classList.toggle('side-off', off);
+  const say = off ? 'Show the side panel' : 'Hide the side panel';
+  b.setAttribute('aria-expanded', String(!off));
+  b.setAttribute('aria-label', say);
+  b.title = say;
+}
+/* A SIDE PANEL NOBODY KNOWS IS THERE is a side panel nobody uses: while it is put away, the edge glows and says
+   what it holds for a couple of seconds each time the editor opens -- until the player has opened it once. */
+function studio_sideHint(off) {
+  const pane = studio_el('studio-pane-timeline');
+  if (!pane) return;
+  const show = off && studio_pref('sidehint', '') !== 'seen';
+  pane.classList.toggle('side-hint', show);
+  if (show) setTimeout(() => pane.classList.remove('side-hint'), 3200);
+}
+let studio_peekTimer = 0;
+function studio_sidePeek(on) {
+  clearTimeout(studio_peekTimer);
+  const pane = studio_el('studio-pane-timeline');
+  if (!pane || !pane.classList.contains('side-off')) return;
+  if (!on) {
+    if (pane.classList.contains('side-peek')) { pane.classList.remove('side-peek'); requestAnimationFrame(() => { studio_fit(); studio_drawAll(); }); }
+    return;
+  }
+  studio_peekTimer = setTimeout(() => {
+    pane.classList.add('side-peek');
+    pane.classList.remove('side-hint');
+    studio_prefSet('sidehint', 'seen');
+    requestAnimationFrame(() => { studio_fit(); studio_drawAll(); });
+  }, 120);
+}
+function studio_sideToggle() {
+  clearTimeout(studio_peekTimer);
+  const pane = studio_el('studio-pane-timeline');
+  if (pane) pane.classList.remove('side-peek');
+  studio_prefSet('side', studio_pref('side', 'off') === 'off' ? 'on' : 'off');
+  studio_sideApply();
+  studio_drawSync();
+  /* the timeline has a new width: draw it for that */
+  requestAnimationFrame(() => { studio_fit(); studio_drawAll(); });
+}
+
+/* THE RENDER CARD, FOLDED. Folded, the card goes and a chip above it keeps the answer: a dot and, while
+   shots are being rendered, how many of them (5/6). */
+function studio_syncFold() {
+  studio_prefSet('sync', studio_pref('sync', 'open') === 'fold' ? 'open' : 'fold');
+  studio_drawSync();
+}
+
+/* THE LANES: which rows of the timeline are shown. A hidden lane takes no room; the rows under it move up. */
+const STUDIO_LANES = ['video', 'trans', 'fx', 'speed', 'text', 'music'];
+const STUDIO_ROW_BASE = Object.assign({}, STUDIO_ROW);
+function studio_lanesOff() {
+  try { return JSON.parse(studio_pref('lanes', '[]')).filter(k => STUDIO_LANES.indexOf(k) >= 0); } catch (e) { return []; }
+}
+function studio_lanesSet() {
+  const off = studio_lanesOff();
+  document.querySelectorAll('#studio-lanes [data-lane]').forEach(c => { c.checked = off.indexOf(c.getAttribute('data-lane')) < 0; });
+}
+function studio_lanesChange(e) {
+  const c = e.target;
+  if (!c || !c.getAttribute || !c.getAttribute('data-lane')) return;
+  const off = studio_lanesOff().filter(k => k !== c.getAttribute('data-lane'));
+  if (!c.checked) off.push(c.getAttribute('data-lane'));
+  studio_prefSet('lanes', JSON.stringify(off));
+  studio_drawTimeline();
+}
 
 /* The editor fills the window and nothing else: its height is what the view
    has left below the Studio's own header, so the page never scrolls while
@@ -10949,6 +11177,10 @@ function studio_wire() {
     else if (act === 'studio-keys-close') studio_show('studio-keys-scrim', false);
     else if (act === 'studio-show') { if (studio.output && typeof clip_reveal === 'function') clip_reveal(studio.output); }
     else if (act === 'studio-play') studio_toggle();
+    else if (act === 'studio-prev-shot') studio_stepShot(-1);
+    else if (act === 'studio-next-shot') studio_stepShot(1);
+    else if (act === 'studio-side') studio_sideToggle();
+    else if (act === 'studio-sync-fold') studio_syncFold();
     else if (act === 'studio-pv-mute') { studio.pv.muted = !studio.pv.muted; studio_pvLevels(); }
     else if (act === 'studio-pv-full') studio_pvFull();
     else if (act === 'studio-zoom') {
@@ -11129,7 +11361,7 @@ function studio_wire() {
     else if (act === 'studio-sg-markdrop') studio_sgDropMark();
     else if (act === 'studio-sg-unmark') studio_sgUnmark();
     else if (act === 'studio-sg-clearmarks') studio_sgClearMarks();
-    else if (act === 'studio-sg-nudge') studio_sgNudge(b.getAttribute('data-what'), b.getAttribute('data-d'));
+    else if (act === 'studio-sg-ovzoom') studio_sgOvZoom(Number(b.getAttribute('data-z')));
     else if (act === 'studio-sg-snapbar') studio_sgSnapBar();
     else if (act === 'studio-sg-atdrop') studio_sgAtDrop();
     else if (act === 'studio-sg-fit') studio_sgFit();
@@ -11197,9 +11429,9 @@ function studio_wire() {
   const fv = studio_el('studio-fc-game');
   if (fv) fv.addEventListener('seeked', () => { const c = studio_el('studio-fc-cam'); if (c && fv.paused) c.currentTime = Math.max(0, studio_fcCamTime()); studio_fcClock(); });
   /* Advanced is off until asked for: the lanes and the detector's kills are for people who want them. */
-  ['studio-sg-adv', 'studio-sg-showdet'].forEach(id => {
+  ['studio-sg-advwrap', 'studio-sg-showdet'].forEach(id => {
     const el = studio_el(id);
-    if (el) el.addEventListener('change', studio_svBuild);
+    if (el) el.addEventListener(id === 'studio-sg-advwrap' ? 'toggle' : 'change', studio_svBuild);
   });
   document.addEventListener('change', e => {
     const b = e.target && e.target.closest ? e.target.closest('[data-act="studio-bin-slot"]') : null;
@@ -11217,6 +11449,21 @@ function studio_wire() {
   });
   const tlbox = studio_el('studio-tl');
   if (tlbox) tlbox.addEventListener('wheel', studio_wheel, {passive: false});
+  const edge = studio_el('studio-side-edge'), sidebar = studio_el('studio-side');
+  if (edge) edge.addEventListener('mouseenter', () => studio_sidePeek(true));
+  if (edge) edge.addEventListener('mouseleave', () => clearTimeout(studio_peekTimer));
+  if (sidebar) sidebar.addEventListener('mouseleave', () => studio_sidePeek(false));
+  studio_lanesSet();
+  const lm = studio_el('studio-lanes');
+  if (lm) lm.addEventListener('change', studio_lanesChange);
+  /* the menu closes when anything else is pressed, as a menu does */
+  document.addEventListener('pointerdown', e => {
+    const m = studio_el('studio-lanes');
+    if (m && m.open && !m.contains(e.target)) m.open = false;
+  });
+  document.querySelectorAll('.studio-zoombtn').forEach(zb => zb.addEventListener('dblclick', () => {
+    if (studio.project) { studio_fit(); studio_drawTimeline(); }
+  }));
   ['studio-tl-spec', 'studio-tl-marks'].forEach(id => {
     const c = studio_el(id);
     if (c) c.addEventListener('change', () => {
@@ -11307,10 +11554,10 @@ function studio_wire() {
     ['timeupdate', 'seeked', 'loadedmetadata'].forEach(ev => v.addEventListener(ev, studio_playhead));
     v.addEventListener('play', function tick() {
       studio_playhead();
-      studio_el('studio-play-btn').textContent = 'Pause';
+      studio_playGlyph(true);
       if (!v.paused) requestAnimationFrame(tick);
     });
-    v.addEventListener('pause', () => { studio_el('studio-play-btn').textContent = 'Play'; });
+    v.addEventListener('pause', () => studio_playGlyph(false));
   }
   /* A preview player given a new clip seeks once it knows the clip's length;
      before that, currentTime is not the browser's to set. */
@@ -11554,8 +11801,7 @@ async function studio_svLoad(song) {
 function studio_svBuild() {
   const box = studio_el('studio-sg-lanes');
   if (!box) return;
-  const adv = studio_el('studio-sg-adv').checked;
-  studio_show('studio-sg-advbar', adv);
+  const adv = studio_el('studio-sg-advwrap').open;
   if (!adv || !studio.sv || !studio.sv.meta) { box.innerHTML = ''; studio_el('studio-sg-toggles').innerHTML = ''; return; }
   studio.svShow = studio.svShow || {wave: true, hits: true, bands: true, flux: false, spec: true};
   if (!studio.svShow.hasOwnProperty('hits')) studio.svShow.hits = true;
@@ -11952,7 +12198,7 @@ function studio_sgFit() {
 /* One button starts and stops; its glyph and name say which it will do next. */
 function studio_sgPlayIcon(playing) {
   const b = studio_el('studio-sg-play');
-  b.innerHTML = playing ? '&#9208;' : '&#9654;';
+  b.innerHTML = playing ? STUDIO_GLYPH.pause : STUDIO_GLYPH.play;
   b.setAttribute('aria-label', playing ? 'Pause the part' : 'Play the part');
   if (playing) requestAnimationFrame(studio_sgTick); else studio_sgDrawWaves();
 }
@@ -12002,13 +12248,6 @@ function studio_sgFromKills() {
   toast(at.length + ' marks from the reel, kept as yours. Move any of them, then re-time.');
 }
 
-/* One mark chosen, by its chip: the nudges and Hear it act on it. */
-function studio_sgSelect(id) {
-  const sg = studio.sg;
-  sg.sel = sg.sel && sg.sel[id] && Object.keys(sg.sel).length === 1 ? {} : {[id]: true};
-  studio_sgDraw();
-}
-
 function studio_sgPicked() {
   const sg = studio.sg, ids = Object.keys(sg.sel || {}).filter(id => !studio_mkIsDrop(id));
   return ids.length === 1 ? studio_tmKillList(sg).find(k => k.id === ids[0]) || null : null;
@@ -12053,10 +12292,13 @@ function studio_sgUnmark() {
   if (last) studio_tmDelIds(studio_tmView('song'), [last.id]);
 }
 
+/* EVERY MARK GOES, AutoStream's green ones with the player's: an empty list is the player's list, so the
+   plan's marks are not drawn back in behind it. */
 function studio_sgClearMarks() {
   const sg = studio.sg;
   sg.cleared = true;
-  studio_tmClearMarks(studio_tmView('song'));
+  sg.hand = []; sg.edited = true; sg.sel = {};
+  studio_sgCommit('Every kill mark cleared');
 }
 
 function studio_sgClick() {
@@ -12096,15 +12338,13 @@ function studio_sgDraw() {
   studio_el('studio-sg-range').textContent = 'Using ' + studio_secs(sg.start) + ' → ' + studio_secs(sg.end) +
     ' (' + studio_dur(sg.end - sg.start) + ')';
   const len = d ? d.length : 0, part = sg.end - sg.start;
-  studio_el('studio-sg-fitnote').textContent = len > part + 0.05
-    ? 'The timeline is ' + studio_dur(len) + '; the part is ' + studio_dur(part) + '. "Fit the timeline" makes the part as long as the reel.'
+  const fitnote = len > part + 0.05
+    ? 'The timeline is ' + studio_dur(len) + '; the part is ' + studio_dur(part) + '. Fit the timeline makes the part as long as the reel.'
     : 'The whole timeline fits in this part.';
-  const list = studio_tmKillList(sg), stale = studio_tmStale(studio_tmView('song')).length > 0;
+  studio_el('studio-sg-fitnote').textContent = fitnote;
+  studio_el('studio-sg-fitbtn').title = 'Fit the timeline. ' + fitnote;
+  const list = studio_tmKillList(sg);
   sg.sel = sg.sel || {};
-  studio_el('studio-sg-chips').innerHTML = list.map((m, i) =>
-    '<span class="reel-chip' + (sg.sel[m.id] ? ' is-on' : '') + (m.hand ? ' is-hand' : ' is-auto') + (stale && !m.hand ? ' is-ghost' : '') +
-    '" data-sgmark="' + esc(m.id) + '" title="' + (m.hand ? 'Yours: never moved for you' : 'AutoStream’s: placed again when the reel is re-timed') +
-    '">' + (i + 1) + ' · ' + studio_secs(m.t) + '</span>').join('');
   const picked = studio_sgPicked();
   studio_show('studio-sg-marknudge', !!picked);
   if (picked) {
@@ -12113,7 +12353,9 @@ function studio_sgDraw() {
   }
   studio_el('studio-sg-fromkills').disabled = !((d && d.shots) || []).length;
   const shots = p ? p.shots.length : 0, mine = list.filter(k => k.hand).length;
-  studio_el('studio-sg-marksinfo').textContent = list.length
+  const info = studio_el('studio-sg-marksinfo');
+  info.textContent = list.length ? list.length + ' marks · ' + shots + ' shots' : '';
+  info.title = list.length
     ? list.length + ' marks for ' + shots + ' shots' + (mine ? ', ' + mine + ' of them yours' : '') +
       (list.length < shots ? ' — the rest keep their spacing after the last mark.' : list.length > shots ? ' — the extra marks are not used.' : '.')
     : 'No marks: the shots keep the lengths they have, starting from here.';
@@ -12134,6 +12376,21 @@ function studio_sgCanvas(id, H) {
    seconds -- so after the part has moved, the kills still timed for where it was are seen where they
    are, dashed, beside the part they are about to be placed in again. The part the plan was made on is
    outlined while it differs from the one chosen. */
+/* THE WHOLE-SONG GRAPH'S WINDOW: all of the song at zoom 1; zoomed in, a stretch of it kept around the part,
+   so the part's edges can be placed closely. Dragging reads the same window (studio_tmPartPointer). */
+function studio_sgOvView() {
+  const sg = studio.sg, sh = sg.shape, z = sg.ovZoom || 1;
+  if (!sh) return {t0: 0, w: 1};
+  const w = sh.seconds / z, mid = (sg.start + sg.end) / 2;
+  return {t0: Math.max(0, Math.min(sh.seconds - w, mid - w / 2)), w: w};
+}
+function studio_sgOvZoom(dir) {
+  const sg = studio.sg;
+  sg.ovZoom = Math.max(1, Math.min(16, (sg.ovZoom || 1) * (dir > 0 ? 1.5 : 1 / 1.5)));
+  if (sg.ovZoom < 1.05) sg.ovZoom = 1;
+  studio_sgDrawWaves();
+}
+
 function studio_sgDrawWaves() {
   studio_svDraw();                      /* the lanes follow the playhead too */
   const sg = studio.sg, sh = sg.shape, p = studio.project;
@@ -12149,10 +12406,10 @@ function studio_sgDrawWaves() {
   const v = studio_tmView('song'), why = studio_tmStale(v);
   const o = studio_sgCanvas('studio-sg-overview', 90);
   if (o) {
-    const {ctx, W, H} = o, X = t => t / sh.seconds * W, mid = H / 2;
+    const {ctx, W, H} = o, vw = studio_sgOvView(), X = t => (t - vw.t0) / vw.w * W, mid = H / 2;
     ctx.fillStyle = accent;
     for (let x = 0; x < W; x++) {
-      const k = Math.min(n - 1, Math.floor(x / W * n));
+      const k = Math.max(0, Math.min(n - 1, Math.floor((vw.t0 + x / W * vw.w) / sh.seconds * n)));
       const amp = sh.peaks[k] * (mid - 10);
       ctx.globalAlpha = (x >= X(sg.start) && x <= X(sg.end)) ? 1 : 0.3;
       ctx.fillRect(x, mid - amp, 1, amp * 2);
@@ -12195,7 +12452,7 @@ function studio_sgDrawWaves() {
 
 function studio_sgPointer(e) {
   const sg = studio.sg;
-  studio_tmPartPointer(e, {T: sg, sh: sg.shape, cv: studio_el('studio-sg-overview'),
+  studio_tmPartPointer(e, {T: sg, sh: sg.shape, cv: studio_el('studio-sg-overview'), view: studio_sgOvView,
     redraw: studio_sgDraw, commit: was => studio_sgPart(was)});
 }
 
@@ -12277,14 +12534,6 @@ function studio_sgWire() {
     a.addEventListener('pause', () => studio_sgPlayIcon(false));
     a.addEventListener('seeked', studio_sgDrawWaves);
   }
-  document.addEventListener('click', e => {
-    const c = e.target.closest ? e.target.closest('[data-sgmark]') : null;
-    if (!c) return;
-    // Choosing, not removing. A chip used to delete on click, which is a hard
-    // thing to undo when the marks are the twenty AutoStream placed; Remove is
-    // its own button on the row that appears.
-    studio_sgSelect(c.getAttribute('data-sgmark'));
-  });
   window.addEventListener('resize', () => { if (shell_page === 'studio') studio_sgDrawWaves(); });
 }
 
@@ -12298,7 +12547,10 @@ function studio_sgWire() {
    way of choosing, not a second engine. "All settings" opens the full page with what was chosen
    already in it.
    ===================================================================== */
-const GD_STEPS = ['Style', 'Song', 'Clips', 'Look', 'Check and make'];
+/* THE ORDER: the clips come before the song, so the song step knows how many kills there are to place and
+   how long the reel can be. The steps are named here, not counted, wherever one is meant. */
+const GD_STEPS = ['Style', 'Clips', 'Song', 'Look', 'Check and make'];
+const GD = {style: 0, clips: 1, song: 2, look: 3, check: 4};
 /* The styles that have been through the review loop. Fast-paced headshot since v1.79.8: ChatGPT's third review of
    its render (7.3/10) said yes, "ready to be offered as a recommended style". */
 /* Montage since v1.79.15: its third review, 7.2/10 on its own planner (4.2 on the general one); the one blocker
@@ -12307,6 +12559,7 @@ const GD_STEPS = ['Style', 'Song', 'Clips', 'Look', 'Check and make'];
    planner, which is why "Pick the style for me" no longer means "a style with a planner of its own" --
    it skips only a verdict that says its style fell back to another planner (`fallback`), and these two
    never do: the general planner is theirs. */
+const GD_BEST_N = 12;                     /* clips Pick for me takes before a song says how many it needs */
 const GD_BEST = ['drop', 'fasthead', 'montage', 'hype', 'velocity'];
 /* THE GUIDE OWNS ITS SPEC. Everything a guided reel is made from is here or in the song: the style,
    the clips, the shape, the lyrics, the name. Nothing is read from the Make page -- Perfect fit left
@@ -12535,6 +12788,16 @@ async function studio_gdFill(d, top) {
   return {setup: draft.setup, quick: draft.quick, verdict: v, judged: studio_gdBody(draft), added: (got.added || []).length};
 }
 async function studio_gdPickAll(top) {
+  if (!studio.song) {
+    /* Clips come before the song now: nothing to plan against yet, so the best of what the style takes --
+       the song step says, and adds, if it needs more. */
+    const gd = studio.gd, o = studio_gdOffer(gd), keep = top ? gd.quick : [];
+    gd.setup = o.setup;
+    gd.quick = keep.concat(o.quick.filter(id => keep.indexOf(id) < 0).slice(0, Math.max(0, GD_BEST_N - keep.length)));
+    gd.verdict = null;
+    studio_gdDraw();
+    return;
+  }
   const gd = studio.gd, ticket = gd.fillAsked = (gd.fillAsked || 0) + 1, was = JSON.stringify([gd.style, gd.setup, gd.quick]);
   clearTimeout(gd.timer);
   gd.filling = true;
@@ -12667,8 +12930,8 @@ function studio_gdCanGo(i) {
   if (gd.busy && i !== gd.step) return false;   /* planning: Back or Close lets go of it first */
   if (i <= 0) return true;
   if (!gd.style && !gd.auto) return false;
-  if (i >= 2 && !studio.song) return false;
-  if (i >= 3 && !studio_gdIds().length) return false;
+  if (i >= GD.song && !studio_gdIds().length) return false;
+  if (i >= GD.look && !studio.song) return false;
   return true;
 }
 
@@ -12679,9 +12942,9 @@ function studio_gdDraw() {
     '<li><button type="button" class="gd-step' + (i === gd.step ? ' is-on' : '') + (i < gd.step ? ' is-done' : '') +
     '" data-act="studio-gd" data-gd="step" data-i="' + i + '"' + (studio_gdCanGo(i) ? '' : ' disabled') +
     ' aria-current="' + (i === gd.step ? 'step' : 'false') + '"><b>Step ' + (i + 1) + '</b><span>' + esc(n) + '</span></button></li>').join('');
-  const draw = [studio_gdDrawStyle, studio_gdDrawSong, studio_gdDrawClips, studio_gdDrawLook, studio_gdDrawCheck][gd.step];
+  const draw = [studio_gdDrawStyle, studio_gdDrawClips, studio_gdDrawSong, studio_gdDrawLook, studio_gdDrawCheck][gd.step];
   studio_el('studio-gd-body').innerHTML = draw();
-  if (gd.step === 1) studio_gdDropWire();
+  if (gd.step === GD.song) studio_gdDropWire();
   else { const a = studio_el('studio-gd-audio'); if (a && !a.paused) a.pause(); }
   const back = studio_el('studio-gd-back');
   back.disabled = gd.step === 0;
@@ -12694,7 +12957,7 @@ function studio_gdDraw() {
   if (nm) nm.addEventListener('input', () => { gd.name = nm.value; });
   if (gd.busy) return;                     /* the chip is saying what the plan is doing */
   studio_gdChip();
-  if (gd.step >= 1) studio_gdAsk();
+  if (gd.step >= GD.clips) studio_gdAsk();
   studio_gdRemember();
 }
 
@@ -12731,7 +12994,7 @@ function studio_gdAutoNote() {
   return '<div class="gd-field"><p class="gd-note">None of the recommended styles works with this song and your clips:</p>' + list +
     '<div class="gd-acts">' + (studio.songShape && studio_gdMainDrop() == null
       ? '<button type="button" class="btn btn-primary btn-sm" data-act="studio-gd" data-gd="fix" data-fix="mark-drop:drop">Mark the drop yourself, for Build and drop</button>' : '') +
-    '<button type="button" class="btn btn-primary btn-sm" data-act="studio-gd" data-gd="step" data-i="1">Choose another song</button>' +
+    '<button type="button" class="btn btn-primary btn-sm" data-act="studio-gd" data-gd="step" data-i="2">Choose another song</button>' +
     '<button type="button" class="btn btn-sm" data-act="studio-gd" data-gd="more">Show the other styles</button></div></div>';
 }
 
@@ -12855,39 +13118,48 @@ function studio_gdNudgeDrop(id, by) {
 function studio_gdDropView() {
   const gd = studio.gd, sh = studio.songShape;
   if (!sh) return '';
-  const list = studio_gdDropList(), main = studio_gdMainDrop();
+  const list = studio_gdDropList(), main = studio_gdMainDrop(), marks = gd.anchors || [];
   const row = (d, i) => {
     const name = 'drop ' + (i + 1), isMain = main != null && Math.abs(d.t - main) < 1e-3;
     return '<li class="gd-droprow' + (d.hand ? ' is-hand' : '') + '"><span class="mono">D' + (i + 1) + '</span>' +
       '<span class="mono">' + esc(studio_secs(d.t)) + '</span><span class="gd-who">' + (d.hand ? 'yours' : 'AutoStream’s') + '</span>' +
       (isMain ? '<span class="gd-main">main drop</span>' : '<span></span>') +
       '<span class="gd-droptools">' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="drop-into" data-t="' + d.t + '" aria-label="Play into ' + name + '">Play into</button>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="drop-nudge" data-id="' + esc(d.id) + '" data-by="-0.1" aria-label="Move ' + name + ' a tenth of a second earlier">&minus;0.1</button>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="drop-nudge" data-id="' + esc(d.id) + '" data-by="0.1" aria-label="Move ' + name + ' a tenth of a second later">+0.1</button>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="drop-del" data-id="' + esc(d.id) + '" aria-label="Remove ' + name + '">Remove</button>' +
+      '<button type="button" class="sg-ic" data-act="studio-gd" data-gd="drop-into" data-t="' + d.t + '" aria-label="Play into ' + name + '" title="Play into this drop">' + studio_gdIc('into') + '</button>' +
+      '<button type="button" class="sg-ic" data-act="studio-gd" data-gd="drop-nudge" data-id="' + esc(d.id) + '" data-by="-0.1" aria-label="Move ' + name + ' a tenth of a second earlier" title="0.1 s earlier">&minus;0.1</button>' +
+      '<button type="button" class="sg-ic" data-act="studio-gd" data-gd="drop-nudge" data-id="' + esc(d.id) + '" data-by="0.1" aria-label="Move ' + name + ' a tenth of a second later" title="0.1 s later">+0.1</button>' +
+      '<button type="button" class="sg-ic" data-act="studio-gd" data-gd="drop-del" data-id="' + esc(d.id) + '" aria-label="Remove ' + name + '" title="Remove this drop">' + studio_gdIc('x') + '</button>' +
       '</span></li>';
   };
   const a = studio_el('studio-gd-audio'), playing = a && !a.paused && a.getAttribute('data-song') === studio.song;
-  return '<section class="gd-slot gd-drops" id="studio-gd-drops"><div class="gd-slothead"><h4>The drops</h4>' +
-    '<span class="mono" id="studio-gd-dropcount">' + (gd.drops ? list.length + (list.length === 1 ? ' drop' : ' drops') + ', as you set them' : list.length + ' found by AutoStream') + '</span></div>' +
-    '<p class="muted" style="margin:0">Where the bass comes in. Build and drop builds into the main one. Listen, and mark it yourself if it is not where you hear it: ' +
-    'click the song to move the playhead, double-click to mark a drop there, drag a drop to move it.</p>' +
+  return '<section class="gd-slot gd-drops" id="studio-gd-drops">' +
+    '<h3 class="sg-title">Drops ' + studio_gdHelp('About drops and marks', 'Where the bass comes in. Build and drop builds into the main one. Listen, and mark it yourself if it is not where you hear it: ' +
+      'click the song to move the playhead, double-click to mark a drop there, drag a drop to move it. Kill marks work the same way: a kill you mark lands where you put it, and the plan places the others around it.') + '</h3>' +
+    /* THE TOOLS, ON THE GRAPH THEY ACT ON: every one an icon, its words on hover */
+    '<div class="sg-bar" role="group" aria-label="Drops and kill marks">' +
+    studio_gdTool('drop-add', 'drop', 'Mark a drop at the playhead', {attrs: ' id="studio-gd-dropadd"'}) +
+    studio_gdTool('drop-reset', 'reset', 'Back to AutoStream’s drops', {disabled: !gd.drops}) +
+    '<span class="sg-sep" aria-hidden="true"></span>' +
+    studio_gdTool('mark-add', 'mark', 'Mark a kill at the playhead', {attrs: ' id="studio-gd-markadd"', main: true}) +
+    studio_gdTool('mark-clear', 'clear', 'Clear my kill marks', {disabled: !marks.length}) +
+    '<span class="sg-sep" aria-hidden="true"></span>' +
+    '<label class="sg-tog gd-snap" title="Snap to the beat"><input type="checkbox" id="studio-gd-snap"' + (gd.snap ? ' checked' : '') + ' aria-label="Snap to the beat">' + studio_gdIc('snap') + '</label>' +
+    '<span class="sg-info muted" id="studio-gd-dropcount">' + (gd.drops ? list.length + (list.length === 1 ? ' drop' : ' drops') + ', as you set them' : list.length + ' found by AutoStream') +
+      (marks.length ? ' · ' + marks.length + (marks.length === 1 ? ' kill mark' : ' kill marks') : '') + '</span></div>' +
     '<div class="gd-dropbox"><canvas id="studio-gd-dropcv" aria-label="The song: its loudness, its parts and its drops"></canvas></div>' +
-    '<div class="gd-transport" role="group" aria-label="Player">' +
-    '<button type="button" class="btn btn-sm gd-play" data-act="studio-gd" data-gd="play" id="studio-gd-play" aria-label="' + (playing ? 'Pause' : 'Play') + '">' +
-      icon(playing ? 'pause' : 'play') + '<span>' + (playing ? 'Pause' : 'Play') + '</span></button>' +
-    '<span class="mono gd-time" id="studio-gd-time">' + studio_dur(studio_gdNow()) + ' / ' + studio_dur(sh.seconds) + '</span>' +
-    '<input type="range" class="gd-seek" id="studio-gd-seek" min="0" max="1000" step="1" value="' + Math.round(studio_gdNow() / Math.max(1, sh.seconds) * 1000) + '" aria-label="Seek">' +
-    '<label class="gd-vol"><span class="muted">Volume</span><input type="range" id="studio-gd-vol" min="0" max="1" step="0.05" value="' + (a ? a.volume : 0.8) + '" aria-label="Volume"></label>' +
-    '<button type="button" class="btn btn-sm" data-act="studio-gd" data-gd="drop-into" data-t="' + (main == null ? '' : main) + '"' + (main == null ? ' disabled' : '') + '>Play into the drop</button>' +
-    '</div>' +
     studio_gdPartHtml() +
-    '<div class="gd-acts">' +
-    '<button type="button" class="btn btn-sm" data-act="studio-gd" data-gd="drop-add" id="studio-gd-dropadd">Mark a drop at the playhead</button>' +
-    '<label class="gd-snap"><input type="checkbox" id="studio-gd-snap"' + (gd.snap ? ' checked' : '') + '> Snap to the beat</label>' +
-    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="drop-reset"' + (gd.drops ? '' : ' disabled') + '>Back to AutoStream’s drops</button>' +
+    /* THE SAME PLAYER BAR AS THE TIMELINE'S */
+    '<div class="gd-transport ed-player-bar" role="group" aria-label="Player">' +
+    '<span class="ed-pb-left"><span class="mono gd-time" id="studio-gd-time">' + studio_dur(studio_gdNow()) + ' / ' + studio_dur(sh.seconds) + '</span></span>' +
+    '<span class="ed-pb-mid">' +
+    '<button type="button" class="ed-pb-btn" data-act="studio-gd" data-gd="drop-into" data-t="' + (main == null ? '' : main) + '"' + (main == null ? ' disabled' : '') +
+      ' aria-label="Play into the drop" title="Play into the drop: from a few seconds before it">' + studio_gdIc('into') + '</button>' +
+    '<button type="button" class="ed-pb-btn is-play gd-play" data-act="studio-gd" data-gd="play" id="studio-gd-play" aria-label="' + (playing ? 'Pause' : 'Play') + '" title="Play or pause">' +
+      STUDIO_GLYPH[playing ? 'pause' : 'play'] + '</button>' +
+    '</span>' +
+    '<span class="ed-pb-right"><label class="gd-vol" title="Volume"><input type="range" id="studio-gd-vol" min="0" max="1" step="0.05" value="' + (a ? a.volume : 0.8) + '" aria-label="Volume"></label></span>' +
     '</div>' +
+    '<input type="range" class="gd-seek" id="studio-gd-seek" min="0" max="1000" step="1" value="' + Math.round(studio_gdNow() / Math.max(1, sh.seconds) * 1000) + '" aria-label="Seek">' +
     (list.length ? '<ol class="gd-droplist" id="studio-gd-droplist">' + list.map(row).join('') + '</ol>'
                  : '<p class="gd-note" id="studio-gd-droplist">' + (gd.drops ? 'No drops: every one was removed.' : 'AutoStream found no drop in this song.') + ' Mark one where you hear the bass come in.</p>') +
     studio_gdMarksHtml() +
@@ -13045,7 +13317,7 @@ function studio_gdAudioWire() {
   const label = () => {
     const b = studio_el('studio-gd-play');
     if (b) {
-      b.innerHTML = icon(a.paused ? 'play' : 'pause') + '<span>' + (a.paused ? 'Play' : 'Pause') + '</span>';
+      b.innerHTML = STUDIO_GLYPH[a.paused ? 'play' : 'pause'];
       b.setAttribute('aria-label', a.paused ? 'Play' : 'Pause');
     }
   };
@@ -13115,49 +13387,78 @@ async function studio_gdLenAsk(v, d, key) {
   if (el) el.textContent = studio_gdLenSays(v);
 }
 
+/* THE SONG STEP'S ICONS AND ? -- the same small vocabulary as the Song tab: a glyph with its words on hover,
+   and a ? where a paragraph used to be. */
+const GD_IC = {
+  drop: '<path d="M5 5h14L12 18z"/>',
+  mark: '<path d="M12 3l6 6-6 6-6-6zM12 17v4M10 19h4"/>',
+  clear: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  reset: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  play: '<path d="M8 5v14l11-7z"/>',
+  snap: '<path d="M6 4v8a6 6 0 0 0 12 0V4M6 8h4M14 8h4"/>',
+  into: '<path d="M4 5v14M9 5v14l11-7z"/>'
+};
+function studio_gdIc(name) {
+  return '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + GD_IC[name] + '</svg>';
+}
+function studio_gdHelp(label, text) {
+  return '<span class="studio-help" tabindex="0" role="note" aria-label="' + esc(label) + '">?<span class="studio-help-pop" role="tooltip">' +
+    esc(text) + '</span></span>';
+}
+function studio_gdTool(gdAct, name, label, extra) {
+  return '<button type="button" class="sg-ic' + ((extra && extra.main) ? ' is-main' : '') + '" data-act="studio-gd" data-gd="' + gdAct + '"' +
+    ((extra && extra.attrs) || '') + ((extra && extra.disabled) ? ' disabled' : '') +
+    ' aria-label="' + esc(label) + '" title="' + esc(label) + '">' + studio_gdIc(name) + '</button>';
+}
+
 function studio_gdPartHtml() {
   const gd = studio.gd, mk = studio.mk, p = studio_gdPart();
   if (!p) return '';
   const len = gd.len || 'part';
-  return '<div class="gd-partrow" id="studio-gd-part"><span><b>Part</b> <span class="mono">' + esc(studio_secs(p[0])) + ' &rarr; ' +
-      esc(studio_secs(p[1])) + '</span> <span class="muted">(' + Math.round(p[1] - p[0]) + ' s, ' + (mk.touched ? 'yours' : 'recommended') + ')</span></span>' +
-    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="part-reset"' + (mk.touched || len !== 'part' ? '' : ' disabled') + '>Use recommended part</button></div>' +
+  return '<div class="sg-bar gd-partrow" id="studio-gd-part"><span class="sg-lab">Part</span>' +
+    '<span class="mono sg-time">' + esc(studio_secs(p[0])) + ' &rarr; ' + esc(studio_secs(p[1])) + '</span>' +
+    '<span class="muted sg-info">' + Math.round(p[1] - p[0]) + ' s &middot; ' + (mk.touched ? 'yours' : 'recommended') + '</span>' +
+    studio_gdTool('part-reset', 'reset', 'Use the recommended part', {disabled: !(mk.touched || len !== 'part')}) +
+    '<span class="sg-sep" aria-hidden="true"></span><span class="sg-lab">Length</span>' +
+    studio_gdHelp('About the length', 'How long the reel is: the style’s own length, the part as drawn on the song, or every clip you chose. Each says how long it will be once clips are chosen.') +
+    '</div>' +
     '<div class="gd-howlong" role="radiogroup" aria-label="How long the reel is">' + GD_LENS.map(([k, label]) =>
       '<button type="button" class="gd-lenopt' + (k === len ? ' is-on' : '') + '" role="radio" aria-checked="' + (k === len ? 'true' : 'false') +
       '" data-act="studio-gd" data-gd="len" data-v="' + k + '"><b>' + esc(label) + '</b><span class="muted" id="studio-gd-len-' + k + '">' +
       esc(studio_gdLenSays(k)) + '</span></button>').join('') + '</div>';
 }
 
+/* The kills marked by hand, as rows; the buttons that add and clear them are on the song's own toolbar. */
 function studio_gdMarksHtml() {
-  const gd = studio.gd, marks = gd.anchors || [];
+  const marks = studio.gd.anchors || [];
+  if (!marks.length) return '';
   const row = (t, i) => '<li><span class="mono">K' + (i + 1) + '</span><span class="mono">' + esc(studio_secs(t)) + '</span>' +
     '<span class="gd-droptools">' +
-    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="mark-nudge" data-i="' + i + '" data-by="-0.1" aria-label="Move kill mark ' + (i + 1) + ' a tenth of a second earlier">&minus;0.1</button>' +
-    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="mark-nudge" data-i="' + i + '" data-by="0.1" aria-label="Move kill mark ' + (i + 1) + ' a tenth of a second later">+0.1</button>' +
-    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="mark-del" data-i="' + i + '" aria-label="Remove kill mark ' + (i + 1) + '">Remove</button>' +
+    '<button type="button" class="sg-ic" data-act="studio-gd" data-gd="mark-nudge" data-i="' + i + '" data-by="-0.1" aria-label="Move kill mark ' + (i + 1) + ' a tenth of a second earlier" title="0.1 s earlier">&minus;0.1</button>' +
+    '<button type="button" class="sg-ic" data-act="studio-gd" data-gd="mark-nudge" data-i="' + i + '" data-by="0.1" aria-label="Move kill mark ' + (i + 1) + ' a tenth of a second later" title="0.1 s later">+0.1</button>' +
+    '<button type="button" class="sg-ic" data-act="studio-gd" data-gd="mark-del" data-i="' + i + '" aria-label="Remove kill mark ' + (i + 1) + '" title="Remove this mark">' + studio_gdIc('x') + '</button>' +
     '</span></li>';
-  return '<details class="gd-marks" id="studio-gd-marks"' + (marks.length ? ' open' : '') + '><summary>Mark kills by hand <span class="muted">(optional)</span></summary>' +
-    '<p class="muted" style="margin:0">Play the song and mark where a kill should land. Each kill you mark lands where you put it; the plan places the others around it.</p>' +
-    '<div class="gd-acts"><button type="button" class="btn btn-sm" data-act="studio-gd" data-gd="mark-add" id="studio-gd-markadd">Mark a kill at the playhead</button>' +
-    '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="mark-clear"' + (marks.length ? '' : ' disabled') + '>Clear my marks</button></div>' +
-    (marks.length ? '<ol class="gd-marklist" id="studio-gd-marklist">' + marks.map(row).join('') + '</ol>' : '') +
-    '</details>';
+  return '<ol class="gd-marklist" id="studio-gd-marklist">' + marks.map(row).join('') + '</ol>';
 }
 
 function studio_gdDrawSong() {
   const sh = studio.songShape, list = studio.songList || [], part = studio_gdPart();
   const drops = sh ? (sh.drops && sh.drops.length ? sh.drops : (sh.drop ? [sh.drop] : [])) : [];
-  return '<div class="gd-q"><h3>Which song?</h3><p class="muted">We pick the best part of it for ' + esc((studio_gdStyle() || {label: 'the style'}).label) + '. Drag its edges on the song to choose another, and say how long the reel should be.</p></div>' +
+  const label = (studio_gdStyle() || {label: 'the style'}).label;
+  return '<h3 class="sg-title">Song ' + studio_gdHelp('About the song', 'We pick the best part of it for ' + label +
+      '. Drag its edges on the song to choose another, and say how long the reel should be.') + '</h3>' +
     '<div class="gd-grid">' + list.map(s => '<button type="button" class="gd-card' + (studio.song && s.path.toLowerCase() === studio.song.toLowerCase() ? ' is-on' : '') +
       '" data-act="studio-gd" data-gd="song" data-path="' + esc(s.path) + '" data-name="' + esc(s.name) + '"><span class="gd-card-name">' + esc(s.name) + '</span></button>').join('') + '</div>' +
     '<div class="gd-acts"><button type="button" class="btn" data-act="studio-gd" data-gd="pick-song">Choose a song file&hellip;</button>' +
     /* the link dialog the Song tab and the Make page use, answering to the guide */
     '<button type="button" class="btn" data-act="studio-yt" data-for="guide">Paste a YouTube link&hellip;</button>' +
     '<span class="muted" id="studio-gd-song-msg"></span></div>' +
-    (sh ? '<div class="gd-facts"><span><b>Tempo</b> ' + Math.round(sh.bpm) + ' BPM</span><span><b>Length</b> ' + studio_dur(sh.seconds) + '</span>' +
-      '<span><b>Drop</b> ' + (drops.length ? drops.map(d => studio_secs(d)).join(', ') : 'none found') +
+    (sh ? '<div class="gd-facts"><span class="sy-pill"><b>Tempo</b> ' + Math.round(sh.bpm) + ' BPM</span><span class="sy-pill"><b>Length</b> ' + studio_dur(sh.seconds) + '</span>' +
+      '<span class="sy-pill is-len"><b>Drop</b> ' + (drops.length ? drops.map(d => studio_secs(d)).join(', ') : 'none found') +
       (studio.gd.drops ? ' (as you set them: ' + (studio.gd.drops.length ? studio.gd.drops.map(d => studio_secs(d.t)).join(', ') : 'none') + ')' : '') + '</span>' +
-      (part ? '<span><b>Part used</b> ' + studio_secs(part[0]) + ' &rarr; ' + studio_secs(part[1]) + '</span>' : '') + '</div>' +
+      (part ? '<span class="sy-pill is-clips"><b>Part used</b> ' + studio_secs(part[0]) + ' &rarr; ' + studio_secs(part[1]) + '</span>' : '') + '</div>' +
       studio_gdDropView() : '');
 }
 
@@ -13525,9 +13826,10 @@ function studio_gdChip() {
   let v = gd.verdict;
   if (gd.step === 0) {
     v = (!gd.style && !gd.auto) ? {level: 'warn', text: 'Pick a style, or pick a song and we will choose one.'}
-      : {level: 'ok', text: gd.style ? 'Good. Next: the song.' : 'Pick a song next and we will choose the style.'};
+      : {level: 'ok', text: gd.style ? 'Good. Next: your clips.' : 'Pick your clips, then a song, and we will choose the style.'};
   }
-  if (gd.step >= 1 && !v) v = {level: 'ok', text: 'Checking this against your song and clips…'};
+  if (gd.step === GD.clips && !studio.song) v = {level: 'ok', text: 'Pick the clips; the song comes next, and it is checked against them there.'};
+  else if (gd.step >= GD.clips && !v) v = {level: 'ok', text: 'Checking this against your song and clips…'};
   if (gd.step === 4 && gd.held) v = gd.held;
   const label = v.dot || {ok: 'Works', warn: 'Will work, but', bad: "Won't work"}[v.level];
   el.className = 'gd-chip ' + v.level;
@@ -13571,7 +13873,7 @@ function studio_gdAsk() {
                                : {level: 'warn', text: 'Could not check this against your clips just now.'};
     gd.judged = body;
     studio_gdChip();
-    if (gd.step === 2) studio_gdRecount();
+    if (gd.step === GD.clips) studio_gdRecount();
     if (gd.step === 4) {
       const f = studio_el('studio-gd-facts');
       if (f) f.outerHTML = studio_gdFacts();
@@ -13601,10 +13903,10 @@ async function studio_gdUseSong(path, name) {
 function studio_gdFix(fix) {
   const gd = studio.gd;
   if (fix.indexOf('style:') === 0) { gd.style = fix.slice(6); gd.auto = false; }
-  else if (fix === 'pick-song') { gd.step = 1; }
+  else if (fix === 'pick-song') { gd.step = GD.song; }
   else if (fix === 'mark-drop' || fix === 'mark-drop:drop') {
     if (fix === 'mark-drop:drop') { gd.style = 'drop'; gd.auto = false; gd.verdict = null; }
-    gd.step = 1;
+    gd.step = GD.song;
     studio_gdDraw();
     const v = studio_el('studio-gd-drops');
     if (v) v.scrollIntoView({block: 'nearest'});
@@ -13613,7 +13915,7 @@ function studio_gdFix(fix) {
     return;
   }
   else if (fix === 'pick-clips') {   /* adds; keeps what was chosen -- what the plan says it is short, chosen by the plan */
-    gd.step = 2;
+    gd.step = GD.clips;
     return studio_gdPickAll(true);
   }
   else if (fix === 'format:vertical') { gd.fmt = 'vertical'; }
@@ -13688,7 +13990,7 @@ function studio_gdAct(b) {
   const gd = studio.gd, what = b.getAttribute('data-gd');
   if (what === 'close') return studio_gdClose();
   /* Back while it plans lets go of the plan and goes back: it used to look live and do nothing */
-  if (what === 'back' && gd.busy) { studio_gdDetach(); gd.step = 3; gd.verdict = null; return studio_gdDraw(); }
+  if (what === 'back' && gd.busy) { studio_gdDetach(); gd.step = GD.look; gd.verdict = null; return studio_gdDraw(); }
   /* a kill mark in the preview: a seek, in the library's preview as in the guide's */
   if (what === 'pv-seek') { const v = studio_el('studio-preview-video'), t = Number(b.getAttribute('data-t')); if (v && isFinite(t)) v.currentTime = t; return; }
   if (gd.busy) return;                     /* planning: Back and Close are what is offered */
@@ -13738,7 +14040,7 @@ function studio_gdAct(b) {
     if (gd.style !== 'drop' && gd.setup && gd.quick.indexOf(gd.setup) < 0) gd.quick = [gd.setup].concat(gd.quick);
     gd.verdict = null;
   }
-  else if (what === 'auto') { gd.auto = true; gd.style = ''; gd.autoWhy = null; gd.step = 1; gd.verdict = null; }
+  else if (what === 'auto') { gd.auto = true; gd.style = ''; gd.autoWhy = null; gd.step = GD.clips; gd.verdict = null; }
   else if (what === 'setup' || what === 'quick' || what === 'unpick') studio_gdToggle(what, b.getAttribute('data-id'));
   else if (what === 'pickall') return studio_gdPickAll(false);
   else if (what === 'set') { gd[b.getAttribute('data-k')] = b.getAttribute('data-v'); gd.verdict = null; }

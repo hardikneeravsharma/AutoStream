@@ -20,7 +20,7 @@ from pathlib import Path
 
 import appd
 import pytest
-from test_ui_studio_guide import _drop_song, _filled, _rich_clips
+from test_ui_studio_guide import _clips_then_song, _drop_song, _filled, _rich_clips
 
 pytestmark = pytest.mark.ui
 
@@ -220,9 +220,9 @@ def test_the_part_put_back_is_no_change(pg):
     assert pg.evaluate("studio.project.draft || null") is None
     assert pg.evaluate("studio.undo.length") == undo0, "a part released where it was is an undo step"
     assert pg.inner_text("#studio-sg-stale").strip() == ""
-    pg.click('[data-act="studio-sg-nudge"][data-what="start"][data-d="bar"]')
+    pg.evaluate("studio_sgNudge('start', 'bar')")
     assert pg.evaluate("!!studio.project.draft")
-    pg.click('[data-act="studio-sg-nudge"][data-what="start"][data-d="-bar"]')
+    pg.evaluate("studio_sgNudge('start', '-bar')")
     assert pg.evaluate("studio.project.draft || null") is None, "nudged and back is no draft"
     assert pg.evaluate("studio.pending.length") == 0
 
@@ -604,14 +604,13 @@ def test_the_same_draft_and_editor_in_the_guide_the_make_page_and_the_song_tab(p
     pg.click("#studio-gd-open")
     pg.wait_for_selector("#studio-guide-scrim:not(.hide)")
     pg.click('.gd-card[data-key="montage"]')
-    pg.click("#studio-gd-next")
+    _clips_then_song(pg)
     pg.click('.gd-card[data-gd="song"][data-name*="drop song"]')
     pg.wait_for_function("() => studio.songShape && studio.song.indexOf('drop song') >= 0", timeout=60_000)
     pg.wait_for_selector("#studio-gd-dropcv")
     pg.evaluate("() => studio_gdAddDrop(22.5)")
     assert 22.5 in pg.evaluate("studio.mk.drops.map(d => d.t)"), "the guide's drop is not the draft's"
-    pg.click("#studio-gd-next")
-    pg.click('[data-gd="pickall"]')
+    pg.evaluate("() => studio_gdPickAll(true)")
     _filled(pg)
     pg.click('[data-act="studio-gd"][data-gd="all"]')
     pg.wait_for_selector("#studio-make-scrim:not(.hide)")
@@ -675,11 +674,10 @@ def test_all_settings_returns_to_the_same_step_with_what_was_chosen(pg):
     pg.click("#studio-gd-open")
     pg.wait_for_selector("#studio-guide-scrim:not(.hide)")
     pg.click('.gd-card[data-key="montage"]')
-    pg.click("#studio-gd-next")
+    _clips_then_song(pg)
     pg.click('.gd-card[data-gd="song"][data-name*="long click"]')
     pg.wait_for_function("() => studio.songShape && studio.song.indexOf('long click') >= 0", timeout=60_000)
-    pg.click("#studio-gd-next")
-    pg.click('[data-gd="pickall"]')
+    pg.evaluate("() => studio_gdPickAll(true)")
     _filled(pg)
     quick = pg.evaluate("studio.gd.quick.slice()")
     assert pg.evaluate("studio.gd.step") == 2
@@ -709,7 +707,7 @@ def test_all_settings_returns_to_the_same_step_with_what_was_chosen(pg):
 def test_undo_and_redo_cover_the_songs_timing(pg):
     _reel(pg)
     _song_tab(pg)
-    pg.click('[data-act="studio-sg-nudge"][data-what="start"][data-d="bar"]')
+    pg.evaluate("studio_sgNudge('start', 'bar')")
     pg.evaluate("(t) => studio_tmAddMark(studio_tmView('song'), t)", pg.evaluate("studio.sg.start + 2.0"))
     assert pg.evaluate("studio.project.draft.marks") is not None
     pg.locator("#studio-sg-name").click()

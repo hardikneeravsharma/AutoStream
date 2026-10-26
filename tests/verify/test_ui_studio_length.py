@@ -235,7 +235,7 @@ def test_a_longer_part_on_the_song_tab_is_planned_again_and_kept(pg, app):
     start, end = pg.evaluate("[studio.sg.start, studio.sg.end]")
     assert end - start == pytest.approx(before, abs=0.6)
     for _ in range(10):
-        pg.click('[data-act="studio-sg-nudge"][data-what="end"][data-d="bar"]')
+        pg.evaluate("studio_sgNudge('end', 'bar')")
     start, end = pg.evaluate("[studio.sg.start, studio.sg.end]")
     assert end - start > before + 15
     # NEVER RE-PLANNED BEHIND THE PLAYER (v1.81.0): the longer part makes the timing stale, and the

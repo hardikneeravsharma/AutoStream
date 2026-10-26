@@ -743,17 +743,17 @@ def test_the_preview_has_its_own_play_bar(ui, app):
         f"{int(length) // 60}:{int(length) % 60:02d}"), page.text_content("#studio-pv-time")
 
     # --- its play button plays the preview, and pauses it
-    page.click("#studio-pv-play")
+    page.click("#studio-play-btn")
     page.wait_for_function("studio.pv.playing && studio_pvTime() > 0.6", timeout=10_000)
-    assert page.get_attribute("#studio-pv-play", "aria-label") == "Pause"
+    assert page.get_attribute("#studio-play-btn", "aria-label") == "Pause"
     # out of the way while it plays and nobody points at it; back when pointed at
     page.mouse.move(2, 2)
     page.wait_for_function(f"({opacity})() === '0'", timeout=5_000)
     page.hover("#studio-pv")
     page.wait_for_function(f"({opacity})() === '1'", timeout=5_000)
-    page.click("#studio-pv-play")
+    page.click("#studio-play-btn")
     assert not page.evaluate("studio.pv.playing")
-    assert page.get_attribute("#studio-pv-play", "aria-label") == "Play"
+    assert page.get_attribute("#studio-play-btn", "aria-label") == "Play"
 
     # --- a click on the picture plays and pauses it, as on the rendered video
     page.click("#studio-pv", position={"x": 40, "y": 60})
@@ -787,7 +787,7 @@ def test_the_preview_has_its_own_play_bar(ui, app):
         assert lv["v"] == pytest.approx(lv["want"], abs=0.01), lv
         page.select_option(knobs + 'select[data-knob="rate"]', "2")
         page.evaluate("studio_seekTo(0)")
-        page.click("#studio-pv-play")
+        page.click("#studio-play-btn")
         sped = page.evaluate("""async () => { const a = studio_pvTime(), w = performance.now();
             await new Promise(r => setTimeout(r, 1000));
             const r = {reel: studio_pvTime() - a, wall: (performance.now() - w) / 1000};
@@ -1273,7 +1273,7 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     page.wait_for_function("() => studio.sv && studio.sv.meta && studio.sv.bytes", timeout=120_000)
     assert not page.evaluate("() => document.querySelectorAll('#studio-sg-lanes .studio-sg-lane').length"), \
         "the lanes are Advanced and must start off"
-    page.check("#studio-sg-adv")
+    page.click("#studio-sg-advwrap summary")
     lanes = page.evaluate("() => [...document.querySelectorAll('#studio-sg-lanes .studio-sg-lane')]"
                           ".map(l => l.getAttribute('data-lane'))")
     assert lanes, "the song has no views at all"
@@ -1305,8 +1305,8 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
 
     beat = page.evaluate("studio_sgBeat()")
     s0 = page.evaluate("studio.sg.start")
-    page.click('[data-act="studio-sg-nudge"][data-what="start"][data-d="bar"]')
-    page.click('[data-act="studio-sg-nudge"][data-what="start"][data-d="ms"]')
+    page.evaluate("studio_sgNudge('start', 'bar')")
+    page.evaluate("studio_sgNudge('start', 'ms')")
     assert page.evaluate("studio.sg.start") == pytest.approx(s0 + 4 * beat + 0.01, abs=1e-3)
     page.click('[data-act="studio-sg-snapbar"]')
     page.click('[data-act="studio-sg-fit"]')
@@ -1317,7 +1317,7 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
         page.keyboard.press("k")
     marks = page.evaluate("studio_tmKillList(studio.sg).filter(k => k.hand).map(k => k.t)")
     assert len(marks) == 3, f"K did not mark the kills: {marks}"
-    assert page.locator("#studio-sg-chips .reel-chip.is-hand").count() == 3
+    assert page.evaluate("studio_tmKillList(studio.sg).filter(k => k.hand).length") == 3
     # NO "USE THIS PART" SINCE THE EDIT FLOW (v1.81.0): the song, the part and the marks are the reel's
     # at once, as its timing draft, and the banner's Keep my shots puts the kills on them.
     assert page.evaluate("!!studio.project.draft")
