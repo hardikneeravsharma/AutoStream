@@ -14015,6 +14015,9 @@ async function studio_gdBgLoad() {
   const got = await API.get('/api/studio/backgrounds').catch(() => null);
   studio.bgLoading = false;
   studio.bgList = got && got.ok ? got : {items: [], folder: ''};
+  /* "Your own" chosen before the folder was read: the first of them, so the preview has one to show */
+  const bg = studio_gdBg();
+  if (bg.kind === 'file' && !bg.file && studio.bgList.items.length) studio.gd.bg = Object.assign(bg, {file: studio.bgList.items[0].path});
   if (studio.gd.step === GD.look) studio_gdDraw();
 }
 function studio_gdDrawLook() {

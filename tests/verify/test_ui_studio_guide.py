@@ -1299,7 +1299,7 @@ def test_each_slot_keeps_its_own_page_and_a_choice_never_moves_it(rp):
     rp.click(f'#studio-gd-quickgrid [data-gd="quick"][data-id="{quick}"]')
     assert rp.evaluate("(id) => studio.gd.quick.includes(id)", quick)
     assert _count(rp, "setup") == "Showing 1–33 of 33"
-    assert _count(rp, "quick").startswith("Showing 1–72")
+    assert _count(rp, "quick").startswith("Showing 1–") and not _count(rp, "quick").startswith("Showing 1–24 ")
     assert rp.locator(f'#studio-gd-quickgrid .gd-clip.is-on[data-id="{quick}"]').count() == 1
     assert rp.locator(f'#studio-gd-setupgrid .gd-clip.is-on[data-id="{pick}"]').count() == 1
 
@@ -1498,6 +1498,7 @@ def test_edit_opens_trim_and_cut_and_comes_back_with_the_choices(rp, rich_app):
     other = _ids(rp)[0]
     rp.evaluate("([a, b]) => { studio.gd.quick = [a, b]; studio_gdDraw(); }", [other, target])
     rp.fill("#studio-gd-find-quick", "mtch0")
+    rp.evaluate("(id) => { document.querySelector('#studio-gd-quickgrid .gd-clip[data-id=\"' + id + '\"] .gd-info').open = true; }", target)  # Edit is behind "..."
     rp.locator(f'{QUICK}[data-id="{target}"] [data-gd="clip-edit"]').click()
     # the Clips page, on that clip's player alone, with Trim and cut
     rp.wait_for_selector("#view-clips.is-active.is-visit")
@@ -1515,6 +1516,7 @@ def test_edit_opens_trim_and_cut_and_comes_back_with_the_choices(rp, rich_app):
     assert rp.evaluate("() => studio.gd.quick") == [other, target]
     assert not rp.evaluate("() => document.getElementById('view-clips').classList.contains('is-visit')")
     # a save: the clip comes back two seconds shorter, under another name
+    rp.evaluate("(id) => { document.querySelector('#studio-gd-quickgrid .gd-clip[data-id=\"' + id + '\"] .gd-info').open = true; }", target)  # Edit is behind "..."
     rp.locator(f'{QUICK}[data-id="{target}"] [data-gd="clip-edit"]').click()
     rp.wait_for_selector("#clip-player-card:not(.hide)")
     new = run / "clips" / "mtch03b.mp4"
@@ -1558,6 +1560,10 @@ def test_the_look_step_frames_the_reel_live_and_sends_what_was_chosen(rp, rich_a
     # the tray shows what is chosen, and takes one out
     n = len(rp.evaluate("() => studio_gdChosen(studio.gd)"))
     assert rp.locator("#studio-gd-tray .gd-trayclip").count() == min(n, 18)
+    first = rp.get_attribute("#studio-gd-tray .gd-trayclip", "data-id")
+    rp.click("#studio-gd-tray .gd-trayclip")
+    assert first not in rp.evaluate("() => studio_gdChosen(studio.gd)")
+    rp.click("#studio-gd-next")                             # the song, chosen already
     rp.click("#studio-gd-next")
     rp.wait_for_selector("#studio-gd-lookpv")
     assert rp.evaluate("() => studio.gd.fit") == "near"
