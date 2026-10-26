@@ -2053,6 +2053,10 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
         except ValueError as e:
             return proj, [f"{e} It was planned {way} instead."] + notes
     proj["shots"] = got.shots
+    # The directors' own effects answer to the same rule as every other plan's: nothing
+    # whites out a kill (no_whiteout). They place no drop flash, so nothing here is meant.
+    if (whited := no_whiteout(got.shots, {"kill": []})):
+        got.notes.append(whiteout_note(whited))
     proj["song_offset"] = round(got.part[0], 5)
     proj["song_marks"] = [round(t, 4) for t in got.marks]
     proj["part_end"] = round(got.part[1], 5)
@@ -3031,8 +3035,10 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
             # The signature rides on every kill anyway (signature_fx); drawn as one of
             # the reel's two kill effects as well, it would be half the variety -- and
             # an effect too soft to sit under it would only be taken off again.
+            # Nor one that whites the kill out by itself (KILL_LIGHT): it would only be
+            # turned down again, one kill at a time (no_whiteout).
             return (fam(p) not in KILL_BLURS and _detail(p) * slowest * sig_detail >= SHARP_FLOOR
-                    and fam(p) not in sig_fams)
+                    and fam(p) not in sig_fams and _light(p) <= WHITE_CEIL)
         kept = [p for p in pools["kill"] if clear_fx(p)]
         pools["kill"] = kept or pools["kill"]
         for s in shots:
@@ -3419,6 +3425,10 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     if style.kill_fx_max or style.crossfade_max < 1.0 or style.flash_cap or style.drift_max:
         ref_fl = float((studio_refs.summary(style.refs) if style.refs else {}).get("flashes_per_min") or 0.0)
         restrain_look(shots, style, ref_fl, sum(float(s["duration"]) for s in shots), theirs_)
+    # Last of the effect guards, so nothing after it brings a white-out back -- and
+    # before the drop's flash, the one white-out that is meant.
+    if (whited := no_whiteout(shots, pools, theirs_, fixed={fam(p) for p in style.signature})):
+        notes.append(whiteout_note(whited))
     if drop_shot is not None and drop_shot < len(shots) and DROP_FLASH not in shots[drop_shot]["fx"]:
         # THE DROP FLASHES WHITE, as the reference edits do on theirs: on the kill that
         # lands on it, on top of that kill's own effect. After the mix is held to two
@@ -4196,6 +4206,16 @@ def vary(project: dict, what: str = "all", seed: int | None = None) -> dict:
                     | ({k for k in POOL_KINDS if k != kind} if kind != "all" else set()),
                     fixed={fam(p) for p in style.signature})
         signature_guard(project["shots"], style)
+        # The drop's flash, where the plan put one and the draw left it, is still meant.
+        dropped = [s for s, s0 in zip(project["shots"], start) if style.drop
+                   and (s0.get("fx") or [""])[-1] == DROP_FLASH and (s.get("fx") or [""])[-1] == DROP_FLASH]
+        for s in dropped:
+            s["fx"] = s["fx"][:-1]
+        no_whiteout(project["shots"], pools, set(project.get("mix_free") or ())
+                    | ({k for k in POOL_KINDS if k != kind} if kind != "all" else set()),
+                    fixed={fam(p) for p in style.signature})
+        for s in dropped:
+            s["fx"] = list(s["fx"]) + [DROP_FLASH]
         if mix_of(project["shots"]) != was:
             break
         seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
@@ -4307,6 +4327,109 @@ def kill_detail(shot: dict) -> float:
     for pid in list(shot.get("fx") or []) + list(shot.get("hero_fx") or []):
         d *= _detail(pid)
     return d
+
+
+# HOW MUCH NEAR-WHITE LIGHT EACH PART ADDS AT THE KILL FRAME, by part id: the render
+# gate's own measure (reelcheck, kill-bright: the share of the game's pixels over 245
+# in the best two-frame run around the kill) with the part alone on one shot, less the
+# same moment plain. Measured by scripts/measure_kill_light.py on 36 moments of 12
+# clips (8 VALORANT, 4 Counter-Strike 2; plain, a median 0.2% of the picture is over
+# the line) through the renderer's own segment_command, one render per part per
+# moment; re-run it after changing a kill effect's filter or knobs.
+#
+# THE WORST MOMENT, NOT THE MEAN. An inversion adds 1.6% on average and 26.6% on a
+# dark frame -- the director's 17.4 s kill that turned white -- so the mean would pass
+# exactly the effect that whited a kill out. A part not listed added under 0.5% on
+# every moment: every punch, shake, split, colour pop, wash, blur, vignette, echo,
+# rotation, bloom, and both hero treatments.
+KILL_LIGHT = {
+    "k03": 0.717, "k03thin": 0.122, "k03mid": 0.717, "k03wide": 0.994, "k03bloom": 0.954,
+    "k03double": 0.718, "k03dim": 0.064,
+    "k16": 0.491, "k16soft": 0.109, "k16mid": 0.491, "k16hard": 0.897, "k16fast": 0.383, "k16long": 0.666,
+    "k12": 0.266, "k12one": 0.266, "k12two": 0.266, "k12long": 0.266, "k12flash": 0.266,
+    "k11": 0.046, "k11soft": 0.011, "k11mid": 0.046, "k11hard": 0.082, "k11held": 0.037,
+    "k20hard": 0.015, "k20blink": 0.005,
+}
+# A STACK THAT ADDS MORE THAN THIS WHITES THE KILL OUT. The gate's line is 20% of the
+# game's picture; footage already carries some near-white of its own, so an effect may
+# add half the line at most. That leaves the dim flash (6.4%) and every crunch (8.2% at
+# the hardest), and turns down every other white flash, every flicker and the inversion.
+WHITE_CEIL = 0.10
+
+
+def _light(pid: str) -> float:
+    if not pid:
+        return 0.0
+    if pid in KILL_LIGHT:
+        return KILL_LIGHT[pid]
+    return KILL_LIGHT.get(fam(pid), 0.0)
+
+
+def kill_light(shot: dict) -> float:
+    """The near-white light this shot's kill effects add at its kill (see KILL_LIGHT).
+
+    Light ADDS: two parts that each lift a share of the picture over the line lift
+    about the sum of the two (both raise the same pixels further, never fewer of them).
+    """
+    return sum(_light(p) for p in list(shot.get("fx") or []) + list(shot.get("hero_fx") or []))
+
+
+def no_whiteout(shots: list[dict], pools: dict, free: set[str] | tuple = (),
+                fixed: set[str] | tuple = ()) -> list[str]:
+    """Turn down an effect that whites out a kill. In place. -> the part ids turned down.
+
+    EVERY KILL IS SEEN, NOT FLASHED OVER (every style; round 3's last rule). While a
+    shot's effects add more than WHITE_CEIL of near-white at its kill (KILL_LIGHT),
+    its brightest part gives way: to a kill effect this reel already uses that adds
+    none of that light -- not a third kind (calm_mix's rule), not the one either
+    neighbour shows where another will do (_vary's), and never one that would leave
+    the kill too soft (SHARP_FLOOR) -- else a dark one from the pool, else nothing.
+    A drawer the player chose (`free`) is theirs and left alone; a style's signature
+    (`fixed`) is never touched. Runs before the drop's flash goes on: that flash is the
+    one white-out asked for by name, on the one kill it is meant for.
+    """
+    def own(s: dict) -> list[str]:
+        return [f for f in s.get("fx") or [] if fam(f) not in fixed]
+
+    used = list(dict.fromkeys(f for s in shots for f in own(s)))
+    gone: list[str] = []
+    for n, s in enumerate(shots):
+        for _ in range(4):
+            if kill_light(s) <= WHITE_CEIL + 1e-9:
+                break
+            kinds = ([("fx", f) for f in own(s)] if "kill" not in free else []) + \
+                    ([("hero_fx", h) for h in s.get("hero_fx") or []] if "hero" not in free else [])
+            kinds = [k for k in kinds if _light(k[1]) > 0.0]
+            if not kinds:
+                break
+            where, worst = max(kinds, key=lambda k: _light(k[1]))
+            rest = [f for f in s[where] if f != worst]
+            to = None
+            if where == "fx":
+                near = {(own(shots[n - 1]) or [""])[0] if n else "",
+                        (own(shots[n + 1]) or [""])[0] if n + 1 < len(shots) else ""}
+                keep_d = kill_detail(dict(s, fx=rest))
+
+                def fits(f: str) -> bool:
+                    return (f not in rest and _light(f) <= 0.0 and fam(f) not in KILL_BLURS
+                            and fam(f) not in fixed and keep_d * _detail(f) >= SHARP_FLOOR)
+                for cands in (used, pools.get("kill") or []):
+                    ok = [f for f in dict.fromkeys(cands) if fits(f)]
+                    if ok:
+                        to = next((f for f in ok if f not in near), ok[0])
+                        break
+            s[where] = [to if f == worst else f for f in s[where]] if to else rest
+            if to and to not in used:
+                used.append(to)
+            gone.append(worst)
+    return gone
+
+
+def whiteout_note(gone: list[str]) -> str:
+    """The plan note for what no_whiteout turned down."""
+    names = ", ".join(dict.fromkeys(PART[p].label.lower() if p in PART else p for p in gone))
+    return (f"{len(gone)} effect(s) would have whited out the kill they landed on ({names}); "
+            f"each gave way so the kill itself is seen.")
 
 
 # VELOCITY, AS A SHAPE ON EVERY KILL (Style.speed_profile "velocity"): rush in at
