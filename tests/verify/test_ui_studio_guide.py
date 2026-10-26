@@ -672,7 +672,7 @@ def test_changing_style_recomputes_which_chosen_clips_count(rp):
         Object.values(studio.clipIndex).forEach(c => { byPath[c.path] = c; });
         return {kept: studio.gd.quick.slice(), sent_hs: body.clips.map(p => studio_gdHs(byPath[p]) > 0),
                 left: [...document.querySelectorAll('.gd-leftlist li')].map(li => li.innerText),
-                counter: document.querySelector('.gd-slothead .mono').innerText,
+                counter: document.getElementById('studio-gd-count').innerText,
                 ids: studio_gdIds().length}; }""")
     assert set(got["kept"]) == body_ids                                       # the selection is the player's
     assert got["sent_hs"] and all(got["sent_hs"])                             # only headshots reach the plan
@@ -856,20 +856,24 @@ def test_the_song_step_moves_the_part_sets_the_length_and_marks_kills(rp):
     body = rp.evaluate("() => studio_gdBody()")
     assert rp.evaluate("() => studio.mk.touched") and part[1] < rec[1] - 1.0 and abs(part[0] - rec[0]) < 0.01
     assert body["part_end"] == part[1] and not body["shaping"].get("part_auto"), body   # the player's, never moved
-    assert "yours" in rp.inner_text("#studio-gd-part")
+    assert "your part" in rp.inner_text("#studio-gd-part")
     # --- and back to AutoStream's
     rp.click('[data-gd="part-reset"]')
     assert rp.evaluate("() => studio_gdPart()") == rec and not rp.evaluate("() => studio.mk.touched")
-    # --- how long: every clip runs on to the song's end and says so to the plan; the style's length
-    rp.click('[data-gd="len"][data-v="all"]')
+    # --- how long, in seconds: 45 s from where the part starts, said to the plan
+    rp.click('[data-gd="len"][data-v="45"]')
+    body = rp.evaluate("() => studio_gdBody()")
+    assert abs(body["part_end"] - min(secs, body["part_start"] + 45)) < 0.01, body
+    assert rp.get_attribute('[data-gd="len"][data-v="45"]', "aria-checked") == "true"
+    # --- every clip is its own tick: the part runs on to the song's end and the plan is told so
+    rp.click("#studio-gd-every")
     body = rp.evaluate("() => studio_gdBody()")
     assert body["shaping"]["fill"] == "all" and abs(body["part_end"] - secs) < 0.01
-    assert rp.get_attribute('[data-gd="len"][data-v="all"]', "aria-checked") == "true"
-    assert "as long as your clips run" in rp.inner_text('[data-gd="len"][data-v="all"]')
-    rp.click('[data-gd="len"][data-v="part"]')
+    rp.click("#studio-gd-every")
     assert rp.evaluate("() => studio_gdBody().shaping.fill") == ""
-    # --- mark a kill at the playhead
-    rp.click("#studio-gd-marks summary")
+    rp.click('[data-gd="len"][data-v="part"]')
+    # --- kill timing, in sight under the player: marking by hand is one click, not a folded line
+    rp.click('[data-gd="timing"][data-v="manual"]')
     at = rec[0] + 10.0
     rp.evaluate("(t) => studio_gdSeek(t)", at)
     rp.click("#studio-gd-markadd")
@@ -1186,8 +1190,20 @@ def _count(pg, slot="quick"):
     return pg.inner_text(f"#studio-gd-count-{slot}")
 
 
+def _filters(pg, slot="quick"):
+    """open the slot's Filters, where session, map, game mode and kind are folded"""
+    if not pg.evaluate("(s) => document.getElementById('studio-gd-filters-' + s).open", slot):
+        pg.click(f"#studio-gd-filters-{slot} summary")
+
+
+def _more(pg, slot="quick"):
+    """Show more: the next 24"""
+    pg.click(f'#studio-gd-browse-{slot} [data-gd="page"]')
+
+
 def _pick_view(pg, k, label, slot="quick"):
     """choose a filter's option by its label, whatever its count"""
+    _filters(pg, slot)
     sel = f"#studio-gd-{k}-{slot}"
     value = pg.evaluate("([s, l]) => [...document.querySelector(s).options].find(o => o.text.startsWith(l)).value", [sel, label])
     pg.select_option(sel, value)
@@ -1200,7 +1216,7 @@ def test_every_clip_is_offered_as_a_card_24_a_page(rp):
     n = rp.evaluate("() => studio_gdClips().length")
     assert n == 72                                       # 26 + 6 of the fixture's, 40 more
     lead = rp.inner_text("#studio-gd-body .gd-q")
-    assert f"All {n} of your VALORANT clips are here, 24 a page" in lead and "Pick for me draws on all of them" in lead
+    assert f"{n} VALORANT clips" in lead and "Pick for me chooses from all of them" in lead
     assert rp.locator(QUICK).count() == 24
     assert _count(rp) == f"Showing 1–24 of {n}"
     # favourites first, then the rest
@@ -1215,25 +1231,24 @@ def test_every_clip_is_offered_as_a_card_24_a_page(rp):
     card = rp.locator(QUICK).first
     text, when = card.inner_text(), rp.evaluate("(id) => studio.clipIndex[id].folderLabel", card.get_attribute("data-id"))
     assert "8s" in text and when in text and ("HEADSHOT" in text.upper() or "BODY" in text.upper())
-    assert card.locator('[data-gd="clip-play"]').is_visible() and card.locator('[data-gd="clip-edit"]').is_visible()
-    # the pager: page numbers, Next and Prev, and what it shows out of how many
-    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Page 2"]')
-    assert _count(rp) == f"Showing 25–48 of {n}"
-    second = _ids(rp)
-    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Next page"]')
-    assert _count(rp) == f"Showing 49–72 of {n}" and rp.locator(QUICK).count() == 24
-    assert rp.is_disabled('#studio-gd-browse-quick .gd-pager [aria-label="Next page"]')
-    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Previous page"]')
-    assert _ids(rp) == second
-    # every clip is on exactly one page
-    seen = []
-    for p in (1, 2, 3):
-        rp.click(f'#studio-gd-browse-quick .gd-pager [aria-label="Page {p}"]')
-        seen += _ids(rp)
+    # Play beside the card; the file name and Edit behind its "..."
+    assert card.locator('[data-gd="clip-play"]').is_visible() and not card.locator('[data-gd="clip-edit"]').is_visible()
+    card.locator(".gd-info summary").click()
+    assert card.locator('[data-gd="clip-edit"]').is_visible() and card.locator(".gd-name").is_visible()
+    # Show more: 24 more at a time, what it shows out of how many, and none once all are shown
+    first = _ids(rp)
+    _more(rp)
+    assert _count(rp) == f"Showing 1–48 of {n}" and _ids(rp)[:24] == first
+    _more(rp)
+    assert _count(rp) == f"Showing 1–72 of {n}" and rp.locator(QUICK).count() == n
+    assert rp.locator('#studio-gd-browse-quick [data-gd="page"]').count() == 0
+    # every clip once
+    seen = _ids(rp)
     assert len(seen) == n and len(set(seen)) == n
     # a long name wraps inside its card
     rp.fill("#studio-gd-find-quick", "a_very_long")
     rp.wait_for_function(f"() => document.querySelectorAll('{QUICK}').length === 1")
+    rp.locator(f"{QUICK} .gd-info summary").click()
     assert rp.evaluate(f"""() => {{ const c = document.querySelector('{QUICK}'), m = c.querySelector('.gd-name');
         return m.getBoundingClientRect().right <= c.getBoundingClientRect().right + 0.5 && c.scrollWidth <= c.clientWidth; }}""")
 
@@ -1246,12 +1261,16 @@ def test_each_slot_keeps_its_own_page_and_a_choice_never_moves_it(rp):
       for (let i = 0; i < 30; i++) studio.clipIndex['build' + i] = Object.assign({}, base, {id: 'build' + i, name: 'build_clip_' + i});
     }""")
     _to_clips(rp, "drop", "drop song")
+    # the build is a strip of its six best, every one of them a click away
+    assert rp.locator("#studio-gd-setupgrid .gd-clip").count() == 6
+    rp.click('[data-gd="build-all"]')
     assert _count(rp, "setup") == "Showing 1–24 of 33"
-    rp.click('#studio-gd-browse-setup .gd-pager [aria-label="Page 2"]')
-    assert _count(rp, "setup") == "Showing 25–33 of 33"
+    _more(rp, "setup")
+    assert _count(rp, "setup") == "Showing 1–33 of 33"
     assert _count(rp, "quick").startswith("Showing 1–24 of ")
-    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Page 3"]')
-    assert _count(rp, "setup") == "Showing 25–33 of 33"
+    _more(rp)
+    _more(rp)
+    assert _count(rp, "setup") == "Showing 1–33 of 33"
     # choosing, in either slot, leaves both pages where they were
     pick = _ids(rp, "#studio-gd-setupgrid .gd-clip")[2]
     rp.click(f'#studio-gd-setupgrid [data-gd="setup"][data-id="{pick}"]')
@@ -1259,8 +1278,8 @@ def test_each_slot_keeps_its_own_page_and_a_choice_never_moves_it(rp):
     quick = _ids(rp)[1]
     rp.click(f'#studio-gd-quickgrid [data-gd="quick"][data-id="{quick}"]')
     assert rp.evaluate("(id) => studio.gd.quick.includes(id)", quick)
-    assert _count(rp, "setup") == "Showing 25–33 of 33"
-    assert _count(rp, "quick").startswith("Showing 49–")
+    assert _count(rp, "setup") == "Showing 1–33 of 33"
+    assert _count(rp, "quick").startswith("Showing 1–72")
     assert rp.locator(f'#studio-gd-quickgrid .gd-clip.is-on[data-id="{quick}"]').count() == 1
     assert rp.locator(f'#studio-gd-setupgrid .gd-clip.is-on[data-id="{pick}"]').count() == 1
 
@@ -1269,17 +1288,16 @@ def test_find_and_each_filter_narrow_with_counts_and_go_back_to_page_one(rp):
     _many_clips(rp)
     _to_clips(rp)
     n = 72
-    # favourites
+    # favourites: a chip that says how many it leaves, and starts again from the top
     assert rp.inner_text('#studio-gd-browse-quick [data-k="fav"][data-v="fav"]') == "Favourites (5)"
-    assert rp.inner_text('#studio-gd-browse-quick [data-k="fav"][data-v="other"]') == f"Not favourites ({n - 5})"
-    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Page 2"]')
+    _more(rp)
     rp.click('#studio-gd-browse-quick [data-k="fav"][data-v="fav"]')
     assert _count(rp) == f"Showing 1–5 of 5 that match, of {n}"
     assert rp.evaluate(f"() => [...document.querySelectorAll('{QUICK}')].every(e => studio.clipIndex[e.dataset.id].fav)")
-    rp.click('#studio-gd-browse-quick [data-k="fav"][data-v="other"]')
-    assert _count(rp) == f"Showing 1–24 of {n - 5} that match, of {n}"
     rp.click('#studio-gd-browse-quick [data-k="fav"][data-v="any"]')
-    # the sessions, newest first, each with its count
+    assert _count(rp) == f"Showing 1–24 of {n}"
+    # the sessions, newest first, each with its count, folded under Filters
+    _filters(rp)
     runs = rp.evaluate("() => [...document.getElementById('studio-gd-run-quick').options].map(o => o.text)")
     assert runs[0] == "Every session" and len(runs) == 3
     assert sorted(runs[1:]) == sorted(["18 Oct 2026, 21:00 (6)", f"20 Oct 2026, 20:00 ({n - 6})"])
@@ -1296,8 +1314,8 @@ def test_find_and_each_filter_narrow_with_counts_and_go_back_to_page_one(rp):
     _pick_view(rp, "kind", "Clutch")
     assert rp.locator(QUICK).count() == 1 and "CLUTCH" in rp.locator(QUICK).first.inner_text().upper()
     rp.select_option("#studio-gd-kind-quick", "")
-    # the find box: by name or label, the caret kept in the box, and back to page one
-    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Page 3"]')
+    # the find box: by name or label, the caret kept in the box, and back to the top
+    _more(rp)
     rp.click("#studio-gd-find-quick")
     rp.keyboard.type("extra_clip_1")
     assert rp.locator(QUICK).count() == 11                 # extra_clip_1 and extra_clip_10..19
@@ -1336,6 +1354,7 @@ def test_map_and_game_mode_come_from_the_match_records(rp):
     Competitive, three from a Haven Spike Rush. The rest have no record at all."""
     _to_clips(rp)
     n = rp.evaluate("() => studio_gdClips().length")
+    _filters(rp)
     maps = rp.evaluate("() => [...document.getElementById('studio-gd-map-quick').options].map(o => o.text)")
     assert maps == ["Every map", f"Unknown map ({n - 5})", "Haven (3)", "Ascent (2)"]
     modes = rp.evaluate("() => [...document.getElementById('studio-gd-mode-quick').options].map(o => o.text)")
@@ -1368,16 +1387,16 @@ def test_choices_survive_paging_and_filtering_and_no_view_asks_the_verdict_again
     _to_clips(rp)
     a = _ids(rp)[3]
     rp.click(f'#studio-gd-quickgrid [data-gd="quick"][data-id="{a}"]')
-    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Page 2"]')
-    b = _ids(rp)[5]
+    _more(rp)
+    b = _ids(rp)[29]
     rp.click(f'#studio-gd-quickgrid [data-gd="quick"][data-id="{b}"]')
-    assert _count(rp).startswith("Showing 25–48")          # choosing did not move the page
+    assert _count(rp).startswith("Showing 1–48")           # choosing did not fold the grid back
     _settled(rp)
     asked, body = rp.evaluate("() => [window.__feas.length, JSON.stringify(studio_gdBody())]")
-    head = "#studio-gd-body .gd-slot .gd-slothead .mono"
+    head = "#studio-gd-count"
     assert _two_chosen(rp.inner_text(head))
     # every kind of view, with both chosen clips out of sight in most of them
-    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Page 3"]')
+    _more(rp)
     rp.click('#studio-gd-browse-quick [data-k="fav"][data-v="fav"]')
     assert _two_chosen(rp.inner_text(head))
     assert rp.inner_text('#studio-gd-browse-quick [data-k="chosen"]') == "Chosen only (2)"
@@ -1391,6 +1410,7 @@ def test_choices_survive_paging_and_filtering_and_no_view_asks_the_verdict_again
     rp.fill("#studio-gd-find-quick", "")
     rp.click('#studio-gd-browse-quick [data-k="chosen"]')
     _pick_view(rp, "kind", "Multi-kill")
+    _filters(rp)
     rp.select_option("#studio-gd-kind-quick", "")
     rp.select_option("#studio-gd-run-quick", "")
     rp.select_option("#studio-gd-map-quick", "")
@@ -1427,9 +1447,9 @@ def test_play_opens_the_clip_over_the_guide_and_chooses_it_there(rp):
     rp.keyboard.press("Escape")
     rp.wait_for_selector("#studio-preview-scrim.hide", state="attached")
     assert rp.is_visible("#studio-guide-scrim") and rp.evaluate("() => studio.gd.step") == 2
-    rp.click('#studio-gd-browse-quick .gd-pager [aria-label="Page 2"]')
+    _more(rp)
     page = _count(rp)
-    q = rp.locator(QUICK).first
+    q = rp.locator(QUICK).nth(25)
     qid = q.get_attribute("data-id")
     q.locator('[data-gd="clip-play"]').click()
     rp.wait_for_selector("#studio-preview-scrim:not(.hide)")
@@ -1500,3 +1520,66 @@ def test_edit_opens_trim_and_cut_and_comes_back_with_the_choices(rp, rich_app):
             new.unlink()
         except OSError:
             pass
+
+
+def test_the_look_step_frames_the_reel_live_and_sends_what_was_chosen(rp, rich_app):
+    """6.111: three framings were the only choice. Now a live 9:16 preview and three numbers under
+    it, the presets values of them, and what is behind the band: the game blurred, black, a colour
+    or one of the player's own backgrounds."""
+    import shutil
+    bgdir = rich_app["home"] / "video" / "backgrounds"
+    bgdir.mkdir(parents=True, exist_ok=True)
+    loop = bgdir / "loop.mp4"
+    clips = sorted((rich_app["home"] / "video" / "clips").rglob("*.mp4"))
+    shutil.copy2(clips[0], loop)
+    _to_clips(rp, "drop", "drop song")
+    rp.click('[data-gd="pickall"]')
+    _filled(rp)
+    # the tray shows what is chosen, and takes one out
+    n = len(rp.evaluate("() => studio_gdChosen(studio.gd)"))
+    assert rp.locator("#studio-gd-tray .gd-trayclip").count() == min(n, 18)
+    rp.click("#studio-gd-next")
+    rp.wait_for_selector("#studio-gd-lookpv")
+    assert rp.evaluate("() => studio.gd.fit") == "near"
+    assert "75% of the game" in rp.inner_text("#studio-gd-lksays")
+    body = rp.evaluate("() => studio_gdBody()")
+    assert body["vfit"] == "near" and "frame" not in body and "bg" not in body
+    # Whole picture: all of the width, in a band
+    rp.click('[data-gd="set"][data-k="fit"][data-v="fit"]')
+    assert "100% of the game" in rp.inner_text("#studio-gd-lksays")
+    # a slider makes it the player's own, without a redraw (the preview's video is the same element)
+    rp.evaluate("() => { window.__pv = document.querySelector('#studio-gd-lkband video'); }")
+    rp.evaluate("""() => { const z = document.querySelector('[data-gdlook="zoom"]'); z.value = 40;
+                           z.dispatchEvent(new Event('input', {bubbles: true})); z.dispatchEvent(new Event('change', {bubbles: true})); }""")
+    assert rp.evaluate("() => studio.gd.fit") == "custom"
+    assert rp.evaluate("() => document.querySelector('#studio-gd-lkband video') === window.__pv")
+    assert rp.get_attribute('[data-gd="set"][data-k="fit"][data-v="custom"]', "aria-pressed") == "true"
+    assert "60% of the game" in rp.inner_text("#studio-gd-lksays")
+    rp.evaluate("""() => { const y = document.querySelector('[data-gdlook="y"]'); y.value = 20;
+                           y.dispatchEvent(new Event('input', {bubbles: true})); }""")
+    top = rp.evaluate("() => parseFloat(document.getElementById('studio-gd-lkband').style.top)")
+    assert 0 < top < 20
+    body = rp.evaluate("() => studio_gdBody()")
+    assert body["vfit"] == "custom" and body["frame"] == {"keep": 0.6, "x": 0.5, "y": 0.2}
+    assert body["keep"]["frame"] == body["frame"]           # All settings and a rebuild carry it
+    # behind the band: black, a colour, then one of the player's own
+    rp.click('[data-gd="bg-kind"][data-v="black"]')
+    assert rp.evaluate("() => studio_gdBody().bg.kind") == "black"
+    rp.click('[data-gd="bg-kind"][data-v="color"]')
+    assert rp.locator('[data-gdlook="color"]').count() == 1
+    rp.click('[data-gd="bg-kind"][data-v="file"]')
+    rp.wait_for_selector(".lk-tile")
+    assert rp.locator(".lk-tile").count() == 1 and "loop" in rp.inner_text(".lk-tile")
+    rp.click(".lk-tile")
+    got = rp.evaluate("() => studio_gdBody().bg")
+    assert got["kind"] == "file" and got["file"].endswith("loop.mp4") and got["dim"] == 0.2 and got["blur"] == 4
+    assert "/api/studio/bgfile" in rp.get_attribute("#studio-gd-lkback video", "src")
+    # Add your own: the picker is refused in a test run, and said, never a window
+    rp.click('[data-gd="bg-add"]')
+    rp.wait_for_timeout(500)
+    # back to the blurred game at its own strength: nothing extra is sent
+    rp.click('[data-gd="bg-kind"][data-v="blur"]')
+    assert "bg" not in rp.evaluate("() => studio_gdBody()")
+    # remembered for the next reel
+    rp.evaluate("() => { studio_gdRemember(); studio.gd.fit = 'near'; studio.gd.frame = null; studio_gdRecall(); }")
+    assert rp.evaluate("() => studio.gd.fit") == "custom" and rp.evaluate("() => studio.gd.frame.keep") == 0.6

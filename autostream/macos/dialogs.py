@@ -119,6 +119,6 @@ def answer(server, picked: list[str], kind: str) -> dict:
            "size_mb": round(path.stat().st_size / (1024 * 1024))}
     if gone:
         out["missing"] = [Path(g).name for g in gone]
-    if kind not in ("intro", "outro"):
+    if kind not in ("intro", "outro", "background"):
         out.update(server.clips_probe({"path": str(path)}))
     return out

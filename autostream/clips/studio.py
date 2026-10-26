@@ -99,8 +99,31 @@ MIN_INTRO_SECONDS = 0.3
 INTRO_FITS = ("cover", "contain")
 # How a 16:9 game fills a 9:16 reel: the middle cropped to fill it, all of it over a
 # blurred copy, or the middle three quarters of it over the same -- a third taller.
-VFITS = ("zoom", "fit", "near")
+VFITS = ("zoom", "fit", "near", "custom")
 NEAR_KEEP = 0.75
+# THE FRAME, SET BY HAND (agreed with ChatGPT, 2026-10-26). Three presets were the
+# only choice, and the player wanted to say how much of the game is cropped. The
+# frame is three numbers, and the presets are only values of them:
+#   keep  the share of the game's WIDTH shown -- 1 is the whole picture, 0.75 near
+#         fit, about 0.32 fills a 9:16 frame's height; below that it zooms on in,
+#         down to FRAME_KEEP_MIN
+#   x     where that width is taken from, 0 the left edge, 1 the right
+#   y     where the game band sits in the frame, 0 the top, 1 the bottom
+# Measured in source width, not in a zoom factor, so the same number means the same
+# crop whatever the frame's shape or a stacked camera leaves of it.
+FRAME_DEFAULT = {"keep": NEAR_KEEP, "x": 0.5, "y": 0.5}
+FRAME_KEEP_MIN = 0.25
+# WHAT IS BEHIND THE BAND. The game itself, blurred and dimmed, was the only one; now
+# also black, a colour, or an image or motion loop from the player's own backgrounds
+# folder. Only the first three ship: a background pack someone bought stays theirs,
+# in their folder, and is never bundled.
+BG_KINDS = ("blur", "black", "color", "file")
+BG_DEFAULT = {"kind": "blur", "blur": 24, "dim": 0.12, "color": "#101014", "file": ""}
+# A motion background starts darker and a little soft, so it holds the eye less than
+# the game does (about 20 % darker, 4 px of blur at 1080x1920).
+BG_FILE_DIM, BG_FILE_BLUR = 0.20, 4
+BG_VIDEO = (".mp4", ".mov", ".webm", ".mkv", ".m4v")
+BG_IMAGE = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 # Windows caps a whole command line at 32,767 characters. Kept well under it:
 # the paths in the line are the user's own and can be far longer here than on
 # the machine this was measured on.
@@ -5456,6 +5479,110 @@ def _probe_seconds(path: Path) -> float:
         return 0.0
 
 
+# ------------------------------------------------------------------ the frame and its background
+
+def frame_settings(v) -> dict:
+    """The hand-set frame (see FRAME_DEFAULT), clamped."""
+    v = v if isinstance(v, dict) else {}
+    return {"keep": round(_num(v.get("keep"), FRAME_KEEP_MIN, 1.0, FRAME_DEFAULT["keep"]), 4),
+            "x": round(_num(v.get("x"), 0.0, 1.0, 0.5), 4),
+            "y": round(_num(v.get("y"), 0.0, 1.0, 0.5), 4)}
+
+
+def bg_dirs() -> list[Path]:
+    """Where a player's own backgrounds are: Videos\\AutoStream\\backgrounds, and the
+    personal assets pack's folder beside it."""
+    from .. import paths
+    return [paths.VIDEO_HOME / "backgrounds", paths.VIDEO_HOME / "assets" / "backgrounds"]
+
+
+def bg_allowed(path: str) -> Path | None:
+    """`path` as a background file, only when it is one inside a backgrounds folder."""
+    try:
+        p = Path(str(path or "")).resolve()
+    except (OSError, ValueError):
+        return None
+    if not p.is_file() or p.suffix.lower() not in BG_VIDEO + BG_IMAGE:
+        return None
+    for d in bg_dirs():
+        try:
+            p.relative_to(d.resolve())
+            return p
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def backgrounds() -> list[dict]:
+    """Every image and motion loop in the backgrounds folders, by name."""
+    out, seen = [], set()
+    for d in bg_dirs():
+        try:
+            files = sorted((f for f in d.iterdir() if f.is_file() and f.suffix.lower() in BG_VIDEO + BG_IMAGE),
+                           key=lambda f: f.name.lower())
+        except OSError:
+            continue
+        for f in files:
+            if str(f).lower() in seen:
+                continue
+            seen.add(str(f).lower())
+            out.append({"path": str(f), "name": f.stem[:60], "kind": "video" if f.suffix.lower() in BG_VIDEO else "image"})
+    return out
+
+
+def bg_settings(v, *, probe=_probe_seconds) -> tuple[dict, list[str]]:
+    """What is behind the band, clamped; a file that is not a background in a backgrounds
+    folder any more falls back to the blurred game, and says so -- never in silence."""
+    v = v if isinstance(v, dict) else {}
+    kind = v.get("kind") if v.get("kind") in BG_KINDS else "blur"
+    file_kind = kind == "file"
+    out = {"kind": kind,
+           "blur": int(_num(v.get("blur"), 0, 60, BG_FILE_BLUR if file_kind else BG_DEFAULT["blur"])),
+           "dim": round(_num(v.get("dim"), 0.0, 0.8, BG_FILE_DIM if file_kind else BG_DEFAULT["dim"]), 3),
+           "color": v.get("color") if re.fullmatch(r"#[0-9a-fA-F]{6}", str(v.get("color") or "")) else BG_DEFAULT["color"],
+           "file": ""}
+    notes: list[str] = []
+    if file_kind:
+        p = bg_allowed(v.get("file"))
+        if p is None:
+            notes.append("The background file is not in your backgrounds folder any more, so the blurred game is behind "
+                         "the picture instead.")
+            out.update(kind="blur", blur=BG_DEFAULT["blur"], dim=BG_DEFAULT["dim"])
+        else:
+            out["file"] = str(p)
+            # an image is a still; a video loops, so where in the loop each shot starts is from its length
+            out["seconds"] = round(probe(p), 3) if p.suffix.lower() in BG_VIDEO else 0.0
+    return out, notes
+
+
+def _frame_box(lay: dict, GW: int, GH: int) -> tuple[float, float, int, float, int]:
+    """For a fit, near or hand-set layout: (keep, vertical share of the source kept, band
+    height, x, band top) inside the game area -- the source assumed 16:9, as everywhere."""
+    if lay.get("fit") == "custom":
+        fr = frame_settings(lay.get("frame"))
+    else:
+        fr = {"keep": NEAR_KEEP if lay.get("fit") == "near" else 1.0, "x": 0.5, "y": 0.5}
+    tall = GW * 9 / 16 / fr["keep"]                 # the band's height with no row cropped
+    # taller than the area: the middle rows are kept, so the band fills it and no more
+    h = _even_px(min(GH, tall))
+    return fr["keep"], (1.0 if tall <= GH else h / tall), h, fr["x"], int(round((GH - h) * fr["y"]))
+
+
+def _even_px(v: float) -> int:
+    return max(2, int(round(v / 2.0)) * 2)
+
+
+def game_band(project: dict) -> tuple[int, int] | None:
+    """Where the game sits in a 1080-wide vertical frame, (top, height) in pixels, for a
+    fit, near or hand-set reel without a stacked camera; None when it fills the frame."""
+    if project.get("format") != "vertical" or project.get("vfit") not in ("fit", "near", "custom"):
+        return None
+    W, H = SIZES["vertical"]
+    lay = {"fit": project.get("vfit"), "frame": project.get("frame")}
+    _keep, _vk, h, _x, top = _frame_box(lay, W, H)
+    return (top, h) if h < H else None
+
+
 def tidy_locks(shots: list[dict]) -> None:
     """A lock holds two or more shots side by side; anything else is not one. In place.
 
@@ -5537,6 +5664,16 @@ def normalise(project: dict, root: Path, *, probe=_probe_seconds) -> tuple[dict,
     # on -- so that is the default, and trimming a shot never knocks it off its
     # own grid.
     out["step"] = _grid_step(project.get("step"), out["beat"])
+    # The hand-set frame and what is behind the band (FRAME_DEFAULT, BG_KINDS): kept
+    # only where they differ from what every reel did before, so an old reel saves
+    # and renders as it always did.
+    if out["vfit"] == "custom":
+        out["frame"] = frame_settings(project.get("frame"))
+    if isinstance(project.get("bg"), dict):
+        bg, bg_notes = bg_settings(project.get("bg"), probe=probe)
+        notes += bg_notes
+        if {k: bg[k] for k in ("kind", "blur", "dim")} != {k: BG_DEFAULT[k] for k in ("kind", "blur", "dim")}:
+            out["bg"] = bg
     out["shaping"] = _shaping(project.get("shaping"))
     arranged = _arrangement({"arrange": project.get("arrange"), "pins": project.get("pins"),
                              "hs_only": project.get("hs_only"), "fill": project.get("fill"),
@@ -6403,12 +6540,21 @@ def segments(project: dict, derived: dict, *, has_audio=lambda p: True,
             kill_times=kill_times or [round(kill_at, 4)],
             game_gate=bool(project.get("song")) and bool(project.get("kill_sound", True)),
             hold=held,
-            layout=_layout_for(project, s, W, H, cam),
+            layout=_bg_at(_layout_for(project, s, W, H, cam), starts[i] / FPS - hsec),
             cam_file=str(s.get("cam_file") or "") if cam["source"] == "file" else "",
             cam_start=round(float(s.get("cam_offset") or 0.0) + src_body_start - hsec, 4)
             if cam["source"] == "file" and s.get("cam_file") else 0.0,
             groove=_shot_groove(groove, offset + starts[i] / FPS - hsec, (head + body + tail) / FPS)))
     return out
+
+
+def _bg_at(lay: dict, reel_t: float) -> dict:
+    """A motion background, cued to where the reel is when this shot starts: the loop
+    runs on across the cuts rather than starting again under every shot."""
+    bg = lay.get("bg") if lay else None
+    if bg and bg.get("kind") == "file" and float(bg.get("seconds") or 0.0) > 0.1:
+        lay = dict(lay, bg=dict(bg, at=round(max(0.0, reel_t) % float(bg["seconds"]), 3)))
+    return lay
 
 
 def _shot_groove(groove: dict, song_at_zero: float, length: float) -> dict:
@@ -6429,7 +6575,15 @@ def _layout_for(project: dict, shot: dict, W: int, H: int, cam: dict) -> dict:
     fit = project.get("vfit") or "zoom"
     if not has_cam and fit == "zoom":
         return {}
-    return facecam.layout(project["format"], W, H, cam, fit, has_cam)
+    lay = facecam.layout(project["format"], W, H, cam, fit, has_cam)
+    # the hand-set frame and the background, named only when they are not what every
+    # fit reel had, so its shots keep their cache keys
+    if fit == "custom":
+        lay["fit"] = "custom"
+        lay["frame"] = frame_settings(project.get("frame"))
+    if lay.get("fit") != "zoom" and project.get("bg"):
+        lay["bg"] = dict(project["bg"])
+    return lay
 
 
 def _cam_input(seg: Segment, src_len: float) -> list[str]:
@@ -6439,8 +6593,36 @@ def _cam_input(seg: Segment, src_len: float) -> list[str]:
     return ["-ss", f"{max(0.0, seg.cam_start):.4f}", "-t", f"{src_len + 0.5:.4f}", "-i", seg.cam_file]
 
 
+def _bg_input(seg: Segment) -> list[str]:
+    """The background file as one more input, cued (see _bg_at) and looped, or nothing."""
+    bg = (seg.layout or {}).get("bg") or {}
+    if bg.get("kind") != "file" or not bg.get("file"):
+        return []
+    span = f"{seg.frames / FPS + 0.5:.4f}"
+    if Path(bg["file"]).suffix.lower() in BG_IMAGE:
+        return ["-loop", "1", "-t", span, "-i", bg["file"]]
+    return ["-stream_loop", "-1", "-ss", f"{float(bg.get('at') or 0.0):.3f}", "-t", span, "-i", bg["file"]]
+
+
+def _bg_graph(bg: dict, GW: int, GH: int, seconds: float, bg_in: int | None) -> str:
+    """What is behind the band, as [gbg], GW x GH: the game blurred ([ga]), black, a
+    colour, or the player's own image or loop, softened and darkened so it does not
+    compete with the game."""
+    kind, dim, blur = bg.get("kind"), float(bg.get("dim") or 0.0), int(bg.get("blur") or 0)
+    if kind == "blur":
+        return (f"[ga]scale={GW}:{GH}:force_original_aspect_ratio=increase,crop={GW}:{GH},"
+                + (f"boxblur={blur}:2," if blur else "") + f"eq=brightness=-{dim:.3f}:saturation=0.8[gbg]")
+    if kind == "file" and bg_in is not None:
+        # muted by being a picture input only; the blur scales with the frame (4 px at 1080 wide)
+        soft = max(0, round(blur * GW / 1080))
+        return (f"[{bg_in}:v]fps={FPS},scale={GW}:{GH}:force_original_aspect_ratio=increase,crop={GW}:{GH},setsar=1,"
+                + (f"gblur=sigma={soft}," if soft else "") + f"eq=brightness=-{dim:.3f},format=yuv420p[gbg]")
+    colour = "0x000000" if kind != "color" else "0x" + str(bg.get("color") or "#000000").lstrip("#")
+    return f"color=c={colour}:s={GW}x{GH}:r={FPS}:d={seconds + 0.5:.4f},format=yuv420p[gbg]"
+
+
 def _layout_graph(seg: Segment, time_ops: list[str], effects: list[str], end: str,
-                  FW: int, FH: int, vin: int = 0) -> str:
+                  FW: int, FH: int, vin: int = 0, bg_in: int | None = None) -> str:
     """The video graph for a shot with a layout: the game framed into its area
     with its effects, the camera cut out and placed, one frame out.
 
@@ -6466,7 +6648,7 @@ def _layout_graph(seg: Segment, time_ops: list[str], effects: list[str], end: st
         # must not leave a hole in the corner of the reel.
         cam_ops.append(f"tpad=stop_mode=clone:stop_duration={seg.frames / FPS:.4f}")
         g.append("[1:v]" + ",".join(cam_ops) + "[ct]")
-    if lay.get("fit") in ("fit", "near"):
+    if lay.get("fit") in ("fit", "near") and not lay.get("bg"):
         # NEAR FIT keeps the middle three quarters of the width: the minimap, the kill feed
         # and the scoreboard mostly survive, and the game is a third taller than a full fit
         # (docs/STYLE-FAST-PACED-HEADSHOT.md section 7.2)
@@ -6476,6 +6658,19 @@ def _layout_graph(seg: Segment, time_ops: list[str], effects: list[str], end: st
                  f"boxblur=24:2,eq=brightness=-0.12:saturation=0.8[gbg];"
                  f"[gb]{near}scale={GW}:{GH}:force_original_aspect_ratio=decrease:flags=lanczos[gfg];"
                  f"[gbg][gfg]overlay=(W-w)/2:(H-h)/2,setsar=1[gf]")
+    elif lay.get("fit") in ("fit", "near", "custom"):
+        # THE FRAME AND THE BACKGROUND AS CHOSEN: the share of the width kept, taken from
+        # where the player put it, the band where they put it, over what they chose
+        keep, vk, h, x, top = _frame_box(lay, GW, GH)
+        bg = lay.get("bg") or BG_DEFAULT
+        fg = "[gt]"
+        if bg.get("kind") == "blur":             # the game is its own background: two copies of it
+            g.append("[gt]split[ga][gb]")
+            fg = "[gb]"
+        g.append(f"{fg}crop=iw*{keep:.4f}:ih*{vk:.4f}:(iw-iw*{keep:.4f})*{x:.4f}:(ih-ih*{vk:.4f})/2,"
+                 f"scale={GW}:{h}:flags=lanczos,setsar=1[gfg]")
+        g.append(_bg_graph(bg, GW, GH, seg.frames / FPS, bg_in))
+        g.append(f"[gbg][gfg]overlay=0:{top},setsar=1[gf]")
     else:
         g.append(f"[gt]scale={GW}:{GH}:force_original_aspect_ratio=increase:flags=lanczos,"
                  f"crop={GW}:{GH},setsar=1[gf]")
@@ -6539,9 +6734,10 @@ def retime_height(seg: Segment) -> int:
     height at 1080.
     """
     lay = seg.layout or {}
-    if lay.get("fit") in ("fit", "near"):
+    if lay.get("fit") in ("fit", "near", "custom"):
         GW, GH = float(lay["game"][2]), float(lay["game"][3])
-        shown = GW * 9 / 16 / (NEAR_KEEP if lay.get("fit") == "near" else 1.0)
+        keep, vk, _h, _x, _top = _frame_box(lay, int(GW), int(GH))
+        shown = GW * 9 / 16 / keep            # the source's whole height, as tall as it is drawn
         return 720 if min(GH, shown) <= 720 else 1080
     return 1080
 
@@ -6773,7 +6969,9 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
     if not lay:
         vchain = f"[{vin}:v]" + ",".join(v + [end]) + "[v]"
     else:
-        vchain = _layout_graph(seg, time_ops, v, end, FW, FH, vin)
+        # the background file, when there is one, is the last input of all
+        bg_in = (1 + bool(seg.cam_file) + bool(retimed)) if _bg_input(seg) else None
+        vchain = _layout_graph(seg, time_ops, v, end, FW, FH, vin, bg_in)
 
     # Game audio: the clip's own sound at real speed; silence where the
     # footage is slowed or sped (a stretched gunshot sounds broken, and the
@@ -6818,6 +7016,7 @@ def segment_command(seg: Segment, out: Path, ff: str = "ffmpeg", encoder_args=No
             "-ss", f"{start:.4f}", "-t", f"{src_len + 0.5:.4f}", "-i", seg.clip,
             *_cam_input(seg, src_len),
             *(["-i", str(retimed)] if retimed else []),
+            *_bg_input(seg),
             "-filter_complex", vchain + ";" + achain,
             "-map", "[v]", "-map", "[a]", "-r", str(F), *enc,
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",

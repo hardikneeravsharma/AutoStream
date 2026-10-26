@@ -602,6 +602,18 @@ CONTROLS: list[Control] = [
             acts=("studio-bin-fav",),
             why="with a hundred parts in a drawer the ones worth coming back to "
                 "have to be findable; an unknown id is refused rather than stored"),
+    Control("/api/studio/backgrounds", "GET", CALL, "the Look step's backgrounds", "studio",
+            expect=_has("ok", "items", "folder"),
+            acts=("studio-gd",),
+            why="the images and loops in the player's own backgrounds folders, by name and path; "
+                "nothing from anywhere else is listed"),
+    Control("/api/studio/bgfile", "GET", CALL, "one background, for the Look step's preview", "studio",
+            query="path=C:/Windows/win.ini", status=(400,), expect=_has("error"),
+            why="only a file inside a backgrounds folder is served; any other path is refused"),
+    Control("/api/studio/backgrounds/add", "POST", STATIC, "Add your own background", "studio",
+            acts=("studio-gd",),
+            why="opens the native file picker on the server (clips_pick), which blocks the request "
+                "thread until a human dismisses it"),
     Control("/api/studio/thumb", "GET", CALL, "library thumbnail", "studio",
             query="path=", status=(400,), expect=_has("error"),
             why="only ever a clip inside the clips folder; a blank path must "

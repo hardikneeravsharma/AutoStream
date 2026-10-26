@@ -157,6 +157,11 @@ def _judge(*, style, song, clips, kills, has_setup, project, notes, part, fmt, e
                 # within SHORT_BY: it works -- and says by how much, so a warning that clears
                 # when one clip is added is not a mystery
                 works = f"This works: the reel runs {length:.0f} s of the {want:.0f} s part."
+        # ON PAST THE BREAK (director._longer): said, so a reel longer than one drop says how
+        # it got there -- a second build, or slower kills through the break
+        cont = next((n for n in notes or [] if "second build at" in n or "carries on with slower kills" in n), "")
+        if cont:
+            works = works.rstrip(".") + ". " + cont
         for n in notes or []:
             # A KILL THE PLAYER MARKED IS NEVER DROPPED IN SILENCE: one outside the part cannot be used,
             # and the chip says so rather than "This works" over a mark that did nothing.

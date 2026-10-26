@@ -615,6 +615,8 @@ Video and everything describing it lives under `paths.VIDEO_HOME` —
     models/kokoro/           the optional voice model (paths.MODELS_DIR)
     songs/                   songs downloaded for a reel (clips/songfetch.py)
     intros/                  intro clips, one normalised mp4 + .json each (clips/intros.py)
+    backgrounds/             the player's own images and loops behind a 9:16 band (studio.bg_dirs;
+                             assets/backgrounds/ too). Never shipped: a bought pack stays theirs
     clips/<date>_<time>_<Game>/
         session.json         source, options, every kill timestamp found
         clips.json           what was actually produced

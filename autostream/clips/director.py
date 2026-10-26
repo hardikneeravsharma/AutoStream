@@ -462,15 +462,18 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
     except ValueError:
         if not (part and loose):
             raise
+    def again(at):
+        """The same plan over other clips -- for keeping a take back for a second drop."""
+        return lambda cs: _plan(cs, shape, rhythm, part=at, seconds=seconds, seed=seed, build=build, loose=loose)
     if not (part and loose):
-        return first
+        return _longer(first, clips, shape, rhythm, part=part, loose=loose, seed=seed, replan=again(part))
     want = float(part[1]) - float(part[0])
     if first is not None and first.reach >= want * FILLS:
         return first
     here = first.drop if first is not None else float(part[0])
     drops = sorted(set([float(d) for d in (getattr(shape, "drops", None) or [])]
                        + ([float(shape.drop)] if getattr(shape, "drop", None) else [])))
-    best = first
+    best, best_part = first, part
     for d in sorted(drops, key=lambda d: (abs(d - here), d)):
         if first is not None and abs(d - first.drop) < 0.05:
             continue
@@ -482,17 +485,236 @@ def plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None =
         except ValueError:
             continue
         if got.reach >= want * FILLS:
-            best = got
+            best, best_part = got, moved
             break
         if best is None or got.reach > best.reach + 0.5:
-            best = got
+            best, best_part = got, moved
     if best is None:
         raise ValueError("No drop in this song has room for a build before it.")
     if best is not first:
         best.notes.append(f"Planned round the drop at {best.drop:.1f} s: round "
                           + (f"{first.drop:.1f} s the song has hits for only {first.reach:.0f} s of reel."
                              if first is not None else "the first drop there is no room for this build."))
-    return best
+    return _longer(best, clips, shape, rhythm, part=part, loose=loose, seed=seed, replan=again(best_part))
+
+
+# ------------------------------------------------------------------ on past the break
+
+# A LONGER REEL THAN ONE DROP CAN CARRY. With 80 quick kills chosen and 45 s asked for,
+# Lalala still made 29 s: the flurry cuts on the drums and stops at the first hole in
+# them, the break before the next drop, however many clips are left (2026-10-26). Agreed
+# with ChatGPT the same day, in this order, and only while the reel is short of its part:
+#   A  A SECOND BUILD AND DROP. Another take with two kills or more plays through the
+#      break and its last kill lands on the next drop; a second flurry follows it.
+#   B  SLOWER KILLS THROUGH THE BREAK, a strong hit every one or two bars, where the
+#      second build cannot cover all of the break on its own -- or where no drop follows.
+#   D  Neither: the reel ends where it did, and the chip says the song is what limits it.
+# Splicing the break out of the song (C) is never done here: it changes the music.
+#
+# SLOW MOTION FILLS A BUILD, WITHIN LIMITS (ChatGPT, asked "why can't a 3 s clip fill a
+# 10 s build-up?"): only the approach before the take's first kill is slowed, never below
+# STRETCH_FLOOR, the last STRETCH_REAL before the kill at real speed, and the slowed part
+# at most STRETCH_SHARE of the take's output. Slow motion improves a take that nearly
+# fits; it does not make footage that is not there. What it cannot cover, B covers.
+STRETCH_FLOOR = 0.6        # the renderer's own slowest bend (studio.RATE_MIN)
+STRETCH_REAL = 0.2         # s before the kill kept at real speed
+STRETCH_SHARE = 0.40
+SPARSE_BARS = (1.0, 2.0)   # a kill every one to two bars through a break, never a longer hole
+SECOND_FLURRY_MIN = 3      # a second drop worth building into has at least this many kills after it
+GRID_BARS = 4              # bar lines stand in for drum hits only in a build-up this short
+
+
+def _longer(p: Plan | None, clips: list[dict], shape, rhythm, *, part, loose: bool, seed: int,
+            replan=None) -> Plan | None:
+    """`p`, carried on past the break when the part asks for more than it reaches (A, then B).
+
+    THE FIRST FLURRY MAY HAVE PLAYED EVERY TAKE LEFT: its runs are the spare set-ups' last
+    two kills. Then the best of them is kept back, the first drop planned again without it
+    (`replan`), and the second build tried with it."""
+    if p is None or not part:
+        return p
+    want = float(part[1]) - float(part[0])
+    end = min(float(shape.seconds), p.part[0] + want) if loose else float(part[1])
+    if p.reach >= want * FILLS or end - p.part[1] < 4 * shape.beat:
+        return p
+    rng = random.Random(seed + 7)
+    got = _second_drop(p, clips, shape, rhythm, end, rng)
+    if got is None and replan is not None:
+        main = str(p.shots[0]["clip"]).lower() if p.shots else ""
+        held = _takes([c for c in clips if str(c["path"]).lower() != main])
+        for b in held[:3]:
+            try:
+                p1 = replan([c for c in clips if str(c["path"]).lower() != b.path.lower()])
+            except ValueError:
+                continue
+            got = _second_drop(p1, clips, shape, rhythm, end, rng)
+            if got is not None:
+                break
+    if got is None:
+        got = _sparse_on(p, clips, shape, rhythm, end)
+    return got or p
+
+
+def _takes(clips: list[dict]) -> list[Burst]:
+    """The takes a second build can be, best first, one per clip: a fight of two kills or
+    more in one round, not all at once -- the clip's whole round where that scores higher."""
+    best: dict[str, Burst] = {}
+    for c in clips:
+        r = round_of(c)
+        for b in bursts(c) + ([r] if r is not None else []):
+            if len(b.kills) >= 2 and round_based(b.clip, len(b.kills)) and b.span > 0.3                     and (b.path not in best or setup_score(b) > setup_score(best[b.path])):
+                best[b.path] = b
+    return sorted(best.values(), key=setup_score, reverse=True)
+
+
+def _spare(p: Plan, clips: list[dict]) -> list[dict]:
+    """The clips the plan has not played -- one clip, one place, across the whole reel."""
+    used = {str(s["clip"]).lower() for s in p.shots}
+    return [c for c in clips if str(c["path"]).lower() not in used]
+
+
+def _sparse(t0: float, t1: float, clips: list[dict], shape, rhythm, *, last_after: float | None = None,
+            grid: bool = False) -> tuple[list[dict], list[float]] | None:
+    """B: shots from song second t0 to t1 with a kill on a strong hit every SPARSE_BARS, each
+    clip once. The last shot ends at t1 -- or `last_after` past its kill, where the reel ends
+    on it. -> (shots, the kills' song seconds), or None where the song leaves a hole longer
+    than two bars or no clip has the footage for a hit.
+
+    `grid`: a bar line will do where no drum hit is -- the build-up into a second drop, where
+    the beat goes on under a break whose drums have stopped and the take lands on the drop."""
+    bar = 4 * float(shape.beat)
+    cues = cue_scores(rhythm, list(shape.beats))
+    if grid:
+        lines = [float(b) for i, b in enumerate(shape.beats) if i % 4 == getattr(shape, "downbeat_pos", 0)]
+        cues = sorted(cues + [(b, 0.05) for b in lines if not any(abs(b - t) < 0.08 for t, _ in cues)])
+    stop = t1 - (last_after if last_after is not None else 0.3)
+    hits: list[float] = []
+    prev = t0
+    while True:
+        lo = prev + (SPARSE_BARS[0] * bar if hits else 0.35)
+        hi = min(prev + SPARSE_BARS[1] * bar, stop)
+        if lo > stop:
+            break
+        inside = [(t, s) for t, s in cues if lo <= t <= hi]
+        if not inside:
+            if last_after is None:
+                return None                # a hole the reel cannot sit through
+            break
+        hits.append(max(inside, key=lambda c: c[1])[0])
+        prev = hits[-1]
+    if not hits or (last_after is None and t1 - hits[-1] > SPARSE_BARS[1] * bar):
+        return None
+    singles = sorted([Burst(b.clip, [k], [h]) for c in clips for b in bursts(c) for k, h in zip(b.kills, b.hs)],
+                     key=single_score, reverse=True)
+    starts = [t0] + [h - min(1.0, 0.4 * (h - g)) for g, h in zip(hits, hits[1:])]
+    ends = starts[1:] + [t1 if last_after is None else hits[-1] + last_after]
+    shots, used = [], set()
+    for i, (h, a, z) in enumerate(zip(hits, starts, ends)):
+        pre, after = h - a, z - h
+        pick = next((b for b in singles if b.path not in used and b.kills[0] - pre >= 0.02
+                     and b.kills[0] + after <= b.seconds - 0.02
+                     and not any(b.kills[0] - pre - 0.05 < float(k) < b.kills[0] + after + 0.05
+                                 and abs(float(k) - b.kills[0]) > 1e-6 for k in b.clip.get("kills") or [])), None)
+        if pick is None:
+            return None
+        used.add(pick.path)
+        shots.append(_shot(pick, pick.kills[0], [pick.kills[0]], pre, pre + after, fx=[("k01", "k02")[i % 2]]))
+    return shots, hits
+
+
+def _sparse_on(p: Plan, clips: list[dict], shape, rhythm, end: float) -> Plan | None:
+    """B alone, where no second drop can be built into: slower kills on to the part's end."""
+    got = _sparse(p.part[1], end, _spare(p, clips), shape, rhythm, last_after=TAIL)
+    if got is None:
+        return None
+    shots, hits = got
+    out = _joined(p, shots, hits)
+    out.notes.append(f"After the drums stop at {p.part[1]:.1f} s the reel carries on with slower kills, one every "
+                     f"bar or two, to {out.part[1]:.1f} s: no later drop has room for a second build.")
+    return out
+
+
+def _joined(p: Plan, shots: list[dict], marks: list[float], *, kills: list[float] | None = None,
+            reach_end: float | None = None, missing: int = 0) -> Plan:
+    """`p` with more shots after it, its part, kills and reach carried to their end."""
+    length = sum(float(s["duration"]) for s in shots)
+    return Plan(part=(p.part[0], round(p.part[1] + length, 4)), drop=p.drop, shots=p.shots + shots,
+                marks=p.marks + [round(m, 4) for m in marks],
+                kills=sorted(set(p.kills) | {round(k, 4) for k in (kills if kills is not None else marks)}),
+                notes=list(p.notes),
+                reach=round((reach_end if reach_end is not None else p.part[1] + length) - p.part[0], 3),
+                missing=missing)
+
+
+def _second_drop(p: Plan, clips: list[dict], shape, rhythm, end: float, rng) -> Plan | None:
+    """A: another build through the break into the next drop, and a second flurry after it."""
+    t1 = p.part[1]
+    gap = preferred_gap(shape.beat)
+    drops = sorted(set([float(d) for d in (getattr(shape, "drops", None) or [])]
+                       + ([float(shape.drop)] if getattr(shape, "drop", None) else [])))
+    spare = _spare(p, clips)
+    takes = _takes(spare)            # set-ups first, then any fight of two kills or more in one round
+    for D2 in [d for d in drops if d > t1 + 1.0 and d + 4 * gap <= end]:
+        G = D2 - t1
+        for b2 in takes[:12]:
+            ks2 = take_kills(b2)
+            S = take_span(ks2)
+            F = ks2[0] - 0.05                       # footage before the take's first kill
+            if S + TAKE_LEAD[0] > G or F < TAKE_LEAD[0]:
+                continue
+            # the approach: real speed as far as the footage goes, then slowed within the limits
+            if F >= G - S:
+                lead = lead_out = G - S
+            else:
+                lead = F
+                cap = min(STRETCH_REAL + (F - STRETCH_REAL) / STRETCH_FLOOR,
+                          (STRETCH_SHARE * S + STRETCH_REAL) / (1 - STRETCH_SHARE))
+                lead_out = max(F, min(G - S, cap))
+            ts2 = D2 - S - lead_out                 # where the take starts in the song
+            pool = [c for c in spare if str(c["path"]).lower() != b2.path.lower()]
+            filler: tuple[list[dict], list[float]] = ([], [])
+            if ts2 - t1 > 0.05:
+                # bar lines carry a short build-up into the drop; a longer stretch needs drum hits
+                got = _sparse(t1, ts2, pool, shape, rhythm, grid=ts2 - t1 <= GRID_BARS * 4 * shape.beat)
+                if got is None:
+                    continue
+                filler = got
+            # the take and its flurry, made as the first drop's are, at real speed from ts2r
+            ts2r = D2 - S - lead
+            take_shots, _begin = take(b2, D2 - ts2r, lead_range=(lead, lead))
+            used = {str(s["clip"]).lower() for s in filler[0]} | {b2.path.lower()}
+            rest = [c for c in pool if str(c["path"]).lower() not in used]
+            all_b = [b for c in rest for b in bursts(c)]
+            setups = sorted((b for b in all_b if is_setup(b)), key=setup_score, reverse=True)
+            notes: list[str] = []
+            try:
+                p2 = _after(all_b, {str(c["path"]): c for c in rest + [b2.clip]}, setups, b2, ks2, take_shots,
+                            D2, ts2r, end, gap, rng, notes, shape, rhythm)
+            except ValueError:
+                continue
+            if len([m for m in p2.marks if m > D2 + 1e-3]) < SECOND_FLURRY_MIN:
+                continue
+            extra = lead_out - lead
+            if extra > 1e-3:
+                # SLOWED, NOT HELD: the approach's footage spread over the longer lead, the last
+                # STRETCH_REAL before the kill at real speed (studio.fit_pieces reads the anchors)
+                s0 = p2.shots[0]
+                k, pre = float(s0["kill"]), float(s0["pre"])
+                real = min(STRETCH_REAL, 0.5 * pre)
+                s0["duration"] = round(float(s0["duration"]) + extra, 5)
+                s0["pre"] = round(pre + extra, 5)
+                s0["anchors"] = [[round(k - pre, 4), 0.0], [round(k - real, 4), round(pre + extra - real, 4)]]
+            out = _joined(p, filler[0] + p2.shots, filler[1] + p2.marks, kills=filler[1] + p2.kills,
+                          reach_end=ts2r + p2.reach, missing=p2.missing)
+            out.notes.append(
+                f"A second build at {D2:.1f} s carries the reel past the break at {t1:.1f} s: "
+                f"{b2.clip.get('name') or Path(b2.path).stem} ({len(ks2)} kills), its last kill on the drop"
+                + (f", its approach slowed to fill {lead_out:.1f} s" if extra > 1e-3 else "")
+                + (f", with {len(filler[1])} slower kill{'s' if len(filler[1]) != 1 else ''} before it"
+                   if filler[1] else "") + ".")
+            out.notes += notes
+            return out
+    return None
 
 
 def _plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None = None,
@@ -545,7 +767,8 @@ def _plan(clips: list[dict], shape, rhythm, *, part: tuple[float, float] | None 
     end_cap = float(part[1]) if part else float(shape.seconds)
     if part and loose:
         end_cap = min(float(shape.seconds), start + float(part[1]) - float(part[0]))
-    end = min(end_cap, start + max(seconds, float(part[1]) - float(part[0]) if part and loose else 0.0))
+    # a part, drawn or loose, is the length asked for; REEL_SECONDS only where none was
+    end = min(end_cap, start + max(seconds, float(part[1]) - float(part[0]) if part else 0.0))
     drop_sec = next((s for s in rhythm.sections if s.kind == "drop" and s.start - 0.2 <= D < s.end), None)
     if drop_sec and not part:
         end = min(end, max(drop_sec.end, D + 6.0))
