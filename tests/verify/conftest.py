@@ -115,3 +115,27 @@ def headless(home: Path):
         yield srv
     finally:
         srv.close()
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _editor_side_panel_starts_open():
+    """The editor's side panel is closed by default (#259), and most browser tests drive its controls: a
+    context starts with it pinned open unless the test removes the choice itself (test_ui_studio_layout)."""
+    try:
+        from playwright.sync_api import Browser
+    except ImportError:
+        yield
+        return
+    real = Browser.new_context
+
+    def new_context(self, *a, **kw):
+        ctx = real(self, *a, **kw)
+        ctx.add_init_script("try { if (localStorage.getItem('autostream.studio.side') === null) "
+                            "localStorage.setItem('autostream.studio.side', 'on'); } catch (e) {}")
+        return ctx
+
+    Browser.new_context = new_context
+    try:
+        yield
+    finally:
+        Browser.new_context = real
