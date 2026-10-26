@@ -173,6 +173,9 @@ QUARTILE_TOLERANCE = 0.20      # provisional: each quartile within this of the r
 KILL_BRIGHT_SHARE = 0.20       # of the gameplay pixels over BRIGHT_LEVEL...
 KILL_BRIGHT_FRAMES = 2         # ...for this many frames running, near a kill
 KILL_WINDOW = (6, 12)          # frames before and after a kill the brightness is read over
+CHAOS_WINDOW = 8               # kills: Chaos's variety is read over every run of this many...
+CHAOS_FAMILIES = 3             # ...which must hold this many kinds of kill effect
+FLASH_RATE_BAND = 0.20         # flashes a minute within this share of the references'
 INTENDED_BRIGHT = ("k03", "k16")   # kill effects meant to white out: the white flash, the flicker
 REAL_SPEED = (0.95, 1.05)      # a rate that reads as real speed (Clean's review)
 OPEN_AT = 15                   # the frame a quarter of a second in, at REEL_FPS...
@@ -306,6 +309,44 @@ def style_findings(project: dict, derived: dict) -> list[Finding]:
         if rate > cap + 1e-9:
             out.append(Finding(SOFT, "flash-rate", f"{rate:.1f} white flashes a minute; {st.label}'s references "
                                f"flash {float(ref['flashes_per_min']):.1f}, at most {cap:.1f}."))
+    # VARIETY AND FLASHES AS A SIGNATURE (Chaos, ChatGPT's first review, every song and tempo).
+    # Variety: at least CHAOS_FAMILIES kinds of kill effect in every run of CHAOS_WINDOW kills --
+    # two alternating "becomes repetitive". Hard, unless the reel's own pool holds fewer kinds
+    # (the player's choice, or a pool the guards emptied): then said as constrained.
+    if st.kill_mix and len(shots) >= CHAOS_WINDOW:
+        firsts = [studio.fam((s.get("fx") or [""])[0]) for s in shots]
+        pool = {studio.fam(p) for p in (project.get("pools") or {}).get("kill") or st.kill_pool}
+        worst = min(len({f for f in firsts[i:i + CHAOS_WINDOW] if f})
+                    for i in range(len(firsts) - CHAOS_WINDOW + 1))
+        if worst < CHAOS_FAMILIES:
+            constrained = len(pool) < CHAOS_FAMILIES
+            out.append(Finding(SOFT if constrained else HARD, "chaos-variety",
+                               f"A run of {CHAOS_WINDOW} kills uses {worst} kind(s) of kill effect; {st.label} "
+                               f"needs {CHAOS_FAMILIES}" + (" (its pool holds fewer: constrained)." if constrained else ".")))
+    # Flashes: kill flashes and flash cuts, counted apart, together against the references'
+    # rate within FLASH_RATE_BAND. Soft and named as constrained: the clean frames each flash
+    # keeps either side (studio.flash_clear) and no white-out on a kill (studio.no_whiteout)
+    # come first, and a flash is never forced past them.
+    # ChatGPT's second review: the visible accents together -- white-flash cuts, the style's
+    # non-whitening accent cut (studio.flash_accent) and any kill flash -- hold the rate, and
+    # no run of studio.FLASH_RUN cuts is more than studio.FLASH_SHARE_MAX white flashes.
+    if st.fast_flash and ref.get("flashes_per_min") and float(derived.get("length") or 0.0) > 0:
+        mins = float(derived["length"]) / 60.0
+        accent = studio.flash_accent(st)
+        cut_fl = sum(1 for s in cuts if s.get("transition") == "t02")
+        acc_n = sum(1 for s in cuts if accent != "t01" and s.get("transition") == accent)
+        kill_fl = sum(1 for s in shots if any(studio.fam(f) in INTENDED_BRIGHT + ("k12",) for f in s.get("fx") or []))
+        rate, want = (cut_fl + acc_n + kill_fl) / mins, float(ref["flashes_per_min"])
+        if abs(rate / want - 1) > FLASH_RATE_BAND:
+            out.append(Finding(SOFT, "flash-rate", f"{rate:.0f} flash accents a minute ({cut_fl / mins:.0f} white on "
+                               f"cuts, {acc_n / mins:.0f} {studio.PART[accent].label.lower()}, {kill_fl / mins:.0f} on "
+                               f"kills); {st.label}'s references flash {want:.0f}. Constrained by the clean frames "
+                               f"each flash keeps from a kill."))
+        run, cap = studio.FLASH_RUN, int(studio.FLASH_SHARE_MAX * studio.FLASH_RUN + 1e-9)
+        if len(cuts) >= run and max(sum(1 for s in cuts[i:i + run] if s.get("transition") == "t02")
+                                    for i in range(len(cuts) - run + 1)) > cap:
+            out.append(Finding(SOFT, "flash-run", f"More than {cap} of {run} cuts running flash white: "
+                               f"{st.label} varies how it flashes, not only how often."))
     if st.drift_max:
         moving = sum(1 for s in shots if studio.drift_of(s.get("camera") or "c00") > st.drift_max + 1e-9)
         if moving:

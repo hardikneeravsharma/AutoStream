@@ -1034,6 +1034,15 @@ class Style:
     # AN OPENING THAT TAKES ITS TIME. Every other style is showing the game within a
     # quarter of a second (see OPEN_FADE); a style made like a trailer may fade up slowly.
     long_fade_in: bool = False
+    # VARIETY AND FLASHES AS A SIGNATURE (Chaos, from ChatGPT's first review: 6.5/10, "a
+    # restricted, less-shake-heavy Hype"). `kill_mix`: how many kill effects one reel
+    # alternates (0 is MAX_KILL_FX, the calm two); `fast_flash`: white-flash cuts at every
+    # tempo -- the fast-cut rules take them out above FAST_BPM, and on Chaos that left 0
+    # flash cuts a minute at 160 and 174 BPM against its references' 40-79 flashes. Each
+    # flash cut is kept only where it leaves FLASH_CLEAR_FRAMES of clean picture before
+    # the next kill and after the last kill's own flash (flash_clear).
+    kill_mix: int = 0
+    fast_flash: bool = False
 
 
 STYLES: tuple[Style, ...] = (
@@ -1140,7 +1149,7 @@ STYLES: tuple[Style, ...] = (
           hero_pool=("h01", "h03"),
           camera_pool=("c04hard", "c04slam", "c00", "c06far"),
           speed_pool=("s04", "s04", "s03", "s02"), energy=0.9, fast_cuts=True,
-          min_run=0.30, min_after=0.18, ramp_max=1.6),
+          min_run=0.30, min_after=0.18, ramp_max=1.6, kill_mix=4, fast_flash=True),
     Style("cinematic", "Cinematic",
           "Bars, a graded picture and a camera that never stops moving. The slower "
           "references, played like a trailer rather than a montage.",
@@ -2205,8 +2214,10 @@ def fast_rules(style: "Style") -> "Style":
             hero=(style.hero[0],), hero_pool=(style.hero[0],),
             speed="s00", hero_speed="s00", speed_pool=("s00",),
             camera_pool=(style.camera,), energy=0.0)
+    # (a style whose flashes are its signature keeps its white-flash cut: see Style.fast_flash)
     trans = keep(style.transition_pool,
-                 lambda p: p == "t01" or (p != "t02" and _cut_seconds(p) <= FAST_CUT_SECONDS + 1e-9), "t01")
+                 lambda p: p == "t01" or ((p != "t02" or style.fast_flash)
+                                          and _cut_seconds(p) <= FAST_CUT_SECONDS + 1e-9), "t01")
     kills = keep(style.kill_pool, lambda p: fam(p) not in KILL_BLURS, style.kill[0])
     heroes = keep(style.hero_pool, lambda p: True, style.hero[0])
     return dataclasses.replace(
@@ -2373,7 +2384,8 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     if fast:
         notes.append(f"{STYLE[style_key].label} is a fast-cut style at {grid.bpm:.0f} BPM, so the "
                      f"footage plays at real speed, each kill gets one effect and no cut is a slow "
-                     f"or white-flash transition. Choose effects yourself on the Make page to mix them.")
+                     + ("transition." if style.fast_flash else "or white-flash transition.")
+                     + " Choose effects yourself on the Make page to mix them.")
     meas = studio_refs.summary(style.refs)
     beat = grid.beat
 
@@ -2475,7 +2487,13 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     open_beats = _pow2_beats(max(meas.get("first_shot") or 4.0, 2.0), beat, lo=2, hi=16) * div
     # No flash cuts in a fast-cut reel: a white flash on a share of the cuts is a second
     # transition, and the rule is one. (The flash is what t02 is.)
-    flash_share = 0.0 if fast else min(0.9, (meas.get("flashes_per_min") or 0.0) / max(cpm, 1.0) * tw["flash"])
+    # (Chaos keeps them at every tempo, each one clear of the kills: Style.fast_flash -- and
+    # may flash every cut that is clear: its references flash more often than they cut, and
+    # with no white-out on a kill (no_whiteout) the cuts are where its flashes are. At 0.9
+    # of them, six songs came to 46-48 a minute against the references' 60.)
+    flash_share = (0.0 if fast and not style.fast_flash
+                   else min(1.0 if style.fast_flash else 0.9,
+                            (meas.get("flashes_per_min") or 0.0) / max(cpm, 1.0) * tw["flash"]))
 
     # ONE ENTRY PER CLIP. Rebuilding a reel in another style sent the timeline's
     # shots back as the clip list, so a clip used in nine shots arrived nine
@@ -3395,8 +3413,10 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
     shots = proj["shots"]
     starts_b = [int(round(t / step)) for t in _starts(shots)]
     rulebook.transitions(shots, starts_b, first_kill_beat=int(round(shots[0]["pre"] / step)) if shots else 0,
-                         looks=clip_look, pools=pools, flash_share=flash_share, beat=step, div=div)
-    calm_mix(shots, mix_free)
+                         looks=clip_look, pools=pools, flash_share=flash_share, beat=step, div=div,
+                         flash_ok=(lambda i: flash_clear(shots, i)) if style.fast_flash else None)
+    calm_mix(shots, mix_free, kill_fx=style.kill_mix or MAX_KILL_FX, clear=style.fast_flash,
+             accent=flash_accent(style))
     # A drawer the player picked on the Make page -- one part or a set -- is theirs.
     theirs_ = set(mix_free) | {k for k in POOL_KINDS if (template or {}).get(k)}
     if restrain_speed(shots, style, speed_ok, theirs_):
@@ -3435,6 +3455,21 @@ def plan(clips: list[dict], style_key: str = DEFAULT_STYLE, *, shape=None,
         # kill effects, so the flash is not counted as one and spread to every other kill.
         shots[drop_shot]["fx"] = list(shots[drop_shot]["fx"]) + [DROP_FLASH]
         notes.append(f"The kill on the drop, {drop_t:.2f} s into the song, flashes white.")
+    if style.fast_flash:
+        # Every effect is settled now, the drop's flash too: a flash cut that no longer
+        # leaves its clean frames either side gives way (flash_clear).
+        for i in range(1, len(shots)):
+            if shots[i].get("transition") == "t02" and not flash_clear(shots, i):
+                shots[i]["transition"], shots[i]["tlen"] = "t01", 0.0
+        if "transition" not in theirs_:
+            flash_rhythm(shots, flash_accent(style))
+        cuts_ = max(1, len(shots) - 1)
+        flashed = sum(1 for s in shots[1:] if s.get("transition") == "t02")
+        accent_ = flash_accent(style)
+        whipped = sum(1 for s in shots[1:] if s.get("transition") == accent_) if accent_ != "t01" else 0
+        notes.append(f"{flashed} of {cuts_} cuts flash white, each at least {FLASH_CLEAR_FRAMES} frames clear "
+                     f"of the kills either side, and {whipped} carry a {PART[accent_].label.lower()} instead: "
+                     f"{style.label} flashes at every tempo, never on every cut.")
     if style.drop and song and not grid.drop:
         notes.append("This song has no clear drop, so the reel is paced as a build without one.")
 
@@ -4196,9 +4231,10 @@ def vary(project: dict, what: str = "all", seed: int | None = None) -> dict:
     for _ in range(1 if asked else 6):
         project["shots"] = copy.deepcopy(start)
         project["seed"] = int(seed)
-        _vary(project["shots"], pools, style, seed, kind, flash=0.0 if fast else None)
+        _vary(project["shots"], pools, style, seed, kind, flash=0.0 if fast and not style.fast_flash else None)
         rulebook.budget(project["shots"], pools, what if what in POOL_KINDS else None)
-        calm_mix(project["shots"], set(project.get("mix_free") or ()), keep_cuts=what == "kill")
+        calm_mix(project["shots"], set(project.get("mix_free") or ()), keep_cuts=what == "kill",
+                 kill_fx=style.kill_mix or MAX_KILL_FX, clear=style.fast_flash, accent=flash_accent(style))
         # Only the drawers being mixed may give way: "mix the kill effects" must
         # leave the speeds as they were.
         signature_fx(project["shots"], style, set(project.get("mix_free") or ()))
@@ -4242,8 +4278,79 @@ def chosen_sets(template: dict | None) -> set[str]:
     return out
 
 
-def calm_mix(shots: list[dict], free: set[str] | tuple = (), keep_cuts: bool = False) -> None:
-    """Hold a reel to MAX_TRANSITIONS transitions and MAX_KILL_FX kill effects. In place."""
+# A WHITE-FLASH CUT LEAVES THIS MUCH CLEAN PICTURE either side of it (ChatGPT's first
+# review of Chaos, the rule Montage's flashes already keep: director.FLASH_CLEAR): from
+# the flash's end to the next kill, and from the last kill's own flash to the flash's start.
+FLASH_CLEAR_FRAMES = 8
+FLASHY = {"k03": "fall", "k16": "dur", "k12": "dur"}     # bright kill effects, and how long each lasts
+
+
+def _flash_tail(pid: str) -> float:
+    """How long a bright kill effect lights the picture after its kill, in seconds (0 for none)."""
+    f = fam(pid)
+    if f not in FLASHY:
+        return 0.0
+    return float(knob(pid, FLASHY[f], {"k03": 0.12, "k16": 0.25, "k12": 0.05}[f]))
+
+
+def flash_clear(shots: list[dict], i: int) -> bool:
+    """Whether a white-flash cut into shots[i] leaves FLASH_CLEAR_FRAMES of clean picture
+    before shots[i]'s kill and after shots[i-1]'s kill flash. Output seconds."""
+    if i <= 0 or i >= len(shots):
+        return False
+    clean = FLASH_CLEAR_FRAMES / FPS
+    half = _cut_seconds("t02") / 2                 # centred on its cut
+    s, prev = shots[i], shots[i - 1]
+    if float(s.get("pre") or 0.0) - half < clean - 1e-9:
+        return False
+    tail = max([_flash_tail(f) for f in list(prev.get("fx") or []) + list(prev.get("hero_fx") or [])] or [0.0])
+    since = float(prev.get("duration") or 0.0) - float(prev.get("pre") or 0.0)   # prev's kill to the cut
+    return not tail or since - tail - half >= clean - 1e-9
+
+
+# NOT EVERY CUT THE SAME FLASH (ChatGPT's second review of Chaos, 7.2/10: "nearly every
+# cut communicates the same visual accent" -- 28 of 30 cuts flashed white). In any run of
+# FLASH_RUN cuts at most FLASH_SHARE_MAX are white flashes; the rest of the run's accents
+# are the style's own non-whitening transition (flash_accent: Chaos's whip), never two
+# running. ChatGPT's own caveat: 70% is a product guard, not a measured property of the
+# references, which were measured for their flash rate and not their transitions.
+FLASH_RUN = 10
+FLASH_SHARE_MAX = 0.70
+
+
+def flash_accent(style: "Style") -> str:
+    """The non-whitening transition a flashing style puts in place of a white flash it gives up."""
+    return next((t for t in style.transition_pool
+                 if t not in ("t01", "t02") and _cut_seconds(t) <= FAST_CUT_SECONDS + 1e-9), "t01")
+
+
+def flash_rhythm(shots: list[dict], accent: str = "t01") -> int:
+    """Hold white-flash cuts to FLASH_SHARE_MAX of every FLASH_RUN cuts. In place. -> cuts changed.
+
+    A flash over the share becomes `accent`, or a hard cut where the cut before is already
+    one: two whips running read as a stamp (rulebook.transitions' own rule)."""
+    cap = int(math.floor(FLASH_SHARE_MAX * FLASH_RUN + 1e-9))
+    changed = 0
+    for i in range(1, len(shots)):
+        if shots[i].get("transition") != "t02":
+            continue
+        run = [shots[j].get("transition") for j in range(max(1, i - FLASH_RUN + 1), i)]
+        if run.count("t02") + 1 > cap:
+            t = accent if shots[i - 1].get("transition") != accent else "t01"
+            shots[i]["transition"], shots[i]["tlen"] = t, 0.0
+            changed += 1
+    return changed
+
+
+def calm_mix(shots: list[dict], free: set[str] | tuple = (), keep_cuts: bool = False,
+             kill_fx: int = MAX_KILL_FX, clear: bool = False, accent: str = "t01") -> None:
+    """Hold a reel to MAX_TRANSITIONS transitions and `kill_fx` kill effects. In place.
+
+    `kill_fx` is the style's own (Style.kill_mix: Chaos alternates four); `clear` is a
+    style that flashes at every tempo, whose flash cuts are kept by the clean picture
+    either side of them (flash_clear) rather than a second away from a bright kill, and
+    held to FLASH_SHARE_MAX of every run of cuts with `accent` in their place (flash_rhythm).
+    """
     from collections import Counter
 
     if "transition" not in free:
@@ -4254,20 +4361,30 @@ def calm_mix(shots: list[dict], free: set[str] | tuple = (), keep_cuts: bool = F
                 s["transition"], s["tlen"] = "t01", 0.0
     if "kill" not in free:
         used = Counter(f for s in shots for f in (s.get("fx") or []))
-        keep = [f for f, _ in used.most_common(MAX_KILL_FX)]
-        last = ""
+        keep = [f for f, _ in used.most_common(max(1, kill_fx))]
+        recent: list[str] = []
         for s in shots:
             fx = list(s.get("fx") or [])
             if not fx:
                 continue
             kept = list(dict.fromkeys(f for f in fx if f in keep))
-            if not kept or kept[0] == last:
+            if not kept or kept[0] in recent[-1:]:
                 # Still never the same effect twice running (see _vary): with two to
                 # choose from, the other one -- the reel alternates rather than repeats.
-                other = [f for f in keep if f != last]
+                # With more, not the one before that either (_vary's own rule), so four
+                # never settle into an A-B-A-B of two.
+                other = ([f for f in keep if f not in recent[-2:]]
+                         or [f for f in keep if f not in recent[-1:]])
                 kept = [other[0]] if other else keep[:1]
             s["fx"] = kept
-            last = kept[0]
+            recent.append(kept[0])
+    if clear:
+        for i in range(1, len(shots)):
+            if shots[i].get("transition") == "t02" and not flash_clear(shots, i):
+                shots[i]["transition"], shots[i]["tlen"] = "t01", 0.0
+        if "transition" not in free:
+            flash_rhythm(shots, accent)
+        return
     # A white cut straight into a bright kill is one flash on top of another; the
     # transitions keep them apart (rulebook.transitions), and the effects changed
     # since may have brought them together again. The cut gives way.

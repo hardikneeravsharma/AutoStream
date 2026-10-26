@@ -183,7 +183,10 @@ def test_a_fast_style_on_a_fast_song_keeps_real_speed_and_one_effect_a_kill(clip
     proj, notes = studio.plan(_clips(clips_root), style, shape=T.Shape(bpm=150.0))
     shots = proj["shots"]
     trans = {s["transition"] for s in shots}
-    assert "t02" not in trans and len(trans - {"t01"}) <= 1, trans
+    st = studio.STYLE[style]
+    # Chaos keeps its white-flash cut at every tempo (Style.fast_flash), and nothing else.
+    # ...beside its one non-whitening accent (flash_rhythm)
+    assert ("t02" not in trans or st.fast_flash) and len(trans - {"t01", "t02" if st.fast_flash else ""}) <= 1, trans
     assert all(studio._cut_seconds(t) <= studio.FAST_CUT_SECONDS for t in trans), trans
     # One effect a kill -- beside the style's signature (Hype's shake), which every
     # kill carries on top (studio.signature_fx).
@@ -191,11 +194,11 @@ def test_a_fast_style_on_a_fast_song_keeps_real_speed_and_one_effect_a_kill(clip
     assert all(len([f for f in s["fx"] if studio.fam(f) not in sig]) <= 1 for s in shots), [s["fx"] for s in shots]
     assert {s["speed"] for s in shots} == {"s00"}
     assert any("fast-cut style" in n for n in notes), notes
-    st = studio.STYLE[style]
     if len(set(st.kill_pool)) > 1:
-        # The variety the pools define survives: two kill effects (calm_mix's cap),
-        # and the cameras the style lists.
-        assert len({f for s in shots for f in s["fx"] if studio.fam(f) not in sig}) == 2, [s["fx"] for s in shots]
+        # The variety the pools define survives: two kill effects (calm_mix's cap; Chaos
+        # alternates its own four, Style.kill_mix), and the cameras the style lists.
+        assert len({f for s in shots for f in s["fx"] if studio.fam(f) not in sig}) == (st.kill_mix or 2), \
+            [s["fx"] for s in shots]
         assert len(proj["pools"]["kill"]) > 1 and len(proj["pools"]["camera"]) > 1, proj["pools"]
     else:
         assert len({tuple(s["fx"]) for s in shots}) == 1, "Fast-paced headshot is one effect by design"
@@ -229,12 +232,50 @@ def test_a_choice_made_on_the_make_page_beats_the_rule(clips_root):
     assert {tuple(s["fx"]) for s in proj["shots"]} == {("k11",)}
 
 
-def test_no_flash_cuts_in_a_reel_that_asked_for_one_transition(clips_root):
-    """A white flash on a share of the cuts is a second transition. (That is what t02 is.)"""
+def test_no_flash_cuts_in_a_reel_that_asked_for_one_transition(clips_root, monkeypatch):
+    """A white flash on a share of the cuts is a second transition. (That is what t02 is.)
+    Chaos is the one style that keeps it (below); without fast_flash it is held to the rule."""
+    import dataclasses
+    monkeypatch.setitem(studio.STYLE, "chaos", dataclasses.replace(studio.STYLE["chaos"], fast_flash=False))
     proj, _ = studio.plan(_clips(clips_root), "chaos", shape=T.Shape(bpm=150.0))
     assert "t02" not in {s["transition"] for s in proj["shots"]}
     studio.vary(proj, "all", seed=3)
     assert "t02" not in {s["transition"] for s in proj["shots"]}, "Mix again brought them back"
+
+
+@pytest.mark.parametrize("bpm", [90.0, 150.0])
+def test_chaos_flashes_its_cuts_at_every_tempo_each_clear_of_the_kills(clips_root, bpm):
+    """ChatGPT's first review of Chaos (6.5/10): the fast-cut rule took every flash cut out
+    above 110 BPM, so the style changed character with tempo -- 0 flashes a minute at
+    150-174 BPM. Now most cuts flash at any tempo, each leaving FLASH_CLEAR_FRAMES of clean
+    picture before the next kill and after the last one's own flash; Mix again keeps it."""
+    proj, notes = studio.plan(_clips(clips_root), "chaos", shape=T.Shape(bpm=bpm))
+    shots = proj["shots"]
+    flashed = [i for i in range(1, len(shots)) if shots[i]["transition"] == "t02"]
+    assert len(flashed) >= 0.5 * (len(shots) - 1), [s["transition"] for s in shots]
+    assert all(studio.flash_clear(shots, i) for i in flashed)
+    assert any("flash white" in n for n in notes), notes
+    # ...never on every cut: at most FLASH_SHARE_MAX of any FLASH_RUN, the rest its whip (review 2)
+    trans = [s["transition"] for s in shots[1:]]
+    run = studio.FLASH_RUN
+    assert max(trans[i:i + run].count("t02") for i in range(max(1, len(trans) - run + 1))) <= 7, trans
+    assert "t06" in trans and not any(a == b == "t06" for a, b in zip(trans, trans[1:])), trans
+    studio.vary(proj, "all", seed=3)
+    shots = proj["shots"]
+    assert all(studio.flash_clear(shots, i) for i in range(1, len(shots)) if shots[i]["transition"] == "t02")
+
+
+def test_a_flash_cut_keeps_its_clean_frames():
+    """8 frames at 60 fps from the flash's end to the kill, and from the last kill's flash to its start."""
+    t = studio._cut_seconds("t02") / 2
+    clean = studio.FLASH_CLEAR_FRAMES / studio.FPS
+    prev = {"duration": 1.0, "pre": 0.5, "fx": ["k01"]}
+    ok = {"duration": 1.0, "pre": t + clean + 0.01, "fx": ["k01"]}
+    late = {"duration": 1.0, "pre": t + clean - 0.01, "fx": ["k01"]}
+    assert studio.flash_clear([prev, ok], 1) and not studio.flash_clear([prev, late], 1)
+    lit = {"duration": 0.6, "pre": 0.3, "fx": ["k03wide"]}       # its flash lasts 0.22 s of the 0.3 s left
+    assert not studio.flash_clear([lit, ok], 1)
+    assert studio.flash_clear([dict(lit, fx=["k02hard"]), ok], 1)
 
 
 # ======================================================================== K3
