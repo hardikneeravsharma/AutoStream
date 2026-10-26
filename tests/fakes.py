@@ -240,6 +240,11 @@ def clips_only(phase: str = IDLE, **kw) -> Engine:
     """An engine with youtube.enabled off: recording, no broadcast."""
     eng = engine(phase=phase, **kw)
     eng.streaming = False
+    # Recording ON, set rather than inherited. Since v1.91.0 an engine with
+    # both off refuses every session ("streaming and recording are both
+    # off"), and CI's config has recording off -- so a clips-only engine
+    # taken from it was one that could do nothing at all.
+    eng.cfg["record"] = dict(eng.cfg["record"], enabled=True)
     eng.yt = FakeYouTube()
     eng.index = None
     eng._start_failures = 0

@@ -121,6 +121,11 @@ def session_engine(phase=st.IDLE, *, streaming=True, active=None, armed=None,
     """
     eng = base_engine(phase=phase, **kw)
     eng.streaming = streaming
+    # A session that does not stream exists to record. Set, never inherited
+    # from the machine's config: CI's has recording off, and with both off
+    # every session is refused.
+    if not streaming:
+        set_cfg(eng, "record.enabled", True)
     eng.watcher = Watcher(active=active, armed=armed, running=running)
     eng.obs = FakeObs(recording=recording, streaming=streaming)
     eng.yt = YT()
