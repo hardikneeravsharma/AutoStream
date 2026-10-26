@@ -851,6 +851,10 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-play": "plays or pauses the reel: the rendered file, or the instant preview of edits "
                    "not rendered yet (clip files the page already streams)",
     "studio-pv-mute": "mutes the instant preview's clip and song in the page; nothing is sent",
+    "studio-vol-add": "puts a keyframe on a volume line in the page's project (studio_change); the render "
+                      "is the next request, and test_ui_studio_volume drives it",
+    "studio-vol-flat": "takes a volume line's keyframes off in the page's project (studio_change); "
+                       "test_ui_studio_volume drives it",
     "studio-pv-full": "puts the player fullscreen in the browser; nothing is sent",
     "studio-zoom": "zooms the timeline",
     "studio-prev-shot": "seeks to the start of this shot, then to the shot before it",
