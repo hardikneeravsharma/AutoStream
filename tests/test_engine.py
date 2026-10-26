@@ -201,9 +201,26 @@ def test_quota_does_not_gate_a_clips_only_session():
     assert eng._preflight() is None
 
 
-def test_quota_still_gates_a_streaming_session():
+def _recording(eng, on: bool) -> None:
+    # Set, never inherited: CI's example config has recording off and this
+    # machine's has it on, and the answer depends on which.
+    eng.cfg["record"] = dict(eng.cfg["record"], enabled=on)
+
+
+def test_quota_still_gates_the_stream():
+    """Out of quota, the session records and does not broadcast."""
     eng = engine()
     eng.streaming = True
+    _recording(eng, True)
+    _spend_the_quota(eng)
+    assert eng._preflight() is None
+    assert "quota" in (eng._why_not_stream() or "")
+
+
+def test_quota_still_gates_a_session_with_nothing_else_to_do():
+    eng = engine()
+    eng.streaming = True
+    _recording(eng, False)
     _spend_the_quota(eng)
     assert "quota" in (eng._preflight() or "")
 
@@ -349,6 +366,7 @@ def test_the_ending_card_is_held_before_the_broadcast_is_completed(tmp_path):
     eng.cfg = _cfg_with_screens(tmp_path, ending="e.mp4")
     eng.state.broadcast_id = "abc123"
     eng.streaming = True
+    eng.obs.streaming = True                 # a stream somebody can see
     eng.yt = FakeYouTube()
     finished = []
     eng._journal = lambda path=None: finished.append(True)  # type: ignore[method-assign]

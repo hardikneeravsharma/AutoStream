@@ -372,11 +372,11 @@ startup and sweeps any broadcast orphaned in `active`/`testing` via
 
 | Phase | Trigger in | Behavior |
 |---|---|---|
-| **IDLE** | `_tick_idle` | Watches for an active game; runs `_preflight()`; on pass → ARMING |
+| **IDLE** | `_tick_idle` | Watches for an active game; runs `_preflight()`; on pass → ARMING. `_preflight()` refuses only what stops a session outright (pause, kill switch, three failed starts, disk). Quiet hours, battery, YouTube's quota (YouTube only), the Library's *Open*, and "Go live" off are `_why_not_stream()`: the session records instead of broadcasting, and is refused only when recording is off too |
 | **ARMING** | `_tick_arming` | Waits for the same game to survive `timing.arm_delay` seconds (debounces brief/accidental launches) — skipped if the user clicked "Open & stream"; re-runs `_preflight()`; on pass → `_begin_session()` → STARTING |
-| **STARTING** | `_tick_starting` | Broadcast + OBS stream already created; polls `youtube.stream_status()` until ingestion is active, bounded by `timing.ingestion_timeout` (else `_abandon_start()` back to IDLE) |
+| **STARTING** | `_tick_starting` | Broadcast + OBS stream already created; polls `youtube.stream_status()` until ingestion is active, bounded by `timing.ingestion_timeout`. A stream that is refused here, at `_begin_session()` or at `_go_live()` becomes a recording-only session (`_record_instead()`) for the rest of the game; `_abandon_start()` back to IDLE only when recording is off or OBS is unreachable |
 | **TESTING** | `_tick_testing` | Holds for `timing.abort_grace` seconds (broadcast is YouTube-side `testing`, i.e. private) — the kill-switch window — then `_go_live()` |
-| **LIVE** | `_tick_live` | Enforces `max_session_hours`; checks pause/kill-switch and OBS health (120s outage grace); polls viewers/likes/chat; detects game switches via `_maybe_switch()` (further `timing.switch_delay` debounce), either retitling in place (`switch_policy: rolling`) or starting a fresh broadcast (`switch_policy: new_broadcast`, loops back to STARTING); no game → COOLDOWN |
+| **LIVE** | `_tick_live` | Enforces `max_session_hours` (`_session_cap()`: a broadcast ends and does not restart for this game, the recording carries on in a new file); checks pause/kill-switch and OBS health (120s outage grace); polls viewers/likes/chat; detects game switches via `_maybe_switch()` (further `timing.switch_delay` debounce), either retitling in place (`switch_policy: rolling`) or starting a fresh broadcast (`switch_policy: new_broadcast`, loops back to STARTING); no game → COOLDOWN |
 | **COOLDOWN** | `_tick_cooldown` | Game back → straight to LIVE (as a switch if different); otherwise waits `timing.cooldown` seconds → STOPPING |
 | **STOPPING** | `_tick_stopping` | `obs.stop()`, `youtube.transition(complete)`, resets session state and the watcher's arm debounce → IDLE |
 
@@ -385,7 +385,14 @@ Two controls force a phase change from outside the tick loop: `Engine.force_stop
 (the kill switch).
 
 Three consecutive start failures auto-pause the engine (`_abandon_start`) until the
-daemon restarts, to avoid a crash-loop hammering the YouTube API.
+daemon restarts, to avoid a crash-loop hammering the YouTube API. A refused stream no
+longer counts: it records instead, and is not retried until the game is next opened.
+
+`Engine.streaming` follows `youtube.enabled` live between sessions and is fixed for a
+session when it begins (`_session_streaming`), so "Go live" takes effect from the next
+session without a restart. While streaming, the recording is paused whenever one of
+AutoStream's cards is on air (`_card_up()` / `_card_down()`), so the master the clips
+are cut from holds the game and not the starting, be-right-back or ending card.
 
 ## 4. Configuration reference
 

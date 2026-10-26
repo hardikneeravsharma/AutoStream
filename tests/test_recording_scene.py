@@ -301,6 +301,7 @@ def test_a_stream_that_ends_on_its_card_does_not_leave_obs_there(tmp_path):
     eng.state.broadcast_id = "b1"
     eng.session = eng.platform.start("t", "d")
     eng.state.recording = True
+    eng.obs.streaming = True                       # the stream is still up
     eng._stop_recording = lambda: None             # type: ignore[method-assign]
     eng._tick_stopping()
     assert eng.obs.scene == ENDING                 # the card, while it is due

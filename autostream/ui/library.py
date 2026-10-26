@@ -161,8 +161,16 @@ function lib_row(a) {
                                        : 'No thumbnail assigned') + '">'
           + (a.thumbnail ? 'Thumbnail set' : 'Thumbnail') + '</button>'
         : '')
+    /* "Open" on a game used to mean "do nothing": no stream, and no recording
+       either -- with streaming off in Settings, a game opened from here was
+       simply not recorded. It now records and never streams, and says so. */
     + '<button class="btn btn-ghost btn-sm" type="button" data-key="' + key
-    + '" data-stream="0">Open</button>'
+    + '" data-stream="0"'
+    + (a.game
+        ? ' title="Records the game and does not stream it (needs Recording '
+          + 'on in Settings)">Open (record only)'
+        : '>Open')
+    + '</button>'
     + (a.stream
         ? '<button class="btn btn-sm" type="button" data-key="' + key
           + '" data-stream="1">Open + stream</button>'

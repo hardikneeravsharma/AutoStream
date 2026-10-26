@@ -261,7 +261,9 @@ def test_starting_still_goes_live_when_the_testing_transition_fails():
 
 
 def test_starting_gives_up_when_youtube_never_sees_the_stream():
+    """With recording off there is nothing to fall back to."""
     eng = session_engine(st.STARTING)
+    set_cfg(eng, "record.enabled", False)
     eng.state.broadcast_id = "bid-1"
     eng._starting_deadline = time.monotonic() - 1
     eng.tick()
@@ -273,6 +275,7 @@ def test_three_failed_starts_in_a_row_pause_the_app():
     """Otherwise a broken OBS retries every few seconds forever, and each
     attempt creates and deletes a broadcast against the daily quota."""
     eng = session_engine(st.STARTING)
+    set_cfg(eng, "record.enabled", False)
     for _ in range(3):
         eng.state.phase = st.STARTING
         eng.state.broadcast_id = "bid-x"
@@ -283,6 +286,24 @@ def test_three_failed_starts_in_a_row_pause_the_app():
     # "Until restart" means until restart: it used to set state.paused, which
     # is saved to state.json and so outlived the restart it promised.
     assert eng.state.paused is False
+
+
+def test_a_stream_that_never_reaches_ingest_keeps_recording():
+    """FROM 2026-10-25. "YouTube never saw our ingestion" abandoned the
+    session, recording and all, three times in five minutes -- then paused the
+    app with the game still running and nothing being written."""
+    eng = session_engine(st.STARTING, active=a_hit())
+    set_cfg(eng, "record.enabled", True)
+    eng._session_streaming = True
+    eng.state.broadcast_id = "bid-1"
+    eng.state.recording = True
+    eng._starting_deadline = time.monotonic() - 1
+    eng.tick()
+    assert eng.state.phase == st.LIVE
+    assert eng.state.recording, "the game stopped being recorded"
+    assert eng.streaming is False
+    assert eng.yt.deleted == ["bid-1"], "the dead broadcast was left behind"
+    assert eng._start_failures == 0 and not eng._start_blocked
 
 
 def test_three_failed_starts_block_every_game_until_resume():
@@ -329,6 +350,7 @@ def test_open_without_stream_survives_a_launcher():
     not running YET, so when it did appear it went live -- as "Open", which
     is the button for not streaming."""
     eng = session_engine(st.IDLE, active=None, running=False)
+    set_cfg(eng, "record.enabled", False)       # so "Open" has nothing to do
     eng._intent_at = {"cs2.exe": time.monotonic()}
     eng._intent_seen = set()
     eng.launch_intent["cs2.exe"] = "silent"
@@ -337,7 +359,7 @@ def test_open_without_stream_survives_a_launcher():
     eng.watcher._active = a_hit()               # the game arrives
     eng.tick()
     assert eng.state.phase == st.IDLE
-    assert eng.blocked_reason == "opened without streaming"
+    assert eng.blocked_reason == "opened with Open, not Open + stream"
     eng.watcher._active = None                  # ...and closes
     eng.tick()
     assert "cs2.exe" not in eng.launch_intent
@@ -396,12 +418,48 @@ def test_live_enters_cooldown_when_the_game_closes():
     assert eng.state.phase == st.COOLDOWN
 
 
-def test_live_stops_at_the_maximum_session_length():
+def test_the_maximum_session_length_ends_the_stream_and_keeps_recording():
+    """It used to stop the session, and with the game still running the next
+    idle tick armed a new broadcast half a minute later. A hard stop on a
+    stream now stays stopped for this game; the game is still recorded."""
     eng = session_engine(st.LIVE, active=a_hit())
+    set_cfg(eng, "record.enabled", True)
     set_cfg(eng, "timing.max_session_hours", 1)
+    eng._session_streaming = True
+    eng.state.broadcast_id = "bid-1"
+    eng.state.recording = True
     eng.state.session_start = time.time() - 7200
     eng.tick()
-    assert eng.state.phase == st.STOPPING
+    assert eng.state.phase == st.LIVE
+    assert eng.streaming is False, "the broadcast carried on past the cap"
+    assert ("bid-1", "complete") in eng.yt.transitions
+    assert eng.journalled == ["C:/verify/rec.mp4"]
+    assert eng.state.recording, "the game stopped being recorded"
+    assert time.time() - eng.state.session_start < 60
+
+
+def test_the_maximum_session_length_splits_a_recording():
+    eng = session_engine(st.LIVE, streaming=False, active=a_hit())
+    set_cfg(eng, "record.enabled", True)
+    set_cfg(eng, "timing.max_session_hours", 1)
+    eng.state.recording = True
+    eng._earlier_files = ()
+    eng.state.session_start = time.time() - 7200
+    eng.tick()
+    assert eng.state.phase == st.LIVE
+    assert eng.state.recording
+    assert [f["path"] for f in eng._earlier_files] == ["C:/verify/rec.mp4"]
+
+
+def test_the_maximum_session_length_without_recording_stops_for_good():
+    eng = session_engine(st.LIVE, active=a_hit())
+    set_cfg(eng, "record.enabled", False)
+    set_cfg(eng, "timing.max_session_hours", 1)
+    eng.state.broadcast_id = "bid-1"
+    eng.state.session_start = time.time() - 7200
+    eng.tick()
+    assert eng.state.phase in (st.STOPPING, st.IDLE)
+    assert eng.launch_intent.get("cs2.exe") == "stopped"
 
 
 def test_live_stops_when_the_pause_flag_file_appears(tmp_path):
@@ -658,9 +716,24 @@ def test_the_flag_file_blocks_a_start():
 
 
 def test_quiet_hours_block_a_start():
+    """With recording off, quiet hours leave nothing to do."""
     eng = session_engine(st.IDLE, active=a_hit())
+    set_cfg(eng, "record.enabled", False)
     eng._in_quiet_hours = lambda now=None: True
     assert _blocked(eng) == "inside quiet hours"
+
+
+def test_quiet_hours_stop_the_stream_not_the_recording():
+    """A 3 a.m. match is still a match: it is recorded, not broadcast."""
+    hit = a_hit()
+    eng = session_engine(st.ARMING, active=hit, armed=hit)
+    set_cfg(eng, "record.enabled", True)
+    eng._in_quiet_hours = lambda now=None: True
+    eng.tick()
+    assert eng.state.phase == st.LIVE
+    assert eng.state.recording
+    assert eng.yt.created == [], "went live inside quiet hours"
+    assert eng.streaming is False
 
 
 def test_a_full_disk_blocks_a_start(monkeypatch):
@@ -677,6 +750,7 @@ def test_a_full_disk_blocks_a_start(monkeypatch):
 
 def test_an_exhausted_quota_blocks_a_start():
     eng = session_engine(st.IDLE, active=a_hit())
+    set_cfg(eng, "record.enabled", False)
     eng.state.roll_quota_day()
     eng.state.quota_spent = 10 ** 9
     assert "quota too low" in (_blocked(eng) or "")
@@ -693,10 +767,33 @@ def test_quota_does_not_block_a_session_that_never_streams():
 
 
 def test_opening_without_streaming_says_so_rather_than_sitting_silent():
+    """With recording off too, "Open" leaves nothing to do -- and says so."""
     eng = session_engine(st.IDLE, active=a_hit())
+    set_cfg(eng, "record.enabled", False)
     eng.launch_intent["cs2.exe"] = "silent"
-    assert _blocked(eng) == "opened without streaming"
+    assert _blocked(eng) == "opened with Open, not Open + stream"
     assert eng.state.phase == st.IDLE
+
+
+def test_open_records_the_game_and_does_not_stream_it():
+    """"Open" meant "do nothing": with streaming off in Settings, a game
+    opened from the Library was not recorded at all."""
+    hit = a_hit()
+    eng = session_engine(st.IDLE, active=hit, armed=hit)
+    set_cfg(eng, "record.enabled", True)
+    eng.launch_intent["cs2.exe"] = "silent"
+    eng.tick()
+    assert eng.state.phase == st.ARMING
+    eng.tick()
+    assert eng.state.phase == st.LIVE
+    assert eng.state.recording
+    assert eng.yt.created == []
+
+
+def test_nothing_to_do_says_so():
+    eng = session_engine(st.IDLE, streaming=False, active=a_hit())
+    set_cfg(eng, "record.enabled", False)
+    assert _blocked(eng) == "streaming and recording are both off in Settings"
 
 
 def test_a_manual_stop_says_how_to_undo_itself():
@@ -751,7 +848,9 @@ SCENARIOS: dict[tuple[str, str], str] = {
     ("_abandon_start", "IDLE"):
         "test_starting_gives_up_when_youtube_never_sees_the_stream",
     ("_tick_live", "COOLDOWN"): "test_live_enters_cooldown_when_the_game_closes",
-    ("_tick_live", "STOPPING"): "test_live_stops_at_the_maximum_session_length",
+    ("_tick_live", "STOPPING"): "test_live_stops_when_the_pause_flag_file_appears",
+    ("_record_instead", "LIVE"):
+        "test_a_stream_that_never_reaches_ingest_keeps_recording",
     ("_tick_cooldown", "LIVE"):
         "test_cooldown_returns_to_live_when_the_game_comes_back",
     ("_tick_cooldown", "STOPPING"): "test_cooldown_stops_once_it_expires",
@@ -803,8 +902,12 @@ def test_every_preflight_reason_has_a_test():
             "test_the_flag_file_blocks_a_start",
         "inside quiet hours": "test_quiet_hours_block_a_start",
         "only {free_gb:.1f} GB free": "test_a_full_disk_blocks_a_start",
-        "quota too low ({self.state.quota_left(DAILY_QUOTA)} units left)":
+        "quota too low ({left} units left)":
             "test_an_exhausted_quota_blocks_a_start",
+        "opened with Open, not Open + stream":
+            "test_opening_without_streaming_says_so_rather_than_sitting_silent",
+        "streaming and recording are both off in Settings":
+            "test_nothing_to_do_says_so",
         "on battery power": "test_running_on_battery_blocks_a_start",
         "3 failed start attempts - press Resume, or restart AutoStream":
             "test_three_failed_starts_block_every_game_until_resume",
@@ -816,6 +919,7 @@ def test_every_preflight_reason_has_a_test():
 def test_running_on_battery_blocks_a_start(monkeypatch):
     """A laptop that starts streaming on its way to a meeting."""
     eng = session_engine(st.IDLE, active=a_hit())
+    set_cfg(eng, "record.enabled", False)
     set_cfg(eng, "rules.require_ac_power", True)
     monkeypatch.setattr(
         engine_mod.psutil, "sensors_battery",
