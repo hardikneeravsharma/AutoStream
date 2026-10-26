@@ -356,7 +356,7 @@ Closing the window does not quit — it keeps running in the tray so it can dete
   graph, OBS ingest health, and live chat. The *Audio* card beside the chat picks
   OBS's microphone and sets it against desktop audio, without opening OBS.
 - **Library** — every game it found. *Open + stream* launches one and goes live
-  deliberately.
+  deliberately; *Open (record only)* launches it and records it without streaming.
 - **Clips** — every stream you have recorded. Pick one, choose what counts as a
   highlight, and it cuts them.
 - **Settings** — every option as a real control, grouped, in plain language.
@@ -589,7 +589,8 @@ IDLE ──▶ ARMING ──▶ STARTING ──▶ TESTING ──▶ LIVE ──
   │         │                       └─ the cancel window: private, and
   │         │                          abortable, before it goes public
   │         └─ the game must survive 30s here, so alt-tab never triggers a stream
-  └─ preflight: paused? quiet hours? on battery? disk? quota? veto list?
+  └─ preflight: paused? disk? veto list? -- and quiet hours, battery, quota or a
+     refused stream mean "record, don't broadcast", never "lose the game"
 ```
 
 State is written to `state.json` **before** each side effect, so a crash mid-transition

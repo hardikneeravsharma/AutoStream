@@ -416,7 +416,8 @@ CONFIG_SCHEMA: list[Section] = [
                 "timing.max_session_hours",
                 "Maximum session length",
                 "A hard stop. However long you keep playing, the broadcast is ended "
-                "at this point; the next detection starts a fresh one.",
+                "at this point and does not start again until the game is closed. "
+                "The recording carries on in a new file.",
                 "number",
                 min=0.5,
                 max=24,
@@ -448,17 +449,19 @@ CONFIG_SCHEMA: list[Section] = [
             _field(
                 "rules.quiet_hours",
                 "Quiet hours",
-                "AutoStream never starts a stream by itself inside this window. A "
-                "session already running is left alone. The window may cross "
-                "midnight. Leave both blank to allow streaming at any hour.",
+                "AutoStream never starts a stream by itself inside this window; "
+                "the game is still recorded, if recording is on. A session already "
+                "running is left alone. The window may cross midnight. Leave both "
+                "blank to allow streaming at any hour.",
                 "time_range",
                 placeholder="HH:MM",
             ),
             _field(
                 "rules.require_ac_power",
                 "Only stream on mains power",
-                "Refuses to auto-start while a laptop is on battery, because an hour "
-                "of encoding empties it. Pressing Open and stream overrides this.",
+                "Refuses to auto-start a stream while a laptop is on battery, because "
+                "an hour of encoding empties it; the game is still recorded, if "
+                "recording is on. Pressing Open and stream overrides this.",
                 "toggle",
             ),
             _field(
@@ -530,8 +533,9 @@ CONFIG_SCHEMA: list[Section] = [
                 "rules.quota_reserve",
                 "API quota to hold back",
                 "YouTube allows 10,000 API units a day and one session spends about "
-                "250. AutoStream refuses to start a session that would eat into this "
-                "reserve, so there is always enough left to stop a stream cleanly.",
+                "250. AutoStream refuses to start a stream that would eat into this "
+                "reserve, so there is always enough left to stop a stream cleanly; "
+                "the game is recorded instead, if recording is on.",
                 "number",
                 min=0,
                 max=9000,

@@ -117,7 +117,9 @@ class Engine:
         # because what changes is only what a session DOES. Off, a session is a
         # recording and nothing else: no broadcast, no OBS stream output, no
         # quota, no Google sign-in.
-        self.streaming = bool(getattr(config.youtube, "enabled", True))
+        # Read through the `streaming` property from here on, which follows
+        # the live config between sessions and holds still during one.
+        self._session_streaming: bool | None = None
         if not self.streaming:
             log.info("streaming is off: AutoStream will record and clip only")
             if not config.record.enabled:
@@ -253,7 +255,9 @@ class Engine:
                 self.obs.stop()
             except Exception:  # noqa: BLE001
                 pass
-            if self.streaming:
+            # Or a broadcast this crash left up: switching streaming off in
+            # Settings before the restart does not take it off the channel.
+            if self.streaming or self.state.broadcast_id:
                 try:
                     n = self.yt.sweep_orphans()
                     log.info("orphan sweep completed %d broadcast(s)", n)
@@ -372,12 +376,22 @@ class Engine:
             return start <= t < end
         return t >= start or t < end        # window crosses midnight
 
-    def _preflight(self, force: bool = False) -> str | None:
+    STREAMING_OFF = "streaming is off in Settings"
+
+    def _preflight(self, force: bool = False,
+                   hit: GameHit | None = None) -> str | None:
         """Return a reason string if we must NOT start, else None.
 
         `force` is set when the user explicitly pressed "Open & stream", which
         overrides the convenience guards (quiet hours, battery) but NEVER the
         safety ones (paused, disk, quota).
+
+        ONLY WHAT STOPS A SESSION OUTRIGHT. Quiet hours, the battery and the
+        quota are reasons not to BROADCAST, and they used to refuse the whole
+        session -- so the game was not recorded either, and a 3 a.m. match
+        played on a laptop was simply gone. They are now _why_not_stream()'s,
+        and the session records instead. They still stop it here when
+        recording is off too, because then they leave nothing to do.
         """
         if self._paused():
             return f"paused ({self.cfg.rules.paused_flag_file} present)"
@@ -385,21 +399,82 @@ class Engine:
             return "paused via kill switch"
         if self._start_blocked:
             return "3 failed start attempts - press Resume, or restart AutoStream"
-        if not force and self._in_quiet_hours():
-            return "inside quiet hours"
-        if not force and self.cfg.rules.require_ac_power:
-            bat = psutil.sensors_battery()
-            if bat is not None and not bat.power_plugged:
-                return "on battery power"
         try:
             free_gb = shutil.disk_usage(str(paths.ROOT)).free / (1024 ** 3)
             if free_gb < float(self.cfg.rules.min_free_disk_gb):
                 return f"only {free_gb:.1f} GB free"
         except OSError:
             pass
-        if (self.streaming and self.state.quota_left(DAILY_QUOTA)
-                < SESSION_COST + self.cfg.rules.quota_reserve):
-            return f"quota too low ({self.state.quota_left(DAILY_QUOTA)} units left)"
+        why = self._why_not_stream(hit, force=force)
+        if why and not self.cfg.record.enabled:
+            if why == self.STREAMING_OFF:
+                return "streaming and recording are both off in Settings"
+            return why
+        return None
+
+    def _streaming_setting(self) -> bool:
+        pinned = getattr(self, "_streaming_pinned", None)
+        if pinned is not None:
+            return pinned
+        return bool(getattr(self.cfg.youtube, "enabled", True))
+
+    @property
+    def streaming(self) -> bool:
+        """Whether this session broadcasts -- between sessions, whether the
+        next one would.
+
+        READ ONCE AT STARTUP, "Go live" WAS A SETTING THAT DID NOTHING. The
+        Settings page saved it, said nothing about restarting, and the engine
+        carried on as it had started: switched off, the next game still went
+        live on the channel; switched on, it still only recorded. The
+        dashboard read this flag and the Clips page read the config, so the
+        two pages disagreed about which it was.
+
+        NEVER MID-SESSION, for the reason the platform waits too: a session
+        that began as a recording has no broadcast to stream to, and one that
+        began as a broadcast cannot drop it halfway without ending it. A
+        session's answer is fixed when it begins (_session_streaming), which
+        is also how a session that could not stream keeps recording.
+        """
+        held = getattr(self, "_session_streaming", None)
+        if held is not None:
+            return held
+        return self._streaming_setting()
+
+    @streaming.setter
+    def streaming(self, value) -> None:
+        """So a test can still pin it."""
+        self._streaming_pinned = None if value is None else bool(value)
+        self._session_streaming = None
+
+    def _why_not_stream(self, hit: GameHit | None = None,
+                        force: bool = False) -> str | None:
+        """Why the next session should record without broadcasting, or None
+        when it should go live.
+
+        Every one of these used to be a reason not to start at all -- or, for
+        "Open", a reason not to record either: the button meant "don't
+        stream", and with streaming off in Settings it meant the game was not
+        recorded, which nobody pressing it could have guessed.
+        """
+        if not self._streaming_setting():
+            return self.STREAMING_OFF
+        if hit is not None and self._intent_for(hit) == "silent":
+            return "opened with Open, not Open + stream"
+        if not force and self._in_quiet_hours():
+            return "inside quiet hours"
+        if not force and self.cfg.rules.require_ac_power:
+            bat = psutil.sensors_battery()
+            if bat is not None and not bat.power_plugged:
+                return "on battery power"
+        # YOUTUBE'S QUOTA IS YOUTUBE'S. It was checked whichever platform was
+        # in use, so a day that had spent it on YouTube refused Twitch and
+        # Kick too -- neither of which spends a unit.
+        platform = str(getattr(self.cfg.youtube, "platform", "") or "youtube")
+        if platform.lower() == "youtube":
+            left = self.state.quota_left(DAILY_QUOTA)
+            if left < SESSION_COST + self.cfg.rules.quota_reserve:
+                return f"quota too low ({left} units left)"
         return None
 
     # ================= phase helpers =================
@@ -537,9 +612,11 @@ class Engine:
             return
         log.info("launched %s with intent=%s", app.name,
                  "stream" if want_stream else "silent")
+        quiet = (" (recording, not streaming)" if self.cfg.record.enabled
+                 else " (not streaming)")
         notify.toast("AutoStream",
                      f"Launching {app.name}"
-                     + (" and going live" if want_stream else " (not streaming)"))
+                     + (" and going live" if want_stream else quiet))
 
     def _intent_for(self, hit: GameHit) -> str | None:
         return self.launch_intent.get((hit.key or "").lower())
@@ -585,15 +662,17 @@ class Engine:
             return
 
         intent = self._intent_for(hit)
-        if intent in ("silent", "stopped"):
-            why = ("opened without streaming" if intent == "silent"
-                   else "stopped manually - close the game to reset")
+        if intent == "stopped":
+            why = "stopped manually - close the game to reset"
             if self.blocked_reason != why:
                 self.blocked_reason = why
                 log.info("%s: %s", hit.name, why)
             return
 
-        reason = self._preflight(force=(intent == "stream"))
+        # "silent" -- Open rather than Open + stream -- is no longer a reason
+        # to do nothing: it is a session that records and does not broadcast.
+        # The preflight still refuses it when recording is off as well.
+        reason = self._preflight(force=(intent == "stream"), hit=hit)
         if reason:
             # Log once per change, not every 3s, but never stay silent.
             if reason != self.blocked_reason:
@@ -615,7 +694,7 @@ class Engine:
         # wait out the debounce that exists to filter accidental launches.
         express = self.watcher.active_game()
         if express is not None and self._intent_for(express) == "stream":
-            if not self._preflight(force=True):
+            if not self._preflight(force=True, hit=express):
                 log.info("explicit launch - skipping arm delay")
                 self._begin_session(express)
                 return
@@ -628,7 +707,7 @@ class Engine:
             elif express is not None:
                 self.candidate = express.name
             return
-        reason = self._preflight()
+        reason = self._preflight(hit=hit)
         if reason:
             log.info("armed but blocked: %s", reason)
             self._goto(st.IDLE)
@@ -656,8 +735,15 @@ class Engine:
         self._loose_recording = False
 
         self._goto(st.STARTING)
-        if not self.streaming:
-            self._begin_recording_only(hit)
+        # Whether THIS session broadcasts, decided once and held until it
+        # ends -- see the `streaming` property.
+        intent = self._intent_for(hit)
+        why = self._why_not_stream(hit, force=(intent == "stream"))
+        self._session_streaming = why is None
+        self._rec_held = False
+        if why:
+            self._begin_recording_only(
+                hit, why=None if why == self.STREAMING_OFF else why)
             return
         try:
             # OBS FIRST. A broadcast is 50 units to create, 50 to bind and 50
@@ -691,6 +777,8 @@ class Engine:
             opening = screens.ensure(self.cfg, self.obs, screens.STARTING)
             self.obs.start(scene=opening or hit.scene, overlay=hit.name)
             self._start_recording()
+            if opening:
+                self._card_up()
             self._starting_deadline = time.monotonic() + self.cfg.timing.ingestion_timeout
             log.info("session #%d started: %s", self.state.session_number, title)
         except (QuotaExhausted, NotAuthorised, PlatformError,
@@ -700,15 +788,18 @@ class Engine:
             # user must fix, and each used to surface as a traceback because
             # only YouTube's two exceptions were caught here.
             log.error("cannot start session: %s", e)
-            notify.toast("AutoStream blocked", str(e))
-            self._abandon_start()
+            if not self._record_instead(hit, f"could not go live: {e}"):
+                notify.toast("AutoStream blocked", str(e))
+                self._abandon_start()
         except ObsUnavailable as e:
+            # Not a fallback: the recording needs the same OBS.
             log.error("OBS unavailable: %s", e)
             notify.toast("AutoStream: OBS unavailable", str(e))
             self._abandon_start()
         except Exception as e:  # noqa: BLE001
             log.exception("session start failed: %s", e)
-            self._abandon_start()
+            if not self._record_instead(hit, f"could not go live: {e}"):
+                self._abandon_start()
 
     @property
     def platform(self):
@@ -777,7 +868,7 @@ class Engine:
             return s.watch_url
         return self.yt.watch_url(s.handle) if s.handle else ""
 
-    def _begin_recording_only(self, hit: GameHit) -> None:
+    def _begin_recording_only(self, hit: GameHit, why: str | None = None) -> None:
         """A session with no broadcast: start recording and go straight to LIVE.
 
         No ingestion to wait for and nothing to hold in `testing`, so STARTING
@@ -811,8 +902,68 @@ class Engine:
         self._start_failures = 0
         self._goto(st.LIVE)
         self.obs.audio_watch_start()
-        log.info("recording session #%d: %s", self.state.session_number, hit.name)
-        notify.toast("AutoStream is recording", hit.name)
+        log.info("recording session #%d: %s%s", self.state.session_number,
+                 hit.name, f" (not streaming: {why})" if why else "")
+        # With streaming switched on, a session that only records must say
+        # why -- or the player finds out from an empty channel afterwards.
+        notify.toast("AutoStream is recording", hit.name
+                     + (f" -- not streaming: {why}" if why else ""))
+
+    def _record_instead(self, hit: GameHit | None, why: str) -> bool:
+        """The broadcast could not start: keep the game as a recording.
+
+        -> whether this handled the session (False: recording is off, so
+        there is nothing to fall back to and the caller abandons it).
+
+        A REFUSED STREAM USED TO LOSE THE GAME. A 403 from YouTube, a stream
+        that never reached ingest, an expired sign-in: each abandoned the
+        session, recording included, then tried again seconds later, and after
+        three the engine paused itself "until Resume" with the game still
+        running and nothing being written. On 2026-10-25 and 26 that happened
+        three times in one evening. The recording never needed the platform.
+
+        Not retried for the rest of this game: a refusal three seconds ago is
+        a refusal now, and retrying is what burned three broadcasts. The next
+        session -- the game closed and opened again -- tries to go live anew.
+        """
+        if not self.cfg.record.enabled:
+            return False
+        log.error("%s -- recording only for the rest of this session", why)
+        bid = self.state.broadcast_id
+        if bid and getattr(self.platform.caps, "makes_broadcast", False):
+            try:
+                self.yt.delete_broadcast(bid)
+            except Exception:  # noqa: BLE001
+                pass
+        self.session = None
+        self.state.broadcast_id = None
+        self.state.save()
+        try:
+            self.obs.stop()               # the stream output; not the recording
+        except Exception:  # noqa: BLE001
+            pass
+        self._restore_stream_limits()
+        self._session_streaming = False
+        self._starting_deadline = None
+        self._screen_until = None
+        self._unseen = True               # no ending card: nobody saw a stream
+        hit = hit or self.watcher.active_game()
+        short = why if len(why) <= 140 else why[:137] + "..."
+        if self.state.recording:
+            # A stream that never reached ingest: the recording has been
+            # running since the session began. Off the starting card, on with
+            # the game.
+            self._card_down()
+            self._back_to_game()
+            self._start_failures = 0
+            self._goto(st.LIVE)
+            self.obs.audio_watch_start()
+            notify.toast("AutoStream is recording", f"Not streaming: {short}")
+            return True
+        if hit is None:
+            return False
+        self._begin_recording_only(hit, why=short)
+        return True
 
     # ---- local recording --------------------------------------------
     #
@@ -857,11 +1008,20 @@ class Engine:
             self.state.save()
             self._rec_began = time.time()
             self._rec_missing = 0
+            self._rec_held = False
             if already:
                 log.info("OBS was already recording; adopting that file. Its "
                          "earlier footage is not part of this session.")
         except Exception as e:  # noqa: BLE001
             log.warning("could not start recording: %s", e)
+            # SAID, NOT ONLY LOGGED, while a stream carries on. The stream
+            # looks healthy, so the first anyone knew was a session on the
+            # Clips page with no file. A recording-only session says so
+            # itself, because it ends over it.
+            if self.streaming:
+                notify.toast("AutoStream: not recording",
+                             f"OBS would not start the recording ({e}). The "
+                             "stream is unaffected.")
 
     def _stop_recording(self) -> str | None:
         if not self.state.recording:
@@ -872,7 +1032,41 @@ class Engine:
         self._stop_replay_buffer()
         path = self.obs.stop_recording()          # already swallows its errors
         self.state.recording = False
+        self._rec_held = False
         return path
+
+    # ---- a card is on air: the recording waits ---------------------
+    #
+    # The recording is the master the clips are cut from, and the cards are
+    # for viewers. Written into it, they were the first forty-nine seconds
+    # and the last two minutes forty-eight of every streamed session --
+    # footage nobody wanted, cut around by hand. OBS pauses a recording
+    # without closing the file, so the file stays one file.
+    #
+    # Only while streaming. A recording-only session puts no card up, and
+    # its own pause button already pauses the recording.
+
+    def _card_up(self) -> None:
+        if (not self.streaming or not self.state.recording
+                or getattr(self, "_rec_held", False)):
+            return
+        try:
+            if self.obs.pause_recording():
+                self._rec_held = True
+                log.info("a card is on air: recording paused until the game "
+                         "is back")
+        except Exception as e:  # noqa: BLE001
+            log.debug("could not pause the recording for a card: %s", e)
+
+    def _card_down(self) -> None:
+        if not getattr(self, "_rec_held", False):
+            return
+        self._rec_held = False
+        try:
+            if self.obs.resume_recording():
+                log.info("the game is back: recording resumed")
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not resume the recording: %s", e)
 
     # ---------------- instant replay ----------------
 
@@ -1526,12 +1720,19 @@ class Engine:
                 self.yt.delete_broadcast(self.state.broadcast_id)
             except Exception:  # noqa: BLE001
                 pass
-        self._stop_recording()
+            self.state.broadcast_id = None
+        rec_path = self._stop_recording()
         try:
             self.obs.stop()
         except Exception:  # noqa: BLE001
             pass
         self._restore_stream_limits()
+        # The file a failed start wrote is still footage of the game. It was
+        # dropped here, so six of them from 2026-10-25 sat in the recording
+        # folder with nothing on the Clips page pointing at them.
+        if rec_path or getattr(self, "_earlier_files", ()):
+            self._journal(rec_path)
+        self._session_streaming = None
         self.state.reset_session()
         self.state.save()
         self._goto(st.IDLE)
@@ -1567,9 +1768,10 @@ class Engine:
 
         if self._starting_deadline and time.monotonic() > self._starting_deadline:
             log.error("%s never saw our ingestion — aborting session", where)
-            notify.toast("AutoStream",
-                         f"Stream never reached {where}. Aborted.")
-            self._abandon_start()
+            if not self._record_instead(None, f"the stream never reached {where}"):
+                notify.toast("AutoStream",
+                             f"Stream never reached {where}. Aborted.")
+                self._abandon_start()
             return
         try:
             if not self.platform.ingest_live(self._session()):
@@ -1613,7 +1815,8 @@ class Engine:
             self.platform.go_live(self._session())
         except Exception as e:  # noqa: BLE001
             log.exception("could not transition to live: %s", e)
-            self._abandon_start()
+            if not self._record_instead(None, f"could not go live: {e}"):
+                self._abandon_start()
             return
         self._goto(st.LIVE)
         self._unseen = False
@@ -1641,6 +1844,7 @@ class Engine:
         from . import screens
 
         if screens.show(self.cfg, self.obs, screens.STARTING):
+            self._card_up()
             self._screen_until = time.monotonic() + screens.hold_for(
                 self.cfg, screens.STARTING)
             log.info("starting screen up for %.0fs",
@@ -1655,6 +1859,7 @@ class Engine:
             self.obs.set_scene(scene)
         if hit:
             self.obs.set_overlay_text(hit.name)
+        self._card_down()
 
     def _game_scene(self, hit: GameHit | None) -> str | None:
         """The scene that shows the game: the game's own, the configured
@@ -1705,6 +1910,7 @@ class Engine:
                         "to %r so the game is what gets recorded", why, now,
                         scene)
             self.obs.set_scene(scene)
+            self._card_down()
             return True
         except Exception as e:  # noqa: BLE001
             log.warning("could not check which scene OBS is showing: %s", e)
@@ -1736,14 +1942,66 @@ class Engine:
             log.info("starting screen done -> game scene")
             self._back_to_game()
 
+    def _session_cap(self) -> None:
+        """timing.max_session_hours has been reached.
+
+        IT WAS NOT A STOP. The session ended, and with the game still running
+        the next idle tick armed a new one -- a fresh broadcast half a minute
+        later, which is the opposite of what a hard stop on a stream is for,
+        and a thirty-second hole in the recording. Now:
+
+        - a broadcast ENDS and does not come back for this game. The game is
+          still being played, so the recording carries on, in a new file, as
+          a recording-only session;
+        - a recording-only session is split into a new file, which is what
+          happened before by accident, now on purpose and without the hole.
+        """
+        hours = float(self.cfg.timing.max_session_hours)
+        if self.streaming and not self.cfg.record.enabled:
+            log.warning("max session length (%gh) reached — ending the stream",
+                        hours)
+            self.force_stop("max session length", suppress=True)
+            return
+        log.warning("max session length (%gh) reached — starting a new file",
+                    hours)
+        rec_path = self._stop_recording()
+        if self.streaming:
+            try:
+                self.obs.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self._restore_stream_limits()
+            try:
+                self.platform.stop(self._session())
+            except Exception as e:  # noqa: BLE001
+                log.warning("could not complete the broadcast: %s", e)
+            # The broadcast and the file it was recorded with, as one row.
+            self._journal(rec_path)
+            self.session = None
+            self.state.broadcast_id = None
+            self._session_streaming = False
+            self._marks = []
+            self._mark_seen = {}
+            self._unseen = True
+            self._screen_until = None
+            notify.toast("AutoStream: stream ended",
+                         f"{hours:g} hours reached. Still recording.")
+        else:
+            self._set_aside(rec_path)
+        self.state.session_start = time.time()      # the cap counts afresh
+        self.state.save()
+        self._off_the_cards("max session length")
+        self._start_recording()
+        if self.state.recording:
+            log.info("recording again, into a new file")
+
     # ---- LIVE -------------------------------------------------------
 
     def _tick_live(self) -> None:
         # hard safety valve
         max_s = float(self.cfg.timing.max_session_hours) * 3600
         if self.state.session_start and time.time() - self.state.session_start > max_s:
-            log.warning("max session length reached — stopping")
-            self._goto(st.STOPPING)
+            self._session_cap()
             return
 
         # Before the pause check: a session parked on its be-right-back card
@@ -2021,7 +2279,9 @@ class Engine:
             self._goto(st.STARTING)
         except Exception as e:  # noqa: BLE001
             log.exception("new broadcast failed: %s", e)
-            self._goto(st.STOPPING)
+            # The new game is still being played. Keep it, as a recording.
+            if not self._record_instead(hit, f"could not go live: {e}"):
+                self._goto(st.STOPPING)
 
     # ---- COOLDOWN ---------------------------------------------------
 
@@ -2040,6 +2300,16 @@ class Engine:
 
     # ---- STOPPING ---------------------------------------------------
 
+    def _stream_alive(self) -> bool:
+        """Is anyone able to see an ending card? A session ended BECAUSE the
+        stream output died has nobody watching: the card was held up for
+        2m48s twice that week, on a dead stream, written into the recording
+        and nowhere else."""
+        try:
+            return bool(self.obs.is_streaming())
+        except Exception:  # noqa: BLE001
+            return False
+
     def _tick_stopping(self, card: bool = True) -> None:
         # The ending card, held before anything is torn down. This is the only
         # window in which it can be seen at all: afterwards the broadcast is
@@ -2053,8 +2323,10 @@ class Engine:
         if not card:
             self._ending_until = None
         elif self._ending_until is None and not self._unseen and screens.configured(
-                self.cfg, screens.ENDING) and self.state.broadcast_id:
+                self.cfg, screens.ENDING) and self.state.broadcast_id \
+                and self._stream_alive():
             if screens.show(self.cfg, self.obs, screens.ENDING):
+                self._card_up()
                 hold = screens.hold_for(self.cfg, screens.ENDING)
                 self._ending_until = time.monotonic() + hold
                 log.info("ending screen up for %.0fs before stopping", hold)
@@ -2103,6 +2375,7 @@ class Engine:
         self.state.reset_session()
         self.state.save()
         self.watcher.reset_debounce()     # next session serves a full arm_delay
+        self._session_streaming = None    # the next session reads Settings
         self._goto(st.IDLE)
         self._obs_down_since = None
         self._switch_candidate = None
@@ -2207,6 +2480,7 @@ class Engine:
                      "session instead")
         elif live and screens.show(self.cfg, self.obs, screens.PAUSED):
             self._screen_until = None      # held by the pause, not by a timer
+            self._card_up()
             log.info("be right back: the broadcast stays up")
             notify.toast("AutoStream paused", "Be right back is on air")
             return True
@@ -2249,6 +2523,18 @@ class Engine:
             # Mid-session: kept for the journal, which is written at the far
             # end of the session -- by when OBS has forgotten this file.
             self._set_aside(path)
+            if not self.streaming:
+                # A RECORDING-ONLY SESSION IS ITS RECORDING. Stopping one
+                # left a session with nothing to do: two minutes later the
+                # watchdog called the output dead and ended it, and with the
+                # game still running the next idle tick started recording
+                # again. Stop now means what End session means -- not until
+                # this game is closed. Record still starts one by hand.
+                notify.toast("AutoStream", "Recording stopped. It will not "
+                                           "start again until you close the "
+                                           "game.")
+                self.force_stop(reason, suppress=True)
+                return False
             notify.toast("AutoStream", "Recording stopped. The stream is "
                                        "unaffected.")
             return False
