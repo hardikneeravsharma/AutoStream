@@ -544,11 +544,9 @@ function shell_paint(s) {
   shell_setPill(shell_$('top-pill'), mod + ' hide', label, why);
   shell_paintState(shell_stateLine(s));
 
-  const game = shell_$('top-game');
-  if (game) {
-    shell_setText(game, s.game || '');
-    game.classList.toggle('hide', !s.game);
-  }
+  /* The game is named in the sidebar's state line and the Dashboard's status
+     line now; the top bar keeps the element, hidden, for the title. */
+  shell_setText(shell_$('top-game'), s.game || '');
   shell_setText(shell_$('top-clock'), shell_hms(s.elapsed));
 
   /* One pause control, always in the same place, on every page. */
@@ -558,7 +556,8 @@ function shell_paint(s) {
        Resume is what clears them. */
     const held = !!(s.paused || s.start_blocked);
     const running = phase !== 'IDLE' || held;
-    tog.classList.toggle('hide', !running);
+    /* The Dashboard has its own Pause in its status line. */
+    tog.classList.toggle('hide', !running || shell_page === 'dash');
     shell_setText(tog, held ? 'Resume' : 'Pause');
   }
 

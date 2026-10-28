@@ -749,7 +749,9 @@ NOT_A_FLOW: dict[str, str] = {
     # anything -- /api/studio/commands exists for the browser tier, not
     # for the page. What a command RUNS is whatever its own control runs,
     # and that control has its own row here or in CONTROLS.
-    "studio-palette": "opens the list of every action, on Ctrl+K; never leaves the browser",
+    "studio-palette": "opens the Studio's own list of its actions; never leaves the browser",
+    # --- the Dashboard's chat (the 2026-10-29 redesign)
+    "dash-chat-watch": "goes to Clips for a !clip mark once the stream is over; never leaves the browser",
     "studio-pal-close": "closes the list of actions",
     "studio-keys": "opens the key sheet, on ?; drawn from the command registry in the page",
     "studio-keys-close": "closes the key sheet",

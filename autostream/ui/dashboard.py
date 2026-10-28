@@ -46,9 +46,13 @@ from __future__ import annotations
 # during the window between page load and the first poll.
 
 DASH_HTML: str = """
-<div class="dash-grid">
-<div class="dash-main" id="dash-col-main">
+<div class="dash" id="dash-root">
 
+  <!-- THE STATUS LINE. One row that says what is happening -- live or not,
+       where, which game, for how long -- with the three things you can do
+       about it beside it. It replaced a hero card, a separate timer and a
+       button row at the bottom of the page, which said the same thing in
+       three places and put End stream below the fold. -->
   <section class="status-hero" id="dash-hero" role="status" aria-live="polite">
     <div class="hero-text">
       <span class="pill pill-idle"
@@ -72,6 +76,22 @@ DASH_HTML: str = """
     </div>
 
     <div class="status-timer mono" id="dash-timer" aria-label="Session elapsed">--:--:--</div>
+
+    <div class="controls" id="dash-actions">
+      <button type="button" class="btn" id="dash-btn-pause">
+        <span>Pause</span>
+      </button>
+      <button type="button" class="btn" id="dash-btn-record">
+        <span>Stop recording</span>
+      </button>
+      <button type="button" class="btn btn-danger" id="dash-btn-stop" disabled>
+        <span>End stream</span>
+      </button>
+      <a class="btn btn-ghost hide" id="dash-btn-open"
+         href="#" target="_blank" rel="noreferrer noopener">
+        <span>Open stream</span>
+      </a>
+    </div>
   </section>
 
   <p class="field-warn hide" id="dash-disk" role="status" aria-live="polite"></p>
@@ -85,54 +105,40 @@ DASH_HTML: str = """
     </button>
   </div>
 
-  <div class="stat-grid" id="dash-stats" role="tablist"
-       aria-label="Choose which metric the graph plots">
-    <button type="button" class="stat is-sel" id="dash-stat-viewers-btn"
-            role="tab" aria-selected="true" data-metric="viewers">
-      <div class="stat-label">Watching</div>
-      <div class="stat-value mono" id="dash-stat-viewers">&#8212;</div>
-      <div class="stat-delta" id="dash-delta-viewers"></div>
-    </button>
-    <button type="button" class="stat" id="dash-stat-likes-btn"
-            role="tab" aria-selected="false" data-metric="likes">
-      <div class="stat-label">Likes</div>
-      <div class="stat-value mono" id="dash-stat-likes">&#8212;</div>
-      <div class="stat-delta" id="dash-delta-likes"></div>
-    </button>
-    <button type="button" class="stat" id="dash-stat-views-btn"
-            role="tab" aria-selected="false" data-metric="views">
-      <div class="stat-label">Views</div>
-      <div class="stat-value mono" id="dash-stat-views">&#8212;</div>
-      <div class="stat-delta" id="dash-delta-views"></div>
-    </button>
+<div class="dash-grid">
+<div class="dash-main" id="dash-col-main">
+
+  <!-- Four numbers, two by two. The first three are tabs that choose what the
+       graph below draws; dropped frames is not a series it can draw, so it
+       sits beside them rather than among them. -->
+  <div class="dash-stats">
+    <div class="stat-grid" id="dash-stats" role="tablist"
+         aria-label="Choose which metric the graph plots">
+      <button type="button" class="stat is-sel" id="dash-stat-viewers-btn"
+              role="tab" aria-selected="true" data-metric="viewers">
+        <div class="stat-label">Watching now</div>
+        <div class="stat-value mono" id="dash-stat-viewers">&#8212;</div>
+        <div class="stat-delta" id="dash-delta-viewers"></div>
+      </button>
+      <button type="button" class="stat" id="dash-stat-views-btn"
+              role="tab" aria-selected="false" data-metric="views">
+        <div class="stat-label">Views</div>
+        <div class="stat-value mono" id="dash-stat-views">&#8212;</div>
+        <div class="stat-delta" id="dash-delta-views"></div>
+      </button>
+      <button type="button" class="stat" id="dash-stat-likes-btn"
+              role="tab" aria-selected="false" data-metric="likes">
+        <div class="stat-label">Likes</div>
+        <div class="stat-value mono" id="dash-stat-likes">&#8212;</div>
+        <div class="stat-delta" id="dash-delta-likes"></div>
+      </button>
+    </div>
+    <div class="stat" id="dash-stat-drop-cell">
+      <div class="stat-label">Dropped frames</div>
+      <div class="stat-value mono" id="dash-stat-drop">&#8212;</div>
+      <div class="stat-delta" id="dash-delta-drop"></div>
+    </div>
   </div>
-
-  <!-- INSTANT REPLAY. The frames are already in memory, so this is the one
-       thing on the page that produces a clip with no scan and no wait -- and
-       it works in a game AutoStream cannot read a word of.
-
-       Beside the graph strip rather than in it: the three above are series
-       the graph can draw and this is not one, so putting it in the same
-       tablist would offer a tab that draws nothing. -->
-  <section class="card replay-card hide" id="dash-replay">
-    <div class="card-head">
-      <div>
-        <div class="card-title">Instant replay</div>
-        <div class="card-sub" id="dash-replay-sub">The last few seconds, kept</div>
-      </div>
-      <span class="pill pill-idle" id="dash-replay-pill"><i></i><span
-            id="dash-replay-state">Off</span></span>
-    </div>
-    <div class="card-body">
-      <div class="replay-row">
-        <button type="button" class="btn btn-primary" id="dash-btn-replay"
-                data-act="dash-save-replay">
-          <span>Save the last 30 seconds</span>
-        </button>
-        <span class="status-meta" id="dash-replay-note"></span>
-      </div>
-    </div>
-  </section>
 
   <section class="card spark-card" id="dash-spark-card">
     <div class="card-head">
@@ -148,23 +154,48 @@ DASH_HTML: str = """
     </div>
   </section>
 
-  <section class="card" id="dash-ingest">
-    <div class="card-head">
-      <div>
-        <div class="card-title">Ingest</div>
-        <div class="card-sub">What OBS is actually pushing</div>
+  <div class="dash-pair">
+    <!-- INSTANT REPLAY. The frames are already in memory, so this is the one
+         thing on the page that produces a clip with no scan and no wait -- and
+         it works in a game AutoStream cannot read a word of. -->
+    <section class="card replay-card hide" id="dash-replay">
+      <div class="card-head">
+        <div>
+          <div class="card-title">Instant replay</div>
+          <div class="card-sub" id="dash-replay-sub">The last few seconds, kept</div>
+        </div>
+        <span class="pill pill-idle" id="dash-replay-pill"><i></i><span
+              id="dash-replay-state">Off</span></span>
       </div>
-      <span class="pill pill-idle"
-            id="dash-obs-pill"><i></i><span id="dash-obs-state">Offline</span></span>
-    </div>
-    <div class="card-body">
-      <div class="meter" id="dash-obs-meter" role="progressbar"
-           aria-label="Encoder congestion" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-        <div class="meter-fill" id="dash-obs-fill"></div>
+      <div class="card-body">
+        <div class="replay-row">
+          <button type="button" class="btn" id="dash-btn-replay"
+                  data-act="dash-save-replay">
+            <span>Save replay</span><span class="kbd">F9</span>
+          </button>
+          <span class="status-meta" id="dash-replay-note"></span>
+        </div>
       </div>
-      <div class="status-meta mono" id="dash-obs-detail">OBS not streaming</div>
-    </div>
-  </section>
+    </section>
+
+    <section class="card" id="dash-ingest">
+      <div class="card-head">
+        <div>
+          <div class="card-title">Stream health</div>
+          <div class="card-sub">What OBS is actually sending</div>
+        </div>
+        <span class="pill pill-idle"
+              id="dash-obs-pill"><i></i><span id="dash-obs-state">Offline</span></span>
+      </div>
+      <div class="card-body">
+        <div class="meter" id="dash-obs-meter" role="progressbar"
+             aria-label="Encoder congestion" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="meter-fill" id="dash-obs-fill"></div>
+        </div>
+        <div class="status-meta mono" id="dash-obs-detail">OBS not streaming</div>
+      </div>
+    </section>
+  </div>
 
   <!-- Only during a live VALORANT session. Fetching the match record used to
        be visible in the log and nowhere else, so a player had no way to know
@@ -173,7 +204,7 @@ DASH_HTML: str = """
   <section class="card hide" id="dash-vmatch">
     <div class="card-head">
       <div>
-        <div class="card-title">VALORANT match record</div>
+        <div class="card-title">Valorant match record</div>
         <div class="card-sub">Kills, rounds and clutches for your clips</div>
       </div>
       <span class="pill pill-idle"
@@ -195,16 +226,44 @@ DASH_HTML: str = """
     </div>
   </section>
 
-  <!-- WHERE YOU GO LIVE. This lived only in Settings, three clicks and a
-       scroll away, which made the one thing you want to check before pressing
-       go the hardest thing on the page to find. It is a setting, but it is
-       the setting you change most often and the one whose value you most want
-       to see without changing anything -- so it reads as a row you can
-       confirm at a glance and change in one click.
+  <!-- The two OBS mixer settings a streamer reaches for mid-session: which
+       microphone, and how loud it sits against the game. -->
+  <section class="card" id="dash-audio">
+    <div class="card-head">
+      <div>
+        <div class="card-title">Audio</div>
+        <div class="card-sub" id="dash-audio-sub">Microphone and desktop, as OBS mixes them</div>
+      </div>
+      <button type="button" class="btn btn-icon btn-ghost btn-sm" id="dash-audio-refresh"
+              title="Read the mixer from OBS again" aria-label="Refresh audio"></button>
+    </div>
+    <div class="card-body">
+      <div class="field">
+        <label class="field-help" for="dash-audio-device">Input device</label>
+        <select class="select" id="dash-audio-device" disabled></select>
+      </div>
+      <div class="dash-fader">
+        <label class="field-help" for="dash-audio-mic">Mic</label>
+        <input type="range" id="dash-audio-mic" min="-60" max="0" step="0.5" disabled>
+        <span class="mono dash-fader-db" id="dash-audio-mic-db">&#8212;</span>
+        <button type="button" class="chip" id="dash-audio-mic-mute"
+                aria-pressed="false" disabled>Mute</button>
+      </div>
+      <div class="dash-fader">
+        <label class="field-help" for="dash-audio-desktop">Desktop</label>
+        <input type="range" id="dash-audio-desktop" min="-60" max="0" step="0.5" disabled>
+        <span class="mono dash-fader-db" id="dash-audio-desktop-db">&#8212;</span>
+        <button type="button" class="chip" id="dash-audio-desktop-mute"
+                aria-pressed="false" disabled>Mute</button>
+      </div>
+      <div class="status-meta" id="dash-audio-balance"></div>
+    </div>
+  </section>
 
-       Locked while a session is running: switching platform mid-broadcast
-       would leave the stream going on one service and the engine talking to
-       another. -->
+  <!-- WHERE YOU GO LIVE. Locked while a session is running: switching
+       platform mid-broadcast would leave the stream going on one service and
+       the engine talking to another. Hidden when going live is off, where a
+       platform choice offers something that would do nothing. -->
   <section class="card" id="dash-where">
     <div class="card-head">
       <div>
@@ -246,24 +305,10 @@ DASH_HTML: str = """
     </div>
   </section>
 
-  <div class="controls" id="dash-actions">
-    <button type="button" class="btn btn-danger" id="dash-btn-stop" disabled>
-      <span>End stream</span>
-    </button>
-    <button type="button" class="btn" id="dash-btn-pause">
-      <span>Pause</span>
-    </button>
-    <button type="button" class="btn" id="dash-btn-record">
-      <span>Stop recording</span>
-    </button>
-    <a class="btn btn-ghost hide" id="dash-btn-open"
-       href="#" target="_blank" rel="noreferrer noopener">
-      <span>Open stream</span>
-    </a>
-  </div>
-
 </div>
 
+<!-- LIVE CHAT GETS THE RIGHT HALF, full height (the player: "the live chats
+     should be more focused, it is important"). -->
 <aside class="dash-side" id="dash-col-side">
   <section class="chat" id="dash-chat">
     <div class="card-head">
@@ -273,53 +318,23 @@ DASH_HTML: str = """
       </div>
     </div>
     <div class="chat-msgs" id="dash-chat-msgs" aria-live="polite">
-      <div class="chat-empty">Chat opens when you go live.</div>
+      <div class="chat-empty">Chat shows here once you go live. Viewers can type
+        <b>!clip</b> to mark a moment for you.</div>
     </div>
+    <button type="button" class="chat-new hide" id="dash-chat-new">New messages</button>
     <div class="chat-row hide" id="dash-chat-row">
       <input class="input" id="dash-chat-input" type="text" maxlength="200"
-             autocomplete="off" spellcheck="false" placeholder="Say something">
+             autocomplete="off" spellcheck="false" placeholder="Say something in chat"
+             aria-label="Say something in chat (press / to jump here)">
       <button type="button" class="btn btn-primary" id="dash-chat-send">
         <span>Send</span>
       </button>
     </div>
-  </section>
-
-  <!-- The two OBS mixer settings a streamer reaches for mid-session: which
-       microphone, and how loud it sits against the game. Beside the chat
-       rather than in the main column, whose height budget is already spent,
-       and it stays in clips-only mode where the chat goes away. -->
-  <section class="card" id="dash-audio">
-    <div class="card-head">
-      <div>
-        <div class="card-title">Audio</div>
-        <div class="card-sub" id="dash-audio-sub">Microphone and desktop, as OBS mixes them</div>
-      </div>
-      <button type="button" class="btn btn-icon btn-ghost btn-sm" id="dash-audio-refresh"
-              title="Read the mixer from OBS again" aria-label="Refresh audio"></button>
-    </div>
-    <div class="card-body">
-      <div class="field">
-        <label class="field-help" for="dash-audio-device">Input device</label>
-        <select class="select" id="dash-audio-device" disabled></select>
-      </div>
-      <div class="dash-fader">
-        <label class="field-help" for="dash-audio-mic">Mic</label>
-        <input type="range" id="dash-audio-mic" min="-60" max="0" step="0.5" disabled>
-        <span class="mono dash-fader-db" id="dash-audio-mic-db">&#8212;</span>
-        <button type="button" class="chip" id="dash-audio-mic-mute"
-                aria-pressed="false" disabled>Mute</button>
-      </div>
-      <div class="dash-fader">
-        <label class="field-help" for="dash-audio-desktop">Desktop</label>
-        <input type="range" id="dash-audio-desktop" min="-60" max="0" step="0.5" disabled>
-        <span class="mono dash-fader-db" id="dash-audio-desktop-db">&#8212;</span>
-        <button type="button" class="chip" id="dash-audio-desktop-mute"
-                aria-pressed="false" disabled>Mute</button>
-      </div>
-      <div class="status-meta" id="dash-audio-balance"></div>
-    </div>
+    <p class="chat-hint hide" id="dash-chat-hint">Enter sends. Each message uses 50 of
+      today's 10,000 YouTube units.</p>
   </section>
 </aside>
+</div>
 </div>
 """
 
@@ -359,7 +374,9 @@ const dash_ACTIVE = ['STARTING', 'TESTING', 'LIVE', 'COOLDOWN'];
 
 const dash_QUOTA_MAX = 10000;
 const dash_EMDASH = '—';
-const dash_MIDDOT = '·';
+/* Parts of a status line join with commas: the redesign retired the middot
+   strings ("A · B · C") the old page was full of. */
+const dash_MIDDOT = ',';
 
 /* Ingest is called bad at either of these, matching the operator's intuition:
    a congested encoder queue, or more than 2% of frames never sent. */
@@ -539,14 +556,12 @@ function dash_renderHero(s) {
 
   const head = dash_el('dash-phase');
   if (head) {
-    head.textContent = paused ? 'Paused' : label;
-    /* Colour only when something is happening; idle stays text-primary so the
-       calm default is still the most legible thing on the page. */
-    let token = 'text-primary';
-    if (!paused && phase === 'LIVE') token = 'live';
-    else if (!paused && (phase === 'ARMING' || phase === 'STARTING'
-                         || phase === 'TESTING' || phase === 'STOPPING')) token = 'warn';
-    head.style.color = 'var(--' + token + ')';
+    /* Live says WHERE: "Live on YouTube". The words stay in the text colour;
+       the dot beside them carries the state (the redesign: colour for state,
+       never for headings). */
+    const where = s.platform_label || 'YouTube';
+    head.textContent = paused ? 'Paused'
+      : (phase === 'LIVE' && !clipsOnly ? 'Live on ' + where : label);
   }
 
   const game = dash_el('dash-game');
@@ -747,8 +762,20 @@ function dash_renderSpark(s) {
   if (now) now.textContent = dash_count(s[dash_metric]);
 }
 
+/* The fourth number: dropped frames, with a plain judgement beside it.
+   Only meaningful while OBS is sending; otherwise a dash. */
+function dash_renderDrop(pct, total, bad) {
+  const v = dash_el('dash-stat-drop'), d = dash_el('dash-delta-drop');
+  if (v) v.textContent = total > 0 ? pct.toFixed(1) + '%' : '—';
+  if (d) {
+    d.textContent = total > 0 ? (bad ? 'a little high' : 'fine') : '';
+    d.className = 'stat-delta' + (total > 0 && bad ? ' is-bad' : '');
+  }
+}
+
 function dash_renderIngest(s) {
   const obs = s.obs || {};
+  if (!(obs.active && s.streaming !== false)) dash_renderDrop(0, 0, false);
   const detail = dash_el('dash-obs-detail');
 
   /* Clips-only has no ingest to report, and a panel stuck on OFFLINE all
@@ -765,8 +792,8 @@ function dash_renderIngest(s) {
     if (detail) {
       detail.textContent = rec
         ? dash_hms(Math.floor((Number(obs.rec_ms) || 0) / 1000))
-          + ' ' + dash_MIDDOT + ' ' + dash_bytes(obs.rec_bytes)
-          + (held ? ' ' + dash_MIDDOT + ' paused' : '')
+          + dash_MIDDOT + ' ' + dash_bytes(obs.rec_bytes)
+          + (held ? dash_MIDDOT + ' paused' : '')
         : 'Not recording';
     }
     return;
@@ -788,10 +815,11 @@ function dash_renderIngest(s) {
 
   dash_pill('dash-obs-pill', 'dash-obs-state',
             bad ? 'pill-warn' : 'pill-ok', bad ? 'Congested' : 'Healthy');
+  dash_renderDrop(drop, total, drop > dash_DROP_BAD);
   /* The meter reads as congestion, so empty is unambiguously good. */
   dash_meter('dash-obs-meter', 'dash-obs-fill', cong * 100, bad ? 'warn' : 'ok');
   if (detail) {
-    detail.textContent = 'Congestion ' + Math.round(cong * 100) + '% '
+    detail.textContent = 'Congestion ' + Math.round(cong * 100) + '%'
       + dash_MIDDOT + ' ' + drop.toFixed(1) + '% frames dropped';
   }
 }
@@ -816,8 +844,8 @@ function dash_renderVMatch(s) {
     variant = 'pill-ok'; word = 'Saved';
     const last = (v.saved || [])[(v.saved || []).length - 1] || {};
     text = n + (n === 1 ? ' match' : ' matches') + ' saved this session'
-      + (last.minutes ? ' ' + dash_MIDDOT + ' last one ' + last.minutes + ' min' : '')
-      + (v.why ? ' ' + dash_MIDDOT + ' ' + v.why : '');
+      + (last.minutes ? dash_MIDDOT + ' last one ' + last.minutes + ' min' : '')
+      + (v.why ? dash_MIDDOT + ' ' + v.why : '');
   } else {
     variant = 'pill-ok'; word = 'Connected';
     text = 'Connected to the Riot Client. Each match is saved a minute or two '
@@ -891,7 +919,7 @@ function dash_renderReplay(s) {
   dash_replayState = key;
 
   dash_pill('dash-replay-pill', 'dash-replay-state',
-            armed ? 'live' : 'warn', armed ? 'Ready' : 'Not running');
+            armed ? 'pill-ok' : 'pill-warn', armed ? 'Ready' : 'Not running');
 
   const label = btn ? btn.querySelector('span') : null;
   if (label) label.textContent = 'Save the last ' + secs + ' seconds';
@@ -953,6 +981,10 @@ let dash_platform = null;       /* what the page is showing right now */
 let dash_platformBusy = false;
 
 function dash_renderWhere(s) {
+  /* Nothing to choose when going live is switched off: the idle page says so
+     in its checklist, with the way to turn it on. */
+  const card = dash_el('dash-where');
+  if (card) card.classList.toggle('hide', s.streaming === false);
   const now = s.platform || 'youtube';
   const live = dash_ACTIVE.indexOf(s.phase || 'IDLE') >= 0;
 
@@ -1135,18 +1167,73 @@ function dash_applyActions(s) {
   }
 }
 
+/* WHAT THE CHAT SHOWS, as rows, from the messages and the !clip marks.
+   Pure, so it is tested in Node (tests/test_dashboard_chat.py).
+     - a message whose author has not been seen this stream is `first`;
+     - a !clip that the engine PLACED becomes a mark row at its moment (a
+       request it dropped -- not recording, inside the cooldown -- stays a
+       message, because a mark row for it would be a lie);
+     - Watch waits for the stream to end: the recording is still being
+       written and has no index to seek in, and a player here would pull the
+       eye mid-match. */
+function dash_chatRows(msgs, marks, seen, live) {
+  const known = {};
+  (seen || []).forEach(a => { known[a] = true; });
+  const pool = {};
+  (marks || []).forEach(m => { (pool[m.author] = pool[m.author] || []).push(m); });
+  const rows = [];
+  (msgs || []).forEach(m => {
+    m = m || {};
+    const who = String(m.author || '?');
+    const text = String(m.text || '').trim().toLowerCase();
+    const asks = text === '!clip' || text.indexOf('!clip ') === 0 ||
+                 text === '!highlight' || text.indexOf('!highlight ') === 0;
+    const mark = asks && pool[who] && pool[who].length ? pool[who].shift() : null;
+    if (mark) {
+      rows.push({kind: 'mark', id: String(m.id), author: who, at: mark.at,
+                 time: m.at || '', watch: live ? 'after' : 'now'});
+      known[who] = true;
+      return;
+    }
+    rows.push({kind: 'msg', id: String(m.id), author: who, text: String(m.text || ''),
+               time: m.at || '', badge: m.owner ? 'Host' : (m.mod ? 'Mod' : ''),
+               first: !known[who]});
+    known[who] = true;
+  });
+  return rows;
+}
+
+/* 21:08 from the platform's timestamp, in this computer's time. */
+function dash_hhmm(iso) {
+  const d = new Date(iso);
+  if (!iso || isNaN(d.getTime())) return '';
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+let dash_chatUnread = 0;      /* arrived while the reader was scrolled up */
+
+function dash_chatPill() {
+  const pill = dash_el('dash-chat-new');
+  if (!pill) return;
+  pill.classList.toggle('hide', dash_chatUnread <= 0);
+  pill.textContent = dash_chatUnread === 1 ? '1 new message' : dash_chatUnread + ' new messages';
+}
+
 /* Chat is the one list on the page that a repaint would visibly damage, so it is
-   keyed on (last message id, length) exactly as the old dashboard was, and scroll
-   is only pinned to the bottom when the reader was already there. */
+   keyed on (last message id, length, marks) and scroll is only pinned to the
+   bottom when the reader was already there. Anything that arrives while they
+   are reading back is counted on the pill instead of yanking them down. */
 function dash_renderChat(s) {
   const phase = s.phase || 'IDLE';
   const live = dash_ACTIVE.indexOf(phase) >= 0 && !s.paused;
   const box = dash_el('dash-chat-msgs');
   const row = dash_el('dash-chat-row');
   const sub = dash_el('dash-chat-sub');
+  const hint = dash_el('dash-chat-hint');
   if (!box) return;
 
   if (row) row.classList.toggle('hide', !live);
+  if (hint) hint.classList.toggle('hide', !live || s.has_quota === false);
 
   if (!live) {
     if (sub) sub.textContent = 'Opens when you go live';
@@ -1155,16 +1242,23 @@ function dash_renderChat(s) {
       /* Re-seed on the next live session, so returning to LIVE does not
          replay an entrance for every message in the backlog. */
       dash_seen = null;
-      box.innerHTML = '<div class="chat-empty">Chat opens when you go live.</div>';
+      dash_chatUnread = 0;
+      dash_chatPill();
+      box.innerHTML = '<div class="chat-empty">Chat shows here once you go live. ' +
+        'Viewers can type <b>!clip</b> to mark a moment for you.</div>';
     }
     return;
   }
 
   const msgs = s.chat || [];
-  if (sub) sub.textContent = msgs.length + (msgs.length === 1 ? ' message' : ' messages');
+  const marks = s.marks || [];
+  const people = {};
+  msgs.forEach(m => { if (m && m.author) people[m.author] = true; });
+  const n = Object.keys(people).length;
+  if (sub) sub.textContent = n + (n === 1 ? ' person chatting' : ' people chatting');
 
   const key = msgs.length
-    ? (String(msgs[msgs.length - 1].id) + ':' + msgs.length)
+    ? (String(msgs[msgs.length - 1].id) + ':' + msgs.length + ':' + marks.length)
     : 'live-empty';
   if (key === dash_chatKey) return;
   dash_chatKey = key;
@@ -1190,21 +1284,42 @@ function dash_renderChat(s) {
   });
   if (dash_seen.size > 400) dash_seen = new Set(msgs.map(m => String(m && m.id)));
 
-  box.innerHTML = msgs.map(function (m) {
-    return dash_chatMsg(m, !dash_still() && fresh.has(String(m && m.id)));
+  /* FIRST MESSAGE MEANS FIRST SINCE YOU WERE WATCHING. The backlog a page
+     opens on (up to 60 messages) has no history before it, so marking every
+     name in it as new would be a guess; it seeds the known names instead, and
+     only someone who turns up after that is marked. */
+  const before = {};
+  msgs.forEach(m => { if (m && !fresh.has(String(m.id))) before[m.author] = true; });
+  const rows = dash_chatRows(msgs, marks, first ? Object.keys(before).concat(
+    msgs.map(m => m && m.author)) : Object.keys(before), live);
+  box.innerHTML = rows.map(function (r) {
+    return dash_chatMsg(r, !dash_still() && fresh.has(r.id));
   }).join('');
-  if (near) box.scrollTop = box.scrollHeight;
+  if (near) { box.scrollTop = box.scrollHeight; dash_chatUnread = 0; }
+  else dash_chatUnread += fresh.size;
+  dash_chatPill();
 }
 
-function dash_chatMsg(m, isNew) {
-  m = m || {};
-  let badge = '';
-  if (m.owner) badge = '<span class="tag">HOST</span>';
-  else if (m.mod) badge = '<span class="tag">MOD</span>';
-  return '<div class="chat-msg' + (isNew ? ' is-new' : '') + '">'
-    + '<span class="chat-author">' + esc(m.author) + '</span>'
-    + badge
-    + '<span>' + esc(m.text) + '</span>'
+function dash_chatMsg(r, isNew) {
+  const t = dash_hhmm(r.time);
+  if (r.kind === 'mark') {
+    const watch = r.watch === 'now'
+      ? '<button type="button" class="chat-watch" data-act="dash-chat-watch" data-at="' +
+        esc(String(r.at)) + '">Watch</button>'
+      : '<span class="chat-later">Watch after the stream</span>';
+    return '<div class="chat-msg is-mark' + (isNew ? ' is-new' : '') + '">'
+      + '<span class="chat-time">' + esc(t) + '</span>'
+      + '<span class="chat-body"><span class="chat-author">' + esc(r.author) + '</span>'
+      + 'marked a clip at ' + esc(dash_hms(Math.floor(Number(r.at) || 0))) + ' ' + watch + '</span>'
+      + '</div>';
+  }
+  const badge = r.badge ? '<span class="tag">' + esc(r.badge) + '</span>' : '';
+  const firstTag = r.first ? '<span class="tag tag-first">First message</span>' : '';
+  return '<div class="chat-msg' + (r.first ? ' is-first' : '') + (isNew ? ' is-new' : '') + '">'
+    + '<span class="chat-time">' + esc(t) + '</span>'
+    + '<span class="chat-body"><span class="chat-author">' + esc(r.author) + '</span>'
+    + badge + firstTag
+    + '<span>' + esc(r.text) + '</span></span>'
     + '</div>';
 }
 
@@ -1435,6 +1550,38 @@ function dash_wire() {
 
   const send = dash_el('dash-chat-send');
   if (send) send.addEventListener('click', function () { dash_send(); });
+
+  const pill = dash_el('dash-chat-new');
+  const box = dash_el('dash-chat-msgs');
+  if (pill && box) {
+    pill.addEventListener('click', function () {
+      box.scrollTop = box.scrollHeight; dash_chatUnread = 0; dash_chatPill();
+    });
+    box.addEventListener('scroll', function () {
+      if (box.scrollHeight - box.scrollTop - box.clientHeight < 60 && dash_chatUnread) {
+        dash_chatUnread = 0; dash_chatPill();
+      }
+    }, {passive: true});
+    /* Watch, after the stream: the Clips page, where the recording that holds
+       the mark is the newest one. */
+    box.addEventListener('click', function (ev) {
+      const b = ev.target.closest ? ev.target.closest('[data-act="dash-chat-watch"]') : null;
+      if (!b) return;
+      go('clips');
+      toast('The clip mark is at ' + dash_hms(Math.floor(Number(b.getAttribute('data-at')) || 0)) +
+            ' in the newest recording.', 'ok');
+    });
+  }
+  /* "/" jumps to the send box from anywhere on the Dashboard, unless the key
+     is being typed into a field. */
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== '/' || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    if (shell_page !== 'dash') return;
+    const tag = ((ev.target || {}).tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    const inp = dash_el('dash-chat-input');
+    if (inp && inp.offsetParent !== null) { ev.preventDefault(); inp.focus(); }
+  });
 
   const input = dash_el('dash-chat-input');
   if (input) {

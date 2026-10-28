@@ -234,6 +234,18 @@ def parse_log_line(line: str) -> dict:
     return {"ts": ts, "level": level, "name": name, "msg": msg}
 
 
+def chat_marks(engine) -> list[dict]:
+    """The !clip marks placed this recording, newest 60, for the chat pane.
+
+    Sent beside the chat so a viewer's request can be drawn as its own row at
+    the moment it marked -- and only when the engine actually placed it: a
+    request it dropped (not recording, inside the cooldown) stays a message.
+    """
+    marks = getattr(engine, "_marks", None) or []
+    return [{"at": float(m.get("at", 0)), "author": str(m.get("author") or "")}
+            for m in list(marks)[-60:] if isinstance(m, dict)]
+
+
 def page(theme_id: str) -> str:
     return (
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
@@ -1635,6 +1647,7 @@ class Server:
             "blocked": getattr(e, "blocked_reason", None),
             "obs": getattr(e, "obs_health", {}) or {},
             "chat": list(getattr(e, "chat", []))[-60:],
+            "marks": chat_marks(e),
             "apps": self.apps_payload(),
             "elapsed": (int(time.time() - s.session_start) if s.session_start else None),
             # ASKED OF THE PLATFORM, not built from the id. This was

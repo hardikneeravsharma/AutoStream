@@ -1046,18 +1046,18 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 .stat{
   display:flex;
   flex-direction:column;
-  align-items:center;
+  align-items:flex-start;
   justify-content:center;
-  gap:var(--space-3);
+  gap:var(--space-2);
   min-width:0;
-  padding:var(--pad-card-tight) var(--space-4);
-  background:var(--surface-raised);
+  padding:var(--space-5) var(--space-6);
+  background:var(--surface);
   border-radius:var(--radius-0);
-  text-align:center;
+  text-align:start;
 }
 .stat-value{
   font-family:var(--font-text);
-  font-size:24px;font-weight:500;line-height:1.05;letter-spacing:-.015em;
+  font-size:18px;font-weight:500;line-height:1.1;letter-spacing:-.02em;
   color:var(--text-primary);
   font-variant-numeric:tabular-nums lining-nums;
   font-feature-settings:"calt" 0,"tnum" 1,"lnum" 1;
@@ -1065,26 +1065,28 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 }
 .stat-label{
   font-family:var(--font-micro);
-  font-size:12px;font-weight:700;line-height:1.2;
+  font-size:12px;font-weight:400;line-height:1.2;
   color:var(--text-tertiary);
 }
 
-/* The status panel: the ONLY in-page element at radius-lg and elevation 2. */
+/* The status line: what is happening and what you can do about it, in one
+   row across the top of the Dashboard. Flat -- a rule under it, no plate --
+   because it is the page's heading, not a card among cards. */
 .status-hero{
   display:grid;
-  grid-template-columns:auto minmax(0,1fr) auto;
+  grid-template-columns:minmax(0,1fr) auto auto auto;
   align-items:center;
-  gap:0 var(--space-6);
-  padding:var(--pad-panel);
-  background:var(--surface-raised);
-  border:var(--border-hair) solid var(--border-subtle);
-  border-radius:var(--radius-lg);
-  box-shadow:var(--shadow-rim),var(--shadow-sm);
+  gap:var(--space-4) var(--space-7);
+  padding:0 0 var(--space-6);
+  background:transparent;
+  border:0;
+  border-bottom:var(--border-hair) solid var(--border-subtle);
+  border-radius:0;
 }
 .status-hero>.dot{align-self:center}
 .status-phase{
   font-family:var(--font-display);
-  font-size:20px;font-weight:600;line-height:1.25;letter-spacing:-.012em;
+  font-size:var(--text-md);font-weight:600;line-height:1.3;letter-spacing:-.015em;
   color:var(--text-primary);
 }
 .status-phase.is-live{color:var(--live)}
@@ -1093,15 +1095,14 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 .status-phase.is-idle{color:var(--idle)}
 .status-phase.is-danger{color:var(--danger)}
 .status-game{
-  font-size:17px;font-weight:600;line-height:1.35;letter-spacing:-.01em;
-  color:var(--text-secondary);
+  font-size:13px;font-weight:400;line-height:1.4;
+  color:var(--text-tertiary);
   min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 .status-timer{
-  grid-column:3;
   justify-self:end;
   font-family:var(--font-text);
-  font-size:34px;font-weight:500;line-height:1;letter-spacing:-.02em;
+  font-size:22px;font-weight:500;line-height:1;letter-spacing:-.03em;
   color:var(--text-primary);
   font-variant-numeric:tabular-nums lining-nums;
   font-feature-settings:"calt" 0,"tnum" 1,"lnum" 1;
@@ -1317,9 +1318,22 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
    itself the moment the window is hidden - this app is open while a game is
    running, and frames spent here are frames the game does not get. */
 
-/* The hero holds text, the ring and the timer. Text takes the slack. */
-.status-hero{grid-template-columns:minmax(0,1fr) auto auto}
-.hero-text{min-width:0}
+/* The line holds text, the ring, the clock and the actions. Text takes the slack. */
+.card-head>.pill{flex:0 0 auto}
+.hero-text{min-width:0;display:grid;grid-template-columns:auto minmax(0,1fr);
+  align-items:center;column-gap:var(--space-4)}
+.hero-text>.pill{grid-row:1 / span 2;height:auto}
+.hero-text>.pill>span{display:none}         /* the dot only: the heading says the words */
+.hero-text>.status-phase,.hero-text>.status-game,.hero-text>.field-error{grid-column:2}
+.status-hero>.controls{flex-wrap:nowrap}
+.dash{display:flex;flex-direction:column;gap:var(--space-7)}
+.dash-stats{display:grid;grid-template-columns:1fr 1fr;
+  border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-md);overflow:hidden;
+  gap:var(--border-hair);background:var(--border-subtle)}
+.dash-stats>.stat-grid{display:contents}
+.dash-stats>.stat-grid>.stat,.dash-stats>.stat{border-radius:0}
+.stat-delta.is-bad{color:var(--warn)}
+.dash-pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--gap-grid);align-items:start}
 
 .ring{
   position:relative;
@@ -1375,14 +1389,11 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 }
 .stat:hover{background:var(--surface-hover)}
 .stat:active{transform:translateY(1px)}
-.stat.is-sel{
-  background:var(--surface-active);
-  border-color:var(--border-strong);
-}
-/* Which series the graph is drawing. A 2px underline, not a filled tile. */
+.stat.is-sel{background:var(--surface-hover)}
+/* Which series the graph is drawing: a short bar under the selected number. */
 .stat.is-sel::after{
-  content:"";position:absolute;left:var(--space-5);right:var(--space-5);bottom:0;
-  height:2px;background:var(--accent);border-radius:var(--radius-pill);
+  content:"";position:absolute;left:var(--space-6);width:24px;bottom:var(--space-3);
+  height:2px;background:var(--text-secondary);border-radius:var(--radius-pill);
 }
 .stat-delta{
   min-height:14px;
@@ -1439,7 +1450,7 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 /* ---- chat ---------------------------------------------------------------- */
 .chat{
   display:grid;
-  grid-template-rows:auto minmax(0,1fr) auto;
+  grid-template-rows:auto minmax(0,1fr) auto auto auto;
   min-height:0;
   background:var(--surface);
   border:var(--border-hair) solid var(--border-subtle);
@@ -1448,30 +1459,51 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 }
 .chat>.card-head{padding:var(--pad-card-tight) var(--pad-card) var(--space-4)}
 .chat-msgs{
-  min-height:120px;
+  min-height:160px;
   overflow-y:auto;
   overscroll-behavior:contain;
-  padding:var(--space-4) var(--pad-card);
-  background:var(--surface-sunken);
-  box-shadow:var(--shadow-inset);
+  padding:var(--space-4) 0;
+  background:transparent;
   border-block:var(--border-hair) solid var(--border-subtle);
   border-radius:var(--radius-0);
   display:flex;
   flex-direction:column;
-  gap:var(--space-4);
+  gap:0;
 }
+/* 14px, the time in its own column, the name in a quieter weight than the
+   words: the reader is reading what people say, not who said it. */
 .chat-msg{
-  font-size:15px;
-  line-height:1.55;
-  color:var(--text-secondary);
+  display:grid;
+  grid-template-columns:40px minmax(0,1fr);
+  gap:var(--space-4);
+  padding:5px var(--pad-card);
+  font-size:14px;
+  line-height:1.45;
+  color:var(--text-primary);
   word-break:break-word;
   min-width:0;
 }
+.chat-time{color:var(--text-tertiary);font-size:12px;padding-top:2px}
+.chat-body{min-width:0}
 .chat-author{
   font-weight:600;
-  color:var(--accent-text);
+  color:var(--text-secondary);
   margin-inline-end:var(--space-3);
 }
+.chat-msg .tag{height:18px;padding:0 5px;margin-inline-end:var(--space-3);font-size:11px;
+  background:transparent;border-color:var(--border-strong);vertical-align:1px}
+/* Someone talking for the first time: a bar in the ready colour and the words. */
+.chat-msg.is-first{box-shadow:inset 2px 0 0 var(--ok)}
+.chat-msg.is-mark{background:var(--surface-raised);color:var(--text-secondary)}
+.chat-watch{color:var(--text-primary);text-decoration:underline;text-underline-offset:2px;margin-inline-start:var(--space-2)}
+.chat-later{color:var(--text-tertiary);margin-inline-start:var(--space-2)}
+.chat-new{
+  justify-self:center;align-self:end;margin:-44px auto 12px;position:relative;z-index:1;
+  height:24px;padding:0 var(--space-5);border-radius:var(--radius-pill);
+  background:var(--accent);color:var(--text-on-accent);font-size:12px;font-weight:600;
+  box-shadow:var(--shadow-md);
+}
+.chat-hint{margin:calc(var(--space-3) * -1) var(--pad-card) var(--space-5);color:var(--text-tertiary);font-size:12px}
 .chat-msg.is-owner .chat-author{color:var(--live)}
 .chat-msg.is-mod .chat-author{color:var(--ok)}
 .chat-row{
@@ -2305,14 +2337,15 @@ ol.steps-list li{margin-block:var(--space-4)}
 
 /* >=980px: the dashboard becomes two columns and the chat panel sticks. */
 @media (min-width:980px){
-  .dash-grid{grid-template-columns:minmax(0,1.45fr) minmax(300px,.8fr)}
+  /* The right half is chat, full height (the player's pick). */
+  .dash-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
   .dash-side{
     position:sticky;
-    top:var(--space-8);
-    max-height:calc(100vh - var(--h-topbar) - var(--space-6) * 4);
+    top:var(--space-6);
+    height:calc(100vh - 44px - var(--space-6) * 2 - 120px);
+    min-height:420px;
   }
   .dash-side>.chat{min-height:0;flex:1 1 auto}
-  .dash-side>#dash-audio{flex:0 0 auto}
 }
 
 /* >=1000px: settings gains its sticky section nav column. */
