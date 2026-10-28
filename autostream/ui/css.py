@@ -1700,6 +1700,13 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
   padding:0 2px;
 }
 
+.log-problems{display:flex;flex-direction:column;border:var(--border-hair) solid var(--border-subtle);
+  border-radius:var(--radius-md);overflow:hidden}
+.log-problem{display:grid;grid-template-columns:16px minmax(0,1fr) auto;align-items:center;gap:var(--space-5);
+  padding:var(--space-5) var(--space-6);border-bottom:var(--border-hair) solid var(--border-subtle)}
+.log-problem:last-child{border-bottom:0}
+.log-problem-say{color:var(--text-primary)}
+
 /* ==========================================================================
    12. SETTINGS
    ========================================================================== */

@@ -778,10 +778,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(schema.flatten(cfg.load()))
         elif u.path == "/api/logs/tail":
             n = _int((parse_qs(u.query).get("n") or [""])[0], 300)
+            from . import logexplain
+            rows = [parse_log_line(x)
+                    for x in tail_lines(paths.LOG_FILE, max(1, min(n, _TAIL_MAX)))]
             self._json({
-                "lines": [parse_log_line(x)
-                          for x in tail_lines(paths.LOG_FILE, max(1, min(n, _TAIL_MAX)))],
+                "lines": rows,
                 "path": str(paths.LOG_FILE),
+                # The worst lines said as sentences, with the fix (logexplain).
+                "problems": logexplain.problems(rows),
             })
         elif u.path == "/api/audio":
             self._json(self.app.obs_for_ui().audio_mixer())

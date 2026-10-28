@@ -65,11 +65,18 @@ LOGS_HTML: str = (
   </div>
 
   <div class="card-body">
+    <!-- WHAT WENT WRONG, IN A SENTENCE, with the fix where there is one
+         (autostream/logexplain.py). Above the log, because the log is the
+         evidence and this is the answer. -->
+    <div class="log-problems hide" id="log-problems" role="status" aria-live="polite"></div>
+
     <div class="field-inline" id="log-filters">
-      <button class="btn btn-sm btn-primary" type="button" data-level="all" aria-pressed="true">All</button>
-      <button class="btn btn-sm" type="button" data-level="info" aria-pressed="false">Info</button>
-      <button class="btn btn-sm" type="button" data-level="warn" aria-pressed="false">Warning</button>
-      <button class="btn btn-sm" type="button" data-level="error" aria-pressed="false">Error</button>
+      <span class="seg" role="group" aria-label="Show">
+        <button class="seg-btn is-active" type="button" data-level="all" aria-pressed="true">Everything</button>
+        <button class="seg-btn" type="button" data-level="info" aria-pressed="false">Info</button>
+        <button class="seg-btn" type="button" data-level="warn" aria-pressed="false">Warnings</button>
+        <button class="seg-btn" type="button" data-level="error" aria-pressed="false">Errors</button>
+      </span>
       <span class="muted" id="log-count"></span>
     </div>
 
@@ -209,12 +216,41 @@ async function log_load(quiet) {
     log_err = '';
     const path = log_el('log-path');
     if (path && r && r.path) path.textContent = r.path;
+    log_problems((r && r.problems) || []);
   } catch (e) {
     log_err = 'Could not read the log file.';
   }
 
   log_loading = false;
   log_render();
+}
+
+/* The explained problems: newest first, each said once (logexplain.problems). */
+function log_problems(list) {
+  const box = log_el('log-problems');
+  if (!box) return;
+  box.classList.toggle('hide', !list.length);
+  box.innerHTML = list.map(function (p) {
+    return '<div class="log-problem">' +
+      '<span class="mark mark-need" aria-hidden="true"></span>' +
+      '<span class="log-problem-say">' + log_esc(p.say) + '</span>' +
+      (p.fix ? '<button type="button" class="btn btn-sm" data-act="log-fix" data-fix="' +
+               log_esc(p.fix.act) + '">' + log_esc(p.fix.label) + '</button>' : '') +
+      '</div>';
+  }).join('');
+}
+
+/* settings:<words> opens Settings searched to them; page:<id> goes to a page. */
+function log_fix(act) {
+  const i = String(act || '').indexOf(':');
+  const kind = act.slice(0, i), what = act.slice(i + 1);
+  if (kind === 'page') { go(what); return; }
+  go('settings');
+  if (typeof set_search === 'function') {
+    const box = document.getElementById('set-search');
+    if (box) box.value = what;
+    set_search(what);
+  }
 }
 
 /* ---- auto-refresh -------------------------------------------------------- */
@@ -246,7 +282,7 @@ function log_setFilter(v) {
     const btns = box.querySelectorAll('button[data-level]');
     for (let i = 0; i < btns.length; i++) {
       const on = btns[i].getAttribute('data-level') === v;
-      btns[i].classList.toggle('btn-primary', on);
+      btns[i].classList.toggle('is-active', on);
       btns[i].setAttribute('aria-pressed', on ? 'true' : 'false');
     }
   }
@@ -271,6 +307,14 @@ function log_wire() {
     filters.addEventListener('click', function (ev) {
       const b = ev.target && ev.target.closest ? ev.target.closest('button[data-level]') : null;
       if (b) log_setFilter(b.getAttribute('data-level'));
+    });
+  }
+
+  const probs = log_el('log-problems');
+  if (probs) {
+    probs.addEventListener('click', function (ev) {
+      const b = ev.target && ev.target.closest ? ev.target.closest('[data-act="log-fix"]') : null;
+      if (b) log_fix(b.getAttribute('data-fix'));
     });
   }
 

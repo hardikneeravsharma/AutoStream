@@ -965,6 +965,7 @@ NOT_A_FLOW: dict[str, str] = {
     "clear-time": "clears a quiet-hours time field",
     "set-discard": "drops the dirty set; never reaches the server",
     "log-filters": "client-side level filter over rows already fetched",
+    "log-fix": "a problem's fix button goes to the page or the Settings search that fixes it",
     # --- Clips run options, collected and sent later as part of the run body
     "montage": "toggles montage for the next /api/clips/run",
     "connect": "opens the platform's OAuth page in a browser; the token "
