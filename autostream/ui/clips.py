@@ -7219,6 +7219,8 @@ function clip_calPaint() {
 
 window.PAGE_CLIPS = {
   onShow: function () {
+    /* The clips have been shown: the idle Dashboard's 'Since last time' counts from now. */
+    API.post('/api/seen', {what: 'clips'}).catch(function () {});
     clip_wire();
     if (!clip_state.loaded) { clip_load(); clip_loadGames(); clip_loadTools(); }
     else { clip_renderOptions(); clip_loadTools(); }

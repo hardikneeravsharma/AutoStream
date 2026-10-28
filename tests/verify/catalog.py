@@ -147,6 +147,12 @@ CONTROLS: list[Control] = [
             why="the token is validated by shape before any request"),
 
     # -------------------------------------------------------------- logs
+    Control("/api/since", "GET", CALL, "Since last time", "dashboard",
+            expect=_has("since", "clips_new", "reels"),
+            why="what is new since the clip pages last showed the clips"),
+    Control("/api/seen", "POST", CALL, "the Clips and Studio pages, on show", "dashboard",
+            body={"what": "clips"}, expect=_ok,
+            why="stamps when the clips were last shown; its own file, not state.json"),
     Control("/api/logs/tail", "GET", CALL, "Refresh", "logs", query="n=5",
             expect=_has("lines", "path"), acts=("log-refresh", "log-auto"),
             why="n is clamped to 1..2000"),
@@ -752,6 +758,9 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-palette": "opens the Studio's own list of its actions; never leaves the browser",
     # --- the Dashboard's chat (the 2026-10-29 redesign)
     "dash-chat-watch": "goes to Clips for a !clip mark once the stream is over; never leaves the browser",
+    "dash-fix": "the idle checklist's fix buttons go to the page that fixes the item",
+    "dash-since-clips": "goes to the Studio, where the new clips are",
+    "dash-since-reels": "goes to the Studio's reels",
     "studio-pal-close": "closes the list of actions",
     "studio-keys": "opens the key sheet, on ?; drawn from the command registry in the page",
     "studio-keys-close": "closes the key sheet",

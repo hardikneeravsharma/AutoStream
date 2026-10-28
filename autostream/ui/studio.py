@@ -14761,6 +14761,8 @@ function studio_gdViewAct(what, b) {
 
 window.PAGE_STUDIO = {
   onShow: function () {
+    /* The clips have been shown: the idle Dashboard's 'Since last time' counts from now. */
+    API.post('/api/seen', {what: 'clips'}).catch(function () {});
     if (!studio.wired) studio_sgWire();
     studio_wire();
     studio_load(false);

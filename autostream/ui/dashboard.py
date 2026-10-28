@@ -105,13 +105,37 @@ DASH_HTML: str = """
     </button>
   </div>
 
+
+  <!-- IDLE, FOR A STRANGER. What the app will do, and what is still missing,
+       each with the one button that fixes it. Once nothing is missing the
+       checklist goes and the status line says Ready instead. -->
+  <section class="dash-idle hide" id="dash-idle">
+    <div class="dash-intro" id="dash-intro">
+      <h2 class="dash-intro-title">Start a game and AutoStream takes it from there</h2>
+      <p class="prose">When a game you've picked opens, it starts recording, and goes
+        live too if you've turned that on. When the game closes, it stops and cuts
+        your best moments into Clips.</p>
+    </div>
+    <div class="dash-idle-grid">
+      <section class="panel" id="dash-setup">
+        <div class="panel-head"><span>Before your first game</span>
+          <span class="muted" id="dash-setup-count"></span></div>
+        <div id="dash-setup-list"></div>
+      </section>
+      <section class="panel hide" id="dash-since">
+        <div class="panel-head"><span>Since last time</span></div>
+        <div id="dash-since-list"></div>
+      </section>
+    </div>
+  </section>
+
 <div class="dash-grid">
 <div class="dash-main" id="dash-col-main">
 
   <!-- Four numbers, two by two. The first three are tabs that choose what the
        graph below draws; dropped frames is not a series it can draw, so it
        sits beside them rather than among them. -->
-  <div class="dash-stats">
+  <div class="dash-stats" id="dash-stats-wrap">
     <div class="stat-grid" id="dash-stats" role="tablist"
          aria-label="Choose which metric the graph plots">
       <button type="button" class="stat is-sel" id="dash-stat-viewers-btn"
@@ -1111,10 +1135,14 @@ function dash_applyActions(s) {
      exist in clips-only mode. The STOP BUTTON STAYS -- a recording still has
      to be stoppable -- but it cannot go on calling itself "End stream". */
   const clipsOnly = s.streaming === false;
-  ['dash-stats', 'dash-chat'].forEach(function (id) {
+  ['dash-stats', 'dash-stats-wrap', 'dash-chat'].forEach(function (id) {
     const el = dash_el(id);
     if (el) el.classList.toggle('hide', clipsOnly);
   });
+  /* With no chat the left half takes the whole width rather than leaving the
+     right half empty. */
+  const grid = document.querySelector('#dash-root .dash-grid');
+  if (grid) grid.classList.toggle('is-solo', clipsOnly || s.has_chat === false);
   /* The API budget belongs to YouTube. With YouTube off nothing spends it,
      and on Twitch or Kick there is no budget to spend -- a meter reading
      "0 / 10,000 units" on a Twitch stream is describing another service. */
@@ -1321,6 +1349,130 @@ function dash_chatMsg(r, isNew) {
     + badge + firstTag
     + '<span>' + esc(r.text) + '</span></span>'
     + '</div>';
+}
+
+
+/* ---------------------------- idle ---------------------------- */
+
+/* THE CHECKLIST, from real state. -> [{key, ok, optional, label, note, fix}].
+   Pure, so it is tested in Node (tests/test_dashboard_idle.py). The
+   microphone is not on it: OBS only says which one it uses while it is
+   running, and a checklist that cannot know should not guess. */
+function dash_checks(s) {
+  s = s || {};
+  const games = (s.apps || []).filter(a => a && a.game);
+  const live = s.streaming !== false;
+  return [
+    {key: 'obs', ok: !!s.obs_found, optional: false,
+     label: s.obs_found ? 'OBS found' : 'Install OBS Studio',
+     note: s.obs_found ? '' : 'AutoStream records and streams through it.',
+     fix: s.obs_found ? null : 'Set the OBS path'},
+    {key: 'games', ok: games.length > 0, optional: false,
+     label: games.length ? 'Games found' : 'No games found yet',
+     note: games.length ? games.length + (games.length === 1 ? ' in your Library' : ' in your Library') : 'Rescan once a game is installed.',
+     fix: games.length ? null : 'Open the Library'},
+    {key: 'record', ok: !!s.record_enabled, optional: false,
+     label: s.record_enabled ? 'Recording is on' : 'Recording is off',
+     note: s.record_enabled ? '' : 'Clips are cut from recordings, so nothing is clipped while it is off.',
+     fix: s.record_enabled ? null : 'Turn recording on'},
+    {key: 'live', ok: live && s.platform_ready !== false, optional: true,
+     label: 'Going live (optional)',
+     note: !live ? 'Off, so games are recorded and clipped only.'
+         : (s.platform_ready === false ? (s.platform_why || 'Not set up yet.') : 'On, to ' + (s.platform_label || 'YouTube') + '.'),
+     fix: !live ? 'Turn it on' : (s.platform_ready === false ? 'Set it up' : null)}
+  ];
+}
+
+/* "Waiting for a game. VALORANT, Counter-Strike 2 and 1 more start a recording." */
+function dash_readyLine(apps) {
+  const names = (apps || []).filter(a => a && a.game).map(a => a.name);
+  if (!names.length) return 'Waiting for a game.';
+  const shown = names.slice(0, 2).join(', ');
+  const more = names.length - 2;
+  return 'Waiting for a game. ' + shown + (more > 0 ? ' and ' + more + ' more' : '') +
+         (names.length === 1 ? ' starts a recording.' : ' start a recording.');
+}
+
+const dash_FIX = {
+  obs:    () => { go('settings'); if (typeof set_search === 'function') set_search('OBS'); },
+  games:  () => go('library'),
+  record: () => { go('settings'); if (typeof set_search === 'function') set_search('Record'); },
+  live:   () => { go('settings'); if (typeof set_search === 'function') set_search('Stream'); }
+};
+
+let dash_idleKey = '';
+let dash_sinceAt = 0;
+let dash_sinceData = null;
+
+function dash_renderIdle(s) {
+  const root = dash_el('dash-root');
+  const idle = (s.phase || 'IDLE') === 'IDLE' && !s.recording && !s.paused;
+  if (root) root.classList.toggle('is-idle', idle);
+  const box = dash_el('dash-idle');
+  if (box) box.classList.toggle('hide', !idle);
+  if (!idle) return;
+
+  const list = dash_checks(s);
+  const ready = list.filter(c => !c.optional).every(c => c.ok);
+  /* Ready: the status line says so, in place of "Idle / Nothing running". */
+  if (ready && !s.blocked) {
+    const head = dash_el('dash-phase'), game = dash_el('dash-game');
+    if (head) head.textContent = 'Ready';
+    if (game) game.textContent = dash_readyLine(s.apps);
+    const pill = dash_el('dash-pill');
+    if (pill) pill.className = 'pill pill-ok';
+  }
+  const key = JSON.stringify(list.map(c => [c.key, c.ok, c.note])) + ready;
+  if (key !== dash_idleKey) {
+    dash_idleKey = key;
+    const intro = dash_el('dash-intro');
+    if (intro) intro.classList.toggle('hide', ready);
+    const setup = dash_el('dash-setup');
+    if (setup) setup.classList.toggle('hide', ready);
+    const n = list.filter(c => c.ok).length;
+    const count = dash_el('dash-setup-count');
+    if (count) count.textContent = n + ' of ' + list.length + ' done';
+    const host = dash_el('dash-setup-list');
+    if (host) {
+      host.innerHTML = list.map(c =>
+        '<div class="dash-check">' +
+        '<span class="mark ' + (c.ok ? 'mark-ok' : (c.optional ? 'mark-idle' : 'mark-need')) + '" aria-hidden="true"></span>' +
+        '<span class="dash-check-text"><span>' + esc(c.label) + '</span>' +
+        (c.note ? '<span class="muted">' + esc(c.note) + '</span>' : '') + '</span>' +
+        (c.fix ? '<button type="button" class="btn btn-sm" data-act="dash-fix" data-fix="' + esc(c.key) + '">' + esc(c.fix) + '</button>' : '') +
+        '</div>').join('');
+    }
+  }
+  dash_renderSince();
+}
+
+/* "Since last time": asked for at most once a minute, and only while idle. */
+function dash_renderSince() {
+  if (Date.now() - dash_sinceAt > 60000) {
+    dash_sinceAt = Date.now();
+    API.get('/api/since').then(d => { dash_sinceData = d || null; dash_paintSince(); })
+      .catch(() => { /* the panel just stays hidden */ });
+  }
+}
+
+function dash_paintSince() {
+  const d = dash_sinceData || {};
+  const rows = [];
+  if (d.clips_new) {
+    rows.push('<div class="dash-check"><span class="mark mark-ok" aria-hidden="true"></span>' +
+      '<span class="dash-check-text"><span>' + d.clips_new + (d.clips_new === 1 ? ' new clip' : ' new clips') +
+      ' since you last looked</span></span>' +
+      '<button type="button" class="btn btn-sm" data-act="dash-since-clips">Open</button></div>');
+  }
+  (d.reels || []).forEach(r => {
+    rows.push('<div class="dash-check"><span class="mark mark-ok" aria-hidden="true"></span>' +
+      '<span class="dash-check-text"><span>Reel finished: ' + esc(r.name) + '</span></span>' +
+      '<button type="button" class="btn btn-sm" data-act="dash-since-reels">Watch</button></div>');
+  });
+  const panel = dash_el('dash-since');
+  if (panel) panel.classList.toggle('hide', !rows.length);
+  const host = dash_el('dash-since-list');
+  if (host) host.innerHTML = rows.join('');
 }
 
 /* ---------------------------- actions ---------------------------- */
@@ -1551,6 +1703,15 @@ function dash_wire() {
   const send = dash_el('dash-chat-send');
   if (send) send.addEventListener('click', function () { dash_send(); });
 
+  const idle = dash_el('dash-idle');
+  if (idle) idle.addEventListener('click', function (ev) {
+    const b = ev.target.closest ? ev.target.closest('[data-act]') : null;
+    if (!b) return;
+    const act = b.getAttribute('data-act');
+    if (act === 'dash-fix' && dash_FIX[b.getAttribute('data-fix')]) dash_FIX[b.getAttribute('data-fix')]();
+    else if (act === 'dash-since-clips') go('studio');
+    else if (act === 'dash-since-reels') { go('studio'); if (typeof studio_tab === 'function') studio_tab('reels'); }
+  });
   const pill = dash_el('dash-chat-new');
   const box = dash_el('dash-chat-msgs');
   if (pill && box) {
@@ -1665,6 +1826,7 @@ function dash_onTick(status) {
   dash_renderReplay(s);
   dash_renderWhere(s);
   dash_renderChat(s);
+  dash_renderIdle(s);
   dash_audioLoad(false);
   dash_last = s;
 }

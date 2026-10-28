@@ -1333,6 +1333,23 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 .dash-stats>.stat-grid{display:contents}
 .dash-stats>.stat-grid>.stat,.dash-stats>.stat{border-radius:0}
 .stat-delta.is-bad{color:var(--warn)}
+/* Idle: what will happen, the checklist, and what is new. The live-only
+   cards step aside so a stranger is not shown a graph of nothing. */
+.dash.is-idle .dash-stats,.dash.is-idle #dash-spark-card,.dash.is-idle #dash-session,
+.dash.is-idle #dash-ingest{display:none}
+.dash-idle{display:flex;flex-direction:column;gap:var(--space-6)}
+.dash.is-idle .status-timer,.dash.is-idle #dash-btn-stop:disabled{display:none}
+.dash-grid.is-solo{grid-template-columns:minmax(0,1fr)}
+.dash-grid.is-solo>.dash-side{display:none}
+.dash-intro-title{font-size:var(--text-lg);font-weight:600;letter-spacing:-.02em;margin:0 0 var(--space-3)}
+.dash-idle-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:var(--gap-grid);align-items:start}
+.panel-head{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);
+  padding:var(--space-5) var(--space-6);border-bottom:var(--border-hair) solid var(--border-subtle);font-weight:500}
+.dash-check{display:grid;grid-template-columns:16px minmax(0,1fr) auto;align-items:center;gap:var(--space-5);
+  padding:var(--space-5) var(--space-6);border-bottom:var(--border-hair) solid var(--border-subtle)}
+.dash-check:last-child{border-bottom:0}
+.dash-check-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+.dash-check-text .muted{font-size:12px}
 .dash-pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--gap-grid);align-items:start}
 
 .ring{

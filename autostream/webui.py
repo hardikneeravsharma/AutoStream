@@ -246,6 +246,62 @@ def chat_marks(engine) -> list[dict]:
             for m in list(marks)[-60:] if isinstance(m, dict)]
 
 
+# When the clip pages last showed the clips (the idle Dashboard's "Since last
+# time"). Beside state.json, but not in it -- see seen_stamp.
+SEEN_FILE = paths.STATE_FILE.parent / "ui-seen.json"
+
+
+def seen_get(path) -> float | None:
+    """When the clip pages last showed the clips, or None if never (or unreadable)."""
+    try:
+        v = json.loads(Path(path).read_text(encoding="utf-8")).get("clips")
+        return float(v) if v is not None else None
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None
+
+
+def seen_stamp(path, when: float) -> None:
+    """Remember that the clips were shown at `when`. Its own file, not
+    state.json: the engine rewrites state.json from memory and would undo it."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"clips": float(when)}), encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def _mtime(path) -> float | None:
+    try:
+        return os.path.getmtime(path)
+    except (OSError, TypeError):
+        return None
+
+
+def since_summary(lib: dict, seen: float | None, mtime=_mtime) -> dict:
+    """What the idle Dashboard's 'Since last time' says: how many clips are
+    newer than `seen`, and up to three reels made since, newest first.
+
+    Never having looked counts as nothing new: on a first run the whole
+    library is new, and a panel announcing all of it is noise, not news.
+    """
+    if seen is None:
+        return {"since": None, "clips_new": 0, "reels": []}
+    n = 0
+    for g in lib.get("games") or []:
+        for f in g.get("folders") or []:
+            for c in f.get("clips") or []:
+                t = mtime(c.get("path"))
+                if t is not None and t > seen:
+                    n += 1
+    reels = []
+    for r in lib.get("reels") or []:
+        t = mtime(r.get("path"))
+        if t is not None and t > seen:
+            reels.append({"name": r.get("name") or "", "path": r.get("path") or "", "made": t})
+    reels.sort(key=lambda r: r["made"], reverse=True)
+    return {"since": seen, "clips_new": n, "reels": reels[:3]}
+
+
 def page(theme_id: str) -> str:
     return (
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
@@ -796,6 +852,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json({"error": err}, 400)
             else:
                 self._send(200, png, "image/png")
+        elif u.path == "/api/since":
+            self._json(self.app.since())
         elif u.path == "/api/studio/library":
             self._json(self.app.studio_library())
         elif u.path == "/api/studio/catalog":
@@ -909,6 +967,11 @@ class _Handler(BaseHTTPRequestHandler):
                     return
                 cfg.save_field("ui", "theme", t)
                 self.app._theme = t
+                self._json({"ok": True})
+
+            elif p == "/api/seen":
+                # The Clips and Studio pages say they have shown the clips.
+                seen_stamp(SEEN_FILE, time.time())
                 self._json({"ok": True})
 
             elif p == "/api/cmd":
@@ -1649,6 +1712,8 @@ class Server:
             "chat": list(getattr(e, "chat", []))[-60:],
             "marks": chat_marks(e),
             "apps": self.apps_payload(),
+            # For the first-run checklist on the idle Dashboard.
+            "obs_found": self.obs_found(),
             "elapsed": (int(time.time() - s.session_start) if s.session_start else None),
             # ASKED OF THE PLATFORM, not built from the id. This was
             # f"youtube.com/watch?v={id}" inline, which is true of exactly one
@@ -3686,6 +3751,43 @@ class Server:
                 "seconds": round(main + fade, 2)}
 
     # ------------------------------------------------------------ studio
+
+    def since(self) -> dict:
+        """The idle Dashboard's 'Since last time'. A first look stamps now, so
+        the next session's clips are what count as new."""
+        from .clips import studio
+
+        seen = seen_get(SEEN_FILE)
+        if seen is None:
+            seen_stamp(SEEN_FILE, time.time())
+        try:
+            lib = studio.library(self._clips_dir(cfg.load()))
+        except Exception:  # noqa: BLE001 - a broken clips folder must not break the Dashboard
+            lib = {}
+        return since_summary(lib, seen)
+
+    _obs_found_at = 0.0
+    _obs_found_was = False
+
+    def obs_found(self) -> bool:
+        """Is OBS installed where AutoStream will look, or already answering?
+        Asked every status poll, so the disk is checked at most every 30s."""
+        now = time.monotonic()
+        if now - self._obs_found_at < 30.0:
+            return self._obs_found_was
+        self._obs_found_at = now
+        found = bool(getattr(self.engine, "obs_health", None))
+        if not found:
+            try:
+                path = str(cfg.load().obs.get("path") or "")
+                found = bool(path) and os.path.isfile(path)
+                if not found:
+                    from .obs import find_obs_exe
+                    found = bool(find_obs_exe())
+            except Exception:  # noqa: BLE001
+                found = False
+        self._obs_found_was = found
+        return found
 
     def studio_library(self) -> dict:
         """Every clip the user has made, by game and run folder."""
