@@ -278,7 +278,7 @@ STUDIO_HTML = r"""
                point at, not a number. Shown while the Reel tab is open. -->
           <div class="ed-frame hide" id="studio-frame" aria-hidden="true">
             <span class="ed-handle" id="studio-handle-chip" title="Drag to move your handle"></span>
-            <span class="ed-handle ed-lyrics" id="studio-lyrics-chip" title="Drag to move the lyrics">LYRICS</span>
+            <span class="ed-handle ed-lyrics" id="studio-lyrics-chip" title="Drag to move the lyrics">Lyrics</span>
           </div>
           <!-- THE BOXES THE WORDS ARE DEALT INTO. Width and Size were two
                numbers describing a rectangle nobody could see; this is that

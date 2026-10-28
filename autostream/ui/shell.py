@@ -119,7 +119,7 @@ _TOPBAR = (
     # shell_setText() only writes when the value actually changed, so the two
     # second poll does not spam the screen reader.
     '<span class="pill pill-idle" id="top-pill" role="status"'
-    ' aria-live="polite">IDLE</span>'
+    ' aria-live="polite">Idle</span>'
     '<span class="status-game hide" id="top-game"></span>'
     '<span class="mono" id="top-clock">--:--:--</span>'
     '<button type="button" class="btn btn-ghost btn-sm hide" id="top-toggle">'
@@ -192,13 +192,13 @@ const SHELL_RAIL_KEY = 'autostream.rail';   // 'open' | 'min': the player's own 
 /* Engine phase -> pill modifier + wordmark. Colour is never the only channel:
    the wordmark always rides along with the dot. */
 const SHELL_PHASE = {
-  IDLE:     {pill: 'pill-idle', label: 'IDLE'},
-  ARMING:   {pill: 'pill-warn', label: 'ARMING'},
-  STARTING: {pill: 'pill-warn', label: 'STARTING'},
-  TESTING:  {pill: 'pill-warn', label: 'TESTING'},
-  LIVE:     {pill: 'pill-live', label: 'LIVE'},
-  COOLDOWN: {pill: 'pill-idle', label: 'COOLDOWN'},
-  STOPPING: {pill: 'pill-warn', label: 'STOPPING'}
+  IDLE:     {pill: 'pill-idle', label: 'Idle'},
+  ARMING:   {pill: 'pill-warn', label: 'Getting ready'},
+  STARTING: {pill: 'pill-warn', label: 'Starting'},
+  TESTING:  {pill: 'pill-warn', label: 'Going live'},
+  LIVE:     {pill: 'pill-live', label: 'Live'},
+  COOLDOWN: {pill: 'pill-idle', label: 'Wrapping up'},
+  STOPPING: {pill: 'pill-warn', label: 'Stopping'}
 };
 
 let STATUS = {};              /* latest GET /api/status payload (contract) */
@@ -453,8 +453,8 @@ function shell_paint(s) {
   const phase = String(s.phase || 'IDLE');
   const meta = SHELL_PHASE[phase] || SHELL_PHASE.IDLE;
   let mod = meta.pill, label = meta.label, why = phase;
-  if (s.blocked) { mod = 'pill-warn'; label = 'BLOCKED'; why = String(s.blocked); }
-  else if (s.paused) { mod = 'pill-idle'; label = 'PAUSED'; why = 'Paused'; }
+  if (s.blocked) { mod = 'pill-warn'; label = 'Blocked'; why = String(s.blocked); }
+  else if (s.paused) { mod = 'pill-idle'; label = 'Paused'; why = 'Paused'; }
 
   shell_setPill(shell_$('rail-dot'), mod, null, label);
   shell_setPill(shell_$('top-pill'), mod, label, why);
@@ -496,7 +496,7 @@ function shell_offline(on) {
   if (shell_off === on) return;
   shell_off = on;
   if (!on) return;    /* the next successful paint repaints everything */
-  shell_setPill(shell_$('top-pill'), 'pill-warn', 'OFFLINE',
+  shell_setPill(shell_$('top-pill'), 'pill-warn', 'Not responding',
                 'AutoStream is not responding');
   shell_setPill(shell_$('rail-dot'), 'pill-warn', null, 'Not responding');
   const game = shell_$('top-game');

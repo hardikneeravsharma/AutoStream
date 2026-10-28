@@ -175,7 +175,7 @@ CLIPS_HTML: str = (
           <div class="clip-fx-cap" id="clip-fx-cap-top"></div>
           <div class="clip-fx-cap" id="clip-fx-cap-middle"></div>
           <div class="clip-fx-cap" id="clip-fx-cap-bottom"></div>
-          <div class="clip-fx-held hide" id="clip-fx-held">FROZEN</div>
+          <div class="clip-fx-held hide" id="clip-fx-held">Frozen</div>
           <!-- Where the zoom under the playhead is aimed. Drawn on the
                stage rather than inside the video, so it does not scale
                with the punch-in it is describing. -->

@@ -52,7 +52,7 @@ DASH_HTML: str = """
   <section class="status-hero" id="dash-hero" role="status" aria-live="polite">
     <div class="hero-text">
       <span class="pill pill-idle"
-            id="dash-pill"><i></i><span id="dash-pill-text">IDLE</span></span>
+            id="dash-pill"><i></i><span id="dash-pill-text">Idle</span></span>
       <div class="status-phase" id="dash-phase">Idle</div>
       <div class="status-game" id="dash-game">Nothing running</div>
       <div class="field-error hide" id="dash-blocked"></div>
@@ -67,7 +67,7 @@ DASH_HTML: str = """
       </svg>
       <div class="ring-face">
         <div class="ring-count mono" id="dash-ring-count">0</div>
-        <div class="ring-cap" id="dash-ring-cap">SECONDS</div>
+        <div class="ring-cap" id="dash-ring-cap">seconds</div>
       </div>
     </div>
 
@@ -121,7 +121,7 @@ DASH_HTML: str = """
         <div class="card-sub" id="dash-replay-sub">The last few seconds, kept</div>
       </div>
       <span class="pill pill-idle" id="dash-replay-pill"><i></i><span
-            id="dash-replay-state">OFF</span></span>
+            id="dash-replay-state">Off</span></span>
     </div>
     <div class="card-body">
       <div class="replay-row">
@@ -155,7 +155,7 @@ DASH_HTML: str = """
         <div class="card-sub">What OBS is actually pushing</div>
       </div>
       <span class="pill pill-idle"
-            id="dash-obs-pill"><i></i><span id="dash-obs-state">OFFLINE</span></span>
+            id="dash-obs-pill"><i></i><span id="dash-obs-state">Offline</span></span>
     </div>
     <div class="card-body">
       <div class="meter" id="dash-obs-meter" role="progressbar"
@@ -177,7 +177,7 @@ DASH_HTML: str = """
         <div class="card-sub">Kills, rounds and clutches for your clips</div>
       </div>
       <span class="pill pill-idle"
-            id="dash-vmatch-pill"><i></i><span id="dash-vmatch-state">WAITING</span></span>
+            id="dash-vmatch-pill"><i></i><span id="dash-vmatch-state">Waiting</span></span>
     </div>
     <div class="card-body">
       <div class="status-meta" id="dash-vmatch-detail"></div>
@@ -343,8 +343,8 @@ const dash_PHASE_LABEL = {
 /* Phase -> the wordmark on the state pill. Colour is never the only channel, so
    this text is always present beside the dot. */
 const dash_PHASE_WORD = {
-  IDLE: 'IDLE', ARMING: 'ARMING', STARTING: 'STARTING', TESTING: 'GOING LIVE',
-  LIVE: 'LIVE', COOLDOWN: 'COOLDOWN', STOPPING: 'STOPPING'
+  IDLE: 'Idle', ARMING: 'Getting ready', STARTING: 'Starting', TESTING: 'Going live',
+  LIVE: 'Live', COOLDOWN: 'Wrapping up', STOPPING: 'Stopping'
 };
 
 /* Phase -> pill variant, per the design system's state mapping. Transitional
@@ -528,14 +528,14 @@ function dash_renderHero(s) {
      running and nothing is being broadcast. Saying LIVE would be a lie about
      the one thing a streamer most needs to be true. */
   const clipsOnly = s.streaming === false;
-  const word = clipsOnly && phase === 'LIVE' ? 'RECORDING'
+  const word = clipsOnly && phase === 'LIVE' ? 'Recording'
                                              : (dash_PHASE_WORD[phase] || String(phase));
   const label = clipsOnly && phase === 'LIVE' ? 'Recording'
                                               : (dash_PHASE_LABEL[phase] || String(phase));
 
   dash_pill('dash-pill', 'dash-pill-text',
             paused ? 'pill-idle' : (dash_PHASE_PILL[phase] || 'pill-idle'),
-            paused ? 'PAUSED' : word);
+            paused ? 'Paused' : word);
 
   const head = dash_el('dash-phase');
   if (head) {
@@ -585,7 +585,7 @@ function dash_renderStats(s) {
    phase ends or the window is hidden. */
 const dash_RING_LEN = 2 * Math.PI * 52;
 const dash_RING_CAP = {
-  ARMING: 'UNTIL START', STARTING: 'CONNECTING', TESTING: 'UNTIL PUBLIC', COOLDOWN: 'UNTIL STOP'
+  ARMING: 'until start', STARTING: 'connecting', TESTING: 'until public', COOLDOWN: 'until stop'
 };
 let dash_ring = null;   /* {phase, total, base, at} */
 let dash_ringRaf = 0;
@@ -759,7 +759,7 @@ function dash_renderIngest(s) {
     const rec = !!obs.recording, held = !!obs.rec_paused;
     dash_pill('dash-obs-pill', 'dash-obs-state',
               !rec ? 'pill-idle' : (held ? 'pill-warn' : 'pill-ok'),
-              !rec ? 'OFFLINE' : (held ? 'PAUSED' : 'RECORDING'));
+              !rec ? 'Not recording' : (held ? 'Paused' : 'Recording'));
     dash_meter('dash-obs-meter', 'dash-obs-fill', rec && !held ? 100 : 0,
                held ? 'warn' : 'ok');
     if (detail) {
@@ -774,7 +774,7 @@ function dash_renderIngest(s) {
 
   if (!obs.active) {
     /* An empty meter beside no words looks like a broken widget. Say the words. */
-    dash_pill('dash-obs-pill', 'dash-obs-state', 'pill-idle', 'OFFLINE');
+    dash_pill('dash-obs-pill', 'dash-obs-state', 'pill-idle', 'Offline');
     dash_meter('dash-obs-meter', 'dash-obs-fill', 0, 'idle');
     if (detail) detail.textContent = 'OBS not streaming';
     return;
@@ -787,7 +787,7 @@ function dash_renderIngest(s) {
   const bad = cong > dash_CONGESTION_BAD || drop > dash_DROP_BAD;
 
   dash_pill('dash-obs-pill', 'dash-obs-state',
-            bad ? 'pill-warn' : 'pill-ok', bad ? 'CONGESTED' : 'HEALTHY');
+            bad ? 'pill-warn' : 'pill-ok', bad ? 'Congested' : 'Healthy');
   /* The meter reads as congestion, so empty is unambiguously good. */
   dash_meter('dash-obs-meter', 'dash-obs-fill', cong * 100, bad ? 'warn' : 'ok');
   if (detail) {
@@ -805,21 +805,21 @@ function dash_renderVMatch(s) {
   card.classList.toggle('hide', !v);
   if (!v) return;
   const n = Number(v.saved_count) || 0;
-  let variant = 'pill-idle', word = 'WAITING', text;
+  let variant = 'pill-idle', word = 'Waiting', text;
   if (!v.checked) {
     text = 'Checking the Riot Client...';
   } else if (!v.ok && !n) {
-    variant = 'pill-warn'; word = 'NOT READ';
+    variant = 'pill-warn'; word = 'Not read';
     text = 'Could not read the match record: ' + (v.why || 'unknown reason')
       + '. Clips will be cut from the screen instead.';
   } else if (n) {
-    variant = 'pill-ok'; word = 'SAVED';
+    variant = 'pill-ok'; word = 'Saved';
     const last = (v.saved || [])[(v.saved || []).length - 1] || {};
     text = n + (n === 1 ? ' match' : ' matches') + ' saved this session'
       + (last.minutes ? ' ' + dash_MIDDOT + ' last one ' + last.minutes + ' min' : '')
       + (v.why ? ' ' + dash_MIDDOT + ' ' + v.why : '');
   } else {
-    variant = 'pill-ok'; word = 'CONNECTED';
+    variant = 'pill-ok'; word = 'Connected';
     text = 'Connected to the Riot Client. Each match is saved a minute or two '
       + 'after it ends.';
   }
@@ -891,7 +891,7 @@ function dash_renderReplay(s) {
   dash_replayState = key;
 
   dash_pill('dash-replay-pill', 'dash-replay-state',
-            armed ? 'live' : 'warn', armed ? 'READY' : 'NOT RUNNING');
+            armed ? 'live' : 'warn', armed ? 'Ready' : 'Not running');
 
   const label = btn ? btn.querySelector('span') : null;
   if (label) label.textContent = 'Save the last ' + secs + ' seconds';

@@ -59,6 +59,39 @@ def test_font_stack_leads_with_instrument_sans():
     assert m and m.group(1).strip().startswith('"Instrument Sans"'), m and m.group(1)
 
 
+# Upper-case words that are not shouting: acronyms, the highlight names the
+# app stamps on clips, element tag names and log levels compared in code, and
+# the engine's phase KEYS (compared, never shown -- their labels are tested
+# separately below).
+NOT_SHOUTING = {
+    "OBS", "API", "GPU", "FPS", "HUD", "URL", "OAUTH", "MVP", "CS", "POST", "OK",
+    "ACE", "CLUTCH", "ALMOST", "KILLS", "LAST ALIVE", "K IN", "CHAOS", "SURVIVED",
+    "MATCH POINT", "PISTOL", "STREAK BREAKER", "FLAWLESS", "THRIFTY", "CLOSER",
+    "TEXTAREA", "INPUT", "SELECT", "BUTTON", "CAMERA",
+    "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "ERR", "CRIT", "CRITICAL", "FATAL", "TRACE",
+    "IDLE", "ARMING", "STARTING", "TESTING", "LIVE", "COOLDOWN", "STOPPING",
+}
+
+
+def test_no_shouted_words_in_markup():
+    from autostream import ui
+    found = {w for w in re.findall(r">\s*([A-Z][A-Z ]{2,}[A-Z])\s*<", ui.BODY)} - NOT_SHOUTING
+    assert not found, sorted(found)
+
+
+def test_no_shouted_words_in_script():
+    from autostream import ui
+    found = {w for w in re.findall(r"'([A-Z][A-Z ]{2,}[A-Z])'", ui.JS)} - NOT_SHOUTING
+    assert not found, sorted(found)
+
+
+def test_phase_labels_are_words_not_caps():
+    from autostream import ui
+    labels = re.findall(r"label:\s*'([^']+)'", ui.JS)
+    assert labels, "no phase labels found"
+    assert not [lab for lab in labels if lab.isupper() and len(lab) > 2], labels
+
+
 def test_base_text_is_13px():
     m = re.search(r"body\s*\{([^}]*)\}", SHEET)
     assert m and re.search(r"font-size\s*:\s*13px", m.group(1))
