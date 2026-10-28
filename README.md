@@ -305,8 +305,10 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
 - **Generates a thumbnail** for each go-live from a live OBS frame, your logo and the
   game — or **assign a finished image per game**, used exactly as given with nothing
   drawn over it.
-- **Five themes**, a full settings page, and a log that says why it decided *not* to
-  stream.
+- **A calm dashboard in dark and light** (or following Windows), with **Ctrl K** to
+  find any clip, reel, game or setting from any page, live chat given half the
+  Dashboard, a first-run checklist that says what is missing and fixes it in one
+  click, and a log that explains its problems in a sentence.
 
 ## Coming next
 
@@ -572,14 +574,16 @@ Global flags `-v/--verbose` and `-q/--quiet` work before or after the subcommand
 
 Full technical reference: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
 
-### Themes
+### Dark, light, or follow Windows
 
-![The five built-in themes — Midnight, Carbon, Ember, Forest and Daylight — each
-shown as a four-colour swatch](docs/img/themes.png)
+![The live Dashboard in dark and in light: the status line across the top, the
+numbers, graph and audio on the left, and live chat on the right half](docs/img/themes.png)
 
 Every colour in the app resolves through one token contract in
-[`theme.py`](autostream/theme.py), so a theme is a palette definition and nothing
-else — no view needs to know a theme exists.
+[`theme.py`](autostream/theme.py): two measured palettes and a System choice that
+follows Windows through `prefers-color-scheme`. Colour is kept for state -- live,
+done, needs you -- and the accent is the text colour itself, so no view needs to
+know which palette it is in.
 
 ### The state machine
 
