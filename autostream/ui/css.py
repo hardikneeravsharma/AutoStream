@@ -1893,6 +1893,47 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 /* ==========================================================================
    13. OVERLAYS -- toasts and the quit confirmation
    ========================================================================== */
+
+/* Ctrl K: the one search box. The only overlay with a real shadow, because
+   it is the only thing that floats over a page while you type into it. */
+.pal-scrim{
+  position:fixed;inset:0;z-index:var(--z-modal);
+  display:grid;justify-items:center;align-content:start;padding-top:12vh;
+  background:var(--scrim);
+}
+.pal{
+  width:min(600px,calc(100vw - 32px));
+  max-height:min(520px,70vh);
+  display:flex;flex-direction:column;
+  background:var(--surface-overlay);
+  border:var(--border-hair) solid var(--border-strong);
+  border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-pop);
+  overflow:hidden;
+}
+.pal-q{
+  height:48px;padding:0 var(--space-6);
+  background:transparent;border:0;border-bottom:var(--border-hair) solid var(--border-subtle);
+  color:var(--text-primary);font-size:15px;outline:none;
+}
+.pal-q:focus-visible{box-shadow:none}
+.pal-q::-webkit-search-cancel-button{display:none}
+.pal-list{flex:1 1 auto;overflow-y:auto;padding:var(--space-2) 0}
+.pal-grp{padding:var(--space-4) var(--space-6) var(--space-2);color:var(--text-tertiary);font-size:12px;font-weight:500}
+.pal-row{
+  display:flex;align-items:center;gap:var(--space-4);width:100%;
+  height:36px;padding:0 var(--space-6);
+  color:var(--text-secondary);font-size:13px;text-align:start;
+}
+.pal-row.is-on,.pal-row:hover{background:var(--surface-hover);color:var(--text-primary)}
+.pal-lab{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pal-hint{color:var(--text-tertiary);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pal-row .kbd{margin-inline-start:auto}
+.pal-none{padding:var(--space-6);color:var(--text-tertiary)}
+.pal-foot{
+  padding:var(--space-4) var(--space-6);border-top:var(--border-hair) solid var(--border-subtle);
+  color:var(--text-tertiary);font-size:12px;
+}
 #toasts{
   position:fixed;
   inset-block-end:var(--space-6);

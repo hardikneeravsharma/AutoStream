@@ -171,6 +171,17 @@ SHELL_HTML: str = (
     "</main>"
     "</div>"
     '<div id="setup-root" class="hide">{{SETUP_HTML}}</div>'
+    # Ctrl K: one box over every page. Outside .app so no view's overflow or
+    # stacking can clip it.
+    '<div class="pal-scrim hide" id="pal-scrim">'
+    '<div class="pal" id="pal" role="dialog" aria-modal="true" aria-label="Search">'
+    '<input class="pal-q" id="pal-q" type="search" autocomplete="off" spellcheck="false"'
+    ' placeholder="Search clips, reels, games and settings, or type a command"'
+    ' aria-label="Search" aria-controls="pal-list">'
+    '<div class="pal-list" id="pal-list" role="listbox" aria-label="Results"></div>'
+    '<p class="pal-foot"><span class="kbd">Up</span> <span class="kbd">Down</span> to move,'
+    ' <span class="kbd">Enter</span> to open, <span class="kbd">Esc</span> to close</p>'
+    "</div></div>"
     '<div id="toasts" role="status" aria-live="polite"></div>'
 )
 
@@ -650,6 +661,124 @@ async function shell_toggle_pause() {
   if (btn) btn.disabled = false;
 }
 
+/* ---------------- Ctrl K ---------------- */
+
+/* Each page registers what it can find: pal_source('Clips', q => [{label,
+   hint, keys, run}]). The shell owns the box, the keys and the order. */
+const PAL_GROUPS = ['Clips', 'Reels', 'Games', 'Actions', 'Settings'];
+const PAL_SOURCES = [];
+const PAL_PER_GROUP = 6;
+let pal_rows = [];
+let pal_at = 0;
+
+function pal_source(name, fn) { PAL_SOURCES.push({name: name, fn: fn}); }
+
+/* Every word of the query, in any order, somewhere in the text. */
+function pal_match(q, text) {
+  const words = String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const t = String(text || '').toLowerCase();
+  return words.every(w => t.indexOf(w) >= 0);
+}
+
+/* -> rows in group order, no group over PAL_PER_GROUP (6). A source that
+   throws is skipped: one broken page must not empty the box. */
+function pal_collect(q, sources) {
+  const by = {};
+  for (let i = 0; i < sources.length; i++) {
+    let got = [];
+    try { got = sources[i].fn(q) || []; } catch (e) { got = []; }
+    const g = sources[i].name;
+    by[g] = (by[g] || []).concat(got);
+  }
+  const out = [];
+  const order = PAL_GROUPS.concat(Object.keys(by).filter(g => PAL_GROUPS.indexOf(g) < 0));
+  for (let i = 0; i < order.length; i++) {
+    const rows = (by[order[i]] || []).slice(0, 6);
+    for (let j = 0; j < rows.length; j++) out.push(Object.assign({group: order[i]}, rows[j]));
+  }
+  return out;
+}
+
+function pal_draw() {
+  const host = shell_$('pal-list');
+  const q = shell_$('pal-q');
+  if (!host) return;
+  pal_rows = pal_collect(q ? q.value : '', PAL_SOURCES);
+  if (pal_at >= pal_rows.length) pal_at = Math.max(0, pal_rows.length - 1);
+  if (!pal_rows.length) {
+    host.innerHTML = '<p class="pal-none">Nothing matches. Try fewer words.</p>';
+    return;
+  }
+  let html = '', last = '';
+  pal_rows.forEach((r, i) => {
+    if (r.group !== last) { html += '<p class="pal-grp">' + esc(r.group) + '</p>'; last = r.group; }
+    html += '<button type="button" role="option" class="pal-row' + (i === pal_at ? ' is-on' : '') +
+      '" data-pal="' + i + '" aria-selected="' + (i === pal_at) + '">' +
+      '<span class="pal-lab">' + esc(r.label) + '</span>' +
+      (r.hint ? '<span class="pal-hint">' + esc(r.hint) + '</span>' : '') +
+      (r.keys ? '<span class="kbd">' + esc(r.keys) + '</span>' : '') + '</button>';
+  });
+  host.innerHTML = html;
+  const on = host.querySelector('.pal-row.is-on');
+  if (on && on.scrollIntoView) on.scrollIntoView({block: 'nearest'});
+}
+
+function pal_open() {
+  const scrim = shell_$('pal-scrim');
+  if (!scrim || !scrim.classList.contains('hide')) return;
+  scrim.classList.remove('hide');
+  const q = shell_$('pal-q');
+  if (q) { q.value = ''; q.focus(); }
+  pal_at = 0;
+  pal_draw();
+}
+
+function pal_close() {
+  const scrim = shell_$('pal-scrim');
+  if (scrim) scrim.classList.add('hide');
+}
+
+function pal_run(i) {
+  const r = pal_rows[i];
+  if (!r) return;
+  pal_close();
+  try { r.run && r.run(); } catch (e) { console.error('palette', e); }
+}
+
+/* Ctrl K (Cmd K) opens it from any page. Only opens: a page with its own
+   Ctrl K handler that also calls pal_open() must not toggle it shut. */
+function pal_key(e) {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && String(e.key).toLowerCase() === 'k') {
+    e.preventDefault();
+    pal_open();
+    return;
+  }
+  const scrim = shell_$('pal-scrim');
+  if (!scrim || scrim.classList.contains('hide')) return;
+  if (e.key === 'Escape') { e.preventDefault(); pal_close(); }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); pal_at = Math.min(pal_rows.length - 1, pal_at + 1); pal_draw(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); pal_at = Math.max(0, pal_at - 1); pal_draw(); }
+  else if (e.key === 'Enter') { e.preventDefault(); pal_run(pal_at); }
+}
+
+/* The app's own actions: pages, and what the engine can do from anywhere. */
+pal_source('Actions', q => {
+  const out = [];
+  SHELL_PAGES.forEach(p => {
+    const t = SHELL_TITLES[p] || p;
+    if (pal_match(q, 'go to ' + t)) out.push({label: 'Go to ' + t, run: () => go(p)});
+  });
+  const held = STATUS && (STATUS.paused || STATUS.start_blocked);
+  const say = held ? 'Resume' : 'Pause';
+  if (STATUS && STATUS.phase && (STATUS.phase !== 'IDLE' || held) && pal_match(q, say))
+    out.push({label: say, keys: 'P', run: shell_toggle_pause});
+  if (pal_match(q, 'save replay instant'))
+    out.push({label: 'Save replay', keys: 'F9', run: () => API.post('/api/cmd', {command: 'replay'})
+      .then(r => toast(r && r.error ? r.error : 'Saving the replay', r && r.error ? 'error' : 'ok'))
+      .catch(() => toast('Could not reach AutoStream', 'error'))});
+  return out;
+});
+
 /* ---------------- wiring ---------------- */
 
 function shell_scrolled(host) {
@@ -682,6 +811,18 @@ function shell_bind() {
   }
   const tog = shell_$('top-toggle');
   if (tog) tog.addEventListener('click', shell_toggle_pause);
+
+  document.addEventListener('keydown', pal_key);
+  const ps = shell_$('rail-search');
+  if (ps) ps.addEventListener('click', pal_open);
+  const pq = shell_$('pal-q');
+  if (pq) pq.addEventListener('input', () => { pal_at = 0; pal_draw(); });
+  const scrim = shell_$('pal-scrim');
+  if (scrim) scrim.addEventListener('click', e => {
+    if (e.target === scrim) { pal_close(); return; }
+    const row = e.target.closest ? e.target.closest('[data-pal]') : null;
+    if (row) pal_run(Number(row.getAttribute('data-pal')));
+  });
 
   const host = shell_$('views');
   if (host) host.addEventListener('scroll', () => shell_scrolled(host), {passive: true});

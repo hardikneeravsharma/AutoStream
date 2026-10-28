@@ -2393,6 +2393,34 @@ function studio_palOpen() {
   if (q) q.focus();
 }
 
+/* What Ctrl K finds in the Studio: clips by name, caption, game or map;
+   reels by name or song; and the Studio's own commands that can run here. */
+pal_source('Clips', q => {
+  if (!String(q || '').trim() || !studio.clipIndex) return [];
+  return Object.keys(studio.clipIndex).map(id => studio.clipIndex[id])
+    .filter(c => pal_match(q, [c.name, c.caption, c.game, c.map, c.folderLabel].join(' ')))
+    .slice(0, 6)
+    .map(c => ({label: c.caption || c.name, hint: [c.map, c.game].filter(Boolean).join(', '),
+                run: () => { go('studio'); studio_tab('clips'); studio.q = c.caption || c.name;
+                             const box = studio_el('studio-q'); if (box) box.value = studio.q;
+                             studio_renderLib(); }}));
+});
+pal_source('Reels', q => {
+  const all = (studio.lib && studio.lib.reels) || [];
+  if (!String(q || '').trim()) return [];
+  return all.filter(r => pal_match(q, [r.name, r.song, r.style].join(' '))).slice(0, 6)
+    .map(r => ({label: r.name, hint: r.song || '',
+                run: () => { go('studio'); studio_tab('reels'); studio.reelQ = r.name;
+                             const box = studio_el('studio-reel-q'); if (box) box.value = r.name;
+                             studio_renderReels(); }}));
+});
+pal_source('Actions', q => {
+  if (shell_page !== 'studio') return [];
+  return STUDIO_CMDS.filter(c => c.palette && c.id !== 'studio.palette' && pal_match(q, c.label))
+    .filter(c => !studio_cmdWhy(c))
+    .map(c => ({label: c.label, keys: c.keys[0] || '', run: () => studio_cmdRun(c.id)}));
+});
+
 function studio_palClose() {
   if (!studio.pal.open) return;
   studio.pal.open = false;
@@ -11991,11 +12019,10 @@ function studio_wire() {
       if (studio.tool !== 'select') studio_tool('select');
       return;
     }
-    /* Ctrl+K is not typing, so it is read before the input guard: the list
-       opens from a reel name half-renamed as readily as from the timeline. */
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
-      e.preventDefault(); studio_palOpen(); return;
-    }
+    /* Ctrl+K belongs to the whole app now (shell pal_key): it opens the one
+       search box, which lists this page's commands among everything else.
+       The Actions button still opens the Studio's own scoped list. */
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) return;
     const tag = (e.target.tagName || '').toUpperCase();
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
     /* '?' IS A CHARACTER SOMEBODY MIGHT BE TYPING, so unlike Ctrl+K it waits

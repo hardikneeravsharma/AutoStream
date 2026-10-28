@@ -86,6 +86,16 @@ const lib_LIVE = ['STARTING', 'TESTING', 'LIVE', 'COOLDOWN'];
 let lib_apps = [];        /* last apps array seen on /api/status              */
 let lib_sig = '';         /* signature of lib_apps, to skip identical renders */
 let lib_query = '';
+
+/* What Ctrl K finds in the Library: games and apps by name. Opening one goes
+   to the Library filtered to it, rather than launching from a search box. */
+pal_source('Games', function (q) {
+  if (!String(q || '').trim()) return [];
+  return lib_apps.filter(a => pal_match(q, a.name)).slice(0, 6).map(a => ({
+    label: a.name, hint: a.game ? 'Game' : 'App',
+    run: () => { go('library'); const s = lib_el('lib-search');
+                 if (s) { s.value = a.name; s.dispatchEvent(new Event('input')); } }}));
+});
 let lib_busy = false;     /* one launch in flight at a time                   */
 let lib_scanning = false;
 let lib_wired = false;

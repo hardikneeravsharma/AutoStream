@@ -726,6 +726,21 @@ function set_applySections(searching, hits, found){
 /* Kept as the name the rest of the page calls after a platform change. */
 function set_applyPlatform(){ set_applyFilters(); }
 
+/* What Ctrl K finds in Settings: a setting by its name or its help text.
+   Opening one goes to Settings searched to it, which shows its section. */
+pal_source('Settings', function (q) {
+  if (!String(q || '').trim()) return [];
+  var out = [];
+  Object.keys(set_state.fields || {}).forEach(function (k) {
+    var f = set_state.fields[k];
+    if (out.length < 6 && f && f.label && pal_match(q, f.label + ' ' + (f.help || '')))
+      out.push({label: f.label, hint: f.section_label || '',
+                run: function () { go('settings'); var s = set_el('set-search');
+                                   if (s) { s.value = f.label; } set_search(f.label); }});
+  });
+  return out;
+});
+
 function set_search(value){
   set_query = String(value == null ? '' : value).trim();
   set_applyFilters();
