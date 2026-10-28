@@ -315,10 +315,36 @@ svg{flex:0 0 auto;display:block}
   padding-inline:var(--space-2);
   min-width:0;
   color:var(--text-primary);
-  font-size:15px;font-weight:600;letter-spacing:-.005em;
+  font-size:13.5px;font-weight:600;letter-spacing:-.01em;
   -webkit-app-region:drag;
 }
-.rail-logo>.pill{margin-inline-start:auto}
+/* The state lives in the foot's state line now; the dot by the logo is only
+   for the collapsed strip, where that line has no room. */
+.rail-logo>.pill{margin-inline-start:auto;display:none}
+.app.rail-min:not(.rail-peek) .rail-logo>.pill{display:inline-flex}
+.rail-search{
+  display:flex;align-items:center;gap:var(--space-4);
+  width:100%;height:var(--h-control);flex:0 0 auto;
+  margin-bottom:var(--space-4);
+  padding:0 var(--space-4) 0 10px;
+  background:var(--surface-raised);
+  color:var(--text-tertiary);
+  border:var(--border-hair) solid var(--border-subtle);
+  border-radius:var(--radius-sm);
+  font-size:13px;font-weight:400;line-height:1;
+}
+.rail-search:hover{color:var(--text-secondary);border-color:var(--border-strong)}
+.rail-search>span:first-of-type{flex:1 1 auto;text-align:start}
+.rail-search .kbd{font-size:11px}
+.rail-section{display:flex;flex-direction:column;gap:var(--space-1);margin-top:var(--space-6)}
+.rail-section .rail-sec-title{padding:0 10px var(--space-2);color:var(--text-tertiary);font-size:12px;font-weight:500}
+.rail-state{
+  display:flex;align-items:center;gap:var(--space-4);
+  min-height:var(--h-control);padding:6px 10px;
+  border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-md);
+  color:var(--text-secondary);font-size:12.5px;line-height:1.3;
+}
+.rail-state>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rail-nav{
   display:flex;
   flex-direction:column;
@@ -339,7 +365,7 @@ svg{flex:0 0 auto;display:block}
   border-radius:var(--radius-sm);
   background:transparent;
   color:var(--text-secondary);
-  font-size:14px;font-weight:600;line-height:1;letter-spacing:-.005em;
+  font-size:13px;font-weight:500;line-height:1;letter-spacing:-.005em;
   transition:background-color var(--dur-instant) var(--ease-standard),
              color var(--dur-instant) var(--ease-standard);
 }
@@ -347,7 +373,7 @@ svg{flex:0 0 auto;display:block}
   min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 .rail-btn:hover{background:var(--surface-hover);color:var(--text-primary)}
-.rail-btn.is-active{background:var(--accent-muted);color:var(--accent-text)}
+.rail-btn.is-active{background:var(--surface-active);color:var(--text-primary)}
 /* WHITE IS NOT A CONTRAST GUARANTEE. Four places filled a shape with
    var(--accent) and then wrote #fff on it, which holds for the dark themes
    that shipped first and fails the moment an accent is light -- and the
@@ -404,7 +430,7 @@ svg{flex:0 0 auto;display:block}
   flex-direction:column;
   min-width:0;
   min-height:0;
-  background:var(--bg);
+  background:var(--surface);
 }
 .topbar{
   z-index:var(--z-topbar);
@@ -412,9 +438,9 @@ svg{flex:0 0 auto;display:block}
   display:flex;
   align-items:center;
   gap:var(--space-5);
-  height:var(--h-topbar);
-  padding-inline:var(--gutter);
-  background:var(--chrome);
+  height:44px;
+  padding-inline:var(--space-6);
+  background:var(--surface);
   border-bottom:var(--border-hair) solid var(--border-subtle);
   border-radius:var(--radius-0);
   -webkit-app-region:drag;     /* frameless pywebview window drags by its topbar */
@@ -427,7 +453,7 @@ svg{flex:0 0 auto;display:block}
 .topbar.is-scrolled{border-bottom-color:transparent;box-shadow:var(--shadow-sm)}
 .topbar-title{
   font-family:var(--font-display);
-  font-size:24px;font-weight:600;line-height:1.18;letter-spacing:-.018em;
+  font-size:13.5px;font-weight:500;line-height:1.2;letter-spacing:-.01em;
   color:var(--text-primary);
   min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
@@ -435,9 +461,14 @@ svg{flex:0 0 auto;display:block}
   display:flex;
   align-items:center;
   gap:var(--space-4);
-  margin-inline-start:auto;
   min-width:0;
 }
+/* The page's own actions sit at the right edge, primary last. */
+.topbar-actions{
+  display:flex;align-items:center;gap:var(--space-4);
+  margin-inline-start:auto;min-width:0;-webkit-app-region:no-drag;
+}
+.topbar-actions:empty+.topbar-meta{margin-inline-start:auto}
 
 /* ---- views --------------------------------------------------------------- */
 .views{
@@ -2300,6 +2331,12 @@ ol.steps-list li{margin-block:var(--space-4)}
 .app.rail-min:not(.rail-peek) .rail-btn.is-active::before{inset-inline-start:calc(var(--space-3) * -1)}
 .app.rail-min:not(.rail-peek) .rail-foot{align-items:center;margin-inline:calc(var(--space-3) * -1);padding-inline:var(--space-3)}
 .app.rail-min:not(.rail-peek) .rail-meta{display:none}
+/* In the strip the search is its icon, and the state line is its mark. */
+.app.rail-min:not(.rail-peek) .rail-search{justify-content:center;padding:0;width:var(--h-control)}
+.app.rail-min:not(.rail-peek) .rail-search>span{display:none}
+.app.rail-min:not(.rail-peek) .rail-state{border:0;padding:0;justify-content:center}
+.app.rail-min:not(.rail-peek) .rail-state>span:last-child{display:none}
+.app.rail-min:not(.rail-peek) .rail-section{display:none}
 .topbar-rail{flex:none;padding-inline:var(--space-3)}
 @media (max-width:899px){.topbar-rail{display:none}}   /* the strip is not a choice there */
 

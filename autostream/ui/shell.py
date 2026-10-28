@@ -83,16 +83,31 @@ _RAIL = (
     # must NOT be a bare <span> — the narrow-width rule hides those.
     + '<span class="pill pill-idle" id="rail-dot" title="Idle"></span>'
     "</div>"
+    # One search box that finds anything and runs anything (Ctrl K). The
+    # palette itself is shell-owned; pages only register what it can find.
+    '<button type="button" class="rail-search" id="rail-search"'
+    ' aria-label="Search and run commands (Ctrl K)" title="Search (Ctrl K)">'
+    + _svg("search")
+    + '<span>Search</span><span class="kbd">Ctrl K</span>'
+    "</button>"
     '<nav class="rail-nav" aria-label="Pages">'
     + "".join(_nav_button(*n) for n in _NAV)
     + "</nav>"
+    # A page's own list, shown only while that page is (the Studio's games).
+    '<div class="rail-section hide" id="rail-section"></div>'
     '<div class="rail-spacer"></div>'
     # Quit is detached from the four page links by a full-bleed rule so it can
     # never be misread as a fifth destination. .rail-foot supplies that bleed
     # and .rail-meta is what the narrow-rail rule hides — both are required.
     '<div class="rail-foot">'
-    '<div class="divider"></div>'
-    '<p class="rail-meta mono" id="rail-readout"></p>'
+    # THE APP'S STATE, visible from every page: what it is doing and for how
+    # long, as a mark and a sentence. It replaced the top bar's pill and clock,
+    # which said the same thing in caps on every page.
+    '<div class="rail-state" id="rail-state" role="status" aria-live="polite">'
+    '<span class="mark mark-idle" id="rail-state-mark" aria-hidden="true"></span>'
+    '<span id="rail-state-text">Idle, not recording</span>'
+    "</div>"
+    '<p class="rail-meta" id="rail-readout"></p>'
     '<button type="button" class="rail-btn is-danger" id="rail-quit"'
     ' title="Quit AutoStream" aria-label="Quit AutoStream">'
     + _svg("power")
@@ -114,14 +129,14 @@ _TOPBAR = (
     '<path d="M9 4v16" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>'
     "</button>"
     '<h1 class="topbar-title" id="topbar-title">Dashboard</h1>'
+    # Page actions, filled by the page that is showing (shell_setActions).
+    '<div class="topbar-actions" id="topbar-actions"></div>'
     '<div class="topbar-meta">'
-    # aria-live so a phase change is announced without the user hunting for it;
-    # shell_setText() only writes when the value actually changed, so the two
-    # second poll does not spam the screen reader.
-    '<span class="pill pill-idle" id="top-pill" role="status"'
-    ' aria-live="polite">Idle</span>'
+    # The pill, game and clock still exist for the tests and the title, but
+    # the sidebar's state line is where the state is read now (#rail-state).
+    '<span class="pill pill-idle hide" id="top-pill">Idle</span>'
     '<span class="status-game hide" id="top-game"></span>'
-    '<span class="mono" id="top-clock">--:--:--</span>'
+    '<span class="mono hide" id="top-clock">--:--:--</span>'
     '<button type="button" class="btn btn-ghost btn-sm hide" id="top-toggle">'
     "Pause</button>"
     "</div>"
@@ -360,12 +375,14 @@ function shell_doc_title() {
                    (SHELL_TITLES[shell_page] || 'Dashboard') + ' - AutoStream';
 }
 
-/* THE RAIL IS AN ICON STRIP EXCEPT ON THE DASHBOARD, until the player says otherwise: the other pages
-   want the width, and the choice they make with the toggle then holds on every page. */
+/* THE SIDEBAR IS OPEN ON EVERY PAGE until the player collapses it, and that
+   choice then holds on every page. It used to fold to an icon strip off the
+   Dashboard, which hid the page names from exactly the person who did not
+   know the icons yet. Below 900px it is the strip regardless. */
 function shell_rail() {
   let pref = null;
   try { pref = localStorage.getItem(SHELL_RAIL_KEY); } catch (e) { /* private mode */ }
-  const min = window.innerWidth < 900 || (pref ? pref === 'min' : shell_page !== 'dash');
+  const min = window.innerWidth < 900 || pref === 'min';
   const app = document.querySelector('.app'), t = shell_$('rail-toggle');
   if (app) { app.classList.toggle('rail-min', min); if (!min) app.classList.remove('rail-peek'); }
   if (t) {
@@ -410,6 +427,10 @@ function go(page) {
     else btns[i].removeAttribute('aria-current');
   }
   shell_setText(shell_$('topbar-title'), SHELL_TITLES[page]);
+  /* A page's actions and sidebar list belong to it alone: clear them before
+     the new page's onShow puts its own back. */
+  shell_setActions(null);
+  shell_railSection(null);
   shell_rail();
   try { sessionStorage.setItem(SHELL_STORE_KEY, page); } catch (e) { /* private mode */ }
   shell_doc_title();
@@ -438,6 +459,58 @@ function shell_setPill(el, mod, text, title) {
   if (title && el.title !== title) el.title = title;
 }
 
+/* What the sidebar's state line says, and which mark goes beside it.
+   -> {mark: 'live'|'work'|'need'|'idle', text}. A sentence, not a code: it is
+   the one place every page shows what the app is doing. */
+function shell_stateLine(s) {
+  const phase = String(s.phase || 'IDLE');
+  const t = shell_clock(s.elapsed);
+  if (s.blocked) return {mark: 'need', text: 'Held back: ' + String(s.blocked)};
+  if (s.paused) return {mark: 'need', text: 'Paused'};
+  if (phase === 'LIVE') {
+    const rec = s.streaming === false;
+    return {mark: 'live', text: (rec ? 'Recording' : 'Live') + (t ? ', ' + t : '')};
+  }
+  if (phase === 'IDLE') {
+    return s.recording ? {mark: 'live', text: 'Recording' + (t ? ', ' + t : '')}
+                       : {mark: 'idle', text: 'Idle, not recording'};
+  }
+  const meta = SHELL_PHASE[phase];
+  return {mark: 'work', text: meta ? meta.label : phase};
+}
+
+/* 1:24:07, or 12:40 under an hour. Empty when there is nothing to time. */
+function shell_clock(sec) {
+  if (sec === null || sec === undefined || isNaN(Number(sec))) return '';
+  sec = Math.max(0, sec | 0);
+  const h = (sec / 3600) | 0, m = ((sec % 3600) / 60) | 0, x = sec % 60;
+  const p = (n) => String(n).padStart(2, '0');
+  return h ? h + ':' + p(m) + ':' + p(x) : m + ':' + p(x);
+}
+
+function shell_paintState(line) {
+  const mark = shell_$('rail-state-mark');
+  const cls = 'mark mark-' + line.mark;
+  if (mark && mark.className !== cls) mark.className = cls;
+  if (mark && line.mark === 'work') mark.style.setProperty('--p', '50');
+  shell_setText(shell_$('rail-state-text'), line.text);
+}
+
+/* A page puts its own buttons in the top bar (null clears them). */
+function shell_setActions(html) {
+  const host = shell_$('topbar-actions');
+  if (host && host.innerHTML !== (html || '')) host.innerHTML = html || '';
+}
+
+/* A page puts its own list in the sidebar under the page links (the Studio's
+   games); null takes it away again. */
+function shell_railSection(html) {
+  const host = shell_$('rail-section');
+  if (!host) return;
+  if (host.innerHTML !== (html || '')) host.innerHTML = html || '';
+  host.classList.toggle('hide', !html);
+}
+
 function shell_hms(s) {
   if (s === null || s === undefined) return '--:--:--';
   s = Math.max(0, s | 0);
@@ -457,7 +530,8 @@ function shell_paint(s) {
   else if (s.paused) { mod = 'pill-idle'; label = 'Paused'; why = 'Paused'; }
 
   shell_setPill(shell_$('rail-dot'), mod, null, label);
-  shell_setPill(shell_$('top-pill'), mod, label, why);
+  shell_setPill(shell_$('top-pill'), mod + ' hide', label, why);
+  shell_paintState(shell_stateLine(s));
 
   const game = shell_$('top-game');
   if (game) {
@@ -496,8 +570,9 @@ function shell_offline(on) {
   if (shell_off === on) return;
   shell_off = on;
   if (!on) return;    /* the next successful paint repaints everything */
-  shell_setPill(shell_$('top-pill'), 'pill-warn', 'Not responding',
+  shell_setPill(shell_$('top-pill'), 'pill-warn hide', 'Not responding',
                 'AutoStream is not responding');
+  shell_paintState({mark: 'need', text: 'Not responding'});
   shell_setPill(shell_$('rail-dot'), 'pill-warn', null, 'Not responding');
   const game = shell_$('top-game');
   if (game) game.classList.add('hide');
