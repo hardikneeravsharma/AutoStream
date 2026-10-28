@@ -107,8 +107,8 @@ description:
     - live
 
 ui:
-  # Applies straight away, here and in any browser tab you have open on this dashboard.
-  theme: midnight
+  # System follows Windows. Applies straight away, here and in any browser tab you have open on this dashboard.
+  theme: system
   # Off means AutoStream starts quietly in the notification area and you open this window from the tray icon when you want it.
   open_window: true
   # Off means the Studio's style cards and effect pickers load no preview clips until you press Play on one. Turn it off on a Mac or a slow PC if that page stutters or freezes.

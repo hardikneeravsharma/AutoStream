@@ -9,10 +9,15 @@ WHY THIS FILE EXISTS
 
 WHY THE TOKENS ARE ROLE-NAMED AND NOT COLOUR-NAMED
     Tokens name a job (`surface-sunken`, `border-strong`, `text-on-accent`), never a
-    hue. That is what lets `daylight` invert the whole system without a single
-    conditional in the stylesheet: in a light theme elevation comes from shadow rather
-    than from a lighter fill, so `surface-raised` and `surface-overlay` are both pure
-    white on purpose and the shadow scale does the work instead.
+    hue. That is what lets `light` invert the whole system without a single
+    conditional in the stylesheet.
+
+TWO PALETTES AND A CHOICE (the 2026-10-29 redesign)
+    Five themes became System, Dark and Light. The look is calm and monochrome: the
+    accent IS the text colour, so a primary button is a white plate in dark and a
+    black one in light, and hue appears only for state. System is not a third
+    palette -- root_css() emits dark with light inside prefers-color-scheme, so the
+    page follows the OS without script. The old ids still resolve (ALIASES).
 
 WHY THE SIX LEGACY ALIASES ARE STILL HERE
     `fg`, `dim`, `faint`, `line`, `raised` and `accent-fg` duplicate the semantic names.
@@ -24,12 +29,13 @@ WHY THE SIX LEGACY ALIASES ARE STILL HERE
 
 CONTRAST
     Every ratio quoted in the per-theme `contrast` notes was computed with the WCAG 2.x
-    relative-luminance formula, not estimated. No token is excused at 3:1: the worst
-    text pair in the whole system is 4.92:1 (carbon `text-tertiary` on `surface-active`)
-    and `border-strong` -- which bounds every interactive control -- clears 3:1 against
-    every surface it can sit on, satisfying WCAG 1.4.11 for non-text contrast.
+    relative-luminance formula, not estimated, and tests/test_theme.py re-measures them:
+    every text token clears 4.5:1 on bg, chrome, surface, raised and sunken, and
+    `border-strong` -- which bounds every interactive control -- clears 3:1, satisfying
+    WCAG 1.4.11. The one exception is dark tertiary on `surface-active` (4.0:1), so
+    tertiary text is never set on a selected fill.
 
-    Consequence for maintainers: the state colours in `daylight` are dark bronze, brick
+    Consequence for maintainers: the state colours in `light` are dark bronze, brick
     and pine because they must work as TEXT. The light amber people expect is
     `warn-muted`, which is only ever the plate behind it. Do not "fix" them.
 """
@@ -99,319 +105,141 @@ TOKENS: tuple[str, ...] = (
 
 
 THEMES: dict[str, dict] = {
-    "midnight": {
-        "label": "Midnight",
+    "dark": {
+        "label": "Dark",
         "dark": True,
-        # The blue hour. A cool blue-graphite room under a muted cyanotype lamp, with
-        # warm bone-white text rather than blue-white -- that tension is what keeps it
-        # from reading clinical. The default, and the theme most users will ever see.
+        # Quiet graphite. Greys with no hue to speak of, hairline edges, and colour
+        # kept for state alone: red is live or broken, green is done, amber needs you.
+        # The accent is the text colour itself, so the primary button is a white
+        # plate and the four accent uses read as emphasis rather than as a brand.
         "vars": {
-            "bg": "#0C1016",
-            "chrome": "#090D12",
-            "surface": "#12171F",
-            "surface-raised": "#1A212B",
-            "surface-sunken": "#080B10",
-            "surface-overlay": "#1F2732",
-            "surface-hover": "#171D27",
-            "surface-active": "#222A36",
-            "border-subtle": "#1F2833",
-            "border-strong": "#68768A",
-            "border-focus": "#58A6FF",
-            "text-primary": "#E9EFF7",
-            "text-secondary": "#AAB8C9",
-            "text-tertiary": "#909EB0",
-            "text-on-accent": "#04121F",
-            "text-on-ok": "#04121F",
-            "accent": "#4D9FFF",
-            "accent-hover": "#6FB2FF",
-            "accent-text": "#7CB8FF",
-            "accent-muted": "#0D1B2B",
-            "live": "#FF6B6B",
-            "live-muted": "#2A0F11",
-            "ok": "#4FC97A",
-            "ok-muted": "#0A1A11",
-            "warn": "#E3AC3B",
-            "warn-muted": "#1E1708",
-            "danger": "#FF7A70",
-            "danger-muted": "#2B100E",
-            "idle": "#909EB0",
-            "idle-muted": "#161B23",
-            "track": "#1C242F",
-            "shadow-color": "rgba(2,5,10,.62)",
-            "rim": "rgba(255,255,255,.055)",
-            "scrim": "rgba(4,7,12,.66)",
-            "selection": "rgba(77,159,255,.30)",
-            "text-on-danger": "#1A0706",
-            "text-on-warn": "#1A1305",
-            "fg": "#E9EFF7",
-            "dim": "#AAB8C9",
-            "faint": "#909EB0",
-            "line": "#1F2833",
-            "raised": "#1A212B",
-            "accent-fg": "#04121F",
+            "bg": "#141519",
+            "chrome": "#141519",
+            "surface": "#191A1F",
+            "surface-raised": "#202228",
+            "surface-sunken": "#111215",
+            "surface-overlay": "#1E2025",
+            "surface-hover": "#1E2025",
+            "surface-active": "#2A2C33",
+            "border-subtle": "rgba(255,255,255,.07)",
+            "border-strong": "rgba(255,255,255,.38)",
+            "border-focus": "#ECEDEF",
+            "text-primary": "#ECEDEF",
+            "text-secondary": "#A0A3AB",
+            "text-tertiary": "#868A93",
+            "text-on-accent": "#191A1F",
+            "text-on-ok": "#0E1512",
+            "accent": "#ECEDEF",
+            "accent-hover": "#FFFFFF",
+            "accent-text": "#ECEDEF",
+            "accent-muted": "#2A2C33",
+            "live": "#F2626A",
+            "live-muted": "#2E1A1C",
+            "ok": "#5CC8A8",
+            "ok-muted": "#16241F",
+            "warn": "#E5B454",
+            "warn-muted": "#2A2417",
+            "danger": "#F2626A",
+            "danger-muted": "#2E1A1C",
+            "idle": "#868A93",
+            "idle-muted": "#202228",
+            "track": "#2A2C33",
+            "shadow-color": "rgba(0,0,0,.5)",
+            "rim": "rgba(255,255,255,.04)",
+            "scrim": "rgba(10,10,12,.6)",
+            "selection": "rgba(236,237,239,.18)",
+            "text-on-danger": "#141519",
+            "text-on-warn": "#141519",
+            "fg": "#ECEDEF",
+            "dim": "#A0A3AB",
+            "faint": "#868A93",
+            "line": "rgba(255,255,255,.07)",
+            "raised": "#202228",
+            "accent-fg": "#191A1F",
         },
         "contrast": {
-            "on_surface": "primary 15.54 / secondary 8.91 / tertiary 6.60",
-            "worst_text": "primary 12.50, secondary 7.17, tertiary 5.30 (surface-active)",
-            "non_text": "border-strong 3.26 worst, border-focus 7.55 on bg",
-            "button": "text-on-accent on accent 6.94, on accent-hover 8.54",
+            "on_surface": "primary 15.1 / secondary 7.0 / tertiary 5.0",
+            "worst_text": "tertiary 4.6 on surface-raised; never on surface-active (4.0)",
+            "non_text": "border-strong 3.2 on surface-raised, 3.6 on surface",
+            "button": "text-on-accent on accent 15.1",
         },
     },
-    "carbon": {
-        "label": "Carbon",
-        "dark": True,
-        # Rolled steel. Near-black, but the neutral is warm graphite (~30deg hue at ~4%
-        # saturation) so it reads as anodised metal rather than a default #111. The lamp
-        # is bone-white by design: colour appears only when something is happening.
-        #
-        # MANDATORY MITIGATION: the accent is luminance, not hue, and sits close to
-        # text-primary (15.10 vs 16.19 on surface). This theme must never signal
-        # interactivity by colour alone -- links carry an underline, and the active rail
-        # item shows the bone indicator bar plus an accent-muted plate. Note that
-        # accent-muted is a slightly *lighter* warm plate here, not a dark one, so a
-        # selected nav item reads as an inset panel with a white label.
-        "vars": {
-            "bg": "#0C0B0A",
-            "chrome": "#080807",
-            "surface": "#141311",
-            "surface-raised": "#1C1A18",
-            "surface-sunken": "#0A0908",
-            "surface-overlay": "#232120",
-            "surface-hover": "#1F1D1B",
-            "surface-active": "#282523",
-            "border-subtle": "#252220",
-            "border-strong": "#726B64",
-            "border-focus": "#EDE7DD",
-            "text-primary": "#F2EFEA",
-            "text-secondary": "#B0A9A0",
-            "text-tertiary": "#9A9188",
-            "text-on-accent": "#0C0B0A",
-            "text-on-ok": "#0C0B0A",
-            "accent": "#EDE7DD",
-            "accent-hover": "#FFFBF4",
-            "accent-text": "#EDE7DD",
-            "accent-muted": "#211E1B",
-            "live": "#FF6672",
-            "live-muted": "#260A0C",
-            "ok": "#57CE7C",
-            "ok-muted": "#08170C",
-            "warn": "#E8BC55",
-            "warn-muted": "#191204",
-            "danger": "#F97970",
-            "danger-muted": "#250B0A",
-            "idle": "#9A9188",
-            "idle-muted": "#1A1715",
-            "track": "#1F1D1B",
-            "shadow-color": "rgba(0,0,0,.70)",
-            "rim": "rgba(255,250,242,.05)",
-            "scrim": "rgba(0,0,0,.72)",
-            "selection": "rgba(237,231,221,.22)",
-            "text-on-danger": "#190605",
-            "text-on-warn": "#191204",
-            "fg": "#F2EFEA",
-            "dim": "#B0A9A0",
-            "faint": "#9A9188",
-            "line": "#252220",
-            "raised": "#1C1A18",
-            "accent-fg": "#0C0B0A",
-        },
-        "contrast": {
-            "on_surface": "primary 16.19 / secondary 7.98 / tertiary 5.99",
-            "worst_text": "tertiary 4.92 on surface-active -- the tightest pair in the system",
-            "non_text": "border-strong 3.06 worst, border-focus 15.99 on bg",
-            "button": "text-on-accent on accent 15.99",
-        },
-    },
-    "ember": {
-        "label": "Ember",
-        "dark": True,
-        # The darkroom. An espresso-toned iron room under a safelight. Deliberately not
-        # warm-cream-plus-terracotta: the room is dark and desaturated and trends more
-        # neutral as surfaces rise, so it never becomes a wash of brown. The orange is a
-        # lamp, not a paint.
-        #
-        # HUE SEPARATION: the one theme where accent (~22deg), live (~354deg) and warn
-        # (~44deg) sit within ~30deg of each other. warn is pushed to a distinctly
-        # yellower gold, live always renders the LIVE wordmark beside its dot, and the
-        # accent budget forbids the accent from ever appearing as a status indicator.
-        "vars": {
-            "bg": "#140F0C",
-            "chrome": "#0E0A08",
-            "surface": "#1C1613",
-            "surface-raised": "#251E19",
-            "surface-sunken": "#0F0B09",
-            "surface-overlay": "#2D2420",
-            "surface-hover": "#231C18",
-            "surface-active": "#302722",
-            "border-subtle": "#2E241E",
-            "border-strong": "#877063",
-            "border-focus": "#FF8A4C",
-            "text-primary": "#F6EDE4",
-            "text-secondary": "#C0AC9C",
-            "text-tertiary": "#AC9583",
-            "text-on-accent": "#1A0B04",
-            "text-on-ok": "#1A0B04",
-            "accent": "#FF8A4C",
-            "accent-hover": "#FF9D68",
-            "accent-text": "#FF9D68",
-            "accent-muted": "#2A1108",
-            "live": "#FF6070",
-            "live-muted": "#2A0B0F",
-            "ok": "#63CE8A",
-            "ok-muted": "#0A1A0F",
-            "warn": "#F0C24A",
-            "warn-muted": "#1C1405",
-            "danger": "#FD6A62",
-            "danger-muted": "#2A0D0B",
-            "idle": "#AC9583",
-            "idle-muted": "#1D1714",
-            "track": "#261F1A",
-            "shadow-color": "rgba(10,4,2,.66)",
-            "rim": "rgba(255,228,208,.055)",
-            "scrim": "rgba(12,7,4,.70)",
-            "selection": "rgba(255,138,76,.28)",
-            "text-on-danger": "#1F0605",
-            "text-on-warn": "#1C1405",
-            "fg": "#F6EDE4",
-            "dim": "#C0AC9C",
-            "faint": "#AC9583",
-            "line": "#2E241E",
-            "raised": "#251E19",
-            "accent-fg": "#1A0B04",
-        },
-        "contrast": {
-            "on_surface": "primary 15.47 / secondary 8.20 / tertiary 6.29",
-            "worst_text": "primary 12.61, secondary 6.69, tertiary 5.13 (surface-active)",
-            "non_text": "border-strong 3.27 worst, border-focus 8.15 on bg",
-            "button": "text-on-accent on accent 8.22, on accent-hover 9.40",
-        },
-    },
-    "forest": {
-        "label": "Forest",
-        "dark": True,
-        # Understory. A deep pine room with blue in the shadows, lit by a muted citron --
-        # a hue almost nothing else uses, which is exactly why it feels chosen rather
-        # than defaulted. Citron also solves the problem every green theme has: the
-        # accent no longer collides with `ok`, which stays a true leaf green ~60deg away.
-        # warn is pushed to amber-orange (~32deg) to open the gap from the citron accent.
-        "vars": {
-            "bg": "#0C1210",
-            "chrome": "#080D0B",
-            "surface": "#121A17",
-            "surface-raised": "#18231F",
-            "surface-sunken": "#080E0C",
-            "surface-overlay": "#1E2A25",
-            "surface-hover": "#16211D",
-            "surface-active": "#213029",
-            "border-subtle": "#1F2C27",
-            "border-strong": "#5E7C70",
-            "border-focus": "#AFC85C",
-            "text-primary": "#ECEFE7",
-            "text-secondary": "#A6B4AA",
-            "text-tertiary": "#8DA096",
-            "text-on-accent": "#0E1405",
-            "text-on-ok": "#0E1405",
-            "accent": "#AFC85C",
-            "accent-hover": "#C2DA70",
-            "accent-text": "#B9D067",
-            "accent-muted": "#181D0C",
-            "live": "#FF6470",
-            "live-muted": "#2A0C10",
-            "ok": "#4FC781",
-            "ok-muted": "#07180D",
-            "warn": "#E49B44",
-            "warn-muted": "#1F1206",
-            "danger": "#FD6A62",
-            "danger-muted": "#2A0C0A",
-            "idle": "#8DA096",
-            "idle-muted": "#161D1A",
-            "track": "#182521",
-            "shadow-color": "rgba(2,7,5,.64)",
-            "rim": "rgba(226,255,236,.05)",
-            "scrim": "rgba(4,9,7,.68)",
-            "selection": "rgba(175,200,92,.28)",
-            "text-on-danger": "#1F0605",
-            "text-on-warn": "#1F1206",
-            "fg": "#ECEFE7",
-            "dim": "#A6B4AA",
-            "faint": "#8DA096",
-            "line": "#1F2C27",
-            "raised": "#18231F",
-            "accent-fg": "#0E1405",
-        },
-        "contrast": {
-            "on_surface": "primary 15.24 / secondary 8.21 / tertiary 6.41",
-            "worst_text": "primary 11.89, secondary 6.40, tertiary 5.00 (surface-active)",
-            "non_text": "border-strong 3.25 worst, border-focus 10.13 on bg",
-            "button": "text-on-accent on accent 10.03, on accent-hover 12.09",
-        },
-    },
-    "daylight": {
-        "label": "Daylight",
+    "light": {
+        "label": "Light",
         "dark": False,
-        # Studio daylight. Cool paper, warm ink -- the inverse of the cliche. The body is
-        # blue-grey paper, cards are true white floating on shadow alone, and the chassis
-        # is a cooler tinted panel like a machined bezel. The lamp is petrol teal, the
-        # lights-on counterpart of midnight's cyanotype.
-        #
-        # DO NOT lighten `chrome`, `surface-sunken` or `surface-active` without re-running
-        # the contrast check: every text token here was tuned against `chrome`, which is
-        # the true worst ground in a light theme, not white.
+        # The same system with the lights on: white plates on a pale grey room,
+        # near-black ink. The state colours are deep (brick, pine, bronze) because
+        # they must work as TEXT on white, not just as dots.
         "vars": {
-            "bg": "#EDF0F3",
-            "chrome": "#E4E9ED",
+            "bg": "#F4F4F6",
+            "chrome": "#F4F4F6",
             "surface": "#FFFFFF",
-            "surface-raised": "#FFFFFF",
-            "surface-sunken": "#E7EBEF",
+            "surface-raised": "#F0F1F3",
+            "surface-sunken": "#F7F7F8",
             "surface-overlay": "#FFFFFF",
-            "surface-hover": "#F2F5F8",
-            "surface-active": "#E8EDF2",
-            "border-subtle": "#DDE3E9",
-            "border-strong": "#767D85",
-            "border-focus": "#0F6E85",
-            "text-primary": "#16191C",
-            "text-secondary": "#48525D",
-            "text-tertiary": "#5A646F",
+            "surface-hover": "#F0F1F3",
+            "surface-active": "#E3E4E8",
+            "border-subtle": "rgba(0,0,0,.08)",
+            "border-strong": "rgba(0,0,0,.45)",
+            "border-focus": "#18191C",
+            "text-primary": "#18191C",
+            "text-secondary": "#55585F",
+            "text-tertiary": "#666A72",
             "text-on-accent": "#FFFFFF",
             "text-on-ok": "#FFFFFF",
-            "accent": "#0F6E85",
-            "accent-hover": "#0B5A6D",
-            "accent-text": "#0B6070",
-            "accent-muted": "#E4EFF2",
-            "live": "#C02730",
-            "live-muted": "#F8E9EA",
-            "ok": "#116B39",
-            "ok-muted": "#E5F0E9",
-            "warn": "#7F5300",
-            "warn-muted": "#F2EDE4",
-            "danger": "#B02218",
-            "danger-muted": "#F7E8E7",
-            "idle": "#5A646F",
-            "idle-muted": "#ECEEF0",
-            "track": "#DDE3E9",
-            "shadow-color": "rgba(19,29,39,.13)",
-            "rim": "rgba(255,255,255,.90)",
-            "scrim": "rgba(18,25,32,.38)",
-            "selection": "rgba(15,110,133,.20)",
+            "accent": "#18191C",
+            "accent-hover": "#000000",
+            "accent-text": "#18191C",
+            "accent-muted": "#E3E4E8",
+            "live": "#BF2C34",
+            "live-muted": "#FBEAEB",
+            "ok": "#167A5C",
+            "ok-muted": "#E6F2EE",
+            "warn": "#94610F",
+            "warn-muted": "#F6EEDF",
+            "danger": "#BF2C34",
+            "danger-muted": "#FBEAEB",
+            "idle": "#666A72",
+            "idle-muted": "#ECEDEF",
+            "track": "#E3E4E8",
+            "shadow-color": "rgba(20,22,28,.12)",
+            "rim": "rgba(255,255,255,.9)",
+            "scrim": "rgba(20,22,28,.35)",
+            "selection": "rgba(24,25,28,.12)",
             "text-on-danger": "#FFFFFF",
             "text-on-warn": "#FFFFFF",
-            "fg": "#16191C",
-            "dim": "#48525D",
-            "faint": "#5A646F",
-            "line": "#DDE3E9",
-            "raised": "#FFFFFF",
+            "fg": "#18191C",
+            "dim": "#55585F",
+            "faint": "#666A72",
+            "line": "rgba(0,0,0,.08)",
+            "raised": "#F0F1F3",
             "accent-fg": "#FFFFFF",
         },
         "contrast": {
-            "on_surface": "primary 17.65 / secondary 7.95 / tertiary 6.02",
-            "worst_text": "primary 14.44, secondary 6.51, tertiary 4.93 (on chrome)",
-            "non_text": "border-strong 3.48 worst (surface-sunken), 4.16 on white",
-            "button": "white on accent 5.85, on accent-hover 7.78",
+            "on_surface": "primary 17.6 / secondary 7.3 / tertiary 5.4",
+            "worst_text": "tertiary 4.8 on surface-raised",
+            "non_text": "border-strong 3.3 on surface-raised",
+            "button": "white on accent 17.6",
         },
     },
 }
 
-DEFAULT = "midnight"
+# Ids from before the redesign. Configs written by v1.92 and earlier still say
+# one of these; they are read as the nearest of the two palettes rather than
+# falling back to System, which would quietly flip a daylight user to dark.
+ALIASES: dict[str, str] = {
+    "midnight": "dark",
+    "carbon": "dark",
+    "ember": "dark",
+    "forest": "dark",
+    "daylight": "light",
+}
+
+# System is not a palette: it is dark with light swapped in by the browser
+# when Windows (or macOS) is in light mode. See root_css().
+CHOICES: tuple[tuple[str, str], ...] = (("system", "System"), ("dark", "Dark"), ("light", "Light"))
+
+DEFAULT = "system"
 
 # Engine phase -> token name. Four independent copies of this mapping used to exist
 # (web JS, tray.py, panel.py, the dead web.py) and they had already drifted -- the tray
@@ -428,41 +256,43 @@ PHASES: dict[str, str] = {
 }
 
 
+def resolve(name: str | None) -> str:
+    """'system', 'dark' or 'light' for whatever a config says. Never raises."""
+    n = str(name or "").strip().lower()
+    n = ALIASES.get(n, n)
+    return n if n in ("system", "dark", "light") else "system"
+
+
 def get(name: str | None) -> dict:
-    """The theme dict for `name`, falling back to DEFAULT. Never raises."""
-    return THEMES.get(name or "", THEMES[DEFAULT])
+    """The palette dict for `name`. System answers with dark, which is what a
+    surface that cannot ask the OS (the tray icon, the theme-color meta) uses."""
+    r = resolve(name)
+    return THEMES["dark" if r == "system" else r]
 
 
 def css_vars(name: str | None) -> str:
-    """The BODY of a `:root{}` block -- indented `--token: value;` lines only.
-
-    webui.page() wraps this in ":root{" ... "}" itself, so emitting a selector,
-    a brace or an @media block here would produce invalid CSS.
-    """
+    """The BODY of a `:root{}` block -- indented `--token: value;` lines only."""
     t = get(name)
     return "\n".join(f"  --{k}: {v};" for k, v in t["vars"].items())
 
 
-def listing() -> list[dict]:
-    """[{id, label, dark, swatch}] for the Settings > Appearance picker.
+def root_css(name: str | None) -> str:
+    """The whole palette as CSS text, ready for its own <style> element.
 
-    The swatch is bg / surface / accent / live: room, plate, lamp, tally -- the four
-    values that carry a theme's whole identity at 88px.
+    For System that is dark in `:root` and light again inside a
+    prefers-color-scheme block, so the page follows the OS with no script and
+    keeps following it if Windows flips to light mid-session.
     """
-    return [
-        {
-            "id": k,
-            "label": v["label"],
-            "dark": v["dark"],
-            "swatch": [
-                v["vars"]["bg"],
-                v["vars"]["surface"],
-                v["vars"]["accent"],
-                v["vars"]["live"],
-            ],
-        }
-        for k, v in THEMES.items()
-    ]
+    r = resolve(name)
+    if r != "system":
+        return ":root{\n" + css_vars(r) + "\n}"
+    return (":root{\n" + css_vars("dark") + "\n}\n"
+            "@media (prefers-color-scheme: light){:root{\n" + css_vars("light") + "\n}}")
+
+
+def listing() -> list[dict]:
+    """[{id, label}] for the Settings > Appearance picker, in picker order."""
+    return [{"id": k, "label": label} for k, label in CHOICES]
 
 
 def rgb(name: str | None, token: str) -> tuple[int, int, int]:
@@ -491,5 +321,5 @@ for _id, _t in THEMES.items():
             f"theme {_id!r} token set does not match TOKENS "
             f"(missing={_missing}, extra={_extra}, order_mismatch={not _missing and not _extra})"
         )
-if DEFAULT not in THEMES:
-    raise RuntimeError(f"DEFAULT theme {DEFAULT!r} is not in THEMES")
+if DEFAULT not in dict(CHOICES):
+    raise RuntimeError(f"DEFAULT theme {DEFAULT!r} is not one of the choices")

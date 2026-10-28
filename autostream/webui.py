@@ -239,9 +239,12 @@ def page(theme_id: str) -> str:
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1,viewport-fit=cover'>"
         f"<meta name='theme-color' content='{theme.get(theme_id)['vars']['bg']}'>"
-        "<title>AutoStream</title><style>:root{\n"
-        + theme.css_vars(theme_id)
-        + "\n}\n" + ui_assets.CSS + "</style></head><body>"
+        # The palette has its own <style> so Settings can swap it in place
+        # (set_repaint) without touching the main sheet, and so System's
+        # prefers-color-scheme block travels with it.
+        "<title>AutoStream</title><style id=\"theme-vars\">"
+        + theme.root_css(theme_id)
+        + "</style><style>" + ui_assets.CSS + "</style></head><body>"
         + ui_assets.BODY
         + "<script>" + ui_assets.JS + "</script></body></html>"
     )
@@ -889,7 +892,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if p == "/api/theme":
                 t = str(b.get("theme", ""))
-                if t not in theme.THEMES:
+                if theme.resolve(t) != t:
                     self._json({"error": "unknown theme"}, 400)
                     return
                 cfg.save_field("ui", "theme", t)
@@ -1353,7 +1356,8 @@ class Server:
     def theme_id(self) -> str:
         if self._theme is None:
             try:
-                self._theme = cfg.load().get("ui", {}).get("theme") or theme.DEFAULT
+                # resolve(): a config from before the redesign says `carbon`.
+                self._theme = theme.resolve(cfg.load().get("ui", {}).get("theme") or theme.DEFAULT)
             except Exception:  # noqa: BLE001
                 self._theme = theme.DEFAULT
         return self._theme
@@ -1415,7 +1419,7 @@ class Server:
             schema.FIELDS_BY_PATH[k].get("restart") for k in changed)
         # theme_id() caches; without this the next full page load paints the
         # old palette while /api/bootstrap reports the new id.
-        self._theme = str(clean["ui.theme"]) if "ui.theme" in clean else None
+        self._theme = theme.resolve(str(clean["ui.theme"])) if "ui.theme" in clean else None
         # Push the new values into the Config instance the daemon is holding.
         # Without this every non-`restart` field is inert until the process is
         # restarted, and the UI would be reporting a change that never happened.

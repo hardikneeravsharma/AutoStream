@@ -210,7 +210,7 @@ DEFAULTS: dict[str, Any] = {
         "headline": "{game}",
         "subtitle": "{channel} | {day} {daypart}",
     },
-    "ui": {"theme": "midnight", "open_window": True, "preview_clips": True,
+    "ui": {"theme": "system", "open_window": True, "preview_clips": True,
            "developer_mode": False},
     "logging": {"level": "INFO", "keep_days": 7},
 }

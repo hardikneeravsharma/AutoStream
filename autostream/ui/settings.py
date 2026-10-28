@@ -345,18 +345,12 @@ function set_themesHtml(){
   var list = set_state.themes;
   if (!list.length) return '<p class="field-help">No themes available.</p>';
   var cur = set_state.theme || set_state.values['ui.theme'];
-  return '<div class="field-inline" id="set-themes">' + list.map(function(t){
+  /* System, Dark, Light as one segmented control: three words need no swatch. */
+  return '<div class="seg" id="set-themes" role="radiogroup" aria-label="Theme">' + list.map(function(t){
     var on = String(t.id) === String(cur);
-    var sw = (t.swatch || []).map(function(c){
-      return '<span style="display:block;height:6px;background:' + set_attr(c) + '"></span>';
-    }).join('');
-    return '<button class="btn btn-ghost" type="button" data-act="theme"' +
-      ' data-theme="' + set_attr(t.id) + '" aria-pressed="' + (on ? 'true' : 'false') + '"' +
-      (on ? ' style="box-shadow:inset 0 0 0 2px var(--accent)"' : '') + '>' +
-      '<span style="display:block;width:44px;overflow:hidden;border-radius:3px">' + sw + '</span>' +
-      '<span>' + esc(t.label || t.id) + '</span>' +
-      (on ? '<span aria-hidden="true">' + icon('check') + '</span>' : '') +
-      '</button>';
+    return '<button class="seg-btn' + (on ? ' is-active' : '') + '" type="button" role="radio"' +
+      ' data-act="theme" data-theme="' + set_attr(t.id) + '"' +
+      ' aria-checked="' + (on ? 'true' : 'false') + '">' + esc(t.label || t.id) + '</button>';
   }).join('') + '</div>';
 }
 
@@ -1082,24 +1076,19 @@ function set_copyFallback(inp){
 
 /* -------------------------------------------------------------- the theme */
 
-/* The palette lives in the :root block the server renders, so after the theme
-   is saved we re-read that block and push it onto the document as inline
-   custom properties. That repaints every view without losing this page. */
+/* The palette lives in its own <style id="theme-vars"> that the server
+   renders, so after the theme is saved we fetch the page again and swap that
+   element's text. Swapping the whole block (rather than copying values onto
+   the root as inline properties, as this used to) is what lets System work:
+   its light half sits inside a prefers-color-scheme block, and an inline
+   property would override it. */
 async function set_repaint(){
   var r = await fetch('/' + (location.search || ''), { cache: 'no-store' });
   var html = await r.text();
-  var m = html.match(/:root\s*\{([^}]*)\}/);
-  if (!m) throw new Error('no palette');
-  var applied = 0;
-  m[1].split(';').forEach(function(line){
-    var i = line.indexOf(':');
-    if (i < 0) return;
-    var name = line.slice(0, i).trim(), value = line.slice(i + 1).trim();
-    if (name.indexOf('--') !== 0 || !value) return;
-    document.documentElement.style.setProperty(name, value);
-    applied++;
-  });
-  if (!applied) throw new Error('no palette');
+  var m = html.match(/<style id="theme-vars">([\s\S]*?)<\/style>/);
+  var host = document.getElementById('theme-vars');
+  if (!m || !host || m[1].indexOf('--') < 0) throw new Error('no palette');
+  host.textContent = m[1];
 }
 
 async function set_theme(id){

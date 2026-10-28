@@ -76,7 +76,7 @@ def _theme_options() -> list[dict[str, str]]:
         ]
     except Exception:  # noqa: BLE001 - settings must render even if themes break
         opts = []
-    return opts or _opts(("midnight", "Midnight"))
+    return opts or _opts(("system", "System"))
 
 
 # YouTube's category ids are global and stable; 20 is Gaming.
@@ -105,8 +105,8 @@ CONFIG_SCHEMA: list[Section] = [
             _field(
                 "ui.theme",
                 "Theme",
-                "Applies straight away, here and in any browser tab you have open "
-                "on this dashboard.",
+                "System follows Windows. Applies straight away, here and in any "
+                "browser tab you have open on this dashboard.",
                 "select",
                 options=_theme_options(),
                 options_source="themes",

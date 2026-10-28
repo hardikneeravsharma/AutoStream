@@ -92,8 +92,8 @@ CONTROLS: list[Control] = [
             acts=("top-toggle", "rail-quit", "dash-btn-stop", "dash-btn-pause",
                   "dash-btn-record", "dash-btn-abort", "dash-save-replay"),
             why="the whitelist is the only thing between a POST and the engine"),
-    Control("/api/theme", "POST", CALL, "theme swatch", "settings",
-            body={"theme": "midnight"}, expect=_ok,
+    Control("/api/theme", "POST", CALL, "theme picker", "settings",
+            body={"theme": "dark"}, expect=_ok,
             reject={"theme": "chartreuse"}, acts=("theme",),
             why="applies immediately, bypassing Save"),
 
