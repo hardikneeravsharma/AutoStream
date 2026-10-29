@@ -863,8 +863,21 @@ function set_applySections(searching, hits, found){
 /* Kept as the name the rest of the page calls after a platform change. */
 function set_applyPlatform(){ set_applyFilters(); }
 
+/* OPEN ONE SETTING: its section, scrolled to it, focus on its control. What
+   every "fix it" button means -- the Dashboard's checklist, the Logs, Ctrl K.
+   They used to search Settings for a word instead, and on a first visit the
+   search ran before the page had loaded anything, so 'Turn recording on'
+   landed on Appearance. Asked before the load, it waits for it. */
+function set_open(path){
+  if (typeof go === 'function' && shell_page !== 'settings') go('settings');
+  set_search('');
+  if (!set_state.loaded){ set_state.openAfterLoad = path; return; }
+  set_state.openAfterLoad = '';
+  set_reveal(path);
+}
+
 /* What Ctrl K finds in Settings: a setting by its name, its help text or its
-   key. Opening one goes to Settings searched to it, which shows its section. */
+   key. Opening one opens that setting (set_open). */
 pal_source('Settings', function (q) {
   if (!String(q || '').trim()) return [];
   var out = [];
@@ -872,8 +885,7 @@ pal_source('Settings', function (q) {
     var f = set_state.fields[k];
     if (out.length < 6 && f && f.label && pal_match(q, f.label + ' ' + (f.help || '') + ' ' + f.path))
       out.push({label: f.label, hint: f.section_label || '',
-                run: function () { go('settings'); var s = set_el('set-search');
-                                   if (s) { s.value = f.label; } set_search(f.label); }});
+                run: function () { set_open(f.path); }});
   });
   return out;
 });
@@ -1340,6 +1352,12 @@ async function set_load(){
     set_render();
     set_wire();
     set_state.loaded = true;
+    /* A fix button asked for one setting before the page could show it. */
+    if (set_state.openAfterLoad){
+      var want = set_state.openAfterLoad;
+      set_state.openAfterLoad = '';
+      set_reveal(want);
+    }
   } catch (e){
     set_el('set-panels').innerHTML = '<div class="empty">Could not load settings. ' +
       esc(String((e && e.message) || e)) + '</div>';

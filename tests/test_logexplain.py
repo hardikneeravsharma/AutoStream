@@ -12,7 +12,7 @@ from autostream import logexplain
 
 def test_obs_not_answering_points_at_its_settings():
     got = logexplain.explain("OBS is not answering: [WinError 10061] refused")
-    assert "OBS" in got["say"] and got["fix"]["act"] == "settings:OBS"
+    assert "OBS" in got["say"] and got["fix"]["act"] == "setting:obs.path"
 
 
 def test_quota_ran_out_has_no_button_to_press():
@@ -22,9 +22,9 @@ def test_quota_ran_out_has_no_button_to_press():
 
 def test_a_full_drive_offers_to_change_the_folder():
     got = logexplain.explain("only 4 GB free on the recording drive (floor 5 GB) - stopping the recording; the stream carries on")
-    assert "full" in got["say"] and got["fix"]["act"] == "settings:Recording"
+    assert "full" in got["say"] and got["fix"]["act"] == "setting:record.directory"
     got = logexplain.explain("12 GB free on the recording drive, under the 20 GB you asked to be warned at")
-    assert got["fix"]["act"] == "settings:Recording"
+    assert got["fix"]["act"] == "setting:record.directory"
 
 
 def test_missing_ffmpeg_offers_the_tools():
@@ -34,7 +34,7 @@ def test_missing_ffmpeg_offers_the_tools():
 
 def test_an_expired_sign_in_offers_to_sign_in():
     got = logexplain.explain("token refresh failed: invalid_grant")
-    assert "sign" in got["say"].lower() and got["fix"]["act"] == "settings:Stream"
+    assert "sign" in got["say"].lower() and got["fix"]["act"] == "setting:youtube.platform"
 
 
 def test_an_unknown_line_is_not_explained():
