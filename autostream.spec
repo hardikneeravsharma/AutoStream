@@ -125,6 +125,11 @@ datas += [("autostream/clips/fonts/*.ttf", "autostream/clips/fonts"),
 # having to dig it back out of the binary.
 datas += [("autostream/ui/assets/autostream.ico", "autostream/ui/assets")]
 
+# The UI's typeface and its licence. Embedded into the page's stylesheet at
+# import (ui/css.py _ui_font), so the file has to be where the code reads it.
+datas += [("autostream/ui/assets/fonts/InstrumentSans.ttf", "autostream/ui/assets/fonts"),
+          ("autostream/ui/assets/fonts/OFL.txt", "autostream/ui/assets/fonts")]
+
 a = Analysis(
     ["autostream_launcher.py"],
     pathex=["."],

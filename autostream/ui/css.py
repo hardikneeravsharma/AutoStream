@@ -1334,8 +1334,9 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
 .dash-stats>.stat-grid>.stat,.dash-stats>.stat{border-radius:0}
 .stat-delta.is-bad{color:var(--warn)}
 /* Idle: what will happen, the checklist, and what is new. The live-only
-   cards step aside so a stranger is not shown a graph of nothing. */
-.dash.is-idle .dash-stats,.dash.is-idle #dash-spark-card,.dash.is-idle #dash-session,
+   cards step aside so a stranger is not shown a graph of nothing. The API
+   budget stays: it is today's, and it is worth knowing before going live. */
+.dash.is-idle .dash-stats,.dash.is-idle #dash-spark-card,
 .dash.is-idle #dash-ingest{display:none}
 .dash-idle{display:flex;flex-direction:column;gap:var(--space-6)}
 .dash.is-idle .status-timer,.dash.is-idle #dash-btn-stop:disabled{display:none}
@@ -3517,6 +3518,34 @@ CLIPS_FLOW_CSS = """
 CSS = CSS + CLIPS_FLOW_CSS
 
 
+def _ui_font() -> str:
+    """Instrument Sans (SIL OFL, assets/fonts/OFL.txt), embedded in the sheet.
+
+    EMBEDDED, NOT SERVED. Every route here is token-gated and the page is one
+    self-contained document, so a font URL would need its own authenticated
+    endpoint -- and a font fetched from the web would be the page's only
+    network request. As a data: URI it is part of the sheet: about 260 KB more
+    on a page that is served from this machine to itself. One variable file
+    carries every weight. If the file is missing (a source checkout that lost
+    it), the stack in --font-text falls back to Segoe UI Variable and nothing
+    else changes.
+    """
+    import base64
+    from pathlib import Path
+
+    f = Path(__file__).parent / "assets" / "fonts" / "InstrumentSans.ttf"
+    try:
+        data = base64.b64encode(f.read_bytes()).decode("ascii")
+    except OSError:
+        return ""
+    return ('@font-face{font-family:"Instrument Sans";font-style:normal;'
+            'font-weight:400 700;font-stretch:75% 100%;font-display:swap;'
+            'src:url(data:font/ttf;base64,' + data + ') format("truetype")}\n')
+
+
+CSS = _ui_font() + CSS
+
+
 REEL_CSS = """
 /* ------------------------------------------------------------------ reels
    Five choices in order, each narrowing the next. The rail reports; it does
@@ -3771,9 +3800,9 @@ STUDIO_CSS = r"""
 .bin-shot .bin-none{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   color:var(--text-tertiary);font:500 12px var(--font-text);
   text-align:center;padding:0 10px}
-.bin-shot .bin-tag{position:absolute;left:6px;top:6px;padding:2px 6px;border-radius:4px;
+.bin-shot .bin-tag{position:absolute;left:6px;top:6px;padding:2px 6px;border-radius:var(--radius-xs);
   background:var(--scrim);color:var(--text-primary);font:500 12px var(--font-text);letter-spacing:.06em}
-.bin-shot .bin-sample{position:absolute;right:6px;bottom:6px;padding:1px 6px;border-radius:4px;
+.bin-shot .bin-sample{position:absolute;right:6px;bottom:6px;padding:1px 6px;border-radius:var(--radius-xs);
   background:var(--scrim);color:var(--text-secondary);font:500 12px var(--font-text);}
 .bin-meat{display:grid;gap:4px;padding:10px 11px 12px}
 .bin-name{font-weight:600;color:var(--text-primary);font-size:13.5px;line-height:1.25}
@@ -3952,7 +3981,7 @@ STUDIO_CSS = r"""
   display:flex;align-items:center;justify-content:center;font:600 12px/1 var(--font-text);
   background:var(--on-media-scrim-soft);color:var(--on-media);border:2px solid rgba(255,255,255,.75)}
 .studio-clip.is-on .studio-clip-n{background:var(--accent);border-color:var(--accent);color:var(--text-on-accent)}
-.studio-clip-dur,.studio-clip-kills{position:absolute;bottom:6px;padding:2px 6px;border-radius:4px;
+.studio-clip-dur,.studio-clip-kills{position:absolute;bottom:6px;padding:2px 6px;border-radius:var(--radius-xs);
   background:var(--on-media-scrim);color:var(--on-media);font-size:12px}
 .studio-clip-dur{right:6px}
 .studio-clip-kills{left:6px;font-weight:600}
@@ -4016,8 +4045,8 @@ STUDIO_CSS = r"""
 .gd-facts b{font-size:12px;color:var(--text-tertiary);margin-right:6px}
 .gd-slot{display:grid;gap:var(--space-3)}
 .gd-slothead{display:flex;justify-content:space-between;gap:var(--space-3);align-items:baseline}.gd-slothead h4,.gd-field h4{margin:0}
-.gd-bar{height:8px;border-radius:4px;background:var(--surface-active);border:1px solid var(--border);overflow:hidden}.gd-bar i{display:block;height:100%;background:var(--accent)}
-.gd-tags{display:flex;flex-wrap:wrap;gap:4px}.gd-tags i{font-size:12px;font-weight:600;font-style:normal;padding:2px 6px;border:1px solid var(--border);border-radius:3px;color:var(--text-secondary)}
+.gd-bar{height:8px;border-radius:var(--radius-xs);background:var(--surface-active);border:1px solid var(--border);overflow:hidden}.gd-bar i{display:block;height:100%;background:var(--accent)}
+.gd-tags{display:flex;flex-wrap:wrap;gap:4px}.gd-tags i{font-size:12px;font-weight:600;font-style:normal;padding:2px 6px;border:1px solid var(--border);border-radius:var(--radius-xs);color:var(--text-secondary)}
 .gd-tags .gd-hs{color:var(--warn)}.gd-tags .gd-fav{color:var(--accent)}
 /* EACH SLOT'S CLIP BROWSER: find, filters and sort above, a page of thumbnail cards, the pager below. */
 .gd-browse{display:grid;gap:var(--space-3);min-width:0}
@@ -4062,12 +4091,12 @@ STUDIO_CSS = r"""
 .gd-sumthumb{width:64px;aspect-ratio:16/9;object-fit:cover;border-radius:var(--radius-sm);background:#000}
 .gd-sumcount{flex:1 1 260px;display:grid;gap:6px;min-width:0}
 .gd-strip{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
-.gd-chipbtn{padding:5px 12px;border:var(--border-hair) solid var(--border);border-radius:999px;background:var(--surface);color:var(--text-secondary);
+.gd-chipbtn{padding:5px 12px;border:var(--border-hair) solid var(--border);border-radius:var(--radius-pill);background:var(--surface);color:var(--text-secondary);
   font:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
 .gd-chipbtn:hover{border-color:var(--border-strong)}
 .gd-chipbtn[aria-pressed="true"],.gd-chipbtn.is-active{border-color:var(--accent);color:var(--accent);background:var(--accent-muted)}
 .gd-filters{position:relative}
-.gd-filters summary{list-style:none;cursor:pointer;padding:5px 12px;border:var(--border-hair) solid var(--border);border-radius:999px;font-size:13px;color:var(--text-secondary)}
+.gd-filters summary{list-style:none;cursor:pointer;padding:5px 12px;border:var(--border-hair) solid var(--border);border-radius:var(--radius-pill);font-size:13px;color:var(--text-secondary)}
 .gd-filters summary::-webkit-details-marker{display:none}
 .gd-filters[open] summary{border-color:var(--accent);color:var(--accent)}
 .gd-filterbox{position:absolute;z-index:5;top:calc(100% + 6px);left:0;display:grid;gap:var(--space-2);min-width:280px;padding:var(--space-3);
@@ -4082,8 +4111,8 @@ STUDIO_CSS = r"""
   padding:var(--space-2) var(--space-4);border:var(--border-hair) solid var(--border);border-radius:var(--radius-md);
   background:var(--surface-raised,var(--surface));box-shadow:var(--shadow-md)}
 .gd-traythumbs{display:flex;flex-wrap:wrap;gap:4px;align-items:center;flex:1 1 auto;min-width:0}
-.gd-trayclip{padding:0;border:2px solid transparent;border-radius:3px;background:none;cursor:pointer;line-height:0}
-.gd-trayclip img{width:48px;aspect-ratio:16/9;object-fit:cover;border-radius:2px;background:#000}
+.gd-trayclip{padding:0;border:2px solid transparent;border-radius:var(--radius-xs);background:none;cursor:pointer;line-height:0}
+.gd-trayclip img{width:48px;aspect-ratio:16/9;object-fit:cover;border-radius:var(--radius-xs);background:#000}
 .gd-trayclip.is-build{border-color:var(--warn)}
 .gd-trayclip:hover{border-color:var(--danger)}
 .gd-timing{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2) var(--space-3)}
@@ -4098,7 +4127,7 @@ STUDIO_CSS = r"""
 .gd-gap{padding:0 4px;color:var(--text-tertiary)}
 /* The preview's kills along the clip, and where it is playing. */
 .gd-pvmarks{position:relative;height:18px;margin-top:var(--space-2);border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface-active)}
-.gd-pvmark{position:absolute;top:2px;bottom:2px;width:6px;margin-left:-3px;padding:0;border:0;border-radius:2px;background:var(--text-secondary);cursor:pointer}
+.gd-pvmark{position:absolute;top:2px;bottom:2px;width:6px;margin-left:-3px;padding:0;border:0;border-radius:var(--radius-xs);background:var(--text-secondary);cursor:pointer}
 .gd-pvmark.is-hs{background:var(--warn)}
 .gd-pvhead{position:absolute;top:0;bottom:0;left:0;width:2px;background:var(--accent);pointer-events:none}
 /* The Clips page's player visited from the guide (clip_visit): the player alone. */
@@ -4164,7 +4193,7 @@ STUDIO_CSS = r"""
 @media (max-width:759px){.lk-wrap{grid-template-columns:minmax(0,1fr)}.lk-left{position:static;max-width:260px}}
 .gd-chip{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface)}
 .gd-chip p{margin:0;min-width:0}
-.gd-dot{font-size:12px;font-weight:700;padding:3px 8px;border-radius:4px;white-space:nowrap}
+.gd-dot{font-size:12px;font-weight:700;padding:3px 8px;border-radius:var(--radius-xs);white-space:nowrap}
 .gd-chip.ok .gd-dot{color:var(--ok)}.gd-chip.warn{border-color:var(--warn)}.gd-chip.warn .gd-dot{color:var(--warn)}
 .gd-chip.bad{border-color:var(--bad)}.gd-chip.bad .gd-dot{color:var(--bad)}
 .gd-foot{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:var(--space-3)}
@@ -4197,11 +4226,11 @@ STUDIO_CSS = r"""
 .studio-style-card.is-on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .studio-style-card .studio-style{border:0;border-radius:0;background:transparent;box-shadow:none}
 .studio-style-media{position:relative;aspect-ratio:16/9;background:var(--surface-sunken);display:flex;align-items:center;justify-content:center}
-.studio-style-own{position:absolute;left:8px;top:8px;font-size:12px;font-weight:600;padding:2px 7px;border-radius:99px;
+.studio-style-own{position:absolute;left:8px;top:8px;font-size:12px;font-weight:600;padding:2px 7px;border-radius:var(--radius-pill);
   background:var(--on-media-scrim);color:var(--on-media)}
 .studio-style-media video{width:100%;height:100%;object-fit:cover;display:block}
 .studio-style-none{font-size:12px;color:var(--text-tertiary);padding:var(--space-3);text-align:center}
-.studio-style-tag{font-size:12px;font-weight:500;padding:1px 6px;border-radius:99px;border:var(--border-hair) solid var(--border-strong);
+.studio-style-tag{font-size:12px;font-weight:500;padding:1px 6px;border-radius:var(--radius-pill);border:var(--border-hair) solid var(--border-strong);
   color:var(--text-secondary);vertical-align:middle}
 .studio-style-more{padding:0 var(--space-4) var(--space-3);font-size:12px;color:var(--text-tertiary)}
 .studio-style-more summary{cursor:pointer}
@@ -4778,7 +4807,7 @@ EDITOR_CSS = r"""
 .studio-strip{display:flex;flex-direction:column;gap:var(--space-2)}
 .studio-strip-view{position:relative;border-radius:var(--radius-sm);overflow:hidden;background:#000;aspect-ratio:16/9}
 .studio-strip-video{display:block;width:100%;height:100%;object-fit:contain}
-.studio-strip-cap{position:absolute;left:6px;bottom:6px;padding:1px 6px;border-radius:4px;font-size:12px;
+.studio-strip-cap{position:absolute;left:6px;bottom:6px;padding:1px 6px;border-radius:var(--radius-xs);font-size:12px;
   background:var(--on-media-scrim);color:var(--on-media)}
 .studio-strip-track{position:relative;display:flex;height:42px;border-radius:var(--radius-sm);overflow:hidden;
   background:var(--surface);touch-action:none;user-select:none}
@@ -4810,7 +4839,7 @@ EDITOR_CSS = r"""
 
 /* Nine places for the handle, laid out as the frame they stand for. */
 .ed-grid9{display:grid;grid-template-columns:repeat(3,28px);gap:4px}
-.ed-grid9 button{height:22px;border-radius:4px;border:var(--border-hair) solid var(--border-subtle);
+.ed-grid9 button{height:22px;border-radius:var(--radius-xs);border:var(--border-hair) solid var(--border-subtle);
   background:var(--surface-sunken);cursor:pointer;padding:0}
 .ed-grid9 button.is-on{background:var(--accent);border-color:var(--accent)}
 .ed-row{display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap}
@@ -4818,7 +4847,7 @@ EDITOR_CSS = r"""
 /* The frame over the player: where the handle and the camera will be. */
 .ed-frame{position:absolute;inset:0;pointer-events:none}
 .ed-frame.hide{display:none}
-.ed-handle{position:absolute;pointer-events:auto;cursor:grab;padding:2px 8px;border-radius:4px;
+.ed-handle{position:absolute;pointer-events:auto;cursor:grab;padding:2px 8px;border-radius:var(--radius-xs);
   font:600 13px/1.4 var(--font-text);color:var(--on-media);background:var(--on-media-scrim);
   outline:1px dashed rgba(255,255,255,.8);white-space:nowrap;user-select:none;touch-action:none}
 .ed-handle:active{cursor:grabbing}
@@ -4840,7 +4869,7 @@ EDITOR_CSS = r"""
   align-items:center;justify-content:center;padding:0 4px;font:700 11px var(--font-text);
   color:var(--on-media);background:var(--on-media-scrim);pointer-events:none}
 .ed-box.is-on .ed-box-num{background:var(--accent);color:var(--text-on-accent)}
-.ed-box-h{position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:2px;
+.ed-box-h{position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:var(--radius-xs);
   background:var(--on-media);border:1px solid var(--accent);box-shadow:0 1px 3px rgba(0,0,0,.5)}
 .ed-box-nw{left:0;top:0;cursor:nwse-resize}
 .ed-box-n{left:50%;top:0;cursor:ns-resize}
@@ -4852,7 +4881,7 @@ EDITOR_CSS = r"""
 .ed-box-w{left:0;top:50%;cursor:ew-resize}
 /* The turn knob stands off the top edge, where it cannot be mistaken for a
    corner: a rotate that resizes is the classic confusion here. */
-.ed-box-rot{left:50%;top:-26px;border-radius:999px;cursor:grab}
+.ed-box-rot{left:50%;top:-26px;border-radius:var(--radius-pill);cursor:grab}
 .ed-box-hint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);margin:0;
   padding:6px 10px;border-radius:var(--radius-sm);font-size:12.5px;
   color:var(--on-media);background:var(--on-media-scrim);pointer-events:none}
@@ -5105,7 +5134,7 @@ FACECAM_CSS = r"""
 .studio-fc-pair video{width:100%;aspect-ratio:16/9;background:#000;border-radius:var(--radius-sm)}
 .studio-fc-pair figcaption{font-size:11.5px;color:var(--text-tertiary)}
 .studio-fc-mockwrap{display:flex;justify-content:center;background:var(--surface-sunken);border-radius:var(--radius-sm);padding:var(--space-4)}
-.studio-fc-mockwrap canvas{max-width:100%;max-height:52vh;border-radius:4px;box-shadow:var(--shadow-md);z-index:calc(var(--z-topbar) + 1)}
+.studio-fc-mockwrap canvas{max-width:100%;max-height:52vh;border-radius:var(--radius-xs);box-shadow:var(--shadow-md);z-index:calc(var(--z-topbar) + 1)}
 
 .studio-imp{width:min(1100px,calc(100vw - 48px))}
 .studio-imp-body{max-width:none;display:grid;grid-template-columns:minmax(0,1.6fr) minmax(260px,1fr);gap:var(--space-5);align-items:start}
@@ -5251,3 +5280,15 @@ CSS += r"""
 .reel-chip.is-ghost{opacity:.55;border-style:dashed}
 .studio-mk-dropsbox.is-flash{outline:2px solid var(--warn);outline-offset:4px;border-radius:var(--radius-md)}
 """
+
+# Settings (grouped sections) and first-run setup, in the redesign's look; last, so it wins.
+from .css_settings import SETTINGS_CSS; CSS += SETTINGS_CSS  # noqa: E402,E702
+
+# Library (games and other apps, with switches), in the redesign's look; after section 10, so it wins.
+from .css_library import LIBRARY_CSS; CSS += LIBRARY_CSS  # noqa: E402,E702
+
+# The Studio (clips as a list, reels with a phone, the maker's steps on top), in the redesign's look; last, so it wins.
+from .css_studio import STUDIO_CSS; CSS += STUDIO_CSS  # noqa: E402,E702
+
+# Clips (a summary to start, then the moments on a timeline), in the redesign's look; last, so it wins.
+from .css_clips import CLIPS_CSS; CSS += CLIPS_CSS  # noqa: E402,E702

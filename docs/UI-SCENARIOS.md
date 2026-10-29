@@ -351,6 +351,28 @@ The song's and the game's level as yellow lines with keyframes on the Music and 
 | 6.122 | *Keyframe at playhead*, *Flat again* | A keyframe at the playhead on that line; Flat again takes every keyframe off and leaves the line at the level it had at the playhead | yes (`test_ui_studio_volume`) |
 | 6.123 | Play the preview over a keyframed line | The players' volume follows the line at the reel second on screen | yes (`test_ui_studio_volume`) |
 
+
+## 6i · The redesign: clips as a list, reels with a phone, steps on top (2026-10-29)
+
+The hero is gone; the clips open as a list with the clip in focus beside it, the reels as a list
+with a 9:16 preview, and the guided maker's steps run across the top with the reel so far in a bar
+at the bottom. All in `test_ui_studio_list.py`.
+
+| # | Scenario | Must be true | Covered |
+|---|---|---|---|
+| 6.124 | Open a run | Rows, not tiles; the first row in focus beside them; no eyebrow or headline; Make a reel still `#studio-gd-open` | yes (`test_ui_studio_list`) |
+| 6.125 | Down, then Up | The focus and the inspector move together, and the keyboard goes with them | yes (`test_ui_studio_list`) |
+| 6.126 | A on a row, A again; the row's box | Picked and unpicked, the tray counts it; the box picks as a tile did, and the kills are read the same | yes (`test_ui_studio_list`) |
+| 6.127 | F, then F | Starred, then unstarred | yes (`test_ui_studio_list`) |
+| 6.128 | E | The marker opens on that clip | yes (`test_ui_studio_list`) |
+| 6.129 | Grid, then reload | The grid is still chosen; List puts it back | yes (`test_ui_studio_list`) |
+| 6.130 | A 60-character caption | The row keeps its height and the name ends in an ellipsis, in the row and the inspector | yes (`test_ui_studio_list`) |
+| 6.131 | The games in the sidebar | Every game and Favourites, with counts; one opens its folder | yes (`test_ui_studio_list`) |
+| 6.132 | Choose a reel | It plays in a 9:16 frame (16:9 for a wide one) with a real length (`preload="metadata"`) | yes (`test_ui_studio_list`) |
+| 6.133 | Enter on a chosen reel | Its timeline opens | yes (`test_ui_studio_list`) |
+| 6.134 | Delete a reel | Only from the row's "..." menu, and it still asks | yes (`test_ui_studio_list`) |
+| 6.135 | The guided maker | Steps Style, Clips, Song, Look, Check and make as tabs; Enter is Next; a done step goes back; the bar at the bottom says the style chosen and stays in view | yes (`test_ui_studio_list`) |
+
 ---
 
 # The honest summary

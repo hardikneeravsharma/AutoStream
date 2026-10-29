@@ -13,6 +13,7 @@ network, nothing more. Do not port-forward it.
 """
 from __future__ import annotations
 
+import fnmatch
 import hmac
 import json
 import logging
@@ -164,6 +165,20 @@ def _not_an_image(path: str) -> str | None:
     return None
 
 
+def _blocked_by(exe: str, blocklist: list[str]) -> str:
+    """The games.yaml blocklist entry that stops `exe` being a game, or "".
+
+    The same test as GameIndex.is_blocked -- an exact name, or a pattern with
+    a `*` in it -- reading a list already loaded, because apps_payload runs on
+    every poll and the engine's own index is only as fresh as its last reload.
+    """
+    exe = (exe or "").lower()
+    for b in blocklist:
+        if b == exe or ("*" in b and fnmatch.fnmatch(exe, b)):
+            return b
+    return ""
+
+
 def lan_ip() -> str:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -263,11 +278,23 @@ def seen_get(path) -> float | None:
 def seen_stamp(path, when: float) -> None:
     """Remember that the clips were shown at `when`. Its own file, not
     state.json: the engine rewrites state.json from memory and would undo it."""
+    # ONE WRITER AT A TIME, AND NEVER AN ERROR. The Studio and the Clips page
+    # both stamp on show, and two requests racing through one shared .tmp
+    # name lost to Windows refusing os.replace on a file the other still held
+    # -- a 500 the browser tier caught. A stamp is a convenience: losing one
+    # costs a "Since last time" count, so it is dropped rather than raised.
     p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"clips": float(when)}), encoding="utf-8")
-    os.replace(tmp, p)
+    with _SEEN_LOCK:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_name(f"{p.stem}.{os.getpid()}.{threading.get_ident()}.tmp")
+            tmp.write_text(json.dumps({"clips": float(when)}), encoding="utf-8")
+            os.replace(tmp, p)
+        except OSError as e:
+            log.debug("seen stamp not written: %s", e)
+
+
+_SEEN_LOCK = threading.Lock()
 
 
 def _mtime(path) -> float | None:
@@ -950,6 +977,17 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json({"error": err}, 400)
             else:
                 self._send_cached(jpg, "image/jpeg")
+        elif u.path == "/api/library/cover":
+            blob, ctype, err = self.app.library_cover(
+                (parse_qs(u.query).get("key") or [""])[0])
+            if err:
+                # 400, not 404, for the same reason as the clip thumbnail: a
+                # game with no picture is a real route answering no.
+                self._json({"error": err}, 400)
+            else:
+                # The page puts the thumbnail's path in the URL as `v`, so a
+                # changed picture is a new URL and an hour's cache is safe.
+                self._send_cached(blob, ctype, max_age=3600)
         else:
             self._json({"error": "not found"}, 404)
 
@@ -1021,6 +1059,12 @@ class _Handler(BaseHTTPRequestHandler):
 
             elif p == "/api/launch":
                 self._json(*self.app.launch(b))
+
+            elif p == "/api/library/game":
+                self._json(*self.app.library_set_game(b))
+
+            elif p == "/api/library/stream":
+                self._json(*self.app.library_set_stream(b))
 
             elif p == "/api/apps/scan":
                 # Re-scan from the dashboard. Needed whenever a new game is
@@ -1517,9 +1561,11 @@ class Server:
         # the catalog is a list of what is installed. Read once per payload
         # rather than per row.
         try:
-            games = cfg.load_games().get("games", {}) or {}
+            table = cfg.load_games()
         except Exception:  # noqa: BLE001
-            games = {}
+            table = {}
+        games = table.get("games", {}) or {}
+        blocked = [str(x).lower() for x in (table.get("blocklist") or [])]
 
         def thumb(key: str) -> str:
             row = games.get((key or "").lower())
@@ -1535,6 +1581,12 @@ class Server:
         index = getattr(self.engine, "index", None)
 
         def is_game(exe: str) -> bool:
+            # The blocklist first, because the watcher reads it first: an exe
+            # on it is never treated as a game, whatever else names it. The
+            # Library's Records switch writes exactly this, and a row that
+            # said "Records" for a game the watcher skips would be lying.
+            if _blocked_by(exe, blocked):
+                return False
             if (exe or "").lower() in games:
                 return True              # already configured, so plainly one
             try:
@@ -1555,6 +1607,104 @@ class Server:
              "thumbnail": thumb(a.exe or a.key)}
             for a in catalog.load()
         ]
+
+    def library_set_game(self, body: dict) -> tuple[dict, int]:
+        """The Library's Records switch, and Other apps' "Move to Games".
+
+        Written where the watcher reads it, games.yaml, keyed on the exe:
+        `blocklist:` for off, because the public index calls plenty of things
+        games and only the blocklist overrides it; and for on, off the
+        blocklist plus a `games:` entry when nothing else would recognise the
+        exe. Off keeps the game's entry, so its thumbnail and in-game name are
+        still there when it is switched back on.
+        """
+        from . import catalog
+
+        key = str(body.get("key", "")).strip()
+        if not key:
+            return {"error": "no app given"}, 400
+        app = catalog.find(catalog.load(), key)
+        if app is None:
+            return {"error": "That app is no longer in the Library. "
+                             "Press Rescan."}, 409
+        exe = (app.exe or app.key).lower()
+        want = bool(body.get("game"))
+        data = cfg.load_games()
+        games, block = data["games"], data["blocklist"]
+        if want:
+            block[:] = [b for b in block if str(b).lower() != exe]
+            # A pattern cannot be lifted for one exe without lifting it for
+            # every exe it matches, so it is named rather than quietly kept.
+            pattern = _blocked_by(exe, [str(b).lower() for b in block])
+            if pattern:
+                return {"error": f"games.yaml blocks every exe matching "
+                                 f"{pattern}, which includes {exe}. Edit that "
+                                 f"line to record {app.name}."}, 409
+            index = getattr(self.engine, "index", None)
+            try:
+                known = index is not None and index.lookup(exe) is not None
+            except Exception:  # noqa: BLE001 - unknown is the safe answer
+                known = False
+            if exe not in games and not known:
+                games[exe] = {"name": app.name}
+        elif exe not in {str(b).lower() for b in block}:
+            block.append(exe)
+        cfg.save_games(data)
+        # The running watcher holds the index it loaded at startup; without
+        # this the switch would read right and change nothing until a restart.
+        index = getattr(self.engine, "index", None)
+        if index is not None:
+            try:
+                index.reload()
+            except Exception as e:  # noqa: BLE001 - the write already succeeded
+                log.warning("saved, but could not reload the game index: %s", e)
+        return {"ok": True, "key": app.key, "game": want}, 200
+
+    def library_set_stream(self, body: dict) -> tuple[dict, int]:
+        """The Library's Goes live switch: the app's own `stream` flag.
+
+        Not through /api/setup/apps, which replaces apps.yaml with the list it
+        is sent and drops every entry without a path -- and the Library's
+        payload carries no paths. This changes one flag on one app and writes
+        every other field back as it was.
+        """
+        from . import catalog
+
+        key = str(body.get("key", "")).strip()
+        if not key:
+            return {"error": "no app given"}, 400
+        apps = catalog.load()
+        app = catalog.find(apps, key)
+        if app is None:
+            return {"error": "That app is no longer in the Library. "
+                             "Press Rescan."}, 409
+        app.stream = bool(body.get("stream"))
+        catalog.save(apps)
+        return {"ok": True, "key": app.key, "stream": app.stream}, 200
+
+    def library_cover(self, key: str) -> tuple[bytes, str, str]:
+        """A game's thumbnail, for its row. -> (bytes, content type, error).
+
+        Only the path games.yaml holds for that game is ever read, and only
+        once it decodes as a PNG or JPG, so the route cannot be pointed at any
+        other file on the disk.
+        """
+        key = (key or "").strip().lower()
+        try:
+            row = cfg.load_games()["games"].get(key)
+        except Exception:  # noqa: BLE001
+            row = None
+        path = str(row.get("thumbnail") or "") if isinstance(row, dict) else ""
+        if not path or not Path(path).is_file():
+            return b"", "", "no thumbnail for that game"
+        why = _not_an_image(path)
+        if why:
+            return b"", "", why
+        ctype = "image/png" if path.lower().endswith(".png") else "image/jpeg"
+        try:
+            return Path(path).read_bytes(), ctype, ""
+        except OSError as e:
+            return b"", "", f"could not read the thumbnail: {e}"
 
     def launch(self, body: dict) -> tuple[dict, int]:
         """Open an app from the Library. -> (answer, HTTP status).

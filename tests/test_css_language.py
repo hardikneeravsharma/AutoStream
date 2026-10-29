@@ -92,6 +92,23 @@ def test_phase_labels_are_words_not_caps():
     assert not [lab for lab in labels if lab.isupper() and len(lab) > 2], labels
 
 
+def test_instrument_sans_ships_with_its_licence_and_is_loaded():
+    """Bundled, not fetched: the face is embedded in the sheet so the page
+    makes no network request, and the OFL travels beside it."""
+    from pathlib import Path
+    fonts = Path(css_mod.__file__).parent / "assets" / "fonts"
+    assert (fonts / "InstrumentSans.ttf").is_file()
+    assert "Open Font License" in (fonts / "OFL.txt").read_text(encoding="utf-8")
+    assert re.search(r'@font-face\s*\{[^}]*font-family:\s*"Instrument Sans"', SHEET)
+    assert "data:font/ttf;base64," in SHEET
+
+
+def test_the_build_ships_the_ui_font():
+    from pathlib import Path
+    spec = (Path(css_mod.__file__).parents[2] / "autostream.spec").read_text(encoding="utf-8")
+    assert "autostream/ui/assets/fonts" in spec
+
+
 def test_base_text_is_13px():
     m = re.search(r"body\s*\{([^}]*)\}", SHEET)
     assert m and re.search(r"font-size\s*:\s*13px", m.group(1))

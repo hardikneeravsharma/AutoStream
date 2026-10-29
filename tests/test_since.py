@@ -48,6 +48,30 @@ def test_the_stamp_survives_a_restart(tmp_path):
     assert webui.seen_get(f) == 1234.5
 
 
+def test_two_pages_stamping_at_once_never_raise(tmp_path):
+    """The Studio and the Clips page both stamp on show, and the browser tier
+    caught them racing: one shared .tmp name, and os.replace on Windows
+    refusing a file the other write still held -- a 500 from /api/seen."""
+    import threading
+    f = tmp_path / "ui-seen.json"
+    errors = []
+
+    def go(i):
+        try:
+            for j in range(40):
+                webui.seen_stamp(f, float(i * 1000 + j))
+        except Exception as e:                      # noqa: BLE001
+            errors.append(e)
+
+    ts = [threading.Thread(target=go, args=(i,)) for i in range(4)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert not errors, errors
+    assert webui.seen_get(f) is not None
+
+
 def test_a_damaged_stamp_reads_as_never(tmp_path):
     f = tmp_path / "ui-seen.json"
     f.write_text("{not json", encoding="utf-8")
