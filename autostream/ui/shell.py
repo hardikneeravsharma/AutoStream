@@ -570,7 +570,7 @@ function shell_paint(s) {
     if (s.streaming !== false && s.quota_spent !== null && s.quota_spent !== undefined) {
       bits.push('quota ' + shell_group(s.quota_spent) + '/10,000');
     }
-    shell_setText(readout, bits.join(' \u00b7 '));   /* escaped so the source file stays ASCII */
+    shell_setText(readout, bits.join(', '));   /* commas: the redesign retired the middot strings */
   }
 
   if (phase !== shell_phase_seen) { shell_phase_seen = phase; shell_doc_title(); }
