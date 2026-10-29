@@ -225,7 +225,9 @@ def clips_src() -> str:
 
 def test_the_button_is_on_the_style_page(clips_src):
     i = clips_src.index('id="clip-options" data-cstep="style"')
-    j = clips_src.index('id="clip-progress"')
+    # The card after the style card. It was the progress card until the
+    # 2026-10-29 redesign moved that above the stages.
+    j = clips_src.index('id="clip-results"')
     assert 'id="clip-diag"' in clips_src[i:j], (
         "Run diagnostic is not inside the style card")
 
