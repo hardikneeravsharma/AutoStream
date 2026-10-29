@@ -14,33 +14,46 @@ from autostream import ui, webui
 from tests import jsfn
 
 
-def rows(msgs, marks=(), seen=(), live=True):
-    expr = f"dash_chatRows({json.dumps(list(msgs))}, {json.dumps(list(marks))}, {json.dumps(list(seen))}, {json.dumps(live)})"
+def rows(msgs, marks=(), first_ids=()):
+    expr = (f"dash_chatRows({json.dumps(list(msgs))}, {json.dumps(list(marks))}, "
+            f"{json.dumps([str(i) for i in first_ids])})")
     return jsfn.call(ui.JS, ["dash_chatRows"], expr)
 
 
-def test_a_first_message_is_marked_once():
+def test_the_first_message_marker_is_kept_by_message_id():
+    """The review caught the marker vanishing on the next poll: 'first' was
+    recomputed from whoever was in the window, so the newcomer was already
+    known two seconds later. The page now remembers WHICH messages were
+    firsts for the stream, and the rows only read that."""
     got = rows([{"id": 1, "author": "a", "text": "hi"}, {"id": 2, "author": "b", "text": "yo"},
-                {"id": 3, "author": "a", "text": "again"}])
-    assert [r["first"] for r in got] == [True, True, False]
+                {"id": 3, "author": "b", "text": "again"}], first_ids=[2])
+    assert [r["first"] for r in got] == [False, True, False]
 
 
-def test_someone_already_seen_is_not_first():
-    got = rows([{"id": 1, "author": "a", "text": "hi"}], seen=["a"])
-    assert got[0]["first"] is False
+def test_firsts_are_decided_once_per_stream():
+    expr = ("(() => { const st = {authors: new Set(), firsts: new Set()};"
+            " dash_chatFirsts(st, [{id:1,author:'a'},{id:2,author:'b'}], new Set(), true);"
+            " dash_chatFirsts(st, [{id:1,author:'a'},{id:2,author:'b'},{id:3,author:'c'},{id:4,author:'a'}],"
+            "   new Set(['3','4']), false);"
+            " dash_chatFirsts(st, [{id:3,author:'c'},{id:4,author:'a'},{id:5,author:'c'}], new Set(['5']), false);"
+            " return Array.from(st.firsts).sort(); })()")
+    # The backlog seeds a and b; c's first message is 3; a's 4 and c's 5 are not firsts.
+    assert jsfn.call(ui.JS, ["dash_chatFirsts"], expr) == ["3"]
 
 
 def test_a_clip_request_becomes_a_mark_row_at_its_moment():
     got = rows([{"id": 1, "author": "rav3n", "text": "!clip"}],
                marks=[{"at": 5020.0, "author": "rav3n"}])
     assert got == [{"kind": "mark", "id": "1", "author": "rav3n", "at": 5020.0,
-                    "time": got[0]["time"], "watch": "after"}]
+                    "time": got[0]["time"]}]
 
 
-def test_after_the_stream_the_mark_can_be_watched_now():
-    got = rows([{"id": 1, "author": "rav3n", "text": "!clip"}],
-               marks=[{"at": 12.5, "author": "rav3n"}], live=False)
-    assert got[0]["watch"] == "now"
+def test_a_mark_promises_no_watch_button():
+    """The chat only shows while live and the engine clears its marks when
+    the recording ends, so a Watch for after the stream could never appear.
+    The row says where the moment goes instead: into the clips."""
+    js = jsfn.source(ui.JS, "dash_chatMsg")
+    assert "dash-chat-watch" not in js and "Watch" not in js
 
 
 def test_two_requests_take_their_own_marks_in_order():

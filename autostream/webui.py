@@ -296,6 +296,20 @@ def seen_stamp(path, when: float) -> None:
 
 _SEEN_LOCK = threading.Lock()
 
+# ONE LIBRARY WRITE AT A TIME. Both switches read games.yaml or apps.yaml,
+# change one entry and write the whole file back, on a threading server --
+# so two clicks in quick succession (the 79-row clean-up the page exists for)
+# each wrote over the other's change.
+_LIBRARY_LOCK = threading.Lock()
+
+
+def _as_bool(v) -> bool:
+    """A JSON boolean, or the strings a hand-made request might send instead.
+    bool("false") is True, which would switch on what the caller switched off."""
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    return bool(v)
+
 
 def _mtime(path) -> float | None:
     try:
@@ -1609,6 +1623,10 @@ class Server:
         ]
 
     def library_set_game(self, body: dict) -> tuple[dict, int]:
+        with _LIBRARY_LOCK:
+            return self._library_set_game(body)
+
+    def _library_set_game(self, body: dict) -> tuple[dict, int]:
         """The Library's Records switch, and Other apps' "Move to Games".
 
         Written where the watcher reads it, games.yaml, keyed on the exe:
@@ -1628,7 +1646,7 @@ class Server:
             return {"error": "That app is no longer in the Library. "
                              "Press Rescan."}, 409
         exe = (app.exe or app.key).lower()
-        want = bool(body.get("game"))
+        want = _as_bool(body.get("game"))
         data = cfg.load_games()
         games, block = data["games"], data["blocklist"]
         if want:
@@ -1661,6 +1679,10 @@ class Server:
         return {"ok": True, "key": app.key, "game": want}, 200
 
     def library_set_stream(self, body: dict) -> tuple[dict, int]:
+        with _LIBRARY_LOCK:
+            return self._library_set_stream(body)
+
+    def _library_set_stream(self, body: dict) -> tuple[dict, int]:
         """The Library's Goes live switch: the app's own `stream` flag.
 
         Not through /api/setup/apps, which replaces apps.yaml with the list it
@@ -1678,7 +1700,7 @@ class Server:
         if app is None:
             return {"error": "That app is no longer in the Library. "
                              "Press Rescan."}, 409
-        app.stream = bool(body.get("stream"))
+        app.stream = _as_bool(body.get("stream"))
         catalog.save(apps)
         return {"ok": True, "key": app.key, "stream": app.stream}, 200
 

@@ -194,3 +194,47 @@ def test_the_cover_serves_only_what_games_yaml_names(lib, tmp_path):
     notes.write_text("not an image", encoding="utf-8")
     cfg.save_game_field("cs2.exe", "thumbnail", str(notes))
     assert lib.get("/api/library/cover?key=cs2.exe").status == 400
+
+
+# ------------------------------------------------------------- two at once
+
+def test_two_switches_at_once_both_land(lib, monkeypatch):
+    """The review's case: switching Records off down a list of system tools
+    sends requests that overlap, and each read-modify-write of games.yaml
+    used to overwrite the one before it. A slow save opens the window wide
+    enough to hit every time."""
+    import threading
+    import time as _time
+
+    real = cfg.save_games
+
+    def slow(data):
+        _time.sleep(0.15)
+        real(data)
+
+    monkeypatch.setattr(cfg, "save_games", slow)
+    out = []
+    ts = [threading.Thread(target=lambda k=k: out.append(
+              lib.srv.library_set_game({"key": k, "game": False})))
+          for k in ("cs2", "charmap")]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert [s for _, s in out] == [200, 200]
+    block = {str(b).lower() for b in cfg.load_games()["blocklist"]}
+    assert {"cs2.exe", "charmap.exe"} <= block, block
+
+
+def test_games_yaml_is_written_atomically(lib, monkeypatch):
+    from autostream import atomic
+    seen = []
+    monkeypatch.setattr(atomic, "write_text", lambda p, t, **kw: seen.append(str(p)))
+    cfg.save_games({"games": {}, "blocklist": [], "never_stream_if_running": []})
+    assert seen and seen[0].endswith("games.yaml")
+
+
+def test_a_string_false_is_not_true():
+    from autostream import webui
+    assert webui._as_bool("false") is False and webui._as_bool("0") is False
+    assert webui._as_bool(True) is True and webui._as_bool("true") is True

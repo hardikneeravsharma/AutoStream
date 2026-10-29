@@ -7839,6 +7839,11 @@ function clip_wire() {
     if (tag === 'input' || tag === 'textarea' || tag === 'select' || t.isContentEditable) return;
     var row = t.closest ? t.closest('.clip-row') : null;
     if ((tag === 'button' || tag === 'a') && !row) return;
+    /* ONLY THE PICKED ROW. Enter on another recording's row is that row's own
+       click -- it picks it. Pressing the summary's button instead started a
+       scan of the recording still on the summary, the one the user had just
+       moved away from. */
+    if (row && !row.classList.contains('is-active')) return;
     var id = clip_state.step === 'pick' ? 'clip-sum-go'
       : clip_state.step === 'review'
         ? (clip_momMode() === 'review' ? 'clip-review-cut' : 'clip-mom-play') : '';

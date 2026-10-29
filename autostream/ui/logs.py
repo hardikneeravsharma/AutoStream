@@ -226,9 +226,17 @@ async function log_load(quiet) {
 }
 
 /* The explained problems: newest first, each said once (logexplain.problems). */
+let log_problemsKey = '';
+
 function log_problems(list) {
   const box = log_el('log-problems');
   if (!box) return;
+  /* Auto-refresh rewrites this every five seconds. Unchanged, it is left
+     alone: a rewrite re-announces the live region and drops keyboard focus
+     from the fix button the reader was about to press. */
+  const key = JSON.stringify(list);
+  if (key === log_problemsKey) return;
+  log_problemsKey = key;
   box.classList.toggle('hide', !list.length);
   box.innerHTML = list.map(function (p) {
     return '<div class="log-problem">' +

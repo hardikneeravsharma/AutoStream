@@ -774,7 +774,6 @@ NOT_A_FLOW: dict[str, str] = {
     # and that control has its own row here or in CONTROLS.
     "studio-palette": "opens the Studio's own list of its actions; never leaves the browser",
     # --- the Dashboard's chat (the 2026-10-29 redesign)
-    "dash-chat-watch": "goes to Clips for a !clip mark once the stream is over; never leaves the browser",
     "dash-fix": "the idle checklist's fix buttons go to the page that fixes the item",
     "dash-since-clips": "goes to the Studio, where the new clips are",
     "dash-since-reels": "goes to the Studio's reels",

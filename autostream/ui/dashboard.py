@@ -1197,16 +1197,16 @@ function dash_applyActions(s) {
 
 /* WHAT THE CHAT SHOWS, as rows, from the messages and the !clip marks.
    Pure, so it is tested in Node (tests/test_dashboard_chat.py).
-     - a message whose author has not been seen this stream is `first`;
+     - `first` is read from `firstIds`, the messages dash_chatFirsts decided
+       were someone's first this stream -- decided ONCE, by id, so the marker
+       does not vanish on the next poll or come back when an older message
+       slides out of the 60-message window;
      - a !clip that the engine PLACED becomes a mark row at its moment (a
        request it dropped -- not recording, inside the cooldown -- stays a
-       message, because a mark row for it would be a lie);
-     - Watch waits for the stream to end: the recording is still being
-       written and has no index to seek in, and a player here would pull the
-       eye mid-match. */
-function dash_chatRows(msgs, marks, seen, live) {
-  const known = {};
-  (seen || []).forEach(a => { known[a] = true; });
+       message, because a mark row for it would be a lie). */
+function dash_chatRows(msgs, marks, firstIds) {
+  const firsts = {};
+  (firstIds || []).forEach(id => { firsts[String(id)] = true; });
   const pool = {};
   (marks || []).forEach(m => { (pool[m.author] = pool[m.author] || []).push(m); });
   const rows = [];
@@ -1218,18 +1218,31 @@ function dash_chatRows(msgs, marks, seen, live) {
                  text === '!highlight' || text.indexOf('!highlight ') === 0;
     const mark = asks && pool[who] && pool[who].length ? pool[who].shift() : null;
     if (mark) {
-      rows.push({kind: 'mark', id: String(m.id), author: who, at: mark.at,
-                 time: m.at || '', watch: live ? 'after' : 'now'});
-      known[who] = true;
+      rows.push({kind: 'mark', id: String(m.id), author: who, at: mark.at, time: m.at || ''});
       return;
     }
     rows.push({kind: 'msg', id: String(m.id), author: who, text: String(m.text || ''),
                time: m.at || '', badge: m.owner ? 'Host' : (m.mod ? 'Mod' : ''),
-               first: !known[who]});
-    known[who] = true;
+               first: !!firsts[String(m.id)]});
   });
   return rows;
 }
+
+/* WHO HAS SPOKEN THIS STREAM, and which messages were firsts. Called once per
+   new batch. The opening backlog (seed) only teaches names: it has no history
+   before it, so marking everyone in it would be a guess. After that, a fresh
+   message from a name not yet known is that person's first. State lives for
+   the stream and is reset where dash_seen is. */
+function dash_chatFirsts(st, msgs, fresh, seed) {
+  (msgs || []).forEach(m => {
+    if (!m) return;
+    const who = String(m.author || '?'), id = String(m.id);
+    if (!seed && fresh.has(id) && !st.authors.has(who)) st.firsts.add(id);
+    st.authors.add(who);
+  });
+}
+
+let dash_chatState = {authors: new Set(), firsts: new Set()};
 
 /* 21:08 from the platform's timestamp, in this computer's time. */
 function dash_hhmm(iso) {
@@ -1270,6 +1283,7 @@ function dash_renderChat(s) {
       /* Re-seed on the next live session, so returning to LIVE does not
          replay an entrance for every message in the backlog. */
       dash_seen = null;
+      dash_chatState = {authors: new Set(), firsts: new Set()};
       dash_chatUnread = 0;
       dash_chatPill();
       box.innerHTML = '<div class="chat-empty">Chat shows here once you go live. ' +
@@ -1312,38 +1326,51 @@ function dash_renderChat(s) {
   });
   if (dash_seen.size > 400) dash_seen = new Set(msgs.map(m => String(m && m.id)));
 
-  /* FIRST MESSAGE MEANS FIRST SINCE YOU WERE WATCHING. The backlog a page
-     opens on (up to 60 messages) has no history before it, so marking every
-     name in it as new would be a guess; it seeds the known names instead, and
-     only someone who turns up after that is marked. */
-  const before = {};
-  msgs.forEach(m => { if (m && !fresh.has(String(m.id))) before[m.author] = true; });
-  const rows = dash_chatRows(msgs, marks, first ? Object.keys(before).concat(
-    msgs.map(m => m && m.author)) : Object.keys(before), live);
+  dash_chatFirsts(dash_chatState, msgs, fresh, first);
+  const rows = dash_chatRows(msgs, marks, Array.from(dash_chatState.firsts));
+
+  /* KEEP THE READER'S PLACE. The page gets the newest 60 messages, so once
+     chat is busy every new one pushes one off the top; a wholesale repaint
+     keeps scrollTop but not the line under the reader's eye, and the text
+     slid up a row per message. The row they were looking at is found again
+     by id and put back where it was. */
+  let anchor = null;
+  if (!near) {
+    const top = box.getBoundingClientRect().top;
+    const kids = box.children;
+    for (let i = 0; i < kids.length; i++) {
+      const r = kids[i].getBoundingClientRect();
+      if (r.bottom > top) { anchor = {id: kids[i].getAttribute('data-id'), off: r.top - top}; break; }
+    }
+  }
   box.innerHTML = rows.map(function (r) {
     return dash_chatMsg(r, !dash_still() && fresh.has(r.id));
   }).join('');
   if (near) { box.scrollTop = box.scrollHeight; dash_chatUnread = 0; }
-  else dash_chatUnread += fresh.size;
+  else {
+    dash_chatUnread += fresh.size;
+    const back = anchor && anchor.id ? box.querySelector('[data-id="' + anchor.id + '"]') : null;
+    if (back) box.scrollTop += back.getBoundingClientRect().top - box.getBoundingClientRect().top - anchor.off;
+  }
   dash_chatPill();
 }
 
 function dash_chatMsg(r, isNew) {
   const t = dash_hhmm(r.time);
+  const id = ' data-id="' + esc(r.id) + '"';
   if (r.kind === 'mark') {
-    const watch = r.watch === 'now'
-      ? '<button type="button" class="chat-watch" data-act="dash-chat-watch" data-at="' +
-        esc(String(r.at)) + '">Watch</button>'
-      : '<span class="chat-later">Watch after the stream</span>';
-    return '<div class="chat-msg is-mark' + (isNew ? ' is-new' : '') + '">'
+    /* Where the moment goes: the engine hands every placed mark to the clip
+       job when the recording ends, so it is cut with the rest. */
+    return '<div class="chat-msg is-mark' + (isNew ? ' is-new' : '') + '"' + id + '>'
       + '<span class="chat-time">' + esc(t) + '</span>'
       + '<span class="chat-body"><span class="chat-author">' + esc(r.author) + '</span>'
-      + 'marked a clip at ' + esc(dash_hms(Math.floor(Number(r.at) || 0))) + ' ' + watch + '</span>'
+      + 'marked a clip at ' + esc(dash_hms(Math.floor(Number(r.at) || 0)))
+      + '<span class="chat-later">, cut with your clips after the stream</span></span>'
       + '</div>';
   }
   const badge = r.badge ? '<span class="tag">' + esc(r.badge) + '</span>' : '';
   const firstTag = r.first ? '<span class="tag tag-first">First message</span>' : '';
-  return '<div class="chat-msg' + (r.first ? ' is-first' : '') + (isNew ? ' is-new' : '') + '">'
+  return '<div class="chat-msg' + (r.first ? ' is-first' : '') + (isNew ? ' is-new' : '') + '"' + id + '>'
     + '<span class="chat-time">' + esc(t) + '</span>'
     + '<span class="chat-body"><span class="chat-author">' + esc(r.author) + '</span>'
     + badge + firstTag
@@ -1364,8 +1391,8 @@ function dash_checks(s) {
   const live = s.streaming !== false;
   return [
     {key: 'obs', ok: !!s.obs_found, optional: false,
-     label: s.obs_found ? 'OBS found' : 'Install OBS Studio',
-     note: s.obs_found ? '' : 'AutoStream records and streams through it.',
+     label: s.obs_found ? 'OBS found' : 'OBS not found',
+     note: s.obs_found ? '' : 'Install OBS Studio, or tell AutoStream where it is. It records and streams through it.',
      fix: s.obs_found ? null : 'Set the OBS path'},
     {key: 'games', ok: games.length > 0, optional: false,
      label: games.length ? 'Games found' : 'No games found yet',
@@ -1466,7 +1493,8 @@ function dash_paintSince() {
   }
   (d.reels || []).forEach(r => {
     rows.push('<div class="dash-check"><span class="mark mark-ok" aria-hidden="true"></span>' +
-      '<span class="dash-check-text"><span>Reel finished: ' + esc(r.name) + '</span></span>' +
+      '<span class="dash-check-text"><span class="truncate" title="' + esc(r.name) + '">Reel finished: ' +
+      esc(r.name) + '</span></span>' +
       '<button type="button" class="btn btn-sm" data-act="dash-since-reels">Watch</button></div>');
   });
   const panel = dash_el('dash-since');
@@ -1723,15 +1751,6 @@ function dash_wire() {
         dash_chatUnread = 0; dash_chatPill();
       }
     }, {passive: true});
-    /* Watch, after the stream: the Clips page, where the recording that holds
-       the mark is the newest one. */
-    box.addEventListener('click', function (ev) {
-      const b = ev.target.closest ? ev.target.closest('[data-act="dash-chat-watch"]') : null;
-      if (!b) return;
-      go('clips');
-      toast('The clip mark is at ' + dash_hms(Math.floor(Number(b.getAttribute('data-at')) || 0)) +
-            ' in the newest recording.', 'ok');
-    });
   }
   /* "/" jumps to the send box from anywhere on the Dashboard, unless the key
      is being typed into a field. */
@@ -1808,6 +1827,9 @@ function dash_onShow() {
   if (dash_last) dash_onTick(dash_last);
   const box = dash_el('dash-chat-msgs');
   if (box) box.scrollTop = box.scrollHeight;
+  /* At the bottom again, so nothing is unread. */
+  dash_chatUnread = 0;
+  dash_chatPill();
 }
 
 function dash_onTick(status) {

@@ -103,9 +103,12 @@ _RAIL = (
     # THE APP'S STATE, visible from every page: what it is doing and for how
     # long, as a mark and a sentence. It replaced the top bar's pill and clock,
     # which said the same thing in caps on every page.
-    '<div class="rail-state" id="rail-state" role="status" aria-live="polite">'
+    # Only the WORDS are a live region: the clock ticks every poll, and inside
+    # the region it was announced every two seconds for a whole stream.
+    '<div class="rail-state" id="rail-state">'
     '<span class="mark mark-idle" id="rail-state-mark" aria-hidden="true"></span>'
-    '<span id="rail-state-text">Idle, not recording</span>'
+    '<span><span id="rail-state-text" role="status" aria-live="polite">Idle, not recording</span>'
+    '<span id="rail-state-clock" aria-hidden="true"></span></span>'
     "</div>"
     '<p class="rail-meta" id="rail-readout"></p>'
     '<button type="button" class="rail-btn is-danger" id="rail-quit"'
@@ -504,7 +507,11 @@ function shell_paintState(line) {
   const cls = 'mark mark-' + line.mark;
   if (mark && mark.className !== cls) mark.className = cls;
   if (mark && line.mark === 'work') mark.style.setProperty('--p', '50');
-  shell_setText(shell_$('rail-state-text'), line.text);
+  /* "Live, 1:24:07" is drawn as the words (a live region) and the clock
+     (not one), so a screen reader hears "Live" once, not every tick. */
+  const m = /^(.*), (\d+:\d\d(?::\d\d)?)$/.exec(line.text);
+  shell_setText(shell_$('rail-state-text'), m ? m[1] : line.text);
+  shell_setText(shell_$('rail-state-clock'), m ? ', ' + m[2] : '');
 }
 
 /* A page puts its own buttons in the top bar (null clears them). */
@@ -754,6 +761,9 @@ function pal_key(e) {
   }
   const scrim = shell_$('pal-scrim');
   if (!scrim || scrim.classList.contains('hide')) return;
+  /* While the box is open the keys are its own. Escape here also reached
+     the Studio's handler, which closed the reel maker under the palette. */
+  if (['Escape', 'ArrowDown', 'ArrowUp', 'Enter'].indexOf(e.key) >= 0) e.stopImmediatePropagation();
   if (e.key === 'Escape') { e.preventDefault(); pal_close(); }
   else if (e.key === 'ArrowDown') { e.preventDefault(); pal_at = Math.min(pal_rows.length - 1, pal_at + 1); pal_draw(); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); pal_at = Math.max(0, pal_at - 1); pal_draw(); }

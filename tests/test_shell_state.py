@@ -54,3 +54,22 @@ def test_the_app_opens_on_the_dashboard():
 def test_the_sidebar_is_open_unless_collapsed_by_hand():
     src = jsfn.source(ui.JS, "shell_rail")
     assert "shell_page !== 'dash'" not in src
+
+
+def test_only_the_words_are_announced_not_the_clock():
+    """The clock ticks every poll; inside a live region it was read out every
+    two seconds for a whole stream."""
+    import re
+    body = ui.BODY
+    assert re.search(r'id="rail-state-text"[^>]*aria-live="polite"', body)
+    assert re.search(r'id="rail-state-clock"[^>]*aria-hidden="true"', body)
+    assert 'id="rail-state" role="status"' not in body
+
+
+def test_the_palette_keeps_its_keys_to_itself():
+    """Escape in Ctrl K also reached the Studio, which closed the reel maker."""
+    assert "stopImmediatePropagation" in jsfn.source(ui.JS, "pal_key")
+
+
+def test_the_log_problems_are_not_rewritten_when_unchanged():
+    assert "log_problemsKey" in jsfn.source(ui.JS, "log_problems")
