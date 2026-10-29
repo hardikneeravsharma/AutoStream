@@ -653,7 +653,12 @@ function set_shortcutRows(values, cmds, scopes){
   };
   var out = [{label: 'Anywhere, even in a game', blurb: 'Pressed while AutoStream is running in the background.',
     rows: [hot('rules.replay_hotkey', 'Save an instant replay'),
-           hot('rules.kill_switch_hotkey', 'Stop the stream now')]}];
+           hot('rules.kill_switch_hotkey', 'Stop the stream now')]},
+    {label: 'Anywhere in this window', blurb: 'The page size is also on screen, top right.',
+     rows: [{label: 'Make the page bigger', keys: ['Ctrl+Scroll up', 'Ctrl++']},
+            {label: 'Make the page smaller', keys: ['Ctrl+Scroll down', 'Ctrl+-']},
+            {label: 'Page at actual size', keys: ['Ctrl+0']},
+            {label: 'Search and run anything', keys: ['Ctrl+K']}]}];
   (scopes || []).forEach(function(s){
     var rows = (cmds || []).filter(function(c){
       return c.scope === s.id && c.keys && c.keys.length;

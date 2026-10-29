@@ -88,6 +88,13 @@ CSS: str = """
 
   /* radius -- deliberately NOT uniform. Chassis and data surfaces are square,
      containers are rounded, and exactly two things are pills. */
+  /* ONE VIEWPORT-HEIGHT UNIT, divided by the page size (shell_zoomSet sets
+     --ui-zoom with CSS zoom on the root). Under zoom a raw full-height unit is
+     drawn zoom times too tall and spills below the window; every height in this
+     sheet that is a share of the window goes through --vh instead
+     (tests/test_page_zoom.py holds that). */
+  --vh:calc(1dvh / var(--ui-zoom, 1));
+
   --radius-0:0px; --radius-xs:3px; --radius-sm:6px; --radius-md:8px;
   --radius-lg:10px; --radius-pill:999px;
   /* 6 a control, 8 a panel, 10 the window and anything floating over it. */
@@ -287,8 +294,7 @@ svg{flex:0 0 auto;display:block}
 .app{
   display:grid;
   grid-template-columns:var(--rail-w) minmax(0,1fr);
-  height:100vh;
-  height:100dvh;
+  height:calc(100 * var(--vh));
   overflow:hidden;
 }
 
@@ -463,6 +469,17 @@ svg{flex:0 0 auto;display:block}
   gap:var(--space-4);
   min-width:0;
 }
+/* Page size: minus, the percentage (which resets), plus. Quiet until used. */
+.zoom{display:inline-flex;align-items:center;flex:0 0 auto;margin-inline-start:var(--space-4);
+  border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-sm);
+  -webkit-app-region:no-drag}
+.zoom-btn{height:26px;min-width:26px;padding:0 var(--space-3);color:var(--text-secondary);
+  font-size:13px;line-height:1;display:inline-flex;align-items:center;justify-content:center}
+.zoom-btn:hover{color:var(--text-primary);background:var(--surface-hover)}
+.zoom-btn:disabled{opacity:var(--opacity-disabled);cursor:default}
+.zoom-pct{min-width:48px;font-size:12px;border-inline:var(--border-hair) solid var(--border-subtle)}
+.topbar-actions:empty~.zoom{margin-inline-start:auto}
+@media (max-width:639px){.zoom-pct{min-width:40px}}
 /* The page's own actions sit at the right edge, primary last. */
 .topbar-actions{
   display:flex;align-items:center;gap:var(--space-4);
@@ -1955,12 +1972,12 @@ input[type="time"],input[type="number"]{font-variant-numeric:tabular-nums lining
    it is the only thing that floats over a page while you type into it. */
 .pal-scrim{
   position:fixed;inset:0;z-index:var(--z-modal);
-  display:grid;justify-items:center;align-content:start;padding-top:12vh;
+  display:grid;justify-items:center;align-content:start;padding-top:calc(12 * var(--vh));
   background:var(--scrim);
 }
 .pal{
   width:min(600px,calc(100vw - 32px));
-  max-height:min(520px,70vh);
+  max-height:min(520px,calc(70 * var(--vh)));
   display:flex;flex-direction:column;
   background:var(--surface-overlay);
   border:var(--border-hair) solid var(--border-strong);
@@ -2367,7 +2384,7 @@ ol.steps-list li{margin-block:var(--space-4)}
   .dash-side{
     position:sticky;
     top:var(--space-6);
-    height:calc(100vh - 44px - var(--space-6) * 2 - 120px);
+    height:calc(calc(100 * var(--vh)) - 44px - var(--space-6) * 2 - 120px);
     min-height:420px;
   }
   .dash-side>.chat{min-height:0;flex:1 1 auto}
@@ -2981,9 +2998,9 @@ ol.steps-list li{margin-block:var(--space-4)}
   border:1px solid var(--border);
   border-radius:var(--radius-sm);
   overflow:hidden;
-  max-height:62vh;
+  max-height:calc(62 * var(--vh));
 }
-#clip-video{max-width:100%;max-height:62vh;display:block}
+#clip-video{max-width:100%;max-height:calc(62 * var(--vh));display:block}
 /* Fullscreen is the player column: the picture takes what is left over after
    the effects lane and the play bar, so the controls stay on screen. */
 .clip-play-left:fullscreen{background:#000;padding:var(--space-3);gap:var(--space-2)}
@@ -3594,7 +3611,7 @@ REEL_CSS = """
 .reel-quick-msg.is-bad{color:var(--danger)}
 .reel-quick-msg:empty{display:none}
 .reel-quick-video{
-  width:100%;max-height:56vh;display:block;border-radius:var(--radius-sm);
+  width:100%;max-height:calc(56 * var(--vh));display:block;border-radius:var(--radius-sm);
   background:#000;border:var(--border-hair) solid var(--border-subtle);
 }
 .reel-quick-ask{margin:var(--space-3) 0;font-weight:600}
@@ -3994,13 +4011,13 @@ STUDIO_CSS = r"""
   background:var(--surface-raised);border:var(--border-hair) solid var(--border-strong);
   border-radius:var(--radius-lg);box-shadow:var(--shadow-lg)}
 .studio-tray-text{display:flex;flex-direction:column;flex:1;min-width:160px}
-.studio-modal{width:min(820px,100%);max-height:calc(100vh - 48px);overflow:auto}
+.studio-modal{width:min(820px,100%);max-height:calc(calc(100 * var(--vh)) - 48px);overflow:auto}
 .studio-modal .modal-body{max-width:none}
 .studio-modal .modal-actions{position:sticky;bottom:calc(-1 * var(--space-8));margin:0 calc(-1 * var(--space-8)) calc(-1 * var(--space-8));
   padding:var(--space-5) var(--space-8);background:var(--surface-overlay);
   border-top:var(--border-hair) solid var(--border-subtle);align-items:center}
 .studio-modal .modal-actions .muted{margin-right:auto}
-.studio-modal video{width:100%;max-height:60vh;background:#000;border-radius:var(--radius-sm)}
+.studio-modal video{width:100%;max-height:calc(60 * var(--vh));background:#000;border-radius:var(--radius-sm)}
 .studio-styles{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:var(--space-4)}
 .studio-style{display:flex;flex-direction:column;gap:6px;text-align:left;padding:var(--space-4);cursor:pointer;
   background:var(--surface);color:var(--text-secondary);border:var(--border-hair) solid var(--border-subtle);
@@ -4506,7 +4523,7 @@ STUDIO_CSS = r"""
 .st-ph{position:absolute;top:0;width:2px;margin-left:-1px;background:var(--danger);pointer-events:none}
 .studio-insp{position:sticky;top:var(--space-4)}
 .studio-insp-tabs{margin:var(--space-4) var(--space-4) 0}
-.studio-insp-body{display:flex;flex-direction:column;gap:var(--space-4);max-height:70vh;overflow:auto}
+.studio-insp-body{display:flex;flex-direction:column;gap:var(--space-4);max-height:calc(70 * var(--vh));overflow:auto}
 .studio-insp-head{display:flex;justify-content:space-between;align-items:center;gap:var(--space-3)}
 .studio-field{display:flex;flex-direction:column;gap:6px}
 .studio-nudge{gap:4px}
@@ -4553,7 +4570,7 @@ STUDIO_CSS = r"""
    looked at is the biggest thing in it: a narrow list of playing rows down
    the left, and the stage -- the example at the largest 16:9 the dialog
    holds, centred -- taking everything else. */
-.studio-fxp-modal{width:min(1480px,100%);height:min(92vh,1000px);max-height:none;gap:var(--space-4)}
+.studio-fxp-modal{width:min(1480px,100%);height:min(calc(92 * var(--vh)),1000px);max-height:none;gap:var(--space-4)}
 .studio-fxp-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:var(--space-4)}
 .studio-fxp-head .modal-title{margin:0}
 .studio-fxp-q{width:min(360px,100%)}
@@ -4596,7 +4613,7 @@ STUDIO_CSS = r"""
 .studio-fxp-count{margin-right:auto}
 /* Narrow: the stage on top, the list under it. */
 @media (max-width:759px){
-  .studio-fxp-modal{height:min(94vh,1000px)}
+  .studio-fxp-modal{height:min(calc(94 * var(--vh)),1000px)}
   .studio-fxp-main{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(180px,42%) minmax(0,1fr)}
   .studio-fxp-prev{order:-1}
 }
@@ -4607,7 +4624,7 @@ STUDIO_CSS = r"""
    underneath -- dimming it to 40% is the same silence as greying out. */
 .studio-palbtn{margin-left:auto;gap:var(--space-3)}
 .studio-palbtn kbd{font-size:12px}
-.studio-pal{width:min(680px,100%);max-height:min(76vh,680px);gap:0;padding:0;overflow:hidden}
+.studio-pal{width:min(680px,100%);max-height:min(calc(76 * var(--vh)),680px);gap:0;padding:0;overflow:hidden}
 .studio-pal-head{display:flex;align-items:center;gap:var(--space-4);padding:var(--space-5) var(--space-6);
   border-bottom:var(--border-hair) solid var(--border-subtle)}
 .studio-pal-ico{color:var(--text-tertiary);font-size:15px}
@@ -4632,7 +4649,7 @@ STUDIO_CSS = r"""
 .studio-pal-foot{display:flex;align-items:center;gap:var(--space-5);padding:var(--space-4) var(--space-6);
   border-top:var(--border-hair) solid var(--border-subtle);background:var(--surface-sunken);
   font-size:11.5px;color:var(--text-tertiary)}
-.studio-keys{width:min(1120px,100%);max-height:min(88vh,900px)}
+.studio-keys{width:min(1120px,100%);max-height:min(calc(88 * var(--vh)),900px)}
 .studio-keys-head{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-5)}
 .studio-keys-head .modal-title{margin:0 0 var(--space-2)}
 .studio-keys-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--space-6);
@@ -4707,8 +4724,8 @@ STUDIO_CSS = r"""
 .studio-introcard-name{font-weight:600;color:var(--text-primary);font-size:12.5px}
 .studio-introcard-meta{font-size:12px}
 .studio-intro-player{background:#000;border-radius:var(--radius-md);overflow:hidden;
-  display:flex;align-items:center;justify-content:center;max-height:38vh}
-.studio-intro-player video{width:100%;max-height:38vh;object-fit:contain;background:#000;display:block}
+  display:flex;align-items:center;justify-content:center;max-height:calc(38 * var(--vh))}
+.studio-intro-player video{width:100%;max-height:calc(38 * var(--vh));object-fit:contain;background:#000;display:block}
 .studio-intro-edit{display:flex;flex-direction:column;gap:var(--space-4)}
 .studio-intro-trim{display:flex;flex-direction:column;gap:var(--space-3)}
 .studio-intro-trim input[type=range]{flex:1 1 160px;min-width:0;accent-color:var(--accent)}
@@ -4737,7 +4754,7 @@ EDITOR_CSS = r"""
 #view-studio.is-editing{max-width:none;padding-top:var(--space-5);padding-bottom:var(--space-5)}
 #view-studio.is-editing .studio{padding-bottom:0;gap:var(--space-4)}
 .studio-editor{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:var(--space-5);
-  height:var(--ed-h,calc(100vh - 170px));min-height:600px}
+  height:var(--ed-h,calc(calc(100 * var(--vh)) - 170px));min-height:600px}
 .studio-editor.hide{display:none}
 .ed-main{display:flex;flex-direction:column;gap:var(--space-3);min-width:0;min-height:0}
 .ed-toolbar{display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap}
@@ -4761,7 +4778,7 @@ EDITOR_CSS = r"""
   .studio-editor{grid-template-columns:1fr;height:auto}
   .ed-stage{min-height:300px}
   .ed-side{overflow:visible}
-  .ed-side .studio-insp-body{max-height:70vh}
+  .ed-side .studio-insp-body{max-height:calc(70 * var(--vh))}
 }
 
 /* The effect preview: the example of whatever part the pointer is on. */
@@ -5134,13 +5151,13 @@ FACECAM_CSS = r"""
 .studio-fc-pair video{width:100%;aspect-ratio:16/9;background:#000;border-radius:var(--radius-sm)}
 .studio-fc-pair figcaption{font-size:11.5px;color:var(--text-tertiary)}
 .studio-fc-mockwrap{display:flex;justify-content:center;background:var(--surface-sunken);border-radius:var(--radius-sm);padding:var(--space-4)}
-.studio-fc-mockwrap canvas{max-width:100%;max-height:52vh;border-radius:var(--radius-xs);box-shadow:var(--shadow-md);z-index:calc(var(--z-topbar) + 1)}
+.studio-fc-mockwrap canvas{max-width:100%;max-height:calc(52 * var(--vh));border-radius:var(--radius-xs);box-shadow:var(--shadow-md);z-index:calc(var(--z-topbar) + 1)}
 
 .studio-imp{width:min(1100px,calc(100vw - 48px))}
 .studio-imp-body{max-width:none;display:grid;grid-template-columns:minmax(0,1.6fr) minmax(260px,1fr);gap:var(--space-5);align-items:start}
 @media (max-width:899px){.studio-imp-body{grid-template-columns:1fr}}
 .studio-imp-player{display:flex;flex-direction:column;gap:var(--space-3);min-width:0}
-.studio-imp-player video{width:100%;max-height:56vh;background:#000;border-radius:var(--radius-sm)}
+.studio-imp-player video{width:100%;max-height:calc(56 * var(--vh));background:#000;border-radius:var(--radius-sm)}
 .studio-imp-lane{width:100%;height:46px;border-radius:var(--radius-sm);cursor:pointer;display:block}
 .studio-imp-side{display:flex;flex-direction:column;gap:var(--space-3)}
 .studio-imp-x{margin-left:4px;border:0;background:none;color:inherit;cursor:pointer;font-size:14px;line-height:1;padding:0 2px}
@@ -5181,7 +5198,7 @@ CSS += r"""
    seekable copy of whichever part is being asked about. */
 .clip-part{display:flex;flex-direction:column;gap:var(--space-5)}
 .clip-part-view{
-  position:relative;width:100%;aspect-ratio:16/9;max-height:52vh;
+  position:relative;width:100%;aspect-ratio:16/9;max-height:calc(52 * var(--vh));
   border-radius:var(--radius-lg);overflow:hidden;background:#000;
   border:var(--border-hair) solid var(--border-subtle);
 }
@@ -5201,7 +5218,7 @@ CSS += r"""
 .clip-part-time b{font-size:19px;font-variant-numeric:tabular-nums}
 .clip-part-time .muted{font-size:12px;}
 @media (max-width:620px){
-  .clip-part-view{max-height:34vh}
+  .clip-part-view{max-height:calc(34 * var(--vh))}
   .clip-part-times{gap:var(--space-4)}
   .clip-part-time b{font-size:16px}
 }
