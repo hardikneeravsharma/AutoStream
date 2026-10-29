@@ -82,28 +82,33 @@ def rail_width(pg) -> float:
     return pg.evaluate("() => document.querySelector('.rail').getBoundingClientRect().width")
 
 
-def test_the_rail_is_open_on_the_dashboard_only_until_the_player_chooses(pg):
-    # A clips-only build has no Dashboard page to go to, so the default is asked of the rule itself.
-    pg.evaluate("() => { shell_page = 'dash'; shell_rail(); }")
+def test_the_rail_is_open_on_every_page_until_the_player_chooses(pg):
+    # The 2026-10-29 redesign: the sidebar used to fold to an icon strip off
+    # the Dashboard, which hid the page names from exactly the person who did
+    # not know the icons yet. Now it is open everywhere until collapsed.
+    pg.evaluate("() => { localStorage.removeItem('autostream.rail'); shell_page = 'dash'; shell_rail(); }")
     assert not rail_min(pg) and rail_width(pg) > 150
     pg.evaluate("() => go('studio')")
-    assert rail_min(pg) and rail_width(pg) < 80
-    # the toggle opens it here, and the choice holds on the next page
-    pg.click("#rail-toggle")
     assert not rail_min(pg) and rail_width(pg) > 150
-    assert pg.get_attribute("#rail-toggle", "aria-expanded") == "true"
-    pg.evaluate("() => go('settings')")
-    assert not rail_min(pg)
+    # the toggle collapses it here, and the choice holds on the next page
     pg.click("#rail-toggle")
-    assert rail_min(pg)
+    assert rail_min(pg) and rail_width(pg) < 80
     assert pg.get_attribute("#rail-toggle", "aria-expanded") == "false"
+    pg.evaluate("() => go('settings')")
+    assert rail_min(pg)
+    pg.click("#rail-toggle")
+    assert not rail_min(pg)
+    assert pg.get_attribute("#rail-toggle", "aria-expanded") == "true"
+    pg.click("#rail-toggle")
     pg.evaluate("() => { shell_page = 'dash'; shell_rail(); }")
     assert rail_min(pg), "a collapse the player chose must hold on the Dashboard too"
+    pg.evaluate("() => { localStorage.removeItem('autostream.rail'); shell_rail(); }")
 
 
 def test_the_strip_opens_on_hover_and_the_page_makes_room(pg):
-    pg.evaluate("() => { shell_page = 'studio'; shell_rail(); }")
-    assert rail_min(pg)
+    # Collapsed by the player's own choice -- the only way to the strip now.
+    pg.evaluate("() => { localStorage.setItem('autostream.rail', 'min'); shell_page = 'studio'; shell_rail(); }")
+    assert rail_min(pg) and rail_width(pg) < 80    # and settled, before the page edge is measured
     main = pg.evaluate("() => document.querySelector('.main').getBoundingClientRect().left")
     pg.hover(".rail-nav")
     pg.wait_for_function("() => document.querySelector('.app').classList.contains('rail-peek')")
@@ -116,6 +121,7 @@ def test_the_strip_opens_on_hover_and_the_page_makes_room(pg):
     pg.mouse.move(900, 500)
     pg.wait_for_function("() => !document.querySelector('.app').classList.contains('rail-peek')")
     assert rail_width(pg) < 80
+    pg.evaluate("() => { localStorage.removeItem('autostream.rail'); shell_rail(); }")
 
 
 def pin_side(pg):
