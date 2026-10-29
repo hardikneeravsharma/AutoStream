@@ -107,7 +107,7 @@ def test_the_card_is_there_when_it_is_on(on):
 def test_it_says_obs_is_not_holding_a_buffer(on):
     """THE FAILURE MODE. On in the config, not running in OBS -- and before
     this card the only sign was a hotkey that did nothing."""
-    assert on.locator("#dash-replay-state").inner_text().strip() == "NOT RUNNING"
+    assert on.locator("#dash-replay-state").inner_text().strip() == "Not running"
     said = on.locator("#dash-replay-note").inner_text()
     assert "Replay Buffer" in said, said
     assert "Output" in said, "it does not say where the setting is"

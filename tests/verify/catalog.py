@@ -92,8 +92,8 @@ CONTROLS: list[Control] = [
             acts=("top-toggle", "rail-quit", "dash-btn-stop", "dash-btn-pause",
                   "dash-btn-record", "dash-btn-abort", "dash-save-replay"),
             why="the whitelist is the only thing between a POST and the engine"),
-    Control("/api/theme", "POST", CALL, "theme swatch", "settings",
-            body={"theme": "midnight"}, expect=_ok,
+    Control("/api/theme", "POST", CALL, "theme picker", "settings",
+            body={"theme": "dark"}, expect=_ok,
             reject={"theme": "chartreuse"}, acts=("theme",),
             why="applies immediately, bypassing Save"),
 
@@ -117,6 +117,22 @@ CONTROLS: list[Control] = [
             body={"key": "verify.exe", "path": ""}, expect=_dict,
             reject={"key": ""},
             why="a path that is not a file is refused before it is saved"),
+    Control("/api/library/game", "POST", CALL, "Records / Move to Games",
+            "library", body={"key": "verify-nonexistent.exe", "game": True},
+            status=(409,), expect=_has("error"), reject={"key": ""},
+            acts=("lib-records", "lib-move"),
+            why="writes games.yaml where the watcher reads it; an app that is "
+                "not in the Library is refused before anything is written"),
+    Control("/api/library/stream", "POST", CALL, "Goes live", "library",
+            body={"key": "verify-nonexistent.exe", "stream": True},
+            status=(409,), expect=_has("error"), reject={"key": ""},
+            acts=("lib-golive",),
+            why="changes one app's stream flag in apps.yaml; an unknown app is "
+                "refused before the file is rewritten"),
+    Control("/api/library/cover", "GET", CALL, "a game's cover", "library",
+            query="key=verify.exe", status=(400,), expect=_has("error"),
+            why="serves only the thumbnail games.yaml names for that game; a "
+                "game with none is a 400, not a 404, so it reads as answered"),
 
     # ---------------------------------------------------------- settings
     Control("/api/settings/schema", "GET", CALL, "renders the whole page",
@@ -147,6 +163,12 @@ CONTROLS: list[Control] = [
             why="the token is validated by shape before any request"),
 
     # -------------------------------------------------------------- logs
+    Control("/api/since", "GET", CALL, "Since last time", "dashboard",
+            expect=_has("since", "clips_new", "reels"),
+            why="what is new since the clip pages last showed the clips"),
+    Control("/api/seen", "POST", CALL, "the Clips and Studio pages, on show", "dashboard",
+            body={"what": "clips"}, expect=_ok,
+            why="stamps when the clips were last shown; its own file, not state.json"),
     Control("/api/logs/tail", "GET", CALL, "Refresh", "logs", query="n=5",
             expect=_has("lines", "path"), acts=("log-refresh", "log-auto"),
             why="n is clamped to 1..2000"),
@@ -222,8 +244,9 @@ CONTROLS: list[Control] = [
             acts=("way",), why="async; the answer is a handle, not the work"),
     Control("/api/clips/preview", "POST", CALL, "Preview (plan only)",
             "clips", body={"source": "", "recording_path": ""}, expect=_dict,
-            acts=("reveal",),
-            why="the server forces plan_only, so nothing is encoded"),
+            acts=("reveal", "sum-go"),
+            why="the server forces plan_only, so nothing is encoded; the "
+                "summary's main button starts it (match videos go to run)"),
     Control("/api/clips/run", "POST", CALL, "Cut clips", "clips",
             body={"source": "", "recording_path": "", "plan_only": True},
             expect=_dict,
@@ -749,7 +772,13 @@ NOT_A_FLOW: dict[str, str] = {
     # anything -- /api/studio/commands exists for the browser tier, not
     # for the page. What a command RUNS is whatever its own control runs,
     # and that control has its own row here or in CONTROLS.
-    "studio-palette": "opens the list of every action, on Ctrl+K; never leaves the browser",
+    "studio-palette": "opens the Studio's own list of its actions; never leaves the browser",
+    # --- the Dashboard's chat (the 2026-10-29 redesign)
+    "dash-fix": "the idle checklist's fix buttons go to the page that fixes the item",
+    "dash-since-clips": "goes to the Studio, where the new clips are",
+    "dash-since-reels": "goes to the Studio's reels",
+    "lib-tab": "switches the Library between Games and Other apps; never leaves the browser",
+    "lib-more": "opens a row's menu of Open, Open + stream and Thumbnail",
     "studio-pal-close": "closes the list of actions",
     "studio-keys": "opens the key sheet, on ?; drawn from the command registry in the page",
     "studio-keys-close": "closes the key sheet",
@@ -760,6 +789,10 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-only-picked": "filters the library to the clips already picked, and back again",
     "studio-match": "selects or unselects every clip of one match in the open run",
     "studio-reel-fmt": "filters the reels to vertical or landscape; never leaves the browser",
+    "studio-view": "shows the clips as a list or a grid, kept in this browser",
+    "studio-row": "brings a clip's row into focus, shown beside the list",
+    "studio-reel-sel": "chooses a reel, which plays in the preview beside the list",
+    "studio-reel-menu": "opens a reel row's menu, which holds Delete",
     "studio-reels-more": "unfolds the reels from two rows to all of them",
     "studio-lyr-pos": "puts the lyrics at one of nine places; sent with the next render",
     "studio-lyr-shift": "moves every lyric line earlier or later; sent with the next render",
@@ -953,7 +986,10 @@ NOT_A_FLOW: dict[str, str] = {
     "tag-x": "removes one tag from a list field",
     "clear-time": "clears a quiet-hours time field",
     "set-discard": "drops the dirty set; never reaches the server",
+    "set-goto": "Shortcuts' Change button: moves to the hotkey's own row on "
+                "the same page; never reaches the server",
     "log-filters": "client-side level filter over rows already fetched",
+    "log-fix": "a problem's fix button goes to the page or the Settings search that fixes it",
     # --- Clips run options, collected and sent later as part of the run body
     "montage": "toggles montage for the next /api/clips/run",
     "connect": "opens the platform's OAuth page in a browser; the token "
@@ -980,6 +1016,12 @@ NOT_A_FLOW: dict[str, str] = {
     # person try four templates and re-tap the grid without queueing an
     # encode each time.
     "reel-open": "opens the reel card over the Clips page",
+    # --- the Clips summary and the moments screen (2026-10-29 redesign)
+    "sum-change": "opens one of the step screens from the summary's Change",
+    "sum-made": "opens the moments screen on what an earlier run already cut; "
+                "reads /api/clips/existing, which is catalogued",
+    "mom-again": "goes back to the summary to clip a cut recording again",
+    "mom-play": "opens the player on clips already on disk; nothing is sent",
     "reel-close": "closes it; no state leaves the browser",
     "reel-all": "ticks every moment in the picker",
     "reel-none": "unticks every moment in the picker",

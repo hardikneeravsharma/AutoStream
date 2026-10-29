@@ -210,7 +210,7 @@ DEFAULTS: dict[str, Any] = {
         "headline": "{game}",
         "subtitle": "{channel} | {day} {daypart}",
     },
-    "ui": {"theme": "midnight", "open_window": True, "preview_clips": True,
+    "ui": {"theme": "system", "open_window": True, "preview_clips": True,
            "developer_mode": False},
     "logging": {"level": "INFO", "keep_days": 7},
 }
@@ -419,6 +419,11 @@ def save_game_field(key: str, field: str, value) -> bool:
 
 
 def save_games(data: dict) -> None:
-    paths.GAMES_FILE.write_text(
-        yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
-    )
+    # Atomic: the Library's switches write this on every click, while the
+    # status poll and the watcher's index read it. A half-written file would
+    # read as no games at all, and a crash mid-write would lose the user's
+    # in-game names and HUD colours.
+    from . import atomic
+
+    atomic.write_text(paths.GAMES_FILE,
+                      yaml.safe_dump(data, sort_keys=False, allow_unicode=True))

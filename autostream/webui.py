@@ -13,6 +13,7 @@ network, nothing more. Do not port-forward it.
 """
 from __future__ import annotations
 
+import fnmatch
 import hmac
 import json
 import logging
@@ -164,6 +165,20 @@ def _not_an_image(path: str) -> str | None:
     return None
 
 
+def _blocked_by(exe: str, blocklist: list[str]) -> str:
+    """The games.yaml blocklist entry that stops `exe` being a game, or "".
+
+    The same test as GameIndex.is_blocked -- an exact name, or a pattern with
+    a `*` in it -- reading a list already loaded, because apps_payload runs on
+    every poll and the engine's own index is only as fresh as its last reload.
+    """
+    exe = (exe or "").lower()
+    for b in blocklist:
+        if b == exe or ("*" in b and fnmatch.fnmatch(exe, b)):
+            return b
+    return ""
+
+
 def lan_ip() -> str:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -234,14 +249,115 @@ def parse_log_line(line: str) -> dict:
     return {"ts": ts, "level": level, "name": name, "msg": msg}
 
 
+def chat_marks(engine) -> list[dict]:
+    """The !clip marks placed this recording, newest 60, for the chat pane.
+
+    Sent beside the chat so a viewer's request can be drawn as its own row at
+    the moment it marked -- and only when the engine actually placed it: a
+    request it dropped (not recording, inside the cooldown) stays a message.
+    """
+    marks = getattr(engine, "_marks", None) or []
+    return [{"at": float(m.get("at", 0)), "author": str(m.get("author") or "")}
+            for m in list(marks)[-60:] if isinstance(m, dict)]
+
+
+# When the clip pages last showed the clips (the idle Dashboard's "Since last
+# time"). Beside state.json, but not in it -- see seen_stamp.
+def seen_file() -> Path:
+    """Asked at call time, not import: the data home can be moved after this
+    module loads (the test suite points it at a throwaway folder), and a path
+    fixed at import wrote the stamp into the checkout."""
+    return paths.STATE_FILE.parent / "ui-seen.json"
+
+
+def seen_get(path) -> float | None:
+    """When the clip pages last showed the clips, or None if never (or unreadable)."""
+    try:
+        v = json.loads(Path(path).read_text(encoding="utf-8")).get("clips")
+        return float(v) if v is not None else None
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None
+
+
+def seen_stamp(path, when: float) -> None:
+    """Remember that the clips were shown at `when`. Its own file, not
+    state.json: the engine rewrites state.json from memory and would undo it."""
+    # ONE WRITER AT A TIME, AND NEVER AN ERROR. The Studio and the Clips page
+    # both stamp on show, and two requests racing through one shared .tmp
+    # name lost to Windows refusing os.replace on a file the other still held
+    # -- a 500 the browser tier caught. A stamp is a convenience: losing one
+    # costs a "Since last time" count, so it is dropped rather than raised.
+    p = Path(path)
+    with _SEEN_LOCK:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_name(f"{p.stem}.{os.getpid()}.{threading.get_ident()}.tmp")
+            tmp.write_text(json.dumps({"clips": float(when)}), encoding="utf-8")
+            os.replace(tmp, p)
+        except OSError as e:
+            log.debug("seen stamp not written: %s", e)
+
+
+_SEEN_LOCK = threading.Lock()
+
+# ONE LIBRARY WRITE AT A TIME. Both switches read games.yaml or apps.yaml,
+# change one entry and write the whole file back, on a threading server --
+# so two clicks in quick succession (the 79-row clean-up the page exists for)
+# each wrote over the other's change.
+_LIBRARY_LOCK = threading.Lock()
+
+
+def _as_bool(v) -> bool:
+    """A JSON boolean, or the strings a hand-made request might send instead.
+    bool("false") is True, which would switch on what the caller switched off."""
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    return bool(v)
+
+
+def _mtime(path) -> float | None:
+    try:
+        return os.path.getmtime(path)
+    except (OSError, TypeError):
+        return None
+
+
+def since_summary(lib: dict, seen: float | None, mtime=_mtime) -> dict:
+    """What the idle Dashboard's 'Since last time' says: how many clips are
+    newer than `seen`, and up to three reels made since, newest first.
+
+    Never having looked counts as nothing new: on a first run the whole
+    library is new, and a panel announcing all of it is noise, not news.
+    """
+    if seen is None:
+        return {"since": None, "clips_new": 0, "reels": []}
+    n = 0
+    for g in lib.get("games") or []:
+        for f in g.get("folders") or []:
+            for c in f.get("clips") or []:
+                t = mtime(c.get("path"))
+                if t is not None and t > seen:
+                    n += 1
+    reels = []
+    for r in lib.get("reels") or []:
+        t = mtime(r.get("path"))
+        if t is not None and t > seen:
+            reels.append({"name": r.get("name") or "", "path": r.get("path") or "", "made": t})
+    reels.sort(key=lambda r: r["made"], reverse=True)
+    return {"since": seen, "clips_new": n, "reels": reels[:3]}
+
+
 def page(theme_id: str) -> str:
     return (
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1,viewport-fit=cover'>"
         f"<meta name='theme-color' content='{theme.get(theme_id)['vars']['bg']}'>"
-        "<title>AutoStream</title><style>:root{\n"
-        + theme.css_vars(theme_id)
-        + "\n}\n" + ui_assets.CSS + "</style></head><body>"
+        # The palette has its own <style> so Settings can swap it in place
+        # (set_repaint) without touching the main sheet, and so System's
+        # prefers-color-scheme block travels with it.
+        "<title>AutoStream</title><style id=\"theme-vars\">"
+        + theme.root_css(theme_id)
+        + "</style><style>" + ui_assets.CSS + "</style></head><body>"
         + ui_assets.BODY
         + "<script>" + ui_assets.JS + "</script></body></html>"
     )
@@ -707,10 +823,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(schema.flatten(cfg.load()))
         elif u.path == "/api/logs/tail":
             n = _int((parse_qs(u.query).get("n") or [""])[0], 300)
+            from . import logexplain
+            rows = [parse_log_line(x)
+                    for x in tail_lines(paths.LOG_FILE, max(1, min(n, _TAIL_MAX)))]
             self._json({
-                "lines": [parse_log_line(x)
-                          for x in tail_lines(paths.LOG_FILE, max(1, min(n, _TAIL_MAX)))],
+                "lines": rows,
                 "path": str(paths.LOG_FILE),
+                # The worst lines said as sentences, with the fix (logexplain).
+                "problems": logexplain.problems(rows),
             })
         elif u.path == "/api/audio":
             self._json(self.app.obs_for_ui().audio_mixer())
@@ -781,6 +901,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json({"error": err}, 400)
             else:
                 self._send(200, png, "image/png")
+        elif u.path == "/api/since":
+            self._json(self.app.since())
         elif u.path == "/api/studio/library":
             self._json(self.app.studio_library())
         elif u.path == "/api/studio/catalog":
@@ -873,6 +995,17 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json({"error": err}, 400)
             else:
                 self._send_cached(jpg, "image/jpeg")
+        elif u.path == "/api/library/cover":
+            blob, ctype, err = self.app.library_cover(
+                (parse_qs(u.query).get("key") or [""])[0])
+            if err:
+                # 400, not 404, for the same reason as the clip thumbnail: a
+                # game with no picture is a real route answering no.
+                self._json({"error": err}, 400)
+            else:
+                # The page puts the thumbnail's path in the URL as `v`, so a
+                # changed picture is a new URL and an hour's cache is safe.
+                self._send_cached(blob, ctype, max_age=3600)
         else:
             self._json({"error": "not found"}, 404)
 
@@ -889,11 +1022,16 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if p == "/api/theme":
                 t = str(b.get("theme", ""))
-                if t not in theme.THEMES:
+                if theme.resolve(t) != t:
                     self._json({"error": "unknown theme"}, 400)
                     return
                 cfg.save_field("ui", "theme", t)
                 self.app._theme = t
+                self._json({"ok": True})
+
+            elif p == "/api/seen":
+                # The Clips and Studio pages say they have shown the clips.
+                seen_stamp(seen_file(), time.time())
                 self._json({"ok": True})
 
             elif p == "/api/cmd":
@@ -939,6 +1077,12 @@ class _Handler(BaseHTTPRequestHandler):
 
             elif p == "/api/launch":
                 self._json(*self.app.launch(b))
+
+            elif p == "/api/library/game":
+                self._json(*self.app.library_set_game(b))
+
+            elif p == "/api/library/stream":
+                self._json(*self.app.library_set_stream(b))
 
             elif p == "/api/apps/scan":
                 # Re-scan from the dashboard. Needed whenever a new game is
@@ -1353,7 +1497,8 @@ class Server:
     def theme_id(self) -> str:
         if self._theme is None:
             try:
-                self._theme = cfg.load().get("ui", {}).get("theme") or theme.DEFAULT
+                # resolve(): a config from before the redesign says `carbon`.
+                self._theme = theme.resolve(cfg.load().get("ui", {}).get("theme") or theme.DEFAULT)
             except Exception:  # noqa: BLE001
                 self._theme = theme.DEFAULT
         return self._theme
@@ -1415,7 +1560,7 @@ class Server:
             schema.FIELDS_BY_PATH[k].get("restart") for k in changed)
         # theme_id() caches; without this the next full page load paints the
         # old palette while /api/bootstrap reports the new id.
-        self._theme = str(clean["ui.theme"]) if "ui.theme" in clean else None
+        self._theme = theme.resolve(str(clean["ui.theme"])) if "ui.theme" in clean else None
         # Push the new values into the Config instance the daemon is holding.
         # Without this every non-`restart` field is inert until the process is
         # restarted, and the UI would be reporting a change that never happened.
@@ -1434,9 +1579,11 @@ class Server:
         # the catalog is a list of what is installed. Read once per payload
         # rather than per row.
         try:
-            games = cfg.load_games().get("games", {}) or {}
+            table = cfg.load_games()
         except Exception:  # noqa: BLE001
-            games = {}
+            table = {}
+        games = table.get("games", {}) or {}
+        blocked = [str(x).lower() for x in (table.get("blocklist") or [])]
 
         def thumb(key: str) -> str:
             row = games.get((key or "").lower())
@@ -1452,6 +1599,12 @@ class Server:
         index = getattr(self.engine, "index", None)
 
         def is_game(exe: str) -> bool:
+            # The blocklist first, because the watcher reads it first: an exe
+            # on it is never treated as a game, whatever else names it. The
+            # Library's Records switch writes exactly this, and a row that
+            # said "Records" for a game the watcher skips would be lying.
+            if _blocked_by(exe, blocked):
+                return False
             if (exe or "").lower() in games:
                 return True              # already configured, so plainly one
             try:
@@ -1472,6 +1625,112 @@ class Server:
              "thumbnail": thumb(a.exe or a.key)}
             for a in catalog.load()
         ]
+
+    def library_set_game(self, body: dict) -> tuple[dict, int]:
+        with _LIBRARY_LOCK:
+            return self._library_set_game(body)
+
+    def _library_set_game(self, body: dict) -> tuple[dict, int]:
+        """The Library's Records switch, and Other apps' "Move to Games".
+
+        Written where the watcher reads it, games.yaml, keyed on the exe:
+        `blocklist:` for off, because the public index calls plenty of things
+        games and only the blocklist overrides it; and for on, off the
+        blocklist plus a `games:` entry when nothing else would recognise the
+        exe. Off keeps the game's entry, so its thumbnail and in-game name are
+        still there when it is switched back on.
+        """
+        from . import catalog
+
+        key = str(body.get("key", "")).strip()
+        if not key:
+            return {"error": "no app given"}, 400
+        app = catalog.find(catalog.load(), key)
+        if app is None:
+            return {"error": "That app is no longer in the Library. "
+                             "Press Rescan."}, 409
+        exe = (app.exe or app.key).lower()
+        want = _as_bool(body.get("game"))
+        data = cfg.load_games()
+        games, block = data["games"], data["blocklist"]
+        if want:
+            block[:] = [b for b in block if str(b).lower() != exe]
+            # A pattern cannot be lifted for one exe without lifting it for
+            # every exe it matches, so it is named rather than quietly kept.
+            pattern = _blocked_by(exe, [str(b).lower() for b in block])
+            if pattern:
+                return {"error": f"games.yaml blocks every exe matching "
+                                 f"{pattern}, which includes {exe}. Edit that "
+                                 f"line to record {app.name}."}, 409
+            index = getattr(self.engine, "index", None)
+            try:
+                known = index is not None and index.lookup(exe) is not None
+            except Exception:  # noqa: BLE001 - unknown is the safe answer
+                known = False
+            if exe not in games and not known:
+                games[exe] = {"name": app.name}
+        elif exe not in {str(b).lower() for b in block}:
+            block.append(exe)
+        cfg.save_games(data)
+        # The running watcher holds the index it loaded at startup; without
+        # this the switch would read right and change nothing until a restart.
+        index = getattr(self.engine, "index", None)
+        if index is not None:
+            try:
+                index.reload()
+            except Exception as e:  # noqa: BLE001 - the write already succeeded
+                log.warning("saved, but could not reload the game index: %s", e)
+        return {"ok": True, "key": app.key, "game": want}, 200
+
+    def library_set_stream(self, body: dict) -> tuple[dict, int]:
+        with _LIBRARY_LOCK:
+            return self._library_set_stream(body)
+
+    def _library_set_stream(self, body: dict) -> tuple[dict, int]:
+        """The Library's Goes live switch: the app's own `stream` flag.
+
+        Not through /api/setup/apps, which replaces apps.yaml with the list it
+        is sent and drops every entry without a path -- and the Library's
+        payload carries no paths. This changes one flag on one app and writes
+        every other field back as it was.
+        """
+        from . import catalog
+
+        key = str(body.get("key", "")).strip()
+        if not key:
+            return {"error": "no app given"}, 400
+        apps = catalog.load()
+        app = catalog.find(apps, key)
+        if app is None:
+            return {"error": "That app is no longer in the Library. "
+                             "Press Rescan."}, 409
+        app.stream = _as_bool(body.get("stream"))
+        catalog.save(apps)
+        return {"ok": True, "key": app.key, "stream": app.stream}, 200
+
+    def library_cover(self, key: str) -> tuple[bytes, str, str]:
+        """A game's thumbnail, for its row. -> (bytes, content type, error).
+
+        Only the path games.yaml holds for that game is ever read, and only
+        once it decodes as a PNG or JPG, so the route cannot be pointed at any
+        other file on the disk.
+        """
+        key = (key or "").strip().lower()
+        try:
+            row = cfg.load_games()["games"].get(key)
+        except Exception:  # noqa: BLE001
+            row = None
+        path = str(row.get("thumbnail") or "") if isinstance(row, dict) else ""
+        if not path or not Path(path).is_file():
+            return b"", "", "no thumbnail for that game"
+        why = _not_an_image(path)
+        if why:
+            return b"", "", why
+        ctype = "image/png" if path.lower().endswith(".png") else "image/jpeg"
+        try:
+            return Path(path).read_bytes(), ctype, ""
+        except OSError as e:
+            return b"", "", f"could not read the thumbnail: {e}"
 
     def launch(self, body: dict) -> tuple[dict, int]:
         """Open an app from the Library. -> (answer, HTTP status).
@@ -1631,7 +1890,10 @@ class Server:
             "blocked": getattr(e, "blocked_reason", None),
             "obs": getattr(e, "obs_health", {}) or {},
             "chat": list(getattr(e, "chat", []))[-60:],
+            "marks": chat_marks(e),
             "apps": self.apps_payload(),
+            # For the first-run checklist on the idle Dashboard.
+            "obs_found": self.obs_found(),
             "elapsed": (int(time.time() - s.session_start) if s.session_start else None),
             # ASKED OF THE PLATFORM, not built from the id. This was
             # f"youtube.com/watch?v={id}" inline, which is true of exactly one
@@ -3669,6 +3931,43 @@ class Server:
                 "seconds": round(main + fade, 2)}
 
     # ------------------------------------------------------------ studio
+
+    def since(self) -> dict:
+        """The idle Dashboard's 'Since last time'. A first look stamps now, so
+        the next session's clips are what count as new."""
+        from .clips import studio
+
+        seen = seen_get(seen_file())
+        if seen is None:
+            seen_stamp(seen_file(), time.time())
+        try:
+            lib = studio.library(self._clips_dir(cfg.load()))
+        except Exception:  # noqa: BLE001 - a broken clips folder must not break the Dashboard
+            lib = {}
+        return since_summary(lib, seen)
+
+    _obs_found_at = 0.0
+    _obs_found_was = False
+
+    def obs_found(self) -> bool:
+        """Is OBS installed where AutoStream will look, or already answering?
+        Asked every status poll, so the disk is checked at most every 30s."""
+        now = time.monotonic()
+        if now - self._obs_found_at < 30.0:
+            return self._obs_found_was
+        self._obs_found_at = now
+        found = bool(getattr(self.engine, "obs_health", None))
+        if not found:
+            try:
+                path = str(cfg.load().obs.get("path") or "")
+                found = bool(path) and os.path.isfile(path)
+                if not found:
+                    from .obs import find_obs_exe
+                    found = bool(find_obs_exe())
+            except Exception:  # noqa: BLE001
+                found = False
+        self._obs_found_was = found
+        return found
 
     def studio_library(self) -> dict:
         """Every clip the user has made, by game and run folder."""

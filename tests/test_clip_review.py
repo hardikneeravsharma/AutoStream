@@ -40,6 +40,30 @@ def test_two_clips_a_tenth_apart_do_not_share_a_key():
     assert jobs.clip_key(10.0) != jobs.clip_key(10.1)
 
 
+# ------------------------------------------- unticked moments are not cut
+
+class _Plan:
+    def __init__(self, start):
+        self.start = start
+
+
+def test_an_unticked_moment_is_left_out_of_the_cut():
+    """The moments screen lets each found moment be unticked; the run must cut
+    only the ticked ones, keyed the same way as every other per-clip choice."""
+    plans = [_Plan(10.0), _Plan(42.25), _Plan(90.0)]
+    per = {jobs.clip_key(42.25): {"skip": True, "caption": True},
+           jobs.clip_key(90.0): {"caption": False}}
+    got = jobs.ticked(plans, per)
+    assert [p.start for p in got] == [10.0, 90.0]
+
+
+def test_a_plan_the_review_never_saw_is_still_cut():
+    """No entry means no decision, which has always meant: cut it."""
+    plans = [_Plan(5.0), _Plan(7.0)]
+    assert jobs.ticked(plans, {}) == plans
+    assert jobs.ticked(plans, {"5.0": {"skip": False}}) == plans
+
+
 # ------------------------------------------------------------- the voices
 
 def _server():

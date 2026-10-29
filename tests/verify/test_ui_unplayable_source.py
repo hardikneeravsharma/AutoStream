@@ -100,6 +100,10 @@ def ui(webkit, app):
         ctx.close()
         pytest.skip("this WebKit decodes AV1, so it has no file to refuse")
     _pick_first(page)
+    # Picking opens the summary now (2026-10-29 redesign); the part screen is
+    # behind its first Change.
+    page.wait_for_selector('#clip-sum [data-act="sum-change"][data-val="part"]', timeout=20_000)
+    page.click('#clip-sum [data-act="sum-change"][data-val="part"]')
     page.wait_for_function("() => clip_state.step === 'part'", timeout=20_000)
     yield w
     ctx.close()

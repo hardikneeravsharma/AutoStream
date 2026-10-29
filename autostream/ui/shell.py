@@ -83,16 +83,34 @@ _RAIL = (
     # must NOT be a bare <span> — the narrow-width rule hides those.
     + '<span class="pill pill-idle" id="rail-dot" title="Idle"></span>'
     "</div>"
+    # One search box that finds anything and runs anything (Ctrl K). The
+    # palette itself is shell-owned; pages only register what it can find.
+    '<button type="button" class="rail-search" id="rail-search"'
+    ' aria-label="Search and run commands (Ctrl K)" title="Search (Ctrl K)">'
+    + _svg("search")
+    + '<span>Search</span><span class="kbd">Ctrl K</span>'
+    "</button>"
     '<nav class="rail-nav" aria-label="Pages">'
     + "".join(_nav_button(*n) for n in _NAV)
     + "</nav>"
+    # A page's own list, shown only while that page is (the Studio's games).
+    '<div class="rail-section hide" id="rail-section"></div>'
     '<div class="rail-spacer"></div>'
     # Quit is detached from the four page links by a full-bleed rule so it can
     # never be misread as a fifth destination. .rail-foot supplies that bleed
     # and .rail-meta is what the narrow-rail rule hides — both are required.
     '<div class="rail-foot">'
-    '<div class="divider"></div>'
-    '<p class="rail-meta mono" id="rail-readout"></p>'
+    # THE APP'S STATE, visible from every page: what it is doing and for how
+    # long, as a mark and a sentence. It replaced the top bar's pill and clock,
+    # which said the same thing in caps on every page.
+    # Only the WORDS are a live region: the clock ticks every poll, and inside
+    # the region it was announced every two seconds for a whole stream.
+    '<div class="rail-state" id="rail-state">'
+    '<span class="mark mark-idle" id="rail-state-mark" aria-hidden="true"></span>'
+    '<span><span id="rail-state-text" role="status" aria-live="polite">Idle, not recording</span>'
+    '<span id="rail-state-clock" aria-hidden="true"></span></span>'
+    "</div>"
+    '<p class="rail-meta" id="rail-readout"></p>'
     '<button type="button" class="rail-btn is-danger" id="rail-quit"'
     ' title="Quit AutoStream" aria-label="Quit AutoStream">'
     + _svg("power")
@@ -114,14 +132,14 @@ _TOPBAR = (
     '<path d="M9 4v16" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>'
     "</button>"
     '<h1 class="topbar-title" id="topbar-title">Dashboard</h1>'
+    # Page actions, filled by the page that is showing (shell_setActions).
+    '<div class="topbar-actions" id="topbar-actions"></div>'
     '<div class="topbar-meta">'
-    # aria-live so a phase change is announced without the user hunting for it;
-    # shell_setText() only writes when the value actually changed, so the two
-    # second poll does not spam the screen reader.
-    '<span class="pill pill-idle" id="top-pill" role="status"'
-    ' aria-live="polite">IDLE</span>'
+    # The pill, game and clock still exist for the tests and the title, but
+    # the sidebar's state line is where the state is read now (#rail-state).
+    '<span class="pill pill-idle hide" id="top-pill">Idle</span>'
     '<span class="status-game hide" id="top-game"></span>'
-    '<span class="mono" id="top-clock">--:--:--</span>'
+    '<span class="mono hide" id="top-clock">--:--:--</span>'
     '<button type="button" class="btn btn-ghost btn-sm hide" id="top-toggle">'
     "Pause</button>"
     "</div>"
@@ -156,6 +174,17 @@ SHELL_HTML: str = (
     "</main>"
     "</div>"
     '<div id="setup-root" class="hide">{{SETUP_HTML}}</div>'
+    # Ctrl K: one box over every page. Outside .app so no view's overflow or
+    # stacking can clip it.
+    '<div class="pal-scrim hide" id="pal-scrim">'
+    '<div class="pal" id="pal" role="dialog" aria-modal="true" aria-label="Search">'
+    '<input class="pal-q" id="pal-q" type="search" autocomplete="off" spellcheck="false"'
+    ' placeholder="Search clips, reels, games and settings, or type a command"'
+    ' aria-label="Search" aria-controls="pal-list">'
+    '<div class="pal-list" id="pal-list" role="listbox" aria-label="Results"></div>'
+    '<p class="pal-foot"><span class="kbd">Up</span> <span class="kbd">Down</span> to move,'
+    ' <span class="kbd">Enter</span> to open, <span class="kbd">Esc</span> to close</p>'
+    "</div></div>"
     '<div id="toasts" role="status" aria-live="polite"></div>'
 )
 
@@ -192,13 +221,13 @@ const SHELL_RAIL_KEY = 'autostream.rail';   // 'open' | 'min': the player's own 
 /* Engine phase -> pill modifier + wordmark. Colour is never the only channel:
    the wordmark always rides along with the dot. */
 const SHELL_PHASE = {
-  IDLE:     {pill: 'pill-idle', label: 'IDLE'},
-  ARMING:   {pill: 'pill-warn', label: 'ARMING'},
-  STARTING: {pill: 'pill-warn', label: 'STARTING'},
-  TESTING:  {pill: 'pill-warn', label: 'TESTING'},
-  LIVE:     {pill: 'pill-live', label: 'LIVE'},
-  COOLDOWN: {pill: 'pill-idle', label: 'COOLDOWN'},
-  STOPPING: {pill: 'pill-warn', label: 'STOPPING'}
+  IDLE:     {pill: 'pill-idle', label: 'Idle'},
+  ARMING:   {pill: 'pill-warn', label: 'Getting ready'},
+  STARTING: {pill: 'pill-warn', label: 'Starting'},
+  TESTING:  {pill: 'pill-warn', label: 'Going live'},
+  LIVE:     {pill: 'pill-live', label: 'Live'},
+  COOLDOWN: {pill: 'pill-idle', label: 'Wrapping up'},
+  STOPPING: {pill: 'pill-warn', label: 'Stopping'}
 };
 
 let STATUS = {};              /* latest GET /api/status payload (contract) */
@@ -360,12 +389,14 @@ function shell_doc_title() {
                    (SHELL_TITLES[shell_page] || 'Dashboard') + ' - AutoStream';
 }
 
-/* THE RAIL IS AN ICON STRIP EXCEPT ON THE DASHBOARD, until the player says otherwise: the other pages
-   want the width, and the choice they make with the toggle then holds on every page. */
+/* THE SIDEBAR IS OPEN ON EVERY PAGE until the player collapses it, and that
+   choice then holds on every page. It used to fold to an icon strip off the
+   Dashboard, which hid the page names from exactly the person who did not
+   know the icons yet. Below 900px it is the strip regardless. */
 function shell_rail() {
   let pref = null;
   try { pref = localStorage.getItem(SHELL_RAIL_KEY); } catch (e) { /* private mode */ }
-  const min = window.innerWidth < 900 || (pref ? pref === 'min' : shell_page !== 'dash');
+  const min = window.innerWidth < 900 || pref === 'min';
   const app = document.querySelector('.app'), t = shell_$('rail-toggle');
   if (app) { app.classList.toggle('rail-min', min); if (!min) app.classList.remove('rail-peek'); }
   if (t) {
@@ -410,6 +441,10 @@ function go(page) {
     else btns[i].removeAttribute('aria-current');
   }
   shell_setText(shell_$('topbar-title'), SHELL_TITLES[page]);
+  /* A page's actions and sidebar list belong to it alone: clear them before
+     the new page's onShow puts its own back. */
+  shell_setActions(null);
+  shell_railSection(null);
   shell_rail();
   try { sessionStorage.setItem(SHELL_STORE_KEY, page); } catch (e) { /* private mode */ }
   shell_doc_title();
@@ -438,6 +473,62 @@ function shell_setPill(el, mod, text, title) {
   if (title && el.title !== title) el.title = title;
 }
 
+/* What the sidebar's state line says, and which mark goes beside it.
+   -> {mark: 'live'|'work'|'need'|'idle', text}. A sentence, not a code: it is
+   the one place every page shows what the app is doing. */
+function shell_stateLine(s) {
+  const phase = String(s.phase || 'IDLE');
+  const t = shell_clock(s.elapsed);
+  if (s.blocked) return {mark: 'need', text: 'Held back: ' + String(s.blocked)};
+  if (s.paused) return {mark: 'need', text: 'Paused'};
+  if (phase === 'LIVE') {
+    const rec = s.streaming === false;
+    return {mark: 'live', text: (rec ? 'Recording' : 'Live') + (t ? ', ' + t : '')};
+  }
+  if (phase === 'IDLE') {
+    return s.recording ? {mark: 'live', text: 'Recording' + (t ? ', ' + t : '')}
+                       : {mark: 'idle', text: 'Idle, not recording'};
+  }
+  const meta = SHELL_PHASE[phase];
+  return {mark: 'work', text: meta ? meta.label : phase};
+}
+
+/* 1:24:07, or 12:40 under an hour. Empty when there is nothing to time. */
+function shell_clock(sec) {
+  if (sec === null || sec === undefined || isNaN(Number(sec))) return '';
+  sec = Math.max(0, sec | 0);
+  const h = (sec / 3600) | 0, m = ((sec % 3600) / 60) | 0, x = sec % 60;
+  const p = (n) => String(n).padStart(2, '0');
+  return h ? h + ':' + p(m) + ':' + p(x) : m + ':' + p(x);
+}
+
+function shell_paintState(line) {
+  const mark = shell_$('rail-state-mark');
+  const cls = 'mark mark-' + line.mark;
+  if (mark && mark.className !== cls) mark.className = cls;
+  if (mark && line.mark === 'work') mark.style.setProperty('--p', '50');
+  /* "Live, 1:24:07" is drawn as the words (a live region) and the clock
+     (not one), so a screen reader hears "Live" once, not every tick. */
+  const m = /^(.*), (\d+:\d\d(?::\d\d)?)$/.exec(line.text);
+  shell_setText(shell_$('rail-state-text'), m ? m[1] : line.text);
+  shell_setText(shell_$('rail-state-clock'), m ? ', ' + m[2] : '');
+}
+
+/* A page puts its own buttons in the top bar (null clears them). */
+function shell_setActions(html) {
+  const host = shell_$('topbar-actions');
+  if (host && host.innerHTML !== (html || '')) host.innerHTML = html || '';
+}
+
+/* A page puts its own list in the sidebar under the page links (the Studio's
+   games); null takes it away again. */
+function shell_railSection(html) {
+  const host = shell_$('rail-section');
+  if (!host) return;
+  if (host.innerHTML !== (html || '')) host.innerHTML = html || '';
+  host.classList.toggle('hide', !html);
+}
+
 function shell_hms(s) {
   if (s === null || s === undefined) return '--:--:--';
   s = Math.max(0, s | 0);
@@ -453,17 +544,16 @@ function shell_paint(s) {
   const phase = String(s.phase || 'IDLE');
   const meta = SHELL_PHASE[phase] || SHELL_PHASE.IDLE;
   let mod = meta.pill, label = meta.label, why = phase;
-  if (s.blocked) { mod = 'pill-warn'; label = 'BLOCKED'; why = String(s.blocked); }
-  else if (s.paused) { mod = 'pill-idle'; label = 'PAUSED'; why = 'Paused'; }
+  if (s.blocked) { mod = 'pill-warn'; label = 'Blocked'; why = String(s.blocked); }
+  else if (s.paused) { mod = 'pill-idle'; label = 'Paused'; why = 'Paused'; }
 
   shell_setPill(shell_$('rail-dot'), mod, null, label);
-  shell_setPill(shell_$('top-pill'), mod, label, why);
+  shell_setPill(shell_$('top-pill'), mod + ' hide', label, why);
+  shell_paintState(shell_stateLine(s));
 
-  const game = shell_$('top-game');
-  if (game) {
-    shell_setText(game, s.game || '');
-    game.classList.toggle('hide', !s.game);
-  }
+  /* The game is named in the sidebar's state line and the Dashboard's status
+     line now; the top bar keeps the element, hidden, for the title. */
+  shell_setText(shell_$('top-game'), s.game || '');
   shell_setText(shell_$('top-clock'), shell_hms(s.elapsed));
 
   /* One pause control, always in the same place, on every page. */
@@ -473,7 +563,8 @@ function shell_paint(s) {
        Resume is what clears them. */
     const held = !!(s.paused || s.start_blocked);
     const running = phase !== 'IDLE' || held;
-    tog.classList.toggle('hide', !running);
+    /* The Dashboard has its own Pause in its status line. */
+    tog.classList.toggle('hide', !running || shell_page === 'dash');
     shell_setText(tog, held ? 'Resume' : 'Pause');
   }
 
@@ -486,7 +577,7 @@ function shell_paint(s) {
     if (s.streaming !== false && s.quota_spent !== null && s.quota_spent !== undefined) {
       bits.push('quota ' + shell_group(s.quota_spent) + '/10,000');
     }
-    shell_setText(readout, bits.join(' \u00b7 '));   /* escaped so the source file stays ASCII */
+    shell_setText(readout, bits.join(', '));   /* commas: the redesign retired the middot strings */
   }
 
   if (phase !== shell_phase_seen) { shell_phase_seen = phase; shell_doc_title(); }
@@ -496,8 +587,9 @@ function shell_offline(on) {
   if (shell_off === on) return;
   shell_off = on;
   if (!on) return;    /* the next successful paint repaints everything */
-  shell_setPill(shell_$('top-pill'), 'pill-warn', 'OFFLINE',
+  shell_setPill(shell_$('top-pill'), 'pill-warn hide', 'Not responding',
                 'AutoStream is not responding');
+  shell_paintState({mark: 'need', text: 'Not responding'});
   shell_setPill(shell_$('rail-dot'), 'pill-warn', null, 'Not responding');
   const game = shell_$('top-game');
   if (game) game.classList.add('hide');
@@ -575,6 +667,127 @@ async function shell_toggle_pause() {
   if (btn) btn.disabled = false;
 }
 
+/* ---------------- Ctrl K ---------------- */
+
+/* Each page registers what it can find: pal_source('Clips', q => [{label,
+   hint, keys, run}]). The shell owns the box, the keys and the order. */
+const PAL_GROUPS = ['Clips', 'Reels', 'Games', 'Actions', 'Settings'];
+const PAL_SOURCES = [];
+const PAL_PER_GROUP = 6;
+let pal_rows = [];
+let pal_at = 0;
+
+function pal_source(name, fn) { PAL_SOURCES.push({name: name, fn: fn}); }
+
+/* Every word of the query, in any order, somewhere in the text. */
+function pal_match(q, text) {
+  const words = String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const t = String(text || '').toLowerCase();
+  return words.every(w => t.indexOf(w) >= 0);
+}
+
+/* -> rows in group order, no group over PAL_PER_GROUP (6). A source that
+   throws is skipped: one broken page must not empty the box. */
+function pal_collect(q, sources) {
+  const by = {};
+  for (let i = 0; i < sources.length; i++) {
+    let got = [];
+    try { got = sources[i].fn(q) || []; } catch (e) { got = []; }
+    const g = sources[i].name;
+    by[g] = (by[g] || []).concat(got);
+  }
+  const out = [];
+  const order = PAL_GROUPS.concat(Object.keys(by).filter(g => PAL_GROUPS.indexOf(g) < 0));
+  for (let i = 0; i < order.length; i++) {
+    const rows = (by[order[i]] || []).slice(0, 6);
+    for (let j = 0; j < rows.length; j++) out.push(Object.assign({group: order[i]}, rows[j]));
+  }
+  return out;
+}
+
+function pal_draw() {
+  const host = shell_$('pal-list');
+  const q = shell_$('pal-q');
+  if (!host) return;
+  pal_rows = pal_collect(q ? q.value : '', PAL_SOURCES);
+  if (pal_at >= pal_rows.length) pal_at = Math.max(0, pal_rows.length - 1);
+  if (!pal_rows.length) {
+    host.innerHTML = '<p class="pal-none">Nothing matches. Try fewer words.</p>';
+    return;
+  }
+  let html = '', last = '';
+  pal_rows.forEach((r, i) => {
+    if (r.group !== last) { html += '<p class="pal-grp">' + esc(r.group) + '</p>'; last = r.group; }
+    html += '<button type="button" role="option" class="pal-row' + (i === pal_at ? ' is-on' : '') +
+      '" data-pal="' + i + '" aria-selected="' + (i === pal_at) + '">' +
+      '<span class="pal-lab">' + esc(r.label) + '</span>' +
+      (r.hint ? '<span class="pal-hint">' + esc(r.hint) + '</span>' : '') +
+      (r.keys ? '<span class="kbd">' + esc(r.keys) + '</span>' : '') + '</button>';
+  });
+  host.innerHTML = html;
+  const on = host.querySelector('.pal-row.is-on');
+  if (on && on.scrollIntoView) on.scrollIntoView({block: 'nearest'});
+}
+
+function pal_open() {
+  const scrim = shell_$('pal-scrim');
+  if (!scrim || !scrim.classList.contains('hide')) return;
+  scrim.classList.remove('hide');
+  const q = shell_$('pal-q');
+  if (q) { q.value = ''; q.focus(); }
+  pal_at = 0;
+  pal_draw();
+}
+
+function pal_close() {
+  const scrim = shell_$('pal-scrim');
+  if (scrim) scrim.classList.add('hide');
+}
+
+function pal_run(i) {
+  const r = pal_rows[i];
+  if (!r) return;
+  pal_close();
+  try { r.run && r.run(); } catch (e) { console.error('palette', e); }
+}
+
+/* Ctrl K (Cmd K) opens it from any page. Only opens: a page with its own
+   Ctrl K handler that also calls pal_open() must not toggle it shut. */
+function pal_key(e) {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && String(e.key).toLowerCase() === 'k') {
+    e.preventDefault();
+    pal_open();
+    return;
+  }
+  const scrim = shell_$('pal-scrim');
+  if (!scrim || scrim.classList.contains('hide')) return;
+  /* While the box is open the keys are its own. Escape here also reached
+     the Studio's handler, which closed the reel maker under the palette. */
+  if (['Escape', 'ArrowDown', 'ArrowUp', 'Enter'].indexOf(e.key) >= 0) e.stopImmediatePropagation();
+  if (e.key === 'Escape') { e.preventDefault(); pal_close(); }
+  else if (e.key === 'ArrowDown') { e.preventDefault(); pal_at = Math.min(pal_rows.length - 1, pal_at + 1); pal_draw(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); pal_at = Math.max(0, pal_at - 1); pal_draw(); }
+  else if (e.key === 'Enter') { e.preventDefault(); pal_run(pal_at); }
+}
+
+/* The app's own actions: pages, and what the engine can do from anywhere. */
+pal_source('Actions', q => {
+  const out = [];
+  SHELL_PAGES.forEach(p => {
+    const t = SHELL_TITLES[p] || p;
+    if (pal_match(q, 'go to ' + t)) out.push({label: 'Go to ' + t, run: () => go(p)});
+  });
+  const held = STATUS && (STATUS.paused || STATUS.start_blocked);
+  const say = held ? 'Resume' : 'Pause';
+  if (STATUS && STATUS.phase && (STATUS.phase !== 'IDLE' || held) && pal_match(q, say))
+    out.push({label: say, keys: 'P', run: shell_toggle_pause});
+  if (pal_match(q, 'save replay instant'))
+    out.push({label: 'Save replay', keys: 'F9', run: () => API.post('/api/cmd', {command: 'replay'})
+      .then(r => toast(r && r.error ? r.error : 'Saving the replay', r && r.error ? 'error' : 'ok'))
+      .catch(() => toast('Could not reach AutoStream', 'error'))});
+  return out;
+});
+
 /* ---------------- wiring ---------------- */
 
 function shell_scrolled(host) {
@@ -607,6 +820,18 @@ function shell_bind() {
   }
   const tog = shell_$('top-toggle');
   if (tog) tog.addEventListener('click', shell_toggle_pause);
+
+  document.addEventListener('keydown', pal_key);
+  const ps = shell_$('rail-search');
+  if (ps) ps.addEventListener('click', pal_open);
+  const pq = shell_$('pal-q');
+  if (pq) pq.addEventListener('input', () => { pal_at = 0; pal_draw(); });
+  const scrim = shell_$('pal-scrim');
+  if (scrim) scrim.addEventListener('click', e => {
+    if (e.target === scrim) { pal_close(); return; }
+    const row = e.target.closest ? e.target.closest('[data-pal]') : null;
+    if (row) pal_run(Number(row.getAttribute('data-pal')));
+  });
 
   const host = shell_$('views');
   if (host) host.addEventListener('scroll', () => shell_scrolled(host), {passive: true});

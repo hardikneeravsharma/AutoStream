@@ -72,7 +72,8 @@ and reopening it every 15 seconds per tab flashed "connected"/"disconnected" all
 | [`web.py`](../autostream/web.py) | **Legacy** — an older dashboard server, superseded by `webui.py`; not wired into `cmd_run` |
 | [`setup_flow.py`](../autostream/setup_flow.py) | Backend actions for the browser-based setup wizard |
 | [`setup_wizard.py`](../autostream/setup_wizard.py) | Original console/interactive setup flow (`autostream setup`) |
-| [`theme.py`](../autostream/theme.py) | Named CSS colour-variable sets for the web UI |
+| [`theme.py`](../autostream/theme.py) | The two palettes (dark, light) and the System choice, as CSS custom properties |
+| [`logexplain.py`](../autostream/logexplain.py) | Explains the log's problems in a sentence, with the fix |
 | [`ui_assets.py`](../autostream/ui_assets.py) | Raw CSS/HTML/JS for the themed dashboard |
 | [`paths.py`](../autostream/paths.py) | Single source of truth for on-disk locations; `AUTOSTREAM_HOME` override |
 | [`streamelements.py`](../autostream/streamelements.py) | Lists a channel's overlays so a screen saver can be picked from a list instead of a pasted URL. The JWT lives in `secrets\` (never `config.yaml`) and carries its own channel id and overlay token, so one paste is enough. Classifies each overlay by name — start / be-right-back / end — and SUGGESTS rather than applies, because a channel can hold two installs of the same theme |
@@ -564,8 +565,14 @@ All gating is centralized in `Engine._preflight()`, called from `_tick_idle` and
   `closing` event handler (infinite-loop risk); only `request_quit()` may truly close
   the window (wired to tray Quit + SIGINT), with a veto-flood backstop so the user
   can't get stuck.
-- **theme.py** — `THEMES` dict (midnight/carbon/ember/forest/daylight palettes);
-  `css_vars()`/`listing()` render CSS and theme-picker metadata.
+- **theme.py** — `THEMES` dict (`dark`, `light`) plus the `system` choice;
+  `root_css()` renders the palette for its own `<style id="theme-vars">` (System
+  carries light inside `prefers-color-scheme`), `resolve()` reads the pre-v2 ids
+  (midnight, carbon, ember, forest -> dark; daylight -> light), `listing()` feeds the
+  Appearance picker.
+- **logexplain.py** — turns the log's worst lines (OBS not answering, the YouTube
+  budget gone, a full drive, no ffmpeg, an expired sign-in) into a sentence and the
+  page action that fixes it; `/api/logs/tail` sends them as `problems`.
 - **ui_assets.py** — raw `CSS`/`BODY`/`JS` strings for the dashboard + wizard,
   imported by `webui.page()`.
 - **paths.py** — `ROOT` resolves from `AUTOSTREAM_HOME` env var if set, else the

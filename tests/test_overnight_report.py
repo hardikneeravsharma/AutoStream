@@ -122,7 +122,9 @@ def test_the_song_mark_nudge_reads_its_own_button():
 def test_picking_a_stream_loads_that_streams_clips():
     js = _ui("clips")
     i = js.index("act === 'pick')")
-    assert "clip_loadMade(clip_state.pick)" in js[i:i + 700]
+    # The window is the pick handler, which grew a comment and the summary
+    # screen's hop in the 2026-10-29 redesign; what it pins is unchanged.
+    assert "clip_loadMade(clip_state.pick)" in js[i:i + 1400]
 
 
 def test_a_clip_with_edits_is_not_left_behind_when_it_ends():

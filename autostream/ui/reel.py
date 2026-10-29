@@ -80,7 +80,7 @@ REEL_HTML: str = (
 
     <!-- 1. the song -->
     <section class="reel-step" id="reel-step-song">
-      <h3 class="reel-h">1 &middot; The song</h3>
+      <h3 class="reel-h"><span class="reel-h-n">1</span>The song</h3>
       <div class="field-inline">
         <button class="btn" type="button" data-act="reel-song">Choose a track&hellip;</button>
         <span class="muted" id="reel-song-name">No track chosen.</span>
@@ -90,7 +90,7 @@ REEL_HTML: str = (
 
     <!-- 2. which part of it -->
     <section class="reel-step hide" id="reel-step-part">
-      <h3 class="reel-h">2 &middot; Which part</h3>
+      <h3 class="reel-h"><span class="reel-h-n">2</span>Which part</h3>
       <canvas class="reel-wave" id="reel-wave" height="120"></canvas>
       <div class="clip-range" id="reel-range">
         <input class="clip-range-in" type="range" id="reel-from" min="0" max="1000"
@@ -103,7 +103,7 @@ REEL_HTML: str = (
 
     <!-- 3. the moments -->
     <section class="reel-step hide" id="reel-step-kills">
-      <h3 class="reel-h">3 &middot; The moments</h3>
+      <h3 class="reel-h"><span class="reel-h-n">3</span>The moments</h3>
       <div class="field-inline">
         <button class="btn btn-sm" type="button" data-act="reel-all">All</button>
         <button class="btn btn-sm" type="button" data-act="reel-none">None</button>
@@ -115,13 +115,13 @@ REEL_HTML: str = (
 
     <!-- 4. the shape -->
     <section class="reel-step hide" id="reel-step-shape">
-      <h3 class="reel-h">4 &middot; The shape of the edit</h3>
+      <h3 class="reel-h"><span class="reel-h-n">4</span>The shape of the edit</h3>
       <div class="reel-templates" id="reel-templates"></div>
     </section>
 
     <!-- 5. what it will do, before anything is encoded -->
     <section class="reel-step hide" id="reel-step-plan">
-      <h3 class="reel-h">5 &middot; Where every kill lands</h3>
+      <h3 class="reel-h"><span class="reel-h-n">5</span>Where every kill lands</h3>
       <canvas class="reel-wave" id="reel-plan-wave" height="120"></canvas>
       <p class="muted" id="reel-plan-facts"></p>
       <p class="muted" id="reel-plan-note"></p>
@@ -163,8 +163,8 @@ REEL_HTML: str = (
         <span class="reel-clock" id="reel-mark-clock">0.000s</span>
         <button class="btn btn-primary" type="button" data-act="reel-tap">Kill here (Space)</button>
         <button class="btn" type="button" data-act="reel-play">Play / Pause</button>
-        <button class="btn" type="button" data-act="reel-back">&larr; 1s</button>
-        <button class="btn" type="button" data-act="reel-fwd">1s &rarr;</button>
+        <button class="btn" type="button" data-act="reel-back">Back 1s</button>
+        <button class="btn" type="button" data-act="reel-fwd">Forward 1s</button>
         <button class="btn" type="button" data-act="reel-untap">Undo</button>
         <button class="btn" type="button" data-act="reel-clearmarks">Clear</button>
         <button class="btn" type="button" data-act="reel-seedmarks">Start from the template</button>
@@ -253,9 +253,9 @@ function reel_useSong(path, got) {
 }
 
 function reel_songFacts(s) {
-  return s.bpm.toFixed(1) + ' BPM · bar ' + s.bar.toFixed(2) + 's' +
-    (s.drums_in ? ' · drums in at ' + s.drums_in.toFixed(1) + 's' : '') +
-    (s.drop ? ' · drop at ' + s.drop.toFixed(1) + 's' : '');
+  return s.bpm.toFixed(1) + ' BPM, a bar every ' + s.bar.toFixed(2) + 's' +
+    (s.drums_in ? ', drums in at ' + s.drums_in.toFixed(1) + 's' : '') +
+    (s.drop ? ', the drop at ' + s.drop.toFixed(1) + 's' : '') + '.';
 }
 
 async function reel_pickSong() {
@@ -475,7 +475,7 @@ async function reel_build() {
   st.built = r;
   reel_show('reel-step-done', !st.quick);
   reel_el('reel-done-facts').textContent =
-    r.shots + ' shots · ' + reel_secs(r.seconds) + ' · ' + r.path;
+    r.shots + ' shots, ' + reel_secs(r.seconds) + '. Saved as ' + r.path;
   reel_renderSteps();
   toast('Reel ready.', 'ok');
   return r;
@@ -588,10 +588,10 @@ async function reel_quickRender() {
   var v = reel_el('reel-quick-video');
   if (v && window.clip_videoURL) { v.src = clip_videoURL(r.path); v.load(); }
   reel_el('reel-quick-facts').textContent =
-    r.shots + (r.shots === 1 ? ' kill' : ' kills') + ' · ' +
-    reel_secs(r.seconds) + ' · ' + (st.plan.used < st.plan.available
-      ? (st.plan.available - st.plan.used) + ' more did not fit in this part of the song · ' : '') +
-    r.path;
+    r.shots + (r.shots === 1 ? ' kill' : ' kills') + ', ' +
+    reel_secs(r.seconds) + '. ' + (st.plan.used < st.plan.available
+      ? (st.plan.available - st.plan.used) + ' more did not fit in this part of the song. ' : '') +
+    'Saved as ' + r.path;
 }
 
 /* "Not quite": the two questions worth asking, in the order they matter. */
@@ -654,7 +654,7 @@ function reel_renderMarks() {
   if (chips) {
     chips.innerHTML = m.map(function (t, i) {
       return '<span class="reel-chip" data-mark="' + i +
-             '" title="click to remove">' + (i + 1) + ' · ' +
+             '" title="Click to remove">' + (i + 1) + ': ' +
              t.toFixed(3) + 's</span>';
     }).join('');
   }

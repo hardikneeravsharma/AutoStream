@@ -72,24 +72,34 @@ STUDIO_HTML = r"""
   </header>
 
   <section id="studio-pane-clips" aria-label="Clips">
-    <header class="bin-top">
-      <div class="bin-intro">
-        <p class="bin-eyebrow">Reel maker</p>
-        <h1 class="bin-title">Pick your clips, then pick a look</h1>
-        <p class="bin-lede" id="studio-sub">Reading your clips…</p>
-      </div>
-      <button type="button" class="btn btn-primary" data-act="studio-gd-open" id="studio-gd-open">Make a reel</button>
-    </header>
-    <div class="studio-tools">
+    <!-- NO HERO. The page you come to for clips starts with the clips: the count is one quiet line,
+         the games are in the sidebar (studio_railDraw), and Make a reel stays a button of the page's own
+         rather than moving to the top bar -- the guided maker and the sweep both reach it here. Its
+         key is drawn from data-kbd, so the button's own text is still just its name. -->
+    <header class="studio-cliphead">
       <input class="input studio-search" id="studio-q" type="search"
              placeholder="Search clips, captions or runs" aria-label="Search clips">
-      <div class="studio-games" id="studio-games" role="group" aria-label="Games"></div>
+      <p class="studio-sub" id="studio-sub">Reading your clips…</p>
+      <span class="studio-spacer"></span>
+      <div class="seg seg-sm studio-viewseg" role="group" aria-label="Show the clips as">
+        <button type="button" class="seg-btn is-active" data-act="studio-view" data-view="list"
+                id="studio-view-list" aria-pressed="true">List</button>
+        <button type="button" class="seg-btn" data-act="studio-view" data-view="grid"
+                id="studio-view-grid" aria-pressed="false">Grid</button>
+      </div>
       <button type="button" class="btn btn-ghost btn-sm" data-act="studio-refresh">Refresh</button>
       <!-- CLIPS THE PLAYER ALREADY HAS: saved by the game, by Medal, sent by a
            friend. Added here they are clips like any other. -->
       <button type="button" class="btn btn-sm" data-act="studio-imp-add">Add your own clip…</button>
+      <button type="button" class="btn btn-primary studio-kbd" data-act="studio-gd-open" id="studio-gd-open"
+              data-kbd="R" title="Make a reel (R)">Make a reel</button>
+    </header>
+    <!-- THE LIST AND THE CLIP IN FOCUS. In list view the run's clips are rows and the one in focus
+         shows beside them, with the same three things a tile offered: pick it, star it, edit it. -->
+    <div class="studio-browse" id="studio-browse">
+      <div id="studio-lib" class="studio-lib"></div>
+      <aside class="studio-cinsp hide" id="studio-cinsp" aria-label="The clip in focus"></aside>
     </div>
-    <div id="studio-lib" class="studio-lib"></div>
     <p class="muted studio-empty hide" id="studio-empty"></p>
 
     <div class="studio-tray hide" id="studio-tray" role="region" aria-label="Selection">
@@ -134,10 +144,18 @@ STUDIO_HTML = r"""
               <option value="long">Longest first</option>
             </select></label>
         </div>
-        <div class="studio-reel-row" id="studio-reel-grid"></div>
-        <p class="muted studio-empty hide" id="studio-reel-none"></p>
-        <button type="button" class="btn btn-sm studio-reels-more hide" data-act="studio-reels-more"
-                id="studio-reels-more" aria-expanded="false"></button>
+        <!-- A LIST AND A PHONE. A reel is tall and a tile was wide, so most of every tile was black
+             bars; now the rows are read by name and song, and the one chosen plays in its own
+             shape beside them. -->
+        <div class="studio-rbrowse">
+          <div class="studio-rlist">
+            <div class="studio-reel-row" id="studio-reel-grid" role="list"></div>
+            <p class="muted studio-empty hide" id="studio-reel-none"></p>
+            <button type="button" class="btn btn-sm studio-reels-more hide" data-act="studio-reels-more"
+                    id="studio-reels-more" aria-expanded="false"></button>
+          </div>
+          <aside class="studio-rinsp hide" id="studio-rinsp" aria-label="The reel chosen"></aside>
+        </div>
       </section>
   </section>
 
@@ -146,16 +164,18 @@ STUDIO_HTML = r"""
        about the app, not a decision anybody has to make before picking a
        clip. -->
   <section id="studio-pane-looks" class="hide" aria-label="Looks">
-    <aside class="bin-calc" aria-label="How many templates">
-      <p class="bin-eyebrow">Mix and match</p>
-      <div class="bin-big" id="bin-total">—<small id="bin-total-note">counting the drawers</small></div>
+    <!-- NO HEADLINE NUMBER. How many reels the drawers make is a fact about the app, not a choice, so
+         it is no longer a fifteen-digit headline: the drawers to deal from are a row of ticks, and the
+         count is one quiet line beside them (studio_binSlots). -->
+    <div class="bin-calc studio-looks-head" aria-label="Which drawers to deal from">
       <div class="bin-slots" id="bin-slots"></div>
-    </aside>
+      <p class="muted studio-looks-note"><span id="bin-total">—</span> <span id="bin-total-note">counting the drawers</span></p>
+    </div>
       <section class="bin-sec" id="bin" aria-label="Parts bin">
-        <div class="bin-sec-head">
-          <h2>The drawers</h2><span class="count" id="bin-count"></span>
-          <p>One example each, cut from your own clips by the same code that renders the reel — so a card
-            shows what the reel will actually do. Click one to put it in the template you are dealing.</p>
+        <div class="bin-sec-head studio-looks-intro">
+          <p>One example of each part, cut from your own clips by the code that renders the reel, so a
+            card shows what the reel will do. Pick one to put it in the look you are dealing.
+            <span class="count" id="bin-count"></span></p>
         </div>
         <div class="bin-build">
           <span class="bin-arrange" id="bin-arrange"></span>
@@ -278,7 +298,7 @@ STUDIO_HTML = r"""
                point at, not a number. Shown while the Reel tab is open. -->
           <div class="ed-frame hide" id="studio-frame" aria-hidden="true">
             <span class="ed-handle" id="studio-handle-chip" title="Drag to move your handle"></span>
-            <span class="ed-handle ed-lyrics" id="studio-lyrics-chip" title="Drag to move the lyrics">LYRICS</span>
+            <span class="ed-handle ed-lyrics" id="studio-lyrics-chip" title="Drag to move the lyrics">Lyrics</span>
           </div>
           <!-- THE BOXES THE WORDS ARE DEALT INTO. Width and Size were two
                numbers describing a rectangle nobody could see; this is that
@@ -709,11 +729,14 @@ STUDIO_HTML = r"""
     <div class="gd-chip" id="studio-gd-chip" role="status"></div>
     <!-- the Song step's player: here, not in the step, so redrawing the step does not stop the song -->
     <audio id="studio-gd-audio" preload="metadata"></audio>
+    <!-- THE BAR AT THE BOTTOM stays in view however long a step is: the reel so far, then Back and
+         Next. Next's key is drawn from data-kbd, because the button's text is rewritten per step. -->
     <footer class="gd-foot">
+      <div class="gd-reelsum" id="studio-gd-reel" aria-label="The reel so far"></div>
       <button type="button" class="btn btn-ghost btn-sm" data-act="studio-gd" data-gd="all">All settings</button>
       <span class="gd-nav">
         <button type="button" class="btn" data-act="studio-gd" data-gd="back" id="studio-gd-back">Back</button>
-        <button type="button" class="btn btn-primary" data-act="studio-gd" data-gd="next" id="studio-gd-next">Next</button>
+        <button type="button" class="btn btn-primary studio-kbd" data-act="studio-gd" data-gd="next" id="studio-gd-next" data-kbd="Enter">Next</button>
       </span>
     </footer>
   </div>
@@ -1680,9 +1703,9 @@ function studio_folderCards() {
       covers.map(c => studio_thumbOf(c, '')).join('') + '</span>' +
       '<span class="studio-folder-card-body"><span class="studio-folder-card-name">' + esc(g.game) +
       studio_pickedPill(picked.byGame[g.game], studio.adding ? 'in this reel' : 'picked') + '</span>' +
-      '<span class="studio-folder-card-facts">' + g.clips + ' clips · ' + runs +
-      (runs === 1 ? ' run' : ' runs') + (newest ? '<br>newest ' + esc(newest) : '') + '</span>' +
-      '<span class="studio-folder-go">Open →</span></span></button>';
+      '<span class="studio-folder-card-facts">' + g.clips + ' clips, ' + runs +
+      (runs === 1 ? ' run' : ' runs') + (newest ? '<br>Newest ' + esc(newest) : '') + '</span>' +
+      '</span></button>';
   });
   /* Favourites cut across every game, so the card sits with the folders
      rather than inside one of them. */
@@ -1692,7 +1715,7 @@ function studio_folderCards() {
     '<span class="studio-folder-mosaic studio-folder-star">★</span>' +
     '<span class="studio-folder-card-body"><span class="studio-folder-card-name">Favourites</span>' +
     '<span class="studio-folder-card-facts">' + (lib.fav_count || 0) +
-    ' clips · across every game</span><span class="studio-folder-go">Open →</span></span></button>';
+    ' clips, across every game</span></span></button>';
   return html + '</div>';
 }
 
@@ -1748,8 +1771,7 @@ function studio_runRows(game) {
    quietly dropped. */
 function studio_matchSections(gr, pos) {
   const ms = gr.folder.matches || [];
-  const tile = c => studio_tile(c, pos[c.id]);
-  if (!ms.length) return '<div class="studio-grid">' + gr.clips.map(tile).join('') + '</div>';
+  if (!ms.length) return studio_clipsBlock(gr.clips, pos);
   let html = '';
   ms.forEach((m, i) => {
     const mine = gr.clips.filter(c => c.match === i);
@@ -1768,7 +1790,7 @@ function studio_matchSections(gr, pos) {
       '<span class="muted">at ' + studio_into(m.at) + ' into the recording</span>' +
       '<button type="button" class="btn btn-ghost btn-sm studio-match-btn" data-act="studio-match" ' +
       'data-match="' + i + '">' + (allOn ? 'Unselect match' : 'Select match') + '</button></div>' +
-      '<div class="studio-grid">' + mine.map(tile).join('') + '</div></section>';
+      studio_clipsBlock(mine, pos) + '</section>';
   });
   const rest = gr.clips.filter(c => c.match === undefined);
   if (rest.length) {
@@ -1779,7 +1801,7 @@ function studio_matchSections(gr, pos) {
       ' · warm-up, the range, or a match with no record</span>' +
       '<button type="button" class="btn btn-ghost btn-sm studio-match-btn" data-act="studio-match" ' +
       'data-match="-1">' + (allOn ? 'Unselect these' : 'Select these') + '</button></div>' +
-      '<div class="studio-grid">' + rest.map(tile).join('') + '</div></section>';
+      studio_clipsBlock(rest, pos) + '</section>';
   }
   return html;
 }
@@ -1853,33 +1875,91 @@ const STUDIO_REEL_SORTS = {
   long: (a, b) => (b.length || 0) - (a.length || 0)
 };
 
+/* The reel's song, without the "[Remix]"-style tag a download carries. */
+function studio_reelSong(r) { return r.song ? r.song.replace(/\s*\[[^\]]*\]\s*$/, '') : ''; }
+function studio_reelOf(path) { return ((studio.lib && studio.lib.reels) || []).filter(r => r.path === path)[0] || null; }
+
+/* ONE REEL, ONE ROW: its first kill as a small tall still, then name, song, length and date. The row
+   chooses the reel, which plays beside the list (studio_reelInsp); Delete is in the row's menu, so a
+   red button no longer sits on every reel. */
 function studio_reelCard(r) {
-  const fmt = r.format === 'vertical' ? '9:16' : r.format === 'landscape' ? '16:9' : '';
-  const style = studio.catalog ? (studio.catalog.styles || []).filter(s => s.key === r.style)[0] : null;
-  const facts = [style ? style.label : '', r.shots ? r.shots + ' shots' : '',
-                 r.lyrics ? 'lyrics' : ''].filter(Boolean).join(' · ');
-  return '<article class="studio-reel" aria-label="' + esc(r.name) + '">' +
-    /* The still plays the reel: the biggest target on the card does the
-       commonest thing. */
-    '<button type="button" class="studio-reel-thumb' + (r.format === 'vertical' ? ' is-tall' : '') + '" data-act="studio-watch" ' +
-    'data-path="' + esc(r.path) + '" aria-label="Play ' + esc(r.name) + '">' +
-    '<img loading="lazy" alt="" src="' + studio_media('/api/studio/thumb', r.path, '&t=' + (r.poster || 1) + '&v=' + r.when) + '">' +
-    (fmt ? '<span class="studio-reel-badge">' + fmt + '</span>' : '') +
-    (r.length ? '<span class="studio-reel-len">' + studio_dur(r.length) + '</span>' : '') +
-    '</button>' +
+  const on = r.path === studio.reelSel;
+  return '<article class="studio-reel' + (on ? ' is-sel' : '') + '" data-path="' + esc(r.path) + '" role="listitem" aria-label="' + esc(r.name) + '">' +
+    '<button type="button" class="studio-reel-main" data-act="studio-reel-sel" data-path="' + esc(r.path) + '" aria-pressed="' + on + '">' +
+    '<span class="studio-reel-thumb' + (r.format === 'vertical' ? ' is-tall' : '') + '">' +
+    '<img loading="lazy" alt="" src="' + studio_media('/api/studio/thumb', r.path, '&t=' + (r.poster || 1) + '&v=' + r.when) + '"></span>' +
     '<span class="studio-reel-name truncate" title="' + esc(r.name) + '">' + esc(r.name) + '</span>' +
-    '<span class="muted studio-reel-meta">' + esc(facts ? facts + ' · ' : '') +
-    new Date(r.when * 1000).toLocaleDateString() + '</span>' +
-    (r.song ? '<span class="muted studio-reel-meta truncate" title="' + esc(r.song) + '">♪ ' + esc(r.song.replace(/\s*\[[^\]]*\]\s*$/, '')) + '</span>' : '') +
-    '<span class="field-inline">' +
-    (r.project ? '<button type="button" class="btn btn-sm" data-act="studio-open" data-path="' + esc(r.path) + '">Open timeline</button>'
-               : '<span class="muted studio-reel-old">Made before the Studio</span>') +
+    '<span class="studio-reel-song truncate" title="' + esc(r.song || '') + '">' + esc(studio_reelSong(r)) + '</span>' +
+    '<span class="studio-reel-len">' + (r.length ? studio_dur(r.length) : '') + '</span>' +
+    '<span class="studio-reel-date">' + new Date(r.when * 1000).toLocaleDateString(undefined, {day: 'numeric', month: 'short'}) + '</span>' +
+    '</button>' +
     /* A reel is the biggest file the app makes and the easiest to make
        another of, so it needs a way out that is not the file explorer. */
-    '<button type="button" class="btn btn-ghost btn-sm studio-del-btn" data-act="studio-reel-del" ' +
-    'data-path="' + esc(r.path) + '" data-name="' + esc(r.name) + '" ' +
-    'title="Delete this reel">Delete…</button>' +
-    '</span></article>';
+    '<span class="studio-reel-more">' +
+    '<button type="button" class="btn btn-ghost btn-sm btn-icon" data-act="studio-reel-menu" data-path="' + esc(r.path) + '" ' +
+    'aria-haspopup="menu" aria-expanded="false" aria-label="More for ' + esc(r.name) + '" title="More">⋯</button>' +
+    '<span class="studio-reel-menu hide" role="menu">' +
+    '<button type="button" class="studio-del-btn" role="menuitem" data-act="studio-reel-del" ' +
+    'data-path="' + esc(r.path) + '" data-name="' + esc(r.name) + '">Delete…</button></span></span>' +
+    '</article>';
+}
+
+/* THE REEL CHOSEN, in its own shape: a 9:16 reel in a phone-shaped frame, a 16:9 one in a wide one.
+   preload="metadata", never "none": with none the length is NaN until it plays (CLAUDE.md). Drawn
+   only when the choice changes, so typing in the search does not restart the video. */
+function studio_reelInsp(force) {
+  const box = studio_el('studio-rinsp');
+  if (!box) return;
+  const shown = [].slice.call(document.querySelectorAll('#studio-reel-grid .studio-reel')).map(x => x.getAttribute('data-path'));
+  if (!shown.length) { studio_show('studio-rinsp', false); box.innerHTML = ''; studio.rinspFor = ''; return; }
+  if (shown.indexOf(studio.reelSel) < 0) studio.reelSel = shown[0];
+  document.querySelectorAll('#studio-reel-grid .studio-reel').forEach(x => {
+    const on = x.getAttribute('data-path') === studio.reelSel;
+    x.classList.toggle('is-sel', on);
+    const m = x.querySelector('.studio-reel-main');
+    if (m) m.setAttribute('aria-pressed', String(on));
+  });
+  studio_show('studio-rinsp', true);
+  if (!force && studio.rinspFor === studio.reelSel && box.innerHTML) return;
+  const r = studio_reelOf(studio.reelSel);
+  if (!r) return;
+  studio.rinspFor = r.path;
+  const style = studio.catalog ? (studio.catalog.styles || []).filter(s => s.key === r.style)[0] : null;
+  const facts = [style ? style.label : '', r.shots ? r.shots + ' shots' : '', r.lyrics ? 'lyrics on' : '',
+                 r.format === 'vertical' ? '9:16' : r.format === 'landscape' ? '16:9' : '',
+                 r.length ? studio_dur(r.length) : ''].filter(Boolean).join(', ');
+  box.innerHTML =
+    '<div class="studio-rphone' + (r.format === 'landscape' ? ' is-wide' : '') + '">' +
+    '<video id="studio-rvideo" preload="metadata" controls muted autoplay loop playsinline src="' +
+    esc(studio_media('/api/clips/video', r.path)) + '"></video></div>' +
+    '<div class="studio-rinsp-text"><h3 class="studio-rinsp-name truncate" title="' + esc(r.name) + '">' + esc(r.name) + '</h3>' +
+    '<p class="muted">' + esc(facts) + '</p>' +
+    (r.song ? '<p class="muted truncate" title="' + esc(r.song) + '">' + esc(studio_reelSong(r)) + '</p>' : '') + '</div>' +
+    '<div class="studio-rinsp-acts">' +
+    (r.project ? '<button type="button" class="btn btn-sm btn-primary" data-act="studio-open" data-path="' + esc(r.path) + '">Open timeline<span class="kbd">Enter</span></button>'
+               : '<span class="muted studio-reel-old">Made before the Studio, so it has no timeline</span>') +
+    '<button type="button" class="btn btn-sm" data-act="studio-show" data-path="' + esc(r.path) + '">Show in folder<span class="kbd">O</span></button>' +
+    '<button type="button" class="btn btn-sm btn-ghost" data-act="studio-watch" data-path="' + esc(r.path) + '" data-name="' + esc(r.name) + '">Watch it large</button>' +
+    '</div>';
+}
+
+/* Choose a reel; with `move` the keyboard goes to its row as well. */
+function studio_reelPick(path, move) {
+  studio.reelSel = path;
+  studio_reelInsp();
+  if (move) {
+    const b = document.querySelector('#studio-reel-grid .studio-reel[data-path="' + CSS.escape(path) + '"] .studio-reel-main');
+    if (b) { b.focus({preventScroll: true}); b.scrollIntoView({block: 'nearest'}); }
+  }
+}
+
+/* The row's "..." menu: one open at a time, closed by the next click anywhere. */
+function studio_reelMenu(btn) {
+  const menu = btn.parentElement.querySelector('.studio-reel-menu');
+  const open = menu && menu.classList.contains('hide');
+  document.querySelectorAll('#studio-reel-grid .studio-reel-menu').forEach(m => m.classList.add('hide'));
+  document.querySelectorAll('#studio-reel-grid [data-act="studio-reel-menu"]').forEach(b => b.setAttribute('aria-expanded', 'false'));
+  if (menu && open) { menu.classList.remove('hide'); btn.setAttribute('aria-expanded', 'true'); }
 }
 
 function studio_renderReels() {
@@ -1909,6 +1989,7 @@ function studio_renderReels() {
   const narrowed = !!words.length || fmt !== 'all';
   const shown = studio.reelsAll || narrowed ? hits : hits.slice(0, STUDIO_REELS_FOLDED);
   studio_el('studio-reel-grid').innerHTML = shown.map(studio_reelCard).join('');
+  studio_reelInsp();
   const none = studio_el('studio-reel-none');
   studio_show('studio-reel-none', !hits.length);
   if (!hits.length) none.textContent = 'No reel matches that.';
@@ -1934,23 +2015,11 @@ function studio_renderLib() {
   studio_el('studio-sub').textContent = lib.clip_count
     ? lib.clip_count + (lib.clip_count === 1 ? ' clip' : ' clips') + ' in ' +
       runs + (runs === 1 ? ' run' : ' runs') +
-      ' across ' + games + (games === 1 ? ' game' : ' games') +
-      '. Open a folder to pick from it — or search, which looks in all of them.'
+      ' across ' + games + (games === 1 ? ' game' : ' games')
     : 'No clips yet. Cut some on the Clips page and they will appear here.';
-  /* The chips are the quick way between folders: the same navigation as the
-     cards, for someone already two levels in. */
-  studio_el('studio-games').innerHTML =
-    '<button type="button" class="chip' + (studio.game === 'all' ? ' is-on' : '') +
-    '" data-act="studio-game" data-game="all" aria-pressed="' + (studio.game === 'all') + '">All folders <b>' +
-    lib.clip_count + '</b></button>' +
-    lib.games.map(g => '<button type="button" class="chip' + (studio.game === g.game ? ' is-on' : '') +
-      '" data-act="studio-game" data-game="' + esc(g.game) + '" aria-pressed="' + (studio.game === g.game) +
-      '">' + esc(g.game) + ' <b>' + g.clips + '</b></button>').join('') +
-    /* Favourites cut across games, so the chip sits apart from them. */
-    '<button type="button" class="chip studio-fav-chip' + (studio.game === 'fav' ? ' is-on' : '') +
-    '" data-act="studio-game" data-game="fav" aria-pressed="' + (studio.game === 'fav') + '"' +
-    ((lib.fav_count || 0) ? '' : ' disabled title="Star a clip with the star on its card"') +
-    '>\u2605 Favourites <b>' + (lib.fav_count || 0) + '</b></button>';
+  /* The games are the sidebar's now: the same navigation as the folder cards, one click from
+     anywhere in the library. */
+  studio_railDraw();
 
   studio_renderReels();
 
@@ -1996,10 +2065,12 @@ function studio_renderLib() {
         '<span class="muted">' + gr.clips.length + ' clips</span>' +
         '<button type="button" class="btn btn-ghost btn-sm" data-act="studio-folder" data-folder="' +
         esc(gr.folder.folder) + '">' + (allOn ? 'Unselect run' : 'Select run') + '</button></div>' +
-        '<div class="studio-grid">' + gr.clips.map(c => studio_tile(c, pos[c.id])).join('') + '</div></section>';
+        studio_clipsBlock(gr.clips, pos) + '</section>';
     });
   }
   studio_el('studio-lib').innerHTML = html;
+  studio_viewMark();
+  studio_inspDraw();
   const empty = level !== 'folders' && !groups.length;
   studio_show('studio-empty', empty && lib.clip_count > 0);
   if (empty && lib.clip_count) studio_el('studio-empty').textContent = level === 'search'
@@ -2056,6 +2127,186 @@ function studio_tile(c, n) {
     esc(c.id) + '" aria-label="Play ' + esc(c.name) + '">' + icon('play') + '</button></div></div>';
 }
 
+/* LIST OR GRID (the 2026-10-29 redesign). A list is the faster read -- a name, a map and the kills on
+   one line, forty to a screen -- so it is where the page opens; the grid is one click away for
+   finding a clip by how it looks, and the choice is kept in this browser. Storage can be refused (a
+   private window), and then the choice lasts until reload. */
+const STUDIO_VIEW_KEY = 'as.studio.view';
+function studio_viewGet() {
+  if (studio.view) return studio.view;
+  let v = '';
+  try { v = localStorage.getItem(STUDIO_VIEW_KEY) || ''; } catch (e) { v = ''; }
+  studio.view = v === 'grid' ? 'grid' : 'list';
+  return studio.view;
+}
+function studio_viewSet(v) {
+  studio.view = v === 'grid' ? 'grid' : 'list';
+  try { localStorage.setItem(STUDIO_VIEW_KEY, studio.view); } catch (e) { /* kept until reload */ }
+  studio_renderLib();
+}
+function studio_viewMark() {
+  const v = studio_viewGet();
+  ['list', 'grid'].forEach(k => {
+    const b = studio_el('studio-view-' + k);
+    if (!b) return;
+    b.classList.toggle('is-active', k === v);
+    b.setAttribute('aria-pressed', String(k === v));
+  });
+}
+
+/* The clips of one group, as rows or as tiles. The same `.studio-clip` / `.studio-clip-hit` either
+   way, so picking, a shift-range and Select run do not care which view is showing. */
+function studio_clipsBlock(clips, pos) {
+  if (studio_viewGet() === 'grid') return '<div class="studio-grid">' + clips.map(c => studio_tile(c, pos[c.id])).join('') + '</div>';
+  return '<div class="studio-rows" role="list">' + clips.map(c => studio_row(c, pos[c.id])).join('') + '</div>';
+}
+
+/* The kills as dots, a headshot drawn filled; the words go to a screen reader (and to the tests,
+   which read them). No kills, or none marked yet, is said in words: an empty row of dots reads
+   as a clip that has not loaded. */
+function studio_killDots(c) {
+  const n = studio_killsOf(c);
+  if (c.unmarked) return '<span class="studio-crow-none is-warn">Not marked</span>';
+  if (n === 0) return '<span class="studio-crow-none">no kills</span>';
+  const hs = (c.hs || []).filter(h => h === true).length;
+  const shown = Math.min(n, 5);
+  let dots = '';
+  for (let i = 0; i < shown; i++) dots += '<i class="studio-dot' + ((c.hs || [])[i] === true ? ' is-hs' : '') + '"></i>';
+  return '<span class="studio-dots" aria-hidden="true">' + dots + (n > shown ? '<b>+' + (n - shown) + '</b>' : '') + '</span>' +
+    '<span class="sr-only">' + (n > 1 ? n + ' kills' : '1 kill') + (c.hs && c.hs.length ? ', ' + hs + ' HS' : '') + '</span>';
+}
+
+/* One clip as a row: the box picks it (the same control a tile's picture is), the rest of the row
+   brings it into focus beside the list. */
+function studio_row(c, n) {
+  const name = c.caption || c.name;
+  const focus = c.id === studio.focus;
+  return '<div class="studio-clip studio-crow' + (n ? ' is-on' : '') + (focus ? ' is-focus' : '') + '" data-clip="' + esc(c.id) + '" role="listitem">' +
+    '<button type="button" class="studio-clip-hit studio-crow-box" data-act="studio-pick" data-clip="' + esc(c.id) +
+    '" aria-pressed="' + (!!n) + '" aria-label="Pick ' + esc(name) + '" title="Pick it for the reel">' +
+    '<span class="studio-clip-n">' + (n || '') + '</span></button>' +
+    '<button type="button" class="studio-crow-main" data-act="studio-row" data-clip="' + esc(c.id) + '" aria-label="' + esc(name) + '">' +
+    studio_thumbOf(c, 'studio-crow-shot') +
+    '<span class="studio-crow-name"><span class="truncate" title="' + esc(c.name) + '">' + esc(name) + '</span>' +
+    (c.map ? '<span class="studio-crow-map">' + esc(c.map) + '</span>' : '') +
+    (c.fav ? '<span class="studio-crow-fav" title="A favourite">★</span>' : '') + '</span>' +
+    '<span class="studio-clip-kills studio-crow-kills">' + studio_killDots(c) + '</span>' +
+    '<span class="studio-crow-at">' + esc(c.at || '') + '</span>' +
+    '<span class="studio-clip-dur studio-crow-dur">' + studio_dur(c.duration) + '</span>' +
+    '</button></div>';
+}
+
+/* THE CLIP IN FOCUS, beside the list: its frame (which plays it), what it is, and the three things a
+   tile offered -- pick it, star it, correct it -- on the same actions, with their keys. Only in list
+   view and only where clips are listed; the folder cards and the runs fill the width. */
+function studio_inspDraw() {
+  const box = studio_el('studio-cinsp'), browse = studio_el('studio-browse');
+  if (!box || !browse) return;
+  const rows = [].slice.call(document.querySelectorAll('#studio-lib .studio-crow'));
+  const ids = rows.map(r => r.getAttribute('data-clip'));
+  const show = studio_viewGet() === 'list' && ids.length > 0;
+  studio_show('studio-cinsp', show);
+  browse.classList.toggle('has-insp', show);
+  if (!show) { box.innerHTML = ''; return; }
+  if (ids.indexOf(studio.focus) < 0) studio.focus = ids[0];
+  rows.forEach(r => r.classList.toggle('is-focus', r.getAttribute('data-clip') === studio.focus));
+  const c = studio.clipIndex[studio.focus];
+  if (!c) { box.innerHTML = ''; return; }
+  const n = studio_killsOf(c), hs = (c.hs || []).filter(h => h === true).length;
+  const on = studio.selected.indexOf(c.id) >= 0;
+  const prop = (k, v) => v ? '<dt>' + k + '</dt><dd>' + v + '</dd>' : '';
+  box.innerHTML =
+    '<button type="button" class="studio-cinsp-shot" data-act="studio-preview" data-clip="' + esc(c.id) + '" aria-label="Play ' + esc(c.caption || c.name) + '">' +
+    studio_thumbOf(c, '') + '<span class="studio-cinsp-play">' + icon('play') + '</span></button>' +
+    '<h3 class="studio-cinsp-name truncate" title="' + esc(c.caption || c.name) + '">' + esc(c.caption || c.name) + '</h3>' +
+    '<dl class="studio-cinsp-props">' +
+    prop('Game', esc(c.game)) + prop('Map', esc(c.map || '')) + prop('Mode', esc(c.mode || '')) +
+    prop('Kills', c.unmarked ? 'Not marked yet' : n === 0 ? 'None' : n + (hs ? ', ' + hs + (hs === 1 ? ' headshot' : ' headshots') : '')) +
+    prop('From', esc(c.folderLabel || '') + (c.at ? ', at ' + esc(c.at) : '')) +
+    prop('Length', studio_dur(c.duration)) + '</dl>' +
+    '<div class="studio-cinsp-acts">' +
+    '<button type="button" class="btn btn-sm' + (on ? '' : ' btn-primary') + '" data-act="studio-pick" data-clip="' + esc(c.id) + '" aria-pressed="' + on + '">' +
+      (on ? 'Take out of the reel' : 'Add to reel') + '<span class="kbd">A</span></button>' +
+    '<button type="button" class="btn btn-sm" data-act="studio-fav" data-clip="' + esc(c.id) + '" aria-pressed="' + (c.fav ? 'true' : 'false') + '">' +
+      (c.fav ? 'Unfavourite' : 'Favourite') + '<span class="kbd">F</span></button>' +
+    '<button type="button" class="btn btn-sm" data-act="studio-imp-edit" data-path="' + esc(c.path) + '">' +
+      (c.unmarked ? 'Mark its kills' : 'Open in editor') + '<span class="kbd">E</span></button>' +
+    '</div>';
+}
+
+/* Bring a row into focus: the inspector follows, and with `move` the keyboard does too. */
+function studio_focusClip(id, move) {
+  if (!studio.clipIndex[id]) return;
+  studio.focus = id;
+  studio_inspDraw();
+  if (move) {
+    const b = document.querySelector('#studio-lib .studio-crow[data-clip="' + CSS.escape(id) + '"] .studio-crow-main');
+    if (b) { b.focus({preventScroll: true}); b.scrollIntoView({block: 'nearest'}); }
+  }
+}
+
+/* THE GAMES IN THE SIDEBAR, with their counts and Favourites: the same studio-game action the folder
+   chips had. The shell empties the section on every page change, so the Studio puts it back each
+   time it draws. */
+function studio_railDraw() {
+  if (typeof shell_railSection !== 'function' || shell_page !== 'studio') return;
+  const lib = studio.lib;
+  if (!lib) { shell_railSection(null); return; }
+  const item = (game, label, n, dis) => '<button type="button" class="rail-btn studio-railgame' + (studio.game === game ? ' is-on' : '') +
+    '" data-act="studio-game" data-game="' + esc(game) + '" aria-pressed="' + (studio.game === game) + '"' +
+    (dis ? ' disabled title="Star a clip to keep it here"' : '') + '><span class="truncate">' + esc(label) + '</span>' +
+    '<b class="studio-railn">' + n + '</b></button>';
+  shell_railSection('<p class="rail-sec-title">Games</p>' +
+    item('all', 'All games', lib.clip_count, false) +
+    lib.games.map(g => item(g.game, g.game, g.clips, false)).join('') +
+    item('fav', 'Favourites', lib.fav_count || 0, !(lib.fav_count || 0)));
+}
+
+/* THE LISTS' OWN KEYS: Up and Down move between rows; on a clip A picks it, F stars it and E opens it
+   in the marker -- each by pressing the inspector's own button, so a key does exactly what the
+   button does; on a reel Enter opens its timeline and O shows it in its folder. R makes a reel from
+   any of the browsing tabs. Read only with nothing open over the page and nothing being typed (the
+   caller's guard). -> true when the key was used. */
+function studio_listKey(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return false;
+  const open = ['studio-guide-scrim', 'studio-make-scrim', 'studio-preview-scrim', 'studio-del-scrim', 'studio-imp-scrim',
+                'studio-keys-scrim', 'studio-rdel-scrim', 'studio-yt-scrim', 'studio-intro-scrim', 'studio-fxp-scrim']
+    .some(id => { const s = studio_el(id); return s && !s.classList.contains('hide'); });
+  if (open) return false;
+  const vis = id => { const p = studio_el(id); return !!p && !p.classList.contains('hide'); };
+  const k = e.key || '';
+  const t = e.target || {};
+  const press = sel => { const b = document.querySelector(sel); if (!b) return false; e.preventDefault(); b.click(); return true; };
+  if ((k === 'r' || k === 'R') && (vis('studio-pane-clips') || vis('studio-pane-reels') || vis('studio-pane-looks'))) {
+    e.preventDefault(); studio_gdOpen(); return true;
+  }
+  if (vis('studio-pane-clips') && vis('studio-cinsp') && studio.focus) {
+    if (!(t === document.body || (t.closest && t.closest('#studio-browse')))) return false;
+    if (k === 'ArrowDown' || k === 'ArrowUp') {
+      const ids = [].slice.call(document.querySelectorAll('#studio-lib .studio-crow')).map(r => r.getAttribute('data-clip'));
+      const i = ids.indexOf(studio.focus) + (k === 'ArrowDown' ? 1 : -1);
+      if (i >= 0 && i < ids.length) studio_focusClip(ids[i], true);
+      e.preventDefault(); return true;
+    }
+    if (k === 'a' || k === 'A') return press('#studio-cinsp [data-act="studio-pick"]');
+    if (k === 'f' || k === 'F') return press('#studio-cinsp [data-act="studio-fav"]');
+    if (k === 'e' || k === 'E') return press('#studio-cinsp [data-act="studio-imp-edit"]');
+    return false;
+  }
+  if (vis('studio-pane-reels') && studio.reelSel) {
+    if (!(t === document.body || (t.closest && t.closest('#studio-reels')))) return false;
+    if (k === 'ArrowDown' || k === 'ArrowUp') {
+      const ps = [].slice.call(document.querySelectorAll('#studio-reel-grid .studio-reel')).map(x => x.getAttribute('data-path'));
+      const i = ps.indexOf(studio.reelSel) + (k === 'ArrowDown' ? 1 : -1);
+      if (i >= 0 && i < ps.length) studio_reelPick(ps[i], true);
+      e.preventDefault(); return true;
+    }
+    if (k === 'Enter') return press('#studio-rinsp [data-act="studio-open"]');
+    if (k === 'o' || k === 'O') return press('#studio-rinsp [data-act="studio-show"]');
+  }
+  return false;
+}
+
 /* Selection changes touch the tiles they change. Rebuilding the grid on every
    click reloaded every thumbnail and threw away the scroll anchor. */
 function studio_syncSelection() {
@@ -2085,6 +2336,7 @@ function studio_syncSelection() {
     btn.textContent = i < 0 ? (allOn ? 'Unselect these' : 'Select these')
                             : (allOn ? 'Unselect match' : 'Select match');
   });
+  studio_inspDraw();
   studio_renderTray();
 }
 
@@ -2392,6 +2644,34 @@ function studio_palOpen() {
   studio_palDraw();
   if (q) q.focus();
 }
+
+/* What Ctrl K finds in the Studio: clips by name, caption, game or map;
+   reels by name or song; and the Studio's own commands that can run here. */
+pal_source('Clips', q => {
+  if (!String(q || '').trim() || !studio.clipIndex) return [];
+  return Object.keys(studio.clipIndex).map(id => studio.clipIndex[id])
+    .filter(c => pal_match(q, [c.name, c.caption, c.game, c.map, c.folderLabel].join(' ')))
+    .slice(0, 6)
+    .map(c => ({label: c.caption || c.name, hint: [c.map, c.game].filter(Boolean).join(', '),
+                run: () => { go('studio'); studio_tab('clips'); studio.q = c.caption || c.name;
+                             const box = studio_el('studio-q'); if (box) box.value = studio.q;
+                             studio_renderLib(); }}));
+});
+pal_source('Reels', q => {
+  const all = (studio.lib && studio.lib.reels) || [];
+  if (!String(q || '').trim()) return [];
+  return all.filter(r => pal_match(q, [r.name, r.song, r.style].join(' '))).slice(0, 6)
+    .map(r => ({label: r.name, hint: r.song || '',
+                run: () => { go('studio'); studio_tab('reels'); studio.reelQ = r.name;
+                             const box = studio_el('studio-reel-q'); if (box) box.value = r.name;
+                             studio_renderReels(); }}));
+});
+pal_source('Actions', q => {
+  if (shell_page !== 'studio') return [];
+  return STUDIO_CMDS.filter(c => c.palette && c.id !== 'studio.palette' && pal_match(q, c.label))
+    .filter(c => !studio_cmdWhy(c))
+    .map(c => ({label: c.label, keys: c.keys[0] || '', run: () => studio_cmdRun(c.id)}));
+});
 
 function studio_palClose() {
   if (!studio.pal.open) return;
@@ -4465,8 +4745,8 @@ function studio_binDraw() {
     return '<section class="bin-sec bin-drawer">' +
       '<div class="bin-sec-head"><h2>' + esc(studio_binName(kind)) + '</h2>' +
       '<span class="count">' + parts.length + (studio.favOnly ? ' kept' : ' effects') +
-      (!studio.favOnly && all.length > parts.length ? ' · ' + all.length + ' versions in all' : '') +
-      (kept && !studio.favOnly ? ' · ' + kept + ' kept' : '') + '</span></div>' +
+      (!studio.favOnly && all.length > parts.length ? ', ' + all.length + ' versions in all' : '') +
+      (kept && !studio.favOnly ? ', ' + kept + ' kept' : '') + '</span></div>' +
       '<div class="bin-grid">' + cards + '</div>' + versions + '</section>';
   }).join('');
   const ex = studio.examples || {};
@@ -4476,7 +4756,7 @@ function studio_binDraw() {
   const miss = (ex.missing || []).length;
   const c = studio_el('bin-count');
   if (c) c.textContent = own + ' of ' + (own + miss) + ' cut from your own clips' +
-    (stock ? ' · ' + stock + ' shown on sample footage' : '');
+    (stock ? ', ' + stock + ' shown on sample footage' : '');
   const b = studio_el('bin-build');
   if (b) {
     b.disabled = !miss;
@@ -11293,14 +11573,23 @@ function studio_wire() {
     studio_cmdRun(id);
   });
   document.addEventListener('click', e => {
+    /* A click anywhere shuts a reel's "..." menu, unless it was the menu's own button. */
+    if (!(e.target.closest && e.target.closest('[data-act="studio-reel-menu"]'))) {
+      document.querySelectorAll('#studio-reel-grid .studio-reel-menu:not(.hide)').forEach(m => m.classList.add('hide'));
+    }
     const b = e.target.closest ? e.target.closest('[data-act^="studio-"]') : null;
-    if (!b || !b.closest('#view-studio')) return;
+    /* The games the Studio puts in the sidebar are its own controls too. */
+    if (!b || !(b.closest('#view-studio') || b.closest('#rail-section'))) return;
     const act = b.getAttribute('data-act');
     const p = studio.project;
     if (act === 'studio-tab') studio_tab(b.getAttribute('data-tab'));
     else if (act === 'studio-edit-song') studio_tab('song');
     else if (act === 'studio-refresh') studio_load(true);
     else if (act === 'studio-game') studio_openFolder(b.getAttribute('data-game'));
+    else if (act === 'studio-view') studio_viewSet(b.getAttribute('data-view'));
+    else if (act === 'studio-row') studio_focusClip(b.getAttribute('data-clip'), false);
+    else if (act === 'studio-reel-sel') studio_reelPick(b.getAttribute('data-path'), false);
+    else if (act === 'studio-reel-menu') studio_reelMenu(b);
     else if (act === 'studio-open-folder') studio_openFolder(b.getAttribute('data-game'));
     else if (act === 'studio-open-run') studio_openRun(b.getAttribute('data-folder'));
     else if (act === 'studio-crumb') studio_goLib(b.getAttribute('data-to'));
@@ -11466,7 +11755,10 @@ function studio_wire() {
     else if (act === 'studio-build') studio_build();
     else if (act === 'studio-open') studio_open(b.getAttribute('data-path'));
     else if (act === 'studio-watch') {
-      studio_el('studio-preview-title').textContent = b.closest('.studio-reel').querySelector('.studio-reel-name').textContent;
+      studio_el('studio-preview-title').textContent = b.getAttribute('data-name') ||
+        (b.closest('.studio-reel') ? b.closest('.studio-reel').querySelector('.studio-reel-name').textContent : '');
+      const pv = studio_el('studio-rvideo');
+      if (pv && !pv.paused) pv.pause();
       const v = studio_el('studio-preview-video');
       v.src = studio_media('/api/clips/video', b.getAttribute('data-path'));
       studio_show('studio-preview-scrim', true);
@@ -11499,7 +11791,11 @@ function studio_wire() {
     else if (act === 'studio-keys') studio_keysOpen();
     else if (act === 'studio-pal-close') studio_palClose();
     else if (act === 'studio-keys-close') studio_show('studio-keys-scrim', false);
-    else if (act === 'studio-show') { if (studio.output && typeof clip_reveal === 'function') clip_reveal(studio.output); }
+    else if (act === 'studio-show') {
+      /* the finished file on the timeline, or the reel chosen on the Reels tab */
+      const path = b.getAttribute('data-path') || studio.output;
+      if (path && typeof clip_reveal === 'function') clip_reveal(path);
+    }
     else if (act === 'studio-play') studio_toggle();
     else if (act === 'studio-prev-shot') studio_stepShot(-1);
     else if (act === 'studio-next-shot') studio_stepShot(1);
@@ -11991,16 +12287,26 @@ function studio_wire() {
       if (studio.tool !== 'select') studio_tool('select');
       return;
     }
-    /* Ctrl+K is not typing, so it is read before the input guard: the list
-       opens from a reel name half-renamed as readily as from the timeline. */
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
-      e.preventDefault(); studio_palOpen(); return;
-    }
+    /* Ctrl+K belongs to the whole app now (shell pal_key): it opens the one
+       search box, which lists this page's commands among everything else.
+       The Actions button still opens the Studio's own scoped list. */
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) return;
     const tag = (e.target.tagName || '').toUpperCase();
     if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
     /* '?' IS A CHARACTER SOMEBODY MIGHT BE TYPING, so unlike Ctrl+K it waits
        until after the guard above. */
     if (e.key === '?') { e.preventDefault(); studio_keysOpen(); return; }
+    /* The clips' and the reels' rows, and R for Make a reel: above the button guard, so Enter on a
+       reel's row opens its timeline rather than choosing it again. */
+    if (studio_listKey(e)) return;
+    /* ENTER IS NEXT in the guided maker, as its bottom bar says: from the page itself, or from a
+       choice just made on a card. A focused Back, a link or a field keeps its own Enter. */
+    if (e.key === 'Enter' && !studio_el('studio-guide-scrim').classList.contains('hide') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const t = e.target || {};
+      const onPage = t === document.body || (t.closest && (t.closest('.gd-card') || t === studio_el('studio-gd')));
+      const nx = studio_el('studio-gd-next');
+      if (onPage && nx && !nx.disabled) { e.preventDefault(); nx.click(); return; }
+    }
     /* A focused button owns Space and Backspace: Space presses it. */
     const onButton = tag === 'BUTTON' || (e.target.closest && e.target.closest('button,[role="tab"],a'));
     const song = !studio_el('studio-pane-song').classList.contains('hide');
@@ -13311,7 +13617,9 @@ function studio_gdDraw() {
   studio_el('studio-gd-steps').innerHTML = GD_STEPS.map((n, i) =>
     '<li><button type="button" class="gd-step' + (i === gd.step ? ' is-on' : '') + (i < gd.step ? ' is-done' : '') +
     '" data-act="studio-gd" data-gd="step" data-i="' + i + '"' + (studio_gdCanGo(i) ? '' : ' disabled') +
-    ' aria-current="' + (i === gd.step ? 'step' : 'false') + '"><b>Step ' + (i + 1) + '</b><span>' + esc(n) + '</span></button></li>').join('');
+    ' aria-current="' + (i === gd.step ? 'step' : 'false') + '"><b class="gd-num" aria-hidden="true">' + (i < gd.step ? '✓' : (i + 1)) + '</b>' +
+    '<span class="sr-only">Step ' + (i + 1) + ': </span><span>' + esc(n) + '</span></button></li>').join('');
+  studio_gdSumDraw();
   const draw = [studio_gdDrawStyle, studio_gdDrawClips, studio_gdDrawSong, studio_gdDrawLook, studio_gdDrawCheck][gd.step];
   studio_el('studio-gd-body').innerHTML = draw();
   if (gd.step === GD.look) studio_gdLookApply();
@@ -13330,6 +13638,18 @@ function studio_gdDraw() {
   studio_gdChip();
   if (gd.step >= GD.clips) studio_gdAsk();
   studio_gdRemember();
+}
+
+/* THE REEL SO FAR, in the bottom bar: what each step has chosen, said once, from the guide's own spec. */
+function studio_gdSumDraw() {
+  const box = studio_el('studio-gd-reel');
+  if (!box) return;
+  const gd = studio.gd, st = studio_gdStyle(), n = studio_gdIds().length;
+  const song = studio.song ? String(studio.song).split(/[\\/]/).pop().replace(/\.[^.]+$/, '').replace(/\s*\[[^\]]*\]\s*$/, '') : '';
+  const item = (k, v) => '<span class="gd-reelsum-item' + (v ? '' : ' is-empty') + '"><b>' + k + '</b><span class="truncate">' + esc(v || 'Not yet') + '</span></span>';
+  box.innerHTML = item('Style', st ? st.label : gd.auto ? 'Picked for you' : '') +
+    item('Clips', n ? n + (n === 1 ? ' clip' : ' clips') : '') + item('Song', song) +
+    item('Shape', gd.fmt === 'vertical' ? '9:16' : '16:9');
 }
 
 function studio_gdDrawStyle() {
@@ -14734,9 +15054,12 @@ function studio_gdViewAct(what, b) {
 
 window.PAGE_STUDIO = {
   onShow: function () {
+    /* The clips have been shown: the idle Dashboard's 'Since last time' counts from now. */
+    API.post('/api/seen', {what: 'clips'}).catch(function () {});
     if (!studio.wired) studio_sgWire();
     studio_wire();
     studio_load(false);
+    studio_railDraw();
     studio_poll();
     studio_autoLoad();
   },

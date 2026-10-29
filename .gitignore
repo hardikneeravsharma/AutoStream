@@ -15,6 +15,8 @@
 # ---------------------------------------------------------------- runtime
 **/logs/
 **/state.json
+# When the clip pages last showed the clips (the Dashboard's 'Since last time').
+**/ui-seen.json
 **/config/index.cache.json
 NOSTREAM
 # Written beside the app by a run from a checkout on a Mac: the one-instance lock

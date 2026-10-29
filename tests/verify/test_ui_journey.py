@@ -142,6 +142,10 @@ def test_02_the_recording_is_listed_on_the_clips_page(page):
 
 def test_03_picking_it_opens_the_part_stage_with_the_recording_playable(page):
     page.locator("#clip-list .clip-row").first.click()
+    # Picking opens the summary now (2026-10-29 redesign); the part screen is
+    # behind its first Change.
+    page.wait_for_selector('#clip-sum [data-act="sum-change"][data-val="part"]', timeout=20_000)
+    page.click('#clip-sum [data-act="sum-change"][data-val="part"]')
     page.wait_for_function("() => clip_state.step === 'part'", timeout=20_000)
     page.wait_for_function("() => clip_state.partWhole === true", timeout=40_000)
     state = page.evaluate("""async () => {

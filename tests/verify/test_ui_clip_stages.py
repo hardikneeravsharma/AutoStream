@@ -144,21 +144,128 @@ def _pick_first(page) -> None:
     page.locator("#clip-list .clip-row").first.click()
 
 
+_PART = '#clip-sum [data-act="sum-change"][data-val="part"]'
+
+
 def _at_part(ui, app) -> None:
+    """Pick the recording, then open the part screen from the summary's first
+    Change -- which is how a person gets there since the 2026-10-29 redesign."""
     _recording(app)
     _pick_first(ui.page)
+    ui.page.wait_for_selector(_PART, timeout=20_000)
+    ui.page.click(_PART)
     ui.page.wait_for_function("() => clip_state.step === 'part'", timeout=20_000)
 
 
 # ------------------------------------------------------------ the stages
 
-def test_picking_a_stream_moves_to_the_next_stage(ui, app):
-    """The point of the split: choosing IS finishing a stage."""
-    _at_part(ui, app)
-    assert ui.page.locator("#clip-listwrap").is_hidden(), \
-        "the list it was chosen from is still on screen"
+def test_picking_a_recording_shows_its_summary_beside_the_list(ui, app):
+    """REDESIGNED 2026-10-29. Picking used to jump to the part stage; now it
+    shows what will happen -- four numbered steps already filled in, each with
+    Change, and one button -- with the list still beside it."""
+    _recording(app)
+    _pick_first(ui.page)
+    ui.page.wait_for_selector("#clip-sum-go", timeout=20_000)
+    assert ui.page.evaluate("clip_state.step") == "pick"
+    assert ui.page.locator("#clip-listwrap").is_visible(), "the list went away"
+    assert ui.page.locator("#clip-sum .clip-sum-step").count() == 4
+    assert ui.page.inner_text("#clip-sum-go").startswith("Find kills")
+    ui.page.click(_PART)
+    assert ui.page.evaluate("clip_state.step") == "part"
     assert ui.page.locator("#clip-strip-card").is_visible()
     ui.clean("picking a stream")
+
+
+def test_the_list_is_grouped_by_day_and_marks_each_recording(ui, app):
+    _recording(app)
+    _pick_first(ui.page)
+    got = ui.page.evaluate("""() => ({
+        days: document.querySelectorAll('#clip-list .clip-day').length,
+        marks: document.querySelectorAll('#clip-list .clip-row .mark').length,
+        rows: document.querySelectorAll('#clip-list .clip-row').length})""")
+    assert got["days"] >= 1, got
+    assert got["marks"] == got["rows"], got
+
+
+# ------------------------------------------------- the moments (screen B)
+
+def _moments(ui, n=4):
+    """Land a plan of `n` moments, the way a finished scan does."""
+    return ui.page.evaluate("""(n) => {
+        const rows = [];
+        for (let i = 0; i < n; i++) {
+          rows.push({key: (20 + i * 30).toFixed(1), name: 'c' + i,
+                     start: 20 + i * 30, end: 32 + i * 30, duration: 12,
+                     kills: 1 + (i % 3), labels: [], thumb_at: 27 + i * 30,
+                     caption: '', voice_line: ''});
+        }
+        clip_openReview({folder: 'x', preview: rows});
+        return clip_state.step;
+    }""", n)
+
+
+def test_a_scan_lands_on_the_moments(ui, app):
+    _recording(app)
+    _pick_first(ui.page)
+    assert _moments(ui) == "review"
+    assert ui.page.locator("#clip-moments").is_visible()
+    assert ui.page.locator("#clip-mom-ticks .clip-tl-tick").count() == 4
+    assert ui.page.locator("#clip-review-list .clip-mom-tick").count() == 4
+    assert ui.page.inner_text("#clip-review-cut").startswith("Cut 4 clips")
+    ui.clean("the moments")
+
+
+def test_unticking_a_moment_lowers_the_count_and_leaves_it_out(ui, app):
+    """Cut runs the existing run, with the unticked moment marked skip under
+    its clip key -- which jobs.ticked leaves out of the cut."""
+    _recording(app)
+    _pick_first(ui.page)
+    _moments(ui)
+    ui.page.locator("#clip-review-list .clip-mom-tick").nth(1).click()
+    assert ui.page.inner_text("#clip-review-cut").startswith("Cut 3 clips")
+    assert ui.page.locator("#clip-mom-ticks .clip-tl-tick.is-off").count() == 1
+    sent = ui.page.evaluate("""async () => {
+        let body = null;
+        const was = API.post;
+        API.post = async (url, b) => { body = {url, b}; return {error: 'held'}; };
+        try { await clip_reviewCut(); } finally { API.post = was; }
+        return body;
+    }""")
+    assert sent["url"] == "/api/clips/run", sent
+    per = sent["b"]["per_clip"]
+    assert per["50.0"]["skip"] is True, per
+    assert sum(1 for v in per.values() if v.get("skip")) == 1, per
+    ui.clean("unticking a moment")
+
+
+def test_a_recording_cut_before_opens_on_what_was_cut(ui, app):
+    _recording(app)
+    _pick_first(ui.page)
+    step = ui.page.evaluate("""() => {
+        const s = clip_state.pick;
+        clip_state.made = {forPath: s.recording_path, folder: 'x', when: 1790000000,
+          source_seconds: 200, kills: [{time: 30}, {time: 90}],
+          clips: [{start: 25, duration: 12, kills: 2, at: '0m25s', master: ''}]};
+        clip_renderMade();
+        clip_goStep('review');
+        return clip_state.step;
+    }""")
+    assert step == "review"
+    assert ui.page.locator("#clip-mom-play").is_visible()
+    assert ui.page.locator("#clip-review-cut").is_hidden()
+    assert ui.page.locator("#clip-review-list [data-made]").count() == 1
+    ui.clean("what was cut")
+
+
+def test_a_game_with_no_profile_says_loud_moments(ui, app):
+    _recording(app)
+    _pick_first(ui.page)
+    label = ui.page.evaluate("""() => {
+        clip_state.pick = Object.assign({}, clip_state.pick, {scan_mode: 'loudness'});
+        clip_renderSum();
+        return document.getElementById('clip-sum-go').textContent;
+    }""")
+    assert "loud moments" in label, label
 
 
 def test_the_stages_ahead_are_locked_until_there_is_something_in_them(ui, app):

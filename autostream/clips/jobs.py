@@ -123,6 +123,17 @@ def clip_key(start: float) -> str:
     return f"{float(start):.1f}"
 
 
+def ticked(plans: list, per_clip: dict) -> list:
+    """The plans the review left ticked.
+
+    The Clips page lists every moment the plan found and lets each one be
+    unticked before cutting; an unticked one arrives as {"skip": true} under
+    its clip_key. Nothing else is filtered here -- a plan the page never saw
+    has no entry and is cut, exactly as before the review could untick."""
+    return [p for p in plans
+            if not (per_clip.get(clip_key(p.start)) or {}).get("skip")]
+
+
 def _mmss(seconds: float) -> str:
     s = int(max(0.0, seconds))
     return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
@@ -1237,6 +1248,14 @@ class ClipJob:
         if per_clip:
             log.info("%d clip(s) carry their own caption or voice settings",
                      len(per_clip))
+            # The moments unticked on the review are not cut. Filtered before
+            # anything counts the plans, so the montage, the step total and
+            # the per-clip lookups below all see the same list.
+            kept = ticked(plans, per_clip)
+            if len(kept) != len(plans):
+                log.info("%d of %d clip(s) unticked on the review; not cut",
+                         len(plans) - len(kept), len(plans))
+                plans = kept
         enc = opt.get("encoder", "auto")
         if self.diag.on:
             from .tools import video_codec_args
