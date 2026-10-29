@@ -1,7 +1,7 @@
 """'Since last time' on the idle Dashboard: what is new since you last looked.
 
 A clip is new until the Clips or Studio page has shown it once. When you last
-looked is kept in its own small file (webui.SEEN_FILE), not in state.json:
+looked is kept in its own small file (webui.seen_file()), not in state.json:
 the engine owns state.json and rewrites it from memory, which would put the
 stamp back to zero on its next save.
 """

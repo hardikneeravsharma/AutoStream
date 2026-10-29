@@ -263,7 +263,11 @@ def chat_marks(engine) -> list[dict]:
 
 # When the clip pages last showed the clips (the idle Dashboard's "Since last
 # time"). Beside state.json, but not in it -- see seen_stamp.
-SEEN_FILE = paths.STATE_FILE.parent / "ui-seen.json"
+def seen_file() -> Path:
+    """Asked at call time, not import: the data home can be moved after this
+    module loads (the test suite points it at a throwaway folder), and a path
+    fixed at import wrote the stamp into the checkout."""
+    return paths.STATE_FILE.parent / "ui-seen.json"
 
 
 def seen_get(path) -> float | None:
@@ -1027,7 +1031,7 @@ class _Handler(BaseHTTPRequestHandler):
 
             elif p == "/api/seen":
                 # The Clips and Studio pages say they have shown the clips.
-                seen_stamp(SEEN_FILE, time.time())
+                seen_stamp(seen_file(), time.time())
                 self._json({"ok": True})
 
             elif p == "/api/cmd":
@@ -3933,9 +3937,9 @@ class Server:
         the next session's clips are what count as new."""
         from .clips import studio
 
-        seen = seen_get(SEEN_FILE)
+        seen = seen_get(seen_file())
         if seen is None:
-            seen_stamp(SEEN_FILE, time.time())
+            seen_stamp(seen_file(), time.time())
         try:
             lib = studio.library(self._clips_dir(cfg.load()))
         except Exception:  # noqa: BLE001 - a broken clips folder must not break the Dashboard

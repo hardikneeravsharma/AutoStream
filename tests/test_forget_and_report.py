@@ -164,8 +164,12 @@ def test_the_report_carries_no_secrets(app, monkeypatch):
     # rather than proving they were never there.
     secret = "hunter2-obs-password-long-enough"
     token = "web-token-abcdefghijklmnop"
-    monkeypatch.setattr(real.obs, "password", secret, raising=False)
-    monkeypatch.setattr(real.rules, "web_token", token, raising=False)
+    # setitem on the real dicts, not setattr: Section's attribute access
+    # hands back a COPY of a sub-dict, so the values were planted on copies
+    # the report never read -- and undoing a plant on a copy that never had
+    # the key raised AttributeError in teardown on CI.
+    monkeypatch.setitem(real["obs"], "password", secret)
+    monkeypatch.setitem(real.setdefault("rules", {}), "web_token", token)
     monkeypatch.setattr(cfg, "load", lambda: real)
 
     text = app.diagnostics()["text"]
