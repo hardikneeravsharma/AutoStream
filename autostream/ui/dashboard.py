@@ -1421,10 +1421,11 @@ function dash_readyLine(apps) {
 }
 
 const dash_FIX = {
-  obs:    () => { go('settings'); if (typeof set_search === 'function') set_search('OBS'); },
+  /* Each opens the one setting that fixes it (set_open), not a search. */
+  obs:    () => set_open('obs.path'),
   games:  () => go('library'),
-  record: () => { go('settings'); if (typeof set_search === 'function') set_search('Record'); },
-  live:   () => { go('settings'); if (typeof set_search === 'function') set_search('Stream'); }
+  record: () => set_open('record.enabled'),
+  live:   () => set_open(STATUS && STATUS.streaming === false ? 'youtube.enabled' : 'youtube.platform')
 };
 
 let dash_idleKey = '';

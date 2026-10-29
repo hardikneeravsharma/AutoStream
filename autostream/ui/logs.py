@@ -248,17 +248,12 @@ function log_problems(list) {
   }).join('');
 }
 
-/* settings:<words> opens Settings searched to them; page:<id> goes to a page. */
+/* setting:<path> opens that setting; page:<id> goes to a page. */
 function log_fix(act) {
   const i = String(act || '').indexOf(':');
   const kind = act.slice(0, i), what = act.slice(i + 1);
   if (kind === 'page') { go(what); return; }
-  go('settings');
-  if (typeof set_search === 'function') {
-    const box = document.getElementById('set-search');
-    if (box) box.value = what;
-    set_search(what);
-  }
+  if (kind === 'setting' && typeof set_open === 'function') set_open(what);
 }
 
 /* ---- auto-refresh -------------------------------------------------------- */

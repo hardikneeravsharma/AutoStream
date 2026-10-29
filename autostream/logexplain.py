@@ -12,8 +12,8 @@ HOW A RULE IS WRITTEN
     `match` is a regex against the MESSAGE the app itself writes, so each rule
     names the module that writes it; tests/test_logexplain.py feeds the real
     format strings, and a reworded message fails there rather than going
-    quietly unexplained. `fix.act` is what the page does: `settings:<words>`
-    opens Settings searched to them, `page:<id>` goes to a page.
+    quietly unexplained. `fix.act` is what the page does: `setting:<path>`
+    opens that one setting, `page:<id>` goes to a page.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ PROBLEMS: list[dict] = [
         "match": r"OBS is not answering",
         "say": "OBS isn't answering. Check that it is open and that its WebSocket "
                "server is on (in OBS: Tools, WebSocket Server Settings).",
-        "fix": {"label": "OBS settings", "act": "settings:OBS"},
+        "fix": {"label": "OBS settings", "act": "setting:obs.path"},
     },
     {   # youtube.py and every caller that hits the daily limit
         "match": r"quotaExceeded|quota (?:is )?exceeded",
@@ -36,7 +36,7 @@ PROBLEMS: list[dict] = [
         "match": r"GB free on the recording drive|not recording: \d+ GB free",
         "say": "The recording drive is nearly full. Free some space or record "
                "somewhere else.",
-        "fix": {"label": "Change folder", "act": "settings:Recording"},
+        "fix": {"label": "Change folder", "act": "setting:record.directory"},
     },
     {   # clips/jobs.py, a clip job with no ffmpeg
         "match": r"ffmpeg not found|ffmpeg (?:is )?not installed",
@@ -46,7 +46,7 @@ PROBLEMS: list[dict] = [
     {   # youtube.py, the stored sign-in
         "match": r"token refresh failed|token\.json unreadable",
         "say": "The YouTube sign-in has expired. Sign in again to go live.",
-        "fix": {"label": "Sign in", "act": "settings:Stream"},
+        "fix": {"label": "Sign in", "act": "setting:youtube.platform"},
     },
 ]
 
