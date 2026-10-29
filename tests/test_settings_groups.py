@@ -122,9 +122,11 @@ def test_shortcuts_lists_the_two_hotkeys_and_the_command_keys():
     kill = next(r for r in flat if r.get("path") == "rules.kill_switch_hotkey")
     assert kill["keys"] == [], "an unset hotkey must say so, not invent one"
     assert any("Ctrl+K" in r["keys"] for r in flat)
-    # Every bound command is listed, and only those with a key.
+    # Every bound command is listed, and only those with a key -- plus the two
+    # hotkeys and the window's own keys (page size and Ctrl K, 4 rows).
     bound = sum(1 for c in commands.COMMANDS if c["keys"])
-    assert len(flat) == bound + 2
+    assert len(flat) == bound + 2 + 4
+    assert any("Ctrl+Scroll up" in r["keys"] for r in flat)
 
 
 # ------------------------------------------------- first-run setup, named steps

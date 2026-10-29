@@ -134,6 +134,20 @@ _TOPBAR = (
     '<h1 class="topbar-title" id="topbar-title">Dashboard</h1>'
     # Page actions, filled by the page that is showing (shell_setActions).
     '<div class="topbar-actions" id="topbar-actions"></div>'
+    # PAGE SIZE, on screen as well as on Ctrl + scroll and Ctrl +/-/0: a
+    # shortcut nobody knows about is not an option, and the number is the
+    # answer to "why is everything so big".
+    '<div class="zoom" role="group" aria-label="Page size">'
+    '<button type="button" class="zoom-btn" id="zoom-out"'
+    ' aria-label="Smaller (Ctrl and minus, or Ctrl and scroll down)" title="Smaller (Ctrl -)">'
+    '<span aria-hidden="true">&minus;</span></button>'
+    '<button type="button" class="zoom-btn zoom-pct" id="zoom-reset"'
+    ' aria-label="Actual size (Ctrl and 0)" title="Back to 100% (Ctrl 0)">100%</button>'
+    '<button type="button" class="zoom-btn" id="zoom-in"'
+    ' aria-label="Bigger (Ctrl and plus, or Ctrl and scroll up)" title="Bigger (Ctrl +)">'
+    '<span aria-hidden="true">+</span></button>'
+    '<span class="sr-only" id="zoom-said" role="status" aria-live="polite"></span>'
+    "</div>"
     '<div class="topbar-meta">'
     # The pill, game and clock still exist for the tests and the title, but
     # the sidebar's state line is where the state is read now (#rail-state).
@@ -667,6 +681,82 @@ async function shell_toggle_pause() {
   if (btn) btn.disabled = false;
 }
 
+/* ---------------- page size ---------------- */
+
+/* THE WHOLE PAGE, BIGGER OR SMALLER. CSS zoom on the root, so it is the same
+   in the app's own window and in a browser tab, and kept per screen in
+   localStorage: a page size is about the monitor in front of you, not about
+   the install. Widths reflow by themselves under zoom; the layouts that are
+   the window's HEIGHT divide by --ui-zoom (css.py --vh100), or a bigger page
+   would spill below the window instead of fitting it. */
+const SHELL_ZOOM_STEPS = [0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+const SHELL_ZOOM_KEY = 'autostream.zoom';
+let shell_zoom = 1;
+
+/* The next step up (dir 1) or down (dir -1) the ladder from z. A value that
+   is not on the ladder -- an old or hand-edited one -- moves to the nearest
+   step in that direction; anything unreadable counts as 100%. */
+function shell_zoomNext(z, dir) {
+  z = Number(z);
+  if (!isFinite(z) || z <= 0) z = 1;
+  const s = SHELL_ZOOM_STEPS;
+  if (dir > 0) { for (let i = 0; i < s.length; i++) if (s[i] > z + 1e-6) return s[i]; return s[s.length - 1]; }
+  for (let i = s.length - 1; i >= 0; i--) if (s[i] < z - 1e-6) return s[i];
+  return s[0];
+}
+
+/* No toast: the percentage on screen already changes, and a toast per
+   Ctrl + scroll notch would stack up. A screen reader hears it from the
+   status line below. */
+function shell_zoomSet(z) {
+  z = Math.min(2, Math.max(0.67, Number(z) || 1));
+  shell_zoom = z;
+  const root = document.documentElement;
+  root.style.zoom = String(z);
+  root.style.setProperty('--ui-zoom', String(z));
+  try { localStorage.setItem(SHELL_ZOOM_KEY, String(z)); } catch (e) { /* the size lasts until reload */ }
+  const pct = Math.round(z * 100) + '%';
+  shell_setText(shell_$('zoom-reset'), pct);
+  const out = shell_$('zoom-out'), inn = shell_$('zoom-in');
+  if (out) out.disabled = z <= SHELL_ZOOM_STEPS[0] + 1e-6;
+  if (inn) inn.disabled = z >= SHELL_ZOOM_STEPS[SHELL_ZOOM_STEPS.length - 1] - 1e-6;
+  /* Canvases (the viewer graph) measure their box when they draw. */
+  window.dispatchEvent(new Event('resize'));
+  shell_setText(shell_$('zoom-said'), 'Page size ' + pct);
+}
+
+function shell_zoomStep(dir) { shell_zoomSet(shell_zoomNext(shell_zoom, dir)); }
+
+function shell_zoomLoad() {
+  let z = 1;
+  try { z = Number(localStorage.getItem(SHELL_ZOOM_KEY)) || 1; } catch (e) { /* private mode */ }
+  shell_zoomSet(z);
+}
+
+/* Ctrl + scroll: up is bigger, down is smaller. Non-passive, or the browser
+   ignores preventDefault and zooms the page on top of us. */
+let shell_zoomWheelAt = 0;
+function shell_zoomWheel(e) {
+  if (!e.ctrlKey || e.deltaY === 0) return;
+  e.preventDefault();
+  /* One step per notch, not per event: a touchpad pinch arrives as Ctrl +
+     wheel in a burst of tiny events, and stepping on each one would jump
+     from 100% to 200% in a single gesture. */
+  const now = Date.now();
+  if (now - shell_zoomWheelAt < 120) return;
+  shell_zoomWheelAt = now;
+  shell_zoomStep(e.deltaY < 0 ? 1 : -1);
+}
+
+/* Ctrl + plus (or =, the same key unshifted), Ctrl + minus, Ctrl + 0. */
+function shell_zoomKey(e) {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  const k = e.key;
+  if (k === '=' || k === '+') { e.preventDefault(); shell_zoomStep(1); }
+  else if (k === '-') { e.preventDefault(); shell_zoomStep(-1); }
+  else if (k === '0') { e.preventDefault(); shell_zoomSet(1); }
+}
+
 /* ---------------- Ctrl K ---------------- */
 
 /* Each page registers what it can find: pal_source('Clips', q => [{label,
@@ -781,6 +871,12 @@ pal_source('Actions', q => {
   const say = held ? 'Resume' : 'Pause';
   if (STATUS && STATUS.phase && (STATUS.phase !== 'IDLE' || held) && pal_match(q, say))
     out.push({label: say, keys: 'P', run: shell_toggle_pause});
+  if (pal_match(q, 'make the page bigger zoom in larger size'))
+    out.push({label: 'Make the page bigger', keys: 'Ctrl +', run: () => shell_zoomStep(1)});
+  if (pal_match(q, 'make the page smaller zoom out size'))
+    out.push({label: 'Make the page smaller', keys: 'Ctrl -', run: () => shell_zoomStep(-1)});
+  if (shell_zoom !== 1 && pal_match(q, 'actual size page reset zoom 100'))
+    out.push({label: 'Page at actual size', keys: 'Ctrl 0', run: () => shell_zoomSet(1)});
   if (pal_match(q, 'save replay instant'))
     out.push({label: 'Save replay', keys: 'F9', run: () => API.post('/api/cmd', {command: 'replay'})
       .then(r => toast(r && r.error ? r.error : 'Saving the replay', r && r.error ? 'error' : 'ok'))
@@ -822,6 +918,13 @@ function shell_bind() {
   if (tog) tog.addEventListener('click', shell_toggle_pause);
 
   document.addEventListener('keydown', pal_key);
+  document.addEventListener('keydown', shell_zoomKey);
+  window.addEventListener('wheel', shell_zoomWheel, {passive: false});
+  const zo = shell_$('zoom-out'), zi = shell_$('zoom-in'), zr = shell_$('zoom-reset');
+  if (zo) zo.addEventListener('click', () => shell_zoomStep(-1));
+  if (zi) zi.addEventListener('click', () => shell_zoomStep(1));
+  if (zr) zr.addEventListener('click', () => shell_zoomSet(1));
+  shell_zoomLoad();
   const ps = shell_$('rail-search');
   if (ps) ps.addEventListener('click', pal_open);
   const pq = shell_$('pal-q');
