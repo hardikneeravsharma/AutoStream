@@ -192,10 +192,7 @@ a dashed ring for needs you, a filled red dot for live.
 **Live chat** (the player's picks):
 - Bigger text (14px) with the time on each message, and a Mod badge on moderators.
 - **!clip rows**: a viewer's !clip shows as its own row ("rav3n marked a clip at
-  1:23:40"). **While live, the row says "Watch after the stream"** (Designer's call).
-  The recording is a fragmented MP4 still being written, with no seek index, and a
-  player on the live Dashboard would pull focus. Once the stream ends, the row's
-  **Watch** opens that recording in Clips at the mark. No server-side excerpt cutting.
+  1:23:40"). The row says the moment is **cut with the clips after the stream** (amended after review: chat and marks are cleared when the stream ends, so a Watch for afterwards could never appear).
 - **First message marker** on someone's first message this stream.
 - **"N new messages" pill** when scrolled up; clicking it returns to the bottom.
 - `/` focuses the send box; Enter sends. A quiet line says each message costs 50 of the
@@ -331,7 +328,8 @@ meets, and it gains ARIA (roadmap UI item: `setup.py` has none).
 
 **"New" (Designer's call):** a clip is new
 until the Clips or Studio page has shown it once. The newest-seen time is kept in
-`state.json`, so "3 new" survives a restart.
+`ui-seen.json` beside `state.json` (not in it: the engine rewrites `state.json` from
+memory), so "3 new" survives a restart.
 
 ## Decided with the player after the builder check
 
