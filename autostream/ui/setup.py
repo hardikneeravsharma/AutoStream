@@ -49,10 +49,17 @@ from .icons import LOGO_LOCKUP
 # a heading to jump to, and never heard a word of the status messages that are
 # the only sign the thing it was asked to do worked.
 #
-# The step bar is a progressbar rather than a list because that is what it is:
-# a dozen identical empty divs conveying one number. The card is a live region
-# and takes focus on each step, because every step replaces it wholesale and
-# focus would otherwise fall back to the top of the document each time.
+# Two ways of saying where you are, and only one is on screen at a time. Wide
+# enough, the steps are a list of their names with aria-current on this one,
+# which is what a reader of a ten-step form wants: what is left, by name.
+# Narrow, there is no room for ten names on a line, so the thin bar stands in,
+# and it is a progressbar because that is what it is there -- a dozen
+# identical empty pips conveying one number. CSS hides whichever is not in
+# use (display:none), so a screen reader hears the one that is drawn.
+#
+# The card is a live region and takes focus on each step, because every step
+# replaces it wholesale and focus would otherwise fall back to the top of the
+# document each time.
 SETUP_HTML: str = (
     '<div id="setup-page" style="max-width:720px;margin:0 auto;'
     'padding:clamp(24px,4vw,40px) clamp(16px,2.2vw,24px) 56px">\n'
@@ -64,13 +71,14 @@ SETUP_HTML: str = (
     '  <div id="setup-progress" style="display:flex;align-items:baseline;gap:12px;'
     'margin:0 0 8px">\n'
     '    <span class="muted" id="setup-stepname"></span>\n'
-    '    <span class="muted mono" id="setup-stepcount" style="margin-left:auto"></span>\n'
+    '    <span class="muted" id="setup-stepcount" style="margin-left:auto"></span>\n'
     '  </div>\n'
+    '  <ol class="setup-steps" id="setup-steplist" aria-label="Setup steps"></ol>\n'
     '  <div class="steps" id="setup-stepbar" role="progressbar"\n'
     '       aria-label="Setup progress" aria-valuemin="1" aria-valuenow="1"\n'
     '       aria-valuemax="1" aria-valuetext="Loading"></div>\n'
     '  <main class="card" id="setup-stepcard" tabindex="-1"\n'
-    '        aria-live="polite" aria-busy="false"></main>\n'
+    '        aria-labelledby="setup-title" aria-live="polite" aria-busy="false"></main>\n'
     '</div>\n'
 )
 
@@ -209,6 +217,18 @@ function setup_bar(){
     b.setAttribute('aria-valuenow', String(setup_step + 1));
     b.setAttribute('aria-valuetext', said);
   }
+  /* The same plan by name. "Done" is said in words as well as by the dot,
+     because a filled circle is not something a screen reader can see. */
+  const list = setup_$('setup-steplist');
+  if (list){
+    list.innerHTML = plan.map((name, i) => {
+      const label = setup_LABELS[name] || name;
+      const done = i < setup_step, now = i === setup_step;
+      return '<li class="setup-step' + (done ? ' is-done' : '') + '"' +
+        (now ? ' aria-current="step"' : '') + '>' + esc(label) +
+        (done ? '<span class="sr-only">, done</span>' : '') + '</li>';
+    }).join('');
+  }
   const n = setup_$('setup-stepname');
   if (n) n.textContent = here;
   const c = setup_$('setup-stepcount');
@@ -218,7 +238,7 @@ function setup_bar(){
 /* back=false drops the Back button; next=false disables Continue; next as a string
    names an entry in setup_ACTIONS. Mirrors the old nav(back, next, nextLabel). */
 function setup_nav(back, next, nextLabel){
-  return '<div class="nav">' +
+  return '<div class="nav" role="group" aria-label="Move between steps">' +
     (back !== false
       ? '<button type="button" class="btn btn-ghost" data-act="back">Back</button>'
       : '') +
@@ -267,7 +287,8 @@ function setup_platformPick(id, title, sub, meta){
    so a second checklist cannot overwrite this one's. */
 function setup_checklist(key, items){
   var done = setup_ticks(key);
-  return '<ul class="checklist" id="setup-ck-' + setup_attr(key) + '">' +
+  return '<ul class="checklist" id="setup-ck-' + setup_attr(key) + '" ' +
+    'aria-label="Steps to tick off as you go">' +
     items.map(function(html, i){
       var on = done.indexOf(i) >= 0;
       return '<li class="checkitem' + (on ? ' is-done' : '') + '">' +
@@ -353,7 +374,7 @@ function setup_draw(){
     '<button type="button" class="btn btn-sm" data-act="getWebview2" ' +
     'id="setup-wv2-btn" style="margin-top:8px">Get the app window</button>' +
     '<p class="muted" id="setup-wv2-msg" role="status" aria-live="polite"></p></div>' +
-    '<div class="pickrow">' +
+    '<div class="pickrow" role="group" aria-label="What AutoStream should do">' +
       /* CLIPS FIRST, AND MARKED AS THE ONE TO TAKE. Two choices presented
          as equals made the ten-minute one look as ordinary as the
          five-second one, and most people arriving here want the clipper --
@@ -598,8 +619,10 @@ function setup_draw(){
     '<input class="input" id="setup-maxh" type="number" min="1" inputmode="numeric" ' +
     'value="' + setup_attr(setup_state.max_session_hours || 8) + '"></div>' +
     '</div>' +
-    '<div class="field">' +
-    '<div class="field-label">Never start automatically between</div>' +
+    /* A fieldset, so "From" and "Until" are heard as the two ends of the
+       quiet hours rather than as two unrelated boxes. */
+    '<fieldset class="field setup-group">' +
+    '<legend class="field-label">Never start automatically between</legend>' +
     '<div class="field-row">' +
     '<div class="field"><label class="field-label" for="setup-q1">From</label>' +
     '<input class="input mono" id="setup-q1" type="text" placeholder="03:30" ' +
@@ -609,7 +632,7 @@ function setup_draw(){
     'autocomplete="off" value="' + setup_attr(setup_state.quiet_to || '') + '"></div>' +
     '</div>' +
     '<div class="field-help">Leave both blank to allow streaming at any hour.</div>' +
-    '</div>' +
+    '</fieldset>' +
     setup_nav(true, 'saveTiming'));
 
   else if (at === 'apps') {
@@ -620,7 +643,8 @@ function setup_draw(){
       '<button type="button" class="btn btn-block" data-act="scanApps">' +
       'Scan my computer</button>' +
       '<p class="muted" id="setup-scanmsg" role="status" aria-live="polite"></p>' +
-      '<div class="scroll" id="setup-applist"></div>' +
+      '<div class="scroll" id="setup-applist" role="group" ' +
+      'aria-label="Games and apps found on this computer"></div>' +
       setup_nav(true, 'saveApps'));
     setup_renderApps();
   }
@@ -653,9 +677,11 @@ function setup_draw(){
       'autocomplete="off" value="' +
       setup_attr(setup_state.subtitle === undefined ? '{channel} | {day} {daypart}' : setup_state.subtitle) +
       '"></div>' +
-      '<div class="field"><span class="field-label">Your in-game names</span>' +
-      '<div class="field-help">Only needed for games you want clipped. Leave blank ' +
-      'to skip.</div>' +
+      '<div class="field" role="group" aria-labelledby="setup-un-label" ' +
+      'aria-describedby="setup-un-help">' +
+      '<span class="field-label" id="setup-un-label">Your in-game names</span>' +
+      '<div class="field-help" id="setup-un-help">Only needed for games you want ' +
+      'clipped. Leave blank to skip.</div>' +
       '<div id="setup-usernames"></div></div>' +
       setup_nav(true, 'saveBranding'));
     setup_renderUsernames();
@@ -711,7 +737,7 @@ function setup_authLink(url){
   box.innerHTML = url
     ? '<div class="field-help">No browser opened, or closed it? Open this ' +
       'link yourself:</div><input class="input mono" readonly ' +
-      'onfocus="this.select()" value="' + setup_attr(url) + '">'
+      'aria-label="Sign-in link" onfocus="this.select()" value="' + setup_attr(url) + '">'
     : '';
 }
 
@@ -941,6 +967,8 @@ async function setup_wantClips(){
     'service.</div>');
   const bar = setup_$('setup-stepbar');
   if (bar) bar.innerHTML = '';
+  const steps = setup_$('setup-steplist');
+  if (steps) steps.innerHTML = '';
   const n = setup_$('setup-stepname');
   if (n) n.textContent = 'Done';
   const cnt = setup_$('setup-stepcount');

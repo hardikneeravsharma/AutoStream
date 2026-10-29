@@ -24,22 +24,30 @@ Save is not a colour scheme you can choose.
 """
 from __future__ import annotations
 
+import json
+
+from ..schema import GROUPS
+
+# NINETY KEYS ACROSS TWELVE SECTIONS. Finding one meant knowing which section
+# somebody had filed it under, and the names are not always the guess a person
+# makes -- the clip length lives under Clips, the clip UPLOAD privacy under
+# Clips too, and the stream privacy under Stream. Searching asks nothing of
+# that. The box itself sits in the top bar (set_searchBox), where the approved
+# layout puts it; the count and the empty answer stay with the results.
+SET_SEARCH_BOX = (
+    '<div class="set-topsearch">'
+    '<input class="input" id="set-search" type="search" autocomplete="off"'
+    ' spellcheck="false" aria-label="Search every setting"'
+    ' placeholder="Search settings">'
+    '</div>'
+)
+
 SETTINGS_HTML = r"""
 <div class="settings-layout">
   <nav class="settings-nav" id="set-nav" aria-label="Settings sections"></nav>
   <div class="settings-body">
-    <!-- NINETY KEYS ACROSS FIFTEEN SECTIONS. Finding one meant knowing which
-         section somebody had filed it under, and the names are not always the
-         guess a person makes -- the clip length lives under Clips, the clip
-         UPLOAD privacy under Clips too, and the stream privacy under Stream.
-         Searching asks nothing of that. -->
-    <div class="settings-search">
-      <input class="input" id="set-search" type="search" autocomplete="off"
-             spellcheck="false" aria-label="Search every setting"
-             placeholder="Search settings (name, help text, or key)">
-      <span class="settings-search-count" id="set-search-count"
-            role="status" aria-live="polite"></span>
-    </div>
+    <p class="settings-search-count" id="set-search-count"
+       role="status" aria-live="polite"></p>
     <div id="set-panels">
       <div class="empty"><span class="spin"></span> Loading settings...</div>
     </div>
@@ -108,7 +116,12 @@ SETTINGS_HTML = r"""
 </div>
 """
 
-SETTINGS_JS = r"""
+SETTINGS_JS = (
+    "/* The nav's four headings, from autostream/schema.py, and the search box\n"
+    "   the page puts in the top bar. */\n"
+    "var set_GROUPS = " + json.dumps(GROUPS) + ";\n"
+    "var set_SEARCH_BOX = " + json.dumps(SET_SEARCH_BOX) + ";\n"
+) + r"""
 /* ============================ settings page ============================ */
 
 var set_state = {
@@ -356,17 +369,35 @@ function set_themesHtml(){
 
 /* ------------------------------------------------------------- page markup */
 
-function set_fieldHtml(f){
+/* THE CONFIG KEY IS FOR THE PERSON WHO ASKED FOR IT. `ui.theme` under a
+   label called Theme is a second name for the same thing, in a language a
+   stranger does not speak, on every one of ninety rows. It stays where
+   somebody has said they want the machinery: the Advanced section, whose
+   values are written by setup and are pasted out of logs, and anywhere at
+   all once Developer mode is on. The search still matches it either way. */
+function set_keyShown(secId, dev){
+  return secId === 'advanced' || dev === true;
+}
+
+/* Controls that need the row's whole width -- a paragraph, a list of tags --
+   sit under the words. Everything else sits on the right of them. */
+var set_WIDE = {textarea: 1, taglist: 1};
+
+function set_fieldHtml(f, secId){
   var slug = set_slug(f.path);
   /* time_range owns two inputs, so the label points at the first one. */
   var target = f.control === 'time_range' ? 'set-f-' + slug + '-a' : 'set-f-' + slug;
   var marks = '';
-  if (f.restart) marks += '<span class="tag">Needs restart</span>';
-  if (f.danger) marks += '<span class="tag">Confirm to change</span>';
+  if (f.restart) marks += '<span class="set-flag">Needs a restart</span>';
+  if (f.danger) marks += '<span class="set-flag">Asks before saving</span>';
   var help = f.help ? '<p class="field-help">' + esc(f.help) + '</p>' : '';
   if (f.danger && f.control === 'readonly'){
     help += '<p class="field-help"><b>Written by setup.</b> Changing this by hand ' +
             'breaks the next session without warning.</p>';
+  }
+  var key = '';
+  if (set_keyShown(secId, set_state.values['ui.developer_mode'] === true)){
+    key = '<div class="field-key">' + esc(f.path) + '</div>';
   }
   var only = (f.only_for && f.only_for.length)
     ? ' data-only="' + set_attr(f.only_for.join(' ')) + '"' : '';
@@ -379,16 +410,16 @@ function set_fieldHtml(f){
     ((f.label || '') + ' ' + f.path + ' ' + (f.help || '')).toLowerCase()) + '"';
   return '<div class="field" data-path="' + set_attr(f.path) + '"' + only + find +
     ' id="set-w-' + slug + '">' +
-    '<div class="field-row">' +
-      '<div>' +
-        '<label class="field-label" id="set-l-' + slug + '" for="' + target + '">' +
-          esc(f.label || f.path) + '</label>' +
-        '<div class="mono muted">' + esc(f.path) + '</div>' +
-        (marks ? '<div class="field-inline">' + marks + '</div>' : '') +
-      '</div>' +
-      '<div>' + set_controlHtml(f) + help +
+    '<div class="set-row' + (set_WIDE[f.control] ? ' set-row-wide' : '') + '">' +
+      '<div class="set-row-text">' +
+        '<div class="set-row-head">' +
+          '<label class="field-label" id="set-l-' + slug + '" for="' + target + '">' +
+            esc(f.label || f.path) + '</label>' + marks +
+        '</div>' +
+        help + key +
         '<p class="field-error hide" id="set-e-' + slug + '"></p>' +
       '</div>' +
+      '<div class="set-row-control">' + set_controlHtml(f) + '</div>' +
     '</div>' +
   '</div>';
 }
@@ -549,7 +580,7 @@ async function set_loadPlatforms(){
 function set_sectionHtml(sec){
   var plain = [], adv = [];
   (sec.fields || []).forEach(function(f){
-    (f.advanced ? adv : plain).push(set_fieldHtml(f));
+    (f.advanced ? adv : plain).push(set_fieldHtml(f, sec.id));
   });
   var body = '';
   if (sec.advanced){
@@ -573,21 +604,127 @@ function set_sectionHtml(sec){
      until the scenes exist in OBS, and building them at the moment of going
      live would mean a failure is discovered by the audience. */
   if (sec.id === 'screens'){
-    body += '<div class="controls" style="margin-top:12px">' +
+    body += '<div class="controls set-sec-acts">' +
       '<button class="btn" type="button" id="set-se-fetch">' +
       'Fetch my StreamElements scenes</button>' +
       '<button class="btn" type="button" id="set-build-screens">' +
       'Create the scenes in OBS</button>' +
       '<span class="muted" id="set-build-screens-note"></span></div>';
   }
-  return '<section class="settings-section card' + (sec.id === set_state.active ? '' : ' hide') +
-    '" id="set-sec-' + set_slug(sec.id) + '" data-sec="' + set_attr(sec.id) + '">' +
+  return set_sectionShell(sec, body);
+}
+
+/* A section is a heading, one sentence, and its rows -- no plate around it.
+   The page is one section at a time, so a card would only be a box around
+   everything. */
+function set_sectionShell(sec, body){
+  var slug = set_slug(sec.id);
+  return '<section class="settings-section' + (sec.id === set_state.active ? '' : ' hide') +
+    '" id="set-sec-' + slug + '" data-sec="' + set_attr(sec.id) + '"' +
+    ' aria-labelledby="set-h-' + slug + '">' +
     '<div class="settings-section-head">' +
-      '<div class="card-title">' + esc(sec.label || sec.id) + '</div>' +
-      (sec.blurb ? '<p class="card-sub">' + esc(sec.blurb) + '</p>' : '') +
+      '<h2 class="set-sec-title" id="set-h-' + slug + '">' + esc(sec.label || sec.id) + '</h2>' +
+      (sec.blurb ? '<p class="set-sec-blurb">' + esc(sec.blurb) + '</p>' : '') +
     '</div>' +
-    '<div class="card-body">' + body + '</div>' +
+    '<div class="set-sec-body">' + body + '</div>' +
   '</section>';
+}
+
+/* ------------------------------------------------------------- shortcuts
+
+   EVERY KEY THE APP ANSWERS TO, IN ONE PLACE. The two hotkeys live in the
+   Safety section beside what they do, and the Studio's keys live in its own
+   key sheet behind "?" -- so "what can I press" had no single answer. This is
+   that answer, read-only: it lists, it does not rebind. Changing a hotkey is
+   still done on its own row, which this links to, because that row is where
+   the validation and the warning about clashing with a game already are. */
+
+var set_SHORTCUTS = {id: 'shortcuts', label: 'Shortcuts', group: 'app',
+  blurb: 'Every key AutoStream answers to. To change a hotkey, open its setting.'};
+
+/* -> [{label, blurb, rows: [{label, keys, path?}]}]. The two system-wide
+   hotkeys first, then each Studio scope in its own precedence order, keeping
+   only the commands that have a key. */
+function set_shortcutRows(values, cmds, scopes){
+  var v = values || {};
+  var hot = function(path, label){
+    var k = String(v[path] == null ? '' : v[path]).trim();
+    return {label: label, keys: k ? [k] : [], path: path};
+  };
+  var out = [{label: 'Anywhere, even in a game', blurb: 'Pressed while AutoStream is running in the background.',
+    rows: [hot('rules.replay_hotkey', 'Save an instant replay'),
+           hot('rules.kill_switch_hotkey', 'Stop the stream now')]}];
+  (scopes || []).forEach(function(s){
+    var rows = (cmds || []).filter(function(c){
+      return c.scope === s.id && c.keys && c.keys.length;
+    }).map(function(c){ return {label: c.label, keys: c.keys.slice()}; });
+    if (rows.length) out.push({label: s.label, blurb: s.blurb || '', rows: rows});
+  });
+  return out;
+}
+
+/* "ArrowRight" is a word for a programmer; the key cap says an arrow. A
+   hotkey is stored the way the keyboard library wants it, "ctrl+alt+r", and
+   is shown the way the keys are printed, "Ctrl+Alt+R". */
+function set_keyCap(k){
+  var names = {ArrowRight: 'Right arrow', ArrowLeft: 'Left arrow', ArrowUp: 'Up arrow',
+               ArrowDown: 'Down arrow', Escape: 'Esc', Backspace: 'Backspace', ' ': 'Space'};
+  if (names[k]) return names[k];
+  var s = String(k);
+  if (s.length > 1 && s.indexOf('+') > 0){
+    return s.split('+').map(function(p){
+      return p ? p.charAt(0).toUpperCase() + p.slice(1) : '+';
+    }).join('+');
+  }
+  return s;
+}
+
+function set_shortcutsHtml(){
+  var cmds = (typeof STUDIO_CMDS !== 'undefined') ? STUDIO_CMDS : [];
+  var scopes = (typeof STUDIO_SCOPES !== 'undefined') ? STUDIO_SCOPES : [];
+  var groups = set_shortcutRows(set_state.values, cmds, scopes);
+  var body = groups.map(function(g){
+    return '<div class="set-keys">' +
+      '<h3 class="set-keys-title">' + esc(g.label) + '</h3>' +
+      (g.blurb ? '<p class="field-help">' + esc(g.blurb) + '</p>' : '') +
+      '<ul class="set-keys-list">' + g.rows.map(function(r){
+        var caps = r.keys.length
+          ? r.keys.map(function(k){ return '<kbd class="kbd">' + esc(set_keyCap(k)) + '</kbd>'; })
+              .join('<span class="set-keys-or">or</span>')
+          : '<span class="muted">Not set</span>';
+        var change = r.path
+          ? '<button class="btn btn-ghost btn-sm" type="button" data-act="set-goto"' +
+            ' data-path="' + set_attr(r.path) + '" aria-label="Change: ' + set_attr(r.label) + '">' +
+            'Change</button>'
+          : '';
+        return '<li class="set-keys-row"><span class="set-keys-what">' + esc(r.label) + '</span>' +
+          '<span class="set-keys-caps">' + caps + change + '</span></li>';
+      }).join('') + '</ul></div>';
+  }).join('');
+  return set_sectionShell(set_SHORTCUTS, body);
+}
+
+/* ------------------------------------------------------------- the groups */
+
+/* Sections under the four headings, in the headings' order. A group left
+   empty -- the Mac build has no streaming sections -- is dropped rather than
+   drawn as a heading over nothing, and a section naming a group this page
+   has never heard of lands under the last one rather than vanishing. */
+function set_grouped(sections, groups){
+  var out = (groups || []).map(function(g){ return {id: g.id, label: g.label, sections: []}; });
+  var by = {};
+  out.forEach(function(g){ by[g.id] = g; });
+  (sections || []).forEach(function(s){
+    var g = by[s.group] || out[out.length - 1];
+    if (g) g.sections.push(s);
+  });
+  return out.filter(function(g){ return g.sections.length; });
+}
+
+/* What the nav and the panels are drawn from: the schema's sections, plus
+   Shortcuts, which is the page's own. */
+function set_navGroups(){
+  return set_grouped(set_state.sections.concat([set_SHORTCUTS]), set_GROUPS);
 }
 
 /* ---------------------------------------------- settings that are not yours
@@ -726,14 +863,14 @@ function set_applySections(searching, hits, found){
 /* Kept as the name the rest of the page calls after a platform change. */
 function set_applyPlatform(){ set_applyFilters(); }
 
-/* What Ctrl K finds in Settings: a setting by its name or its help text.
-   Opening one goes to Settings searched to it, which shows its section. */
+/* What Ctrl K finds in Settings: a setting by its name, its help text or its
+   key. Opening one goes to Settings searched to it, which shows its section. */
 pal_source('Settings', function (q) {
   if (!String(q || '').trim()) return [];
   var out = [];
   Object.keys(set_state.fields || {}).forEach(function (k) {
     var f = set_state.fields[k];
-    if (out.length < 6 && f && f.label && pal_match(q, f.label + ' ' + (f.help || '')))
+    if (out.length < 6 && f && f.label && pal_match(q, f.label + ' ' + (f.help || '') + ' ' + f.path))
       out.push({label: f.label, hint: f.section_label || '',
                 run: function () { go('settings'); var s = set_el('set-search');
                                    if (s) { s.value = f.label; } set_search(f.label); }});
@@ -743,7 +880,38 @@ pal_source('Settings', function (q) {
 
 function set_search(value){
   set_query = String(value == null ? '' : value).trim();
+  /* The box follows the query, not only the other way round: the Dashboard,
+     the Logs fix buttons and Ctrl K all open this page searched, and a filter
+     with an empty box above it is a page that looks broken. */
+  var box = set_el('set-search');
+  if (box && box.value.trim() !== set_query) box.value = set_query;
+  var q = set_el('set-noresult-q');
+  if (q) q.textContent = set_query;
   set_applyFilters();
+}
+
+/* THE SEARCH LIVES IN THE TOP BAR, which the shell empties on every page
+   change -- so it is put back, and wired again, each time this page shows.
+   The query itself is held in set_query, so it survives the box being
+   rebuilt. */
+function set_searchBox(){
+  if (typeof shell_setActions !== 'function') return;
+  shell_setActions(set_SEARCH_BOX);
+  var search = set_el('set-search');
+  if (!search || search.dataset.wired) return;
+  search.dataset.wired = '1';
+  search.value = set_query;
+  search.addEventListener('input', function(){ set_search(search.value); });
+  search.addEventListener('keydown', function(ev){
+    /* Escape clears rather than closing anything, because there is nothing
+       open -- and a search box that swallows Escape with no effect is the
+       reason people reach for the mouse. */
+    if (ev.key === 'Escape' && search.value){
+      search.value = '';
+      set_search('');
+      ev.stopPropagation();
+    }
+  });
 }
 
 function set_platformLabel(id){
@@ -755,17 +923,31 @@ function set_platformLabel(id){
   return id;
 }
 
+/* Group headings are words above the items, not buttons: there is nothing to
+   open, and a heading that took focus would be one more stop for every Tab. */
 function set_navHtml(){
-  return set_state.sections.map(function(sec){
-    return '<button class="settings-nav-item' + (sec.id === set_state.active ? ' is-active' : '') +
-      '" type="button" data-sec="' + set_attr(sec.id) + '">' +
-      icon(sec.icon || 'settings') + '<span>' + esc(sec.label || sec.id) + '</span></button>';
+  return set_navGroups().map(function(g){
+    return '<div class="set-nav-group" role="group" aria-labelledby="set-g-' + set_attr(g.id) + '">' +
+      '<div class="set-nav-head" id="set-g-' + set_attr(g.id) + '">' + esc(g.label) + '</div>' +
+      g.sections.map(function(sec){
+        var on = sec.id === set_state.active;
+        return '<button class="settings-nav-item' + (on ? ' is-active' : '') +
+          '" type="button" data-sec="' + set_attr(sec.id) + '"' +
+          (on ? ' aria-current="true"' : '') + '>' +
+          '<span>' + esc(sec.label || sec.id) + '</span></button>';
+      }).join('') + '</div>';
   }).join('');
 }
 
 function set_render(){
   set_el('set-nav').innerHTML = set_navHtml();
-  set_el('set-panels').innerHTML = set_state.sections.map(set_sectionHtml).join('');
+  /* Drawn in the nav's order, so a search's results read top to bottom in
+     the same order as the list beside them. */
+  set_el('set-panels').innerHTML = set_navGroups().map(function(g){
+    return g.sections.map(function(sec){
+      return sec.id === 'shortcuts' ? set_shortcutsHtml() : set_sectionHtml(sec);
+    }).join('');
+  }).join('');
   set_wireBuildScreens();
   set_wireStreamElements();
   set_applyFilters();
@@ -789,7 +971,8 @@ function set_navMark(id){
   for (var i = 0; i < items.length; i++){
     var mine = items[i].getAttribute('data-sec') === id;
     items[i].classList.toggle('is-active', mine);
-    if (mine) here = items[i];
+    if (mine) { here = items[i]; items[i].setAttribute('aria-current', 'true'); }
+    else items[i].removeAttribute('aria-current');
   }
   /* THE STRIP SCROLLS, so the section you just chose can be off the end of
      it -- which is how a nav item reads as not having been pressed. */
@@ -934,25 +1117,6 @@ function set_wire(){
     ev.preventDefault();
   }, {passive: false});
 
-  var search = set_el('set-search');
-  if (search){
-    search.addEventListener('input', function(){
-      set_search(search.value);
-      var q = set_el('set-noresult-q');
-      if (q) q.textContent = search.value.trim();
-    });
-    search.addEventListener('keydown', function(ev){
-      /* Escape clears rather than closing anything, because there is nothing
-         open -- and a search box that swallows Escape with no effect is the
-         reason people reach for the mouse. */
-      if (ev.key === 'Escape' && search.value){
-        search.value = '';
-        set_search('');
-        ev.stopPropagation();
-      }
-    });
-  }
-
   window.addEventListener('resize', set_navEdges);
 
   panels.addEventListener('input', function(ev){
@@ -1024,6 +1188,8 @@ function set_wire(){
       set_connect(btn.getAttribute('data-platform'));
     } else if (act === 'theme'){
       set_theme(btn.getAttribute('data-theme'));
+    } else if (act === 'set-goto'){
+      set_reveal(btn.getAttribute('data-path'));
     }
   });
 
@@ -1148,7 +1314,8 @@ function set_ingest(sections, values, boot){
   });
   set_state.themes = (boot && boot.themes) || [];
   set_state.theme = (boot && boot.theme) || set_state.values['ui.theme'] || '';
-  if (!sections.some(function(s){ return s.id === set_state.active; })){
+  if (set_state.active !== 'shortcuts' &&
+      !sections.some(function(s){ return s.id === set_state.active; })){
     var first = sections.filter(function(s){ return !s.advanced; })[0] || sections[0];
     set_state.active = first ? first.id : '';
   }
@@ -1261,6 +1428,10 @@ async function set_save(){
     if (r && r.restart_required){
       toast('Restart AutoStream for those to take effect.', 'warn');
     }
+    /* Developer mode decides whether rows show their keys, so saving it
+       redraws the page -- but only once nothing is left unsaved, because a
+       redraw puts every control back to its saved value. */
+    if (saved.indexOf('ui.developer_mode') >= 0 && !set_dirtyPaths().length) set_render();
   } catch (e){
     toast('Could not save: ' + String((e && e.message) || e), 'error');
   } finally {
@@ -1364,6 +1535,7 @@ window.PAGE_SETTINGS = {
   onShow: function(){
     set_guardNav();
     set_wireUpdates();
+    set_searchBox();
     // Asked every time the page opens: a connect finishes in another tab, so
     // the only way this one learns about it is by looking again.
     set_loadPlatforms().then(function(){

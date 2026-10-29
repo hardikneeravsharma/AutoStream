@@ -1364,6 +1364,42 @@ CONFIG_SCHEMA: list[Section] = [
     },
 ]
 
+# ---------------------------------------------------------------- the groups
+#
+# The Settings nav files the sections under what a person is DOING, not under
+# how the app is built: twelve section names in one list made "where is the
+# replay hotkey" a guessing game, and the four headings below are the four
+# reasons anybody opens the page. Grouping is presentation only -- a section's
+# id is what code, tests and the API use, so ids never change to fit a group.
+GROUPS: list[dict[str, str]] = [
+    {"id": "app", "label": "App"},
+    {"id": "streaming", "label": "Streaming"},
+    {"id": "clips", "label": "Making clips"},
+    {"id": "advanced", "label": "Advanced"},
+]
+
+_GROUP_OF: dict[str, str] = {
+    "appearance": "app",
+    "logging": "app",          # how much is written down, and developer mode
+    "stream": "streaming",
+    "obs": "streaming",
+    "timing": "streaming",
+    "safety": "streaming",
+    "titles": "streaming",
+    "thumbnail": "streaming",
+    "screens": "streaming",
+    "record": "clips",
+    "clips": "clips",
+    "advanced": "advanced",
+}
+
+# Stamped onto the sections rather than written into each one, so the whole
+# map reads in one place. A section added without an entry gets no group, and
+# test_every_section_belongs_to_a_group says so before the nav loses it.
+for _sec in CONFIG_SCHEMA:
+    if _sec["id"] in _GROUP_OF:
+        _sec["group"] = _GROUP_OF[_sec["id"]]
+
 FIELDS_BY_PATH: dict[str, Field] = {
     f["path"]: f for section in CONFIG_SCHEMA for f in section["fields"]
 }
