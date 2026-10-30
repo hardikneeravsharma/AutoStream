@@ -95,6 +95,15 @@ MIN_OVERLAP = 60.0
 # more apart.
 DISAGREE_MAX = 300.0
 
+# HOW LONG AFTER match.started THE FIRST ROUND'S CLOCK STARTS, for ending a match
+# in the file. gameLengthMillis counts from game time 0, so started + length is
+# about this much before the match really ends. Measured on five matches in one
+# recording, fingerprint against clock: 106.6s to 107.7s. It cut the last round of
+# every chosen match -- a Plummet 13-9 lost its last three kills, 15 in Riot's
+# record and 12 clipped. A little over the measured lag: the next match's own
+# loading screen is minutes away, and a kill is only ever read inside a match.
+MATCH_LAG = 110.0
+
 # Riot's own name for what made a round notable. These are the values the
 # client sends; the mapping is to the words this app already uses elsewhere so
 # a Valorant clip and a Counter-Strike clip read the same way.
@@ -271,7 +280,7 @@ def listing(started: float = 0.0, seconds: float = 0.0,
             # Where it ENDS in the file, said outright: for a match already
             # running when the file began, at + seconds runs on past its end
             # and into whatever was played next.
-            row["until"] = m.started - started + max(m.seconds, 0.0)
+            row["until"] = m.started - started + MATCH_LAG + max(m.seconds, 0.0)
         out.append(row)
     out.sort(key=lambda r: -r["started"])
     return out
