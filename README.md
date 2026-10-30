@@ -1056,6 +1056,7 @@ Video and its metadata live **outside** the application folder, in
 Videos\AutoStream    2026-08-19 05-15-45.mp4    the recordings themselves
     history.jsonl              one line per finished stream — what the Clips page reads
     clips\<date>_<time>_<Game>\   finished clips, one folder per stream
+        kills.json             every kill the run found, for other tools (docs/KILLS-JSON.md)
 ```
 
 They are kept out of the app folder deliberately. A frozen build lives in

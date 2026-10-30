@@ -54,6 +54,10 @@ class Kill:
     # seconds past `time` still lands in the middle of them. Cutting against
     # `end` is what actually gets past the moment.
     end: float = 0.0
+    # How sure the reader was, for kills.json only (see killslog): frames the
+    # row was read in, and what each frame called it. Nothing ranks on them.
+    seen: int = 0
+    votes: str = ""
 
     def __post_init__(self) -> None:
         if not self.end:
@@ -396,8 +400,10 @@ def scan_killfeed(video: Path, profile: Profile, total: float,
             kills[-1].count += 1
             kills[-1].end = e.time
             kills[-1].score = max(kills[-1].score, e.ratio)
+            kills[-1].seen += e.seen
             continue
-        kills.append(Kill(time=e.time, end=e.time, score=e.ratio, count=1))
+        kills.append(Kill(time=e.time, end=e.time, score=e.ratio, count=1,
+                          seen=e.seen))
     deaths = sum(1 for e in events if e.kind == "death")
     assists = sum(1 for e in events if e.kind == "assist")
     log.info("found %d kill(s), %d assist(s) (not clipped) and %d death(s) in %s",
@@ -445,7 +451,8 @@ def scan_feedbar(video: Path, profile: Profile, total: float, height: int,
             continue
         # A feed row has no "marker cleared" moment the way a HUD glyph does,
         # so `end` is the kill itself and the tail is measured from there.
-        kills.append(Kill(time=e.time, end=e.time, score=1.0, count=1))
+        kills.append(Kill(time=e.time, end=e.time, score=1.0, count=1,
+                          seen=e.seen, votes=e.votes))
     t = valorant_feed.tally(events)
     log.info("found %d kill(s), %d assist(s) (not clipped) and %d death(s) in %s",
              len(kills), t["assist"], t["death"], video.name)
