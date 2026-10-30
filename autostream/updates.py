@@ -250,3 +250,50 @@ def download(rel: Release, into: Path, *, on_progress=None,
              target.stat().st_size / 1e6,
              f", sha256 {got[:12]} verified" if want else ", UNVERIFIED")
     return target
+
+
+# A package download() wrote, or the .part of one: a release asset name that
+# carries its version. A name with no version in it (AutoStream-share.zip,
+# v1.78.1's AutoStream-macos-arm64.dmg) cannot be placed, so it is left alone.
+PACKAGE = re.compile(r"^AutoStream-\d[\d.]*-.+\.(?:dmg|exe|zip)(?:\.part)?$", re.I)
+
+
+def prune(folder: Path, current: str) -> list[str]:
+    """Delete the downloaded packages this version no longer needs. Never raises.
+
+    -> the names removed.
+
+    A package is spent once its version, or a newer one, is running: a
+    reinstall downloads it again from the release. Every update left its
+    package behind for good, and one Mac had ten of them -- 776 MB -- with the
+    newest already installed. Run as the app starts, which is the moment a
+    new version first runs after the installer or the swap script relaunches
+    it.
+
+    A NEWER package is kept: it is an update downloaded but not installed
+    yet. Nothing that is not one of our packages is touched -- the Mac's
+    swap.sh lives in the same folder.
+    """
+    now = parse_version(current)
+    removed: list[str] = []
+    try:
+        entries = sorted(Path(folder).iterdir())
+    except OSError:
+        return removed                   # no folder yet: nothing was ever downloaded
+    for f in entries:
+        if not PACKAGE.match(f.name) or version_of(f.name) > now:
+            continue
+        try:
+            if not f.is_file():
+                continue
+            f.unlink()
+        except OSError as e:
+            # Windows: the installer that just ran can still be holding its
+            # own file. The next start takes it.
+            log.info("could not remove the old update %s: %s", f.name, e)
+            continue
+        removed.append(f.name)
+    if removed:
+        log.info("removed %d downloaded update(s) this version no longer needs: %s",
+                 len(removed), ", ".join(removed))
+    return removed

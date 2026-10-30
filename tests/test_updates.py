@@ -331,3 +331,100 @@ def test_the_page_does_not_call_an_empty_release_up_to_date():
         "set_verRender must distinguish 'nothing newer exists' from 'the "
         "newer release has nothing attached to it'")
     assert "no package attached" in body
+
+
+# ------------------------------------------------------------ tidying up
+
+def _folder(tmp_path, *names):
+    d = tmp_path / "updates"
+    d.mkdir()
+    for n in names:
+        (d / n).write_bytes(b"x")
+    return d
+
+
+def test_installed_and_older_packages_are_deleted_and_a_newer_one_is_kept(tmp_path):
+    """The Mac that had ten .dmg files, 776 MB, with the newest installed."""
+    d = _folder(tmp_path,
+                "AutoStream-1.78.3-macos-arm64.dmg", "AutoStream-2.2.1-macos-arm64.dmg",
+                "AutoStream-2.3.0-macos-arm64.dmg", "AutoStream-2.4.0-macos-arm64.dmg")
+    gone = updates.prune(d, "2.3.0")
+    assert sorted(gone) == ["AutoStream-1.78.3-macos-arm64.dmg",
+                            "AutoStream-2.2.1-macos-arm64.dmg",
+                            "AutoStream-2.3.0-macos-arm64.dmg"]
+    assert sorted(f.name for f in d.iterdir()) == ["AutoStream-2.4.0-macos-arm64.dmg"], \
+        "a newer package is an update downloaded but not installed yet"
+
+
+def test_windows_packages_go_the_same_way(tmp_path):
+    d = _folder(tmp_path, "AutoStream-2.2.1-setup.exe",
+                "AutoStream-2.2.1-windows-x64-setup.exe",
+                "AutoStream-2.2.1-windows-x64.zip",
+                "AutoStream-2.3.1-windows-x64-setup.exe")
+    updates.prune(d, "2.3.0")
+    assert [f.name for f in d.iterdir()] == ["AutoStream-2.3.1-windows-x64-setup.exe"]
+
+
+def test_versions_are_compared_as_numbers(tmp_path):
+    """1.90.0 is older than 2.3.0, and 2.10.0 is newer, whatever the text says."""
+    d = _folder(tmp_path, "AutoStream-1.90.0-macos-arm64.dmg",
+                "AutoStream-2.10.0-macos-arm64.dmg")
+    assert updates.prune(d, "2.3.0") == ["AutoStream-1.90.0-macos-arm64.dmg"]
+
+
+def test_a_half_download_of_a_spent_version_goes_too(tmp_path):
+    d = _folder(tmp_path, "AutoStream-2.2.1-macos-arm64.dmg.part",
+                "AutoStream-2.4.0-macos-arm64.dmg.part")
+    assert updates.prune(d, "2.3.0") == ["AutoStream-2.2.1-macos-arm64.dmg.part"]
+
+
+def test_nothing_that_is_not_one_of_our_packages_is_touched(tmp_path):
+    """swap.sh lives here on a Mac; names with no version cannot be placed."""
+    keep = ["swap.sh", "AutoStream-share.zip", "AutoStream-macos-arm64.dmg",
+            "notes.txt", "Other-1.0.0-setup.exe", "AutoStream-2.2.1-notes.txt"]
+    d = _folder(tmp_path, *keep)
+    (d / "AutoStream-2.2.1-macos-arm64.dmg").mkdir()          # a folder, not a file
+    assert updates.prune(d, "2.3.0") == []
+    assert sorted(f.name for f in d.iterdir()) == sorted(
+        keep + ["AutoStream-2.2.1-macos-arm64.dmg"])
+
+
+def test_no_folder_is_not_an_error(tmp_path):
+    assert updates.prune(tmp_path / "never-made", "2.3.0") == []
+
+
+def test_a_file_that_will_not_delete_is_skipped_not_raised(tmp_path, monkeypatch):
+    """Windows: the installer that just ran can still hold its own file."""
+    d = _folder(tmp_path, "AutoStream-2.2.1-windows-x64-setup.exe",
+                "AutoStream-2.2.0-windows-x64-setup.exe")
+    real = Path.unlink
+
+    def held(self, *a, **k):
+        if self.name == "AutoStream-2.2.1-windows-x64-setup.exe":
+            raise PermissionError("in use")
+        return real(self, *a, **k)
+    monkeypatch.setattr(Path, "unlink", held)
+    assert updates.prune(d, "2.3.0") == ["AutoStream-2.2.0-windows-x64-setup.exe"]
+    assert [f.name for f in d.iterdir()] == ["AutoStream-2.2.1-windows-x64-setup.exe"]
+
+
+def test_the_app_tidies_up_as_it_starts(tmp_path, monkeypatch):
+    """Starting is the moment a new version first runs after an update."""
+    from autostream import __version__, paths, webui
+
+    seen = []
+    monkeypatch.setattr(paths, "DATA_HOME", tmp_path)
+    monkeypatch.setattr(updates, "prune", lambda folder, current: seen.append(
+        (Path(folder), current)) or [])
+    webui.Server._prune_updates()
+    assert seen == [(tmp_path / "updates", __version__)]
+    assert "_prune_updates" in webui.Server.start.__code__.co_names
+
+
+def test_tidying_up_can_never_stop_the_app_starting(monkeypatch):
+    from autostream import webui
+
+    def boom(*a, **k):
+        raise RuntimeError("disk on fire")
+    monkeypatch.setattr(updates, "prune", boom)
+    webui.Server._prune_updates()                              # does not raise
