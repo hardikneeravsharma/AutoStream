@@ -31,8 +31,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import (cutter, detect, diag, killfeed, montage, overlay, plan,
-               profiles, promo, voice)
+from . import (cutter, detect, diag, killfeed, killslog, montage, overlay,
+               plan, profiles, promo, voice)
 from .. import atomic, paths
 from .cs2_cards import HudUnread
 from .tools import FfmpegMissing, duration_label, media_info
@@ -185,13 +185,33 @@ def _free_folder(root: Path, name: str) -> Path:
     run happens not to produce.
     """
     p = root / name
-    if not p.exists():
+    if not p.exists() or _only_kills_log(p):
         return p
     for i in range(2, 100):
         alt = root / f"{name}_{i}"
-        if not alt.exists():
+        if not alt.exists() or _only_kills_log(alt):
             return alt
     return root / f"{name}_{int(time.time())}"
+
+
+# What Finder and Explorer drop into a folder that has merely been opened.
+_OS_LITTER = {".DS_Store", "Thumbs.db", "desktop.ini"}
+
+
+def _only_kills_log(folder: Path) -> bool:
+    """Whether a folder holds nothing but a kills.json.
+
+    A plan-only run and a run that found no kills leave exactly that and
+    nothing else, and neither is a redo worth protecting -- without this the
+    real cut that follows a plan-only review would land in name_2. Opening
+    the folder to look at the file must not change that, so OS litter does
+    not count.
+    """
+    try:
+        names = {f.name for f in folder.iterdir()} - _OS_LITTER
+    except OSError:
+        return False
+    return names == {killslog.FILENAME}
 
 
 class ClipJob:
@@ -274,6 +294,9 @@ class ClipJob:
         self.needs_demo: bool = False
         self.started_at = time.time()
         self.finished_at: float | None = None
+        # The run's final kills, for kills.json -- see killslog. Set once the
+        # kills are settled; a run that stops before then writes none.
+        self.kill_events: list[dict] = []
         # For the estimate: when the current step began, how long the recording
         # is, and how it is being read. Filled in as the run learns them.
         self.step_started = self.started_at
@@ -602,6 +625,7 @@ class ClipJob:
         """
         try:
             self._set(state="running")
+            self._clear_kills_log()
             if self.diag.on:
                 self._begin_diagnostic()
             self._run()
@@ -622,6 +646,10 @@ class ClipJob:
                       summary=summary, message=str(e))
             log.info("clip job found nothing to cut: %s", e)
             self.diag.error(e)
+            # Some NoKills are raised after kills were found and then all
+            # filtered out; kills.json says what the run ended with, which is
+            # none.
+            self.kill_events = []
         except detect.Cancelled as e:
             self._set(state="cancelled", message="Cancelled")
             log.info("clip job cancelled")
@@ -654,7 +682,43 @@ class ClipJob:
         finally:
             self._set(finished_at=time.time())
             self._write_manifest()
+            # AFTER the manifest, which is written only where the folder
+            # already exists: a plan-only run removes its folder and a run
+            # with no kills never makes one, and written first this would hand
+            # both a clips.json and put them in the Studio's library.
+            if self.state == "done":
+                self._write_kills_log()
             self._finish_diagnostic()
+
+    def _write_kills_log(self) -> None:
+        """kills.json, for other tools -- see killslog. Never raises."""
+        try:
+            kind = ("plan_only" if self.options.get("plan_only") else
+                    "match-videos" if self.scan_mode == "summary" else "clips")
+            killslog.write(self.folder, killslog.build(
+                kind=kind, source=self.source, duration=self.source_seconds,
+                game=self.game, game_key=self.game_key,
+                started_at=self.started_at, kills=self.kill_events,
+                scanned=(None if self.win_whole
+                         else [round(self.win_start, 1), round(self.win_end, 1)])))
+        except Exception as e:                               # noqa: BLE001
+            log.warning("could not write %s: %s", killslog.FILENAME, e)
+
+    def _clear_kills_log(self) -> None:
+        """Empty a folder this run reused because it held only a kills.json.
+
+        So the run starts from a folder that does not exist, exactly as it
+        did before kills.json: _write_manifest decides on the folder existing,
+        and a leftover must not change what it decides.
+        """
+        try:
+            if _only_kills_log(self.folder):
+                for name in (killslog.FILENAME, *_OS_LITTER):
+                    (self.folder / name).unlink(missing_ok=True)
+                self.folder.rmdir()
+        except OSError as e:
+            log.info("could not clear the old %s in %s: %s",
+                     killslog.FILENAME, self.folder.name, e)
 
     def _begin_diagnostic(self) -> None:
         """Make this run's recorder current and describe the machine.
@@ -887,8 +951,13 @@ class ClipJob:
             # `end` must survive into session.json: the planner reserves its
             # tail from when the marker CLEARED, and without this key it silently
             # falls back to the appearance time and clips cut early again.
+            # `seen`/`votes` are for kills.json alone; for_session() strips
+            # them before session.json, whose kills stay as they always were.
             kills = [{"time": k.time, "end": k.end, "score": k.score,
-                      "count": k.count} for k in found]
+                      "count": k.count,
+                      **({"seen": k.seen} if k.seen else {}),
+                      **({"votes": k.votes} if k.votes else {})}
+                     for k in found]
         else:
             raise RuntimeError(
                 prof.why_not() if prof else
@@ -1162,6 +1231,7 @@ class ClipJob:
                     f"{len(kills)} kill(s) found, but none reached your "
                     f"minimum of {floor}.")
         self._set(summary=summary, clip_count=len(plans))
+        self.kill_events = kills
         self.folder.mkdir(parents=True, exist_ok=True)
         atomic.write_json(self.folder / "session.json", {
             "source": str(self.source), "game": self.game,
@@ -1176,7 +1246,8 @@ class ClipJob:
             # reads the same way.
             "scanned": ([0.0, 0.0] if self.win_whole else
                         [round(self.win_start, 1), round(self.win_end, 1)]),
-            "kills": kills, "plans": [p.as_dict() for p in plans],
+            "kills": killslog.for_session(kills),
+            "plans": [p.as_dict() for p in plans],
             **({"demo": self.demo} if self.demo else {}),
             **({"emblems": self.emblem_note} if self.emblem_note else {}),
             **({"promo_clips": [p.as_dict() for p in spare]} if spare else {}),
@@ -2265,7 +2336,10 @@ class ClipJob:
                   "end": round(sync.to_vod(k.time), 3),
                   "score": 1.0, "count": 1,
                   "round": k.round,
-                  **({"tags": _kill_tags(k)} if _kill_tags(k) else {})}
+                  **({"tags": _kill_tags(k)} if _kill_tags(k) else {}),
+                  # Valve's record, for kills.json's source (a side key:
+                  # for_session() keeps it out of session.json).
+                  "demo": True}
                  for k in mine]
         self._set(message=f"{match.map_name}: {len(rounds)} rounds and "
                           f"{len(exact)} kills, exactly")
@@ -2359,6 +2433,9 @@ class ClipJob:
                 f"whole match is. A match needs at least three minutes of play; "
                 f"widen the part you chose if it cuts one short.")
         self._set(clip_count=len(found))
+        # A match video has no kill list; its KOs are the moments kills.json
+        # carries, so it is the one place they are written one by one.
+        self.kill_events = [{"time": t, "end": t} for m in found for t in m.all_kos()]
         self.folder.mkdir(parents=True, exist_ok=True)
         # WHAT THIS RUN WAS, for the next visit to the page: the stream list
         # says "made before" from a run's session.json, and without one these
