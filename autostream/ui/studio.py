@@ -1351,6 +1351,8 @@ const studio = {
      rebuilt on every edit -- state kept in the DOM would drop the player back
      at the top every time they came back from making a reel. */
   game: 'all', run: '', q: '', onlyPicked: false, selected: [], lastClick: null,
+  /* the clip playing in the panel beside the list ('' for none): a click on a row plays it */
+  playing: '',
   reelQ: '', reelSort: 'new', reelFmt: 'all', reelsAll: false,
   examples: null, picks: null, binOn: null, binObs: null, binTimer: null,
   sv: null, svShow: null, svWin: 8, songList: null,
@@ -1474,7 +1476,13 @@ const studio = {
 };
 
 const studio_el = (id) => document.getElementById(id);
-const studio_show = (id, on) => { const e = studio_el(id); if (e) e.classList.toggle('hide', !on); };
+/* A dialog opening over the page pauses the clip playing beside the list: the editor or the
+   maker should not have a clip talking over it. */
+const studio_show = (id, on) => {
+  const e = studio_el(id);
+  if (e) e.classList.toggle('hide', !on);
+  if (on && /-scrim$/.test(id)) studio_clipPause();
+};
 
 /* The whole route, written out at every call: the wiring test finds the pages'
    routes by their literal text, and a route assembled from pieces is a route
@@ -2158,10 +2166,17 @@ function studio_viewMark() {
    way, so picking, a shift-range and Select run do not care which view is showing. */
 function studio_clipsBlock(clips, pos) {
   if (studio_viewGet() === 'grid') return '<div class="studio-grid">' + clips.map(c => studio_tile(c, pos[c.id])).join('') + '</div>';
-  return '<div class="studio-rows" role="list">' + clips.map(c => studio_row(c, pos[c.id])).join('') + '</div>';
+  return STUDIO_CHEAD + '<div class="studio-rows" role="list">' + clips.map(c => studio_row(c, pos[c.id])).join('') + '</div>';
 }
 
-/* The kills as dots, a headshot drawn filled; the words go to a screen reader (and to the tests,
+/* The columns named over each group of rows. A row of circles did not say it was the kills, nor that
+   a gold one is a headshot. Each row already says both in words to a screen reader, so this is
+   hidden from one. */
+const STUDIO_CHEAD = '<div class="studio-chead" aria-hidden="true"><span></span><span class="studio-chead-main"><span></span>' +
+  '<span>Clip</span><span class="studio-chead-kills" title="A dot for each kill. A gold one is a headshot.">Kills</span>' +
+  '<span class="studio-chead-at">At</span><span class="studio-chead-dur">Length</span></span></div>';
+
+/* The kills as dots, a headshot drawn filled and gold; the words go to a screen reader (and to the tests,
    which read them). No kills, or none marked yet, is said in words: an empty row of dots reads
    as a clip that has not loaded. */
 function studio_killDots(c) {
@@ -2177,16 +2192,18 @@ function studio_killDots(c) {
 }
 
 /* One clip as a row: the box picks it (the same control a tile's picture is), the rest of the row
-   brings it into focus beside the list. */
+   brings it into focus and plays it beside the list. */
 function studio_row(c, n) {
   const name = c.caption || c.name;
   const focus = c.id === studio.focus;
-  return '<div class="studio-clip studio-crow' + (n ? ' is-on' : '') + (focus ? ' is-focus' : '') + '" data-clip="' + esc(c.id) + '" role="listitem">' +
+  return '<div class="studio-clip studio-crow' + (n ? ' is-on' : '') + (focus ? ' is-focus' : '') +
+    (c.id === studio.playing ? ' is-playing' : '') + '" data-clip="' + esc(c.id) + '" role="listitem">' +
     '<button type="button" class="studio-clip-hit studio-crow-box" data-act="studio-pick" data-clip="' + esc(c.id) +
     '" aria-pressed="' + (!!n) + '" aria-label="Pick ' + esc(name) + '" title="Pick it for the reel">' +
     '<span class="studio-clip-n">' + (n || '') + '</span></button>' +
-    '<button type="button" class="studio-crow-main" data-act="studio-row" data-clip="' + esc(c.id) + '" aria-label="' + esc(name) + '">' +
-    studio_thumbOf(c, 'studio-crow-shot') +
+    '<button type="button" class="studio-crow-main" data-act="studio-row" data-clip="' + esc(c.id) + '" aria-label="Play ' + esc(name) + '">' +
+    '<span class="studio-crow-shotw">' + studio_thumbOf(c, 'studio-crow-shot') +
+    '<span class="studio-crow-play">' + icon('play') + '</span></span>' +
     '<span class="studio-crow-name"><span class="truncate" title="' + esc(c.name) + '">' + esc(name) + '</span>' +
     (c.map ? '<span class="studio-crow-map">' + esc(c.map) + '</span>' : '') +
     (c.fav ? '<span class="studio-crow-fav" title="A favourite">★</span>' : '') + '</span>' +
@@ -2209,15 +2226,27 @@ function studio_inspDraw() {
   browse.classList.toggle('has-insp', show);
   if (!show) { box.innerHTML = ''; return; }
   if (ids.indexOf(studio.focus) < 0) studio.focus = ids[0];
-  rows.forEach(r => r.classList.toggle('is-focus', r.getAttribute('data-clip') === studio.focus));
+  /* moving off the clip that plays ends it: coming back shows its frame, not a clip restarting */
+  if (studio.playing && studio.playing !== studio.focus) studio.playing = '';
+  rows.forEach(r => {
+    r.classList.toggle('is-focus', r.getAttribute('data-clip') === studio.focus);
+    r.classList.toggle('is-playing', r.getAttribute('data-clip') === studio.playing);
+  });
+  const old = box.querySelector('.studio-cinsp-video');
   const c = studio.clipIndex[studio.focus];
+  /* The panel is redrawn by A, F and every library refresh. The player that is already running
+     is carried across the redraw rather than rebuilt, or each of those would start it again. */
+  const keep = c && old && studio.playing === c.id && old.getAttribute('data-clip') === c.id ? old : null;
+  if (old && !keep) { old.pause(); old.removeAttribute('src'); old.load(); }
   if (!c) { box.innerHTML = ''; return; }
   const n = studio_killsOf(c), hs = (c.hs || []).filter(h => h === true).length;
   const on = studio.selected.indexOf(c.id) >= 0;
   const prop = (k, v) => v ? '<dt>' + k + '</dt><dd>' + v + '</dd>' : '';
+  const play = studio.playing === c.id;
   box.innerHTML =
-    '<button type="button" class="studio-cinsp-shot" data-act="studio-preview" data-clip="' + esc(c.id) + '" aria-label="Play ' + esc(c.caption || c.name) + '">' +
-    studio_thumbOf(c, '') + '<span class="studio-cinsp-play">' + icon('play') + '</span></button>' +
+    (play ? '<div class="studio-cinsp-shot studio-cinsp-media"></div>'
+      : '<button type="button" class="studio-cinsp-shot" data-act="studio-row" data-clip="' + esc(c.id) + '" aria-label="Play ' + esc(c.caption || c.name) + '">' +
+        studio_thumbOf(c, '') + '<span class="studio-cinsp-play">' + icon('play') + '</span></button>') +
     '<h3 class="studio-cinsp-name truncate" title="' + esc(c.caption || c.name) + '">' + esc(c.caption || c.name) + '</h3>' +
     '<dl class="studio-cinsp-props">' +
     prop('Game', esc(c.game)) + prop('Map', esc(c.map || '')) + prop('Mode', esc(c.mode || '')) +
@@ -2232,6 +2261,49 @@ function studio_inspDraw() {
     '<button type="button" class="btn btn-sm" data-act="studio-imp-edit" data-path="' + esc(c.path) + '">' +
       (c.unmarked ? 'Mark its kills' : 'Open in editor') + '<span class="kbd">E</span></button>' +
     '</div>';
+  if (!play) return;
+  /* Removed and put back in the same task, a media element does not pause (the spec waits for a
+     stable state before pausing one that has left the document). preload="metadata", never
+     "none": with none its duration is NaN and the controls show no length. */
+  let v = keep;
+  if (!v) {
+    v = document.createElement('video');
+    v.className = 'studio-cinsp-video';
+    v.setAttribute('data-clip', c.id);
+    v.controls = true;
+    v.playsInline = true;
+    v.preload = 'metadata';
+    v.setAttribute('aria-label', 'Playing ' + (c.caption || c.name));
+    v.src = studio_media('/api/clips/video', c.path);
+  }
+  box.querySelector('.studio-cinsp-media').appendChild(v);
+  if (!keep) v.play().catch(() => {});
+}
+
+/* A CLICK ON A CLIP PLAYS IT, in the panel beside the list; the same clip again pauses it or carries
+   on. The arrows only move the focus, so running down fifty rows does not start fifty clips talking;
+   Enter on a row is a click on it. */
+function studio_playClip(id) {
+  if (!studio.clipIndex[id]) return;
+  const v = document.querySelector('#studio-cinsp .studio-cinsp-video');
+  if (studio.playing === id && studio.focus === id && v) {
+    if (v.paused) v.play().catch(() => {}); else v.pause();
+    return;
+  }
+  /* In a narrow window the panel sits under the whole list, where a clip playing would be out of
+     sight: there it plays in the preview dialog instead. The width is the one css_studio folds at. */
+  if (window.matchMedia && matchMedia('(max-width:1119px)').matches) {
+    studio_focusClip(id, false);
+    studio_preview(id);
+    return;
+  }
+  studio.playing = id;
+  studio_focusClip(id, false);
+}
+/* Paused, not ended: it keeps its place for when the player comes back to it. */
+function studio_clipPause() {
+  const v = document.querySelector('#studio-cinsp .studio-cinsp-video');
+  if (v && !v.paused) v.pause();
 }
 
 /* Bring a row into focus: the inspector follows, and with `move` the keyboard does too. */
@@ -2282,6 +2354,8 @@ function studio_listKey(e) {
   }
   if (vis('studio-pane-clips') && vis('studio-cinsp') && studio.focus) {
     if (!(t === document.body || (t.closest && t.closest('#studio-browse')))) return false;
+    /* the playing clip's own controls have the arrows (seek) and the keys while it has the focus */
+    if (t.tagName === 'VIDEO') return false;
     if (k === 'ArrowDown' || k === 'ArrowUp') {
       const ids = [].slice.call(document.querySelectorAll('#studio-lib .studio-crow')).map(r => r.getAttribute('data-clip'));
       const i = ids.indexOf(studio.focus) + (k === 'ArrowDown' ? 1 : -1);
@@ -10399,6 +10473,7 @@ function studio_tab(which) {
   const a = studio_el('studio-sg-audio');
   if (which !== 'song' && a && !a.paused) a.pause();
   if (which !== 'timeline' && studio.pv.playing) studio_pvPause();
+  if (which !== 'clips') studio_clipPause();
   studio_sideApply(which);
   if (which === 'timeline') { studio_fitEditor(); studio_fit(); studio_drawAll(); }
   if (which === 'song') studio_sgOpen();
@@ -11587,7 +11662,7 @@ function studio_wire() {
     else if (act === 'studio-refresh') studio_load(true);
     else if (act === 'studio-game') studio_openFolder(b.getAttribute('data-game'));
     else if (act === 'studio-view') studio_viewSet(b.getAttribute('data-view'));
-    else if (act === 'studio-row') studio_focusClip(b.getAttribute('data-clip'), false);
+    else if (act === 'studio-row') studio_playClip(b.getAttribute('data-clip'));
     else if (act === 'studio-reel-sel') studio_reelPick(b.getAttribute('data-path'), false);
     else if (act === 'studio-reel-menu') studio_reelMenu(b);
     else if (act === 'studio-open-folder') studio_openFolder(b.getAttribute('data-game'));
@@ -15063,6 +15138,8 @@ window.PAGE_STUDIO = {
     studio_poll();
     studio_autoLoad();
   },
+  /* a clip playing beside the list is not to be heard from another page */
+  onHide: function () { studio_clipPause(); },
   onTick: function () { studio_autoTick(); }
 };
 """

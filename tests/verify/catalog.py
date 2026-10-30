@@ -790,7 +790,7 @@ NOT_A_FLOW: dict[str, str] = {
     "studio-match": "selects or unselects every clip of one match in the open run",
     "studio-reel-fmt": "filters the reels to vertical or landscape; never leaves the browser",
     "studio-view": "shows the clips as a list or a grid, kept in this browser",
-    "studio-row": "brings a clip's row into focus, shown beside the list",
+    "studio-row": "plays a clip beside the list, bringing its row into focus; again pauses it",
     "studio-reel-sel": "chooses a reel, which plays in the preview beside the list",
     "studio-reel-menu": "opens a reel row's menu, which holds Delete",
     "studio-reels-more": "unfolds the reels from two rows to all of them",

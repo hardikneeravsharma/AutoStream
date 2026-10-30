@@ -198,6 +198,84 @@ def test_a_long_name_truncates_rather_than_wrapping_the_row(pg):
     assert got["icut"], got
 
 
+# ------------------------------------------------------------- playing a clip
+
+_PLAYER = "#studio-cinsp video.studio-cinsp-video"
+
+
+def _playing_src(pg):
+    return pg.evaluate("(sel) => { const v = document.querySelector(sel); return v ? decodeURIComponent(v.src) : ''; }",
+                       _PLAYER)
+
+
+def test_clicking_a_row_plays_its_clip_beside_the_list(pg):
+    pg.locator("#studio-lib .studio-crow .studio-crow-main").nth(1).click()
+    pg.wait_for_selector(_PLAYER, timeout=5_000)
+    assert "list_1" in _playing_src(pg)
+    assert pg.evaluate("() => studio.playing") == _focus(pg)
+    # it actually runs: the time moves (or, on a browser without the codec, it says so)
+    pg.wait_for_function("(sel) => { const v = document.querySelector(sel); return v.currentTime > 0 || !!v.error; }",
+                         arg=_PLAYER, timeout=10_000)
+    # A redraws the panel; the same player carries on rather than starting again
+    pg.evaluate("(sel) => { document.querySelector(sel).dataset.mark = 'same'; }", _PLAYER)
+    pg.keyboard.press("a")
+    assert pg.evaluate("(sel) => document.querySelector(sel).dataset.mark", _PLAYER) == "same"
+    pg.keyboard.press("a")
+
+
+def test_the_frame_in_the_panel_plays_it_too_and_a_second_click_pauses(pg):
+    pg.click("#studio-cinsp .studio-cinsp-shot")
+    pg.wait_for_selector(_PLAYER, timeout=5_000)
+    assert "list_0" in _playing_src(pg)
+    assert not pg.is_visible("#studio-preview-scrim")          # in the panel, not a dialog
+    pg.locator("#studio-lib .studio-crow .studio-crow-main").first.click()
+    assert pg.evaluate("(sel) => document.querySelector(sel).paused", _PLAYER)
+
+
+def test_arrows_move_on_without_playing_and_leaving_the_page_pauses(pg):
+    pg.locator("#studio-lib .studio-crow .studio-crow-main").first.click()
+    pg.wait_for_selector(_PLAYER, timeout=5_000)
+    pg.keyboard.press("ArrowDown")
+    assert pg.locator(_PLAYER).count() == 0               # the next clip shows its frame, silent
+    pg.keyboard.press("Enter")                             # Enter on the row plays it
+    pg.wait_for_selector(_PLAYER, timeout=5_000)
+    assert "list_1" in _playing_src(pg)
+    pg.evaluate("() => go('settings')")
+    assert pg.evaluate("(sel) => document.querySelector(sel).paused", _PLAYER)
+
+
+# ------------------------------------------------------------- the kills column
+
+def test_the_kills_column_has_a_header_lined_up_with_the_dots(pg):
+    head = pg.locator("#studio-lib .studio-chead").first
+    assert head.is_visible()
+    assert "Kills" in head.inner_text()
+    got = pg.evaluate("""() => {
+        const h = document.querySelector('#studio-lib .studio-chead-kills').getBoundingClientRect();
+        const k = document.querySelector('#studio-lib .studio-crow-kills').getBoundingClientRect();
+        return [h.left, k.left];
+    }""")
+    assert abs(got[0] - got[1]) < 1.5, got
+
+
+def test_a_headshot_dot_is_gold_and_the_rest_are_not(pg):
+    got = pg.evaluate("""() => {
+        const c = studio.clipIndex[document.querySelector('#studio-lib .studio-crow').getAttribute('data-clip')];
+        c.hs = [true, false, false];
+        studio_renderLib();
+        const row = document.querySelector('#studio-lib .studio-crow[data-clip="' + CSS.escape(c.id) + '"]');
+        const probe = document.createElement('i');
+        probe.style.background = 'var(--warn)';
+        document.body.appendChild(probe);
+        const gold = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        const dots = [...row.querySelectorAll('.studio-dot')].map(d => getComputedStyle(d).backgroundColor);
+        return {gold, dots};
+    }""")
+    assert got["dots"][0] == got["gold"], got
+    assert got["gold"] not in got["dots"][1:], got
+
+
 def test_the_games_are_in_the_sidebar(pg):
     names = pg.evaluate("() => [...document.querySelectorAll('#rail-section [data-act=\"studio-game\"]')]"
                         ".map(b => b.textContent)")

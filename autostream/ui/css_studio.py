@@ -90,6 +90,13 @@ STUDIO_CSS = r"""
 .studio-crow-main:focus-visible{outline:2px solid var(--border-focus);outline-offset:-2px}
 .studio-crow-shot{display:block;width:56px;height:32px;object-fit:cover;border-radius:var(--radius-xs);
   background:var(--surface-sunken)}
+/* a play mark on the frame says what a click does; it stays on the one that is playing */
+.studio-crow-shotw{position:relative;display:block;width:fit-content}
+.studio-crow-play{position:absolute;inset:0;display:grid;place-items:center;border-radius:var(--radius-xs);
+  background:var(--on-media-scrim);color:var(--on-media);opacity:0}
+.studio-crow-play svg{width:14px;height:14px}
+.studio-crow-main:hover .studio-crow-play,.studio-crow-main:focus-visible .studio-crow-play,
+.studio-crow.is-playing .studio-crow-play{opacity:1}
 .studio-crow-name{display:flex;align-items:baseline;gap:var(--space-4);min-width:0;color:var(--text-primary)}
 .studio-crow-name .truncate{flex:0 1 auto}
 .studio-crow-map{flex:0 0 auto;color:var(--text-tertiary);font-size:var(--text-xs)}
@@ -101,7 +108,17 @@ STUDIO_CSS = r"""
 .studio-dots{display:inline-flex;align-items:center;gap:3px}
 .studio-dot{display:inline-block;width:7px;height:7px;border-radius:50%;
   border:var(--border-hair) solid var(--text-secondary)}
-.studio-dot.is-hs{background:var(--text-secondary)}
+/* a headshot is gold and filled: the fill still tells it apart where the colour does not */
+.studio-dot.is-hs{background:var(--warn);border-color:var(--warn)}
+
+/* the columns named over the rows, on the rows' own grid so each name sits over its column; it
+   stays at the top of the list while its group is scrolled */
+.studio-chead{position:sticky;top:0;z-index:1;display:grid;grid-template-columns:32px minmax(0,1fr);
+  background:var(--surface);color:var(--text-tertiary);font-size:var(--text-xs)}
+.studio-chead-main{display:grid;grid-template-columns:56px minmax(0,1fr) 84px 64px 52px;align-items:center;
+  gap:var(--space-5);height:28px;padding:0 var(--space-4) 0 0}
+.studio-chead-at,.studio-chead-dur{text-align:end}
+.studio-chead-kills{cursor:help}
 .studio-dots b{margin-inline-start:var(--space-2);font-weight:500;color:var(--text-tertiary)}
 .studio-crow-none{color:var(--text-tertiary)}
 .studio-crow-none.is-warn{color:var(--warn)}
@@ -117,6 +134,8 @@ STUDIO_CSS = r"""
 .studio-cinsp-play{position:absolute;left:var(--space-4);bottom:var(--space-4);display:grid;place-items:center;
   width:32px;height:32px;border-radius:50%;background:var(--on-media-scrim);color:var(--on-media)}
 .studio-cinsp-play svg{width:16px;height:16px}
+.studio-cinsp-media{cursor:auto}
+.studio-cinsp-video{display:block;width:100%;height:100%;object-fit:contain;background:var(--surface-sunken)}
 .studio-cinsp-name,.studio-rinsp-name{margin:0;font-size:var(--text-md);font-weight:600;color:var(--text-primary)}
 .studio-cinsp-props{display:grid;grid-template-columns:auto minmax(0,1fr);gap:var(--space-3) var(--space-5);
   margin:0;font-size:var(--text-sm)}
@@ -218,14 +237,14 @@ STUDIO_CSS = r"""
 @media (max-width:1119px){
   .studio-browse.has-insp,.studio-rbrowse{grid-template-columns:minmax(0,1fr)}
   .studio-cinsp,.studio-rinsp{position:static}
-  .studio-crow-main{grid-template-columns:48px minmax(0,1fr) 64px 44px}
-  .studio-crow-at{display:none}
+  .studio-crow-main,.studio-chead-main{grid-template-columns:48px minmax(0,1fr) 64px 44px}
+  .studio-crow-at,.studio-chead-at{display:none}
   .studio-reel-main{grid-template-columns:28px minmax(0,1fr) 48px 56px}
   .studio-reel-song{display:none}
   .gd-reelsum{display:none}
 }
 @media (max-width:639px){
-  .studio-crow-main{grid-template-columns:40px minmax(0,1fr) auto 36px;gap:var(--space-4)}
+  .studio-crow-main,.studio-chead-main{grid-template-columns:40px minmax(0,1fr) 56px 36px;gap:var(--space-4)}
   .studio-crow-shot{width:40px;height:23px}
   .studio-reel-main{grid-template-columns:24px minmax(0,1fr) 40px;gap:var(--space-4)}
   .studio-reel-main .studio-reel-thumb{width:24px;height:40px}
