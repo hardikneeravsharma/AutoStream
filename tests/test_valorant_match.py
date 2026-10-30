@@ -134,7 +134,17 @@ def test_the_listing_says_where_an_already_running_match_ends(monkeypatch):
     m = _m()
     monkeypatch.setattr(vm, "cached", lambda: [m])
     row = vm.listing(started=m.started + 300, seconds=1800.0)[0]
-    assert row["at"] == 0.0 and row["until"] == pytest.approx(300.0)
+    assert row["at"] == 0.0 and row["until"] == pytest.approx(300.0 + vm.MATCH_LAG)
+
+
+def test_a_match_ends_after_its_loading_lag_not_at_started_plus_length(monkeypatch):
+    """gameLengthMillis runs from the first round, ~107s after `started`. Ending
+    the match at started + length dropped the last round's kills: a match with 15
+    kills was clipped to 12 (2026-10-25, Plummet)."""
+    m = _m()
+    monkeypatch.setattr(vm, "cached", lambda: [m])
+    row = vm.listing(started=m.started - 1000, seconds=3000.0)[0]
+    assert row["until"] >= 1000 + 107.7 + m.seconds
 
 
 # ------------------------------------------------------------ lining it up
