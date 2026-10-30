@@ -6302,7 +6302,20 @@ class Server:
         log.info("=" * 60)
         log.info("AutoStream UI: %s", self.url())
         log.info("=" * 60)
+        # The packages of updates already installed -- see updates.prune. On
+        # its own thread so a slow disk never holds up the window.
+        threading.Thread(target=self._prune_updates, name="autostream-prune",
+                         daemon=True).start()
         return self.url()
+
+    @staticmethod
+    def _prune_updates() -> None:
+        from . import __version__, updates
+
+        try:
+            updates.prune(paths.DATA_HOME / "updates", __version__)
+        except Exception as e:                               # noqa: BLE001
+            log.info("could not tidy the downloaded updates: %s", e)
 
     def request_started(self) -> None:
         with self._busy_lock:
