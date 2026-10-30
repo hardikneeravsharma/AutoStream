@@ -147,7 +147,8 @@ server, no account, and no telemetry. Everything it stores stays in its own fold
   K/D/A, read from the match record Valorant already gave AutoStream, never from the
   screen. Pick any of them — one at a time, a range, a whole match or a whole run —
   choose a style and a song, and it builds the reel with every cut and every kill on
-  the beat. The search box still looks through every folder at once.
+  the beat. The search box still looks through every folder at once. Click a clip and
+  it plays beside the list; each row shows its kills as dots, a gold one a headshot.
   - **Eight styles**: Build and drop, Fast-paced headshot, Montage, Hype and Velocity
     (the five marked *Use this for best result*), then Clean, Chaos and Cinematic.
     Retro, Story and Short were retired as near-copies of Cinematic, Montage and

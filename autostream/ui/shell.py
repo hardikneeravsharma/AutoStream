@@ -442,6 +442,8 @@ function shell_railToggle() {
 
 function go(page) {
   if (SHELL_PAGES.indexOf(page) < 0) page = SHELL_BOOT.home || 'dash';
+  /* The page being left is told first, so whatever it is playing stops with it. */
+  if (page !== shell_page) shell_call(window[SHELL_PAGE_OBJ[shell_page]], 'onHide');
   shell_page = page;
   const views = document.querySelectorAll('.view');
   for (let i = 0; i < views.length; i++) {
