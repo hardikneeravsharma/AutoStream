@@ -375,6 +375,31 @@ def save_field(section: str, key: str, value: Any) -> None:
     save_fields({f"{section}.{key}": value})
 
 
+def migrate_theme() -> str | None:
+    """Rewrite a pre-v2.0.0 `ui.theme` (carbon, daylight, ...) to what it now means.
+
+    theme.resolve() already reads the old ids, but leaving them on disk means
+    the settings page is asked to mark a choice it does not offer, and every
+    reader of the raw file has to know the alias table. Returns what was
+    written, or None when nothing needed to change. The default is restored by
+    deleting the key, never by pinning it -- see save_fields' sparse overlay.
+    """
+    from . import theme
+
+    ui = load_raw().get("ui")
+    saved = ui.get("theme") if isinstance(ui, dict) else None
+    if saved is None:
+        return None
+    meant = theme.resolve(saved)
+    if saved == meant and meant != theme.DEFAULT:
+        return None
+    if meant == theme.DEFAULT:
+        save_fields({}, delete=["ui.theme"])
+    else:
+        save_fields({"ui.theme": meant})
+    return meant
+
+
 def load_games() -> dict:
     if not paths.GAMES_FILE.exists():
         return {"games": {}, "blocklist": [], "never_stream_if_running": []}

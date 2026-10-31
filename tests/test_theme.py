@@ -88,6 +88,26 @@ def test_legacy_ids_resolve():
     assert theme.resolve(None) == "system"
 
 
+def test_a_saved_old_theme_is_rewritten_once(tmp_path, monkeypatch):
+    # Resolving an alias forever leaves `carbon` in config.yaml, and the
+    # settings page has no button that says carbon. Rewrite it at start.
+    from autostream import cfg, paths
+
+    monkeypatch.setattr(paths, "CONFIG_FILE", tmp_path / "config.yaml")
+    cfg.save_fields({"ui.theme": "daylight", "obs.port": 4455})
+    assert cfg.migrate_theme() == "light"
+    assert cfg.load_raw() == {"ui": {"theme": "light"}, "obs": {"port": 4455}}
+    assert cfg.migrate_theme() is None          # already canonical: no write
+
+    # Nonsense goes back to the default by removing the key, so a later change
+    # to the default still reaches this config.
+    cfg.save_fields({"ui.theme": "neon"})
+    assert cfg.migrate_theme() == "system"
+    assert cfg.load_raw() == {"obs": {"port": 4455}}
+
+    assert cfg.migrate_theme() is None          # nothing saved at all
+
+
 def test_system_carries_both_palettes():
     system = theme.root_css("system")
     assert "prefers-color-scheme: light" in system

@@ -8,25 +8,28 @@ Keep it current: every feature that lands gets a row in [Progress](#progress),
 written the day it lands. A roadmap nobody updates is worse than none, because
 the next session trusts it.
 
-## In flight (2026-10-25, after v1.86.0)
+## In flight (2026-10-31, after v2.3.2)
 
-**The guide plan agreed with ChatGPT on 2026-10-24**, three steps in this order, each
-shipped as it lands:
+Asked for by the player on 2026-10-31, in this order: **the redesign's leftovers, then F14,
+F15 and F16**. Each item is shipped as it lands and gets a Progress row; its status here
+is updated the same day.
 
-1. **One count** -- landed in v1.84.0 (see Progress).
-2. **Shots as slots** -- landed in v1.85.0 (see Progress).
-3. **Song step controls in the guide** -- landed in v1.86.0 (see Progress). The plan is done.
+| # | Item | Status |
+|---|---|---|
+| R1 | Old theme ids **migrated** in the saved setting, not only aliased | **done** (v2.4.0) |
+| R2 | Canvases repaint late after a theme switch | **done** (v2.4.0) |
+| R3 | Ctrl K returns focus to where it was opened from, and traps it while open | **done** (v2.4.0) |
+| R4 | The sidebar shows "Clips (N new)" | **done** (v2.4.0) |
+| R5 | A per-game broadcast switch (the Library's switch is honestly "Open + stream", all the flag does). Changes what a control does, so it is described to the player first | **described 2026-10-31, waiting for a yes** |
+| R6 | Width breakpoints follow the page zoom, so 200% on a small window gets the narrow arrangement | **done** (v2.4.0) |
+| R7 | The three Studio browser tests that fail on `main`: `test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills`, `test_ui_studio_length`, the side-panel edge test in `test_ui_studio_layout.py` | **done** (v2.4.0): two were real bugs (a short plan lost its How long; the side edge stopped 10 px short of the window), one a real silent no-op (Mix transitions on Velocity), and two test races |
+| F14 | Sequence-aware clip choice (see Phase D) | not started |
+| F15 | Transitions on strong phrase moments, never on a kill (see Phase D) | not started |
+| F16 | The 9:16 crop that follows the crosshair (see Phase D; *Near fit* is done) | not started |
 
-v1.83.0 is Clean (7.5/10, recommended), eight styles, the freezes and the kill counter
-removed, and the "short of kills" verdict -- see Progress. Left besides the plan:
-
-- **Clean's re-render for ChatGPT** -- done 2026-10-24: 7.8/10, still recommended.
-- **The duplicate-frame check** (`kill-dup-frames`) -- landed in v1.88.0.
-- **The planner turns down an effect that whites out a kill** (round 3's last rule) --
-  landed in v1.88.0 (see Progress).
-- **Chaos through the review loop** -- 6.5 -> 7.2 -> 7.5/10, recommended, 
-  landed in v1.88.0 (see Progress). **Cinematic is dropped from the loop** at the player's
-  request (2026-10-26), so the loop is done once Chaos ships.
+Done before this, kept for the record: the guide plan of 2026-10-24 (one count v1.84.0,
+shots as slots v1.85.0, song step controls v1.86.0); the duplicate-frame check, no white-out
+on a kill and Chaos's review (all v1.88.0); the style review loop is finished -- see F18.
 
 ---
 
@@ -439,20 +442,20 @@ clips-only -- streaming on a Mac is still off the roadmap. See docs/MACOS.md.
 
 ---
 
-## State of the tree, 2026-10-21
+## State of the tree, 2026-10-31
 
-- `__version__` is **1.77.0**, **released**
-  (<https://github.com/hardikneeravsharma/AutoStream/releases/tag/v1.77.0>; the installer and
-  the share zip downloaded back and hash-checked) and built into the local `dist\AutoStream`.
-  `main` is `3aad4e9`.
-- **One PR is open, from the other session**: #196, the clipper and Studio on macOS
-  (v1.78.0). It predates v1.77.0 and needs bringing up to date with it.
-- **Several sessions share this machine.** `C:\autostream` is worked by more than one agent
-  and `C:\autostream-tempo` holds `main` as a second worktree. Stage explicit paths, never
-  `git add -A`. A build freezes whatever is in the tree: the eight untracked fonts in
-  `autostream/clips/fonts/` (another session's) fail `test_lyrics` and are moved aside for a
-  build, then put back.
-- Releases are built with `scripts\build.ps1 -Dist -HandOff` with the app left open; it
+- `__version__` is **2.3.2**, **released**
+  (<https://github.com/hardikneeravsharma/AutoStream/releases/tag/v2.3.2>, Windows and
+  macOS, built by CI) and built into the local `dist\AutoStream`. `main` is `1bec421`.
+- **No PR is open.** The macOS port (#196) was merged on 2026-10-21.
+- **Several sessions share this machine.** `C:\autostream` is worked by more than one agent,
+  and about fifteen worktrees (`C:\autostream-*`) hold older feature branches. Stage explicit
+  paths, never `git add -A`. A build freezes whatever is in the tree: the eight untracked
+  fonts in `autostream/clips/fonts/` (another session's) fail `test_lyrics` and are moved
+  aside for a build, then put back. `C:\autostream` also carries an uncommitted reformat of
+  `CLAUDE.md`, an untracked `AGENTS.md` and `live.html` -- none of them this roadmap's.
+- Releases are CI's: an annotated tag on `main` builds and publishes Windows and macOS. The
+  local app is built with `scripts\build.ps1 -NoGate -HandOff` with the app left open; it
   closes the app only when idle (about two minutes) and reopens it.
 - The four Follow-the-song reels of 2026-10-21 (That Acid, THE LAST RIDE, Sunflower,
   Notorious) are in the clips folder's `reels`, each with its timeline; the batch scripts and
@@ -478,17 +481,8 @@ Valorant match video were removed 2026-10-21 -- each lives in its own row):
   and last kill, so a round nobody died in is dropped. The switch is also
   hidden for Valorant, whose profile deliberately leaves `rounds` False. Those
   three, then the video.
-- **Left after the redesign (v2.0.0) and page zoom (v2.1.0)**, added 2026-10-30:
-  - old theme ids are aliased to System/Dark/Light, not migrated in the saved setting;
-  - canvases repaint late after a theme switch;
-  - Ctrl K does not return focus to where it was opened from, and does not trap focus;
-  - the sidebar has no "Clips (N new)" count;
-  - there is no per-game broadcast switch -- the Library's is Open + stream, all the flag does;
-  - width breakpoints do not follow the zoom, so 200% on a small window keeps the desktop
-    arrangement;
-  - three Studio browser tests already fail on `main`:
-    `test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills`, `test_ui_studio_length`
-    and the side-panel edge test in `test_ui_studio_layout.py`.
+- **Left after the redesign (v2.0.0) and page zoom (v2.1.0)** -- moved to *In flight* as
+  R1-R7 on 2026-10-31.
 
 ## UI work, carried alongside
 
@@ -869,6 +863,7 @@ plan**, because a roadmap that never moves was never being followed.
 
 | Date | Item | What landed | What it changed |
 |---|---|---|---|
+| 2026-10-31 | **What the redesign left for later** v2.4.0 (R1-R4, R6, R7; asked 2026-10-31: "update the roadmap then" the leftovers, F14, F15, F16) | **R1** a pre-v2.0.0 `ui.theme` (carbon, daylight, ...) is rewritten at start (`cfg.migrate_theme`; nonsense goes back to the default by deleting the key). **R2** a theme switch, or Windows flipping light/dark under System, tells the page's canvases (`shell_themeChanged`: the resize every canvas already redraws on, plus `as-theme` for the Studio's two graphs that only redrew while playing); a page hidden at the time repaints when next shown. **R3** Ctrl K remembers where it was pressed and gives focus back on close, unless the command moved it or hid it; Tab and Shift+Tab wrap inside the box; Enter on a result reached with Tab runs that one. **R4** "3 new" beside Clips (a dot on the strip), from `/api/since` so it agrees with the Dashboard; asked on open, on a change of page at most every 30 s and when a clip job ends; cleared by the Clips page or the Studio. **R6** every width and height in the sheet's `@media` rules is rescaled by the page size (`shell_zoomMedia`), and the script's own width checks ask `shell_narrow`: 200% of a 1200 px window is 600 px of page and now gets the narrow layout. **R7**, three tests failing on `main`, each read before touched: *a plan short of its part lost its How long* -- the planner's shortfall was written over `proj["fill"]`, the player's choice, so the reel was saved with fill "" (now `shortfall`); *the side panel's edge stopped 10 px short of the window* -- `.views`' stable scrollbar gutter, dropped while the editor (one screen tall) is open; *Mix transitions on Velocity changed nothing about one press in five* (68 of 300 draws, measured) -- it flashes every clean cut and keeps no other transition, so there is often one layout; moving the flashes' phase was tried and made Chaos worse (9 -> 42 of 300), so the press now says there is nothing else to mix instead of "mixed again" over the same reel. Two were test races (a `<details>` toggle event read too early; a pointer that jumped instead of moving). Tests: `test_theme` (+1), `test_one_count` (+3), `tests/verify/test_ui_shell_leftovers.py` (new, 8), scenarios 6.136-6.143. | R5 (a per-game broadcast switch) changes what a control does, so it was described and waits for a yes. F14-F16 each have a decision only the player can make; they were set out rather than built (see *In flight*). |
 | 2026-10-31 | **A recording started with Record shows as recording** v2.3.2 (reported 2026-10-31: "I clicked start recording again ... why there is no indicator") | Stop, then Record, with the game still open: OBS wrote a file that reached 3.7 GB while the dashboard said Idle, `--:--:--` and Not recording, with "stopped manually" in red under it. Record outside a session leaves the phase IDLE, and `_poll_obs` ran only on LIVE ticks and `elapsed` came only from `session_start`. Now `tick()` refreshes OBS health in IDLE/ARMING whenever the engine is recording (`_poll_obs(watch=False)` -- health only, no watchdog, which belongs to a session), stopping a loose recording clears it, `/api/status` times a loose recording from `_rec_began`, and the hero reads Recording with the red dot, "Started with Record" and the hold reason left to the sidebar. Tests: four in `tests/test_record_button.py`; the hero checked in Chromium against the checkout for loose, idle, recording-only and live. | None. |
 | 2026-10-31 | **Installed updates' packages are deleted** v2.3.1 (issue #277; asked 2026-10-31: "once a new version is installed the DMGs which are not required anymore are deleted immediately") | Every in-app update left its package in `<data home>/updates/` for good: one Mac held ten `.dmg` files, 1.78.3 to 2.3.0, 776 MB, with 2.3.0 running (deleted by hand the same day). `updates.prune()` now runs as the app starts -- the moment a new version first runs, since the Mac swap script and the Windows installer both relaunch it -- on its own thread from `webui.Server.start`, and deletes every package (and `.part`) whose version is the running one or older. A newer package (downloaded, not installed) is kept; names that are not versioned AutoStream release assets, and the Mac's `swap.sh`, are never touched; a file Windows still holds is skipped and taken at the next start; nothing it does can stop the app starting. Tests: nine in `tests/test_updates.py`. | The updates folder holds at most an update not yet installed. |
 | 2026-10-30 | **Every clip job writes kills.json** v2.3.0 (issue #275) | A new file in each run folder, `kills.json`: every kill the job found, for other tools (schema v1, [docs/KILLS-JSON.md](KILLS-JSON.md)). Top level: kind (`clips` / `plan_only` / `match-videos`), status (`ok` / `no_kills`), source, duration, game, job start, version and commit, the scanned window. Per kill: kind (`kill`, room for deaths and assists later), time, end, headshot, round, source (`record` / `emblem` / `screen`; a Counter-Strike demo counts as `record`), a confidence (1.0 for a record, the share of frames that voted "kill" where the reader votes, otherwise null -- the planner's score is not reused), frames seen, and the burst it belongs to from the planner's own 22 s clustering. Written on full, plan-only and match-videos runs, and with an empty list when a run finds nothing; never on a failure or cancel, and never able to fail the job. `autostream/clips/killslog.py`; the readers' `seen`/`votes` now ride on the kill dicts and are stripped before `session.json`, whose content is unchanged, as are the planner, ranking and cutting. Written after `clips.json`, so plan-only and no-kills runs still never appear in the Studio, and a folder holding only `kills.json` is reused by the next run so folder names do not shift to `_2`. Tests: `tests/test_killslog.py` (30), each of the four safeguards checked by breaking it; offline suite 3950 passed. | Kill times are no longer locked inside the planner's state: anything can read a run's highlight moments, and what the Valorant reader measured about each one is kept rather than discarded. |

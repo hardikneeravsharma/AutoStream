@@ -410,7 +410,7 @@ function shell_doc_title() {
 function shell_rail() {
   let pref = null;
   try { pref = localStorage.getItem(SHELL_RAIL_KEY); } catch (e) { /* private mode */ }
-  const min = window.innerWidth < 900 || pref === 'min';
+  const min = shell_narrow(899) || pref === 'min';
   const app = document.querySelector('.app'), t = shell_$('rail-toggle');
   if (app) { app.classList.toggle('rail-min', min); if (!min) app.classList.remove('rail-peek'); }
   if (t) {
@@ -430,7 +430,7 @@ function shell_railPeek(on) {
   const app = document.querySelector('.app');
   if (!app) return;
   if (!on) { app.classList.remove('rail-peek'); return; }
-  if (!app.classList.contains('rail-min') || window.innerWidth < 900) return;
+  if (!app.classList.contains('rail-min') || shell_narrow(899)) return;
   shell_peekTimer = setTimeout(() => app.classList.add('rail-peek'), 120);
 }
 
@@ -472,6 +472,78 @@ function go(page) {
   shell_call(P, 'onShow');
   /* A page that just became visible should not sit blank for two seconds. */
   if (STATUS && STATUS.phase) shell_call(P, 'onTick', STATUS);
+  /* Its canvases were painted in the palette it was last shown in. */
+  if ((shell_themeSeen[page] || 0) !== shell_themeGen) shell_repaint();
+  shell_newOnGo(page);
+}
+
+/* ---------------- "Clips, N new" ---------------- */
+
+/* The clips made since the player last looked at them, beside Clips in the
+   sidebar -- the same count as the idle Dashboard's "Since last time", from
+   the same endpoint, so the two can never disagree. Looking at them (the Clips
+   page or the Studio, which both stamp /api/seen on show) clears it. Asked
+   when the page opens, when a clip job finishes, and on a change of page at
+   most every 30 s: /api/since walks the clips folder, which is not a thing to
+   do every two-second status poll. */
+let shell_newN = 0, shell_newAt = 0, shell_newJob = '';
+
+function shell_newPaint() {
+  const btn = document.querySelector('.rail-btn[data-page="clips"]');
+  if (!btn) return;
+  let b = btn.querySelector('.rail-n');
+  const n = shell_newN;
+  if (!n) { if (b) b.remove(); btn.setAttribute('aria-label', 'Clips'); btn.title = 'Clips'; return; }
+  if (!b) { b = document.createElement('b'); b.className = 'rail-n'; btn.appendChild(b); }
+  const say = n + ' new';
+  shell_setText(b, say);
+  btn.setAttribute('aria-label', 'Clips, ' + say);
+  btn.title = 'Clips, ' + say;
+}
+
+function shell_newAsk() {
+  shell_newAt = Date.now();
+  API.get('/api/since').then(d => {
+    /* Looked at the clips while the request was out: they are not new any more. */
+    if (shell_page === 'clips' || shell_page === 'studio') return;
+    shell_newN = Math.max(0, Number(d && d.clips_new) || 0);
+    shell_newPaint();
+  }).catch(() => { /* a missed count is not worth a toast */ });
+}
+
+function shell_newOnGo(page) {
+  if (page === 'clips' || page === 'studio') { shell_newN = 0; shell_newPaint(); return; }
+  if (Date.now() - shell_newAt > 30000) shell_newAsk();
+}
+
+function shell_newWatch(s) {
+  const st = (s && s.clips && s.clips.state) || '';
+  if (st !== shell_newJob && shell_newJob === 'running' &&
+      shell_page !== 'clips' && shell_page !== 'studio') shell_newAsk();
+  shell_newJob = st;
+}
+
+/* ---------------- the palette changed ---------------- */
+
+/* A canvas is pixels, not styles: it keeps the colours it was drawn in until
+   something draws it again, so a theme switch left graphs in the old palette
+   until their song played or the window was resized. Every page's canvases
+   already redraw on resize (zoom relies on it), so that is the signal; the
+   few that only redraw while playing listen for 'as-theme' as well. A page
+   that is hidden when the palette changes repaints the next time it is shown,
+   because its resize handlers draw only the page on screen. */
+let shell_themeGen = 0, shell_scheme = null;
+const shell_themeSeen = {};
+
+function shell_repaint() {
+  shell_themeSeen[shell_page] = shell_themeGen;
+  window.dispatchEvent(new Event('resize'));
+  window.dispatchEvent(new Event('as-theme'));
+}
+
+function shell_themeChanged() {
+  shell_themeGen++;
+  shell_repaint();
 }
 
 /* ---------------- live state ---------------- */
@@ -629,6 +701,7 @@ async function shell_poll() {
   /* Guarded: a throw in here used to freeze the whole page silently, because
      the loop would stop rescheduling and nothing visible would change. */
   try { shell_paint(STATUS); } catch (e) { console.error('paint failed', e); }
+  shell_newWatch(STATUS);
   shell_call(window[SHELL_PAGE_OBJ[shell_page]], 'onTick', STATUS);
 }
 
@@ -690,10 +763,48 @@ async function shell_toggle_pause() {
    localStorage: a page size is about the monitor in front of you, not about
    the install. Widths reflow by themselves under zoom; the layouts that are
    the window's HEIGHT divide by --ui-zoom (css.py --vh100), or a bigger page
-   would spill below the window instead of fitting it. */
+   would spill below the window instead of fitting it.
+
+   THE BREAKPOINTS DO NOT FOLLOW BY THEMSELVES. A media query measures the
+   window, and CSS zoom does not change the window: at 200% a 1200px window
+   holds 600px of page but still matched the desktop rules, so the sidebar,
+   the Studio's panel and the Dashboard's two halves were squeezed side by
+   side at twice the size. shell_zoomMedia() rescales every width and height
+   in the sheet's @media rules by the zoom, so they ask about the page's room
+   instead; shell_narrow() is the same question for the script. */
 const SHELL_ZOOM_STEPS = [0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 const SHELL_ZOOM_KEY = 'autostream.zoom';
 let shell_zoom = 1;
+
+/* Is the page's own room (the window divided by the zoom) at most `px` wide? */
+function shell_narrow(px) {
+  return window.innerWidth / (shell_zoom || 1) <= px;
+}
+
+function shell_zoomMedia(z) {
+  const scale = text => text.replace(/((?:min|max)-(?:width|height)\s*:\s*)([\d.]+)px/g,
+    (m, k, n) => k + (Math.round(Number(n) * z * 100) / 100) + 'px');
+  const walk = rules => {
+    for (let i = 0; i < rules.length; i++) {
+      const r = rules[i];
+      if (r.media && r.cssRules) {
+        /* The rule's own text is kept the first time, so every step scales the
+           original rather than the last step's already-scaled number. */
+        if (r.__asMedia === undefined) r.__asMedia = r.media.mediaText;
+        if (/(?:min|max)-(?:width|height)/.test(r.__asMedia)) {
+          const want = z === 1 ? r.__asMedia : scale(r.__asMedia);
+          if (r.media.mediaText !== want) r.media.mediaText = want;
+        }
+      }
+      if (r.cssRules) walk(r.cssRules);
+    }
+  };
+  for (let i = 0; i < document.styleSheets.length; i++) {
+    let rules = null;
+    try { rules = document.styleSheets[i].cssRules; } catch (e) { continue; }  /* not ours to read */
+    if (rules) walk(rules);
+  }
+}
 
 /* The next step up (dir 1) or down (dir -1) the ladder from z. A value that
    is not on the ladder -- an old or hand-edited one -- moves to the nearest
@@ -716,6 +827,7 @@ function shell_zoomSet(z) {
   const root = document.documentElement;
   root.style.zoom = String(z);
   root.style.setProperty('--ui-zoom', String(z));
+  shell_zoomMedia(z);
   try { localStorage.setItem(SHELL_ZOOM_KEY, String(z)); } catch (e) { /* the size lasts until reload */ }
   const pct = Math.round(z * 100) + '%';
   shell_setText(shell_$('zoom-reset'), pct);
@@ -821,9 +933,16 @@ function pal_draw() {
   if (on && on.scrollIntoView) on.scrollIntoView({block: 'nearest'});
 }
 
+/* Where Ctrl K was pressed, so closing the box puts the keyboard back there
+   rather than at the top of the document -- a keyboard user who looked
+   something up and pressed Escape was otherwise sent back to the skip link. */
+let pal_from = null;
+
 function pal_open() {
   const scrim = shell_$('pal-scrim');
   if (!scrim || !scrim.classList.contains('hide')) return;
+  const a = document.activeElement;
+  pal_from = a && a !== document.body ? a : null;
   scrim.classList.remove('hide');
   const q = shell_$('pal-q');
   if (q) { q.value = ''; q.focus(); }
@@ -831,16 +950,47 @@ function pal_open() {
   pal_draw();
 }
 
+/* Back to where it was opened from, if that is still on screen. A command
+   that changed page has hidden it, and focusing a hidden control scrolls
+   nothing into view and leaves the keyboard nowhere visible. */
+function pal_return() {
+  const from = pal_from;
+  pal_from = null;
+  if (!from || !from.isConnected || !from.offsetParent || !from.focus) return;
+  const a = document.activeElement;
+  if (a && a !== document.body && !shell_$('pal-scrim').contains(a)) return;  /* the command moved it */
+  try { from.focus({preventScroll: true}); } catch (e) { /* gone mid-call */ }
+}
+
 function pal_close() {
   const scrim = shell_$('pal-scrim');
-  if (scrim) scrim.classList.add('hide');
+  if (!scrim || scrim.classList.contains('hide')) return;
+  scrim.classList.add('hide');
+  pal_return();
 }
 
 function pal_run(i) {
   const r = pal_rows[i];
   if (!r) return;
-  pal_close();
+  const scrim = shell_$('pal-scrim');
+  if (scrim) scrim.classList.add('hide');
   try { r.run && r.run(); } catch (e) { console.error('palette', e); }
+  pal_return();
+}
+
+/* aria-modal says nothing outside the box can be reached; Tab has to agree,
+   or it walks out behind the scrim into a page the reader was told is not
+   there. Wraps from the last result to the search box and back. */
+function pal_trap(e) {
+  const box = shell_$('pal');
+  if (!box) return;
+  const all = Array.prototype.filter.call(box.querySelectorAll('input, button, [tabindex]'),
+    el => !el.disabled && el.tabIndex >= 0 && el.offsetParent);
+  if (!all.length) return;
+  const first = all[0], last = all[all.length - 1], at = document.activeElement;
+  if (!box.contains(at)) { e.preventDefault(); first.focus(); }
+  else if (e.shiftKey && at === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && at === last) { e.preventDefault(); first.focus(); }
 }
 
 /* Ctrl K (Cmd K) opens it from any page. Only opens: a page with its own
@@ -855,11 +1005,18 @@ function pal_key(e) {
   if (!scrim || scrim.classList.contains('hide')) return;
   /* While the box is open the keys are its own. Escape here also reached
      the Studio's handler, which closed the reel maker under the palette. */
-  if (['Escape', 'ArrowDown', 'ArrowUp', 'Enter'].indexOf(e.key) >= 0) e.stopImmediatePropagation();
-  if (e.key === 'Escape') { e.preventDefault(); pal_close(); }
+  if (['Escape', 'ArrowDown', 'ArrowUp', 'Enter', 'Tab'].indexOf(e.key) >= 0) e.stopImmediatePropagation();
+  if (e.key === 'Tab') pal_trap(e);
+  else if (e.key === 'Escape') { e.preventDefault(); pal_close(); }
   else if (e.key === 'ArrowDown') { e.preventDefault(); pal_at = Math.min(pal_rows.length - 1, pal_at + 1); pal_draw(); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); pal_at = Math.max(0, pal_at - 1); pal_draw(); }
-  else if (e.key === 'Enter') { e.preventDefault(); pal_run(pal_at); }
+  else if (e.key === 'Enter') {
+    /* A result reached with Tab is the one meant, not the highlighted one. */
+    const row = document.activeElement && document.activeElement.closest
+      ? document.activeElement.closest('.pal-row[data-pal]') : null;
+    e.preventDefault();
+    pal_run(row ? Number(row.getAttribute('data-pal')) : pal_at);
+  }
 }
 
 /* The app's own actions: pages, and what the engine can do from anywhere. */
@@ -927,6 +1084,10 @@ function shell_bind() {
   if (zi) zi.addEventListener('click', () => shell_zoomStep(1));
   if (zr) zr.addEventListener('click', () => shell_zoomSet(1));
   shell_zoomLoad();
+  /* System follows Windows, which can flip to light mid-session. Held in a global: a
+     MediaQueryList nothing refers to may be collected, and its listener with it. */
+  shell_scheme = window.matchMedia ? matchMedia('(prefers-color-scheme: light)') : null;
+  if (shell_scheme && shell_scheme.addEventListener) shell_scheme.addEventListener('change', shell_themeChanged);
   const ps = shell_$('rail-search');
   if (ps) ps.addEventListener('click', pal_open);
   const pq = shell_$('pal-q');

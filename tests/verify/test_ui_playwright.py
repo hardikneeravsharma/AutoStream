@@ -1228,10 +1228,16 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     after = page.evaluate("studio.derived.shots.map(r => [r.start, r.kill_reel])")
     assert all(abs(a - b) < 1e-3 for x, y in zip(timing, after) for a, b in zip(x, y)), \
         "mixing the effects moved a cut or a kill"
+    # Velocity flashes every cut with clean picture either side and keeps no other
+    # transition, so about one reel in five has no other mix to give (68 of 300 draws,
+    # measured). Then the press must SAY so, never answer "mixed" over the same reel.
     before = page.evaluate("studio.project.shots.map(s => s.transition).join()")
     page.click('[data-act="studio-mix"][data-what="transition"]')
-    page.wait_for_function("(b) => studio.project.shots.map(s => s.transition).join() !== b",
+    page.wait_for_function("(b) => studio.project.shots.map(s => s.transition).join() !== b"
+                           " || window.__toasts.some(t => t.indexOf('nothing else to mix') >= 0)",
                            arg=before, timeout=15_000)
+    if page.evaluate("studio.project.shots.map(s => s.transition).join()") == before:
+        assert not any(t.startswith("Transitions mixed") for t in page.evaluate("window.__toasts"))
     _fxp_set(page, '#studio-insp [data-act="studio-fxp-open"][data-pool="kill"]', ["k02", "k06"], exact=True)
     page.wait_for_function(
         "studio.project.shots.every(s => s.fx.every(k => k === 'k02' || k === 'k06'))", timeout=15_000)
@@ -1274,6 +1280,9 @@ def test_the_studio_mixes_effects_restyles_and_cuts_to_marked_kills(ui, app, tmp
     assert not page.evaluate("() => document.querySelectorAll('#studio-sg-lanes .studio-sg-lane').length"), \
         "the lanes are Advanced and must start off"
     page.click("#studio-sg-advwrap summary")
+    # <details> says it opened with a 'toggle' event, which is queued, not sent during the click.
+    page.wait_for_function("() => document.querySelectorAll('#studio-sg-lanes .studio-sg-lane').length",
+                           timeout=10_000)
     lanes = page.evaluate("() => [...document.querySelectorAll('#studio-sg-lanes .studio-sg-lane')]"
                           ".map(l => l.getAttribute('data-lane'))")
     assert lanes, "the song has no views at all"

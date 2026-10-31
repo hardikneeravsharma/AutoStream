@@ -4504,7 +4504,7 @@ class Server:
         if shape is not None and isinstance(body.get("drops"), list):
             proj["hand_drops"] = list(getattr(shape, "drops", None) or [])
         # the planner's own shortfall: said beside the reel, not kept on it (feasible.judge)
-        fill = proj.pop("fill", None) or {}
+        fill = proj.pop("shortfall", None) or {}
         try:
             proj, derived, more = studio.normalise(proj, root)
         except studio.ProjectError as e:
@@ -4910,12 +4910,25 @@ class Server:
             seed = int(seed) if seed is not None else None
         except (TypeError, ValueError):
             seed = None
+        # A MIX THAT COULD CHANGE NOTHING SAYS SO. vary() redraws until something differs, but
+        # some reels have one mix: Velocity flashes every cut with clean picture either side and
+        # keeps no other transition, so about one press in five of "Mix transitions" laid the
+        # same cuts again and the button looked broken (68 of 300 draws on an 11-shot reel).
+        # Judged on what was asked to be mixed: transitions that stay put while a kill effect
+        # gives way to them have not been "mixed again".
+        def mix(shots):
+            return [(s.get("transition"),) if what == "transition"
+                    else (tuple(s.get("fx") or ()),) if what == "kill"
+                    else (s.get("transition"), tuple(s.get("fx") or ()), s.get("camera"), s.get("speed"),
+                          tuple(s.get("hero_fx") or ())) for s in shots]
+        was = mix(proj["shots"])
         studio.vary(proj, what, seed)
+        same = mix(proj["shots"]) == was
         try:
             proj, derived, notes = studio.normalise(proj, root)
         except studio.ProjectError as e:
             return {"ok": False, "error": str(e)}
-        return {"ok": True, "project": proj, "derived": derived, "notes": notes}
+        return {"ok": True, "project": proj, "derived": derived, "notes": notes, "same": same}
 
     def studio_song(self, body: dict) -> dict:
         """Choose the song, the part of it, and optionally where the kills land."""

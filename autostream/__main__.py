@@ -430,6 +430,11 @@ def cmd_run(args) -> int:
     if not token:
         token = _secrets.token_urlsafe(12)
         cfg.save_field("rules", "web_token", token)
+    try:
+        if cfg.migrate_theme():
+            config = cfg.load()
+    except Exception as e:  # noqa: BLE001 - resolve() still reads the old id
+        log.warning("could not rewrite the saved theme: %s", e)
     port = int(config.rules.web_port or 8787)
 
     # One at a time. Two engines each create their own broadcast and each tell

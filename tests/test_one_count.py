@@ -102,6 +102,29 @@ def test_the_chip_asks_for_exactly_what_the_plan_is_short(srv, style, n):
     assert v["length"] == pytest.approx(length, abs=0.01)
 
 
+@pytest.mark.parametrize("style", ["hype", "clean"])
+def test_a_plan_short_of_its_part_keeps_the_how_long_it_was_asked_for(srv, style):
+    # The shortfall was written over the project's "fill" (the player's How long),
+    # so a short plan came back with fill "" and the next rebuild ran at the style's length.
+    b = body(srv, style, quick(srv)[:2])
+    b["shaping"]["fill"] = "part"
+    plan = srv.studio_plan(dict(b, dry=True))
+    assert int(plan["fill"].get("missing") or 0) > 0, plan["fill"]     # short, so the case bites
+    assert plan["project"]["fill"] == "part"
+    assert "shortfall" not in plan["project"]
+
+
+def test_a_mix_that_could_change_nothing_says_so(srv):
+    # Build and drop's cuts are its plan's: there is no other mix of them to give.
+    p = srv.studio_plan(dict(body(srv, "drop", [srv.lib[0]] + quick(srv)[:6]), dry=True))["project"]
+    got = srv.studio_vary({"project": p, "what": "transition"})
+    assert got["ok"] and got["same"] is True
+    # Clean has transitions to draw from, and a mix of them changes the reel.
+    p = srv.studio_plan(dict(body(srv, "clean", quick(srv)[:6]), dry=True))["project"]
+    got = srv.studio_vary({"project": p, "what": "transition"})
+    assert got["ok"] and got["same"] is False
+
+
 @pytest.mark.parametrize("style", STYLES)
 def test_add_n_more_adds_clips_the_plan_plays_until_it_is_full(srv, style):
     # as few clips as it takes for this style's plan to come up short
