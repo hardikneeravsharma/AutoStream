@@ -139,7 +139,9 @@ def test_the_side_panel_is_closed_by_default_opens_on_its_edge_and_stays_when_pi
     # resting on the edge opens it; leaving it closes it again
     pg.hover("#studio-side-edge")
     pg.wait_for_selector(".ed-side", state="visible")
-    pg.mouse.move(300, 500)
+    # In steps, as a hand moves it: the panel opens under the pointer, and a pointer that
+    # jumps from there in one move never entered it, so it has nothing to leave.
+    pg.mouse.move(300, 500, steps=12)
     pg.wait_for_selector(".ed-side", state="hidden")
     # the button keeps it open, and the choice is kept
     pg.click("#studio-sidebtn")

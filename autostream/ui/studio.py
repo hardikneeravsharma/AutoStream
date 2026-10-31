@@ -2292,7 +2292,7 @@ function studio_playClip(id) {
   }
   /* In a narrow window the panel sits under the whole list, where a clip playing would be out of
      sight: there it plays in the preview dialog instead. The width is the one css_studio folds at. */
-  if (window.matchMedia && matchMedia('(max-width:1119px)').matches) {
+  if (shell_narrow(1119)) {
     studio_focusClip(id, false);
     studio_preview(id);
     return;
@@ -12447,6 +12447,16 @@ async function studio_mix(what, announce, ride) {
   const r = await API.post('/api/studio/vary', {project: p, what: what});
   if (gen !== studio.gen) return;
   if (!r || !r.ok) { toast((r && r.error) || 'Could not mix the effects.', 'warn'); return; }
+  /* Nothing could change (some styles have one mix: Velocity flashes every clean cut). Said,
+     because a press that answers with a "mixed again" toast and the same reel reads as broken. */
+  if (r.same && announce) {
+    /* The reel stays exactly as it was (a kill effect the draw moved aside is not applied
+       unannounced); only the seed moves on, so the next press draws anew. */
+    if (r.project && r.project.seed != null) p.seed = r.project.seed;
+    toast(what === 'transition' ? 'These are the only cuts this style allows here: nothing else to mix.'
+                                : 'Nothing else to mix for this style and these clips.', 'info');
+    return;
+  }
   if (announce) studio_pushUndo(snapshot, 'Kill effects mixed');
   studio.project = r.project; studio.derived = r.derived; studio.notes = r.notes || [];
   /* An unannounced mix rides along with the pool edit that asked for it, and
@@ -13271,6 +13281,14 @@ function studio_sgWire() {
     a.addEventListener('seeked', studio_sgDrawWaves);
   }
   window.addEventListener('resize', () => { if (shell_page === 'studio') studio_sgDrawWaves(); });
+  /* The maker's song graph and the guide's drop graph redraw on playback, not
+     on resize; a new palette would otherwise wait for the song to play. */
+  window.addEventListener('as-theme', () => {
+    if (shell_page !== 'studio' || !studio.songShape) return;
+    const shown = id => { const e = studio_el(id); return !!(e && e.offsetParent); };
+    if (shown('studio-mk-wave')) studio_mkDraw();
+    if (shown('studio-gd-dropcv')) studio_gdDropDraw();
+  });
 }
 
 /* =====================================================================

@@ -378,6 +378,12 @@ svg{flex:0 0 auto;display:block}
 .rail-btn>span{
   min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
+/* "3 new" beside Clips (shell_newPaint). Quiet on purpose: news, not an alarm. */
+.rail-n{
+  margin-inline-start:auto;
+  font-weight:400;font-size:var(--text-xs);color:var(--text-tertiary);
+  font-variant-numeric:tabular-nums;white-space:nowrap;
+}
 .rail-btn:hover{background:var(--surface-hover);color:var(--text-primary)}
 .rail-btn.is-active{background:var(--surface-active);color:var(--text-primary)}
 /* WHITE IS NOT A CONTRAST GUARANTEE. Four places filled a shape with
@@ -2444,6 +2450,11 @@ ol.steps-list li{margin-block:var(--space-4)}
 .app.rail-min:not(.rail-peek) .rail-nav{width:100%}
 .app.rail-min:not(.rail-peek) .rail-btn{justify-content:center;padding-inline:0;gap:0}
 .app.rail-min:not(.rail-peek) .rail-btn>span{display:none}
+/* The strip has no room for words: the count becomes a dot on the icon. */
+.app.rail-min:not(.rail-peek) .rail-n{
+  position:absolute;top:6px;inset-inline-end:8px;width:6px;height:6px;
+  border-radius:var(--radius-pill);background:var(--text-secondary);font-size:0;
+}
 .app.rail-min:not(.rail-peek) .rail-btn.is-active::before{inset-inline-start:calc(var(--space-3) * -1)}
 .app.rail-min:not(.rail-peek) .rail-foot{align-items:center;margin-inline:calc(var(--space-3) * -1);padding-inline:var(--space-3)}
 .app.rail-min:not(.rail-peek) .rail-meta{display:none}
@@ -4752,6 +4763,10 @@ CSS = CSS + STUDIO_CSS
 EDITOR_CSS = r"""
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
 #view-studio.is-editing{max-width:none;padding-top:var(--space-5);padding-bottom:var(--space-5)}
+/* THE EDGE IS AT THE WINDOW'S EDGE. The editor is one screen tall and does not scroll the page,
+   but .views keeps a stable 10px gutter for the pages that do -- dead space between the side
+   panel's edge and the window, so a pointer thrown to the right stopped short of the edge. */
+.views:has(> #view-studio.is-editing.is-active){scrollbar-gutter:auto}
 #view-studio.is-editing .studio{padding-bottom:0;gap:var(--space-4)}
 .studio-editor{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:var(--space-5);
   height:var(--ed-h,calc(calc(100 * var(--vh)) - 170px));min-height:600px}

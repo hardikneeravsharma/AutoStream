@@ -373,13 +373,30 @@ at the bottom. All in `test_ui_studio_list.py`.
 | 6.134 | Delete a reel | Only from the row's "..." menu, and it still asks | yes (`test_ui_studio_list`) |
 | 6.135 | The guided maker | Steps Style, Clips, Song, Look, Check and make as tabs; Enter is Next; a done step goes back; the bar at the bottom says the style chosen and stays in view | yes (`test_ui_studio_list`) |
 
+
+## 6j · What the redesign left for later (2026-10-31)
+
+ROADMAP R1-R4 and R6, in `test_ui_shell_leftovers.py`; 6.143 in `test_ui_playwright.py`.
+
+| # | Scenario | Must be true | Covered |
+|---|---|---|---|
+| 6.136 | Start the app with a theme from before v2.0.0 (`daylight`) | config.yaml says `light`; the page has no System block | yes (`test_ui_shell_leftovers`) |
+| 6.137 | Change the theme on Settings, then open another page | The page on screen, then the other page, are each told to repaint once, and no more | yes (`test_ui_shell_leftovers`) |
+| 6.138 | Windows flips between dark and light on System | The page is told to repaint | yes (`test_ui_shell_leftovers`) |
+| 6.139 | Ctrl K from a button; Tab past the last result; Escape | Focus starts in the search box, never leaves the box, and goes back to the button | yes (`test_ui_shell_leftovers`) |
+| 6.140 | Ctrl K, run "Go to Logs" | The page changes; focus is not left on the hidden search box | yes (`test_ui_shell_leftovers`) |
+| 6.141 | Clips made since they were last looked at; then open the Studio | "Clips, 2 new" beside Clips (and to a screen reader); gone once they are looked at | yes (`test_ui_shell_leftovers`) |
+| 6.142 | 200% page size on a 1200 px window, then back | The narrow arrangement (the strip, the 899 px rules) at 200%; the desktop one back at 100%, exactly | yes (`test_ui_shell_leftovers`) |
+| 6.143 | "Mix transitions" on a reel whose style has one mix (Velocity) | Either the cuts change, or it says there is nothing else to mix -- never "mixed again" over the same reel | yes (`test_ui_playwright`) |
+
 ---
 
 # The honest summary
 
 Counted from the tables above on 2026-10-23, when 6.86-6.104 were added: rows whose last
 column says yes, sweep or gap. Two say something else (one *partial*, one planned offline only)
-and are counted as gaps.
+and are counted as gaps. Not yet recounted for 6.105-6.143; the eight of 6j (2026-10-31) are
+all covered.
 
 | | count |
 |---|---|

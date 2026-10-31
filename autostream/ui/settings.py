@@ -1308,6 +1308,7 @@ async function set_theme(id){
   }
   try {
     await set_repaint();
+    shell_themeChanged();
   } catch (e){
     /* Last resort: reload. The shell restores the page from the hash. */
     try { location.hash = '#settings'; } catch (e2){}
