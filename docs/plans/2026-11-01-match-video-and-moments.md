@@ -167,7 +167,7 @@ match of 2026-10-25 and sent to ChatGPT each round:
 |---|---|---|
 | v1 (today's recap) | 4.6/10 | Right length; wrong moments and no context |
 | v2 (first pass) | 7.4/10 | "From a kill compilation towards a match story". The cold open showed the buy phase; the card sat on the facecam; "+ reaction" should be "+ Player Reaction"; no agent; a faint title |
-| v3 (second pass) | *see below* | Re-rendered correctly aligned (v1 and v2 were 107 s early -- my script lined the record up by the clock alone; the job fingerprints) |
+| v3 (second pass) | **8.5/10** | Re-rendered correctly aligned (v1 and v2 were 107 s early -- my script lined the record up by the clock alone; the job fingerprints). "Ready for release": hook 8.5, story 9, moment choice 9, pacing 8.5, card 8.5, chapters/title 8.5. Next: a per-recording safe-area search for the card (top centre stays the fallback); YAMNet labels as an optional, user-approved download, each at 85 % precision or the neutral label stays (Player Laughs / Hype Reaction / Player Rage); alignment kept a hard prerequisite, the match's result kept separate from what the recording covers |
 
 Second-pass rules, applied: the cold open holds its kill inside the first two seconds; the card
 sits top centre under the score bar for at most 1.8 s and leaves 0.25 s before a kill (a
