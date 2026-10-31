@@ -8,7 +8,7 @@ Keep it current: every feature that lands gets a row in [Progress](#progress),
 written the day it lands. A roadmap nobody updates is worse than none, because
 the next session trusts it.
 
-## In flight (2026-11-01, after v2.6.0)
+## In flight (2026-11-01, after v2.7.0 -- paused mid-H1 at the player's word)
 
 ### First: the match video, and moments that are not kills (asked 2026-11-01)
 
@@ -20,8 +20,8 @@ the plan and ChatGPT's answers are in [plans/2026-11-01-match-video-and-moments.
 
 | # | Item | Status |
 |---|---|---|
-| H1 | **A good Valorant match highlight video.** It already exists -- the recap (`match_recap` + `highlight.render`), offered for Valorant since the match record gives the rounds, and the score and quiet rounds already come from Riot's record (the C2 notes below were stale) -- but no Valorant recap had ever been made. One was rendered from a real match (Bind, 9-10, 11 moments, 158 s) and reviewed by ChatGPT: the length is right, the moments and their context are not -- lone 12 s kills, three unnamed, repeats, no map or agent, no round context | **first pass done** (v2.7.0): cold open on the strongest moment's kill, a round card (top centre, gone before the kill), chapters never blank or repeated, "VALORANT BIND \| 11-13 LOSS - 16 KILLS - CYPHER", reaction moments in. ChatGPT: v1 4.6/10 -> v2 7.4/10 -> **v3 8.5/10, "ready for release"** (v1 and v2 were rendered misaligned -- see Progress). Left: a per-recording safe-area search for the card, more matches reviewed |
-| H2 | **Moments from the audio, not the kill feed: funny and exciting ones.** Recordings carry the mic on its own track (track 2; 1 is the mix, 3 the game -- confirmed on two real recordings), so a laugh, a shout or a scream is the player's own reaction, separable from gunfire. Read it, name what it is, and let the clipper cut those moments beside the kills, and the recap use them | **planned** with ChatGPT; **detection built and measured**: against the player's own speaking level (the mic is noise-gated, so the rolling median called every word a peak), the hand-cut "missed 1v4 RAGE" moment ranks 2nd of 96 reactions in 40 min. **Clips from reactions done** (v2.7.0): "Also clip your reactions" on the Clips page, on by default -- the best 10 an hour, each from its cause (a kill up to 20 s back, else 8 s) to 4 s after, to the round's end within 12 s; a reaction on a kill clip lengthens that clip; every reaction listed in session.json. Left: YAMNet labels (LAUGH / HYPE; a 15 MB download, waiting for the player's yes) and labelled sessions to calibrate against |
+| H1 | **A good Valorant match highlight video.** It already exists -- the recap (`match_recap` + `highlight.render`), offered for Valorant since the match record gives the rounds, and the score and quiet rounds already come from Riot's record (the C2 notes below were stale) -- but no Valorant recap had ever been made. One was rendered from a real match (Bind, 9-10, 11 moments, 158 s) and reviewed by ChatGPT: the length is right, the moments and their context are not -- lone 12 s kills, three unnamed, repeats, no map or agent, no round context | **first pass done** (v2.7.0): cold open on the strongest moment's kill, a round card (top centre, gone before the kill), chapters never blank or repeated, "VALORANT BIND \| 11-13 LOSS - 16 KILLS - CYPHER", reaction moments in. ChatGPT: v1 4.6/10 -> v2 7.4/10 -> **v3 8.5/10, "ready for release"** (v1 and v2 were rendered misaligned -- see Progress). **The player watched v3 and rejected it**: the fonts terrible, the transitions and kill sounds not good, "don't follow the approach of the Marvel highlights video"; grade it on the whole match, not kills and audio; use the facecam. **v4, on branch `feat/match-video-pro`, not shipped**: a new renderer for match videos (`clips/match_video.py`; the Marvel one, `highlight.py`, is no longer used for them) built to ChatGPT's spec from that feedback -- hard cuts, a 5-frame dip between rounds, no added hits/whooshes/flashes, the game's own sound at -16 LUFS; fonts from the player's pack (#03 Montserrat ExtraBold title, #05 Alte Haas Grotesk Bold text, glyph-checked); typeset cards on a rounded 73 % plate; a 24-round result bar on each card; half-time and final-score cards; the match's story from Riot's record of every round (`clips/match_story.py`: "4-8 at the half, came back from 4-11 to 11-12, lost 11-13", round importance, the final round and the end of the comeback always shown); K/D/A and ACS from the record (22/18/7, ACS 274 -- the recording-only count said 16 kills); a 1.2 s facecam close-up for the 3 strongest reactions, from the box the player marked. ChatGPT re-graded v3 as a match summary 7.5/10; v4 sent, verdict pending. **The player watched v4 and says it is "still not good and nowhere near" real YouTubers' Valorant highlight videos** -- and that review copies must go to ChatGPT at full quality (they were 640x360). **Next, where it paused**: study real single-stream/single-match highlight videos -- not compilations (the player corrected the choice twice: shroud's mixes games; Sinatraa's "12 MINUTES OF..." is a compilation) -- starting with Sinatraa's "HOW IS THIS RADIANT?? (30+ KILLS)" and Subroza's "TERRORIZING Valorant Ranked With Mooda"; frame-by-frame layout, facecam, captions, pacing, sound; then put those frames beside ours to ChatGPT at full quality and rebuild to that bar. Seen so far (compilations, so only partly relevant): the stream's facecam kept as is; a branded glow on the frame edges; an animated Subscribe pop-up; a stylised intro card |
+| H2 | **Moments from the audio, not the kill feed: funny and exciting ones.** Recordings carry the mic on its own track (track 2; 1 is the mix, 3 the game -- confirmed on two real recordings), so a laugh, a shout or a scream is the player's own reaction, separable from gunfire. Read it, name what it is, and let the clipper cut those moments beside the kills, and the recap use them | **planned** with ChatGPT; **detection built and measured**: against the player's own speaking level (the mic is noise-gated, so the rolling median called every word a peak), the hand-cut "missed 1v4 RAGE" moment ranks 2nd of 96 reactions in 40 min. **Clips from reactions done** (v2.7.0): "Also clip your reactions" on the Clips page, on by default -- the best 10 an hour, each from its cause (a kill up to 20 s back, else 8 s) to 4 s after, to the round's end within 12 s; a reaction on a kill clip lengthens that clip; every reaction listed in session.json. **YAMNet downloaded** with the player's yes (2026-11-01): `yamnet.onnx` from `audiomagic/yamnet-onnx` (Apache-2.0, 16 MB, sha256 matching Hugging Face's) in `Videos\AutoStream\models\yamnet` -- not in the repo. It reads the mic at ~850x real time. First findings on the Bind match: most loud reactions are just "Speech"; the rage scream reads "Crying, sobbing" 0.85-0.90 with the hype classes at 0.92; laughter candidates at 778 s (0.59) and 1465 s. **Left**: calibrate the labels by checking candidates against the player's facecam (a laugh is visible on the face), then put LAUGH / HYPE / RAGE on clips and chapters only above thresholds that hold; labelled sessions from the player still wanted |
 
 ### Then: the redesign's leftovers and Phase D
 
@@ -459,12 +459,19 @@ clips-only -- streaming on a Mac is still off the roadmap. See docs/MACOS.md.
 
 ---
 
-## State of the tree, 2026-10-31
+## State of the tree, 2026-11-01
 
-- `__version__` is **2.3.2**, **released**
-  (<https://github.com/hardikneeravsharma/AutoStream/releases/tag/v2.3.2>, Windows and
-  macOS, built by CI) and built into the local `dist\AutoStream`. `main` is `1bec421`.
-- **No PR is open.** The macOS port (#196) was merged on 2026-10-21.
+- `__version__` is **2.7.0**, **released**
+  (<https://github.com/hardikneeravsharma/AutoStream/releases/tag/v2.7.0>, Windows and
+  macOS, built by CI, assets hash-checked) and built into the local `dist\AutoStream`.
+  `main` is `aa24af0`. Shipped today: v2.4.0 (redesign leftovers), v2.5.0 (Streams per
+  game), v2.6.0 (F14), v2.7.0 (reactions, recap first pass).
+- **No PR is open.** Unshipped work sits on branch **`feat/match-video-pro`** (worktree
+  `C:\autostream-pro`): the match-video renderer, the match story, K/D/A and ACS from the
+  record -- offline suite green (4081), not reviewed to the player's bar yet, so not merged.
+- **Personal, never in the repo**: the YAMNet model (`Videos\AutoStream\models\yamnet`), the
+  font pack (`assets\fonts\km-mustahin`), the Devin Jatho asset pack. The match video reads
+  the pack's fonts when present and falls back to the bundled OFL faces.
 - **Several sessions share this machine.** `C:\autostream` is worked by more than one agent,
   and about fifteen worktrees (`C:\autostream-*`) hold older feature branches. Stage explicit
   paths, never `git add -A`. A build freezes whatever is in the tree: the eight untracked
