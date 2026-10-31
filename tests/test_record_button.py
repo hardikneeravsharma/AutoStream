@@ -103,6 +103,81 @@ def test_the_api_accepts_the_record_command():
     assert '"record"' in src, "the endpoint would reject the button"
 
 
+# ------------------------------------- Record pressed with no session running
+
+class HealthObs(Obs):
+    def __init__(self, recording=True):
+        super().__init__()
+        self.recording = recording
+
+    def health(self):
+        return {"recording": self.recording, "active": False}
+
+
+def a_loose_recording() -> Engine:
+    """Stop, then Record, with the game still open: the phase stays IDLE."""
+    from autostream.state import IDLE
+
+    eng = an_engine(recording=True)
+    eng.state.phase = IDLE
+    eng.obs = HealthObs()
+    eng.obs_health = {}
+    eng._obs_checked = 0.0
+    eng._obs_reachable = True
+    eng._rec_missing = 0
+    eng._stop_requested = False
+    eng._drain_commands = lambda: None       # type: ignore[method-assign]
+    eng._tick_idle = lambda: None            # type: ignore[method-assign]
+    return eng
+
+
+def test_an_idle_recording_is_reported_from_obs():
+    """THE REPORT. The file grew by gigabytes while the dashboard said Not
+    recording: OBS was only asked how it was during a session."""
+    eng = a_loose_recording()
+    eng.tick()
+    assert eng.obs_health.get("recording") is True
+
+
+def test_an_idle_recording_is_not_watchdogged():
+    """Health only. The watchdog's set-asides are journalled at the end of a
+    session, and a loose recording has none to end."""
+    eng = a_loose_recording()
+    eng.obs.recording = False
+    lost = []
+    eng._recording_lost = lambda **kw: lost.append(kw)   # type: ignore[method-assign]
+    for _ in range(3):
+        eng._obs_checked = 0.0
+        eng.tick()
+    assert lost == [] and eng.state.recording is True
+
+
+def test_stopping_an_idle_recording_clears_the_report():
+    """Or the dashboard keeps saying Recording off the last poll."""
+    eng = a_loose_recording()
+    eng.tick()
+    eng._journal_loose = lambda path: None   # type: ignore[method-assign]
+    assert eng.toggle_recording("test") is False
+    assert eng.obs_health == {}
+
+
+def test_the_timer_counts_an_idle_recording():
+    """No session, so no session_start: the timer read --:--:--."""
+    import time
+    from types import SimpleNamespace
+
+    from autostream import webui
+
+    eng = SimpleNamespace(state=State(), _rec_began=time.time() - 65)
+    srv = SimpleNamespace(engine=eng)
+    eng.state.recording = True
+    assert webui.Server._elapsed(srv) in (65, 66)
+    eng.state.recording = False
+    assert webui.Server._elapsed(srv) is None
+    eng.state.session_start = time.time() - 10
+    assert webui.Server._elapsed(srv) in (10, 11)
+
+
 # ------------------------------------------------- the recording drive fills
 
 def a_live_engine_with(free_gb, recording=True):

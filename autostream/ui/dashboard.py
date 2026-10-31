@@ -569,13 +569,17 @@ function dash_renderHero(s) {
      running and nothing is being broadcast. Saying LIVE would be a lie about
      the one thing a streamer most needs to be true. */
   const clipsOnly = s.streaming === false;
-  const word = clipsOnly && phase === 'LIVE' ? 'Recording'
-                                             : (dash_PHASE_WORD[phase] || String(phase));
-  const label = clipsOnly && phase === 'LIVE' ? 'Recording'
-                                              : (dash_PHASE_LABEL[phase] || String(phase));
+  /* Record pressed with no session: the phase stays IDLE while OBS writes a
+     file. Headed "Idle" with an empty timer, it looked like nothing was
+     happening at all. */
+  const loose = phase === 'IDLE' && !!s.recording;
+  const rec = loose || (clipsOnly && phase === 'LIVE');
+  const word = rec ? 'Recording' : (dash_PHASE_WORD[phase] || String(phase));
+  const label = rec ? 'Recording' : (dash_PHASE_LABEL[phase] || String(phase));
 
   dash_pill('dash-pill', 'dash-pill-text',
-            paused ? 'pill-idle' : (dash_PHASE_PILL[phase] || 'pill-idle'),
+            paused ? 'pill-idle'
+                   : (loose ? 'pill-live' : (dash_PHASE_PILL[phase] || 'pill-idle')),
             paused ? 'Paused' : word);
 
   const head = dash_el('dash-phase');
@@ -589,11 +593,14 @@ function dash_renderHero(s) {
   }
 
   const game = dash_el('dash-game');
-  if (game) game.textContent = s.game || 'Nothing running';
+  if (game) game.textContent = s.game || (loose ? 'Started with Record'
+                                                 : 'Nothing running');
 
   /* The blocked reason is why a running game is not on air. Only meaningful
-     before the broadcast exists; the engine clears it once streaming starts. */
-  const why = (!active && s.blocked) ? String(s.blocked) : '';
+     before the broadcast exists; the engine clears it once streaming starts.
+     Under a loose recording, "stopped manually" in red reads as "this is
+     not recording" -- the sidebar still carries it. */
+  const why = (!active && !loose && s.blocked) ? String(s.blocked) : '';
   const blocked = dash_el('dash-blocked');
   if (blocked) {
     if (why && blocked.textContent !== why) blocked.textContent = why;

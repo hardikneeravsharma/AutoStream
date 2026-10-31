@@ -1870,6 +1870,19 @@ class Server:
             "has_chat": bool(getattr(caps, "has_chat", True)),
         }
 
+    def _elapsed(self) -> int | None:
+        """The session's age -- or, with Record pressed and no session, the
+        recording's. That one had no session_start, so the timer read
+        --:--:-- for as long as it ran."""
+        e = self.engine
+        s = e.state
+        if s.session_start:
+            return int(time.time() - s.session_start)
+        began = getattr(e, "_rec_began", None)
+        if getattr(s, "recording", False) and began:
+            return int(time.time() - began)
+        return None
+
     def status(self) -> dict:
         e = self.engine
         s = e.state
@@ -1894,7 +1907,7 @@ class Server:
             "apps": self.apps_payload(),
             # For the first-run checklist on the idle Dashboard.
             "obs_found": self.obs_found(),
-            "elapsed": (int(time.time() - s.session_start) if s.session_start else None),
+            "elapsed": self._elapsed(),
             # ASKED OF THE PLATFORM, not built from the id. This was
             # f"youtube.com/watch?v={id}" inline, which is true of exactly one
             # of the three -- a Twitch session's url is the channel, and the
