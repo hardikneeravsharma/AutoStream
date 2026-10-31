@@ -795,6 +795,32 @@ def test_open_records_the_game_and_does_not_stream_it():
     assert eng.yt.created == []
 
 
+def test_a_game_set_to_record_only_is_never_streamed():
+    """The Library's Streams switch (R5). It used to be a menu option: a
+    detected game went live whatever it said."""
+    hit = GameHit(key="cs2.exe", name="Counter-Strike 2", source="test", stream=False)
+    eng = session_engine(st.IDLE, active=hit)
+    set_cfg(eng, "record.enabled", False)
+    assert _blocked(eng) == "Counter-Strike 2 is set to record only in the Library"
+    # Open + stream does not overrule it -- that is what the switch is for.
+    eng.launch_intent["cs2.exe"] = "stream"
+    assert _blocked(eng) == "Counter-Strike 2 is set to record only in the Library"
+    # Settings' switch still decides above it, and says so in its own words.
+    eng2 = session_engine(st.IDLE, streaming=False, active=hit)
+    set_cfg(eng2, "record.enabled", False)
+    assert _blocked(eng2) == "streaming and recording are both off in Settings"
+
+
+def test_a_game_set_to_record_only_is_recorded():
+    hit = GameHit(key="cs2.exe", name="Counter-Strike 2", source="test", stream=False)
+    eng = session_engine(st.IDLE, active=hit, armed=hit)
+    set_cfg(eng, "record.enabled", True)
+    eng.tick()
+    eng.tick()
+    assert eng.state.phase == st.LIVE and eng.state.recording
+    assert eng.yt.created == []
+
+
 def test_nothing_to_do_says_so():
     eng = session_engine(st.IDLE, streaming=False, active=a_hit())
     set_cfg(eng, "record.enabled", False)
@@ -911,6 +937,8 @@ def test_every_preflight_reason_has_a_test():
             "test_an_exhausted_quota_blocks_a_start",
         "opened with Open, not Open + stream":
             "test_opening_without_streaming_says_so_rather_than_sitting_silent",
+        "{hit.name} is set to record only in the Library":
+            "test_a_game_set_to_record_only_is_never_streamed",
         "streaming and recording are both off in Settings":
             "test_nothing_to_do_says_so",
         "on battery power": "test_running_on_battery_blocks_a_start",

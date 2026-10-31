@@ -123,12 +123,13 @@ CONTROLS: list[Control] = [
             acts=("lib-records", "lib-move"),
             why="writes games.yaml where the watcher reads it; an app that is "
                 "not in the Library is refused before anything is written"),
-    Control("/api/library/stream", "POST", CALL, "Goes live", "library",
+    Control("/api/library/stream", "POST", CALL, "Streams", "library",
             body={"key": "verify-nonexistent.exe", "stream": True},
             status=(409,), expect=_has("error"), reject={"key": ""},
             acts=("lib-golive",),
-            why="changes one app's stream flag in apps.yaml; an unknown app is "
-                "refused before the file is rewritten"),
+            why="writes `stream: false` on one game in games.yaml, which the "
+                "engine reads before a session; an unknown app is refused "
+                "before the file is rewritten"),
     Control("/api/library/cover", "GET", CALL, "a game's cover", "library",
             query="key=verify.exe", status=(400,), expect=_has("error"),
             why="serves only the thumbnail games.yaml names for that game; a "

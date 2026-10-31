@@ -9,9 +9,11 @@ WHY TWO TABS
 
 WHAT THE TWO SWITCHES ARE
     Records is whether AutoStream treats the exe as a game at all, written to
-    games.yaml where the watcher reads it (POST /api/library/game). Goes live
-    is the app's own `stream` flag in apps.yaml (POST /api/library/stream),
-    which is what offers "Open + stream" in the row's menu.
+    games.yaml where the watcher reads it (POST /api/library/game). Streams is
+    whether that game may go live, `stream: false` on it in games.yaml (POST
+    /api/library/stream): off, it only ever records, detected or opened.
+    Settings' streaming switch still decides above both. Streams cannot be
+    pressed while Records is off -- an ignored game has no session to allow.
 
 A ROW DOES NOT JUMP TABS UNDER THE POINTER
     Switching Records off makes an app "not a game", and the next poll would
@@ -251,11 +253,11 @@ function lib_cover(a) {
     + lib_initial(a) + '</span>';
 }
 
-function lib_switch(act, key, on, label, title) {
+function lib_switch(act, key, on, label, title, off) {
   const busy = !!lib_saving[key + ':' + (act === 'lib-golive' ? 'lib-golive' : 'lib-records')];
   return '<button class="switch lib-sw" type="button" role="switch" data-act="' + act
     + '" data-app="' + lib_esc(key) + '" aria-checked="' + (on ? 'true' : 'false') + '"'
-    + (busy ? ' aria-disabled="true"' : '')
+    + (busy || off ? ' aria-disabled="true"' : '')
     + ' title="' + lib_esc(title) + '">'
     + '<span class="switch-track"><span class="switch-thumb"></span></span>'
     + '<span class="lib-sw-label">' + label + '</span></button>';
@@ -276,7 +278,8 @@ function lib_menuHtml(a) {
           + 'on in Settings)">Open (record only)'
         : '>Open')
     + '</button>'
-    + (a.stream
+    /* Not for a game switched to record only: the engine would refuse to stream it. */
+    + (a.stream && a.streams !== false
         ? '<button class="lib-mi" type="button" role="menuitem" data-key="' + key
           + '" data-stream="1">Open + stream</button>'
         : '');
@@ -316,13 +319,14 @@ function lib_row(a) {
       + lib_switch('lib-records', key, !!a.game, 'Records',
                    a.game ? 'AutoStream treats ' + label + ' as a game'
                           : 'AutoStream ignores ' + label + ' when it runs')
-      /* NOT "Goes live": this flag only decides whether the Library offers
-         Open + stream for the game. Whether a detected game broadcasts is
-         Settings' streaming switch, and a label saying otherwise would be a
-         promise the engine does not keep. */
-      + lib_switch('lib-golive', key, !!a.stream, 'Open + stream',
-                   a.stream ? 'Offers Open + stream for ' + label
-                            : 'Opens without streaming')
+      /* A promise the engine keeps: off, the game is never broadcast, however
+         it starts (Engine._why_not_stream). It used to be "Open + stream", a
+         flag that only changed the menu while a detected game went live anyway. */
+      + lib_switch('lib-golive', key, !!a.game && a.streams !== false, 'Streams',
+                   !a.game ? 'Records is off, so ' + label + ' is neither recorded nor streamed'
+                   : a.streams !== false ? 'AutoStream may stream ' + label + ' when it is detected or opened'
+                                         : label + ' is recorded only, never streamed',
+                   !a.game)
       + lib_menuHtml(a) + '</div>';
   }
   return '<div class="app-card lib-row is-app" data-row="' + lib_esc(key) + '">'
@@ -505,7 +509,7 @@ async function lib_setGame(btn, key, game) {
 function lib_setStream(btn, key, stream) {
   if (!key || (btn && btn.getAttribute('aria-disabled') === 'true')) return null;
   return lib_save(key, 'lib-golive', '/api/library/stream', {key: key, stream: !!stream},
-                  a => { a.stream = !!stream; });
+                  a => { a.streams = !!stream; });
 }
 
 /* ---------------- notes, thumbnail, launch, rescan ---------------- */

@@ -2,8 +2,8 @@
 
 RECORDS is whether AutoStream treats the executable as a game at all -- the
 same question the watcher asks of games.yaml (`games:` says yes, `blocklist:`
-says no, and the blocklist wins). GOES LIVE is the catalogue's `stream` flag,
-which offers "Open + stream" on the row.
+says no, and the blocklist wins). STREAMS is whether that game may go live:
+`stream: false` on it in games.yaml, which the engine reads before a session.
 
 Both used to be hand edits to a YAML file, which is why the Library listed
 Command Prompt and Character Map among the games with no way to move them.
@@ -152,21 +152,54 @@ def test_records_refuses_an_app_that_is_not_in_the_library(lib):
     assert r.status == 400
 
 
-# ---------------------------------------------------------------- Goes live
+# ------------------------------------------------------------------ Streams
 
-def test_goes_live_saves_the_stream_flag_on_that_app_alone(lib):
+def test_streams_off_is_written_on_the_game_where_the_engine_reads_it(lib):
     r = lib.post("/api/library/stream", {"key": "cs2", "stream": False})
-    assert r.status == 200 and r.json()["ok"] is True
-    after = {a.key: a.stream for a in lib.saved["apps"]}
-    assert after == {"cs2": False, "charmap": False, "steam": False}
-    # Every other field of every app is written back as it was.
-    assert [a.path for a in lib.saved["apps"]] == [a.path for a in APPS]
+    assert r.status == 200 and r.json() == {"ok": True, "key": "cs2", "streams": False}
+    row = cfg.load_games()["games"]["cs2.exe"]
+    assert row == {"name": "Counter-Strike 2", "thumbnail": "C:/art/cs2.png", "stream": False}
+    assert lib.index.reloads == 1, "the running watcher must see it without a restart"
+    assert _row(lib, "cs2")["streams"] is False
+    assert "apps" not in lib.saved, "apps.yaml is not where this lives any more"
+    # On takes the key away and keeps the game's entry, thumbnail and all.
+    r = lib.post("/api/library/stream", {"key": "cs2", "stream": True})
+    assert r.status == 200 and r.json()["streams"] is True
+    assert cfg.load_games()["games"]["cs2.exe"] == {"name": "Counter-Strike 2",
+                                                    "thumbnail": "C:/art/cs2.png"}
+    assert _row(lib, "cs2")["streams"] is True
 
 
-def test_goes_live_refuses_an_unknown_app(lib):
+def test_streams_off_on_a_game_known_only_to_the_index_adds_just_that(lib, monkeypatch):
+    lib.index.public.add("charmap.exe")
+    r = lib.post("/api/library/stream", {"key": "charmap", "stream": False})
+    assert r.status == 200
+    assert cfg.load_games()["games"]["charmap.exe"] == {"stream": False}
+    lib.post("/api/library/stream", {"key": "charmap", "stream": True})
+    # The entry stays (as {}): an entry is also how a game is recognised at all.
+    assert cfg.load_games()["games"]["charmap.exe"] == {}
+
+
+def test_streams_is_refused_while_records_is_off(lib):
+    r = lib.post("/api/library/stream", {"key": "steam", "stream": False})
+    assert r.status == 409 and "Records is off" in r.json()["error"]
+    assert "steam.exe" not in cfg.load_games()["games"]
+
+
+def test_the_game_index_carries_the_switch_to_the_engine():
+    from autostream.gameindex import GameIndex
+
+    idx = GameIndex.__new__(GameIndex)
+    idx.overrides = {"cs2.exe": {"name": "Counter-Strike 2", "stream": False},
+                     "eldenring.exe": {"name": "ELDEN RING"}}
+    idx.public = {}
+    assert idx.lookup("cs2.exe").stream is False
+    assert idx.lookup("eldenring.exe").stream is True      # absent is on
+
+
+def test_streams_refuses_an_unknown_app(lib):
     r = lib.post("/api/library/stream", {"key": "nope", "stream": True})
     assert r.status == 409 and "error" in r.json()
-    assert "apps" not in lib.saved
     assert lib.post("/api/library/stream", {"key": ""}).status == 400
 
 

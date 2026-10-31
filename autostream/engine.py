@@ -459,6 +459,11 @@ class Engine:
         """
         if not self._streaming_setting():
             return self.STREAMING_OFF
+        # THE GAME'S OWN SAY, under Settings' and above everything else: a game
+        # switched to record only in the Library does not go live because it
+        # was opened with Open + stream, any more than because it was detected.
+        if hit is not None and not getattr(hit, "stream", True):
+            return f"{hit.name} is set to record only in the Library"
         if hit is not None and self._intent_for(hit) == "silent":
             return "opened with Open, not Open + stream"
         if not force and self._in_quiet_hours():

@@ -100,6 +100,8 @@ listed so the gap is visible.
 | 4.4 | A launcher-run game (Valorant) shows it too | `stream=false` must not hide it — this was the bug | **gap** |
 | 4.5 | A non-game (Command Prompt) does not | No thumbnail button on Character Map | **gap** |
 | 4.6 | Assigning a thumbnail saves under the exe | `games.yaml` keyed on the exe, not the catalogue key | **gap** |
+| 4.7 | Switch a game's Streams off, then on (2026-11-01, R5) | `stream: false` on the game in `games.yaml`; the row says recorded only; its menu stops offering Open + stream; on takes the key away | yes (`test_ui_library_streams`) |
+| 4.8 | Records off | Streams shows off and cannot be pressed; Records back on brings it back on | yes (`test_ui_library_streams`) |
 
 4.4 and 4.6 are the two that have actually broken. They need a test.
 
