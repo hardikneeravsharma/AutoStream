@@ -2042,13 +2042,23 @@ def _plan_sections(clips: list[dict], style_key: str, *, shape, song: str, part,
     # the part the page drew by itself, which the player never touched: a length, not an end
     loose = bool((shape_it or {}).get("part_auto"))
     got = None
+    # THE CAMERA ACROSS THE CUTS (F14, director._keep_moving): read for a reel being made,
+    # never for a dry plan -- the feasibility chip must answer in about a second.
+    from . import motion
+    from .. import paths
+    look = motion.Cache(paths.CLIPS_DIR / CACHE_DIR) if checks else None
 
     def direct():
-        if which == "fasthead":
-            return fasthead.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, loose=loose)
-        if which == "montage":
-            return director.plan_montage(list(chosen.values()), shape, rh, part=part, seed=seed_n, loose=loose)
-        return director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, build=build, loose=loose)
+        token = director.MOTION.set(look)
+        try:
+            if which == "fasthead":
+                return fasthead.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, loose=loose)
+            if which == "montage":
+                return director.plan_montage(list(chosen.values()), shape, rh, part=part, seed=seed_n, loose=loose)
+            return director.plan(list(chosen.values()), shape, rh, part=part, seed=seed_n, build=build,
+                                 loose=loose)
+        finally:
+            director.MOTION.reset(token)
     for _ in range(4):
         try:
             got = direct()

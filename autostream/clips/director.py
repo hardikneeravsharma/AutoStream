@@ -33,12 +33,21 @@ the timeline edits, re-times and renders them like any other reel.
 """
 from __future__ import annotations
 
+import contextvars
 import logging
 import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+
+# THE CAMERA ACROSS THE CUTS (F14). Set by the caller around a plan to a motion.Cache;
+# unset -- a dry plan, a test, the feasibility chip -- the shots are chosen as before.
+# A context variable rather than a parameter: a plan reaches _after through a dozen
+# paths (each drop tried, a second drop, a longer part), and each would carry it.
+MOTION: contextvars.ContextVar = contextvars.ContextVar("director_motion", default=None)
+LOOK_AHEAD = 3             # shots weighed together when one is chosen
+TIE_CANDIDATES = 2         # per shot: clips the reel does not use, as good as what it has
 
 log = logging.getLogger(__name__)
 
@@ -910,6 +919,10 @@ def _after(all_b, clips_by_path, setups, best, ks, take_shots, D, start, end, ga
         g_before = impacts[i + 1] - impacts[i]
         pres.append(anchor_pre if g_before > 1.2 * gap or strength.get(ts[0], 0.0) >= 0.6 else fast_pre)
 
+    look = MOTION.get()
+    if look is not None and len(flurry) > 1:
+        flurry = _keep_moving(flurry, singles, pres, impacts, rel, look, fits, after, tj, notes)
+
     shots: list[dict] = []
     marks: list[float] = []
     # the take: each shot's length from the cuts inside the clip, the last one up to the first flurry run-up
@@ -992,6 +1005,118 @@ def _after(all_b, clips_by_path, setups, best, ks, take_shots, D, start, end, ga
     return Plan(part=(round(start, 4), round(start + sum(s["duration"] for s in shots), 4)), drop=D,
                 shots=shots, marks=marks, notes=notes, kills=kills,
                 reach=round(T[-1] + TAIL - start, 3), missing=missing)
+
+
+def _keep_moving(flurry, singles, pres, impacts, rel, look, fits, after, tj, notes):
+    """F14: among shots as good as each other, the ones that keep the camera moving one way.
+
+    The flurry was chosen target by target, by kill score alone, so a cut could join a
+    camera swinging right to one swinging left. Here each single-kill shot may be swapped
+    for another clip in exactly its score class (single_score's values are steps of 0.4 or
+    more, so this is ChatGPT's "within 5 %"), that fits the same target and is not used
+    anywhere else; doubles and the take stay put. The choice weighs LOOK_AHEAD shots
+    together -- every combination of their candidates -- by what their cuts cost
+    (motion.cut_cost: opposite ways 1, the same way -0.5, unknown 0), and commits only the
+    first before moving on, so a good cut now is not bought with a bad one next. Kill on
+    the beat and one clip one place are untouched: the targets are fixed and `fits` and the
+    path check are the same tests the flurry was built with. Motion that is unknown is
+    neutral, and a tie keeps the shot the flurry chose.
+    """
+    import itertools
+
+    from . import motion
+
+    def cut_in(i, b, ks):
+        s = ks[0] - pres[i]
+        return look.direction(b.path, ks[0], s, s + motion.WINDOW)
+
+    def cut_out(i, b, ks, ts):
+        if i + 1 >= len(flurry):
+            return 0
+        end = impacts[i + 2] - pres[i + 1]                  # where the next shot starts, reel time
+        if len(ks) == 2:
+            rate = (ks[1] - ks[0]) / max(1e-6, ts[1] - ts[0])
+            e = ks[1] + (end - rel(ts[1])) * rate
+        else:
+            e = ks[0] + (end - impacts[i + 1])
+        return look.direction(b.path, ks[-1], e - motion.WINDOW, e)
+
+    in_use = {b.path for b, _ks, _ts in flurry}
+    spare_all = [b for b in singles if b.path not in in_use]
+
+    def able(b, i):
+        """Can b's kill take flurry position i, a single of exactly its score class?"""
+        b0, ks0, ts0 = flurry[i]
+        j = tj.get(ts0[0])
+        return (len(ks0) == 1 and j is not None and abs(single_score(b) - single_score(b0)) < 1e-9
+                and fits(b, b.kills[0], ANCHOR_PRE, after(j)))
+
+    def options(i, here):
+        """What position i may hold while the shots at `here` are being weighed together:
+        what it has, a shot of the same window moved here (so the window can be put in
+        another order), and up to TIE_CANDIDATES clips the reel does not use at all."""
+        b0, ks0, ts0 = here[i]
+        if len(ks0) != 1:
+            return [here[i]]
+        out = [here[i]]
+        for n in window_of(i):
+            if n != i and len(here[n][1]) == 1 and able(here[n][0], i):
+                out.append((here[n][0], [here[n][0].kills[0]], ts0))
+        k = 0
+        for b in spare_all:
+            if k >= TIE_CANDIDATES:
+                break
+            if b.path not in {x[0].path for x in here} and able(b, i):
+                out.append((b, [b.kills[0]], ts0))
+                k += 1
+        return out
+
+    def window_of(i):
+        return range(i, min(len(flurry), i + LOOK_AHEAD))
+
+    if not any(len(ks) == 1 for _b, ks, _ts in flurry):
+        return flurry
+    # Read only what could be weighed: the shots there and the spares that fit somewhere.
+    want = [(b.path, k) for b, ks, _ts in flurry for k in {ks[0], ks[-1]}]
+    want += [(b.path, b.kills[0]) for b in spare_all
+             if any(able(b, i) for i in range(len(flurry)))][:6 * len(flurry)]
+    look.prefetch(want)
+
+    def cost(seq, lo, hi):
+        total = 0.0
+        for c in range(max(0, lo), min(len(seq) - 1, hi)):
+            (b1, k1, t1), (b2, k2, _t2) = seq[c], seq[c + 1]
+            total += motion.cut_cost(cut_out(c, b1, k1, t1), cut_in(c + 1, b2, k2))
+        return total
+
+    out = list(flurry)
+    before = cost(out, 0, len(out))
+    for i in range(len(out)):
+        if len(out[i][1]) != 1:
+            continue
+        span = window_of(i)
+        fixed = {out[n][0].path for n in range(len(out)) if n not in span}
+        best_seq, best_cost = None, None
+        for combo in itertools.product(*(options(n, out) for n in span)):
+            paths = [c[0].path for c in combo]
+            if len(set(paths)) < len(paths) or fixed & set(paths):
+                continue
+            trial = out[:i] + list(combo) + out[i + len(combo):]
+            c = cost(trial, i - 1, i + len(combo))
+            # a tie keeps what the flurry chose for this shot
+            if best_cost is None or c < best_cost - 1e-9 or (abs(c - best_cost) < 1e-9 and combo[0] is out[i]):
+                best_seq, best_cost = combo, c
+        if best_seq is not None and best_seq[0] is not out[i]:
+            # The whole window as weighed, not its first shot alone: a shot moved forward
+            # from later in the window must leave a different one behind, and the window's
+            # combination is the one already checked for using each clip once. The next
+            # step weighs from i + 1 again, so only shot i is final here.
+            for n, c in zip(span, best_seq):
+                out[n] = c
+    after_cost = cost(out, 0, len(out))
+    if after_cost < before:
+        log.info("shots chosen to keep the camera moving: cut cost %.1f -> %.1f", before, after_cost)
+    return out
 
 
 # ------------------------------------------------------------------ montage
