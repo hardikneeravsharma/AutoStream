@@ -261,6 +261,7 @@ class ClipJob:
         # the recap leaves the names off.
         self.record_names: list[tuple[tuple[float, float], str]] = []
         self.record_agents: list[str] = []          # the agent played, per match, for the title
+        self.record_stories: list[dict] = []        # every round's winner and the player's line, per match
         self.summary_chapters: str = ""
         self.reel_path: str | None = None
         self.promo_path: str | None = None
@@ -465,7 +466,7 @@ class ClipJob:
         the whooshes, the hit flashes, the title and the outro. Both are
         proved without footage.
         """
-        from . import highlight, match_recap as recap
+        from . import match_recap as recap
 
         dur = float(info["duration"])
         names = list(self.record_names)
@@ -484,9 +485,23 @@ class ClipJob:
                     return name
             return ""
 
+        # THE MATCH'S STORY (match_story.Story): every round's winner from Riot's record
+        # when there is one match -- the whole match, which the recording may only
+        # partly hold -- else the rounds read off the recording itself.
+        from . import facecam, match_story, match_video as mv
+
+        record = (self.record_stories[0] if len(names) == 1 and getattr(self, "record_stories", None)
+                  else {}) or {}
+        if record.get("won"):
+            story = match_story.Story(list(record["won"]))
+        else:
+            seen = sorted((r for r in round_list if getattr(r, "won", None) is not None),
+                          key=lambda r: int(getattr(r, "number", 0) or 0))
+            story = match_story.Story([bool(r.won) for r in seen]) if seen and len(names) < 2 else None
         ms = recap.moments(round_list, source_duration=dur, match_of=match_of,
                            target=recap.PER_MATCH * max(1, len(names)),
-                           reactions=getattr(self, "reactions_found", None) or ())
+                           reactions=getattr(self, "reactions_found", None) or (),
+                           story=story)
         spent = sum(m.seconds for m in ms)
         if not ms or spent < recap.FLOOR:
             log.info("not cutting a recap: %.0fs of moments in %d round(s)",
@@ -494,34 +509,41 @@ class ClipJob:
             return None
 
         opening = recap.intro(round_list, source_duration=dur)
-        # A COLD OPEN (ChatGPT, 2026-11-01): a few seconds of the strongest moment
-        # before the title, so the first thing seen is a reason to stay. Its kill, or
-        # its reaction, and not the whole moment -- that plays in its place later.
-        best = max(ms, key=lambda m: (m.score, -m.start))
-        hook = (best.kills[-1] if best.kills else best.start + recap.REACT_PRE)
-        teaser = highlight.Shot(max(0.0, hook - recap.COLD_OPEN_BEFORE),
-                                min(dur, hook + recap.COLD_OPEN_AFTER), "fight")
-        shots = ([teaser] if opening else []) + \
-            ([highlight.Shot(opening.start, opening.end, "intro")] if opening else []) + \
-            [highlight.Shot(m.start, m.end, "fight", card=m.card) for m in ms]
-        shown = ([recap.Moment(teaser.start, teaser.end, name="", kills=[])] if opening else []) + \
-            ([opening] if opening else []) + ms
-        kills = sorted(t for m in ms for t in m.kills)
+        # A COLD OPEN (ChatGPT, 2026-11-01): a few seconds of the strongest moment's
+        # kill before the title -- the kill inside the first two seconds. Chosen by
+        # its own strength, not by being a round the story insists on.
+        fights = [m for m in ms if m.kills] or ms
+        best = max(fights, key=lambda m: (m.score % recap.MUST_SHOW, -m.start))
+        hook = best.kills[-1] if best.kills else best.start + recap.REACT_PRE
+        cold = ((max(0.0, hook - recap.COLD_OPEN_BEFORE), min(dur, hook + recap.COLD_OPEN_AFTER))
+                if opening else None)
+        # The player's facecam, only where they marked it (clips/facecam.py's inset):
+        # a close-up of a box guessed at would be a close-up of the wrong thing.
+        try:
+            box = facecam.load(self.folder.parent).get("inset")
+        except Exception:  # noqa: BLE001 - no box, no close-up
+            box = None
+        pieces = mv.plan(ms, opening=opening, story=story, cold=cold, facecam_box=box)
+        by_start = {round(m.start, 3): m for m in ms}
+        cards_for, chapter_names = {}, {}
+        for i, p in enumerate(pieces):
+            m = by_start.get(round(p.start, 3)) if p.kind == "moment" else None
+            if m is not None:
+                cards_for[i] = (m.card, mv.card_label(m.name, p.round))
+                chapter_names[i] = m.name
 
         when = datetime.fromtimestamp(
             self.session.get("started") or self.started_at).strftime("%Y-%m-%d")
-        won = sum(1 for r in round_list if getattr(r, "won", None) is True)
-        lost = sum(1 for r in round_list if getattr(r, "won", None) is False)
+        fx = mv.facts(self.game, record, story,
+                      map_name=(names[0][1] if len(names) == 1 else ""),
+                      agent=(self.record_agents[0] if len(names) == 1
+                             and getattr(self, "record_agents", None) else ""))
         # NO SCORELINE FOR TWO MATCHES. Summing them is how a recording of
         # Lotus (won 13-10) and Sunset (lost 2-13) came out called 15-23, a
         # score that never existed in either game.
-        how = (f"{won}-{lost}" if len(names) < 2 else f"{len(names)}matches")
+        how = (fx.result.split()[0] if len(names) < 2 and fx.result else f"{max(1, len(names))}matches")
         name = f"{plan.slug(self.game)}_{when}_recap_{how}_{duration_label(spent)}"
-        title, sub = recap.title_of(self.game, round_list, when=when,
-                                    matches=max(1, len(names)),
-                                    map_name=(names[0][1] if len(names) == 1 else ""),
-                                    agent=(self.record_agents[0] if len(names) == 1
-                                           and getattr(self, "record_agents", None) else ""))
+        title, sub = fx.head, f"{fx.result}  -  {fx.line}".strip(" -")
 
         def tick(done: int, total: int) -> None:
             # Deliberately not self._check(): a cancel raised from inside the
@@ -529,26 +551,18 @@ class ClipJob:
             # "could not cut the match summary", which reads like a failure.
             # Cancellation is checked where it is handled.
             self._set(done=done, total=total,
-                      message=(f"Cutting the recap: moment {done + 1} of "
-                               f"{len(shots)}" if done < len(shots) else
-                               f"Joining {len(shots)} moments into the recap"))
+                      message=(f"Cutting the recap: piece {done + 1} of {total - 1}"
+                               if done < total - 1 else "Joining the recap"))
 
-        got: dict = {}
-        out = highlight.render(
-            self.source, shots, self.folder / "match" / f"{name}.mp4",
-            kills=kills, title=title, subtitle=sub, encoder=enc,
-            # MEASURED, on a minute of this very recording: cq 19 is 25 Mbps,
-            # 21 is 20, 23 is 16 and 25 is 12. The first real recap came out
-            # 1.4 GB for 6m27s, which is a slow upload and a big file for
-            # something nobody will watch at full bitrate. 23 is still a third
-            # above YouTube's own 1080p60 recommendation and takes a third off
-            # the file. The Rivals highlight keeps 19; it is two minutes long
-            # and the size was never the problem there.
-            cq=23,
-            outro=str(self.options.get("outro") or "") or None,
-            progress=tick, on_durations=lambda d, o: got.update(durs=d, offs=o))
+        # THE MATCH VIDEO'S OWN RENDERER (clips/match_video.py), not the Marvel Rivals
+        # highlight's: hard cuts, the game's own sound, typeset cards, the match's story.
+        # cq 23: measured on this kind of recording, a third above YouTube's 1080p60
+        # recommendation and a third off the file.
+        out = mv.render(self.source, pieces, self.folder / "match" / f"{name}.mp4",
+                        facts=fx, cards_for=cards_for, facecam_box=box, encoder=enc,
+                        cq=23, progress=tick)
 
-        marks = recap.chapters(shown, got.get("durs") or [], got.get("offs") or [])
+        marks = mv.chapters(pieces, chapter_names)
         if marks:
             from .summary import chapter_text
 
@@ -561,7 +575,8 @@ class ClipJob:
         atomic.write_json(Path(out).with_suffix(".json"), {
             "title": f"{title} {sub}".strip() + f" | {when}",
             "source": str(self.source), "rounds": len(round_list),
-            "won": won, "lost": lost, "moments": len(ms),
+            "won": story.final[0] if story else None, "lost": story.final[1] if story else None,
+            "story": story.line() if story else "", "moments": len(ms),
             "duration": round(spent, 2),
             "chapters": [[round(t, 2), n] for t, n in marks],
         })
@@ -1019,6 +1034,7 @@ class ClipJob:
                 self.record_names = [(g["span"], str(g["about"].get("map") or ""))
                                      for g in found]
                 self.record_agents = [str(g["about"].get("agent") or "") for g in found]
+                self.record_stories = [g["about"].get("story") or {} for g in found]
                 use_rounds = bool(round_list)
                 first = max(found, key=lambda g: len(g["kills"]))
                 self.demo = dict(first["about"], outside=outside,
@@ -1755,6 +1771,7 @@ class ClipJob:
                 "about": {"match": m.id, "mode": m.mode, "ranked": m.ranked,
                           "map": vmatch.summary(m).get("map") or "",
                           "agent": vmatch.agent_of(m, puuid),
+                          "story": vmatch.story(m, puuid),
                           "offset": round(sync.offset, 2),
                           "matched": sync.matched, "total": sync.total,
                           "how": sync.why},
@@ -1801,6 +1818,7 @@ class ClipJob:
                 "about": {"match": m.id, "mode": m.mode, "ranked": m.ranked,
                           "map": vmatch.summary(m).get("map") or "",
                           "agent": vmatch.agent_of(m, puuid),
+                          "story": vmatch.story(m, puuid),
                           "offset": round(sync.offset, 2), "matched": sync.matched,
                           "total": sync.total, "how": "picked by you; " + sync.why},
             })

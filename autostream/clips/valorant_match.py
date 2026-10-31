@@ -210,6 +210,32 @@ def agent_of(match: "Match", puuid: str) -> str:
     return ""
 
 
+def story(match: "Match", puuid: str) -> dict:
+    """The whole match, for the recap's story (clips/match_story.py) and its cards:
+    who won every round -- every one, not only those the recording holds -- and the
+    player's own line for the match. Never raises; an unreadable record gives {}."""
+    try:
+        players = match.data.get("players") or []
+        me = next((p for p in players if isinstance(p, dict) and p.get("subject") == puuid), None)
+        if me is None:
+            return {}
+        team = me.get("teamId")
+        results = sorted(match.data.get("roundResults") or [], key=lambda r: int(r.get("roundNum") or 0))
+        st = me.get("stats") or {}
+        played = int(st.get("roundsPlayed") or len(results) or 1)
+        return {
+            "won": [r.get("winningTeam") == team for r in results],
+            "kills": int(st.get("kills") or 0), "deaths": int(st.get("deaths") or 0),
+            "assists": int(st.get("assists") or 0),
+            # Riot's own combat score over the rounds played -- the ACS the game shows.
+            "acs": int(round(float(st.get("score") or 0) / max(1, played))),
+            "agent": agent_of(match, puuid), "map": summary(match).get("map") or "",
+        }
+    except (TypeError, ValueError, AttributeError) as e:
+        log.debug("no story for match %s: %s", getattr(match, "id", "?"), e)
+        return {}
+
+
 # Riot's internal map names -> the names on the loading screen. A map missing
 # here shows its internal name, which is still a name a player can search.
 MAP_NAMES = {
