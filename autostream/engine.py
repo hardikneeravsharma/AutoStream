@@ -567,6 +567,12 @@ class Engine:
             return
         phase = self.state.phase
 
+        if phase in (st.IDLE, st.ARMING) and self.state.recording:
+            # Record pressed with no session. Without this the dashboard had
+            # nothing from OBS and said "Not recording" beside a file growing
+            # by gigabytes. Health only: the watchdog belongs to a session.
+            self._poll_obs(watch=False)
+
         if phase == st.IDLE:
             self._tick_idle()
         elif phase == st.ARMING:
@@ -1164,12 +1170,16 @@ class Engine:
     # that matters -- but the engine loop is serial, so not every tick either.
     OBS_POLL = 5.0
 
-    def _poll_obs(self) -> None:
+    def _poll_obs(self, watch: bool = True) -> None:
         """OBS health, whether OBS is answering at all, and what to do when it
         comes back. Every LIVE tick, streaming or not.
 
         It used to run only while streaming, so in a recording-only session
         the Ingest card said "Not recording" while OBS was recording.
+
+        watch=False only refreshes obs_health, for a recording outside any
+        session: restarting or set-asides there would have no session to
+        journal into.
         """
         now = time.monotonic()
         if now - self._obs_checked < self.OBS_POLL:
@@ -1178,12 +1188,15 @@ class Engine:
         try:
             h = self.obs.health()
         except Exception as e:  # noqa: BLE001
-            if self._obs_reachable:
+            if self._obs_reachable and watch:
                 log.warning("OBS is not answering: %s", e)
-            self._obs_reachable = False
+            if watch:
+                self._obs_reachable = False
             self.obs_health = {}
             return
         self.obs_health = h
+        if not watch:
+            return
         if not self._obs_reachable:
             self._obs_reachable = True
             self._obs_returned(h)
@@ -2517,6 +2530,8 @@ class Engine:
                 # the file would only be reachable through "Clip a video
                 # file". Journalled now, as a recording of its own.
                 self._journal_loose(path)
+                # Or the dashboard keeps saying Recording off the last poll.
+                self.obs_health = {}
                 notify.toast("AutoStream", "Recording stopped. It is on the "
                                            "Clips page.")
                 return False
