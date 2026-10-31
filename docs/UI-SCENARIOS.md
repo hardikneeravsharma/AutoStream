@@ -171,6 +171,7 @@ listed so the gap is visible.
 | 5.29 | A clip plays in the page | Real media, real duration | yes |
 | 5.30 | Framing marks its choice | The reported bug | yes |
 | 5.31 | Upload to YouTube | Refused safely with no account | **gap** |
+| 5.32 | "Also clip your reactions" (2026-11-01, H2), off then on | On by default; the next run asks for `reactions` false, then true | yes (`test_ui_clip_reactions`) |
 
 # 6 · Studio — 165 controls
 

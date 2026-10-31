@@ -260,6 +260,7 @@ class ClipJob:
         # with no records; with one match there is nothing to tell apart, so
         # the recap leaves the names off.
         self.record_names: list[tuple[tuple[float, float], str]] = []
+        self.record_agents: list[str] = []          # the agent played, per match, for the title
         self.summary_chapters: str = ""
         self.reel_path: str | None = None
         self.promo_path: str | None = None
@@ -483,7 +484,9 @@ class ClipJob:
                     return name
             return ""
 
-        ms = recap.moments(round_list, source_duration=dur, match_of=match_of)
+        ms = recap.moments(round_list, source_duration=dur, match_of=match_of,
+                           target=recap.PER_MATCH * max(1, len(names)),
+                           reactions=getattr(self, "reactions_found", None) or ())
         spent = sum(m.seconds for m in ms)
         if not ms or spent < recap.FLOOR:
             log.info("not cutting a recap: %.0fs of moments in %d round(s)",
@@ -491,10 +494,18 @@ class ClipJob:
             return None
 
         opening = recap.intro(round_list, source_duration=dur)
-        shown = ([opening] if opening else []) + ms
-        shots = [highlight.Shot(m.start, m.end,
-                                "intro" if m is opening else "fight")
-                 for m in shown]
+        # A COLD OPEN (ChatGPT, 2026-11-01): a few seconds of the strongest moment
+        # before the title, so the first thing seen is a reason to stay. Its kill, or
+        # its reaction, and not the whole moment -- that plays in its place later.
+        best = max(ms, key=lambda m: (m.score, -m.start))
+        hook = (best.kills[-1] if best.kills else best.start + recap.REACT_PRE)
+        teaser = highlight.Shot(max(0.0, hook - recap.COLD_OPEN_BEFORE),
+                                min(dur, hook + recap.COLD_OPEN_AFTER), "fight")
+        shots = ([teaser] if opening else []) + \
+            ([highlight.Shot(opening.start, opening.end, "intro")] if opening else []) + \
+            [highlight.Shot(m.start, m.end, "fight", card=m.card) for m in ms]
+        shown = ([recap.Moment(teaser.start, teaser.end, name="", kills=[])] if opening else []) + \
+            ([opening] if opening else []) + ms
         kills = sorted(t for m in ms for t in m.kills)
 
         when = datetime.fromtimestamp(
@@ -507,7 +518,10 @@ class ClipJob:
         how = (f"{won}-{lost}" if len(names) < 2 else f"{len(names)}matches")
         name = f"{plan.slug(self.game)}_{when}_recap_{how}_{duration_label(spent)}"
         title, sub = recap.title_of(self.game, round_list, when=when,
-                                    matches=max(1, len(names)))
+                                    matches=max(1, len(names)),
+                                    map_name=(names[0][1] if len(names) == 1 else ""),
+                                    agent=(self.record_agents[0] if len(names) == 1
+                                           and getattr(self, "record_agents", None) else ""))
 
         def tick(done: int, total: int) -> None:
             # Deliberately not self._check(): a cancel raised from inside the
@@ -1004,6 +1018,7 @@ class ClipJob:
                 self.record_spans = [g["span"] for g in found]
                 self.record_names = [(g["span"], str(g["about"].get("map") or ""))
                                      for g in found]
+                self.record_agents = [str(g["about"].get("agent") or "") for g in found]
                 use_rounds = bool(round_list)
                 first = max(found, key=lambda g: len(g["kills"]))
                 self.demo = dict(first["about"], outside=outside,
@@ -1205,6 +1220,34 @@ class ClipJob:
             log.info("chat asked for %d moment(s); %d were not already found",
                      len(marked), len(plans) - before)
 
+        # THE PLAYER'S OWN REACTIONS (H2). The microphone has a track of its own, and
+        # a laugh or a shout at a missed clutch is a moment no kill reader finds. Every
+        # reaction is listed in session.json; only the strongest few an hour become
+        # clips, and one that belongs to a kill clip makes that clip longer instead.
+        self.reactions_found = []
+        if opt.get("reactions", True):
+            self._check()
+            a, b = ((0.0, None) if self.win_whole
+                    else (self.win_start, self.win_end - self.win_start))
+            try:
+                from . import reactions as react
+
+                self.reactions_found = react.scan(self.source, start=a, duration=b)
+            except Exception as e:  # noqa: BLE001 - reactions are beside the kills, never instead
+                log.warning("could not read the microphone track for reactions: %s", e)
+            if self.reactions_found:
+                span = float(b) if b else float(info["duration"])
+                made = plan.build_reactions(
+                    self.reactions_found, game=self.game,
+                    kills=[float(k["time"]) for k in kills],
+                    rounds=round_list or (), hours=span / 3600.0,
+                    source_duration=info["duration"])
+                before = len(plans)
+                plans = plan.merge_reactions(plans, made)
+                log.info("%d reaction(s) on the microphone track; %d made into clips of "
+                         "their own, %d joined a kill clip", len(self.reactions_found),
+                         len(plans) - before, len(made) - (len(plans) - before))
+
         # Now the plan is known, so the rest of the run can be estimated: a
         # clip costs about the same as any other clip.
         summary = plan.summarise(kills, plans)
@@ -1251,6 +1294,10 @@ class ClipJob:
             **({"demo": self.demo} if self.demo else {}),
             **({"emblems": self.emblem_note} if self.emblem_note else {}),
             **({"promo_clips": [p.as_dict() for p in spare]} if spare else {}),
+            # Every reaction found, strongest first -- the clips are the best few an
+            # hour; the rest are here for a player to pick (ChatGPT's "reaction index").
+            **({"reactions": [r.as_dict() for r in self.reactions_found]}
+               if getattr(self, "reactions_found", None) else {}),
             **({"rounds": [
                 {"number": r.number, "start": round(r.started, 1),
                  "end": round(r.ended, 1), "half": r.half,
@@ -1707,6 +1754,7 @@ class ClipJob:
                 # chapters at all.
                 "about": {"match": m.id, "mode": m.mode, "ranked": m.ranked,
                           "map": vmatch.summary(m).get("map") or "",
+                          "agent": vmatch.agent_of(m, puuid),
                           "offset": round(sync.offset, 2),
                           "matched": sync.matched, "total": sync.total,
                           "how": sync.why},
@@ -1752,6 +1800,7 @@ class ClipJob:
                 # chapters at all.
                 "about": {"match": m.id, "mode": m.mode, "ranked": m.ranked,
                           "map": vmatch.summary(m).get("map") or "",
+                          "agent": vmatch.agent_of(m, puuid),
                           "offset": round(sync.offset, 2), "matched": sync.matched,
                           "total": sync.total, "how": "picked by you; " + sync.why},
             })

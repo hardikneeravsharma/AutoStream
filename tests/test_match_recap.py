@@ -237,3 +237,127 @@ def test_two_matches_get_no_invented_scoreline():
     _head, sub = recap.title_of("VALORANT", _match(n=10), matches=2)
     assert "2 MATCHES" in sub
     assert "5-5" not in sub
+
+
+# ---- the review of the first Valorant recap (ChatGPT, 2026-11-01) ---------
+# docs/plans/2026-11-01-match-video-and-moments.md: 11 moments of the Bind match,
+# three unnamed, "Last Alive" and "Thrifty" twice each, no map, no round context.
+
+from types import SimpleNamespace as _NS  # noqa: E402
+
+
+def test_no_moment_is_unnamed_and_no_name_comes_twice():
+    rounds = [R(i + 1, 100.0 + i * 110, 190.0 + i * 110, kill_times=[140.0 + i * 110],
+                labels=(["LAST ALIVE"] if i in (1, 3) else None)) for i in range(6)]
+    ms = recap.moments(rounds, target=600)
+    names = [m.name for m in ms]
+    assert all(names), names
+    assert len(set(names)) == len(names), names
+    assert "Last Alive - Round 02" in names and "Last Alive - Round 04" in names
+    assert any(n.startswith("Round ") and n.endswith("1 kill") for n in names)
+
+
+def test_a_lone_unnamed_kill_goes_when_there_is_enough_else():
+    rounds = _match(n=10, kills=2) + [R(99, 5000.0, 5090.0, kill_times=[5040.0])]
+    ms = recap.moments(rounds, target=2000)
+    assert not any(m.round is rounds[-1] for m in ms)
+
+
+def test_a_reaction_inside_a_fight_joins_it_and_lifts_it():
+    rounds = _match(n=3, kills=2)
+    plain = {m.start: m.score for m in recap.moments(rounds, target=600)}
+    shout = _NS(start=rounds[1].kill_times[-1] + 1.0, end=rounds[1].kill_times[-1] + 4.0)
+    ms = recap.moments(rounds, target=600, reactions=[shout])
+    hit = next(m for m in ms if m.round is rounds[1])
+    assert hit.reaction and hit.score > plain[hit.start] and hit.end >= shout.end
+    assert "reaction" in hit.name.lower()
+
+
+def test_a_reaction_away_from_every_fight_is_a_moment_of_its_own():
+    """The missed-clutch rage the player hand-cut was in no kill moment at all."""
+    rounds = _match(n=3, kills=2)
+    rage = _NS(start=rounds[2].started + 10.0, end=rounds[2].started + 15.0)
+    ms = recap.moments(rounds, target=600, reactions=[rage])
+    alone = [m for m in ms if m.reaction and not m.kills]
+    assert len(alone) == 1 and alone[0].start <= rage.start and alone[0].end >= rage.end
+    assert alone[0].name == "Round 03 - Player Reacts"
+
+
+def test_reactions_outside_the_match_are_left_out():
+    rounds = _match(n=3, kills=2)
+    far = _NS(start=99999.0, end=100003.0)
+    assert not any(m.reaction for m in recap.moments(rounds, target=600, reactions=[far]))
+
+
+def test_the_card_says_the_round_the_score_and_the_situation():
+    rd = R(12, 0.0, 90.0, kill_times=[40.0])
+    rd.score_before, rd.my_side = (8, 9), "defense"
+    rd.last_stand_at, rd.enemies_at_last_stand, rd.match_point = 35.0, 3, False
+    m = recap.Moment(30.0, 50.0, name="1v3", kills=[40.0], rd=rd)
+    assert m.card == "Round 12  ·  Defense  ·  8-9  ·  1v3"
+    assert recap.Moment(0, 12, name="", kills=[]).card == ""
+
+
+def test_the_title_says_the_map_and_the_result_in_words():
+    rounds = _match(n=6, kills=2)
+    rounds[0].won = False                          # 2-4
+    head, sub = recap.title_of("VALORANT", rounds, map_name="Bind")
+    assert head == "VALORANT BIND" and sub.startswith("2-4 LOSS")
+    head, _ = recap.title_of("VALORANT", rounds, map_name="Bind", matches=2)
+    assert head == "VALORANT"                      # two maps: no one map in the title
+
+
+def test_one_match_is_two_and_a_half_to_four_and_a_half_minutes():
+    ms = recap.moments(_match(n=24, kills=3), target=recap.PER_MATCH)
+    assert sum(m.seconds for m in ms) <= recap.PER_MATCH + recap.MOMENT_MAX
+
+
+def test_two_fights_in_one_round_are_told_apart_in_words():
+    rd = R(7, 100.0, 200.0, kill_times=[130.0, 170.0], labels=["LAST ALIVE"])
+    ms = recap.moments([rd], target=600)
+    assert [m.name for m in ms] == ["Last Alive - Round 07", "Last Alive - Round 07 - Second Moment"]
+
+
+def test_a_cold_open_does_not_make_two_intros():
+    shown = [recap.Moment(0, 4.8, name="", kills=[]), recap.Moment(10, 26, name="Intro", kills=[]),
+             recap.Moment(100, 120, name="3K", kills=[110.0]), recap.Moment(200, 220, name="Ace", kills=[210.0])]
+    marks = recap.chapters(shown, [4.8, 16, 20, 20], [0.0, 4.45, 20.1, 39.8])
+    assert [n for _t, n in marks] == ["Intro", "3K", "Ace"] and marks[0][0] == 0.0
+
+
+def test_a_reaction_between_rounds_belongs_to_the_nearest():
+    rounds = _match(n=3, kills=2)
+    gap = _NS(start=rounds[0].ended + 12.0, end=rounds[0].ended + 15.0)   # the buy phase
+    ms = recap.moments(rounds, target=600, reactions=[gap])
+    alone = next(m for m in ms if m.reaction and not m.kills)
+    assert alone.round is rounds[0] and alone.card.startswith("Round 1")
+
+
+def test_a_reaction_in_the_buy_phase_says_so():
+    rounds = _match(n=3, kills=2)
+    gap = _NS(start=rounds[0].ended + 12.0, end=rounds[0].ended + 15.0)
+    ms = recap.moments(rounds, target=600, reactions=[gap])
+    alone = next(m for m in ms if m.reaction and not m.kills)
+    assert alone.name == "Between Rounds - Player Reaction"
+
+
+def test_the_agent_is_in_the_title_and_a_raw_id_never_is():
+    from autostream.clips import valorant_match as vm
+
+    head, sub = recap.title_of("VALORANT", _match(n=2), map_name="Bind", agent="Cypher")
+    assert sub.endswith("CYPHER")
+    assert vm.AGENT_NAMES["117ed9e3-49f3-6512-3ccf-0cada7e3823b"] == "Cypher"
+    m = vm.Match.__new__(vm.Match)
+    m.data = {"players": [{"subject": "me", "characterId": "00000000-not-an-agent"}]}
+    assert vm.agent_of(m, "me") == ""
+
+
+def test_the_title_has_the_matchs_score_even_when_the_recording_starts_late():
+    """The Bind match of 2026-10-25 was lost 11-13; the recording began at round 6, so
+    counting its rounds made the title read 9-11."""
+    rounds = _match(n=4, kills=1)
+    for r, (a, b) in zip(rounds, [(7, 9), (8, 9), (8, 10), (9, 10)]):
+        r.score_after = (a, b)
+    rounds[-1].score_after = (11, 13)
+    _head, sub = recap.title_of("VALORANT", rounds)
+    assert sub.startswith("11-13 LOSS"), sub

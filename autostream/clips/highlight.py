@@ -60,11 +60,26 @@ OUTRO_FADE = 0.7
 OUTRO_HOLD = 1.5
 
 
+CARD_SECONDS = 1.8     # 1.5-1.8 s, 2.2 at most (ChatGPT's second review)
+CARD_IN = 0.35         # after the cut, so the whip has landed
+CARD_CLEAR = 0.25      # gone this long before a kill in its shot
+CARD_SHORTEST = 0.8    # a card that would be gone sooner is not drawn at all
+# TOP CENTRE, UNDER THE SCORE BAR. Bottom-left -- where the first card went -- is the
+# facecam's and the player's stats' (reviewed: "overlaps the facecam's lower border").
+# In a tactical shooter the strip under the round timer is the one place that is
+# neither HUD, minimap, kill feed, facecam nor the crosshair's.
+CARD_Y = 0.115
+
+
 @dataclass
 class Shot:
     start: float
     end: float
     kind: str          # intro | fight | result
+    # The round's context, drawn for CARD_SECONDS as the shot opens ("Round 12 · 8-9 ·
+    # 1v3") -- ChatGPT's review of the first Valorant recap: a moment that never says
+    # what was at stake is a clip, not a match story. Empty draws nothing.
+    card: str = ""
 
     @property
     def seconds(self) -> float:
@@ -176,13 +191,39 @@ def graph(shots: list[Shot], durations: list[float], kills: list[float],
           for k in kill_out]
     fx += [f"eq=brightness=0.45:enable='between(t,{k:.3f},{k + 0.12:.3f})'" for k in ult_out]
     if title:
-        fade = "if(lt(t,0.25),t/0.25,if(lt(t,2.4),1,max(0,(2.8-t)/0.4)))"
+        # Over the INTRO shot, wherever it is: a recap may open cold on a few seconds of
+        # its strongest moment and only then say what it is (ChatGPT, 2026-11-01).
+        ta = next((offs[i] for i, s in enumerate(shots) if s.kind == "intro"), 0.0)
+        u = f"(t-{ta:.3f})"
+        fade = f"if(lt({u},0.25),{u}/0.25,if(lt({u},2.4),1,max(0,(2.8-{u})/0.4)))"
+        on = f"between(t,{ta:.3f},{ta + 2.8:.3f})"
+        # A dark plate behind the title: it sat over a bright frame and read faintly
+        # (ChatGPT's second review, the frame at 4.5 s).
         fx.append("drawtext=fontfile=title.ttf:textfile=title1.txt:fontsize=h*0.1:"
                   "fontcolor=white:borderw=6:bordercolor=black@0.8:x=(w-text_w)/2:"
-                  f"y=h*0.36:alpha='{fade}':enable='lt(t,2.8)'")
+                  "box=1:boxcolor=black@0.45:boxborderw=24:"
+                  f"y=h*0.36:alpha='{fade}':enable='{on}'")
         fx.append("drawtext=fontfile=title.ttf:textfile=title2.txt:fontsize=h*0.05:"
                   "fontcolor=0xFFD23C:borderw=4:bordercolor=black@0.8:x=(w-text_w)/2:"
-                  f"y=h*0.36+h*0.115:alpha='{fade}':enable='lt(t,2.8)'")
+                  "box=1:boxcolor=black@0.45:boxborderw=14:"
+                  f"y=h*0.36+h*0.13:alpha='{fade}':enable='{on}'")
+        for i, s in enumerate(shots):
+            if not s.card:
+                continue
+            a = offs[i] + CARD_IN
+            nxt = offs[i + 1] if i + 1 < n else total
+            first_kill = min((k for k in kill_out if a <= k < nxt), default=None)
+            b = a + CARD_SECONDS
+            if first_kill is not None:
+                b = min(b, first_kill - CARD_CLEAR)
+            if b - a < CARD_SHORTEST:
+                continue
+            span = b - a
+            u = f"(t-{a:.3f})"
+            cf = f"if(lt({u},0.2),{u}/0.2,if(lt({u},{span - 0.25:.2f}),1,max(0,({span:.2f}-{u})/0.25)))"
+            fx.append(f"drawtext=fontfile=title.ttf:textfile=card{i}.txt:fontsize=h*0.04:"
+                      "fontcolor=white:borderw=3:bordercolor=black@0.85:x=(w-text_w)/2:"
+                      f"y=h*{CARD_Y}:alpha='{cf}':enable='between(t,{a:.3f},{b:.3f})'")
     fx.append("format=yuv420p")
     if outro:
         # A white flash from the result screen into the outro, which then
@@ -362,6 +403,9 @@ def render(source: Path, shots: list[Shot], out: Path, *,
         have_font = _font(work)
         (work / "title1.txt").write_text(title, encoding="utf-8")
         (work / "title2.txt").write_text(subtitle, encoding="utf-8")
+        for i, s in enumerate(shots):
+            if s.card:
+                (work / f"card{i}.txt").write_text(s.card, encoding="utf-8")
         outro_len = None
         if outro and Path(outro).is_file():
             outro_len = _fit_outro(Path(outro), parts[0], work / "outro_fit.mp4", encoder)
