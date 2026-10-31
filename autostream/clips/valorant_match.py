@@ -242,6 +242,9 @@ MAP_NAMES = {
     "Ascent": "Ascent", "Bonsai": "Split", "Duality": "Bind", "Triad": "Haven",
     "Port": "Icebox", "Foxtrot": "Breeze", "Canyon": "Fracture", "Pitt": "Pearl",
     "Jam": "Lotus", "Juliett": "Sunset", "Infinity": "Abyss", "Rook": "Corrode",
+    # Read off the agent select of a 2026-10-25 match: the session video's lower
+    # third said PLUMMET over a screen that says SUMMIT.
+    "Plummet": "Summit",
     "Range": "The Range", "HURM_Alley": "District", "HURM_Bowl": "Kasbah",
     "HURM_Yard": "Piazza", "HURM_Helix": "Drift", "HURM_HighTide": "Glitch",
 }
@@ -775,6 +778,71 @@ def _alive_at(match: Match, kill: dict, puuid: str) -> tuple[int, int]:
 # How much of a round is shown either side of its kills: the buy and the walk
 # in, and the moment after the last kill before the screen changes.
 RUN_IN, RUN_OUT = 20.0, 6.0
+
+
+def deaths_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list[float]:
+    """Every time this player died, on the recording's timeline."""
+    out = [sync.to_vod(float(k.get("gameTime") or 0) / 1000.0)
+           for k in match.kills() if k.get("victim") == puuid]
+    return sorted(round(t, 3) for t in out if t > 0)
+
+
+SPIKE_FUSE = 45.0          # seconds from plant to detonation
+ROUND_CLOCK = 100.0        # seconds of combat before a round runs out of time
+
+
+def round_times(match: Match, puuid: str, sync: cs2_demo.Sync) -> list[dict]:
+    """Where each round's FIGHTING happens on the recording: when the barrier
+    dropped, when the round was decided, the plant, every kill by anyone, and when
+    the player became last alive.
+
+    Riot gives no round start, but every kill carries both gameTime and roundTime,
+    and their difference is the same for every kill in a round. It is the barrier
+    dropping, not the buy phase: on the Bind match of 2026-10-25 a kill lands 3.3 s
+    after it. The round is decided by its last kill, the defuse, the detonation
+    (plant + SPIKE_FUSE) or the clock, whichever the result code says."""
+    by_round: dict[int, list[dict]] = {}
+    for k in match.kills():
+        by_round.setdefault(int(k.get("round") or 0), []).append(k)
+    results = {int(r.get("roundNum") or 0): r for r in (match.data.get("roundResults") or [])}
+    last_n = max(results) if results else -1
+    out = []
+    for n in sorted(results):
+        ks = sorted(by_round.get(n, []), key=lambda k: float(k.get("gameTime") or 0))
+        if not ks:
+            continue                       # no kill, so nothing to place the round's clock against
+        zero = (float(ks[0].get("gameTime") or 0) - float(ks[0].get("roundTime") or 0)) / 1000.0
+        r = results[n]
+        plant = float(r["plantRoundTime"]) / 1000.0 if r.get("plantRoundTime") else None
+        defuse = float(r["defuseRoundTime"]) / 1000.0 if r.get("defuseRoundTime") else None
+        code = str(r.get("roundResultCode") or "")
+        last_kill = float(ks[-1].get("roundTime") or 0) / 1000.0
+        if code == "Defuse" and defuse:
+            decided = defuse
+        elif code == "Detonate" and plant is not None:
+            decided = plant + SPIKE_FUSE
+        elif code == "Elimination":
+            decided = last_kill
+        else:
+            decided = max(last_kill, ROUND_CLOCK if plant is None else plant + SPIKE_FUSE)
+        last_stand = None
+        for k in ks:
+            if k.get("victim") == puuid:
+                break
+            mine, theirs = _alive_at(match, k, puuid)
+            if mine == 1 and theirs >= 1:
+                last_stand = sync.to_vod(float(k.get("gameTime") or 0) / 1000.0)
+                break
+        out.append({
+            "number": n + 1,
+            "start": sync.to_vod(zero),
+            "end": sync.to_vod(zero + decided),
+            "plant": sync.to_vod(zero + plant) if plant is not None else None,
+            "contacts": [sync.to_vod(float(k.get("gameTime") or 0) / 1000.0) for k in ks],
+            "last_stand": last_stand,
+            "final": n == last_n,
+        })
+    return out
 
 
 def rounds_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list:
