@@ -147,6 +147,9 @@ class ClipPlan:
     won: bool | None = None
     # One of the handful worth watching first. See SHORTLIST.
     top: bool = False
+    # The player's reaction in it, seconds into the recording (build_reactions):
+    # where the shout or laugh is, not where the clip starts.
+    reaction: list[float] = field(default_factory=list)
 
     @property
     def duration(self) -> float:
@@ -185,6 +188,7 @@ class ClipPlan:
             **({"labels": list(self.labels)} if self.labels else {}),
             **({"round": self.round_number} if self.round_number else {}),
             **({"won": self.won} if self.won is not None else {}),
+            **({"reaction": [round(x, 2) for x in self.reaction]} if self.reaction else {}),
         }
 
 
@@ -602,6 +606,83 @@ def merge_marks(plans: list[ClipPlan], marked: list[ClipPlan],
         p.rank = i
     # Same reasoning as combine(): two lists arrive each carrying their own
     # five, and a shortlist of ten is not a shortlist.
+    return shortlist(out)
+
+
+# ---------------------------------------------------------------- reactions
+#
+# THE PLAYER'S OWN REACTIONS AS CLIPS (H2, rules from ChatGPT 2026-11-01; see
+# docs/plans/2026-11-01-match-video-and-moments.md). clips/reactions.py finds them
+# on the microphone track; these place them. A reaction FOLLOWS what caused it, so
+# where the clip starts matters as much as finding it: the hand-cut rage meme of
+# 2026-10-25 starts about twenty seconds before its shout.
+REACT_CAUSE = 20.0       # how far back the cause is looked for
+REACT_LEAD = 1.5         # started this far before the cause
+REACT_PRE = 8.0          # ...or this far before the reaction, with no cause found
+REACT_AFTER = 4.0        # kept after the reaction: back to calm (1.5 s) and 2-3 s more
+REACT_ROUND_END = 12.0   # a round ending this soon after is shown ending
+REACT_MAX = 40.0
+REACT_PER_HOUR = 10      # cut; the rest are listed, not made into files
+REACT_SAME_EVENT = 3.0   # a reaction this soon after a kill clip ends is that clip's
+
+
+def build_reactions(found, *, game: str, kills=(), rounds=(),
+                    hours: float = 1.0, per_hour: int = REACT_PER_HOUR,
+                    source_duration: float | None = None) -> list[ClipPlan]:
+    """A clip around each of the strongest reactions. -> strongest first.
+
+    `found` is reactions.Reaction (or anything with .start .end .at .score .kind),
+    strongest first. `kills` the player's kill times, the causes it can see; `rounds`
+    anything with .started/.ended, so a clip shows its round ending and never runs
+    into the next. Only the best `per_hour` an hour of footage are made into clips.
+    """
+    keep = max(1, int(round(per_hour * max(hours, 1 / 60))))
+    tag = slug(game)
+    ks = sorted(float(k) for k in kills)
+    spans = sorted((float(r.started), float(r.ended)) for r in rounds
+                   if getattr(r, "started", None) is not None)
+    out: list[ClipPlan] = []
+    for r in list(found)[:keep]:
+        rs, re_ = float(r.start), float(r.end)
+        rnd = next(((a, b) for a, b in spans if a - 5.0 <= rs <= b + 5.0), None)
+        floor = rnd[0] - 2.0 if rnd else rs - REACT_CAUSE
+        causes = [k for k in ks if max(floor, rs - REACT_CAUSE) <= k <= rs]
+        start = (min(causes) - REACT_LEAD) if causes else rs - REACT_PRE
+        end = re_ + REACT_AFTER
+        if rnd and rnd[1] >= re_ and rnd[1] - re_ <= REACT_ROUND_END:
+            end = max(end, rnd[1] + 1.0)
+        if end - start > REACT_MAX:
+            start = end - REACT_MAX
+        start = max(0.0, start)
+        if source_duration:
+            end = min(end, float(source_duration))
+        if end - start < MIN_CLIP:
+            continue
+        kind = str(getattr(r, "kind", "") or "").upper()
+        name = f"{tag}_react{len(out) + 1:02d}_{stamp(start)}_{duration_label(end - start)}"
+        out.append(ClipPlan(rank=len(out) + 1, start=start, end=end, kills=0, burst_kills=0,
+                            peak_score=float(r.score), name=name,
+                            labels=[kind or "REACTION"], reaction=[rs, re_]))
+    return out
+
+
+def merge_reactions(plans: list[ClipPlan], made: list[ClipPlan]) -> list[ClipPlan]:
+    """Fold reaction clips in. A reaction during a kill clip, or just after it, is that
+    fight's: the kill clip gains the label and runs on to the end of the reaction (to
+    REACT_MAX). Only reactions to something the kill clips do not show stand alone."""
+    out = list(plans)
+    for c in made:
+        rs = c.reaction[0] if c.reaction else c.start
+        home = next((p for p in out if p.kills > 0 and p.start <= rs <= p.end + REACT_SAME_EVENT), None)
+        if home is None:
+            out.append(c)
+            continue
+        if c.labels[0] not in home.labels:
+            home.labels = list(home.labels) + [c.labels[0]]
+        home.reaction = list(c.reaction)
+        home.end = max(home.end, min(c.end, home.start + REACT_MAX))
+    for i, p in enumerate(out, 1):
+        p.rank = i
     return shortlist(out)
 
 

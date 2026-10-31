@@ -738,6 +738,22 @@ One per line - a long session often covers several matches."></textarea>
          clips, not instead of them.</p>
     </div>
 
+    <!-- THE PLAYER'S OWN REACTIONS (H2): read off the microphone's own track,
+         so it is offered for every game, with or without a kill reader. On by
+         default -- at most ten clips an hour, and a reaction on a kill clip makes
+         that clip longer rather than adding one. -->
+    <div class="field" id="clip-react-field">
+      <div class="field-inline">
+        <button class="switch is-on" type="button" role="switch" id="clip-react"
+                aria-checked="true"><span class="switch-track"><span
+                class="switch-thumb"></span></span></button>
+        <label for="clip-react">Also clip your reactions</label>
+      </div>
+      <p class="field-help">The moments you laughed, shouted or lost it, heard on your
+         microphone &mdash; even with no kill in them. The strongest ten an hour become
+         clips; a reaction during a kill clip stays with that clip.</p>
+    </div>
+
     <div class="field" id="clip-min-field">
       <span class="field-label" id="clip-min-label">How good does a moment have to be?</span>
       <div class="seg" id="clip-min" role="group" aria-label="Minimum kills"></div>
@@ -2081,7 +2097,8 @@ function clip_renderOptions() {
   if (sw) sw.setAttribute('aria-checked', clip_state.montage ? 'true' : 'false');
   [['clip-rounds', clip_state.rounds !== false],
    ['clip-whole', clip_state.whole !== false],
-   ['clip-matchvid', !!clip_state.matchVid]].forEach(function (pair) {
+   ['clip-matchvid', !!clip_state.matchVid],
+   ['clip-react', clip_state.react !== false]].forEach(function (pair) {
     var el = clip_el(pair[0]);
     if (!el) return;
     el.setAttribute('aria-checked', pair[1] ? 'true' : 'false');
@@ -5590,6 +5607,7 @@ function clip_runBody(s) {
     match_spans: clip_matchSpans(),
     match_ids: clip_matchIds(),
     match_summary: !!clip_state.matchVid,
+    reactions: clip_state.react !== false,
     summaries: !!clip_mvMake().summaries,
     highlights: !!clip_mvMake().highlights
   });
@@ -7524,6 +7542,11 @@ function clip_wire() {
   var mvw = clip_el('clip-matchvid');
   if (mvw) mvw.addEventListener('click', function () {
     clip_state.matchVid = !clip_state.matchVid;
+    clip_renderOptions();
+  });
+  var rcw = clip_el('clip-react');
+  if (rcw) rcw.addEventListener('click', function () {
+    clip_state.react = clip_state.react === false;
     clip_renderOptions();
   });
   var types = clip_el('clip-types');

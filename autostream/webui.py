@@ -3209,6 +3209,11 @@ class Server:
         # what the page put in the request, which is why it stayed green.
         if body.get("match_summary") is not None:
             opt["match_summary"] = bool(body.get("match_summary"))
+        # The player's reactions on the mic track (H2) -- copied out here for the same
+        # reason as the line above: a flag the page sends and nothing reads is a switch
+        # that does nothing.
+        if body.get("reactions") is not None:
+            opt["reactions"] = _as_bool(body.get("reactions"))
         want = body.get("round_types")
         if isinstance(want, list) and want:
             opt["round_types"] = [str(x) for x in want][:16]
