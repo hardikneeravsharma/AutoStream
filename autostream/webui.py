@@ -1589,6 +1589,10 @@ class Server:
             row = games.get((key or "").lower())
             return str(row.get("thumbnail") or "") if isinstance(row, dict) else ""
 
+        def streams(key: str) -> bool:
+            row = games.get((key or "").lower())
+            return not (isinstance(row, dict) and row.get("stream") is False)
+
         # IS THIS A GAME, which is a different question from "can it be
         # launched and streamed in one click". A title started through a
         # launcher -- Valorant, League -- carries stream=False, because the
@@ -1622,6 +1626,7 @@ class Server:
             {"key": a.key, "name": a.name, "source": a.source, "stream": a.stream,
              "game_key": (a.exe or a.key).lower(),
              "game": is_game(a.exe or a.key),
+             "streams": streams(a.exe or a.key),
              "thumbnail": thumb(a.exe or a.key)}
             for a in catalog.load()
         ]
@@ -1687,26 +1692,51 @@ class Server:
             return self._library_set_stream(body)
 
     def _library_set_stream(self, body: dict) -> tuple[dict, int]:
-        """The Library's Goes live switch: the app's own `stream` flag.
+        """The Library's Streams switch: whether this game may go live at all.
 
-        Not through /api/setup/apps, which replaces apps.yaml with the list it
-        is sent and drops every entry without a path -- and the Library's
-        payload carries no paths. This changes one flag on one app and writes
-        every other field back as it was.
+        It used to be the app's `stream` flag in apps.yaml, which only decided
+        whether the row's menu offered "Open + stream" -- a detected game went
+        live whatever it said, so a switch reading "off" broadcast anyway. It
+        is now `stream: false` on the game in games.yaml, keyed on the exe as
+        Records is, which the engine reads before it starts a session
+        (Engine._why_not_stream): off, the game only ever records. On removes
+        the key rather than writing `true`. Refused while Records is off: a game AutoStream ignores starts no
+        session to stream or record, so there is nothing for it to allow.
         """
         from . import catalog
 
         key = str(body.get("key", "")).strip()
         if not key:
             return {"error": "no app given"}, 400
-        apps = catalog.load()
-        app = catalog.find(apps, key)
+        app = catalog.find(catalog.load(), key)
         if app is None:
             return {"error": "That app is no longer in the Library. "
                              "Press Rescan."}, 409
-        app.stream = _as_bool(body.get("stream"))
-        catalog.save(apps)
-        return {"ok": True, "key": app.key, "stream": app.stream}, 200
+        exe = (app.exe or app.key).lower()
+        want = _as_bool(body.get("stream"))
+        data = cfg.load_games()
+        games, block = data["games"], data["blocklist"]
+        if _blocked_by(exe, [str(b).lower() for b in block]):
+            return {"error": f"Records is off for {app.name}, so it is never "
+                             "recorded or streamed. Switch Records on first."}, 409
+        row = games.get(exe)
+        if want:
+            # The key goes, never the row: an entry is also how a game the
+            # public index does not know is recognised at all (Records).
+            if isinstance(row, dict):
+                row.pop("stream", None)
+        else:
+            if not isinstance(row, dict):
+                row = games[exe] = {}
+            row["stream"] = False
+        cfg.save_games(data)
+        index = getattr(self.engine, "index", None)
+        if index is not None:
+            try:
+                index.reload()
+            except Exception as e:  # noqa: BLE001 - the write already succeeded
+                log.warning("saved, but could not reload the game index: %s", e)
+        return {"ok": True, "key": app.key, "streams": want}, 200
 
     def library_cover(self, key: str) -> tuple[bytes, str, str]:
         """A game's thumbnail, for its row. -> (bytes, content type, error).

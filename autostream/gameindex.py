@@ -69,6 +69,10 @@ class GameHit:
     # business compositing a headline across it. Games without one keep the
     # composite built from a live OBS frame.
     thumbnail: str = ""
+    # Whether THIS game may go live (the Library's Streams switch, `stream:
+    # false` in games.yaml). Off, it only ever records, detected or opened --
+    # and Settings' streaming switch still decides above it.
+    stream: bool = True
 
     def __eq__(self, other):
         return isinstance(other, GameHit) and other.key == self.key
@@ -299,6 +303,7 @@ class GameIndex:
                 source="override",
                 username=str(o.get("username") or ""),
                 thumbnail=str(o.get("thumbnail") or ""),
+                stream=o.get("stream") is not False,
             )
         if exe in self.public and exe not in GENERIC_EXES:
             return GameHit(key=exe, name=self.public[exe], source="public")

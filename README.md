@@ -365,6 +365,9 @@ Closing the window does not quit — it keeps running in the tray so it can dete
   OBS's microphone and sets it against desktop audio, without opening OBS.
 - **Library** — every game it found. *Open + stream* launches one and goes live
   deliberately; *Open (record only)* launches it and records it without streaming.
+  Each game has two switches: *Records* (treat it as a game at all) and *Streams*
+  (whether it may ever go live — off, it is recorded and never streamed, however it
+  starts; Settings' streaming switch still decides above it).
 - **Clips** — every stream you have recorded. Pick one, choose what counts as a
   highlight, and it cuts them.
 - **Settings** — every option as a real control, grouped, in plain language.
