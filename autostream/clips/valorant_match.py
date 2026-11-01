@@ -838,6 +838,21 @@ def round_times(match: Match, puuid: str, sync: cs2_demo.Sync) -> list[dict]:
             if alive_mine == 1 and alive_theirs >= 1:
                 last_stand = sync.to_vod(float(k.get("gameTime") or 0) / 1000.0)
                 break
+        # A TEAM-MATE'S CLUTCH, won: the round's ceremony names them, and the moment
+        # they were left alone is the first kill after which one of the player's side
+        # stands. The player watched three of these go missing from a session video
+        # (2026-11-01) -- the cut stopped when the player died.
+        mate_clutch = None
+        who = str(r.get("ceremonyPlayer") or "")
+        teams = {str(p.get("subject")): str(p.get("teamId") or "")
+                 for p in (match.data.get("players") or [])}
+        if (str(r.get("roundCeremony") or "") == "CeremonyClutch" and won and who
+                and who != puuid and teams.get(who) == me):
+            for k in ks:
+                alive_mine, alive_theirs = _alive_at(match, k, puuid)
+                if alive_mine == 1 and alive_theirs >= 1:
+                    mate_clutch = sync.to_vod(float(k.get("gameTime") or 0) / 1000.0)
+                    break
         out.append({
             "number": n + 1,
             "start": sync.to_vod(zero),
@@ -845,6 +860,7 @@ def round_times(match: Match, puuid: str, sync: cs2_demo.Sync) -> list[dict]:
             "plant": sync.to_vod(zero + plant) if plant is not None else None,
             "contacts": [sync.to_vod(float(k.get("gameTime") or 0) / 1000.0) for k in ks],
             "last_stand": last_stand,
+            "mate_clutch": mate_clutch,
             "final": n == last_n,
             "won": won,
             "score": (mine, theirs),          # the player's side first, after this round

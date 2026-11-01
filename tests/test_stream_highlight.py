@@ -349,3 +349,25 @@ def test_a_sentence_never_runs_over_the_rounds_banner():
     got = sh.snap(cuts, [Line(715.0, 723.2, "talk")])
     assert [c.layout for c in got] == ["game", "cam", "result"]
     assert got[1].end == 717.7 and (got[2].start, got[2].end) == (717.7, 720.2)
+
+
+def test_a_team_mates_clutch_is_a_stretch_of_its_own_and_always_kept():
+    r22 = {"number": 22, "start": 1789.6, "end": 1858.1, "plant": 1816.3, "last_stand": None,
+           "mate_clutch": 1825.0, "final": False, "won": True, "score": (10, 12),
+           "contacts": [1801.1, 1807.4, 1824.6, 1825.0, 1835.0, 1843.0, 1846.0, 1850.0]}
+    evs = sh.events(kills=[], deaths=[1807.4], reactions=[], rounds=[r22])
+    sts = sh.stretches(evs, speech=[], rounds=[r22])
+    clutch = next(s for s in sts if any(e.kind == "clutch" for e in s.events))
+    # from the fight that left the team-mate alone, to the round's result
+    assert clutch.start <= 1825.0 - sh.STATE_SETUP and clutch.end >= 1858.1 + sh.RESULT_HOLD
+    assert clutch.why == "Team-mate clutch"
+    assert sh.must_show(clutch)
+    # kept even when the budget has no room for it
+    assert clutch in sh.select(sts, budget=1.0)
+
+
+def test_two_kills_in_a_round_are_never_budgeted_out():
+    a = sh.Stretch(start=0, end=200, score=50.0, round=3, events=[sh.Event(10, "kill", 1)])
+    b = sh.Stretch(start=300, end=330, score=2.5, round=5,
+                   events=[sh.Event(310, "kill", 1), sh.Event(312, "kill", 1)])
+    assert sh.select([a, b], budget=150) == [b]

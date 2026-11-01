@@ -330,6 +330,9 @@ def events(*, kills: list[float], deaths: list[float], reactions: list, rounds=N
         r = _round_of(rounds, x.start)
         out.append(Event(float(x.start), "reaction", float(x.score) / REACTION_UNIT, end=float(x.end),
                          round=r["number"] if r else None))
+    for r in rounds or []:
+        if r.get("mate_clutch") is not None:
+            out.append(Event(float(r["end"]), "clutch", LABEL_BONUS["CLUTCH"], round=r["number"]))
     out.sort(key=lambda e: e.t)
     return out
 
@@ -382,6 +385,9 @@ def bounds(g: list[Event], r: dict | None, speech: list[tuple[float, float]],
     first = g[0].t
     if plays:
         c, lead = situation_start(plays[0].t, r)
+        if r and r.get("mate_clutch") is not None and any(e.kind == "clutch" for e in g):
+            if r["mate_clutch"] < c:
+                c, lead = r["mate_clutch"], STATE_SETUP
         start = min(c - lead, first - 1.0)
     else:
         # A reaction with no play of the player's: whatever fight just happened
@@ -466,6 +472,8 @@ def stretches(evs: list[Event], *, speech: list[tuple[float, float]], rounds=Non
             imp, reason = story.importance(rnum)
             score += ROUND_WEIGHT * imp
             why = why or reason
+        if any(e.kind == "clutch" for e in g):
+            why = "Team-mate clutch"
         if not why:
             n = len(kills)
             why = f"{n} kill{'s' if n != 1 else ''}" if n else "Reaction"
@@ -551,12 +559,24 @@ def punches(s: Stretch) -> list[float]:
     return out
 
 
+def must_show(s: Stretch, final: bool = False) -> bool:
+    """A stretch no budget leaves out: two or more of the player's kills, a clutch --
+    theirs, last alive with a kill, or a team-mate's -- or the match's last round.
+    The player, on the first session video (2026-11-01): "some of the kills are
+    getting missed and the clutch of my team-mates are also getting missed". It had
+    shown 8 of 17 of his kills on Bind and none of three team-mate clutches, all to
+    stay inside a per-match budget."""
+    kinds = [e.kind for e in s.events]
+    return final or kinds.count("kill") >= 2 or "clutch" in kinds or (
+        "LAST ALIVE" in s.why.upper() and "kill" in kinds)
+
+
 def select(sts: list[Stretch], *, budget: float = PER_MATCH, must: list[int] | None = None) -> list[Stretch]:
-    """The best stretches that fit the budget, in the order they happened. A round in
-    `must` (the final round) is kept when it has a stretch at all."""
+    """The best stretches that fit the budget, in the order they happened. Every
+    must_show stretch is kept whatever the budget; a round in `must` is the final."""
     chosen: list[Stretch] = []
     used = 0.0
-    forced = [s for s in sts if must and s.round in must]
+    forced = [s for s in sts if must_show(s, final=bool(must and s.round in must))]
     for s in forced + sorted((s for s in sts if s not in forced), key=lambda s: -s.score):
         if s in chosen:
             continue
@@ -691,8 +711,14 @@ def shape(s: Stretch, r: dict | None, speech: list[tuple[float, float]],
         # spectating with uninteresting footage" (ChatGPT, on the first CAM render).
         # Every fight after the death, up to the round's end, stays on the game --
         # talked over or not -- and the talk around it is the CAM.
-        fights = _union([(max(d, c - HOLD_BEFORE_CONTACT), c + 1.0) for c in r.get("contacts") or []
-                         if d < c <= min(r["end"], limit)])
+        fights = [(max(d, c - HOLD_BEFORE_CONTACT), c + 1.0) for c in r.get("contacts") or []
+                  if d < c <= min(r["end"], limit)]
+        if r.get("mate_clutch") is not None and any(e.kind == "clutch" for e in s.events):
+            # The team-mate's clutch is the round: all of it, however long. (Only in
+            # the stretch that holds it -- another stretch of the round would show it
+            # twice.)
+            fights.append((max(d, r["mate_clutch"] - STATE_SETUP), r["end"] + RESULT_SEEN))
+        fights = _union(fights)
         cam = _minus(_talk_after(d, speech, limit), fights)
         pieces = sorted(kept + [(a, b, "game") for a, b in fights]
                         + [(a, b, "cam") for a, b in cam if b - a >= CAM_SHORTEST])
