@@ -16,7 +16,8 @@ WHY THIS EXISTS
 WHAT IS MEASURED (2026-11-01, the Bind recording of 2026-10-25)
     The "small" multilingual model on the CPU, int8, 12 threads: 1.2x to 4.7x real
     time over the stretches of a match -- under the 5x a reader needs to go in front
-    of people, so the clip job uses it only on a graphics card (`fast`). The player
+    of people, so the clip job uses it only on a graphics card (`fast`). On the card
+    (float16, with pip's nvidia-cublas-cu12 and nvidia-cudnn-cu12): 11x. The player
     speaks Hindi (detected at 0.73); the round-10 rage reads "साले इतार! बापास
     आजा!" at 715.2-727.3 s, where the mic's level put the end at 719.6.
 """
@@ -64,6 +65,25 @@ _model = None
 _device: str | None = None
 
 
+def _cuda_dlls() -> None:
+    """Put pip's CUDA libraries (nvidia-cublas-cu12, nvidia-cudnn-cu12) where Windows
+    looks for DLLs. They install into site-packages/nvidia/*/bin, which is on no
+    search path, and ctranslate2 loads cuBLAS by name."""
+    if os.name != "nt":
+        return
+    try:
+        import nvidia
+    except ImportError:
+        return
+    for root in getattr(nvidia, "__path__", []):
+        for bin_dir in Path(root).glob("*/bin"):
+            try:
+                os.add_dll_directory(str(bin_dir))
+                os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+            except OSError:
+                pass
+
+
 def _load():
     """The model on the graphics card when it can run there, else the CPU.
 
@@ -73,6 +93,7 @@ def _load():
     global _model, _device
     if _model is None:
         from faster_whisper import WhisperModel
+        _cuda_dlls()
         try:
             import ctranslate2
             if ctranslate2.get_cuda_device_count() < 1:
