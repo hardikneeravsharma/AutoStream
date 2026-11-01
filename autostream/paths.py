@@ -73,6 +73,9 @@ DATA_HOME = _default_data_home()
 # ROOT; it must never touch anything under DATA_HOME.
 CONFIG_DIR = DATA_HOME / "config"
 SECRETS_DIR = DATA_HOME / "secrets"
+# Heavy optional extras downloaded at the user's asking (packs.py): libraries a
+# packaged build cannot carry, each in a folder of its own.
+PACKS_DIR = DATA_HOME / "packs"
 LOGS_DIR = DATA_HOME / "logs"
 
 # What the program SHIPS WITH: defaults to seed a fresh install from, and the

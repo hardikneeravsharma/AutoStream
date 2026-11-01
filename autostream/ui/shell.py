@@ -400,6 +400,110 @@ function toast(message, kind, action) {
   while (host.children.length > 4) host.removeChild(host.firstChild);
 }
 
+/* ---------------- heavy downloads (packs.py) ----------------
+
+   ASKED, NEVER ASSUMED. The player (2026-11-02): when somebody uses a feature
+   whose heavy libraries or models are not on the machine, ask them and download
+   it for them. So a feature that needs a pack calls pack_need(key) first: it
+   says what the pack is for and what it costs in gigabytes, and downloads only
+   on Download, with its progress, and the app stays usable meanwhile.
+   -> a promise of true once the pack is there; false for Not now, or a machine
+   that cannot use it (opts.quiet: say nothing about that). */
+let pack_open = null;
+
+function pack_size(b) {
+  return b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : Math.max(1, Math.round(b / 1e6)) + ' MB';
+}
+
+async function pack_need(key, opts) {
+  opts = opts || {};
+  if (pack_open) return pack_open.promise;
+  const scrim = document.createElement('div');
+  scrim.className = 'scrim pack-scrim';
+  scrim.innerHTML =
+    '<div class="modal pack-modal" role="dialog" aria-modal="true" aria-labelledby="pack-title">' +
+    '<h2 class="modal-title" id="pack-title">Checking what is needed</h2>' +
+    '<div class="modal-body" id="pack-body"><p class="muted">Working out the download size&hellip;</p></div>' +
+    '<div class="pack-bar hide" id="pack-bar"><span id="pack-fill"></span></div>' +
+    '<p class="muted pack-step hide" id="pack-step"></p>' +
+    '<div class="modal-actions" id="pack-acts"></div></div>';
+  let done;
+  const promise = new Promise(res => { done = res; });
+  pack_open = {promise: promise};
+  const finish = (ok) => {
+    clearTimeout(pack_open && pack_open.poll);
+    if (scrim.parentNode) scrim.parentNode.removeChild(scrim);
+    pack_open = null;
+    done(ok);
+  };
+  const $ = (id) => scrim.querySelector('#' + id);
+  const acts = (html) => { $('pack-acts').innerHTML = html; };
+  document.body.appendChild(scrim);
+  let plan;
+  try { plan = await API.post('/api/packs/plan', {key: key}); } catch (e) { plan = {error: 'The download could not be checked.'}; }
+  if (!plan || plan.error) { finish(false); toast((plan && plan.error) || 'The download could not be checked.', 'error'); return promise; }
+  if (plan.installed) { finish(true); return promise; }
+  if (!plan.can) { finish(false); if (!opts.quiet) toast(plan.why, 'warn'); return promise; }
+  const label = plan.label;
+  $('pack-title').textContent = 'Download ' + label.toLowerCase() + '?';
+  $('pack-body').innerHTML =
+    '<p>' + esc((opts.reason ? opts.reason + ' needs ' : '') + label.toLowerCase() + ': it ' + plan.what + '.') + '</p>' +
+    '<p>It is too large to come with AutoStream, so it is downloaded once, when it is first ' +
+    'needed: <b>' + esc(pack_size(plan.bytes || 0)) + '</b>, kept on this PC and never uploaded anywhere.</p>';
+  const watch = () => {
+    pack_open.poll = setTimeout(async () => {
+      let r;
+      try { r = await API.get('/api/packs/progress'); } catch (e) { r = null; }
+      if (!pack_open) return;
+      if (!r) { watch(); return; }
+      if (r.state === 'running') {
+        $('pack-bar').classList.remove('hide');
+        $('pack-step').classList.remove('hide');
+        $('pack-fill').style.width = Math.min(100, r.percent || 0) + '%';
+        $('pack-step').textContent = (r.step || 'Downloading') + ' -- ' + pack_size(r.done || 0) + ' of ' +
+          pack_size(r.total || plan.bytes || 0);
+        watch();
+      } else if (r.state === 'done') {
+        toast(label + ' is ready.', 'ok');
+        finish(true);
+      } else if (r.state === 'failed') {
+        $('pack-step').textContent = r.error || 'The download failed.';
+        acts('<button class="btn" type="button" data-pack="no">Close</button>' +
+             '<button class="btn btn-primary" type="button" data-pack="go">Try again</button>');
+      } else {
+        finish(false);
+      }
+    }, 1000);
+  };
+  const start = async () => {
+    const r = await API.post('/api/packs/install', {key: key});
+    if (r && r.error) { toast(r.error, 'error'); return; }
+    acts('<button class="btn" type="button" data-pack="hide">Keep using the app</button>' +
+         '<button class="btn btn-ghost" type="button" data-pack="stop">Stop</button>');
+    $('pack-step').classList.remove('hide');
+    $('pack-step').textContent = 'Starting the download...';
+    watch();
+  };
+  acts('<button class="btn" type="button" data-pack="no">' + esc(opts.skip || 'Not now') + '</button>' +
+       '<button class="btn btn-primary" type="button" data-pack="go">Download ' + esc(pack_size(plan.bytes || 0)) + '</button>');
+  scrim.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pack]');
+    if (!b) return;
+    const a = b.getAttribute('data-pack');
+    if (a === 'go') start();
+    else if (a === 'no') finish(false);
+    else if (a === 'stop') { API.post('/api/packs/cancel', {}); finish(false); }
+    else if (a === 'hide') scrim.classList.add('hide');     /* still downloading; resolves when done */
+  });
+  const running = await API.get('/api/packs/progress').catch(() => null);
+  if (running && running.state === 'running' && running.key === key) {
+    acts('<button class="btn" type="button" data-pack="hide">Keep using the app</button>' +
+         '<button class="btn btn-ghost" type="button" data-pack="stop">Stop</button>');
+    watch();
+  }
+  return promise;
+}
+
 /* ---------------- navigation ---------------- */
 
 function shell_call(obj, method, arg) {

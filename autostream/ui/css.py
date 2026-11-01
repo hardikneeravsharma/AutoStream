@@ -5327,3 +5327,13 @@ from .css_clips import CLIPS_CSS; CSS += CLIPS_CSS  # noqa: E402,E702
 
 # The highlight editor (ui/highlight.py keeps its own sheet beside its markup).
 from .highlight import HIGHLIGHT_CSS; CSS += HIGHLIGHT_CSS  # noqa: E402,E702
+
+# The heavy-download question (shell's pack_need): the modal, a bar and a line.
+CSS += r"""
+.pack-modal{width:min(480px,100%)}
+.pack-modal .modal-body p{margin:0 0 var(--space-4)}
+.pack-bar{height:var(--meter-height);border-radius:var(--radius-pill);background:var(--track);overflow:hidden}
+.pack-bar>span{display:block;height:100%;width:0;background:var(--accent);transition:width var(--dur-base) var(--ease-standard)}
+.pack-step{margin:0;font-size:var(--text-sm);font-variant-numeric:tabular-nums}
+.pack-scrim.hide{display:none}
+"""

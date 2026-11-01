@@ -356,6 +356,16 @@ CONTROLS: list[Control] = [
             why="stops the copy started above; test_ui_unplayable_source drives it"),
     Control("/api/clips/playable/status", "GET", STATIC, "", "clips",
             why="polled while a playable copy is being made"),
+    # Heavy downloads (packs.py), offered by shell's pack_need; test_ui_highlight
+    # drives the question with the server's answers faked, test_packs the rest.
+    Control("/api/packs/plan", "POST", STATIC, "", "shell",
+            why="asks PyPI what a pack would download; needs the network"),
+    Control("/api/packs/install", "POST", STATIC, "Download", "shell",
+            why="downloads gigabytes of libraries and models, only at the user's yes"),
+    Control("/api/packs/cancel", "POST", STATIC, "Stop", "shell",
+            why="stops the download started above"),
+    Control("/api/packs/progress", "GET", STATIC, "", "shell",
+            why="polled while a pack downloads"),
     # The highlight editor (ui/highlight.py); test_ui_highlight drives all six.
     Control("/api/clips/highlight", "GET", STATIC, "Edit the highlight video", "clips",
             why="opens a highlight video's edit project; needs one made by a clip job"),

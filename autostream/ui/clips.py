@@ -5583,6 +5583,7 @@ async function clip_reviewCut() {
      overrides whatever was set earlier. */
   var mont = clip_el('clip-review-montage');
   if (mont) body.montage = mont.getAttribute('aria-checked') === 'true';
+  await clip_offerSpeech(s);
   try {
     var r = await API.post('/api/clips/run', body);
     if (r && r.error) { toast(r.error, 'error'); if (b) b.disabled = false; return; }
@@ -5701,9 +5702,22 @@ async function clip_runDiag() {
   }
 }
 
+/* A run that makes a highlight video (a game with a match record) captions it
+   with speech-to-text -- which the installed app downloads when first needed,
+   at the person's yes (shell's pack_need). Asked once a session at most:
+   "Make it without captions" is an answer, not a nag to repeat. */
+async function clip_offerSpeech(s) {
+  if (!s || !s.matches || typeof pack_need !== 'function') return;
+  try { if (sessionStorage.getItem('autostream.speechAsked')) return; } catch (e) { /* private mode */ }
+  try { sessionStorage.setItem('autostream.speechAsked', '1'); } catch (e) { /* private mode */ }
+  await pack_need('speech', {reason: 'Captioning the highlight video', skip: 'Make it without captions',
+                             quiet: true});
+}
+
 async function clip_run() {
   var s = clip_state.pick;
   if (!s) return;
+  await clip_offerSpeech(s);
   var go = clip_el('clip-go');
   if (go) go.disabled = true;
   try {
