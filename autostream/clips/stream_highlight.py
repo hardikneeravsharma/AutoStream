@@ -104,6 +104,8 @@ RESULT_OUT = 3.3
 RESULT_SEEN = 1.5
 SNAP = 6.0                 # how far a cut moves to a sentence's edge (snap())
 SHORTEST = 8.0
+SINGLE_LEAD = 6.0          # a lone kill with nothing said: this long before it...
+SINGLE_TAIL = 2.5          # ...and this long after
 
 # DEAD TIME: DEAD seconds or more with no speech, no game-audio activity, no event,
 # and nothing brewing -- the seconds before any contact, a post-plant, a last-alive
@@ -431,6 +433,13 @@ def bounds(g: list[Event], r: dict | None, speech: list[tuple[float, float]],
         end = min(end, max(r["end"] + AFTER_ROUND, rx_end))
     if next_start is not None:
         end = min(end, next_start - 1.0)
+    # ONE KILL, NOTHING SAID ABOUT IT: every kill is now in the video (must_show),
+    # so a lone one is a quick look -- the peek and the kill -- not a 25 s stretch.
+    kills = [e.t for e in g if e.kind == "kill"]
+    if len(kills) == 1 and not rxs and not (r and r.get("last_stand")
+                                            and r["last_stand"] <= kills[0] <= r["end"]):
+        start = max(start, kills[0] - SINGLE_LEAD)
+        end = min(end, max(kills[0] + SINGLE_TAIL, start + SHORTEST))
     if end - start < SHORTEST:
         end = start + SHORTEST
     return max(0.0, start), end
@@ -560,15 +569,14 @@ def punches(s: Stretch) -> list[float]:
 
 
 def must_show(s: Stretch, final: bool = False) -> bool:
-    """A stretch no budget leaves out: two or more of the player's kills, a clutch --
-    theirs, last alive with a kill, or a team-mate's -- or the match's last round.
+    """A stretch no budget leaves out: any kill of the player's, a team-mate's clutch,
+    or the match's last round. The budget only decides the rest -- reactions and talk.
     The player, on the first session video (2026-11-01): "some of the kills are
     getting missed and the clutch of my team-mates are also getting missed". It had
     shown 8 of 17 of his kills on Bind and none of three team-mate clutches, all to
     stay inside a per-match budget."""
     kinds = [e.kind for e in s.events]
-    return final or kinds.count("kill") >= 2 or "clutch" in kinds or (
-        "LAST ALIVE" in s.why.upper() and "kill" in kinds)
+    return final or "kill" in kinds or "clutch" in kinds
 
 
 def select(sts: list[Stretch], *, budget: float = PER_MATCH, must: list[int] | None = None) -> list[Stretch]:

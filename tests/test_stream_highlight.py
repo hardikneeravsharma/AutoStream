@@ -366,8 +366,12 @@ def test_a_team_mates_clutch_is_a_stretch_of_its_own_and_always_kept():
     assert clutch in sh.select(sts, budget=1.0)
 
 
-def test_two_kills_in_a_round_are_never_budgeted_out():
-    a = sh.Stretch(start=0, end=200, score=50.0, round=3, events=[sh.Event(10, "kill", 1)])
-    b = sh.Stretch(start=300, end=330, score=2.5, round=5,
-                   events=[sh.Event(310, "kill", 1), sh.Event(312, "kill", 1)])
+def test_no_kill_is_ever_budgeted_out():
+    a = sh.Stretch(start=0, end=200, score=50.0, round=3, events=[sh.Event(100, "reaction", 9)])
+    b = sh.Stretch(start=300, end=330, score=1.0, round=5, events=[sh.Event(310, "kill", 1)])
     assert sh.select([a, b], budget=150) == [b]
+
+
+def test_a_lone_kill_with_nothing_said_is_a_quick_look():
+    s = sh.stretches(sh.events(kills=[500.0], deaths=[], reactions=[]), speech=[])[0]
+    assert (s.start, s.end) == (500.0 - sh.SINGLE_LEAD, 500.0 + sh.SINGLE_TAIL)
