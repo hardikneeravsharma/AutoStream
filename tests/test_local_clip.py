@@ -399,6 +399,10 @@ SESSION_ONLY = {
     # us was not recorded against a session, so there is no match to line it up
     # with, and the switch it gates is correctly not offered.
     "matches": "no session, so no match record to cut the whole match from",
+    # The highlight video a recording's earlier run made, for the editor. Found
+    # from that run's folder, like made_folder, which a picked file's row is not
+    # given either: the summary's buttons for earlier work are a journal row's.
+    "highlight": "an earlier run's highlight video, looked up for journal rows only",
 }
 
 
@@ -767,6 +771,7 @@ PICK_SESSION_ONLY = {
     "kills_known": "kills a PREVIOUS run of this session found",
     "made_clips": "how many clips a previous run of this session produced",
     "made_folder": "where that previous run put them",
+    "highlight": "the highlight video that previous run made, for its editor",
     "seed": "a starting scan-mode hint attached to a recorded session",
     "matches": "whether the game keeps a match record to cut the whole match "
                "from; a picked file was not recorded against a session, so "

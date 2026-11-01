@@ -500,6 +500,18 @@ class _Handler(BaseHTTPRequestHandler):
         self._media(path, Path(path).parent,
                     tuple(self.app.FRAME_TYPES), "video")
 
+    def _highlight_source(self, video: str) -> None:
+        """Stream the recording a highlight video was cut from, for the editor's
+        preview. Named by the highlight's PROJECT -- a file the clip job wrote
+        inside the clips folder -- never by the request: the request names only
+        the video, and `_highlight_project` holds that to the clips folder."""
+        project, why = self.app._highlight_project(video)
+        if project is None:
+            self._json({"error": why}, 404)
+            return
+        src = Path(project.get("source") or "")
+        self._media(str(src), src.parent, tuple(self.app.FRAME_TYPES), "video")
+
     def _facecam_video(self, path: str) -> None:
         """Stream a facecam video, so it can be lined up with the game by eye.
 
@@ -847,6 +859,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.app.platform_status())
         elif u.path == "/api/clips/playable/status":
             self._json(self.app.clips_playable_status())
+        elif u.path == "/api/clips/highlight":
+            q = parse_qs(u.query)
+            self._json(self.app.clips_highlight((q.get("video") or [""])[0]))
+        elif u.path == "/api/clips/highlight/status":
+            self._json(self.app.clips_highlight_status())
+        elif u.path == "/api/clips/highlight/source":
+            q = parse_qs(u.query)
+            self._highlight_source((q.get("video") or [""])[0])
         elif u.path == "/api/clips/part/status":
             self._json(self.app.clips_part_status())
         elif u.path == "/api/clips/source-info":
@@ -1385,6 +1405,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.clips_playable_cancel())
             elif p == "/api/clips/part/save":
                 self._json(self.app.clips_part_save(b))
+            elif p == "/api/clips/highlight/save":
+                self._json(self.app.clips_highlight_save(b))
+            elif p == "/api/clips/highlight/render":
+                self._json(self.app.clips_highlight_render(b))
+            elif p == "/api/clips/highlight/cancel":
+                self._json(self.app.clips_highlight_cancel())
             elif p == "/api/setup/scan":
                 self._json(self.app.setup.scan())
             elif p == "/api/setup/apps":
@@ -2269,6 +2295,8 @@ class Server:
             r["made_folder"] = made["folder"] if made else ""
             r["made_when"] = made["when"] if made else 0
             r["made_kind"] = made["kind"] if made else ""
+            # The highlight video it has, if one can be opened in the editor.
+            r["highlight"] = self._editable_highlight(made["folder"]) if made else ""
             # Games can only be counted, not distinguished from assists.
             r["counts_assists"] = bool(prof and prof.counts_assists)
             # How this game's kills are found, so the page can say. "killfeed"
@@ -2441,6 +2469,11 @@ class Server:
             if made:
                 runs[src] = {"folder": str(folder), "clips": made,
                              "kind": str(data.get("kind") or "clips"),
+                             "when": int(sidecar.stat().st_mtime)}
+            elif self._editable_highlight(str(folder)):
+                # Only a highlight video came out of it: nothing to list as clips,
+                # but the video can still be opened in its editor.
+                runs[src] = {"folder": str(folder), "clips": 0, "kind": "highlight",
                              "when": int(sidecar.stat().st_mtime)}
         return kills, runs
 
@@ -3070,6 +3103,10 @@ class Server:
 
         if edit_mod.editor().busy():
             return {"error": "A clip is being re-rendered; wait for it to finish."}
+        from .clips import highlight_edit
+
+        if highlight_edit.renderer().busy():
+            return {"error": "A highlight video is being made; wait for it to finish."}
 
         src = str(body.get("source") or "")
         session: dict = {}
@@ -3360,6 +3397,119 @@ class Server:
         from .clips import edit as edit_mod
 
         return edit_mod.editor().snapshot()
+
+    # ------------------------------------------------ the highlight editor
+
+    def _highlight_project(self, video: str) -> tuple[dict | None, str]:
+        """The edit project of a highlight video in the clips folder, or why not.
+
+        The video must be inside the clips folder, and the project beside it
+        must name that same video: a project copied from elsewhere, naming a
+        recording somewhere else, is not one this app wrote for it."""
+        from .clips import highlight_edit
+
+        if not video:
+            return None, "Which video?"
+        v = Path(video)
+        try:
+            if not v.resolve().is_relative_to(self._clips_dir(cfg.load()).resolve()):
+                return None, "That video is not in the clips folder."
+        except OSError:
+            return None, "That video is gone."
+        project = highlight_edit.load(v)
+        if project is None:
+            return None, "That video has no edit project."
+        try:
+            if Path(project.get("video") or "").resolve() != v.resolve():
+                return None, "That edit project is for another video."
+        except OSError:
+            return None, "That edit project is for another video."
+        return project, ""
+
+    @staticmethod
+    def _editable_highlight(folder: str) -> str:
+        """The newest highlight video in a run folder that has an edit project."""
+        from .clips import highlight_edit
+
+        if not folder:
+            return ""
+        try:
+            found = [p for p in (Path(folder) / "match").glob("*" + highlight_edit.SUFFIX)]
+        except OSError:
+            return ""
+        best = ""
+        for p in sorted(found, key=lambda q: q.stat().st_mtime, reverse=True):
+            video = p.with_name(p.name[:-len(highlight_edit.SUFFIX)] + ".mp4")
+            if video.is_file():
+                best = str(video)
+                break
+        return best
+
+    def clips_highlight(self, video: str) -> dict:
+        """A highlight video's edit project, for the editor to open."""
+        from .clips import highlight_edit
+
+        project, why = self._highlight_project(video)
+        if project is None:
+            return {"error": why}
+        src = Path(project.get("source") or "")
+        made = project.get("made") or ""
+        return {"ok": True, "project": project,
+                "source_ok": src.is_file(),
+                "length": round(highlight_edit.length(project), 2),
+                "made": made if made and Path(made).is_file() else "",
+                "render": highlight_edit.renderer().snapshot()}
+
+    def clips_highlight_save(self, body: dict) -> dict:
+        """The editor's changes, saved as they are made."""
+        from .clips import highlight_edit
+
+        project, why = self._highlight_project(str(body.get("video") or ""))
+        if project is None:
+            return {"error": why}
+        edits = body.get("project")
+        if not isinstance(edits, dict):
+            return {"error": "Nothing to save."}
+        merged = highlight_edit.merge(project, edits)
+        highlight_edit.save(merged)
+        return {"ok": True, "length": round(highlight_edit.length(merged), 2)}
+
+    def clips_highlight_render(self, body: dict) -> dict:
+        """Make the edited video: the changes saved, then rendered once."""
+        from . import clips
+        from .clips import highlight_edit
+
+        c = cfg.load()
+        clips.set_ffmpeg_path(c.clips.ffmpeg_path or None)
+        st = clips.status()
+        if not st["ok"]:
+            return {"error": st["detail"] or "ffmpeg or numpy is missing."}
+        project, why = self._highlight_project(str(body.get("video") or ""))
+        if project is None:
+            return {"error": why}
+        if not Path(project.get("source") or "").is_file():
+            return {"error": "The recording this was cut from is not on this PC any more."}
+        if clips.runner().busy():
+            return {"error": "A clip job is running; make the video when it has finished."}
+        if isinstance(body.get("project"), dict):
+            project = highlight_edit.merge(project, body["project"])
+            highlight_edit.save(project)
+        if highlight_edit.length(project) < 5.0:
+            return {"error": "Nothing is kept: keep at least one moment."}
+        if not highlight_edit.renderer().start(project, encoder=c.clips.encoder):
+            return {"error": "A highlight video is already being made."}
+        return {"ok": True, "out": str(highlight_edit.edited_path(project["video"]))}
+
+    def clips_highlight_cancel(self) -> dict:
+        from .clips import highlight_edit
+
+        highlight_edit.renderer().cancel()
+        return {"ok": True}
+
+    def clips_highlight_status(self) -> dict:
+        from .clips import highlight_edit
+
+        return {"ok": True, **highlight_edit.renderer().snapshot()}
 
     def clips_edit(self, body: dict) -> dict:
         """Re-render one already-cut clip with new settings."""

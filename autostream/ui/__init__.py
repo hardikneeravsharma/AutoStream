@@ -24,6 +24,7 @@ from .clips import CLIPS_HTML, CLIPS_JS
 from .commands import COMMANDS_JS
 from .css import CSS
 from .dashboard import DASH_HTML, DASH_JS
+from .highlight import HIGHLIGHT_HTML, HIGHLIGHT_JS
 from .icons import ICONS, LOGO_LOCKUP, LOGO_MARK
 from .library import LIBRARY_HTML, LIBRARY_JS
 from .logs import LOGS_HTML, LOGS_JS
@@ -38,6 +39,7 @@ _VIEWS = {
     "{{LIBRARY_HTML}}": LIBRARY_HTML,
     "{{CLIPS_HTML}}": CLIPS_HTML,
     "{{REEL_HTML}}": REEL_HTML,
+    "{{HIGHLIGHT_HTML}}": HIGHLIGHT_HTML,
     "{{STUDIO_HTML}}": STUDIO_HTML,
     "{{SETTINGS_HTML}}": SETTINGS_HTML,
     "{{LOGS_HTML}}": LOGS_HTML,
@@ -62,6 +64,7 @@ JS = "\n".join((
     LIBRARY_JS,
     CLIPS_JS,
     REEL_JS,
+    HIGHLIGHT_JS,  # after CLIPS_JS: it calls clip_reveal
     COMMANDS_JS,   # the Studio's command registry: STUDIO_JS reads it
     STUDIO_JS,
     SETTINGS_JS,

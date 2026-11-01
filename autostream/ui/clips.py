@@ -2460,6 +2460,11 @@ function clip_sumHTML(s) {
          esc(s.made_kind === 'summary' ? 'See the videos made' : 'See the ' + s.made_clips +
              (s.made_clips === 1 ? ' clip' : ' clips') + ' cut') + '</button>';
   }
+  /* The highlight video this recording already has, opened in its editor
+     (ui/highlight.py): moments kept, captions, the facecam zoom. */
+  if (s.highlight) {
+    h += '<button class="btn" type="button" data-act="sum-highlight">Edit the highlight video</button>';
+  }
   if (clip_momMode() === 'review') {
     h += '<button class="btn" type="button" data-act="sum-change" data-val="review">' +
          'Back to the moments found</button>';
@@ -7616,6 +7621,8 @@ function clip_wire() {
       if (clip_isMV()) clip_run(); else clip_preview();
     } else if (act === 'sum-change') {
       clip_goStep(b.getAttribute('data-val'));
+    } else if (act === 'sum-highlight') {
+      if (window.PAGE_HL && clip_state.pick) window.PAGE_HL.open(clip_state.pick.highlight);
     } else if (act === 'sum-made') {
       clip_state.openMade = true;
       if (clip_momMode() === 'made') { clip_state.openMade = false; clip_goStep('review'); }

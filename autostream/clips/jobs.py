@@ -586,6 +586,17 @@ class ClipJob:
             "chapters": [[round(t, 2), n] for t, n in marks],
             **({"said": [ln.as_dict() for ln in lines]} if lines else {}),
         })
+        # THE PROJECT the highlight editor opens (clips/highlight_edit.py): the same
+        # cuts, the moments they came from and what was said, so a kept moment, a
+        # caption or the facecam zoom can be changed without planning it again.
+        try:
+            from . import highlight_edit
+            highlight_edit.save(highlight_edit.build(
+                video=out, source=self.source, source_seconds=dur, cuts=cuts, chosen=chosen,
+                labels=[matches[o].label for o in owner], lines=lines, cam_box=box,
+                channel=str(self.options.get("channel") or ""), game=self.game))
+        except Exception as e:  # noqa: BLE001 - the video is made; only the editor misses it
+            log.warning("could not write the highlight's edit project: %s", e)
         log.info("stream highlight: %s (%d stretches from %d of %d matches, %d chapters)",
                  Path(out).name, len(chosen), len(kept), len(matches), len(marks))
         return str(out)
