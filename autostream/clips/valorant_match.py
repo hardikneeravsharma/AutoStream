@@ -210,12 +210,41 @@ def agent_of(match: "Match", puuid: str) -> str:
     return ""
 
 
+def story(match: "Match", puuid: str) -> dict:
+    """The whole match, for the recap's story (clips/match_story.py) and its cards:
+    who won every round -- every one, not only those the recording holds -- and the
+    player's own line for the match. Never raises; an unreadable record gives {}."""
+    try:
+        players = match.data.get("players") or []
+        me = next((p for p in players if isinstance(p, dict) and p.get("subject") == puuid), None)
+        if me is None:
+            return {}
+        team = me.get("teamId")
+        results = sorted(match.data.get("roundResults") or [], key=lambda r: int(r.get("roundNum") or 0))
+        st = me.get("stats") or {}
+        played = int(st.get("roundsPlayed") or len(results) or 1)
+        return {
+            "won": [r.get("winningTeam") == team for r in results],
+            "kills": int(st.get("kills") or 0), "deaths": int(st.get("deaths") or 0),
+            "assists": int(st.get("assists") or 0),
+            # Riot's own combat score over the rounds played -- the ACS the game shows.
+            "acs": int(round(float(st.get("score") or 0) / max(1, played))),
+            "agent": agent_of(match, puuid), "map": summary(match).get("map") or "",
+        }
+    except (TypeError, ValueError, AttributeError) as e:
+        log.debug("no story for match %s: %s", getattr(match, "id", "?"), e)
+        return {}
+
+
 # Riot's internal map names -> the names on the loading screen. A map missing
 # here shows its internal name, which is still a name a player can search.
 MAP_NAMES = {
     "Ascent": "Ascent", "Bonsai": "Split", "Duality": "Bind", "Triad": "Haven",
     "Port": "Icebox", "Foxtrot": "Breeze", "Canyon": "Fracture", "Pitt": "Pearl",
     "Jam": "Lotus", "Juliett": "Sunset", "Infinity": "Abyss", "Rook": "Corrode",
+    # Read off the agent select of a 2026-10-25 match: the session video's lower
+    # third said PLUMMET over a screen that says SUMMIT.
+    "Plummet": "Summit",
     "Range": "The Range", "HURM_Alley": "District", "HURM_Bowl": "Kasbah",
     "HURM_Yard": "Piazza", "HURM_Helix": "Drift", "HURM_HighTide": "Glitch",
 }
@@ -749,6 +778,94 @@ def _alive_at(match: Match, kill: dict, puuid: str) -> tuple[int, int]:
 # How much of a round is shown either side of its kills: the buy and the walk
 # in, and the moment after the last kill before the screen changes.
 RUN_IN, RUN_OUT = 20.0, 6.0
+
+
+def deaths_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list[float]:
+    """Every time this player died, on the recording's timeline."""
+    out = [sync.to_vod(float(k.get("gameTime") or 0) / 1000.0)
+           for k in match.kills() if k.get("victim") == puuid]
+    return sorted(round(t, 3) for t in out if t > 0)
+
+
+SPIKE_FUSE = 45.0          # seconds from plant to detonation
+ROUND_CLOCK = 100.0        # seconds of combat before a round runs out of time
+
+
+def round_times(match: Match, puuid: str, sync: cs2_demo.Sync) -> list[dict]:
+    """Where each round's FIGHTING happens on the recording: when the barrier
+    dropped, when the round was decided, the plant, every kill by anyone, and when
+    the player became last alive.
+
+    Riot gives no round start, but every kill carries both gameTime and roundTime,
+    and their difference is the same for every kill in a round. It is the barrier
+    dropping, not the buy phase: on the Bind match of 2026-10-25 a kill lands 3.3 s
+    after it. The round is decided by its last kill, the defuse, the detonation
+    (plant + SPIKE_FUSE) or the clock, whichever the result code says."""
+    by_round: dict[int, list[dict]] = {}
+    for k in match.kills():
+        by_round.setdefault(int(k.get("round") or 0), []).append(k)
+    results = {int(r.get("roundNum") or 0): r for r in (match.data.get("roundResults") or [])}
+    last_n = max(results) if results else -1
+    me = {str(p.get("subject")): str(p.get("teamId") or "")
+          for p in (match.data.get("players") or [])}.get(puuid, "")
+    out = []
+    mine = theirs = 0
+    for n in sorted(results):
+        won = (str(results[n].get("winningTeam") or "") == me) if me else None
+        mine, theirs = mine + (won is True), theirs + (won is False)
+        ks = sorted(by_round.get(n, []), key=lambda k: float(k.get("gameTime") or 0))
+        if not ks:
+            continue                       # no kill, so nothing to place the round's clock against
+        zero = (float(ks[0].get("gameTime") or 0) - float(ks[0].get("roundTime") or 0)) / 1000.0
+        r = results[n]
+        plant = float(r["plantRoundTime"]) / 1000.0 if r.get("plantRoundTime") else None
+        defuse = float(r["defuseRoundTime"]) / 1000.0 if r.get("defuseRoundTime") else None
+        code = str(r.get("roundResultCode") or "")
+        last_kill = float(ks[-1].get("roundTime") or 0) / 1000.0
+        if code == "Defuse" and defuse:
+            decided = defuse
+        elif code == "Detonate" and plant is not None:
+            decided = plant + SPIKE_FUSE
+        elif code == "Elimination":
+            decided = last_kill
+        else:
+            decided = max(last_kill, ROUND_CLOCK if plant is None else plant + SPIKE_FUSE)
+        last_stand = None
+        for k in ks:
+            if k.get("victim") == puuid:
+                break
+            alive_mine, alive_theirs = _alive_at(match, k, puuid)
+            if alive_mine == 1 and alive_theirs >= 1:
+                last_stand = sync.to_vod(float(k.get("gameTime") or 0) / 1000.0)
+                break
+        # A TEAM-MATE'S CLUTCH, won: the round's ceremony names them, and the moment
+        # they were left alone is the first kill after which one of the player's side
+        # stands. The player watched three of these go missing from a session video
+        # (2026-11-01) -- the cut stopped when the player died.
+        mate_clutch = None
+        who = str(r.get("ceremonyPlayer") or "")
+        teams = {str(p.get("subject")): str(p.get("teamId") or "")
+                 for p in (match.data.get("players") or [])}
+        if (str(r.get("roundCeremony") or "") == "CeremonyClutch" and won and who
+                and who != puuid and teams.get(who) == me):
+            for k in ks:
+                alive_mine, alive_theirs = _alive_at(match, k, puuid)
+                if alive_mine == 1 and alive_theirs >= 1:
+                    mate_clutch = sync.to_vod(float(k.get("gameTime") or 0) / 1000.0)
+                    break
+        out.append({
+            "number": n + 1,
+            "start": sync.to_vod(zero),
+            "end": sync.to_vod(zero + decided),
+            "plant": sync.to_vod(zero + plant) if plant is not None else None,
+            "contacts": [sync.to_vod(float(k.get("gameTime") or 0) / 1000.0) for k in ks],
+            "last_stand": last_stand,
+            "mate_clutch": mate_clutch,
+            "final": n == last_n,
+            "won": won,
+            "score": (mine, theirs),          # the player's side first, after this round
+        })
+    return out
 
 
 def rounds_from(match: Match, puuid: str, sync: cs2_demo.Sync) -> list:

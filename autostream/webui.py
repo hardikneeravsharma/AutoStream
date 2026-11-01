@@ -3133,6 +3133,8 @@ class Server:
             # a later re-edit of one clip keeps the branding it was cut with.
             "handle": overlay.handle_for(c.thumbnail.channel_name or ""),
             "logo": str(c.thumbnail.logo or ""),
+            # The stream highlight ends on the channel's end screen, by name.
+            "channel": str(c.thumbnail.channel_name or ""),
         }
         # WHICH PART OF THE FILE. Chosen on the Clips page against a filmstrip
         # of the recording, because one file routinely holds more than one

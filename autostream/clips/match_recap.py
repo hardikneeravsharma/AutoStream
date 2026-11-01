@@ -89,7 +89,7 @@ COLD_OPEN_AFTER = 3.3
 class Moment:
     """One stretch of the recording, and what to call it."""
 
-    __slots__ = ("start", "end", "name", "kills", "round", "match", "score", "reaction")
+    __slots__ = ("start", "end", "name", "kills", "round", "match", "score", "reaction", "react_at", "why", "react_score")
 
     def __init__(self, start: float, end: float, *, name: str,
                  kills: list[float], rd=None, match: str = "", score: float = 0.0,
@@ -102,6 +102,9 @@ class Moment:
         self.match = match
         self.score = float(score)
         self.reaction = bool(reaction)    # the player reacted in it (clips/reactions.py)
+        self.react_at: float | None = None  # where the reaction starts, source seconds
+        self.why = ""                       # what the round meant to the match (match_story)
+        self.react_score = 0.0              # how strong its reaction was (reactions.Reaction.score)
 
     @property
     def card(self) -> str:
@@ -197,7 +200,7 @@ def _score(rd, kills: int) -> float:
 
 def moments(round_list, *, target: float = TARGET,
             source_duration: float | None = None,
-            match_of=None, reactions=()) -> list[Moment]:
+            match_of=None, reactions=(), story=None) -> list[Moment]:
     """The moments of the recap, in the order they happened. May be empty.
 
     `match_of(round)` -> a name for the match a round belongs to, when the
@@ -264,6 +267,9 @@ def moments(round_list, *, target: float = TARGET,
         home = next((m for m in pool if m.start <= rs <= m.end + 2.0), None)
         if home is not None:
             home.reaction = True
+            if home.react_at is None:
+                home.react_at = rs
+            home.react_score = max(home.react_score, float(getattr(x, "score", 0.0) or 0.0))
             home.end = max(home.end, min(re_ + 2.0, home.start + MOMENT_MAX))
             home.score += REACTION_BONUS
             continue
@@ -286,13 +292,17 @@ def moments(round_list, *, target: float = TARGET,
         pool.append(Moment(a, b, name="", kills=[], rd=rd,
                            match=(match_of(rd) if (match_of and rd) else ""),
                            score=REACTION_ALONE, reaction=True))
+        pool[-1].react_at = rs
+        pool[-1].react_score = float(getattr(x, "score", 0.0) or 0.0)
         alone += 1
+    if story is not None:
+        pool = _story_weight(pool, story, rounds_sorted, source_duration)
     if not pool:
         return []
 
     # A LONE KILL IS NOT A HIGHLIGHT (see LONE_KILL_SPARE): one unnamed kill, nobody
-    # reacting, goes while there is enough else to make the video from.
-    lone = [m for m in pool if len(m.kills) == 1 and not m.name and not m.reaction]
+    # reacting, nothing riding on the round, goes while there is enough else.
+    lone = [m for m in pool if len(m.kills) == 1 and not m.name and not m.reaction and not m.why]
     if len(pool) - len(lone) >= LONE_KILL_SPARE:
         pool = [m for m in pool if m not in lone]
 
@@ -309,6 +319,47 @@ def moments(round_list, *, target: float = TARGET,
             break
     keep.sort(key=lambda m: m.start)
     return _names(_tidy(keep))
+
+
+def _story_weight(pool: list[Moment], story, rounds_sorted, source_duration) -> list[Moment]:
+    """The match's story in the ranking (ChatGPT's whole-match grading, 2026-11-01).
+
+    Each moment is lifted by how much its round mattered to the match --
+    match_story.Story.importance: the final round, match point, a lead changing hands,
+    the end of the biggest swing, a streak ended, half-time -- STORY_WEIGHT at the
+    most, three rank steps, so a match-point 2K can pass a quiet 3K but not an ace.
+    And the rounds the story cannot do without (Story.must_show: the final round, the
+    end of the biggest swing) are kept when the recording has them: a round there with
+    no moment in it -- lost, nobody's kills -- gets one, its last FINAL_TAIL seconds."""
+    by_n = {int(getattr(r, "number", 0) or 0): r for r in rounds_sorted}
+    for m in pool:
+        n = int(getattr(m.round, "number", 0) or 0) if m.round is not None else 0
+        imp, why = story.importance(n) if n else (0.0, "")
+        m.score += STORY_WEIGHT * imp
+        m.why = why
+    for n in story.must_show():
+        if any(int(getattr(m.round, "number", 0) or 0) == n for m in pool if m.round is not None):
+            continue
+        rd = by_n.get(n)
+        if rd is None or getattr(rd, "ended", None) is None:
+            continue
+        b = float(rd.ended) + POST
+        if source_duration:
+            b = min(b, float(source_duration))
+        m = Moment(max(0.0, b - FINAL_TAIL), b, name="", kills=[], rd=rd, score=0.0)
+        m.score = STORY_WEIGHT * story.importance(n)[0]
+        m.why = story.importance(n)[1]
+        pool.append(m)
+    for m in pool:
+        n = int(getattr(m.round, "number", 0) or 0) if m.round is not None else 0
+        if n in story.must_show():
+            m.score += MUST_SHOW
+    return pool
+
+
+STORY_WEIGHT = 30.0      # rounds.RANK steps are 10
+FINAL_TAIL = 16.0
+MUST_SHOW = 1000.0       # chosen before anything the target could squeeze out
 
 
 # A fight the player reacted in outranks one like it they did not; a reaction on its
@@ -333,6 +384,7 @@ def _names(ms: list[Moment]) -> list[Moment]:
                    and not (float(m.round.started) <= m.start + REACT_PRE <= float(m.round.ended)))
         if not m.name:
             what = (f"{len(m.kills)}K" if len(m.kills) >= 2 else
+                    m.why if m.why else
                     "Player Reacts" if m.reaction else ("1 kill" if m.kills else ""))
             m.name = ("Between Rounds - Player Reaction" if between else
                       f"Round {n:02d} - {what}" if n and what else
@@ -371,6 +423,9 @@ def _tidy(ms: list[Moment]) -> list[Moment]:
             prev.end = max(prev.end, m.end)
             prev.kills += m.kills
             prev.reaction = prev.reaction or m.reaction
+            prev.react_at = prev.react_at if prev.react_at is not None else m.react_at
+            prev.why = prev.why or m.why
+            prev.react_score = max(prev.react_score, m.react_score)
             if m.score > prev.score:
                 prev.name, prev.score = m.name, m.score
             continue

@@ -261,6 +261,8 @@ class ClipJob:
         # the recap leaves the names off.
         self.record_names: list[tuple[tuple[float, float], str]] = []
         self.record_agents: list[str] = []          # the agent played, per match, for the title
+        self.record_stories: list[dict] = []        # every round's winner and the player's line, per match
+        self.record_matches: list[dict] = []        # each match found, as _from_matches returned it
         self.summary_chapters: str = ""
         self.reel_path: str | None = None
         self.promo_path: str | None = None
@@ -452,76 +454,95 @@ class ClipJob:
         return self._cancel.is_set()
 
     def _cut_match(self, round_list, info, enc) -> str | None:
-        """The match as a highlight channel would cut it. -> the file.
+        """The recording as a streamer's highlight video. -> the file.
 
-        WHAT CHANGED AND WHY. This used to be `cutter.master_segments` over
-        `match_summary.spans`: the whole match with the dead time out. On a
-        real recording that kept 83% of it -- 52 minutes, no transitions, no
-        sound design, no beginning and no end -- and the person who asked for
-        it said so in six words. A watch-through is not what anybody uploads.
+        WHAT CHANGED AND WHY. This was a match recap -- twelve short moments
+        between a title card, round cards, a score bar and a result card -- and
+        the player, measuring it against Sinatraa's and Subroza's single-stream
+        highlights, said it was nowhere near them. Those videos are long, real
+        stretches of the stream with the face and the voice carrying them, and
+        no graphics at all; clips/stream_highlight.py cuts that. Every match the
+        record found is a candidate; the strongest few are kept, each given time
+        by how good it was.
 
-        What is decided here is nothing: `match_recap.moments` chooses the
-        seconds and the names, `highlight.render` does the cutting, the whips,
-        the whooshes, the hit flashes, the title and the outro. Both are
-        proved without footage.
+        What is decided here is nothing: `stream_highlight.plan_session` chooses
+        the seconds, `stream_highlight.render` cuts them. Both are proved without
+        footage.
         """
-        from . import highlight, match_recap as recap
+        from . import match_story, reactions as react, stream_highlight as sh
+        from . import valorant_match as vmatch
 
         dur = float(info["duration"])
-        names = list(self.record_names)
+        found = list(getattr(self, "record_matches", None) or [])
+        matches: list[sh.Match] = []
+        for n, g in enumerate(found, 1):
+            about = g.get("about") or {}
+            mode = str(about.get("mode") or "")
+            respawn = vmatch.respawn_mode(mode)
+            labels = {int(getattr(r, "number", 0) or 0): list(getattr(r, "labels", []) or [])
+                      for r in g.get("rounds") or []}
+            times = [dict(t, labels=labels.get(int(t["number"]), [])) for t in g.get("times") or []]
+            won = (about.get("story") or {}).get("won") or []
+            label = " · ".join(x for x in (
+                f"MATCH {n}", (vmatch.mode_name(mode) or "").upper(),
+                "" if respawn else str(about.get("map") or "").upper(),
+                str(about.get("agent") or "").upper()) if x)
+            matches.append(sh.Match(
+                kills=[float(k["time"]) for k in g.get("kills") or []],
+                deaths=[float(t) for t in g.get("deaths") or []],
+                rounds=None if respawn else (times or None),
+                story=match_story.Story(list(won)) if won and not respawn else None,
+                label=label, respawn=respawn,
+                span=tuple(g["span"]) if g.get("span") else None))
+        if not matches:
+            # No match record: the kills the run found are the events, with no
+            # round clock to bound them -- fixed margins do it instead.
+            kills = sorted(t for r in round_list for t in getattr(r, "kill_times", []) or [])
+            if not kills:
+                return None
+            matches = [sh.Match(kills=kills)]
 
-        def match_of(rd):
-            """Which match a round belongs to, when there is more than one.
-
-            One match needs no label; two in one recording do, or the chapter
-            list reads "Round 1" twice with nothing to tell them apart.
-            """
-            if len(names) < 2:
-                return ""
-            t = float(getattr(rd, "started", 0.0) or 0.0)
-            for (lo, hi), name in names:
-                if float(lo) <= t <= float(hi):
-                    return name
-            return ""
-
-        ms = recap.moments(round_list, source_duration=dur, match_of=match_of,
-                           target=recap.PER_MATCH * max(1, len(names)),
-                           reactions=getattr(self, "reactions_found", None) or ())
-        spent = sum(m.seconds for m in ms)
-        if not ms or spent < recap.FLOOR:
-            log.info("not cutting a recap: %.0fs of moments in %d round(s)",
-                     spent, len(round_list))
+        # The microphone and the game, as levels: where the player talks, and where
+        # the game is busy. Read once, a few seconds for an hour of recording.
+        a, b = ((0.0, None) if self.win_whole else (self.win_start, self.win_end - self.win_start))
+        try:
+            mic = react.level(self.source, react.MIC_TRACK, a, b) if react.tracks(self.source) > 1 else None
+            game_lv = react.level(self.source, 2, a, b) if react.tracks(self.source) > 2 else None
+        except Exception as e:  # noqa: BLE001 - no levels: no talk, nothing protected by it
+            log.info("could not read the audio tracks for the highlight: %s", e)
+            mic = game_lv = None
+        speech = sh.speech_runs(mic, offset=a) if mic is not None else []
+        game = sh.game_activity(game_lv, offset=a) if game_lv is not None else []
+        cuts, chosen, owner = sh.plan_session(
+            matches, reactions=getattr(self, "reactions_found", None) or [], speech=speech,
+            game=game, source_duration=dur)
+        # WHAT WAS SAID, where faster-whisper, its model and a graphics card to run it
+        # on are all here (speech.fast): only around the stretches kept, so a 4-hour
+        # stream is minutes of work. The cuts move to the edges of sentences.
+        lines = None
+        if cuts:
+            from . import speech as stt
+            if stt.fast():
+                self._set(message="Listening to what you said")
+                windows = [(max(0.0, s.start - sh.SNAP - 2), s.end + sh.SNAP + 2) for s in chosen]
+                lines = stt.transcribe(self.source, windows)
+                cuts = sh.snap(cuts, lines)
+        spent = sum(c.length for c in cuts)
+        if not cuts or spent < sh.FLOOR:
+            log.info("not cutting a highlight: %.0fs worth keeping in %d match(es)", spent, len(matches))
             return None
 
-        opening = recap.intro(round_list, source_duration=dur)
-        # A COLD OPEN (ChatGPT, 2026-11-01): a few seconds of the strongest moment
-        # before the title, so the first thing seen is a reason to stay. Its kill, or
-        # its reaction, and not the whole moment -- that plays in its place later.
-        best = max(ms, key=lambda m: (m.score, -m.start))
-        hook = (best.kills[-1] if best.kills else best.start + recap.REACT_PRE)
-        teaser = highlight.Shot(max(0.0, hook - recap.COLD_OPEN_BEFORE),
-                                min(dur, hook + recap.COLD_OPEN_AFTER), "fight")
-        shots = ([teaser] if opening else []) + \
-            ([highlight.Shot(opening.start, opening.end, "intro")] if opening else []) + \
-            [highlight.Shot(m.start, m.end, "fight", card=m.card) for m in ms]
-        shown = ([recap.Moment(teaser.start, teaser.end, name="", kills=[])] if opening else []) + \
-            ([opening] if opening else []) + ms
-        kills = sorted(t for m in ms for t in m.kills)
-
+        kept = sorted(set(owner))
         when = datetime.fromtimestamp(
             self.session.get("started") or self.started_at).strftime("%Y-%m-%d")
-        won = sum(1 for r in round_list if getattr(r, "won", None) is True)
-        lost = sum(1 for r in round_list if getattr(r, "won", None) is False)
-        # NO SCORELINE FOR TWO MATCHES. Summing them is how a recording of
-        # Lotus (won 13-10) and Sunset (lost 2-13) came out called 15-23, a
-        # score that never existed in either game.
-        how = (f"{won}-{lost}" if len(names) < 2 else f"{len(names)}matches")
-        name = f"{plan.slug(self.game)}_{when}_recap_{how}_{duration_label(spent)}"
-        title, sub = recap.title_of(self.game, round_list, when=when,
-                                    matches=max(1, len(names)),
-                                    map_name=(names[0][1] if len(names) == 1 else ""),
-                                    agent=(self.record_agents[0] if len(names) == 1
-                                           and getattr(self, "record_agents", None) else ""))
+        if len(kept) == 1 and found:
+            about = found[kept[0]].get("about") or {}
+            st = matches[kept[0]].story
+            what = "_".join(x for x in (str(about.get("map") or ""),
+                                        f"{st.final[0]}-{st.final[1]}" if st else "") if x)
+        else:
+            what = f"{len(kept)}matches"
+        name = f"{plan.slug(self.game)}_{when}_highlights_{what or 'match'}_{duration_label(spent)}"
 
         def tick(done: int, total: int) -> None:
             # Deliberately not self._check(): a cancel raised from inside the
@@ -529,44 +550,44 @@ class ClipJob:
             # "could not cut the match summary", which reads like a failure.
             # Cancellation is checked where it is handled.
             self._set(done=done, total=total,
-                      message=(f"Cutting the recap: moment {done + 1} of "
-                               f"{len(shots)}" if done < len(shots) else
-                               f"Joining {len(shots)} moments into the recap"))
+                      message=(f"Cutting the highlight: part {done + 1} of {total - 2}"
+                               if done < total - 2 else "Joining the highlight"))
 
-        got: dict = {}
-        out = highlight.render(
-            self.source, shots, self.folder / "match" / f"{name}.mp4",
-            kills=kills, title=title, subtitle=sub, encoder=enc,
-            # MEASURED, on a minute of this very recording: cq 19 is 25 Mbps,
-            # 21 is 20, 23 is 16 and 25 is 12. The first real recap came out
-            # 1.4 GB for 6m27s, which is a slow upload and a big file for
-            # something nobody will watch at full bitrate. 23 is still a third
-            # above YouTube's own 1080p60 recommendation and takes a third off
-            # the file. The Rivals highlight keeps 19; it is two minutes long
-            # and the size was never the problem there.
-            cq=23,
-            outro=str(self.options.get("outro") or "") or None,
-            progress=tick, on_durations=lambda d, o: got.update(durs=d, offs=o))
+        # cq 23: measured on this kind of recording, a third above YouTube's 1080p60
+        # recommendation and a third off the file.
+        # The player's facecam, only where they marked it (clips/facecam.py's inset):
+        # the talking layout of a box guessed at would be a close-up of the wrong thing.
+        try:
+            from . import facecam
+            box = facecam.load(self.folder.parent).get("inset")
+        except Exception:  # noqa: BLE001 - no box: talk stays on the game
+            box = None
+        out = sh.render(self.source, cuts, self.folder / "match" / f"{name}.mp4", encoder=enc,
+                        cq=23, channel=str(self.options.get("channel") or ""), game=self.game,
+                        cam_box=box, progress=tick)
 
-        marks = recap.chapters(shown, got.get("durs") or [], got.get("offs") or [])
+        # Two Round 7s in one video with nothing to tell them apart is worse than no
+        # chapters: in a session video each names its match.
+        marks = sh.chapters(cuts, chosen, prefix=[matches[o].label.split(" · ")[0].title() for o in owner]
+                            if len(kept) > 1 else None)
         if marks:
             from .summary import chapter_text
 
             text = chapter_text(marks)
-            Path(out).with_suffix(".chapters.txt").write_text(
-                text, encoding="utf-8")
+            Path(out).with_suffix(".chapters.txt").write_text(text, encoding="utf-8")
             self.summary_chapters = text
         # Through atomic, like every other manifest here: a half-written one
         # is indistinguishable from a complete one to whatever reads it next.
         atomic.write_json(Path(out).with_suffix(".json"), {
-            "title": f"{title} {sub}".strip() + f" | {when}",
-            "source": str(self.source), "rounds": len(round_list),
-            "won": won, "lost": lost, "moments": len(ms),
-            "duration": round(spent, 2),
+            "title": f"{self.game} highlights | {when}",
+            "source": str(self.source),
+            "matches": [matches[i].label for i in kept],
+            "stretches": len(chosen), "duration": round(spent, 2),
             "chapters": [[round(t, 2), n] for t, n in marks],
+            **({"said": [ln.as_dict() for ln in lines]} if lines else {}),
         })
-        log.info("match recap: %s (%d moments from %d rounds, %d chapters)",
-                 Path(out).name, len(ms), len(round_list), len(marks))
+        log.info("stream highlight: %s (%d stretches from %d of %d matches, %d chapters)",
+                 Path(out).name, len(chosen), len(kept), len(matches), len(marks))
         return str(out)
 
     def _write_chapters(self, out, plans, masters, opt) -> None:
@@ -1019,6 +1040,8 @@ class ClipJob:
                 self.record_names = [(g["span"], str(g["about"].get("map") or ""))
                                      for g in found]
                 self.record_agents = [str(g["about"].get("agent") or "") for g in found]
+                self.record_stories = [g["about"].get("story") or {} for g in found]
+                self.record_matches = found
                 use_rounds = bool(round_list)
                 first = max(found, key=lambda g: len(g["kills"]))
                 self.demo = dict(first["about"], outside=outside,
@@ -1743,6 +1766,10 @@ class ClipJob:
             out.append({
                 "kills": got_kills,
                 "rounds": got_rounds,
+                # For the stream highlight: where each round's fighting was,
+                # and where the player died (clips/stream_highlight.py).
+                "times": vmatch.round_times(m, puuid, sync),
+                "deaths": vmatch.deaths_from(m, puuid, sync),
                 "span": vmatch.span_of(m, sync),
                 # Only on a clock the file carries: a guessed one cannot say
                 # where MATCH FOUND was.
@@ -1755,6 +1782,7 @@ class ClipJob:
                 "about": {"match": m.id, "mode": m.mode, "ranked": m.ranked,
                           "map": vmatch.summary(m).get("map") or "",
                           "agent": vmatch.agent_of(m, puuid),
+                          "story": vmatch.story(m, puuid),
                           "offset": round(sync.offset, 2),
                           "matched": sync.matched, "total": sync.total,
                           "how": sync.why},
@@ -1793,6 +1821,8 @@ class ClipJob:
             out.append({
                 "kills": got_kills,
                 "rounds": vmatch.rounds_from(m, puuid, sync),
+                "times": vmatch.round_times(m, puuid, sync),
+                "deaths": vmatch.deaths_from(m, puuid, sync),
                 "span": span,
                 # The MAP, so a recording with two matches in it can name
                 # them in its chapters. "Round 1" appearing twice in one
@@ -1801,6 +1831,7 @@ class ClipJob:
                 "about": {"match": m.id, "mode": m.mode, "ranked": m.ranked,
                           "map": vmatch.summary(m).get("map") or "",
                           "agent": vmatch.agent_of(m, puuid),
+                          "story": vmatch.story(m, puuid),
                           "offset": round(sync.offset, 2), "matched": sync.matched,
                           "total": sync.total, "how": "picked by you; " + sync.why},
             })
