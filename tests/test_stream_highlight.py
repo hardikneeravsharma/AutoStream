@@ -319,9 +319,40 @@ def test_the_cam_layout_pushes_in_on_the_marked_box():
 
 def test_no_transcriber_means_none_not_a_failure(monkeypatch):
     from autostream.clips import speech
-    monkeypatch.setattr(speech, "available", lambda: False)
+    monkeypatch.setattr(speech, "models", lambda: None)
+    assert speech.available() is False
     assert speech.transcribe("x.mp4", [(0.0, 10.0)]) is None
+    assert speech.language("x.mp4", [(0.0, 10.0)]) is None
     assert speech.fast() is False
+
+
+def test_the_large_pair_when_both_are_on_disk_else_small_for_both(monkeypatch):
+    from autostream.clips import speech
+    import types, sys
+    monkeypatch.setitem(sys.modules, "faster_whisper", types.ModuleType("faster_whisper"))
+    monkeypatch.setattr(speech, "_on_disk", lambda name: True)
+    assert speech.models() == ("large-v3-turbo", "large-v3")
+    monkeypatch.setattr(speech, "_on_disk", lambda name: name == "small")
+    assert speech.models() == ("small", "small")
+    monkeypatch.setattr(speech, "_on_disk", lambda name: False)
+    assert speech.models() is None
+
+
+def test_each_sentence_takes_the_english_that_overlaps_it_most(monkeypatch):
+    from autostream.clips import speech
+    import numpy as np
+    monkeypatch.setattr(speech, "models", lambda: ("turbo", "large"))
+    monkeypatch.setattr(speech, "_model", lambda name: name)
+    monkeypatch.setattr(speech, "_audio", lambda *a: np.zeros(speech.RATE * 10, dtype=np.float32))
+
+    def run(model, audio, *, lang, task):
+        assert lang == "hi"
+        if task == "transcribe":
+            return [(0.0, 3.0, "pehla"), (3.5, 8.0, "doosra")]
+        return [(0.2, 4.0, "first"), (4.0, 7.9, "second")]
+    monkeypatch.setattr(speech, "_run", run)
+    got = speech.transcribe("x.mp4", [(100.0, 110.0)], lang="hi")
+    assert [(ln.start, ln.text, ln.english) for ln in got] == [(100.0, "pehla", "first"), (103.5, "doosra", "second")]
 
 
 def test_a_team_mates_fight_after_the_death_stays_on_the_game():
