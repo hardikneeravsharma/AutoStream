@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import atomic
+from . import hinglish
 from . import stream_highlight as sh
 
 log = logging.getLogger("autostream.clips.highlight_edit")
@@ -41,7 +42,7 @@ VERSION = 1
 SUFFIX = ".edit.json"
 EDITED = "_edited"
 LAYOUTS = ("game", "cam", "result")
-LANGS = ("english", "said")
+LANGS = ("hinglish", "english", "said")
 SHORTEST = 0.5             # sh.shape()'s floor: a piece shorter than this is a flash
 TRIM_LEAST = 1.0           # a kept cut is never trimmed shorter than this
 CAPTION_LEAST = 0.3        # a caption shown for less than this cannot be read
@@ -78,6 +79,7 @@ def build(*, video: str | Path, source: str | Path, source_seconds: float, cuts:
     said = [(ln, "mic") for ln in lines or []] + [(ln, "game") for ln in team_lines or []]
     said.sort(key=lambda x: x[0].start)
     english = any(getattr(ln, "english", "") for ln in lines or [])
+    hindi = any(hinglish.has_devanagari(getattr(ln, "text", "")) for ln in lines or [])
     return {
         "version": VERSION,
         "video": str(video),
@@ -87,7 +89,10 @@ def build(*, video: str | Path, source: str | Path, source_seconds: float, cuts:
         "cam_box": [round(float(v), 5) for v in cam_box] if cam_box else None,
         "cam_zoom": None,
         "language": language,
-        "captions": {"on": False, "lang": "english" if english else "said"},
+        # Hinglish when the player speaks Hindi: his word, 2026-11-02, "make all
+        # the captions hinglish".
+        "captions": {"on": False, "lang": "hinglish" if hindi else ("english" if english else "said")},
+        "timed": True,
         "moments": [{"id": i, "name": _name(s),
                      "match": labels[i] if i < len(labels) else "", "round": s.round}
                     for i, s in enumerate(chosen)],
@@ -99,6 +104,7 @@ def build(*, video: str | Path, source: str | Path, source_seconds: float, cuts:
                  for i, c in enumerate(cuts)],
         "lines": [{"id": i, "start": round(ln.start, 3), "end": round(ln.end, 3),
                    "text": ln.text, "english": getattr(ln, "english", "") or "",
+                   "hinglish": hinglish.romanize(ln.text) if hinglish.has_devanagari(ln.text) else "",
                    "show": True, "cut": False, "face": False, "track": who}
                   for i, (ln, who) in enumerate(said)],
         "zooms": [],
@@ -112,11 +118,33 @@ def _volume_default() -> dict:
     return {"master": 0.0, "mic": {"db": 0.0, "keys": []}, "game": {"db": 0.0, "keys": []}}
 
 
+READ_CPS = 12.0           # characters a viewer reads a second...
+READ_MORE = 0.8           # ...plus this to find the line
+READ_LEAST, READ_MOST = 1.2, 7.0
+
+
+def read_time(text: str) -> float:
+    """How long a caption needs on screen to be read: never much longer."""
+    return max(READ_LEAST, min(READ_MOST, len(text) / READ_CPS + READ_MORE))
+
+
 def upgrade(project: dict) -> dict:
     """A project as this version reads it: v2.9.0 projects had no speaker on a
-    line, no face-zoom spans, no volume lines and no copied-out tracks."""
+    line, no face-zoom spans, no volume lines and no copied-out tracks; before
+    v2.11.2 no Hinglish, and lines timed by whole segments."""
+    timed = project.get("timed")
     for ln in project.get("lines") or []:
         ln.setdefault("track", "mic")
+        if "hinglish" not in ln:
+            ln["hinglish"] = hinglish.romanize(ln.get("text", "")) if hinglish.has_devanagari(ln.get("text", "")) else ""
+        if not timed:
+            # A segment ran on through the silence after it -- one line was up
+            # 58 s (the player: "not removed once the line is spoken"). Without the
+            # words' own times, a line is shown as long as it takes to read.
+            longest = read_time(ln.get("english") or ln.get("text") or "")
+            if ln["end"] - ln["start"] > longest:
+                ln["end"] = round(ln["start"] + longest, 3)
+    project["timed"] = True
     project.setdefault("zooms", [])
     vol = project.get("volume") if isinstance(project.get("volume"), dict) else {}
     project["volume"] = {**_volume_default(), **vol}
@@ -210,7 +238,7 @@ def _lines(raw: list, before: dict, top: float) -> list[dict]:
                 continue
             a, b = old["start"], old["end"]
         ln = {"id": i, "start": round(a, 3), "end": round(b, 3)}
-        for k in ("text", "english"):
+        for k in ("text", "english", "hinglish"):
             v = e.get(k, old.get(k, ""))
             ln[k] = " ".join(v.split())[:400] if isinstance(v, str) else ""
         for k, dflt in (("show", True), ("cut", False), ("face", False)):
@@ -279,8 +307,12 @@ def _layouts(a: float, b: float, base: str, faces: list[tuple[float, float]]) ->
 
 
 def caption_text(ln: dict, lang: str) -> str:
+    """The words a caption shows: Hinglish (Hindi in Latin letters), the English
+    translation, or as said. A line said in English already is shown as said."""
     if lang == "english" and ln.get("english"):
         return ln["english"]
+    if lang == "hinglish":
+        return ln.get("hinglish") or hinglish.romanize(ln.get("text") or "")
     return ln.get("text") or ""
 
 
@@ -456,7 +488,9 @@ def transcribe_track(project: dict, track: str) -> int:
     keep = [ln for ln in fresh.get("lines") or [] if ln.get("track", "mic") != track]
     nxt = max((ln["id"] for ln in fresh.get("lines") or []), default=-1) + 1
     new = [{"id": nxt + k, "start": round(ln.start, 3), "end": round(ln.end, 3), "text": ln.text,
-            "english": ln.english or "", "show": True, "cut": False, "face": False, "track": track}
+            "english": ln.english or "",
+            "hinglish": hinglish.romanize(ln.text) if hinglish.has_devanagari(ln.text) else "",
+            "show": True, "cut": False, "face": False, "track": track}
            for k, ln in enumerate(found)]
     save({**fresh, "lines": sorted(keep + new, key=lambda x: (x["start"], x["id"]))})
     log.info("%s: %d line(s) on the %s track", Path(project["video"]).name, len(new), track)

@@ -496,3 +496,63 @@ def test_words_written_over_and_over_are_one_line():
     assert [(ln.start, ln.end, ln.text) for ln in got] == [
         (11.0, 12.0, "Close down"), (15.5, 18.0, "Close down."), (19.5, 20.0, "Reta"),
         (24.5, 25.4, "Nice round"), (29.0, 30.0, "Nice round")]
+
+
+# ------------------------------------------------- Hinglish, and captions that end when the talking does
+
+def test_a_hindi_project_captions_in_hinglish_by_default(tmp_path):
+    p = he.build(video=tmp_path / "v.mp4", source=tmp_path / "r.mp4", source_seconds=100.0,
+                 cuts=[sh.Cut(0.0, 30.0, stretch=0)], chosen=[sh.Stretch(0, 30, 1.0, round=1, why="1 kill")],
+                 labels=["M"], lines=[Line(5.0, 7.0, "क्लोव नीचे है", "Clove is down")])
+    assert p["captions"]["lang"] == "hinglish"
+    assert p["lines"][0]["hinglish"] == "Clove neeche hai"
+    assert he.caption_text(p["lines"][0], "hinglish") == "Clove neeche hai"
+    assert he.caption_text(p["lines"][0], "english") == "Clove is down"
+    assert he.pieces(p)[1][0] == [(5.0, 7.0, "Clove neeche hai", "mic")]
+
+
+def test_a_line_said_in_english_is_shown_as_said_in_hinglish():
+    ln = {"text": "Not A, peak mid", "english": "", "hinglish": ""}
+    assert he.caption_text(ln, "hinglish") == "Not A, peak mid"
+
+
+def test_an_old_project_gets_hinglish_and_its_long_lines_shortened_once(tmp_path):
+    """Measured: one line up 58 s ("Hey, hey, hey."). Read-time, not segment-time."""
+    p = _project(tmp_path)
+    p.pop("timed", None)
+    p["lines"].append({"id": 7, "start": 200.0, "end": 258.1, "text": "हे हे",
+                       "english": "Hey, hey, hey.", "show": True, "cut": False, "face": False, "track": "mic"})
+    for ln in p["lines"]:
+        ln.pop("hinglish", None)
+    up = he.upgrade(p)
+    long = [ln for ln in up["lines"] if ln["id"] == 7][0]
+    assert long["end"] == pytest.approx(200.0 + he.read_time("Hey, hey, hey."), abs=0.001)
+    assert long["hinglish"] == "He he"
+    assert up["timed"] is True
+    long["end"] = 230.0                     # the player stretches it by hand...
+    assert he.upgrade(up)["lines"][-1]["end"] == 230.0   # ...and it stays stretched
+
+
+def test_hinglish_edits_are_kept(tmp_path):
+    p = _project(tmp_path)
+    m = he.merge(p, {"lines": [dict(ln, hinglish="theek hai bhai") if ln["id"] == 0 else ln for ln in p["lines"]]})
+    assert m["lines"][0]["hinglish"] == "theek hai bhai"
+    assert he.merge(p, {"captions": {"on": True, "lang": "hinglish"}})["captions"]["lang"] == "hinglish"
+
+
+def test_a_segment_is_cut_at_its_pauses_and_ends_on_its_last_word():
+    from types import SimpleNamespace as W
+    from autostream.clips import speech
+    words = [W(start=10.0, end=10.4, word=" hey"), W(start=10.5, end=10.9, word=" hey"),
+             W(start=30.0, end=30.5, word=" come"), W(start=30.6, end=31.0, word=" back")]
+    got = speech._pieces(words, 10.0, 68.1, "hey hey come back")
+    assert got == [(10.0, 10.9 + speech.WORD_TAIL, "hey hey"), (30.0, 31.0 + speech.WORD_TAIL, "come back")]
+    assert speech._pieces([], 1.0, 2.0, "x") == [(1.0, 2.0, "x")]
+
+
+def test_a_word_stretched_over_silence_is_held_only_as_long_as_it_takes_to_say():
+    """Measured on the game track: a "Why?" 14 s long."""
+    from types import SimpleNamespace as W
+    from autostream.clips import speech
+    got = speech._pieces([W(start=5.0, end=19.0, word=" Why?")], 5.0, 19.0, "Why?")
+    assert got == [(5.0, 5.0 + speech.SAID_LEAST, "Why?")]
