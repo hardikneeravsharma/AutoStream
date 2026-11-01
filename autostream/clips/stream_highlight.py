@@ -716,17 +716,21 @@ def snap(cuts: list[Cut], lines) -> list[Cut]:
     """Cuts moved to the edges of what the player said (speech.transcribe's lines): a
     cut that would land inside a sentence moves out to its start or its end, by at
     most SNAP. The cold open and the round-result cuts keep their times -- one is
-    action, the other the game's banner. Never into the cut before it."""
+    action, the other the game's banner. Never into the cut before it or after it."""
     if not lines:
         return cuts
     out: list[Cut] = []
-    for c in cuts:
+    for k, c in enumerate(cuts):
         if c.kind == "play" and c.layout != "result":
+            # Never into the cut after it either: the first session render with this
+            # ran round 10's talk on over its own WON/LOST banner and lost the banner.
+            nxt = next((n for n in cuts[k + 1:] if n.kind == "play" and n.stretch == c.stretch), None)
+            ceiling = nxt.start if nxt is not None and nxt.start >= c.end else float("inf")
             for ln in lines:
                 if ln.start < c.start < ln.end and c.start - ln.start <= SNAP:
                     c.start = ln.start - 0.15
                 if ln.start < c.end < ln.end and ln.end - c.end <= SNAP:
-                    c.end = ln.end + 0.25
+                    c.end = min(ln.end + 0.25, ceiling)
         prev = out[-1] if out else None
         if prev is not None and prev.kind == "play" and c.start < prev.end and prev.stretch == c.stretch:
             c.start = prev.end

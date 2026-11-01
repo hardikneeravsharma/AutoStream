@@ -340,3 +340,12 @@ def test_two_stretches_of_one_round_end_on_one_banner_in_order():
     cuts = sh._cuts([a, b], cold_open=False)
     assert [c.start for c in cuts] == sorted(c.start for c in cuts)
     assert sum(c.layout == "result" for c in cuts) == 1
+
+
+def test_a_sentence_never_runs_over_the_rounds_banner():
+    from autostream.clips.speech import Line
+    cuts = [sh.Cut(698.9, 714.1, stretch=0), sh.Cut(714.1, 717.7, stretch=0, layout="cam"),
+            sh.Cut(717.7, 720.2, stretch=0, layout="result")]
+    got = sh.snap(cuts, [Line(715.0, 723.2, "talk")])
+    assert [c.layout for c in got] == ["game", "cam", "result"]
+    assert got[1].end == 717.7 and (got[2].start, got[2].end) == (717.7, 720.2)
