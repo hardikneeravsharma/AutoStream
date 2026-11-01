@@ -199,6 +199,10 @@ Its controls carry `data-hl`, not `data-act`, so they are not in the sweep's cou
 | 5.51 | Write down the team's voice | The game track's lines arrive as Team captions | offline only (`test_highlight_edit`: speech-to-text needs a graphics card) |
 | 5.52 | A feature whose heavy pack is missing (v2.11.0): Write down the team's voice | Asks first, with the size; Download shows progress; when done, the feature runs | yes (server faked: PyPI and gigabytes are not a test) |
 | 5.53 | A highlight run with no speech-to-text | Offered once a session: Download, or Make it without captions | **gap** (needs a real run) |
+| 5.54 | A caption's length typed in its row of What was said (v2.12.0), and its start nudged | Saved; the start moves alone | yes |
+| 5.55 | A caption a few pixels wide, dragged by its end | It grows by what was dragged | yes |
+| 5.56 | A volume point clicked at 0 dB, at 100% and 125% page size | It lands at 0 dB, under the pointer, at the second clicked | yes |
+| 5.57 | Captions in Hinglish | Offered, and the default for a player who speaks Hindi | yes |
 | 5.44 | Make video while live or recording | Waits, says why, starts by itself afterwards; Stop cancels it | offline only (`test_highlight_edit`: the test app cannot go live) |
 
 # 6 · Studio — 165 controls

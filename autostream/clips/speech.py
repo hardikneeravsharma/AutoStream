@@ -195,12 +195,50 @@ def language(video: str | Path, spans: list[tuple[float, float]], *, track: int 
     return lang
 
 
+PAUSE = 0.7               # a gap between words this long ends a caption
+LONGEST = 6.0             # and a caption this long ends at its next word
+WORD_TAIL = 0.25          # shown this long after its last word
+SAID_CPS = 8.0            # slower than anybody talks: a caption longer than this is the model's
+SAID_LEAST = 1.5
+
+
+def _pieces(words, seg_start: float, seg_end: float, seg_text: str) -> list[tuple[float, float, str]]:
+    """A segment cut at its pauses, each piece ending on its last word.
+
+    Measured on the 2026-10-25 session (2026-11-02): with the VAD's segments, the
+    median caption was 2.2 s but one in ten stayed up over 15 s and one 58 s --
+    "Hey, hey, hey." -- because a segment runs on through the silence after it.
+    The player: "they are not removed once the line is spoken". The words' own
+    times end each caption when the talking does."""
+    if not words:
+        return [(seg_start, seg_end, seg_text)]
+    out, cur = [], []
+    for w in words:
+        if cur and (w.start - cur[-1].end > PAUSE or (w.start - cur[0].start > LONGEST)):
+            out.append(cur)
+            cur = []
+        cur.append(w)
+    if cur:
+        out.append(cur)
+    pieces = []
+    for p in out:
+        text = "".join(w.word for w in p).strip()
+        a, b = float(p[0].start), float(p[-1].end) + WORD_TAIL
+        # A word the model stretched over the silence after it (measured: a "Why?"
+        # 14 s long on the game track) is held no longer than it takes to say.
+        pieces.append((a, min(b, a + max(SAID_LEAST, len(text) / SAID_CPS + 1.0)), text))
+    return pieces
+
+
 def _run(model, audio: np.ndarray, *, lang: str | None, task: str):
     # Not conditioned on its own previous text: on a gamer's mic, half-heard words
     # fed back in made it loop on one phrase and run 4x slower.
     segs, _info = model.transcribe(audio, vad_filter=True, beam_size=1, language=lang, task=task,
-                                   condition_on_previous_text=False)
-    return [(float(s.start), float(s.end), (s.text or "").strip()) for s in segs]
+                                   condition_on_previous_text=False, word_timestamps=True)
+    out = []
+    for s in segs:
+        out += _pieces(getattr(s, "words", None) or [], float(s.start), float(s.end), (s.text or "").strip())
+    return [(a, b, t) for a, b, t in out if t]
 
 
 def transcribe(video: str | Path, spans: list[tuple[float, float]], *, track: int = MIC_TRACK,

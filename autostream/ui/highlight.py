@@ -119,6 +119,7 @@ HIGHLIGHT_HTML: str = r"""
               aria-checked="false"><span class="switch-track"><span class="switch-thumb"></span></span>
         <span>Captions in the video</span></button>
       <select class="select" id="hl-lang" data-hl-change="lang" aria-label="Caption language">
+        <option value="hinglish">In Hinglish</option>
         <option value="english">In English</option>
         <option value="said">As said</option>
       </select>
@@ -197,14 +198,16 @@ function hl_layout() {
   hl.at = at; hl.total = t; hl.pieces = null;
 }
 
-function hl_capText(ln) {
-  var lang = (hl.p.captions || {}).lang || 'english';
-  return lang === 'english' && ln.english ? ln.english : (ln.text || '');
-}
+/* The words a caption shows: Hinglish (Hindi in Latin letters, the player's
+   choice: "clove neeche hai"), the English translation, or as said --
+   clips/highlight_edit.caption_text. A line said in English is shown as said. */
 function hl_capField(ln) {
   var lang = (hl.p.captions || {}).lang || 'english';
-  return lang === 'english' && ln.english ? 'english' : 'text';
+  if (lang === 'english' && ln.english) return 'english';
+  if (lang === 'hinglish' && ln.hinglish) return 'hinglish';
+  return 'text';
 }
+function hl_capText(ln) { return ln[hl_capField(ln)] || ''; }
 
 function hl_minus(a, b, holes) {
   var out = [[a, b]];
@@ -415,7 +418,7 @@ function hl_render(keepSaid) {
   var lang = hl_el('hl-lang');
   var anyEnglish = (hl.p.lines || []).some(function (l) { return l.english; });
   lang.value = cap.lang || 'english';
-  lang.disabled = !anyEnglish;
+  lang.disabled = !anyEnglish && !(hl.p.lines || []).some(function (l) { return l.hinglish; });
   hl_el('hl-zoom').value = hl.p.cam_zoom ? String(hl.p.cam_zoom) : '';
   var m = (hl.p.volume || {}).master || 0;
   hl_el('hl-master').value = String(m);
@@ -436,10 +439,17 @@ function hl_blocks(i, a, b) {
   return y - x > 0.05 ? [hl_x(i, x), hl_x(i, y)] : null;
 }
 
+/* Screen pixels per layout pixel: the page's own size (shell_zoomSet zooms the
+   root), so a pointer's movement is turned into seconds at any size. */
+function hl_scale() {
+  var el = hl_el('hl-track');
+  return el && el.offsetWidth ? (el.getBoundingClientRect().width / el.offsetWidth) || 1 : 1;
+}
+
 /* A point on the timeline -> the cut there and the recording second it shows. */
 function hl_hit(clientX) {
   var tr = hl_el('hl-track').getBoundingClientRect();
-  var T = (clientX - tr.left) / hl.pxs, p = hl.p;
+  var T = (clientX - tr.left) / (hl.pxs * hl_scale()), p = hl.p;
   for (var i = 0; i < p.cuts.length; i++) {
     if (T < hl.at[i] + hl_len(p.cuts[i]) || i === p.cuts.length - 1) {
       return {i: i, t: Math.max(p.cuts[i].start, Math.min(p.cuts[i].end, p.cuts[i].start + (T - hl.at[i])))};
@@ -563,8 +573,12 @@ function hl_volSvg(l, top, W) {
              pts.map(function (q) { return q[0].toFixed(1) + ',' + q[1].toFixed(1); }).join(' ') + '"/>';
   });
   var zero = hl_volY(0, H).toFixed(1);
+  /* Its size in the style attribute, not just the svg's own: the sheet sizes
+     every svg in the app as a 16 px icon (.app svg), which left this one a 16 px
+     box drawing 44 px of line -- so a click was read against 16 px and the point
+     landed far below it (the player: "marked very below the actual click"). */
   return '<svg class="hl-vol" data-vol="' + l.vol + '" width="' + W + '" height="' + H + '" style="top:' + top +
-    'px" aria-label="' + esc(l.name) + ': click to add a point, drag a point to move it, double-click it to remove it">' +
+    'px;width:' + W + 'px;height:' + H + 'px" aria-label="' + esc(l.name) + ': click to add a point, drag a point to move it, double-click it to remove it">' +
     '<rect class="hl-vol-bg" x="0" y="0" width="' + W + '" height="' + H + '"/>' +
     '<line class="hl-v0" x1="0" x2="' + W + '" y1="' + zero + '" y2="' + zero + '"/>' + paths + dots + '</svg>';
 }
@@ -681,10 +695,18 @@ function hl_renderSaid() {
              (team ? '<span class="hl-chip is-team">Team</span>' : '') +
              '<span class="hl-line-text" contenteditable="' + (l.cut ? 'false' : 'plaintext-only') +
                '" spellcheck="true" data-field="' + field + '" data-l="' + l.id + '">' + esc(l[field] || '') + '</span>' +
-             (field === 'english' && l.text ? '<span class="hl-line-orig">' + esc(l.text) + '</span>' : '') +
+             (field !== 'text' && l.text ? '<span class="hl-line-orig">' + esc(l.text) + '</span>' : '') +
              (inside ? '' : '<span class="hl-line-orig">Not in the video</span>') +
            '</div>' +
            '<div class="hl-line-acts">' +
+             '<span class="hl-len" title="When this caption shows, and for how long">' +
+               '<button class="hl-len-btn" type="button" data-hl="capnudge" data-id="' + l.id +
+                 '" data-edge="a" data-d="-0.1" aria-label="Start 0.1 s earlier">&lsaquo;</button>' +
+               '<button class="hl-len-btn" type="button" data-hl="capnudge" data-id="' + l.id +
+                 '" data-edge="a" data-d="0.1" aria-label="Start 0.1 s later">&rsaquo;</button>' +
+               '<input class="hl-len-in" type="number" min="0.3" max="30" step="0.1" value="' + (l.end - l.start).toFixed(1) +
+                 '" data-hl-change="caplen" data-l="' + l.id + '" aria-label="Seconds shown">' +
+               '<span class="hl-len-s">s</span></span>' +
              '<button class="hl-tog' + (l.show && !l.cut ? ' is-on' : '') + '" type="button" data-hl="show" data-l="' + l.id +
                '" title="Show this line as a caption"' + (l.cut ? ' disabled' : '') + '>Caption</button>' +
              '<button class="hl-tog' + (l.face ? ' is-on' : '') + '" type="button" data-hl="face" data-l="' + l.id +
@@ -959,7 +981,7 @@ function hl_trackDown(e) {
 function hl_move(e) {
   var d = hl.drag;
   if (!d) return;
-  var p = hl.p, top = p.source_seconds || Infinity, dt = (e.clientX - d.x) / hl.pxs;
+  var p = hl.p, top = p.source_seconds || Infinity, dt = (e.clientX - d.x) / (hl.pxs * hl_scale());
   if (Math.abs(e.clientX - d.x) > 3 || (d.kind === 'key' && Math.abs(e.clientY - d.y) > 2)) d.moved = true;
   if (d.kind === 'box') {
     var dx = (e.clientX - d.x) / d.w, dy = (e.clientY - d.y) / d.h, b = d.b.slice();
@@ -1330,6 +1352,12 @@ function hl_paintRender(r) {
       p.captions = {on: !!(p.captions || {}).on, lang: e.target.value};
     });
     if (w === 'master') hl_change(function () { p.volume.master = +e.target.value; }, true);
+    if (w === 'caplen') {
+      var ln = hl_line(+e.target.getAttribute('data-l')), secs = +e.target.value;
+      if (ln && secs >= 0.3) hl_change(function () {
+        ln.end = hl_r3(Math.min(p.source_seconds || Infinity, ln.start + Math.min(30, secs)));
+      });
+    }
     if (w === 'captrack') {
       var l = hl_line(hl.selId);
       if (l) hl_change(function () { l.track = e.target.value; });
@@ -1489,16 +1517,20 @@ HIGHLIGHT_CSS: str = r"""
 .hl-zm{background:var(--warn-muted);border:var(--border-hair) solid var(--hl-gold);cursor:pointer}
 .hl-zm.is-line{background:var(--hl-gold);opacity:.8}
 .hl-zm.is-off{background:transparent;border-style:dashed;opacity:.8}
-.hl-zm.is-drawn{background:var(--hl-gold);opacity:.9;display:flex;cursor:grab}
+.hl-zm.is-drawn{background:var(--hl-gold);opacity:.9;display:flex;cursor:grab;overflow:visible;min-width:6px}
 /* A caption block: its words in it, an edge to retime either end, its middle to move it. */
-.hl-cp{display:flex;align-items:stretch;background:var(--surface-active);border:var(--border-hair) solid var(--border-strong);
+.hl-cp{overflow:visible;min-width:6px;display:flex;align-items:stretch;background:var(--surface-active);border:var(--border-hair) solid var(--border-strong);
   color:var(--text-primary);cursor:grab}
 .hl-cp.is-team{border-color:var(--hl-team);background:color-mix(in srgb,var(--hl-team) 18%,var(--surface-active))}
 .hl-cp.is-off{background:transparent;border-style:dashed;color:var(--text-tertiary)}
 .hl-cp.is-cut{background:var(--danger-muted);border-color:var(--danger);color:var(--text-tertiary)}
 .hl-cp.is-sel,.hl-zm.is-sel{box-shadow:0 0 0 var(--border-thick) var(--text-primary) inset}
-.hl-cedge{flex:0 0 6px;cursor:ew-resize;touch-action:none}
-.hl-cedge-b{margin-left:auto}
+/* The grips sit on the block's edges and reach past them, so a caption a few
+   pixels wide can still be taken by either end ("the dragging button does not
+   work on small boxes", the player). The end grip is drawn over the start's. */
+.hl-cedge{position:absolute;top:-2px;bottom:-2px;left:-5px;width:10px;cursor:ew-resize;touch-action:none;z-index:1}
+.hl-cedge-b{left:auto;right:-5px;z-index:2}
+.hl-cp .hl-blk-text{padding:0 6px;overflow:hidden}
 .hl-cp:hover .hl-cedge,.hl-zm.is-drawn:hover .hl-cedge{background:rgba(127,127,127,.45)}
 .hl-end{background:var(--text-tertiary);cursor:pointer}
 .hl-end.is-off{background:transparent;border:var(--border-hair) dashed var(--text-tertiary)}
@@ -1569,7 +1601,14 @@ HIGHLIGHT_CSS: str = r"""
   outline:0;padding:0 2px;margin:0 -2px;overflow-wrap:anywhere}
 .hl-line-text:focus{background:var(--surface);box-shadow:0 0 0 var(--focus-ring-width) var(--border-focus)}
 .hl-line-orig{font-size:var(--text-xs);color:var(--text-tertiary);overflow-wrap:anywhere}
-.hl-line-acts{grid-column:2;display:flex;gap:var(--space-2)}
+.hl-line-acts{grid-column:2;display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2)}
+.hl-len{display:inline-flex;align-items:center;gap:2px;margin-right:var(--space-3)}
+.hl-len-btn{width:20px;height:22px;padding:0;border-radius:var(--radius-xs);border:var(--border-hair) solid var(--border-subtle);
+  background:none;color:var(--text-secondary);font:inherit;font-size:13px;line-height:1;cursor:pointer}
+.hl-len-btn:hover{color:var(--text-primary);border-color:var(--border-strong)}
+.hl-len-in{width:52px;height:22px;padding:0 4px;border-radius:var(--radius-xs);border:var(--border-hair) solid var(--border-subtle);
+  background:var(--surface);color:var(--text-primary);font:inherit;font-size:11px;font-variant-numeric:tabular-nums}
+.hl-len-s{font-size:11px;color:var(--text-tertiary)}
 .hl-tog{height:22px;padding:0 var(--space-3);border-radius:var(--radius-xs);border:var(--border-hair) solid var(--border-subtle);
   background:none;color:var(--text-tertiary);font:inherit;font-size:11px;cursor:pointer}
 .hl-tog:hover{color:var(--text-primary);border-color:var(--border-strong)}

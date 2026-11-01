@@ -351,6 +351,72 @@ def test_volume_points_are_added_moved_and_removed(ui, app):
     ui.clean("the game's volume line")
 
 
+@pytest.mark.parametrize("zoom", [1.0, 1.25])
+def test_a_volume_point_lands_where_it_was_clicked(ui, app, zoom):
+    """The player: "when I mark a keyframe in the volume timeline the volume is
+    marked very below the actual click". At the page's own sizes, too."""
+    page = ui.page
+    page.evaluate("(z) => { shell_zoomSet(z); hl.pxs = 20; hl_renderTrack(); }", zoom)
+    page.evaluate("() => { hl_lane('mic').keys = []; hl_renderTrack(); }")
+    svg = page.locator('#hl-track svg[data-vol="mic"]')
+    box = svg.bounding_box()
+    zero = page.evaluate("() => { const l = hl.lanes.find(x => x.k === 'volmic'); return hl_volY(0, l.h) / l.h; }")
+    page.evaluate("() => { document.getElementById('hl-scroll').scrollLeft = hl_x(3, 22.0) * hl.pxs - 100; }")
+    box = svg.bounding_box()
+    x = page.evaluate("() => document.getElementById('hl-track').getBoundingClientRect().left") + 0
+    target = page.evaluate("(z) => { const tr = document.getElementById('hl-track').getBoundingClientRect();"
+                           " return tr.left + hl_x(3, 22.0) * hl.pxs * z; }", zoom)
+    y = box["y"] + box["height"] * zero
+    page.mouse.click(target, y)
+    key = page.evaluate("() => hl_lane('mic').keys[0]")
+    dot = page.locator('#hl-track svg[data-vol="mic"] .hl-vk').first.bounding_box()
+    page.evaluate("() => { shell_zoomSet(1); hl_lane('mic').keys = []; hl_save(); hl_renderTrack(); }")
+    assert abs(key[1]) <= 1.0, key                                   # 0 dB where 0 dB was clicked
+    assert key[0] == pytest.approx(22.0, abs=0.2), key
+    assert abs((dot["y"] + dot["height"] / 2) - y) <= 3, (dot, y)
+
+
+def test_how_long_a_caption_shows_is_typed_in_what_was_said(ui, app):
+    """The player: small boxes cannot be dragged -- "give the length option in the
+    right side what was said tab"."""
+    page = ui.page
+    box = page.locator('#hl-line-1 .hl-len-in')
+    box.fill("1.2")
+    box.dispatch_event("change")
+    _settle(page)
+    ln = [x for x in _disk(app)["lines"] if x["id"] == 1][0]
+    assert ln["end"] - ln["start"] == pytest.approx(1.2, abs=0.01)
+    page.click('#hl-line-1 [data-hl="capnudge"][data-d="0.1"]')
+    _settle(page)
+    ln2 = [x for x in _disk(app)["lines"] if x["id"] == 1][0]
+    assert ln2["start"] == pytest.approx(ln["start"] + 0.1, abs=0.01) and ln2["end"] == ln["end"]
+    ui.clean("a caption's length in its row")
+
+
+def test_a_tiny_caption_is_still_taken_by_its_end(ui, app):
+    page = ui.page
+    page.evaluate("() => hl_change(() => { const l = hl_line(1); l.end = hl_r3(l.start + 0.4); })")
+    page.evaluate("() => { hl.pxs = 6; hl_renderTrack(); document.getElementById('hl-scroll').scrollLeft ="
+                  " hl_x(3, hl_line(1).start) * hl.pxs - 100; }")
+    blk = page.locator('#hl-track .hl-cp[data-cap="1"]').first.bounding_box()
+    assert blk["width"] < 8                                   # a few pixels wide
+    before = [x for x in page.evaluate("() => hl.p.lines") if x["id"] == 1][0]
+    grip = page.locator('#hl-track .hl-cp[data-cap="1"] .hl-cedge-b').first.bounding_box()
+    page.mouse.move(grip["x"] + grip["width"] - 2, grip["y"] + grip["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(grip["x"] + grip["width"] - 2 + 12, grip["y"] + grip["height"] / 2, steps=4)   # 2 s at 6 px/s
+    page.mouse.up()
+    after = [x for x in page.evaluate("() => hl.p.lines") if x["id"] == 1][0]
+    assert after["start"] == before["start"]
+    assert after["end"] - before["end"] == pytest.approx(2.0, abs=0.4)
+    ui.clean("a tiny caption's end")
+
+
+def test_captions_can_be_hinglish(ui):
+    page = ui.page
+    assert page.locator('#hl-lang option[value="hinglish"]').count() == 1
+
+
 def test_the_overall_volume_is_saved(ui, app):
     page = ui.page
     page.locator("#hl-master").fill("-4")
