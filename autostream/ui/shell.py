@@ -177,7 +177,7 @@ SHELL_HTML: str = (
     '<section class="view" id="view-library" role="tabpanel"'
     ' aria-label="Library">{{LIBRARY_HTML}}</section>'
     '<section class="view" id="view-clips" role="tabpanel"'
-    ' aria-label="Clips">{{CLIPS_HTML}}{{REEL_HTML}}</section>'
+    ' aria-label="Clips">{{CLIPS_HTML}}{{REEL_HTML}}{{HIGHLIGHT_HTML}}</section>'
     '<section class="view" id="view-studio" role="tabpanel"'
     ' aria-label="Studio">{{STUDIO_HTML}}</section>'
     '<section class="view" id="view-settings" role="tabpanel"'

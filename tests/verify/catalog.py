@@ -356,6 +356,19 @@ CONTROLS: list[Control] = [
             why="stops the copy started above; test_ui_unplayable_source drives it"),
     Control("/api/clips/playable/status", "GET", STATIC, "", "clips",
             why="polled while a playable copy is being made"),
+    # The highlight editor (ui/highlight.py); test_ui_highlight drives all six.
+    Control("/api/clips/highlight", "GET", STATIC, "Edit the highlight video", "clips",
+            why="opens a highlight video's edit project; needs one made by a clip job"),
+    Control("/api/clips/highlight/source", "GET", STATIC, "", "clips",
+            why="streams the recording a highlight was cut from, by byte range"),
+    Control("/api/clips/highlight/save", "POST", STATIC, "", "clips",
+            why="writes the editor's changes into the project beside the video"),
+    Control("/api/clips/highlight/render", "POST", STATIC, "Make video", "clips",
+            why="re-encodes the edited highlight on a worker thread"),
+    Control("/api/clips/highlight/cancel", "POST", STATIC, "Stop", "clips",
+            why="stops the render started above"),
+    Control("/api/clips/highlight/status", "GET", STATIC, "", "clips",
+            why="polled while an edited highlight is being made"),
     Control("/api/clips/source-info", "GET", STATIC, "", "clips",
             why="asks whether a recording can be played whole in the page"),
     Control("/api/clips/source", "GET", STATIC, "", "clips",
@@ -1021,6 +1034,8 @@ NOT_A_FLOW: dict[str, str] = {
     "sum-change": "opens one of the step screens from the summary's Change",
     "sum-made": "opens the moments screen on what an earlier run already cut; "
                 "reads /api/clips/existing, which is catalogued",
+    "sum-highlight": "opens the highlight editor over the Clips page; reads "
+                     "/api/clips/highlight, which is catalogued (test_ui_highlight)",
     "mom-again": "goes back to the summary to clip a cut recording again",
     "mom-play": "opens the player on clips already on disk; nothing is sent",
     "reel-close": "closes it; no state leaves the browser",

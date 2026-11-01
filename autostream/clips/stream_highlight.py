@@ -940,7 +940,96 @@ def lower_third(text: str, size: tuple[int, int] = (1920, 1080)):
     return img
 
 
-def cam_zoom(box, length: float) -> tuple[str, str, str]:
+CAPTION_SIZE = 0.040       # of the frame's height
+CAPTION_BOTTOM = 0.835     # the caption's lowest line ends here: above the abilities bar
+CAPTION_WIDTH = 0.72       # longest line, of the frame's width
+CAPTION_FADE = 4 / 60
+# Hindi said as Hindi arrives in Devanagari, which nothing in the player's font pack
+# draws. Windows' own Indic face is the fallback for a line the pack cannot set.
+SCRIPT_FALLBACKS = (("Nirmala.ttc", 1), ("Nirmala.ttc", 0), ("Nirmala.ttf", 0))
+
+
+def _caption_font(px: int, text: str):
+    from PIL import ImageFont
+    from . import match_video as mv
+    f = mv.face("text", px, text)
+    if mv.has_glyphs(f, text):
+        return f
+    fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+    for name, index in SCRIPT_FALLBACKS:
+        try:
+            g = ImageFont.truetype(str(fonts / name), px, index=index)
+        except OSError:
+            continue
+        if mv.has_glyphs(g, text):
+            return g
+    return f
+
+
+def _wrap(d, f, text: str, width: float) -> list[str]:
+    lines = [""]
+    for word in text.split():
+        trial = f"{lines[-1]} {word}".strip()
+        if d.textlength(trial, font=f) <= width or not lines[-1]:
+            lines[-1] = trial
+        else:
+            lines.append(word)
+    return lines
+
+
+def caption_image(text: str, size: tuple[int, int] = (1920, 1080)):
+    """One line of what the player said, as a burned-in caption: white on the same
+    73 % plate as the lower third, bottom centre, at most two lines -- a longer one
+    is set smaller rather than as a paragraph. A transparent full-frame PNG, laid
+    over the picture after any zoom, so it stays put when the frame pushes in on
+    the facecam."""
+    from PIL import Image, ImageDraw
+    from . import match_video as mv
+    w, h = size
+    text = " ".join(text.split())
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    px = max(14, round(h * CAPTION_SIZE))
+    f = _caption_font(px, text)
+    lines = _wrap(d, f, text, w * CAPTION_WIDTH)
+    if len(lines) > 2:
+        f = _caption_font(max(12, round(px * 0.8)), text)
+        lines = _wrap(d, f, text, w * CAPTION_WIDTH * 1.1)
+        if len(lines) > 3:
+            lines = lines[:3]
+            lines[-1] = lines[-1].rstrip(".,") + "…"
+    asc, desc = f.getmetrics()
+    lh = asc + desc
+    pad_x, pad_y = round(f.size * 0.6), round(f.size * 0.3)
+    bottom = round(h * CAPTION_BOTTOM)
+    top = bottom - len(lines) * lh
+    # The plates are drawn opaque into one mask and laid down once, so where two
+    # lines' plates overlap the overlap is not darker than the rest.
+    mask = Image.new("L", (w, h), 0)
+    md = ImageDraw.Draw(mask)
+    spots = []
+    for i, line in enumerate(lines):
+        lw = d.textlength(line, font=f)
+        x, y = (w - lw) / 2, top + i * lh
+        md.rounded_rectangle((x - pad_x, y - pad_y, x + lw + pad_x, y + lh + pad_y),
+                             radius=round(f.size * 0.3), fill=255)
+        spots.append((x, y, line))
+    plate = Image.new("RGBA", (w, h), mv.PLATE[:3] + (0,))
+    plate.putalpha(mask.point(lambda v: v * mv.PLATE[3] // 255))
+    img = Image.alpha_composite(img, plate)
+    d = ImageDraw.Draw(img)
+    for x, y, line in spots:
+        d.text((x, y), line, font=f, fill=mv.OFF_WHITE)
+    return img
+
+
+def cam_amount(box) -> float:
+    """How far the CAM layout pushes in to fill the frame with the facecam box."""
+    _bx, _by, bw, bh = box
+    return max(1.0, min(1.0 / (bw * CAM_PAD), 1.0 / (bh * CAM_PAD), CAM_ZOOM_MOST))
+
+
+def cam_zoom(box, length: float, most: float | None = None) -> tuple[str, str, str]:
     """The CAM layout as zoompan's (z, x, y): the frame itself pushes in on the
     player's facecam where it sits, eases in over CAM_EASE, holds, and eases back out
     at the end. `box` is the facecam's place in the frame, x y w h as fractions
@@ -949,9 +1038,11 @@ def cam_zoom(box, length: float) -> tuple[str, str, str]:
     The player's word on the first CAM layout, a separate composition with the cam
     large and the game inset (2026-11-01): "not good, just zoom on the place where
     the facecam is instead of making a different layout". The stream stays the
-    stream; the camera moves."""
+    stream; the camera moves.
+
+    `most`, from the editor's zoom control, replaces the fit to the box; None fits."""
     bx, by, bw, bh = box
-    z = max(1.0, min(1.0 / (bw * CAM_PAD), 1.0 / (bh * CAM_PAD), CAM_ZOOM_MOST))
+    z = cam_amount(box) if not most else max(1.0, min(float(most), CAM_ZOOM_MOST))
     e = min(CAM_EASE, length / 3)
     up = f"clip(it/{e:.4f},0,1)"
     dn = f"clip((it-{length - e:.4f})/{e:.4f},0,1)"
@@ -963,13 +1054,16 @@ def cam_zoom(box, length: float) -> tuple[str, str, str]:
 
 
 def _cut_one(source: Path, c: Cut, out: Path, *, size: tuple[int, int], encoder: str, cq: int,
-             last: bool = False, cam_box=None) -> None:
+             last: bool = False, cam_box=None, cam_most: float | None = None,
+             subs: list[tuple[float, float, str]] | None = None) -> None:
+    """One cut, encoded. `subs` are the captions to burn in: (start, end, text) in
+    seconds into the cut."""
     from .tools import decode_args, ffmpeg, filter_script_flag, video_codec_args
     w, h = size
     vf = [f"fps={FPS}"]
     zoom = None
     if c.layout == "cam" and cam_box:
-        zoom = cam_zoom(cam_box, c.length)
+        zoom = cam_zoom(cam_box, c.length, cam_most)
     elif c.punches:
         zoom = (zoom_expr([p - c.start for p in c.punches]), "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)")
     if zoom:
@@ -994,6 +1088,19 @@ def _cut_one(source: Path, c: Cut, out: Path, *, size: tuple[int, int], encoder:
                      f"fade=t=out:st={b - LOWER_FADE:.3f}:d={LOWER_FADE:.3f}:alpha=1[l];"
                      f"[{at}][l]overlay=0:0:shortest=1:enable='between(t,{a:.3f},{b:.3f})'[lo]")
         at = "lo"
+    k = 2 if c.caption else 1
+    for n, (a, b, text) in enumerate(subs or []):
+        a, b = max(0.0, a), min(c.length, b)
+        if b - a < 0.2 or not text.strip():
+            continue
+        png = out.with_name(f"{out.stem}.cap{n}.png")
+        caption_image(text, size).save(png)
+        inputs += ["-loop", "1", "-framerate", str(FPS), "-t", f"{c.length:.3f}", "-i", str(png)]
+        fade = min(CAPTION_FADE, (b - a) / 3)
+        graph.append(f"[{k}:v]format=rgba,fade=t=in:st={a:.3f}:d={fade:.3f}:alpha=1,"
+                     f"fade=t=out:st={b - fade:.3f}:d={fade:.3f}:alpha=1[s{n}];"
+                     f"[{at}][s{n}]overlay=0:0:shortest=1:enable='between(t,{a:.3f},{b:.3f})'[so{n}]")
+        at, k = f"so{n}", k + 1
     if last:
         graph.append(f"[{at}]fade=t=out:st={max(0.0, c.length - FADE_OUT):.3f}:d={FADE_OUT}[fo]")
         at = "fo"
@@ -1068,9 +1175,12 @@ def _end_clip(still: Path, out: Path, *, encoder: str, cq: int) -> None:
 
 def render(source: Path, cuts: list[Cut], out: Path, *, size: tuple[int, int] = (1920, 1080),
            encoder: str = "auto", cq: int = 19, channel: str = "", game: str = "", cam_box=None,
-           progress: Callable[[int, int], None] | None = None) -> Path:
+           progress: Callable[[int, int], None] | None = None, cam_most: float | None = None,
+           subs: list[list[tuple[float, float, str]]] | None = None,
+           cancelled: Callable[[], bool] | None = None) -> Path:
     """Cut, join, and bring the loudness to -16 LUFS without flattening it. With a
-    `channel`, the video ends on its end screen.
+    `channel`, the video ends on its end screen. `subs[i]` are cut i's burned-in
+    captions (_cut_one); `cam_most` the editor's facecam zoom.
 
     The loudness is measured on the joined video and applied in a second pass as
     one linear gain (loudnorm's linear mode): a live recording's dynamics -- a
@@ -1083,12 +1193,15 @@ def render(source: Path, cuts: list[Cut], out: Path, *, size: tuple[int, int] = 
     try:
         names = []
         for i, c in enumerate(cuts):
+            if cancelled and cancelled():
+                raise InterruptedError("stopped")
             if progress:
                 progress(i, len(cuts) + 2)
             f = work / f"c{i:03d}.mp4"
             # With an end screen the last cut hands over to it rather than fading.
             _cut_one(source, c, f, size=size, encoder=encoder, cq=cq,
-                     last=i == len(cuts) - 1 and not channel, cam_box=cam_box)
+                     last=i == len(cuts) - 1 and not channel, cam_box=cam_box, cam_most=cam_most,
+                     subs=subs[i] if subs and i < len(subs) else None)
             names.append(f.name)
         if channel and cuts:
             from . import match_video as mv

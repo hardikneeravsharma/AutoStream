@@ -5324,3 +5324,6 @@ from .css_studio import STUDIO_CSS; CSS += STUDIO_CSS  # noqa: E402,E702
 
 # Clips (a summary to start, then the moments on a timeline), in the redesign's look; last, so it wins.
 from .css_clips import CLIPS_CSS; CSS += CLIPS_CSS  # noqa: E402,E702
+
+# The highlight editor (ui/highlight.py keeps its own sheet beside its markup).
+from .highlight import HIGHLIGHT_CSS; CSS += HIGHLIGHT_CSS  # noqa: E402,E702

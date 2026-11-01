@@ -173,6 +173,22 @@ listed so the gap is visible.
 | 5.31 | Upload to YouTube | Refused safely with no account | **gap** |
 | 5.32 | "Also clip your reactions" (2026-11-01, H2), off then on | On by default; the next run asks for `reactions` false, then true | yes (`test_ui_clip_reactions`) |
 
+## 5g · The highlight editor (2026-11-01)
+
+Its controls carry `data-hl`, not `data-act`, so they are not in the sweep's count above.
+
+| # | Scenario | Must be true | Covered |
+|---|---|---|---|
+| 5.33 | "Edit the highlight video" on a recording's summary | Opens the editor over the Clips page; the preview plays the recording | yes (`test_ui_highlight`) |
+| 5.34 | Remove a moment, then Undo | The block is struck through, the project on disk says so; Undo puts it back | yes |
+| 5.35 | Play across a removed moment | The preview jumps over it to the next kept cut | yes |
+| 5.36 | A talk cut zooms on the face | The preview draws the push-in; a game cut does not | yes |
+| 5.37 | Fix a line's words, cut a line, put a line on the face | Saved; the caption shown is the fixed one; the lanes show the cut and the zoom | yes |
+| 5.38 | Move the facecam box | Dragged on the preview, saved | yes |
+| 5.39 | Make video, captions on | An `_edited.mp4` and its `.srt` are written beside the original | yes |
+| 5.40 | Drag a moment's edge on the timeline | Its start or end moves, one undo step | **gap** |
+| 5.41 | Done | The Clips page comes back as it was | yes |
+
 # 6 · Studio — 165 controls
 
 `test_ui_playwright.py` covers the two big flows and the effect picker.
