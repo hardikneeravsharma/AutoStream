@@ -377,16 +377,26 @@ const API = {
 
 /* ---------------- toasts ---------------- */
 
-function toast(message, kind) {
+/* `action`, optional: {label, run} -- one button on the toast, which then stays
+   long enough to be pressed. */
+function toast(message, kind, action) {
   const host = shell_$('toasts');
   if (!host) return;
   const el = document.createElement('div');
   el.className = 'toast is-' + (kind === 'warn' || kind === 'error' ? kind : 'ok');
   el.textContent = message === null || message === undefined ? '' : String(message);
-  host.appendChild(el);
   const kill = () => { if (el.parentNode) el.parentNode.removeChild(el); };
+  if (action && action.label && typeof action.run === 'function') {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn btn-sm toast-act';
+    b.textContent = action.label;
+    b.addEventListener('click', (e) => { e.stopPropagation(); kill(); action.run(); });
+    el.appendChild(b);
+  }
+  host.appendChild(el);
   el.addEventListener('click', kill);
-  setTimeout(kill, 3500);
+  setTimeout(kill, action ? 10000 : 3500);
   while (host.children.length > 4) host.removeChild(host.firstChild);
 }
 

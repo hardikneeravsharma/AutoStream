@@ -3115,7 +3115,27 @@ function clip_mvPlayerMeta(c) {
   host.innerHTML = h;
 }
 
-function clip_renderResults(list, montagePath) {
+/* The run's highlight video, first in its results: the one long-form thing a
+   run makes, and the one with an editor (ui/highlight.py). It used to be
+   written into the run's folder and listed nowhere, so finding it meant
+   Explorer. */
+function clip_highlightRow(hlv) {
+  if (!hlv || !hlv.path) return '';
+  var name = hlv.path.split(/[\\/]/).pop();
+  var long = (name.match(/_(\d+m\d+s)\.mp4$/) || [])[1] || '';
+  return '<div class="clip-res is-montage is-highlight">' +
+    '<span class="clip-res-rank">' + icon('film') + '</span>' +
+    '<span class="clip-res-name">Highlight video</span>' +
+    '<span class="clip-res-meta muted">' + esc(long ? long.replace('m', ' min ').replace('s', ' s') : name) +
+      (hlv.edit ? '' : '  ·  made before the editor existed') + '</span>' +
+    '<span class="clip-res-acts">' +
+    (hlv.edit ? '<button class="btn btn-sm" type="button" data-act="res-highlight-edit"' +
+                ' data-path="' + esc(hlv.path) + '">Edit</button>' : '') +
+    '<button class="btn btn-ghost btn-sm" type="button" data-act="reveal"' +
+    ' data-path="' + esc(hlv.path) + '">Show</button></span></div>';
+}
+
+function clip_renderResults(list, montagePath, hlv) {
   var host = clip_el('clip-res-list');
   if (!host) return;
   if ((list || []).some(function (c) { return c.kind === 'summary' || c.kind === 'highlight'; })) {
@@ -3126,7 +3146,7 @@ function clip_renderResults(list, montagePath) {
     clip_renderUpload();
     return;
   }
-  var h = '';
+  var h = clip_highlightRow(hlv);
   if (montagePath) {
     /* THE ONE OUTPUT WITH NO WAY INTO THE MIDDLE OF IT. Forty clips joined
        into eight minutes, and the good one is somewhere in there -- so the
@@ -7621,6 +7641,8 @@ function clip_wire() {
       if (clip_isMV()) clip_run(); else clip_preview();
     } else if (act === 'sum-change') {
       clip_goStep(b.getAttribute('data-val'));
+    } else if (act === 'res-highlight-edit') {
+      if (window.PAGE_HL) window.PAGE_HL.open(b.getAttribute('data-path'));
     } else if (act === 'sum-highlight') {
       if (window.PAGE_HL && clip_state.pick) window.PAGE_HL.open(clip_state.pick.highlight);
     } else if (act === 'sum-made') {
@@ -7952,8 +7974,15 @@ window.PAGE_CLIPS = {
     clip_state.lastJob = j;
     if (wasBusy && !clip_state.busy) {
       clip_load();
-      if (j.state === 'done' && j.scan_mode !== 'summary' && !j.clips)
+      if (j.state === 'done' && j.scan_mode !== 'summary' && !j.clips && !j.match_video)
         toast((j.summary && j.summary.why) || 'No clips came out of that run.', 'warn');
+      else if (j.state === 'done' && j.match_video && window.PAGE_HL) {
+        /* The highlight is what a run of a whole stream is for: say so, and
+           offer its editor from the toast itself. */
+        var mvPath = j.match_video;
+        toast(j.clips ? 'Clips and your highlight video are ready.' : 'Your highlight video is ready.', 'ok',
+              {label: 'Edit', run: function () { go('clips'); window.PAGE_HL.open(mvPath); }});
+      }
       else if (j.state === 'done') toast(j.scan_mode === 'summary'
         ? 'Your match videos are ready.' : 'Clips are ready.', 'ok');
       else if (j.state === 'failed') toast(j.error || 'Clip job failed.', 'error');
@@ -7967,8 +7996,11 @@ async function clip_fetchResults(j) {
   try {
     var r = await API.get('/api/clips/sessions');
     var last = (r && r.last_job) || null;
-    if (last && last.clips) clip_renderResults(last.clips, last.montage);
-    else clip_renderResults([], j.montage);
+    var hlv = last && last.match_video
+      ? {path: last.match_video, edit: !!last.match_video_edit}
+      : (j.match_video ? {path: j.match_video, edit: true} : null);
+    if (last && last.clips) clip_renderResults(last.clips, last.montage, hlv);
+    else clip_renderResults([], j.montage, hlv);
   } catch (e) { /* the headline summary is already on screen */ }
 }
 """

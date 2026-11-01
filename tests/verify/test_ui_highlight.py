@@ -230,6 +230,36 @@ def test_make_video_writes_the_edited_file(ui, app):
     ui.clean("making the video")
 
 
+def test_a_finished_run_lists_its_highlight_with_edit(ui, app):
+    """The highlight used to be written to the run's folder and listed nowhere."""
+    page = ui.page
+    page.click('[data-hl="close"]')
+    # The card a finished run shows (a real run is minutes of footage away).
+    page.evaluate("([p]) => { clip_show('clip-results', true); clip_show('clip-res-list', true);"
+                  " document.getElementById('clip-results').classList.remove('clip-offstep');"
+                  " clip_renderResults([], null, {path: p, edit: true}); }", [str(app["video"])])
+    row = page.locator("#clip-res-list .is-highlight")
+    assert row.is_visible()
+    assert "Highlight video" in row.inner_text()
+    row.locator('[data-act="res-highlight-edit"]').click()
+    page.wait_for_function("() => !document.getElementById('hl-card').classList.contains('hide')", timeout=10_000)
+    page.click('[data-hl="close"]')
+    # Made before the editor: listed, with no Edit to press.
+    page.evaluate("([p]) => clip_renderResults([], null, {path: p, edit: false})", [str(app["video"])])
+    assert page.locator('#clip-res-list [data-act="res-highlight-edit"]').count() == 0
+    ui.clean("the results' highlight row")
+
+
+def test_the_ready_toast_offers_edit(ui, app):
+    page = ui.page
+    page.click('[data-hl="close"]')
+    page.evaluate("([p]) => toast('Your highlight video is ready.', 'ok',"
+                  " {label: 'Edit', run: () => PAGE_HL.open(p)})", [str(app["video"])])
+    page.locator("#toasts .toast-act").click()
+    page.wait_for_function("() => !document.getElementById('hl-card').classList.contains('hide')", timeout=10_000)
+    ui.clean("the toast's Edit")
+
+
 def test_done_closes_it(ui):
     page = ui.page
     page.click('[data-hl="close"]')

@@ -252,7 +252,7 @@ async function hl_open(video) {
   hl_el('hl-title').textContent = 'Edit the highlight video';
   hl_render();
   hl_paintRender(r.render || {});
-  if (r.render && r.render.state === 'running') hl_pollRender();
+  if (r.render && (r.render.state === 'running' || r.render.state === 'waiting')) hl_pollRender();
   if (!hl.raf) hl.raf = requestAnimationFrame(hl_tick);
   window.scrollTo(0, 0);
 }
@@ -788,7 +788,7 @@ async function hl_make() {
   clearTimeout(hl.saveT);
   var r = await API.post('/api/clips/highlight/render', {video: hl.video, project: hl_edits()});
   if (!r || r.error) { toast((r && r.error) || 'The video could not be started.', 'error'); return; }
-  hl_paintRender({state: 'running', percent: 0});
+  hl_paintRender(r.waiting ? {state: 'waiting', why: r.waiting} : {state: 'running', percent: 0});
   hl_pollRender();
 }
 
@@ -799,16 +799,20 @@ function hl_pollRender() {
     try { r = await API.get('/api/clips/highlight/status'); } catch (e) { r = null; }
     if (!r) { hl_pollRender(); return; }
     hl_paintRender(r);
-    if (r.state === 'running') hl_pollRender();
+    if (r.state === 'running' || r.state === 'waiting') hl_pollRender();
     else if (r.state === 'done') { hl.made = r.out; toast('Your edited video is made.', 'ok'); hl_paintRender(r); }
     else if (r.state === 'failed') toast(r.error || 'The video could not be made.', 'error');
   }, 1000);
 }
 
 function hl_paintRender(r) {
-  var run = r.state === 'running';
+  var wait = r.state === 'waiting';
+  var run = r.state === 'running' || wait;
   var msg = hl_el('hl-make-msg');
-  if (run) msg.textContent = r.total ? ('Making it: part ' + Math.min(r.done + 1, r.total) + ' of ' + r.total + ', ' +
+  /* Live or recording: the render is held so the stream keeps its encoder,
+     and starts by itself afterwards (clips/highlight_edit.Renderer). */
+  if (wait) msg.textContent = (r.why || 'Waiting.') + ' The video starts by itself after that.';
+  else if (run) msg.textContent = r.total ? ('Making it: part ' + Math.min(r.done + 1, r.total) + ' of ' + r.total + ', ' +
                                         r.percent + '%') : 'Making it…';
   else if (r.state === 'failed') msg.textContent = r.error || 'It could not be made.';
   else if (hl.made) msg.textContent = 'Made: ' + hl.made.split(/[\\/]/).pop();
@@ -1050,4 +1054,7 @@ HIGHLIGHT_CSS: str = r"""
   .hl-said{max-height:420px}
 }
 @media (prefers-reduced-motion:reduce){.hl-stage video{transition:none}}
+/* A toast's one action (shell's toast(message, kind, action)): "Edit" on
+   "Your highlight video is ready." */
+.toast .toast-act{flex:0 0 auto;margin-left:auto;margin-top:-2px}
 """

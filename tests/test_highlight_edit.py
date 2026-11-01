@@ -232,3 +232,80 @@ def test_the_newest_editable_highlight_of_a_run_is_offered(tmp_path):
     p = _saved(tmp_path)
     assert webui.Server._editable_highlight(str(tmp_path)) == p["video"]
     assert webui.Server._editable_highlight(str(tmp_path / "nothing")) == ""
+
+
+# ------------------------------------------------- waiting for the broadcast
+
+def _quick_render(monkeypatch, made: list):
+    def fake(source, cuts, out, **kw):
+        made.append(out)
+        Path(out).write_bytes(b"\0" * 16)
+        return out
+    monkeypatch.setattr(sh, "render", fake)
+    monkeypatch.setattr(he, "WAIT_POLL", 0.05)
+
+
+def _until(r: he.Renderer, state: str, seconds: float = 5.0) -> dict:
+    import time
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        snap = r.snapshot()
+        if snap["state"] == state and not (state != "waiting" and r.busy()):
+            return snap
+        time.sleep(0.02)
+    raise AssertionError(f"never {state}: {r.snapshot()}")
+
+
+def test_make_video_waits_while_live_and_starts_by_itself(tmp_path, monkeypatch):
+    """The player's rule: no Make video while live or recording -- it waits and says so."""
+    made: list = []
+    _quick_render(monkeypatch, made)
+    p = _saved(tmp_path)
+    live = {"why": "Waiting until you are not live."}
+    r = he.Renderer()
+    assert r.start(p, held=lambda: live["why"])
+    snap = _until(r, "waiting")
+    assert snap["why"] == "Waiting until you are not live."
+    assert not made and not r.encoding()
+    # Edits saved while it waits are what it makes.
+    he.save({**he.load(p["video"]), "cuts": [dict(c, keep=c["id"] != 1) for c in p["cuts"]]})
+    live["why"] = ""
+    _until(r, "done")
+    assert made and he.load(p["video"])["made"].endswith("_edited.mp4")
+    assert he.load(p["video"])["cuts"][1]["keep"] is False
+
+
+def test_stopping_a_waiting_render_makes_nothing(tmp_path, monkeypatch):
+    made: list = []
+    _quick_render(monkeypatch, made)
+    p = _saved(tmp_path)
+    r = he.Renderer()
+    r.start(p, held=lambda: "Waiting until the recording stops.")
+    _until(r, "waiting")
+    r.cancel()
+    snap = _until(r, "idle")
+    assert snap["why"] == "" and not made
+
+
+def test_a_waiting_render_does_not_hold_up_a_clip_job(tmp_path, monkeypatch):
+    """busy() is the slot; encoding() is the encoder, which is what a clip job
+    fights over -- and a render waiting FOR that clip job must not refuse it."""
+    _quick_render(monkeypatch, [])
+    p = _saved(tmp_path)
+    r = he.Renderer()
+    r.start(p, held=lambda: "Waiting for the clip job to finish.")
+    _until(r, "waiting")
+    assert r.busy() and not r.encoding()
+    r.cancel()
+    _until(r, "idle")
+
+
+def test_the_last_run_says_whether_its_highlight_opens_in_the_editor(srv, tmp_path, monkeypatch):
+    p = _saved(tmp_path)
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "clips.json").write_text(json.dumps({"match_video": p["video"], "clips": []}), encoding="utf-8")
+    got = srv._last_manifest(None)
+    assert got["match_video_edit"] is True
+    he.project_path(p["video"]).unlink()
+    assert srv._last_manifest(None)["match_video_edit"] is False

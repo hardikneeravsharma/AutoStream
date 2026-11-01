@@ -3074,9 +3074,18 @@ class Server:
             return None
         for p in found[:1]:
             try:
-                return json.loads(p.read_text(encoding="utf-8"))
+                data = json.loads(p.read_text(encoding="utf-8"))
             except (OSError, ValueError, json.JSONDecodeError):
                 return None
+            # Whether the run's highlight video opens in the editor: only one a
+            # clip job wrote a project for (v2.9.0 on) does.
+            if isinstance(data, dict) and data.get("match_video"):
+                from .clips import highlight_edit
+
+                video = Path(str(data["match_video"]))
+                data["match_video_edit"] = (video.is_file()
+                                            and highlight_edit.project_path(video).is_file())
+            return data
         return None
 
     @staticmethod
@@ -3105,7 +3114,7 @@ class Server:
             return {"error": "A clip is being re-rendered; wait for it to finish."}
         from .clips import highlight_edit
 
-        if highlight_edit.renderer().busy():
+        if highlight_edit.renderer().encoding():
             return {"error": "A highlight video is being made; wait for it to finish."}
 
         src = str(body.get("source") or "")
@@ -3489,16 +3498,19 @@ class Server:
             return {"error": why}
         if not Path(project.get("source") or "").is_file():
             return {"error": "The recording this was cut from is not on this PC any more."}
-        if clips.runner().busy():
-            return {"error": "A clip job is running; make the video when it has finished."}
         if isinstance(body.get("project"), dict):
             project = highlight_edit.merge(project, body["project"])
             highlight_edit.save(project)
         if highlight_edit.length(project) < 5.0:
             return {"error": "Nothing is kept: keep at least one moment."}
-        if not highlight_edit.renderer().start(project, encoder=c.clips.encoder):
+        # Live, recording or a clip job: the render waits for it and says so,
+        # rather than taking the encoder from the broadcast (Renderer).
+        if not highlight_edit.renderer().start(project, encoder=c.clips.encoder,
+                                               held=self.studio_encoder_held):
             return {"error": "A highlight video is already being made."}
-        return {"ok": True, "out": str(highlight_edit.edited_path(project["video"]))}
+        why = self.studio_encoder_held()
+        return {"ok": True, "out": str(highlight_edit.edited_path(project["video"])),
+                **({"waiting": why} if why else {})}
 
     def clips_highlight_cancel(self) -> dict:
         from .clips import highlight_edit
