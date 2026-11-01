@@ -183,9 +183,12 @@ LOWER_AT = 0.4
 LOWER_SECONDS = 1.4
 LOWER_FADE = 5 / 60
 
-# THE CAM LAYOUT (cam_graph): the facecam this share of the frame's height, at the
-# left margin; the game inset PIP_WIDTH wide in the bottom-right corner.
-CAM_HEIGHT = 0.76
+# THE CAM LAYOUT (cam_graph): the facecam CAM_HEIGHT of the frame's height; the game
+# inset PIP_WIDTH wide in the bottom-right corner.
+# Half the frame's height: a camera baked in at about 270p, at most twice its size
+# (ChatGPT, on the first CAM render at 76 %: "visibly softer... slightly amateur").
+CAM_HEIGHT = 0.50
+CAM_CX, CAM_CY = 0.44, 0.46      # its centre: a little left and up, clear of the inset
 CAM_MARGIN = 0.04
 PIP_WIDTH = 0.30
 PIP_MARGIN = 0.05
@@ -587,6 +590,36 @@ def _cuts(chosen: list[Stretch], cold_open: bool) -> list[Cut]:
     return cuts
 
 
+def _union(spans: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    out: list[list[float]] = []
+    for a, b in sorted(spans):
+        if out and a <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return [(a, b) for a, b in out]
+
+
+def _minus(spans: list[tuple[float, float]], holes: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """`spans` with `holes` taken out of them."""
+    out = []
+    for a, b in spans:
+        parts = [(a, b)]
+        for x, y in holes:
+            nxt = []
+            for p, q in parts:
+                if y <= p or x >= q:
+                    nxt.append((p, q))
+                    continue
+                if x > p:
+                    nxt.append((p, x))
+                if y < q:
+                    nxt.append((y, q))
+            parts = nxt
+        out += parts
+    return out
+
+
 def _talk_after(t: float, speech: list[tuple[float, float]], limit: float) -> list[tuple[float, float]]:
     """The turns of talk that run on from `t`, each following the last within
     AFTER_TURN_GAP, cut at `limit`; spans under CAM_SHORTEST dropped."""
@@ -619,8 +652,9 @@ def shape(s: Stretch, r: dict | None, speech: list[tuple[float, float]],
       * talk in the buy phase before a round's fight is the CAM layout;
     and in a round that is not the match's last:
       * once the player is dead, the game keeps CAM_AFTER_DEATH (the kill and the
-        combat report); after that, spectating is not worth showing -- while they
-        keep talking it is the CAM layout, and when they stop it is over;
+        combat report); after that, a team-mate's fight stays on the game, and the
+        rest of spectating is not worth showing -- while they keep talking it is the
+        CAM layout, and when they stop it is over;
       * the round always ENDS ON SCREEN: unless the stretch already shows the
         game's own WON / LOST banner, RESULT_IN to RESULT_OUT after the round was
         decided is cut in (measured on three Bind rounds: the banner is up from
@@ -651,7 +685,15 @@ def shape(s: Stretch, r: dict | None, speech: list[tuple[float, float]],
         if next_start is not None:
             limit = min(limit, next_start - 1.0)
         kept = [(a, min(b, d), lay) for a, b, lay in pieces if a < d]
-        pieces = kept + [(a, b, "cam") for a, b in _talk_after(d, speech, limit)]
+        # A team-mate still fighting is gameplay, not spectating: "do not equate
+        # spectating with uninteresting footage" (ChatGPT, on the first CAM render).
+        # Every fight after the death, up to the round's end, stays on the game --
+        # talked over or not -- and the talk around it is the CAM.
+        fights = _union([(max(d, c - HOLD_BEFORE_CONTACT), c + 1.0) for c in r.get("contacts") or []
+                         if d < c <= min(r["end"], limit)])
+        cam = _minus(_talk_after(d, speech, limit), fights)
+        pieces = sorted(kept + [(a, b, "game") for a, b in fights]
+                        + [(a, b, "cam") for a, b in cam if b - a >= CAM_SHORTEST])
     shown = any(lay == "game" and a <= r["end"] + RESULT_SEEN <= b for a, b, lay in pieces)
     ra, rb = r["end"] + RESULT_IN, r["end"] + RESULT_OUT
     if not shown and (next_start is None or rb < next_start):
@@ -872,7 +914,7 @@ def cam_graph(box, size: tuple[int, int]) -> str:
     bx, by, bw, bh = box
     ch = round(h * CAM_HEIGHT) // 2 * 2
     cw = round(ch * (bw * w) / (bh * h)) // 2 * 2
-    cx, cy = round(w * CAM_MARGIN), (h - ch) // 2
+    cx, cy = round(w * CAM_CX) - cw // 2, round(h * CAM_CY) - ch // 2
     pw = round(w * PIP_WIDTH) // 2 * 2
     ph = round(pw * h / w) // 2 * 2
     px, py = w - pw - round(w * CAM_MARGIN), h - ph - round(h * PIP_MARGIN)

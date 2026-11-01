@@ -320,3 +320,13 @@ def test_no_transcriber_means_none_not_a_failure(monkeypatch):
     monkeypatch.setattr(speech, "available", lambda: False)
     assert speech.transcribe("x.mp4", [(0.0, 10.0)]) is None
     assert speech.fast() is False
+
+
+def test_a_team_mates_fight_after_the_death_stays_on_the_game():
+    s = sh.Stretch(start=698.9, end=722.6, score=9, round=10,
+                   events=[sh.Event(704.9, "kill", 1), sh.Event(711.6, "death", 0.3)])
+    r = dict(R10, contacts=R10["contacts"] + [716.0], won=False, score=(4, 6))
+    got = shaped(s, r, speech=[(712.0, 730.0)])
+    # 716.0 is a team-mate's kill: the game from HOLD_BEFORE_CONTACT before it
+    assert any(lay == "game" and a <= 715.0 and b >= 717.0 for a, b, lay in got)
+    assert any(lay == "cam" for _, _, lay in got)
