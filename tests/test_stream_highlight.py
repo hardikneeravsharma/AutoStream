@@ -309,10 +309,12 @@ def test_cuts_move_to_the_edges_of_sentences_but_not_the_banner():
     assert far[0].start == 100.0
 
 
-def test_the_cam_layout_is_a_graph_from_the_marked_box():
-    g = sh.cam_graph([0.0122, 0.5851, 0.2514, 0.2795], (1920, 1080))
-    assert g.startswith("[v]split=3") and g.endswith("[vv]")
-    assert "crop=iw*0.25140:ih*0.27950:iw*0.01220:ih*0.58510" in g
+def test_the_cam_layout_pushes_in_on_the_marked_box():
+    z, x, y = sh.cam_zoom([0.0122, 0.5851, 0.2514, 0.2795], 10.0)
+    # the facecam fills the frame with CAM_PAD to spare: 1 / (0.2795 * 1.12)
+    assert z.startswith("1+2.1945*(")
+    assert "0.13790*iw" in x and "0.72485*ih" in y          # centred on the box
+    assert "clip(" in x and "iw-iw/zoom" in x                # never past the frame's edge
 
 
 def test_no_transcriber_means_none_not_a_failure(monkeypatch):

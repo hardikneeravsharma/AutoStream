@@ -183,15 +183,11 @@ LOWER_AT = 0.4
 LOWER_SECONDS = 1.4
 LOWER_FADE = 5 / 60
 
-# THE CAM LAYOUT (cam_graph): the facecam CAM_HEIGHT of the frame's height; the game
-# inset PIP_WIDTH wide in the bottom-right corner.
-# Half the frame's height: a camera baked in at about 270p, at most twice its size
-# (ChatGPT, on the first CAM render at 76 %: "visibly softer... slightly amateur").
-CAM_HEIGHT = 0.50
-CAM_CX, CAM_CY = 0.44, 0.46      # its centre: a little left and up, clear of the inset
-CAM_MARGIN = 0.04
-PIP_WIDTH = 0.30
-PIP_MARGIN = 0.05
+# THE CAM LAYOUT (cam_zoom): the frame pushes in on the facecam until it fills the
+# frame with CAM_PAD to spare, at most CAM_ZOOM_MOST, easing in and out over CAM_EASE.
+CAM_PAD = 1.12
+CAM_ZOOM_MOST = 3.2
+CAM_EASE = 0.35
 
 # THE END SCREEN, after the game's own result screen and never instead of it:
 # the channel's name, a thank-you, and the two places for YouTube's end-screen
@@ -906,32 +902,26 @@ def lower_third(text: str, size: tuple[int, int] = (1920, 1080)):
     return img
 
 
-def cam_graph(box, size: tuple[int, int]) -> str:
-    """The CAM layout as an ffmpeg graph from [v] to [vv]: the player's facecam large,
-    the game small in the corner, over the game blurred and dimmed (Subroza's
-    reverse picture-in-picture). `box` is the facecam's place in the frame, x y w h
-    as fractions (facecam.load()["inset"]).
+def cam_zoom(box, length: float) -> tuple[str, str, str]:
+    """The CAM layout as zoompan's (z, x, y): the frame itself pushes in on the
+    player's facecam where it sits, eases in over CAM_EASE, holds, and eases back out
+    at the end. `box` is the facecam's place in the frame, x y w h as fractions
+    (facecam.load()["inset"]).
 
-    A camera baked into the recording is soft when it is made this big -- ChatGPT
-    advised against it at 270p, the player asked for it anyway: a face that can be
-    seen talking beats a minute of spectating. It is scaled with lanczos and
-    sharpened a little; a camera recorded as its own file would be sharp."""
-    w, h = size
+    The player's word on the first CAM layout, a separate composition with the cam
+    large and the game inset (2026-11-01): "not good, just zoom on the place where
+    the facecam is instead of making a different layout". The stream stays the
+    stream; the camera moves."""
     bx, by, bw, bh = box
-    ch = round(h * CAM_HEIGHT) // 2 * 2
-    cw = round(ch * (bw * w) / (bh * h)) // 2 * 2
-    cx, cy = round(w * CAM_CX) - cw // 2, round(h * CAM_CY) - ch // 2
-    pw = round(w * PIP_WIDTH) // 2 * 2
-    ph = round(pw * h / w) // 2 * 2
-    px, py = w - pw - round(w * CAM_MARGIN), h - ph - round(h * PIP_MARGIN)
-    edge = max(2, round(h * 0.003))
-    return (f"[v]split=3[bg][cam][pip];"
-            f"[bg]scale={w // 8}:{h // 8},gblur=sigma=6,scale={w}:{h},eq=brightness=-0.22:saturation=0.8[bgb];"
-            f"[cam]crop=iw*{bw:.5f}:ih*{bh:.5f}:iw*{bx:.5f}:ih*{by:.5f},"
-            f"scale={cw}:{ch}:flags=lanczos,unsharp=5:5:0.5:5:5:0[c];"
-            f"[pip]scale={pw - 2 * edge}:{ph - 2 * edge}:flags=lanczos,"
-            f"pad={pw}:{ph}:{edge}:{edge}:color=0xF2F2EE[p];"
-            f"[bgb][c]overlay={cx}:{cy}[t];[t][p]overlay={px}:{py},format=yuv420p[vv]")
+    z = max(1.0, min(1.0 / (bw * CAM_PAD), 1.0 / (bh * CAM_PAD), CAM_ZOOM_MOST))
+    e = min(CAM_EASE, length / 3)
+    up = f"clip(it/{e:.4f},0,1)"
+    dn = f"clip((it-{length - e:.4f})/{e:.4f},0,1)"
+    zexpr = f"1+{z - 1:.4f}*({up}*{up}*(3-2*{up}))*(1-{dn}*{dn}*(3-2*{dn}))"
+    cx, cy = bx + bw / 2, by + bh / 2
+    x = f"clip({cx:.5f}*iw-iw/zoom/2,0,iw-iw/zoom)"
+    y = f"clip({cy:.5f}*ih-ih/zoom/2,0,ih-ih/zoom)"
+    return zexpr, x, y
 
 
 def _cut_one(source: Path, c: Cut, out: Path, *, size: tuple[int, int], encoder: str, cq: int,
@@ -939,20 +929,22 @@ def _cut_one(source: Path, c: Cut, out: Path, *, size: tuple[int, int], encoder:
     from .tools import decode_args, ffmpeg, filter_script_flag, video_codec_args
     w, h = size
     vf = [f"fps={FPS}"]
-    if c.punches:
-        z = zoom_expr([p - c.start for p in c.punches])
+    zoom = None
+    if c.layout == "cam" and cam_box:
+        zoom = cam_zoom(cam_box, c.length)
+    elif c.punches:
+        zoom = (zoom_expr([p - c.start for p in c.punches]), "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)")
+    if zoom:
+        z, x, y = zoom
         # Over-sampled first: zoompan rounds its window to whole pixels, which
         # shimmers on a slow zoom at the source's own size.
         vf += [f"scale={w * 2}:{h * 2}:flags=bicubic",
-               f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}:fps={FPS}"]
+               f"zoompan=z='{z}':x='{x}':y='{y}':d=1:s={w}x{h}:fps={FPS}"]
     vf += [f"scale={w}:{h}:flags=lanczos", "format=yuv420p"]
     fade = FADE_OUT if last else EDGE_FADE
     af = f"afade=t=in:d={EDGE_FADE},afade=t=out:st={max(0.0, c.length - fade):.3f}:d={fade}"
     graph = [f"[0:v]{','.join(vf)}[v]"]
     at = "v"
-    if c.layout == "cam" and cam_box:
-        graph.append(cam_graph(cam_box, size))
-        at = "vv"
     inputs = ["-ss", f"{c.start:.3f}", "-t", f"{c.length:.3f}", "-i", str(source)]
     if c.caption:
         png = out.with_suffix(".lower.png")
