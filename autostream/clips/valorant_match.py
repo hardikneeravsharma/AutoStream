@@ -806,8 +806,13 @@ def round_times(match: Match, puuid: str, sync: cs2_demo.Sync) -> list[dict]:
         by_round.setdefault(int(k.get("round") or 0), []).append(k)
     results = {int(r.get("roundNum") or 0): r for r in (match.data.get("roundResults") or [])}
     last_n = max(results) if results else -1
+    me = {str(p.get("subject")): str(p.get("teamId") or "")
+          for p in (match.data.get("players") or [])}.get(puuid, "")
     out = []
+    mine = theirs = 0
     for n in sorted(results):
+        won = (str(results[n].get("winningTeam") or "") == me) if me else None
+        mine, theirs = mine + (won is True), theirs + (won is False)
         ks = sorted(by_round.get(n, []), key=lambda k: float(k.get("gameTime") or 0))
         if not ks:
             continue                       # no kill, so nothing to place the round's clock against
@@ -829,8 +834,8 @@ def round_times(match: Match, puuid: str, sync: cs2_demo.Sync) -> list[dict]:
         for k in ks:
             if k.get("victim") == puuid:
                 break
-            mine, theirs = _alive_at(match, k, puuid)
-            if mine == 1 and theirs >= 1:
+            alive_mine, alive_theirs = _alive_at(match, k, puuid)
+            if alive_mine == 1 and alive_theirs >= 1:
                 last_stand = sync.to_vod(float(k.get("gameTime") or 0) / 1000.0)
                 break
         out.append({
@@ -841,6 +846,8 @@ def round_times(match: Match, puuid: str, sync: cs2_demo.Sync) -> list[dict]:
             "contacts": [sync.to_vod(float(k.get("gameTime") or 0) / 1000.0) for k in ks],
             "last_stand": last_stand,
             "final": n == last_n,
+            "won": won,
+            "score": (mine, theirs),          # the player's side first, after this round
         })
     return out
 

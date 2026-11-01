@@ -89,6 +89,20 @@ RESULT_HOLD = 2.5
 FINAL_HOLD = 7.0
 AFTER_ROUND = 7.0
 MERGE_GAP = 6.0            # stretches closer than this are played through, not cut between
+
+# WHAT THE VIEWER SEES (shape()). After the player dies the game keeps
+# CAM_AFTER_DEATH for the kill and the combat report; their talk after that is the
+# CAM layout, for at most CAM_LONGEST, and a turn under CAM_SHORTEST is not worth a
+# layout change. The round's own WON / LOST banner, RESULT_IN to RESULT_OUT after
+# it was decided, closes every round that does not already show it (it is up from
+# about 1 s to 5 s after; RESULT_SEEN into it counts as shown).
+CAM_AFTER_DEATH = 2.5
+CAM_LONGEST = 20.0
+CAM_SHORTEST = 2.0
+RESULT_IN = 0.8
+RESULT_OUT = 3.3
+RESULT_SEEN = 1.5
+SNAP = 6.0                 # how far a cut moves to a sentence's edge (snap())
 SHORTEST = 8.0
 
 # DEAD TIME: DEAD seconds or more with no speech, no game-audio activity, no event,
@@ -169,6 +183,13 @@ LOWER_AT = 0.4
 LOWER_SECONDS = 1.4
 LOWER_FADE = 5 / 60
 
+# THE CAM LAYOUT (cam_graph): the facecam this share of the frame's height, at the
+# left margin; the game inset PIP_WIDTH wide in the bottom-right corner.
+CAM_HEIGHT = 0.76
+CAM_MARGIN = 0.04
+PIP_WIDTH = 0.30
+PIP_MARGIN = 0.05
+
 # THE END SCREEN, after the game's own result screen and never instead of it:
 # the channel's name, a thank-you, and the two places for YouTube's end-screen
 # elements. 5-7 s (ChatGPT); YouTube needs at least 5 for its elements.
@@ -201,9 +222,13 @@ class Stretch:
     why: str = ""
     cuts: list[tuple[float, float]] = field(default_factory=list)   # after dead time is taken out
     punches: list[float] = field(default_factory=list)              # source times to punch in at
+    shaped: list[tuple[float, float, str]] = field(default_factory=list)   # the cuts with layouts: shape()
+    result: str = ""                                                # "ROUND 10 · LOST · 4-6", on its result cut
 
     @property
     def length(self) -> float:
+        if self.shaped:
+            return sum(b - a for a, b, _ in self.shaped)
         return sum(b - a for a, b in self.cuts) if self.cuts else self.end - self.start
 
     @property
@@ -236,6 +261,7 @@ class Cut:
     kind: str = "play"                                    # "cold" / "play"
     stretch: int = -1
     caption: str = ""                                     # the lower third, on a match's first cut
+    layout: str = "game"                                  # "game" / "cam" / "result" -- see shape()
 
     @property
     def length(self) -> float:
@@ -555,9 +581,123 @@ def _cuts(chosen: list[Stretch], cold_open: bool) -> list[Cut]:
         b = min(a + COLD_LONGEST, max(pk, a + COLD_BEFORE) + COLD_AFTER)
         cuts.append(Cut(max(0.0, a), b, kind="cold", stretch=chosen.index(best)))
     for i, s in enumerate(chosen):
-        for a, b in s.cuts:
-            cuts.append(Cut(a, b, punches=[p for p in s.punches if a <= p < b], stretch=i))
+        for a, b, layout in s.shaped or [(a, b, "game") for a, b in s.cuts]:
+            cuts.append(Cut(a, b, punches=[p for p in s.punches if a <= p < b], stretch=i, layout=layout,
+                            caption=s.result if layout == "result" else ""))
     return cuts
+
+
+def _talk_after(t: float, speech: list[tuple[float, float]], limit: float) -> list[tuple[float, float]]:
+    """The turns of talk that run on from `t`, each following the last within
+    AFTER_TURN_GAP, cut at `limit`; spans under CAM_SHORTEST dropped."""
+    out: list[list[float]] = []
+    at = t
+    for a, b in sorted(speech):
+        if b <= t:
+            continue
+        if a > at + AFTER_TURN_GAP or a >= limit:
+            break
+        a, b = max(a, t), min(b, limit)
+        if out and a - out[-1][1] < AFTER_TURN_GAP:
+            out[-1][1] = b
+        else:
+            out.append([a, b])
+        at = b
+    return [(a, b) for a, b in out if b - a >= CAM_SHORTEST]
+
+
+def shape(s: Stretch, r: dict | None, speech: list[tuple[float, float]],
+          next_start: float | None = None) -> list[tuple[float, float, str]]:
+    """What the viewer sees through a stretch: (start, end, layout) in order.
+
+    Two things the player asked for (2026-11-01) after watching the first session
+    video: "there is no clear indication of when the round ends and the next starts
+    -- when I die, suddenly in the next second I am alive", and "when I am talking
+    and no gameplay is worth showing, enlarge the facecam".
+
+    So:
+      * talk in the buy phase before a round's fight is the CAM layout;
+    and in a round that is not the match's last:
+      * once the player is dead, the game keeps CAM_AFTER_DEATH (the kill and the
+        combat report); after that, spectating is not worth showing -- while they
+        keep talking it is the CAM layout, and when they stop it is over;
+      * the round always ENDS ON SCREEN: unless the stretch already shows the
+        game's own WON / LOST banner, RESULT_IN to RESULT_OUT after the round was
+        decided is cut in (measured on three Bind rounds: the banner is up from
+        1 s to 5 s after the deciding moment). It is the game's banner, not a card.
+    The match's last round plays as it is: it ends on the game's result screen."""
+    pieces = [(a, b, "game") for a, b in s.cuts]
+    if not r or not pieces:
+        return pieces
+    if r.get("start") is not None and pieces[0][0] < r["start"] - 0.5:
+        lead = r["start"] - 0.5
+        talk = [(max(a, pieces[0][0]), min(b, lead)) for a, b in speech if a < lead and b > pieces[0][0]]
+        out = []
+        for a, b, lay in pieces:
+            if b <= lead:
+                out += [(x, y, "cam") for x, y in talk if a <= x < b and y - x >= CAM_SHORTEST]
+            elif a < lead:
+                out += [(x, min(y, lead), "cam") for x, y in talk if a <= x < lead and min(y, lead) - x >= CAM_SHORTEST]
+                out.append((lead, b, lay))
+            else:
+                out.append((a, b, lay))
+        pieces = out or pieces
+    if r.get("final"):
+        return [(a, b, lay) for a, b, lay in pieces if b - a >= 0.5]
+    deaths = sorted(e.t for e in s.events if e.kind == "death")
+    if deaths:
+        d = deaths[0] + CAM_AFTER_DEATH
+        limit = d + CAM_LONGEST
+        if next_start is not None:
+            limit = min(limit, next_start - 1.0)
+        kept = [(a, min(b, d), lay) for a, b, lay in pieces if a < d]
+        pieces = kept + [(a, b, "cam") for a, b in _talk_after(d, speech, limit)]
+    shown = any(lay == "game" and a <= r["end"] + RESULT_SEEN <= b for a, b, lay in pieces)
+    ra, rb = r["end"] + RESULT_IN, r["end"] + RESULT_OUT
+    if not shown and (next_start is None or rb < next_start):
+        out = []
+        for a, b, lay in pieces:
+            if b <= ra or a >= rb:
+                out.append((a, b, lay))
+                continue
+            if a < ra:
+                out.append((a, ra, lay))
+            if b > rb:
+                out.append((rb, b, lay))
+        pieces = sorted(out + [(ra, rb, "result")])
+    return [(a, b, lay) for a, b, lay in pieces if b - a >= 0.5]
+
+
+def snap(cuts: list[Cut], lines) -> list[Cut]:
+    """Cuts moved to the edges of what the player said (speech.transcribe's lines): a
+    cut that would land inside a sentence moves out to its start or its end, by at
+    most SNAP. The cold open and the round-result cuts keep their times -- one is
+    action, the other the game's banner. Never into the cut before it."""
+    if not lines:
+        return cuts
+    out: list[Cut] = []
+    for c in cuts:
+        if c.kind == "play" and c.layout != "result":
+            for ln in lines:
+                if ln.start < c.start < ln.end and c.start - ln.start <= SNAP:
+                    c.start = ln.start - 0.15
+                if ln.start < c.end < ln.end and ln.end - c.end <= SNAP:
+                    c.end = ln.end + 0.25
+        prev = out[-1] if out else None
+        if prev is not None and prev.kind == "play" and c.start < prev.end and prev.stretch == c.stretch:
+            c.start = prev.end
+        if c.end - c.start >= 0.5:
+            out.append(c)
+    return out
+
+
+def result_line(r: dict | None) -> str:
+    """What the round-result cut says over the game's own banner, in case a held
+    scoreboard or a spectated team-mate hides it: "ROUND 10 · LOST · 4-6"."""
+    if not r or r.get("won") is None or not r.get("score"):
+        return ""
+    a, b = r["score"]
+    return f"ROUND {r['number']} · {'WON' if r['won'] else 'LOST'} · {a}-{b}"
 
 
 def plan(*, kills: list[float], deaths: list[float], reactions: list, speech: list[tuple[float, float]],
@@ -574,8 +714,12 @@ def plan(*, kills: list[float], deaths: list[float], reactions: list, speech: li
                     cluster_gap=RESPAWN_GAP if respawn else CLUSTER_GAP)
     by_num = {r["number"]: r for r in rounds or []}
     for s in sts:
-        s.cuts = trim_dead(s, speech, game, by_num.get(s.round))
+        r = by_num.get(s.round)
+        s.cuts = trim_dead(s, speech, game, r)
         s.punches = punches(s)
+        nxt = by_num.get(s.round + 1) if s.round else None
+        s.shaped = shape(s, r, speech, next_start=nxt["start"] if nxt else None)
+        s.result = result_line(r)
     final = [r["number"] for r in rounds or [] if r.get("final")]
     chosen = select(sts, budget=budget, must=final or None)
     return _cuts(chosen, cold_open), chosen
@@ -714,8 +858,36 @@ def lower_third(text: str, size: tuple[int, int] = (1920, 1080)):
     return img
 
 
+def cam_graph(box, size: tuple[int, int]) -> str:
+    """The CAM layout as an ffmpeg graph from [v] to [vv]: the player's facecam large,
+    the game small in the corner, over the game blurred and dimmed (Subroza's
+    reverse picture-in-picture). `box` is the facecam's place in the frame, x y w h
+    as fractions (facecam.load()["inset"]).
+
+    A camera baked into the recording is soft when it is made this big -- ChatGPT
+    advised against it at 270p, the player asked for it anyway: a face that can be
+    seen talking beats a minute of spectating. It is scaled with lanczos and
+    sharpened a little; a camera recorded as its own file would be sharp."""
+    w, h = size
+    bx, by, bw, bh = box
+    ch = round(h * CAM_HEIGHT) // 2 * 2
+    cw = round(ch * (bw * w) / (bh * h)) // 2 * 2
+    cx, cy = round(w * CAM_MARGIN), (h - ch) // 2
+    pw = round(w * PIP_WIDTH) // 2 * 2
+    ph = round(pw * h / w) // 2 * 2
+    px, py = w - pw - round(w * CAM_MARGIN), h - ph - round(h * PIP_MARGIN)
+    edge = max(2, round(h * 0.003))
+    return (f"[v]split=3[bg][cam][pip];"
+            f"[bg]scale={w // 8}:{h // 8},gblur=sigma=6,scale={w}:{h},eq=brightness=-0.22:saturation=0.8[bgb];"
+            f"[cam]crop=iw*{bw:.5f}:ih*{bh:.5f}:iw*{bx:.5f}:ih*{by:.5f},"
+            f"scale={cw}:{ch}:flags=lanczos,unsharp=5:5:0.5:5:5:0[c];"
+            f"[pip]scale={pw - 2 * edge}:{ph - 2 * edge}:flags=lanczos,"
+            f"pad={pw}:{ph}:{edge}:{edge}:color=0xF2F2EE[p];"
+            f"[bgb][c]overlay={cx}:{cy}[t];[t][p]overlay={px}:{py},format=yuv420p[vv]")
+
+
 def _cut_one(source: Path, c: Cut, out: Path, *, size: tuple[int, int], encoder: str, cq: int,
-             last: bool = False) -> None:
+             last: bool = False, cam_box=None) -> None:
     from .tools import decode_args, ffmpeg, filter_script_flag, video_codec_args
     w, h = size
     vf = [f"fps={FPS}"]
@@ -727,29 +899,30 @@ def _cut_one(source: Path, c: Cut, out: Path, *, size: tuple[int, int], encoder:
                f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}:fps={FPS}"]
     vf += [f"scale={w}:{h}:flags=lanczos", "format=yuv420p"]
     fade = FADE_OUT if last else EDGE_FADE
-    if last:
-        vf.append(f"fade=t=out:st={max(0.0, c.length - FADE_OUT):.3f}:d={FADE_OUT}")
     af = f"afade=t=in:d={EDGE_FADE},afade=t=out:st={max(0.0, c.length - fade):.3f}:d={fade}"
-    if not c.caption:
-        ffmpeg(*decode_args(), "-ss", f"{c.start:.3f}", "-i", str(source), "-t", f"{c.length:.3f}",
-               "-map", "0:v:0", "-map", "0:a:0", "-vf", ",".join(vf), "-af", af,
-               *video_codec_args(encoder, cq=cq), "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-               "-y", str(out))
-        return
-    png = out.with_suffix(".lower.png")
-    lower_third(c.caption, size).save(png)
-    a = LOWER_AT
-    b = min(c.length - 0.2, a + LOWER_SECONDS)
-    graph = (f"[0:v]{','.join(vf)}[v];"
-             f"[1:v]format=rgba,fade=t=in:st={a:.3f}:d={LOWER_FADE:.3f}:alpha=1,"
-             f"fade=t=out:st={b - LOWER_FADE:.3f}:d={LOWER_FADE:.3f}:alpha=1[l];"
-             f"[v][l]overlay=0:0:shortest=1:enable='between(t,{a:.3f},{b:.3f})'[vout];"
-             f"[0:a:0]{af}[aout]")
+    graph = [f"[0:v]{','.join(vf)}[v]"]
+    at = "v"
+    if c.layout == "cam" and cam_box:
+        graph.append(cam_graph(cam_box, size))
+        at = "vv"
+    inputs = ["-ss", f"{c.start:.3f}", "-t", f"{c.length:.3f}", "-i", str(source)]
+    if c.caption:
+        png = out.with_suffix(".lower.png")
+        lower_third(c.caption, size).save(png)
+        a = LOWER_AT
+        b = min(c.length - 0.2, a + LOWER_SECONDS)
+        inputs += ["-loop", "1", "-framerate", str(FPS), "-t", f"{c.length:.3f}", "-i", str(png)]
+        graph.append(f"[1:v]format=rgba,fade=t=in:st={a:.3f}:d={LOWER_FADE:.3f}:alpha=1,"
+                     f"fade=t=out:st={b - LOWER_FADE:.3f}:d={LOWER_FADE:.3f}:alpha=1[l];"
+                     f"[{at}][l]overlay=0:0:shortest=1:enable='between(t,{a:.3f},{b:.3f})'[lo]")
+        at = "lo"
+    if last:
+        graph.append(f"[{at}]fade=t=out:st={max(0.0, c.length - FADE_OUT):.3f}:d={FADE_OUT}[fo]")
+        at = "fo"
+    graph.append(f"[{at}]null[vout];[0:a:0]{af}[aout]")
     script = out.with_suffix(".graph.txt")
-    script.write_text(graph, encoding="utf-8")
-    ffmpeg(*decode_args(), "-ss", f"{c.start:.3f}", "-t", f"{c.length:.3f}", "-i", str(source),
-           "-loop", "1", "-framerate", str(FPS), "-t", f"{c.length:.3f}", "-i", str(png),
-           filter_script_flag(), str(script), "-map", "[vout]", "-map", "[aout]",
+    script.write_text(";".join(graph), encoding="utf-8")
+    ffmpeg(*decode_args(), *inputs, filter_script_flag(), str(script), "-map", "[vout]", "-map", "[aout]",
            *video_codec_args(encoder, cq=cq), "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
            "-y", str(out))
 
@@ -816,7 +989,7 @@ def _end_clip(still: Path, out: Path, *, encoder: str, cq: int) -> None:
 
 
 def render(source: Path, cuts: list[Cut], out: Path, *, size: tuple[int, int] = (1920, 1080),
-           encoder: str = "auto", cq: int = 19, channel: str = "", game: str = "",
+           encoder: str = "auto", cq: int = 19, channel: str = "", game: str = "", cam_box=None,
            progress: Callable[[int, int], None] | None = None) -> Path:
     """Cut, join, and bring the loudness to -16 LUFS without flattening it. With a
     `channel`, the video ends on its end screen.
@@ -837,7 +1010,7 @@ def render(source: Path, cuts: list[Cut], out: Path, *, size: tuple[int, int] = 
             f = work / f"c{i:03d}.mp4"
             # With an end screen the last cut hands over to it rather than fading.
             _cut_one(source, c, f, size=size, encoder=encoder, cq=cq,
-                     last=i == len(cuts) - 1 and not channel)
+                     last=i == len(cuts) - 1 and not channel, cam_box=cam_box)
             names.append(f.name)
         if channel and cuts:
             from . import match_video as mv

@@ -253,3 +253,70 @@ def test_the_job_cuts_the_session_from_the_match_records(tmp_path, monkeypatch):
     assert manifest["matches"] == ["MATCH 1 · COMPETITIVE · BIND · CYPHER",
                                    "MATCH 2 · COMPETITIVE · SUNSET · CYPHER"]
     assert all(n.startswith("Match ") for _, n in manifest["chapters"])
+
+
+R7 = {"number": 7, "start": 281.4, "end": 373.9, "plant": 328.9, "last_stand": 359.2, "final": False,
+      "contacts": [296.0, 303.1, 307.1, 310.8, 317.0, 341.4, 356.0, 359.2, 366.7], "won": True, "score": (3, 4)}
+
+
+def shaped(stretch, r, speech, next_start=None):
+    stretch.cuts = [(stretch.start, stretch.end)]
+    return sh.shape(stretch, r, speech, next_start)
+
+
+def test_after_the_player_dies_their_talk_is_the_cam_and_the_round_ends_on_its_banner():
+    s = sh.Stretch(start=698.9, end=722.6, score=9, round=10,
+                   events=[sh.Event(704.9, "kill", 1), sh.Event(711.6, "death", 0.3)])
+    r = dict(R10, won=False, score=(4, 6))
+    got = shaped(s, r, speech=[(712.0, 720.0)])
+    d = 711.6 + sh.CAM_AFTER_DEATH
+    assert got[0] == (698.9, d, "game")
+    # talk after the death is the cam, interrupted by the game's own banner
+    assert (d, 716.9 + sh.RESULT_IN, "cam") in got
+    assert (716.9 + sh.RESULT_IN, 716.9 + sh.RESULT_OUT, "result") in got
+    # silent after the death: straight from the death to the banner
+    got = shaped(s, r, speech=[])
+    assert [lay for _, _, lay in got] == ["game", "result"]
+
+
+def test_a_round_already_shown_to_its_end_gets_no_second_banner():
+    s = sh.Stretch(start=355.0, end=373.9 + 4.0, score=5, round=7, events=[sh.Event(366.7, "kill", 1)])
+    assert [lay for _, _, lay in shaped(s, R7, speech=[])] == ["game"]
+
+
+def test_buy_phase_talk_is_the_cam_and_the_last_round_keeps_the_game():
+    s = sh.Stretch(start=1305.0, end=1385.8, score=6, round=17, events=[sh.Event(1350.0, "kill", 1)])
+    r17 = {"number": 17, "start": 1334.2, "end": 1367.5, "plant": None, "last_stand": None,
+           "final": True, "contacts": [1350.0]}
+    got = shaped(s, r17, speech=[(1310.0, 1330.0)])
+    assert got[0] == (1310.0, 1330.0, "cam")
+    assert got[-1][2] == "game" and got[-1][1] == 1385.8
+
+
+def test_the_result_line_reads_like_the_scoreboard():
+    assert sh.result_line(R7) == "ROUND 7 · WON · 3-4"
+    assert sh.result_line({"number": 1}) == ""
+
+
+def test_cuts_move_to_the_edges_of_sentences_but_not_the_banner():
+    from autostream.clips.speech import Line
+    cuts = [sh.Cut(100.0, 120.0, stretch=0), sh.Cut(130.0, 132.5, stretch=0, layout="result")]
+    got = sh.snap(cuts, [Line(97.0, 101.0, "a"), Line(118.0, 123.0, "b"), Line(129.0, 131.0, "c")])
+    assert (got[0].start, got[0].end) == (97.0 - 0.15, 123.0 + 0.25)
+    assert (got[1].start, got[1].end) == (130.0, 132.5)
+    # a sentence more than SNAP away is left alone
+    far = sh.snap([sh.Cut(100.0, 120.0)], [Line(80.0, 101.0, "x")])
+    assert far[0].start == 100.0
+
+
+def test_the_cam_layout_is_a_graph_from_the_marked_box():
+    g = sh.cam_graph([0.0122, 0.5851, 0.2514, 0.2795], (1920, 1080))
+    assert g.startswith("[v]split=3") and g.endswith("[vv]")
+    assert "crop=iw*0.25140:ih*0.27950:iw*0.01220:ih*0.58510" in g
+
+
+def test_no_transcriber_means_none_not_a_failure(monkeypatch):
+    from autostream.clips import speech
+    monkeypatch.setattr(speech, "available", lambda: False)
+    assert speech.transcribe("x.mp4", [(0.0, 10.0)]) is None
+    assert speech.fast() is False

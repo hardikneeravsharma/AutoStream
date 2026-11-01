@@ -516,6 +516,17 @@ class ClipJob:
         cuts, chosen, owner = sh.plan_session(
             matches, reactions=getattr(self, "reactions_found", None) or [], speech=speech,
             game=game, source_duration=dur)
+        # WHAT WAS SAID, where faster-whisper, its model and a graphics card to run it
+        # on are all here (speech.fast): only around the stretches kept, so a 4-hour
+        # stream is minutes of work. The cuts move to the edges of sentences.
+        lines = None
+        if cuts:
+            from . import speech as stt
+            if stt.fast():
+                self._set(message="Listening to what you said")
+                windows = [(max(0.0, s.start - sh.SNAP - 2), s.end + sh.SNAP + 2) for s in chosen]
+                lines = stt.transcribe(self.source, windows)
+                cuts = sh.snap(cuts, lines)
         spent = sum(c.length for c in cuts)
         if not cuts or spent < sh.FLOOR:
             log.info("not cutting a highlight: %.0fs worth keeping in %d match(es)", spent, len(matches))
@@ -544,9 +555,16 @@ class ClipJob:
 
         # cq 23: measured on this kind of recording, a third above YouTube's 1080p60
         # recommendation and a third off the file.
+        # The player's facecam, only where they marked it (clips/facecam.py's inset):
+        # the talking layout of a box guessed at would be a close-up of the wrong thing.
+        try:
+            from . import facecam
+            box = facecam.load(self.folder.parent).get("inset")
+        except Exception:  # noqa: BLE001 - no box: talk stays on the game
+            box = None
         out = sh.render(self.source, cuts, self.folder / "match" / f"{name}.mp4", encoder=enc,
                         cq=23, channel=str(self.options.get("channel") or ""), game=self.game,
-                        progress=tick)
+                        cam_box=box, progress=tick)
 
         # Two Round 7s in one video with nothing to tell them apart is worse than no
         # chapters: in a session video each names its match.
@@ -566,6 +584,7 @@ class ClipJob:
             "matches": [matches[i].label for i in kept],
             "stretches": len(chosen), "duration": round(spent, 2),
             "chapters": [[round(t, 2), n] for t, n in marks],
+            **({"said": [ln.as_dict() for ln in lines]} if lines else {}),
         })
         log.info("stream highlight: %s (%d stretches from %d of %d matches, %d chapters)",
                  Path(out).name, len(chosen), len(kept), len(matches), len(marks))
