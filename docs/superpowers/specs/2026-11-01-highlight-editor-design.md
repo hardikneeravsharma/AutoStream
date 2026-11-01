@@ -51,6 +51,42 @@ list once, beside the original.
 - One render at a time; refused while a clip job runs, and a clip job refused
   while it renders.
 
+## Second pass (asked 2026-11-01, after using v2.9.1)
+
+"There is no option to edit the time frame of a caption ... how to put a face cam
+zoom manually for how much time I want, volume timeline for separate tracks in the
+recording, transcription for both audio tracks and keyframe points addition and
+overall volume level adjuster just like a video editor". Reference: FilmCraft
+(installed; its command set -- caption in/out, split, merge, track keyframes, the
+track mixer -- is the model; no source repo was found on the machine).
+
+Decided by the player:
+- Caption timing, manual face-zoom spans of any length, a volume line per audio
+  track with keyframes, an overall volume, transcripts of both tracks.
+- The two tracks are copied out of the recording once (no re-encode, ~130 MB each
+  for a 4.6 h stream, beside the edit project) so their volumes can be heard while
+  editing: "yes".
+- The game track's transcript is for the team-mates' voice comms, and they are
+  captioned: "it's my teammates' voice comms I want captioned".
+
+My calls:
+- Lines carry `track` ("mic" or "game"). Team captions sit a line above the
+  player's and are tinted, so two people talking at once are both readable; the
+  .srt prefixes them "[Team]".
+- Caption blocks: drag an edge to retime, drag the middle to move; split at the
+  playhead, merge with the next, delete, add one at the playhead.
+- Face zooms are spans of the recording drawn on the Face zoom lane (drag across
+  it), resized by their edges, moved by their middle; they add to the face lines.
+- Volume lines are keyframes on the recording's clock in dB, the reel editor's
+  rules (`studio.vol_at` / `vol_filter`): straight between points, flat past the
+  ends, flat at 0 dB with none. Click the lane to add a point, drag it, double-
+  click it away. The render mixes mic and game itself instead of the recording's
+  own mix.
+- The overall volume moves the loudness target (0 = -16 LUFS), from -10 to +6 dB:
+  a plain gain before loudness normalisation would be undone by it.
+- Transcribing the game track runs where speech-to-text runs (a graphics card and
+  faster-whisper); elsewhere the button says why.
+
 ## Not in this version
 - Adding footage the planner did not choose (only trimming outward from a cut).
 - Reordering moments, music, titles.

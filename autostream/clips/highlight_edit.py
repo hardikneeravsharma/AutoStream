@@ -44,6 +44,13 @@ LAYOUTS = ("game", "cam", "result")
 LANGS = ("english", "said")
 SHORTEST = 0.5             # sh.shape()'s floor: a piece shorter than this is a flash
 TRIM_LEAST = 1.0           # a kept cut is never trimmed shorter than this
+CAPTION_LEAST = 0.3        # a caption shown for less than this cannot be read
+LINES_MOST = 5000
+ZOOMS_MOST = 500
+TRACKS = ("mic", "game")   # the recording's own audio: 0 is the mix, 1 the mic, 2 the game
+TRACK_INDEX = {"mic": 1, "game": 2}
+MASTER_LEAST, MASTER_MOST = -10.0, 6.0   # the overall volume, dB from LOUDNESS
+LOUDNESS = -16.0           # stream_highlight.render's target, LUFS
 ZOOM_LEAST, ZOOM_MOST = 1.2, sh.CAM_ZOOM_MOST
 
 
@@ -62,11 +69,14 @@ def _name(s: sh.Stretch) -> str:
 
 
 def build(*, video: str | Path, source: str | Path, source_seconds: float, cuts: list[sh.Cut],
-          chosen: list[sh.Stretch], labels: list[str], lines=None, cam_box=None,
+          chosen: list[sh.Stretch], labels: list[str], lines=None, team_lines=None, cam_box=None,
           channel: str = "", game: str = "", language: str | None = None,
           size: tuple[int, int] = (1920, 1080)) -> dict:
     """The project for a video the job has just planned. `labels[i]` names the match
-    stretch i is from ("MATCH 1 · COMPETITIVE · BIND · CYPHER")."""
+    stretch i is from ("MATCH 1 · COMPETITIVE · BIND · CYPHER"). `team_lines` are
+    what the team-mates said on voice comms (the game's track)."""
+    said = [(ln, "mic") for ln in lines or []] + [(ln, "game") for ln in team_lines or []]
+    said.sort(key=lambda x: x[0].start)
     english = any(getattr(ln, "english", "") for ln in lines or [])
     return {
         "version": VERSION,
@@ -89,10 +99,29 @@ def build(*, video: str | Path, source: str | Path, source_seconds: float, cuts:
                  for i, c in enumerate(cuts)],
         "lines": [{"id": i, "start": round(ln.start, 3), "end": round(ln.end, 3),
                    "text": ln.text, "english": getattr(ln, "english", "") or "",
-                   "show": True, "cut": False, "face": False}
-                  for i, ln in enumerate(lines or [])],
+                   "show": True, "cut": False, "face": False, "track": who}
+                  for i, (ln, who) in enumerate(said)],
+        "zooms": [],
+        "volume": _volume_default(),
+        "audio": {},
         "made": "",
     }
+
+
+def _volume_default() -> dict:
+    return {"master": 0.0, "mic": {"db": 0.0, "keys": []}, "game": {"db": 0.0, "keys": []}}
+
+
+def upgrade(project: dict) -> dict:
+    """A project as this version reads it: v2.9.0 projects had no speaker on a
+    line, no face-zoom spans, no volume lines and no copied-out tracks."""
+    for ln in project.get("lines") or []:
+        ln.setdefault("track", "mic")
+    project.setdefault("zooms", [])
+    vol = project.get("volume") if isinstance(project.get("volume"), dict) else {}
+    project["volume"] = {**_volume_default(), **vol}
+    project.setdefault("audio", {})
+    return project
 
 
 def save(project: dict) -> Path:
@@ -108,7 +137,7 @@ def load(video: str | Path) -> dict | None:
         d = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return d if isinstance(d, dict) and d.get("version") == VERSION else None
+    return upgrade(d) if isinstance(d, dict) and d.get("version") == VERSION else None
 
 
 def _num(v, default: float) -> float:
@@ -136,17 +165,12 @@ def merge(base: dict, edits: dict) -> dict:
             c["start"], c["end"] = round(a, 3), round(b, 3)
         c["keep"] = bool(e.get("keep", c["keep"]))
         c["zoom"] = bool(e.get("zoom", c["zoom"]))
-    by_line = {ln["id"]: ln for ln in out["lines"]}
-    for e in edits.get("lines") or []:
-        ln = by_line.get(e.get("id")) if isinstance(e, dict) else None
-        if ln is None:
-            continue
-        for k in ("text", "english"):
-            if isinstance(e.get(k), str):
-                ln[k] = " ".join(e[k].split())[:400]
-        for k in ("show", "cut", "face"):
-            if k in e:
-                ln[k] = bool(e[k])
+    if isinstance(edits.get("lines"), list):
+        out["lines"] = _lines(edits["lines"], {ln["id"]: ln for ln in out["lines"]}, top)
+    if isinstance(edits.get("zooms"), list):
+        out["zooms"] = _zooms(edits["zooms"], top)
+    if isinstance(edits.get("volume"), dict):
+        out["volume"] = _volume(edits["volume"], base.get("volume") or _volume_default())
     if "cam_box" in edits:
         b = edits.get("cam_box")
         if isinstance(b, (list, tuple)) and len(b) == 4:
@@ -162,6 +186,67 @@ def merge(base: dict, edits: dict) -> dict:
         out["captions"] = {"on": bool(cap.get("on", (base.get("captions") or {}).get("on"))),
                            "lang": cap.get("lang") if cap.get("lang") in LANGS
                            else (base.get("captions") or {}).get("lang", "english")}
+    return out
+
+
+def _lines(raw: list, before: dict, top: float) -> list[dict]:
+    """The page's lines -- it adds, splits, merges, retimes and deletes them, so the
+    list it sends is the list. Each is checked; a line it no longer sends is gone."""
+    out, seen = [], set()
+    for e in raw[:LINES_MOST]:
+        if not isinstance(e, dict):
+            continue
+        try:
+            i = int(e.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if i in seen or i < 0:
+            continue
+        old = before.get(i, {})
+        a = max(0.0, min(_num(e.get("start"), old.get("start", -1.0)), top))
+        b = max(0.0, min(_num(e.get("end"), old.get("end", -1.0)), top))
+        if b - a < CAPTION_LEAST:
+            if not old:
+                continue
+            a, b = old["start"], old["end"]
+        ln = {"id": i, "start": round(a, 3), "end": round(b, 3)}
+        for k in ("text", "english"):
+            v = e.get(k, old.get(k, ""))
+            ln[k] = " ".join(v.split())[:400] if isinstance(v, str) else ""
+        for k, dflt in (("show", True), ("cut", False), ("face", False)):
+            ln[k] = bool(e.get(k, old.get(k, dflt)))
+        ln["track"] = e.get("track") if e.get("track") in TRACKS else old.get("track", "mic")
+        seen.add(i)
+        out.append(ln)
+    return sorted(out, key=lambda x: (x["start"], x["id"]))
+
+
+def _zooms(raw: list, top: float) -> list[dict]:
+    """Face-zoom spans drawn on the timeline: {id, start, end} on the recording's clock."""
+    out = []
+    for n, e in enumerate(raw[:ZOOMS_MOST]):
+        if isinstance(e, dict):
+            a, b, i = _num(e.get("start"), -1.0), _num(e.get("end"), -1.0), e.get("id", n)
+        elif isinstance(e, (list, tuple)) and len(e) == 2:
+            (a, b), i = (_num(e[0], -1.0), _num(e[1], -1.0)), n
+        else:
+            continue
+        a, b = max(0.0, min(a, top)), max(0.0, min(b, top))
+        if b - a >= SHORTEST:
+            out.append({"id": int(i) if isinstance(i, (int, float)) else n,
+                        "start": round(a, 3), "end": round(b, 3)})
+    return sorted(out, key=lambda z: z["start"])
+
+
+def _volume(raw: dict, before: dict) -> dict:
+    from .studio import VOL_FLOOR, VOL_TOP, vol_keys
+    out = {"master": round(max(MASTER_LEAST, min(_num(raw.get("master"), before.get("master", 0.0)),
+                                                   MASTER_MOST)), 2)}
+    for name in TRACKS:
+        lane = raw.get(name) if isinstance(raw.get(name), dict) else {}
+        old = before.get(name) or {"db": 0.0, "keys": []}
+        out[name] = {"db": round(max(VOL_FLOOR, min(_num(lane.get("db"), old.get("db", 0.0)), VOL_TOP)), 2),
+                     "keys": vol_keys(lane["keys"]) if "keys" in lane else old.get("keys", [])}
     return out
 
 
@@ -205,7 +290,8 @@ def pieces(project: dict) -> tuple[list[sh.Cut], list[list[tuple[float, float, s
     is written from them either way."""
     lines = [ln for ln in project.get("lines") or [] if (ln.get("end") or 0) > (ln.get("start") or 0)]
     holes = [(ln["start"], ln["end"]) for ln in lines if ln.get("cut")]
-    faces = sh._union([(ln["start"], ln["end"]) for ln in lines if ln.get("face") and not ln.get("cut")])
+    faces = sh._union([(ln["start"], ln["end"]) for ln in lines if ln.get("face") and not ln.get("cut")]
+                      + [(z["start"], z["end"]) for z in project.get("zooms") or []])
     lang = (project.get("captions") or {}).get("lang", "english")
     said = [ln for ln in lines if ln.get("show", True) and not ln.get("cut") and caption_text(ln, lang).strip()]
     cuts: list[sh.Cut] = []
@@ -225,7 +311,8 @@ def pieces(project: dict) -> tuple[list[sh.Cut], list[list[tuple[float, float, s
                              caption=(c.get("caption") or "") if first else "", layout=layout)
                 first = False
                 cuts.append(cut)
-                subs.append([(max(ln["start"], x) - x, min(ln["end"], y) - x, caption_text(ln, lang))
+                subs.append([(max(ln["start"], x) - x, min(ln["end"], y) - x, caption_text(ln, lang),
+                              ln.get("track", "mic"))
                              for ln in said if ln["start"] < y and ln["end"] > x
                              and min(ln["end"], y) - max(ln["start"], x) >= 0.3])
     return cuts, subs
@@ -244,8 +331,9 @@ def srt(cuts: list[sh.Cut], subs: list[list[tuple[float, float, str]]]) -> str:
     captions, which a viewer can switch off and which are searchable."""
     rows, at = [], 0.0
     for c, ss in zip(cuts, subs):
-        for a, b, text in ss:
-            rows.append((at + a, at + b, text))
+        for sub in ss:
+            who = sub[3] if len(sub) > 3 else "mic"
+            rows.append((at + sub[0], at + sub[1], ("[Team] " if who == "game" else "") + sub[2]))
         at += c.length
     return "".join(f"{n}\n{_stamp(a)} --> {_stamp(b)}\n{text}\n\n"
                    for n, (a, b, text) in enumerate(rows, 1))
@@ -254,6 +342,173 @@ def srt(cuts: list[sh.Cut], subs: list[list[tuple[float, float, str]]]) -> str:
 def length(project: dict) -> float:
     return sum(c.length for c in pieces(project)[0])
 
+
+def track_count(source: str | Path) -> int:
+    try:
+        from . import reactions
+        return int(reactions.tracks(Path(source)))
+    except Exception:  # noqa: BLE001 - unreadable: the recording's own mix only
+        return 1
+
+
+def track_mix(project: dict) -> dict | None:
+    """The mic and game volume lines for the render, or None to keep the
+    recording's own mix: when they are untouched -- OBS's mix is what the player
+    has always heard -- or when the recording has no separate tracks."""
+    vol = project.get("volume") or {}
+    lanes = {name: vol.get(name) or {"db": 0.0, "keys": []} for name in TRACKS}
+    if all(not lane.get("keys") and not lane.get("db") for lane in lanes.values()):
+        return None
+    if track_count(project.get("source") or "") < 3:
+        return None
+    return {"mic": lanes["mic"].get("keys") or [], "mic_db": float(lanes["mic"].get("db") or 0.0),
+            "game": lanes["game"].get("keys") or [], "game_db": float(lanes["game"].get("db") or 0.0)}
+
+
+# ---------------------------------------------------------------- the tracks, and the team's words
+
+def track_path(video: str | Path, track: str) -> Path:
+    """Where a track copied out of the recording is kept: beside the project."""
+    v = Path(video)
+    return v.with_name(f"{v.stem}.{track}.m4a")
+
+
+def copy_tracks(project: dict) -> dict:
+    """The mic and the game, each copied out of the recording into a file of its
+    own -- no re-encode, seconds for a long stream -- so the editor can play them
+    at their own volumes: a browser plays only a file's first audio track. The
+    player's yes (2026-11-01): about 130 MB each for a 4.6 h stream."""
+    import subprocess
+    from .tools import binary
+    src = Path(project["source"])
+    if track_count(src) < 3:
+        raise ValueError("This recording has no separate mic and game tracks.")
+    made = {}
+    for name in TRACKS:
+        out = track_path(project["video"], name)
+        if not out.is_file():
+            tmp = out.with_name(out.stem + ".part.m4a")
+            p = subprocess.run([binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                                "-i", str(src), "-map", f"0:a:{TRACK_INDEX[name]}", "-vn", "-c:a", "copy",
+                                "-movflags", "+faststart", str(tmp)],
+                               capture_output=True, text=True,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if p.returncode != 0 or not tmp.is_file():
+                tmp.unlink(missing_ok=True)
+                raise RuntimeError(f"could not copy the {name} track: {(p.stderr or '').strip()[-300:]}")
+            tmp.replace(out)
+        made[name] = str(out)
+    fresh = load(project["video"]) or project
+    save({**fresh, "audio": {**(fresh.get("audio") or {}), **made}})
+    return made
+
+
+TEAM_PAD = 2.0             # transcribed this far either side of every cut
+REPEAT_GAP = 2.5           # the same words again within this is one line said once
+
+
+def _key(text: str) -> str:
+    return "".join(ch for ch in text.lower() if ch.isalnum())
+
+
+def collapse(lines: list) -> list:
+    """One line where speech-to-text wrote the same words over and over. Measured on
+    the game track of the 2026-10-25 session: "Close down" four times a second
+    apart, "Nice round" twice -- the model repeats itself over gunfire and music,
+    and four identical captions in four seconds read as a stutter. A repeat closer
+    than REPEAT_GAP extends the line before it instead."""
+    out: list = []
+    for ln in sorted(lines, key=lambda x: x.start):
+        prev = out[-1] if out else None
+        if prev is not None and _key(prev.text) and _key(prev.text) == _key(ln.text) \
+                and ln.start - prev.end <= REPEAT_GAP:
+            prev.end = max(prev.end, ln.end)
+            continue
+        out.append(ln)
+    return out
+
+
+def transcribe_track(project: dict, track: str) -> int:
+    """Every line said on one of the recording's tracks around the video's cuts, in
+    place of that track's lines so far. For the game track that is the team-mates'
+    voice comms, which the player wants captioned (2026-11-01). -> lines found.
+
+    Only where speech-to-text is fast enough to wait for (speech.fast: a graphics
+    card). The language of that track is decided on its own, since a team-mate need
+    not speak the player's."""
+    from . import speech
+    if track not in TRACKS:
+        raise ValueError("Which track?")
+    if not speech.available():
+        raise RuntimeError("Speech-to-text is not installed in this copy of AutoStream.")
+    if not speech.fast():
+        raise RuntimeError("Speech-to-text needs a graphics card here; on the processor it is too slow to wait for.")
+    if track == "game" and track_count(project["source"]) < 3:
+        raise ValueError("This recording has no separate game track.")
+    spans = sh._union([(max(0.0, min(c["start"], (c.get("planned") or [c["start"]])[0]) - TEAM_PAD),
+                        max(c["end"], (c.get("planned") or [0, c["end"]])[1]) + TEAM_PAD)
+                       for c in project.get("cuts") or []])
+    found = speech.transcribe(project["source"], spans, track=TRACK_INDEX[track], english=True)
+    if found is None:
+        raise RuntimeError("Speech-to-text could not run.")
+    found = collapse(found)
+    fresh = load(project["video"]) or project
+    keep = [ln for ln in fresh.get("lines") or [] if ln.get("track", "mic") != track]
+    nxt = max((ln["id"] for ln in fresh.get("lines") or []), default=-1) + 1
+    new = [{"id": nxt + k, "start": round(ln.start, 3), "end": round(ln.end, 3), "text": ln.text,
+            "english": ln.english or "", "show": True, "cut": False, "face": False, "track": track}
+           for k, ln in enumerate(found)]
+    save({**fresh, "lines": sorted(keep + new, key=lambda x: (x["start"], x["id"]))})
+    log.info("%s: %d line(s) on the %s track", Path(project["video"]).name, len(new), track)
+    return len(new)
+
+
+class Work:
+    """The editor's slow jobs: copying the tracks out, and transcribing a track. Each
+    runs on its own thread, one of a kind at a time; the page polls `snapshot`."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.jobs: dict[str, dict] = {}     # "tracks" / "transcribe" -> its state
+
+    def _go(self, kind: str, video: str, fn) -> bool:
+        with self._lock:
+            j = self.jobs.get(kind)
+            if j and j["state"] == "running":
+                return False
+            job = {"state": "running", "video": video, "error": "", "result": None}
+            self.jobs[kind] = job
+
+        def run():
+            try:
+                result = fn()
+                with self._lock:
+                    job.update(state="done", result=result)
+            except Exception as e:  # noqa: BLE001 - the page shows why
+                log.warning("highlight %s failed: %s", kind, e)
+                with self._lock:
+                    job.update(state="failed", error=str(e)[:400])
+
+        threading.Thread(target=run, name=f"autostream-highlight-{kind}", daemon=True).start()
+        return True
+
+    def copy_tracks(self, project: dict) -> bool:
+        return self._go("tracks", project["video"], lambda: copy_tracks(project))
+
+    def transcribe(self, project: dict, track: str) -> bool:
+        return self._go("transcribe", project["video"], lambda: transcribe_track(project, track))
+
+    def snapshot(self, video: str) -> dict:
+        with self._lock:
+            return {k: {x: j[x] for x in ("state", "error", "result")}
+                    for k, j in self.jobs.items() if j["video"] == video}
+
+
+_WORK = Work()
+
+
+def work() -> Work:
+    return _WORK
 
 WAIT_POLL = 3.0            # how often a waiting render asks whether it may start
 
@@ -341,6 +596,8 @@ class Renderer:
                       game=project.get("game") or "", cam_box=tuple(box) if box else None,
                       progress=tick, cam_most=project.get("cam_zoom"),
                       subs=subs if (project.get("captions") or {}).get("on") else None,
+                      mix=track_mix(project),
+                      loudness=LOUDNESS + float((project.get("volume") or {}).get("master") or 0.0),
                       cancelled=self._stop.is_set)
             tmp.replace(out)
             text = srt(cuts, subs)

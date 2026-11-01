@@ -7,14 +7,25 @@ facecam area, the facecam zoom, the automatic captions. Shown three layouts on h
 own Bind footage he chose "a mix of B and C" -- B the timeline with lanes, C the
 video edited by its words -- so both are here, editing one project:
 
-    preview (the recording, played cut to cut)  |  what you said, moment by moment
-    lanes: moments / face zoom / captions / ends |  (fix a caption, cut a line,
-    the selected moment: keep, trim              |   zoom on the face for a line)
-    face zoom, the facecam box, captions, Make video
+    preview (the recording, played cut to cut)  |  what was said, moment by moment
+    lanes: moments / face zoom / your captions   |  (fix a caption, cut a line,
+      / team captions / mic / game / round ends  |   zoom on the face for a line)
+    the selected moment, caption or zoom         |
+    face zoom, the facecam box, captions, volume, Make video
+
+THE SECOND PASS (asked after using it): "edit the time frame of a caption", "put a
+face cam zoom manually for how much time I want", a "volume timeline for separate
+tracks in the recording", "transcription for both audio tracks", "keyframe points"
+and an "overall volume level adjuster just like a video editor". So caption blocks
+are retimed by their edges and moved by their middle; face zooms are drawn across
+their lane; the mic and the game each have a volume line with keyframes (the reel
+editor's rules: clips/studio.vol_at); the team-mates' voice comms, on the game
+track, are transcribed and captioned a line above the player's.
 
 WHAT IS EDITED is the cut list, never pixels (clips/highlight_edit.py). The preview
-plays the RECORDING, skipping what is removed and pushing in on the facecam exactly
-where the render will, so nothing is rendered until Make video.
+plays the RECORDING, skipping what is removed, pushing in on the facecam exactly
+where the render will, and -- once the two tracks are copied out of it -- playing
+the mic and the game at their own volumes. Nothing is rendered until Make video.
 
 NAMING. Everything is prefixed hl_ and the one global is window.PAGE_HL -- every
 view module shares one scope. Its buttons carry data-hl, not data-act, so the Clips
@@ -45,6 +56,7 @@ HIGHLIGHT_HTML: str = r"""
     <div class="hl-main">
       <div class="hl-stage" id="hl-stage">
         <video id="hl-video" playsinline preload="metadata"></video>
+        <div class="hl-cap is-team hide" id="hl-cap-team"></div>
         <div class="hl-cap hide" id="hl-cap"></div>
         <div class="hl-box hide" id="hl-box"><span class="hl-box-grip" id="hl-box-grip"></span></div>
         <p class="hl-stage-msg hide" id="hl-stage-msg"></p>
@@ -56,15 +68,16 @@ HIGHLIGHT_HTML: str = r"""
                 title="The moment before">Previous moment</button>
         <button class="btn btn-ghost btn-sm" type="button" data-hl="next"
                 title="The moment after">Next moment</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-hl="addcap"
+                title="A new caption where the playhead is">Add caption</button>
         <span class="hl-clock" id="hl-clock">0:00 / 0:00</span>
         <span class="hl-spacer"></span>
+        <span class="muted hl-audio-msg" id="hl-audio-msg"></span>
         <label class="hl-scale-label" for="hl-scale">Timeline zoom</label>
-        <input type="range" id="hl-scale" min="1" max="24" step="1" value="5">
+        <input type="range" id="hl-scale" min="1" max="40" step="1" value="6">
       </div>
       <div class="hl-lanes" id="hl-lanes">
-        <div class="hl-lane-names" aria-hidden="true">
-          <span>Moments</span><span>Face zoom</span><span>Captions</span><span>Round ends</span>
-        </div>
+        <div class="hl-lane-names" id="hl-lane-names"></div>
         <div class="hl-scroll" id="hl-scroll"><div class="hl-track" id="hl-track"></div></div>
       </div>
       <div class="hl-insp" id="hl-insp"></div>
@@ -72,9 +85,18 @@ HIGHLIGHT_HTML: str = r"""
 
     <aside class="hl-said">
       <div class="hl-said-head">
-        <h3 class="hl-said-title">What you said</h3>
-        <p class="muted hl-said-help">Fix a line's words to fix its caption. Click a line to
-           hear it.</p>
+        <h3 class="hl-said-title">What was said</h3>
+        <p class="muted hl-said-help">Fix a line's words to fix its caption. Click a line's time to
+           hear it and set when it shows.</p>
+        <div class="hl-said-tools">
+          <span class="hl-seg" role="group" aria-label="Whose lines">
+            <button class="hl-seg-btn is-on" type="button" data-hl="said-who" data-v="all">All</button>
+            <button class="hl-seg-btn" type="button" data-hl="said-who" data-v="mic">You</button>
+            <button class="hl-seg-btn" type="button" data-hl="said-who" data-v="game">Team</button>
+          </span>
+          <button class="btn btn-sm hide" type="button" data-hl="team-stt" id="hl-team-stt">Write down the team's voice</button>
+        </div>
+        <p class="muted hl-team-msg hide" id="hl-team-msg"></p>
       </div>
       <div class="hl-said-list" id="hl-said"></div>
     </aside>
@@ -101,6 +123,11 @@ HIGHLIGHT_HTML: str = r"""
         <option value="said">As said</option>
       </select>
     </div>
+    <div class="hl-opt">
+      <label class="hl-opt-label" for="hl-master">Overall volume</label>
+      <input type="range" id="hl-master" min="-10" max="6" step="1" value="0" data-hl-change="master">
+      <span class="hl-master-v" id="hl-master-v">0 dB</span>
+    </div>
     <div class="hl-make">
       <span class="muted hl-make-msg" id="hl-make-msg"></span>
       <button class="btn btn-ghost btn-sm hide" type="button" data-hl="reveal" id="hl-show">Show the file</button>
@@ -115,11 +142,21 @@ HIGHLIGHT_JS: str = r"""
 /* ============================================================ the highlight editor */
 const hl = {
   video: '', p: null, groups: [], at: [], total: 0, pieces: null,
-  sel: 0, cur: -1, undo: [], redo: [], saveT: 0, saving: false,
-  pxs: 5, boxMode: false, drag: null, editing: null, poll: 0, raf: 0,
-  lastLine: -1, outLen: 0, made: ''
+  sel: 0, selKind: 'mom', selId: null, cur: -1, undo: [], redo: [], saveT: 0,
+  pxs: 6, boxMode: false, drag: null, editing: null, poll: 0, raf: 0, workPoll: 0,
+  lastLine: -1, outLen: 0, made: '', tracks: 0, audio: {}, aud: null, who: 'all', lanes: []
 };
-const HL_FIT_PAD = 1.12, HL_ZOOM_MOST = 3.2, HL_SHORTEST = 0.5;
+const HL_FIT_PAD = 1.12, HL_ZOOM_MOST = 3.2, HL_SHORTEST = 0.5, HL_CAP_LEAST = 0.3;
+const HL_VOL_TOP = 12, HL_VOL_BOT = -40, HL_LANE_GAP = 6;
+const HL_LANES = [
+  {k: 'mom', name: 'Moments', h: 24},
+  {k: 'zoom', name: 'Face zoom', h: 22},
+  {k: 'capmic', name: 'Your captions', h: 22, track: 'mic'},
+  {k: 'capgame', name: 'Team captions', h: 22, track: 'game'},
+  {k: 'volmic', name: 'Mic volume', h: 44, vol: 'mic'},
+  {k: 'volgame', name: 'Game volume', h: 44, vol: 'game'},
+  {k: 'end', name: 'Round ends', h: 14}
+];
 
 function hl_el(id) { return document.getElementById(id); }
 /* Times on a four-hour recording read 3:19:39, not 199:39. */
@@ -131,6 +168,7 @@ function hl_fmt(s, fine) {
   return h ? h + ':' + (m < 10 ? '0' : '') + m + ':' + sec : m + ':' + sec;
 }
 function hl_fmtFine(s) { return hl_fmt(s, true); }
+function hl_r3(x) { return Math.round(x * 1000) / 1000; }
 
 /* ---- the project, as the page sees it -------------------------------------- */
 
@@ -163,6 +201,10 @@ function hl_capText(ln) {
   var lang = (hl.p.captions || {}).lang || 'english';
   return lang === 'english' && ln.english ? ln.english : (ln.text || '');
 }
+function hl_capField(ln) {
+  var lang = (hl.p.captions || {}).lang || 'english';
+  return lang === 'english' && ln.english ? 'english' : 'text';
+}
 
 function hl_minus(a, b, holes) {
   var out = [[a, b]];
@@ -179,13 +221,14 @@ function hl_minus(a, b, holes) {
 }
 
 /* The same cut list clips/highlight_edit.pieces() renders: kept cuts, cut lines
-   taken out, face lines as the zoom. Kept in step with it by
+   taken out, face lines and drawn face zooms as the zoom. Kept in step with it by
    tests/test_highlight_edit.py, which runs both on one project. */
 function hl_pieces() {
   if (hl.pieces) return hl.pieces;
   var lines = hl.p.lines || [];
   var holes = lines.filter(function (l) { return l.cut; }).map(function (l) { return [l.start, l.end]; });
-  var faces = lines.filter(function (l) { return l.face && !l.cut; }).map(function (l) { return [l.start, l.end]; });
+  var faces = lines.filter(function (l) { return l.face && !l.cut; }).map(function (l) { return [l.start, l.end]; })
+    .concat((hl.p.zooms || []).map(function (z) { return [z.start, z.end]; }));
   var out = [];
   hl.p.cuts.forEach(function (c, i) {
     if (!c.keep || hl_len(c) < HL_SHORTEST) return;
@@ -221,14 +264,34 @@ function hl_pieces() {
   return out;
 }
 
+/* A volume line's level, in dB, at recording second t: clips/studio.vol_at. */
+function hl_volAt(keys, flat, t) {
+  if (!keys || !keys.length) return +flat || 0;
+  if (t <= keys[0][0]) return keys[0][1];
+  for (var i = 0; i + 1 < keys.length; i++) {
+    var a = keys[i], b = keys[i + 1];
+    if (t <= b[0]) return a[1] + (b[1] - a[1]) * (t - a[0]) / Math.max(b[0] - a[0], 1e-9);
+  }
+  return keys[keys.length - 1][1];
+}
+function hl_lane(name) {
+  var v = hl.p.volume || (hl.p.volume = {master: 0, mic: {db: 0, keys: []}, game: {db: 0, keys: []}});
+  return v[name] || (v[name] = {db: 0, keys: []});
+}
+
 /* ---- opening and saving ---------------------------------------------------- */
 
 async function hl_open(video) {
   if (!video) return;
   var r = await API.get('/api/clips/highlight?video=' + encodeURIComponent(video));
   if (!r || r.error) { toast((r && r.error) || 'That video cannot be opened.', 'error'); return; }
+  hl_dropAudio();
   hl.video = video; hl.p = r.project; hl.undo = []; hl.redo = []; hl.sel = 0; hl.cur = -1;
-  hl.made = r.made || '';
+  hl.selKind = 'mom'; hl.selId = null;
+  hl.made = r.made || ''; hl.tracks = r.tracks || 0; hl.audio = r.audio || {};
+  hl.p.zooms = hl.p.zooms || [];
+  hl_lane('mic'); hl_lane('game');
+  hl.lanes = HL_LANES.filter(function (l) { return !l.vol || hl.tracks >= 3; });
   hl_group(); hl_layout(); hl_pieces();
   var view = hl_el('view-clips');
   if (view) view.classList.add('hl-on');
@@ -236,6 +299,7 @@ async function hl_open(video) {
   var v = hl_el('hl-video');
   var msg = hl_el('hl-stage-msg');
   msg.classList.add('hide');
+  v.muted = false;
   if (r.source_ok) {
     v.src = '/api/clips/highlight/source?k=' + encodeURIComponent(SHELL_K) +
             '&video=' + encodeURIComponent(video);
@@ -249,10 +313,17 @@ async function hl_open(video) {
   if (first) { hl.cur = first.cut; v.addEventListener('loadedmetadata', function once() {
     v.removeEventListener('loadedmetadata', once); if (hl.cur >= 0) v.currentTime = hl.p.cuts[hl.cur].start;
   }); }
-  hl_el('hl-title').textContent = 'Edit the highlight video';
   hl_render();
   hl_paintRender(r.render || {});
   if (r.render && (r.render.state === 'running' || r.render.state === 'waiting')) hl_pollRender();
+  hl_paintWork(r.work || {});
+  /* The mic and the game, copied out of the recording once (the player's yes),
+     so each can be heard at its own volume here. */
+  if (r.source_ok && hl.tracks >= 3) {
+    if (hl.audio.mic && hl.audio.game) hl_attachAudio();
+    else { API.post('/api/clips/highlight/tracks', {video: video}); hl_pollWork(); }
+  }
+  if ((r.work || {}).transcribe && r.work.transcribe.state === 'running') hl_pollWork();
   if (!hl.raf) hl.raf = requestAnimationFrame(hl_tick);
   window.scrollTo(0, 0);
 }
@@ -261,10 +332,12 @@ function hl_close() {
   hl_save(true);
   var v = hl_el('hl-video');
   if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
+  hl_dropAudio();
   hl_el('hl-card').classList.add('hide');
   var view = hl_el('view-clips');
   if (view) view.classList.remove('hl-on');
   hl.p = null; hl.video = '';
+  clearTimeout(hl.workPoll);
   if (hl.raf) { cancelAnimationFrame(hl.raf); hl.raf = 0; }
 }
 
@@ -273,13 +346,16 @@ function hl_edits() {
   return {
     cuts: p.cuts.map(function (c) { return {id: c.id, start: c.start, end: c.end, keep: c.keep, zoom: c.zoom}; }),
     lines: (p.lines || []).map(function (l) {
-      return {id: l.id, text: l.text, english: l.english, show: l.show, cut: l.cut, face: l.face};
+      return {id: l.id, start: l.start, end: l.end, text: l.text, english: l.english, show: l.show,
+              cut: l.cut, face: l.face, track: l.track || 'mic'};
     }),
+    zooms: (p.zooms || []).map(function (z) { return {id: z.id, start: z.start, end: z.end}; }),
+    volume: JSON.parse(JSON.stringify(p.volume || {})),
     cam_box: p.cam_box, cam_zoom: p.cam_zoom, captions: p.captions
   };
 }
 
-function hl_save(now) {
+async function hl_save(now) {
   clearTimeout(hl.saveT);
   if (!hl.p) return;
   var go = async function () {
@@ -289,17 +365,16 @@ function hl_save(now) {
       if (r && r.error) toast(r.error, 'error');
     } catch (e) { toast('Your changes could not be saved.', 'error'); }
   };
-  if (now) go(); else hl.saveT = setTimeout(go, 600);
+  if (now) return go();
+  hl.saveT = setTimeout(go, 600);
 }
 
 function hl_snap() { return JSON.stringify(hl_edits()); }
 function hl_restore(s) {
-  var e = JSON.parse(s), p = hl.p;
-  var cuts = {}, lines = {};
+  var e = JSON.parse(s), p = hl.p, cuts = {};
   e.cuts.forEach(function (c) { cuts[c.id] = c; });
-  e.lines.forEach(function (l) { lines[l.id] = l; });
   p.cuts.forEach(function (c) { Object.assign(c, cuts[c.id] || {}); });
-  (p.lines || []).forEach(function (l) { Object.assign(l, lines[l.id] || {}); });
+  p.lines = e.lines; p.zooms = e.zooms; p.volume = e.volume;
   p.cam_box = e.cam_box; p.cam_zoom = e.cam_zoom; p.captions = e.captions;
 }
 
@@ -342,8 +417,12 @@ function hl_render(keepSaid) {
   lang.value = cap.lang || 'english';
   lang.disabled = !anyEnglish;
   hl_el('hl-zoom').value = hl.p.cam_zoom ? String(hl.p.cam_zoom) : '';
+  var m = (hl.p.volume || {}).master || 0;
+  hl_el('hl-master').value = String(m);
+  hl_el('hl-master-v').textContent = (m > 0 ? '+' : '') + m + ' dB';
   hl_el('hl-box-btn').textContent = hl.boxMode ? 'Done moving the box' :
     (hl.p.cam_box ? 'Move the facecam box' : 'Mark the facecam');
+  hl_el('hl-team-stt').classList.toggle('hide', hl.tracks < 3);
   hl_placeBox();
 }
 
@@ -357,71 +436,185 @@ function hl_blocks(i, a, b) {
   return y - x > 0.05 ? [hl_x(i, x), hl_x(i, y)] : null;
 }
 
+/* A point on the timeline -> the cut there and the recording second it shows. */
+function hl_hit(clientX) {
+  var tr = hl_el('hl-track').getBoundingClientRect();
+  var T = (clientX - tr.left) / hl.pxs, p = hl.p;
+  for (var i = 0; i < p.cuts.length; i++) {
+    if (T < hl.at[i] + hl_len(p.cuts[i]) || i === p.cuts.length - 1) {
+      return {i: i, t: Math.max(p.cuts[i].start, Math.min(p.cuts[i].end, p.cuts[i].start + (T - hl.at[i])))};
+    }
+  }
+  return {i: 0, t: 0};
+}
+
+function hl_laneTops() {
+  var tops = {}, y = 4;
+  hl.lanes.forEach(function (l) { tops[l.k] = y; y += l.h + HL_LANE_GAP; });
+  tops._h = y - HL_LANE_GAP + 4;
+  return tops;
+}
+
+function hl_volY(db, h) { return (HL_VOL_TOP - Math.max(HL_VOL_BOT, Math.min(HL_VOL_TOP, db))) / (HL_VOL_TOP - HL_VOL_BOT) * h; }
+function hl_volDb(y, h) { return Math.round((HL_VOL_TOP - y / h * (HL_VOL_TOP - HL_VOL_BOT)) * 2) / 2; }
+
 function hl_renderTrack() {
-  var p = hl.p, pxs = hl.pxs, h = '';
+  var p = hl.p, pxs = hl.pxs, h = '', tops = hl_laneTops();
   var W = Math.max(hl.total * pxs, 200);
   var px = function (s) { return (s * pxs).toFixed(1) + 'px'; };
+  var pos = function (k, a, b) {
+    return 'left:' + px(a) + ';width:' + px(Math.max(0, b - a)) + ';top:' + tops[k] + 'px';
+  };
+  /* the lanes' own grounds, under everything: press one to seek, or to draw */
+  hl.lanes.forEach(function (l) {
+    if (l.vol) return;
+    h += '<div class="hl-ground" data-lane="' + l.k + '" style="top:' + tops[l.k] + 'px;height:' + l.h + 'px"></div>';
+  });
   /* moments */
   hl.groups.forEach(function (g, k) {
     var a = hl.at[g.cuts[0]], last = g.cuts[g.cuts.length - 1];
     var b = hl.at[last] + hl_len(p.cuts[last]);
     var on = g.cuts.some(function (i) { return p.cuts[i].keep; });
-    h += '<div class="hl-blk hl-mom' + (on ? '' : ' is-off') + (k === hl.sel ? ' is-sel' : '') +
-         (g.kind === 'cold' ? ' is-cold' : '') + '" style="left:' + px(a) + ';width:' + px(b - a) +
+    var sel = hl.selKind === 'mom' && k === hl.sel;
+    h += '<div class="hl-blk hl-mom' + (on ? '' : ' is-off') + (sel ? ' is-sel' : '') +
+         (g.kind === 'cold' ? ' is-cold' : '') + '" style="' + pos('mom', a, b) +
          '" data-hl="mom" data-k="' + k + '" title="' + esc(g.name) + '">' +
          '<span class="hl-edge hl-edge-a" data-edge="a" data-i="' + g.cuts[0] + '"></span>' +
          '<span class="hl-blk-text">' + esc(g.name) + '</span>' +
          '<span class="hl-edge hl-edge-b" data-edge="b" data-i="' + last + '"></span></div>';
   });
-  /* face zoom: whole cuts, then face lines */
+  /* face zoom: whole cuts, face lines, and the zooms drawn by hand */
   p.cuts.forEach(function (c, i) {
     if (!c.zoom && c.layout !== 'cam') return;
     h += '<div class="hl-blk hl-zm' + (c.zoom ? '' : ' is-off') + (c.keep ? '' : ' is-gone') +
-         '" style="left:' + px(hl.at[i]) + ';width:' + px(hl_len(c)) + ';top:var(--hl-l2)" data-hl="zoomcut" data-i="' + i +
-         '" title="' + (c.zoom ? 'Face zoom: click to turn it off' : 'Face zoom is off here: click to turn it on') + '"></div>';
+         '" style="' + pos('zoom', hl.at[i], hl.at[i] + hl_len(c)) + '" data-hl="zoomcut" data-i="' + i +
+         '" title="' + (c.zoom ? 'Face zoom on this cut: click to turn it off' : 'Face zoom is off here: click to turn it on') + '"></div>';
+  });
+  (p.zooms || []).forEach(function (z) {
+    p.cuts.forEach(function (c, i) {
+      var s = hl_blocks(i, z.start, z.end);
+      if (!s) return;
+      var sel = hl.selKind === 'zoom' && hl.selId === z.id;
+      h += '<div class="hl-blk hl-zm is-drawn' + (sel ? ' is-sel' : '') + (c.keep ? '' : ' is-gone') +
+           '" style="' + pos('zoom', s[0], s[1]) + '" data-zm="' + z.id + '" title="Face zoom, ' +
+           (z.end - z.start).toFixed(1) + ' s: drag its edges to change how long">' +
+           '<span class="hl-cedge" data-ce="a"></span><span class="hl-cedge hl-cedge-b" data-ce="b"></span></div>';
+    });
   });
   (p.lines || []).forEach(function (l) {
+    var lane = l.track === 'game' ? 'capgame' : 'capmic';
+    if (!tops.hasOwnProperty(lane)) return;
     p.cuts.forEach(function (c, i) {
       var s = hl_blocks(i, l.start, l.end);
       if (!s) return;
       if (l.face && !l.cut) {
-        h += '<div class="hl-blk hl-zm is-line" style="left:' + px(s[0]) + ';width:' + px(s[1] - s[0]) +
-             ';top:var(--hl-l2)" data-hl="zoomline" data-l="' + l.id + '" title="Face zoom for this line: click to turn it off"></div>';
+        h += '<div class="hl-blk hl-zm is-line" style="' + pos('zoom', s[0], s[1]) +
+             '" data-hl="zoomline" data-l="' + l.id + '" title="Face zoom for this line: click to turn it off"></div>';
       }
-      h += '<div class="hl-blk hl-cp' + (l.cut ? ' is-cut' : (l.show ? '' : ' is-off')) + (c.keep ? '' : ' is-gone') +
-           '" style="left:' + px(s[0]) + ';width:' + px(s[1] - s[0]) + ';top:var(--hl-l3)" data-hl="capline" data-l="' +
-           l.id + '" data-i="' + i + '" title="' + esc(hl_capText(l)) + '"></div>';
+      var sel = hl.selKind === 'cap' && hl.selId === l.id;
+      h += '<div class="hl-blk hl-cp' + (l.track === 'game' ? ' is-team' : '') +
+           (l.cut ? ' is-cut' : (l.show ? '' : ' is-off')) + (c.keep ? '' : ' is-gone') + (sel ? ' is-sel' : '') +
+           '" style="' + pos(lane, s[0], s[1]) + '" data-cap="' + l.id + '" title="' + esc(hl_capText(l)) + '">' +
+           '<span class="hl-cedge" data-ce="a"></span><span class="hl-blk-text">' + esc(hl_capText(l)) + '</span>' +
+           '<span class="hl-cedge hl-cedge-b" data-ce="b"></span></div>';
     });
   });
   /* round ends */
   p.cuts.forEach(function (c, i) {
-    if (c.layout !== 'result') return;
-    h += '<div class="hl-blk hl-end' + (c.keep ? '' : ' is-off') + '" style="left:' + px(hl.at[i]) +
-         ';width:' + px(hl_len(c)) + ';top:var(--hl-l4)" data-hl="endcut" data-i="' + i + '" title="' +
+    if (c.layout !== 'result' || !tops.hasOwnProperty('end')) return;
+    h += '<div class="hl-blk hl-end' + (c.keep ? '' : ' is-off') + '" style="' + pos('end', hl.at[i], hl.at[i] + hl_len(c)) +
+         ';height:14px" data-hl="endcut" data-i="' + i + '" title="' +
          esc(c.caption || 'The round ends') + (c.keep ? '' : ' (removed)') + '"></div>';
+  });
+  /* the volume lines */
+  hl.lanes.forEach(function (l) {
+    if (l.vol) h += hl_volSvg(l, tops[l.k], W);
   });
   h += '<div class="hl-head-line" id="hl-playhead"></div>';
   var tr = hl_el('hl-track');
   tr.style.width = W + 'px';
+  tr.style.height = tops._h + 'px';
   tr.innerHTML = h;
+  var names = hl_el('hl-lane-names');
+  names.innerHTML = hl.lanes.map(function (l) {
+    var clear = l.vol && hl_lane(l.vol).keys.length
+      ? '<button class="hl-lane-clear" type="button" data-hl="volclear" data-v="' + l.vol + '" title="Take every point off this line">Clear</button>' : '';
+    return '<span class="hl-lane-name" style="height:' + l.h + 'px;line-height:' + Math.min(l.h, 22) + 'px">' +
+      esc(l.name) + clear + '</span>';
+  }).join('');
   hl_paintHead();
 }
 
+function hl_volSvg(l, top, W) {
+  var p = hl.p, lane = hl_lane(l.vol), keys = lane.keys, H = l.h, pxs = hl.pxs;
+  var paths = '', dots = '';
+  p.cuts.forEach(function (c, i) {
+    var x0 = hl.at[i] * pxs, pts = [[x0, hl_volY(hl_volAt(keys, lane.db, c.start), H)]];
+    keys.forEach(function (k, n) {
+      if (k[0] > c.start && k[0] < c.end) {
+        var x = (hl.at[i] + k[0] - c.start) * pxs, y = hl_volY(k[1], H);
+        pts.push([x, y]);
+        dots += '<circle class="hl-vk" cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="4.5" data-vk="' + n +
+                '"><title>' + (k[1] > 0 ? '+' : '') + k[1] + ' dB at ' + hl_fmtFine(k[0]) + '</title></circle>';
+      }
+    });
+    pts.push([(hl.at[i] + hl_len(c)) * pxs, hl_volY(hl_volAt(keys, lane.db, c.end), H)]);
+    paths += '<polyline class="hl-vl' + (c.keep ? '' : ' is-gone') + '" points="' +
+             pts.map(function (q) { return q[0].toFixed(1) + ',' + q[1].toFixed(1); }).join(' ') + '"/>';
+  });
+  var zero = hl_volY(0, H).toFixed(1);
+  return '<svg class="hl-vol" data-vol="' + l.vol + '" width="' + W + '" height="' + H + '" style="top:' + top +
+    'px" aria-label="' + esc(l.name) + ': click to add a point, drag a point to move it, double-click it to remove it">' +
+    '<rect class="hl-vol-bg" x="0" y="0" width="' + W + '" height="' + H + '"/>' +
+    '<line class="hl-v0" x1="0" x2="' + W + '" y1="' + zero + '" y2="' + zero + '"/>' + paths + dots + '</svg>';
+}
+
+function hl_line(id) { return (hl.p.lines || []).filter(function (l) { return l.id === id; })[0]; }
+function hl_zoom(id) { return (hl.p.zooms || []).filter(function (z) { return z.id === id; })[0]; }
+function hl_nextId(list) { return list.reduce(function (m, x) { return Math.max(m, x.id); }, -1) + 1; }
+
+function hl_nudges(act, edge, id) {
+  return '<span class="hl-nudge">' + [-1, -0.1, 0.1, 1].map(function (d) {
+    return '<button class="btn btn-ghost btn-sm" type="button" data-hl="' + act + '" data-id="' + id +
+      '" data-edge="' + edge + '" data-d="' + d + '">' + (d > 0 ? '+' : '&minus;') + Math.abs(d) + (Math.abs(d) >= 1 ? 's' : '') + '</button>';
+  }).join('') + '</span>';
+}
+
 function hl_renderInsp() {
-  var g = hl.groups[hl.sel], p = hl.p, host = hl_el('hl-insp');
+  var host = hl_el('hl-insp'), p = hl.p;
+  if (hl.selKind === 'cap' && hl_line(hl.selId)) {
+    var l = hl_line(hl.selId), f = hl_capField(l);
+    host.innerHTML =
+      '<div class="hl-insp-head"><div><b>Caption</b><span class="muted"> ' + (l.track === 'game' ? 'Team' : 'You') + ', shown ' +
+        (l.end - l.start).toFixed(1) + ' s</span></div><div class="hl-insp-acts">' +
+        '<select class="select" data-hl-change="captrack" aria-label="Who says it">' +
+          '<option value="mic"' + (l.track !== 'game' ? ' selected' : '') + '>You</option>' +
+          '<option value="game"' + (l.track === 'game' ? ' selected' : '') + '>Team</option></select>' +
+        '<button class="btn btn-sm" type="button" data-hl="show" data-l="' + l.id + '">' + (l.show ? 'Hide caption' : 'Show caption') + '</button>' +
+        '<button class="btn btn-sm" type="button" data-hl="capdel">Delete</button></div></div>' +
+      '<input class="input hl-cap-input" id="hl-cap-input" type="text" value="' + esc(l[f] || '') +
+        '" data-field="' + f + '" data-l="' + l.id + '" aria-label="The caption\'s words">' +
+      '<div class="hl-trim"><span class="hl-trim-label">Shows at <b>' + hl_fmtFine(l.start) + '</b></span>' +
+        hl_nudges('capnudge', 'a', l.id) +
+        '<span class="hl-trim-label">Until <b>' + hl_fmtFine(l.end) + '</b></span>' + hl_nudges('capnudge', 'b', l.id) + '</div>' +
+      '<div class="hl-insp-acts"><button class="btn btn-ghost btn-sm" type="button" data-hl="capsplit">Split at the playhead</button>' +
+        '<button class="btn btn-ghost btn-sm" type="button" data-hl="capmerge">Join with the next caption</button></div>';
+    return;
+  }
+  if (hl.selKind === 'zoom' && hl_zoom(hl.selId)) {
+    var z = hl_zoom(hl.selId);
+    host.innerHTML =
+      '<div class="hl-insp-head"><div><b>Face zoom</b><span class="muted"> ' + (z.end - z.start).toFixed(1) + ' s</span></div>' +
+        '<button class="btn btn-sm" type="button" data-hl="zoomdel">Delete</button></div>' +
+      '<div class="hl-trim"><span class="hl-trim-label">From <b>' + hl_fmtFine(z.start) + '</b></span>' + hl_nudges('zoomnudge', 'a', z.id) +
+        '<span class="hl-trim-label">To <b>' + hl_fmtFine(z.end) + '</b></span>' + hl_nudges('zoomnudge', 'b', z.id) + '</div>';
+    return;
+  }
+  hl.selKind = 'mom';
+  var g = hl.groups[hl.sel];
   if (!g) { host.innerHTML = ''; return; }
   var on = g.cuts.some(function (i) { return p.cuts[i].keep; });
   var a = p.cuts[g.cuts[0]], b = p.cuts[g.cuts[g.cuts.length - 1]];
-  var nudge = function (edge, i) {
-    return '<span class="hl-nudge"><button class="btn btn-ghost btn-sm" type="button" data-hl="nudge" data-i="' + i +
-      '" data-edge="' + edge + '" data-d="-1">&minus;1s</button>' +
-      '<button class="btn btn-ghost btn-sm" type="button" data-hl="nudge" data-i="' + i + '" data-edge="' + edge +
-      '" data-d="-0.2">&minus;0.2</button>' +
-      '<button class="btn btn-ghost btn-sm" type="button" data-hl="nudge" data-i="' + i + '" data-edge="' + edge +
-      '" data-d="0.2">+0.2</button>' +
-      '<button class="btn btn-ghost btn-sm" type="button" data-hl="nudge" data-i="' + i + '" data-edge="' + edge +
-      '" data-d="1">+1s</button></span>';
-  };
   var parts = g.cuts.map(function (i) {
     var c = p.cuts[i];
     var what = c.layout === 'result' ? 'Round end' : (c.zoom ? 'Face zoom' : 'Game');
@@ -439,19 +632,25 @@ function hl_renderInsp() {
       '<button class="btn btn-sm' + (on ? '' : ' btn-primary') + '" type="button" data-hl="keepmom">' +
         (on ? 'Remove this moment' : 'Put this moment back') + '</button></div>' +
     '<div class="hl-trim"><span class="hl-trim-label">Starts at <b>' + hl_fmtFine(a.start) + '</b></span>' +
-      nudge('a', g.cuts[0]) +
-      '<span class="hl-trim-label">Ends at <b>' + hl_fmtFine(b.end) + '</b></span>' + nudge('b', g.cuts[g.cuts.length - 1]) +
+      hl_nudges('nudge', 'a', g.cuts[0]) +
+      '<span class="hl-trim-label">Ends at <b>' + hl_fmtFine(b.end) + '</b></span>' + hl_nudges('nudge', 'b', g.cuts[g.cuts.length - 1]) +
     '</div><ol class="hl-parts">' + parts + '</ol>';
 }
 
-/* The transcript, moment by moment. A line belongs to the first moment whose
+/* What was said, moment by moment. A line belongs to the first moment whose
    planned span (with a little either side) holds it. */
 function hl_renderSaid() {
   var p = hl.p, host = hl_el('hl-said');
-  var lines = p.lines || [];
-  if (!lines.length) {
+  var lines = (p.lines || []).filter(function (l) { return hl.who === 'all' || (l.track || 'mic') === hl.who; });
+  if (!(p.lines || []).length) {
     host.innerHTML = '<p class="muted hl-said-empty">No transcript for this video. What you said is ' +
       'written down when the video is made on a PC with a graphics card and speech-to-text installed.</p>';
+    return;
+  }
+  if (!lines.length) {
+    host.innerHTML = '<p class="muted hl-said-empty">' + (hl.who === 'game'
+      ? 'Nothing from your team yet. Press "Write down the team\'s voice" to transcribe the game\'s sound.'
+      : 'Nothing here.') + '</p>';
     return;
   }
   var used = {}, h = '';
@@ -464,19 +663,21 @@ function hl_renderSaid() {
     });
     var mine = lines.filter(function (l) { return !used[l.id] && l.end > lo - 6 && l.start < hi + 6; });
     var on = g.cuts.some(function (i) { return p.cuts[i].keep; });
-    h += '<section class="hl-said-mom' + (on ? '' : ' is-off') + (k === hl.sel ? ' is-sel' : '') + '">' +
+    h += '<section class="hl-said-mom' + (on ? '' : ' is-off') + (k === hl.sel && hl.selKind === 'mom' ? ' is-sel' : '') + '">' +
          '<button class="hl-said-name" type="button" data-hl="mom" data-k="' + k + '">' + esc(g.name) +
          (on ? '' : ' <span class="hl-chip">Removed</span>') + '</button>';
     if (!mine.length) h += '<p class="muted hl-said-none">Nothing said.</p>';
     mine.forEach(function (l) {
       used[l.id] = true;
       var inside = g.cuts.some(function (i) { var c = p.cuts[i]; return c.keep && l.end > c.start && l.start < c.end; });
-      var lang = (p.captions || {}).lang || 'english';
-      var field = lang === 'english' && l.english ? 'english' : 'text';
+      var field = hl_capField(l);
+      var team = l.track === 'game';
       h += '<div class="hl-line' + (l.cut ? ' is-cut' : '') + (inside ? '' : ' is-out') + (l.face ? ' is-face' : '') +
+           (team ? ' is-team' : '') + (hl.selKind === 'cap' && hl.selId === l.id ? ' is-sel' : '') +
            '" id="hl-line-' + l.id + '" data-l="' + l.id + '">' +
            '<button class="hl-line-t" type="button" data-hl="seekline" data-l="' + l.id + '">' + hl_fmt(l.start) + '</button>' +
            '<div class="hl-line-body">' +
+             (team ? '<span class="hl-chip is-team">Team</span>' : '') +
              '<span class="hl-line-text" contenteditable="' + (l.cut ? 'false' : 'plaintext-only') +
                '" spellcheck="true" data-field="' + field + '" data-l="' + l.id + '">' + esc(l[field] || '') + '</span>' +
              (field === 'english' && l.text ? '<span class="hl-line-orig">' + esc(l.text) + '</span>' : '') +
@@ -486,7 +687,7 @@ function hl_renderSaid() {
              '<button class="hl-tog' + (l.show && !l.cut ? ' is-on' : '') + '" type="button" data-hl="show" data-l="' + l.id +
                '" title="Show this line as a caption"' + (l.cut ? ' disabled' : '') + '>Caption</button>' +
              '<button class="hl-tog' + (l.face ? ' is-on' : '') + '" type="button" data-hl="face" data-l="' + l.id +
-               '" title="Zoom on your face while you say this"' + (l.cut ? ' disabled' : '') + '>Face</button>' +
+               '" title="Zoom on your face while this is said"' + (l.cut ? ' disabled' : '') + '>Face</button>' +
              '<button class="hl-tog' + (l.cut ? ' is-on is-danger' : '') + '" type="button" data-hl="cut" data-l="' + l.id +
                '" title="' + (l.cut ? 'Cut out of the video: click to put it back' : 'Take this line out of the video') +
                '">Cut</button>' +
@@ -498,8 +699,6 @@ function hl_renderSaid() {
 }
 
 /* ---- the preview -------------------------------------------------------------- */
-
-function hl_line(id) { return (hl.p.lines || []).filter(function (l) { return l.id === id; })[0]; }
 
 function hl_pieceAt(i, t) {
   var P = hl_pieces();
@@ -534,11 +733,58 @@ function hl_zoomOf(box) {
   return Math.max(1, Math.min(1 / (box[2] * HL_FIT_PAD), 1 / (box[3] * HL_FIT_PAD), HL_ZOOM_MOST));
 }
 
+/* The two tracks, each at its own volume: two hidden players kept on the
+   video's clock, through Web Audio so a line can go above 0 dB. */
+function hl_attachAudio() {
+  hl_dropAudio();
+  var Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx || !hl.video) return;
+  var ctx = new Ctx(), master = ctx.createGain(), aud = {ctx: ctx, master: master};
+  master.connect(ctx.destination);
+  ['mic', 'game'].forEach(function (name) {
+    var el = new Audio();
+    el.preload = 'auto';
+    el.src = '/api/clips/highlight/audio?k=' + encodeURIComponent(SHELL_K) + '&video=' +
+             encodeURIComponent(hl.video) + '&track=' + name;
+    var g = ctx.createGain();
+    ctx.createMediaElementSource(el).connect(g);
+    g.connect(master);
+    aud[name] = {el: el, gain: g};
+  });
+  hl.aud = aud;
+  hl_el('hl-video').muted = true;
+  hl_el('hl-audio-msg').textContent = '';
+}
+
+function hl_dropAudio() {
+  var a = hl.aud;
+  if (!a) return;
+  ['mic', 'game'].forEach(function (n) { if (a[n]) { a[n].el.pause(); a[n].el.removeAttribute('src'); } });
+  try { a.ctx.close(); } catch (e) { /* already closed */ }
+  hl.aud = null;
+  var v = hl_el('hl-video');
+  if (v) v.muted = false;
+}
+
+function hl_syncAudio(v, t) {
+  var a = hl.aud;
+  if (!a) return;
+  var m = Math.pow(10, (((hl.p.volume || {}).master) || 0) / 20);
+  a.master.gain.setTargetAtTime(m, a.ctx.currentTime, 0.03);
+  ['mic', 'game'].forEach(function (name) {
+    var lane = hl_lane(name), x = a[name];
+    x.gain.gain.setTargetAtTime(Math.pow(10, hl_volAt(lane.keys, lane.db, t) / 20), a.ctx.currentTime, 0.03);
+    if (v.paused || v.seeking) { if (!x.el.paused) x.el.pause(); return; }
+    if (Math.abs(x.el.currentTime - t) > 0.15) x.el.currentTime = t;
+    if (x.el.paused) { var pr = x.el.play(); if (pr && pr.catch) pr.catch(function () {}); }
+  });
+}
+
 function hl_tick() {
   hl.raf = requestAnimationFrame(hl_tick);
   var view = hl_el('view-clips'), v = hl_el('hl-video');
   if (!hl.p || !v) return;
-  if (!view || !view.classList.contains('is-active')) { if (!v.paused) v.pause(); return; }
+  if (!view || !view.classList.contains('is-active')) { if (!v.paused) v.pause(); hl_syncAudio(v, v.currentTime); return; }
   var i = hl.cur, c = hl.p.cuts[i];
   if (!c) return;
   var t = v.currentTime;
@@ -553,7 +799,17 @@ function hl_tick() {
       hl_goPiece(hl_nextPiece(i, t));       /* a cut line: over it */
     }
   }
+  hl_syncAudio(v, v.currentTime);
   hl_paintHead();
+}
+
+function hl_capAt(t, track) {
+  var on = null;
+  (hl.p.lines || []).some(function (l) {
+    if ((l.track || 'mic') === track && l.show && !l.cut && t >= l.start && t < l.end && hl_capText(l).trim()) { on = l; return true; }
+    return false;
+  });
+  return on;
 }
 
 function hl_paintHead() {
@@ -594,27 +850,26 @@ function hl_paintHead() {
     v.style.transform = '';
   }
   v.classList.toggle('is-out', !inside);
-  /* the caption */
-  var cap = hl_el('hl-cap'), on = null;
-  if (inside) {
-    (hl.p.lines || []).some(function (l) {
-      if (l.show && !l.cut && t >= l.start && t < l.end && hl_capText(l).trim()) { on = l; return true; }
-      return false;
-    });
-  }
-  if (on) { if (cap.textContent !== hl_capText(on)) cap.textContent = hl_capText(on); cap.classList.remove('hide'); }
-  else cap.classList.add('hide');
-  cap.classList.toggle('is-burned', !!(hl.p.captions || {}).on);
-  var nowLine = on ? on.id : -1;
-  if (nowLine !== hl.lastLine) {
+  /* the captions: the player's at the bottom, the team's a line above */
+  var burned = !!(hl.p.captions || {}).on, now = -1;
+  [['mic', 'hl-cap'], ['game', 'hl-cap-team']].forEach(function (pair) {
+    var cap = hl_el(pair[1]), on = inside ? hl_capAt(t, pair[0]) : null;
+    if (on) {
+      if (cap.textContent !== hl_capText(on)) cap.textContent = hl_capText(on);
+      cap.classList.remove('hide');
+      if (now < 0 || pair[0] === 'mic') now = on.id;
+    } else cap.classList.add('hide');
+    cap.classList.toggle('is-burned', burned);
+  });
+  if (now !== hl.lastLine) {
     var was = hl_el('hl-line-' + hl.lastLine);
     if (was) was.classList.remove('is-now');
-    var el = hl_el('hl-line-' + nowLine);
+    var el = hl_el('hl-line-' + now);
     if (el) {
       el.classList.add('is-now');
       if (!v.paused && !hl.editing) el.scrollIntoView({block: 'nearest'});
     }
-    hl.lastLine = nowLine;
+    hl.lastLine = now;
   }
 }
 
@@ -633,57 +888,211 @@ function hl_boxDown(e) {
   if (!hl.boxMode) return;
   var stage = hl_el('hl-stage').getBoundingClientRect();
   var b = (hl.p.cam_box || [0.02, 0.6, 0.22, 0.32]).slice();
-  hl.drag = {box: true, grip: e.target.id === 'hl-box-grip', x: e.clientX, y: e.clientY,
+  hl.drag = {kind: 'box', grip: e.target.id === 'hl-box-grip', x: e.clientX, y: e.clientY,
              w: stage.width, h: stage.height, b: b, snap: hl_snap()};
   e.preventDefault();
 }
 
-/* ---- dragging a moment's edge ---------------------------------------------------- */
+/* ---- pressing the timeline -------------------------------------------------------- */
 
-function hl_edgeDown(e) {
-  var edge = e.target.getAttribute('data-edge');
-  if (!edge) return false;
-  var i = +e.target.getAttribute('data-i'), c = hl.p.cuts[i];
-  hl.drag = {edge: edge, i: i, x: e.clientX, v: edge === 'a' ? c.start : c.end, snap: hl_snap()};
-  e.preventDefault(); e.stopPropagation();
-  return true;
+function hl_trackDown(e) {
+  if (!hl.p) return;
+  var tgt = e.target, snap = hl_snap(), top = hl.p.source_seconds || Infinity;
+  /* a moment's edge */
+  if (tgt.getAttribute('data-edge')) {
+    var i = +tgt.getAttribute('data-i'), c = hl.p.cuts[i], ed = tgt.getAttribute('data-edge');
+    hl.drag = {kind: 'edge', edge: ed, i: i, x: e.clientX, v: ed === 'a' ? c.start : c.end, snap: snap};
+    e.preventDefault(); e.stopPropagation();
+    return;
+  }
+  /* a caption: its edges retime it, its middle moves it */
+  var cap = tgt.closest('[data-cap]');
+  if (cap) {
+    var l = hl_line(+cap.getAttribute('data-cap'));
+    hl.drag = {kind: 'cap', id: l.id, mode: tgt.getAttribute('data-ce') || 'move', x: e.clientX,
+               a: l.start, b: l.end, snap: snap};
+    e.preventDefault();
+    return;
+  }
+  /* a face zoom drawn by hand: the same */
+  var zm = tgt.closest('[data-zm]');
+  if (zm) {
+    var z = hl_zoom(+zm.getAttribute('data-zm'));
+    hl.drag = {kind: 'zoom', id: z.id, mode: tgt.getAttribute('data-ce') || 'move', x: e.clientX,
+               a: z.start, b: z.end, snap: snap};
+    e.preventDefault();
+    return;
+  }
+  /* a volume line: a point to drag, or a new one */
+  var svg = tgt.closest('svg[data-vol]');
+  if (svg) {
+    var name = svg.getAttribute('data-vol'), lane = hl_lane(name), r = svg.getBoundingClientRect();
+    var key;
+    if (tgt.getAttribute('data-vk') !== null) key = lane.keys[+tgt.getAttribute('data-vk')];
+    else {
+      var hit = hl_hit(e.clientX);
+      key = [hl_r3(hit.t), Math.max(-60, hl_volDb(e.clientY - r.top, r.height))];
+      hl.undo.push(snap); hl.redo = []; snap = null;
+      lane.keys.push(key);
+      lane.keys.sort(function (x, y) { return x[0] - y[0]; });
+      hl_renderTrack();
+    }
+    hl.drag = {kind: 'key', lane: name, key: key, top: r.top, h: r.height, x: e.clientX, y: e.clientY,
+               snap: snap, moved: !snap};
+    e.preventDefault();
+    return;
+  }
+  if (tgt.closest('[data-hl]')) return;
+  /* an empty lane: the face zoom lane draws a zoom; any other seeks */
+  var ground = tgt.getAttribute('data-lane'), at = hl_hit(e.clientX);
+  if (ground === 'zoom') {
+    if (!hl.p.cam_box) { toast('Mark where your facecam is first.', 'warn'); hl.boxMode = true; hl_render(true); return; }
+    var c2 = hl.p.cuts[at.i];
+    hl.drag = {kind: 'newzoom', i: at.i, t0: at.t, lo: c2.start, hi: c2.end, x: e.clientX, snap: snap, id: null};
+    e.preventDefault();
+    return;
+  }
+  hl_seek(at.i, at.t, !hl_el('hl-video').paused);
 }
 
 function hl_move(e) {
   var d = hl.drag;
   if (!d) return;
-  if (d.box) {
+  var p = hl.p, top = p.source_seconds || Infinity, dt = (e.clientX - d.x) / hl.pxs;
+  if (Math.abs(e.clientX - d.x) > 3 || (d.kind === 'key' && Math.abs(e.clientY - d.y) > 2)) d.moved = true;
+  if (d.kind === 'box') {
     var dx = (e.clientX - d.x) / d.w, dy = (e.clientY - d.y) / d.h, b = d.b.slice();
     if (d.grip) {
       b[2] = Math.max(0.04, Math.min(1 - b[0], b[2] + dx)); b[3] = Math.max(0.04, Math.min(1 - b[1], b[3] + dy));
     } else {
       b[0] = Math.max(0, Math.min(1 - b[2], b[0] + dx)); b[1] = Math.max(0, Math.min(1 - b[3], b[1] + dy));
     }
-    hl.p.cam_box = b.map(function (x) { return Math.round(x * 100000) / 100000; });
-    hl.drag.moved = true;
+    p.cam_box = b.map(function (x) { return Math.round(x * 100000) / 100000; });
+    d.moved = true;
     hl_placeBox();
     return;
   }
-  var c = hl.p.cuts[d.i], dt = (e.clientX - d.x) / hl.pxs;
-  var top = hl.p.source_seconds || Infinity;
-  if (d.edge === 'a') c.start = Math.round(Math.max(0, Math.min(c.end - 1, d.v + dt)) * 1000) / 1000;
-  else c.end = Math.round(Math.min(top, Math.max(c.start + 1, d.v + dt)) * 1000) / 1000;
-  hl.drag.moved = true;
-  hl_layout();
-  if (!hl.drag.frame) hl.drag.frame = requestAnimationFrame(function () {
-    if (hl.drag) hl.drag.frame = 0;
-    hl_renderTrack();
+  if (!d.moved) return;
+  if (d.kind === 'edge') {
+    var c = p.cuts[d.i];
+    if (d.edge === 'a') c.start = hl_r3(Math.max(0, Math.min(c.end - 1, d.v + dt)));
+    else c.end = hl_r3(Math.min(top, Math.max(c.start + 1, d.v + dt)));
+    hl_layout();
     hl_seek(d.i, d.edge === 'a' ? c.start : c.end - 0.1);
-  });
+  } else if (d.kind === 'cap' || d.kind === 'zoom') {
+    var o = d.kind === 'cap' ? hl_line(d.id) : hl_zoom(d.id), least = d.kind === 'cap' ? HL_CAP_LEAST : HL_SHORTEST;
+    if (d.mode === 'a') o.start = hl_r3(Math.max(0, Math.min(d.b - least, d.a + dt)));
+    else if (d.mode === 'b') o.end = hl_r3(Math.min(top, Math.max(d.a + least, d.b + dt)));
+    else {
+      var sh = Math.max(-d.a, Math.min(top - d.b, dt));
+      o.start = hl_r3(d.a + sh); o.end = hl_r3(d.b + sh);
+    }
+    hl.pieces = null;
+  } else if (d.kind === 'newzoom') {
+    var t = Math.max(d.lo, Math.min(d.hi, d.t0 + dt)), a = Math.min(d.t0, t), b2 = Math.max(d.t0, t);
+    if (b2 - a < HL_SHORTEST) return;
+    if (d.id === null) {
+      d.id = hl_nextId(p.zooms || []);
+      (p.zooms = p.zooms || []).push({id: d.id, start: hl_r3(a), end: hl_r3(b2)});
+      hl.selKind = 'zoom'; hl.selId = d.id;
+    } else { var zz = hl_zoom(d.id); zz.start = hl_r3(a); zz.end = hl_r3(b2); }
+    hl.pieces = null;
+  } else if (d.kind === 'key') {
+    var hit = hl_hit(e.clientX);
+    d.key[0] = hl_r3(hit.t);
+    d.key[1] = Math.max(-60, hl_volDb(e.clientY - d.top, d.h));
+    hl_lane(d.lane).keys.sort(function (x, y) { return x[0] - y[0]; });
+  }
+  if (!d.frame) d.frame = requestAnimationFrame(function () { d.frame = 0; hl_renderTrack(); });
 }
 
 function hl_up() {
   var d = hl.drag;
   if (!d) return;
   hl.drag = null;
-  if (!d.moved) return;
-  hl.undo.push(d.snap); hl.redo = [];
+  if (d.kind === 'box') {
+    if (d.moved) { hl.undo.push(d.snap); hl.redo = []; hl_save(); hl_render(true); }
+    return;
+  }
+  if (!d.moved) {
+    /* a press without a drag: choose it, and hear it */
+    if (d.kind === 'cap') { hl.selKind = 'cap'; hl.selId = d.id; hl_render(true); hl_markSaid(); hl_seekLine(hl_line(d.id), -1); }
+    else if (d.kind === 'zoom') { hl.selKind = 'zoom'; hl.selId = d.id; hl_render(true); }
+    return;
+  }
+  if (d.snap) { hl.undo.push(d.snap); hl.redo = []; }
+  if (d.kind === 'cap') { hl.selKind = 'cap'; hl.selId = d.id; }
   hl_layout(); hl_render(); hl_save();
+}
+
+function hl_markSaid() {
+  var on = document.querySelectorAll('#hl-said .hl-line.is-sel');
+  for (var i = 0; i < on.length; i++) on[i].classList.remove('is-sel');
+  if (hl.selKind !== 'cap') return;
+  var el = hl_el('hl-line-' + hl.selId);
+  if (el) { el.classList.add('is-sel'); el.scrollIntoView({block: 'nearest'}); }
+}
+
+/* ---- captions: add, split, join, delete ---------------------------------------- */
+
+function hl_addCaption() {
+  var v = hl_el('hl-video'), c = hl.p.cuts[hl.cur];
+  if (!c) return;
+  var t = Math.max(c.start, Math.min(c.end - HL_CAP_LEAST, v.currentTime));
+  var id = hl_nextId(hl.p.lines || []);
+  hl_change(function () {
+    (hl.p.lines = hl.p.lines || []).push({id: id, start: hl_r3(t), end: hl_r3(Math.min(t + 2, (hl.p.source_seconds || Infinity))),
+      text: '', english: '', show: true, cut: false, face: false, track: 'mic'});
+    hl.p.lines.sort(function (a, b) { return a.start - b.start || a.id - b.id; });
+    hl.selKind = 'cap'; hl.selId = id;
+  });
+  var inp = hl_el('hl-cap-input');
+  if (inp) inp.focus();
+}
+
+function hl_splitWords(s, frac) {
+  var w = (s || '').split(/\s+/).filter(Boolean), k = Math.max(0, Math.min(w.length, Math.round(w.length * frac)));
+  return [w.slice(0, k).join(' '), w.slice(k).join(' ')];
+}
+
+function hl_capSplit() {
+  var l = hl_line(hl.selId), t = hl_el('hl-video').currentTime;
+  if (!l) return;
+  if (!(t > l.start + HL_CAP_LEAST && t < l.end - HL_CAP_LEAST)) {
+    toast('Put the playhead inside the caption, where it should split.', 'warn'); return;
+  }
+  var frac = (t - l.start) / (l.end - l.start), id = hl_nextId(hl.p.lines);
+  hl_change(function () {
+    var a = hl_splitWords(l.text, frac), b = hl_splitWords(l.english, frac);
+    hl.p.lines.push({id: id, start: hl_r3(t), end: l.end, text: a[1], english: b[1], show: l.show,
+                     cut: l.cut, face: l.face, track: l.track || 'mic'});
+    l.end = hl_r3(t); l.text = a[0]; l.english = b[0];
+    hl.p.lines.sort(function (x, y) { return x.start - y.start || x.id - y.id; });
+  });
+}
+
+function hl_capMerge() {
+  var l = hl_line(hl.selId);
+  if (!l) return;
+  var next = hl.p.lines.filter(function (x) { return (x.track || 'mic') === (l.track || 'mic') && x.start >= l.start && x.id !== l.id; })
+    .sort(function (a, b) { return a.start - b.start; })[0];
+  if (!next) { toast('There is no caption after this one to join.', 'warn'); return; }
+  hl_change(function () {
+    l.end = Math.max(l.end, next.end);
+    l.text = (l.text + ' ' + next.text).trim();
+    l.english = ((l.english || '') + ' ' + (next.english || '')).trim();
+    hl.p.lines = hl.p.lines.filter(function (x) { return x.id !== next.id; });
+  });
+}
+
+function hl_delete() {
+  if (hl.selKind === 'cap' && hl_line(hl.selId)) {
+    var id = hl.selId;
+    hl_change(function () { hl.p.lines = hl.p.lines.filter(function (x) { return x.id !== id; }); hl.selKind = 'mom'; });
+  } else if (hl.selKind === 'zoom' && hl_zoom(hl.selId)) {
+    var zid = hl.selId;
+    hl_change(function () { hl.p.zooms = hl.p.zooms.filter(function (x) { return x.id !== zid; }); hl.selKind = 'mom'; });
+  }
 }
 
 /* ---- clicks ------------------------------------------------------------------------ */
@@ -693,16 +1102,17 @@ function hl_click(e) {
   if (!b || !hl.p) return;
   var act = b.getAttribute('data-hl'), p = hl.p, v = hl_el('hl-video');
   var i = +b.getAttribute('data-i'), l = hl_line(+b.getAttribute('data-l'));
+  var top = p.source_seconds || Infinity;
   if (act === 'close') hl_close();
   else if (act === 'undo') hl_undoRedo(true);
   else if (act === 'redo') hl_undoRedo(false);
   else if (act === 'play') hl_togglePlay();
   else if (act === 'prev' || act === 'next') {
     var k = Math.max(0, Math.min(hl.groups.length - 1, hl.sel + (act === 'next' ? 1 : -1)));
-    hl.sel = k; hl_render(); hl_seek(hl.groups[k].cuts[0], p.cuts[hl.groups[k].cuts[0]].start);
+    hl.sel = k; hl.selKind = 'mom'; hl_render(); hl_seek(hl.groups[k].cuts[0], p.cuts[hl.groups[k].cuts[0]].start);
   } else if (act === 'mom') {
     var kk = +b.getAttribute('data-k');
-    hl.sel = kk;
+    hl.sel = kk; hl.selKind = 'mom';
     hl_render();
     var g = hl.groups[kk];
     if (b.classList.contains('hl-blk')) {
@@ -730,17 +1140,38 @@ function hl_click(e) {
   } else if (act === 'cut') {
     hl_change(function () { l.cut = !l.cut; });
   } else if (act === 'nudge') {
-    var edge = b.getAttribute('data-edge'), d = +b.getAttribute('data-d'), c = p.cuts[i];
-    var top = p.source_seconds || Infinity;
+    var edge = b.getAttribute('data-edge'), d = +b.getAttribute('data-d'), c = p.cuts[+b.getAttribute('data-id')];
     hl_change(function () {
-      if (edge === 'a') c.start = Math.round(Math.max(0, Math.min(c.end - 1, c.start + d)) * 1000) / 1000;
-      else c.end = Math.round(Math.min(top, Math.max(c.start + 1, c.end + d)) * 1000) / 1000;
+      if (edge === 'a') c.start = hl_r3(Math.max(0, Math.min(c.end - 1, c.start + d)));
+      else c.end = hl_r3(Math.min(top, Math.max(c.start + 1, c.end + d)));
     });
-    hl_seek(i, edge === 'a' ? c.start : c.end - 2);
-  } else if (act === 'seekcut') {
+    hl_seek(p.cuts.indexOf(c), edge === 'a' ? c.start : c.end - 2);
+  } else if (act === 'capnudge' || act === 'zoomnudge') {
+    var o = act === 'capnudge' ? hl_line(+b.getAttribute('data-id')) : hl_zoom(+b.getAttribute('data-id'));
+    var e2 = b.getAttribute('data-edge'), d2 = +b.getAttribute('data-d');
+    var least = act === 'capnudge' ? HL_CAP_LEAST : HL_SHORTEST;
+    hl_change(function () {
+      if (e2 === 'a') o.start = hl_r3(Math.max(0, Math.min(o.end - least, o.start + d2)));
+      else o.end = hl_r3(Math.min(top, Math.max(o.start + least, o.end + d2)));
+    }, act === 'zoomnudge');
+  } else if (act === 'capsplit') hl_capSplit();
+  else if (act === 'capmerge') hl_capMerge();
+  else if (act === 'capdel' || act === 'zoomdel') hl_delete();
+  else if (act === 'addcap') hl_addCaption();
+  else if (act === 'seekcut') {
     hl_seek(i, p.cuts[i].start);
-  } else if (act === 'seekline' || act === 'capline') {
-    hl_seekLine(l, act === 'capline' ? i : -1);
+  } else if (act === 'seekline') {
+    hl.selKind = 'cap'; hl.selId = l.id; hl_render(true); hl_markSaid();
+    hl_seekLine(l, -1);
+  } else if (act === 'said-who') {
+    hl.who = b.getAttribute('data-v');
+    var segs = document.querySelectorAll('#hl-card .hl-seg-btn');
+    for (var s = 0; s < segs.length; s++) segs[s].classList.toggle('is-on', segs[s] === b);
+    hl_renderSaid();
+  } else if (act === 'team-stt') hl_teamStt();
+  else if (act === 'volclear') {
+    var vn = b.getAttribute('data-v');
+    hl_change(function () { hl_lane(vn).keys = []; }, true);
   } else if (act === 'caps') {
     hl_change(function () { p.captions = {on: !(p.captions || {}).on, lang: (p.captions || {}).lang || 'english'}; }, true);
   } else if (act === 'box') {
@@ -775,11 +1206,64 @@ function hl_seekLine(l, prefer) {
 function hl_togglePlay() {
   var v = hl_el('hl-video');
   if (!v.getAttribute('src')) return;
+  if (hl.aud && hl.aud.ctx.state === 'suspended') hl.aud.ctx.resume();
   if (v.paused) {
     if (hl.cur < 0) { var P = hl_pieces(); if (P[0]) hl_goPiece(0); }
     var pr = v.play();
     if (pr && pr.catch) pr.catch(function () {});
   } else v.pause();
+}
+
+/* ---- the slow jobs: tracks copied out, the team's voice written down -------------- */
+
+async function hl_teamStt() {
+  await hl_save(true);
+  var r = await API.post('/api/clips/highlight/transcribe', {video: hl.video, track: 'game'});
+  if (!r || r.error) { toast((r && r.error) || 'The team\'s voice could not be written down.', 'error'); return; }
+  hl_paintWork({transcribe: {state: 'running'}});
+  hl_pollWork();
+}
+
+function hl_pollWork() {
+  clearTimeout(hl.workPoll);
+  hl.workPoll = setTimeout(async function () {
+    if (!hl.p) return;
+    var r;
+    try { r = await API.get('/api/clips/highlight/work?video=' + encodeURIComponent(hl.video)); } catch (e) { r = null; }
+    if (!r || r.error) { hl_pollWork(); return; }
+    var was = hl.workState || {};
+    hl_paintWork(r.work || {});
+    if (r.audio && r.audio.mic && r.audio.game && !hl.aud) { hl.audio = r.audio; hl_attachAudio(); }
+    var tr = (r.work || {}).transcribe;
+    if (tr && tr.state === 'done' && was.transcribe === 'running') await hl_reloadLines(tr.result);
+    var busy = Object.keys(r.work || {}).some(function (k) { return r.work[k].state === 'running'; });
+    if (busy || (hl.tracks >= 3 && !hl.aud && !((r.work || {}).tracks || {}).error)) hl_pollWork();
+  }, 1500);
+}
+
+function hl_paintWork(w) {
+  hl.workState = {};
+  Object.keys(w).forEach(function (k) { hl.workState[k] = w[k].state; });
+  var am = hl_el('hl-audio-msg');
+  var t = w.tracks || {};
+  if (t.state === 'running') am.textContent = 'Preparing the mic and game tracks...';
+  else if (t.state === 'failed') am.textContent = 'The mic and game play together here: ' + (t.error || '');
+  else if (hl.aud) am.textContent = '';
+  var msg = hl_el('hl-team-msg'), btn = hl_el('hl-team-stt'), s = w.transcribe || {};
+  btn.disabled = s.state === 'running';
+  msg.classList.toggle('hide', !s.state || s.state === 'idle');
+  msg.textContent = s.state === 'running' ? 'Writing down what your team said... this takes a few minutes.'
+    : s.state === 'failed' ? (s.error || 'It could not be written down.')
+    : s.state === 'done' ? ((s.result || 0) + ' lines from your team.') : '';
+}
+
+async function hl_reloadLines(n) {
+  var r = await API.get('/api/clips/highlight?video=' + encodeURIComponent(hl.video));
+  if (!r || r.error || !hl.p) return;
+  hl.undo.push(hl_snap()); hl.redo = [];
+  hl.p.lines = r.project.lines || [];
+  hl_layout(); hl_render();
+  toast((n || 0) + ' lines from your team were added as captions.', 'ok');
 }
 
 /* ---- Make video ---------------------------------------------------------------------- */
@@ -813,7 +1297,7 @@ function hl_paintRender(r) {
      and starts by itself afterwards (clips/highlight_edit.Renderer). */
   if (wait) msg.textContent = (r.why || 'Waiting.') + ' The video starts by itself after that.';
   else if (run) msg.textContent = r.total ? ('Making it: part ' + Math.min(r.done + 1, r.total) + ' of ' + r.total + ', ' +
-                                        r.percent + '%') : 'Making it…';
+                                        r.percent + '%') : 'Making it...';
   else if (r.state === 'failed') msg.textContent = r.error || 'It could not be made.';
   else if (hl.made) msg.textContent = 'Made: ' + hl.made.split(/[\\/]/).pop();
   else msg.textContent = '';
@@ -836,54 +1320,61 @@ function hl_paintRender(r) {
     if (w === 'lang') hl_change(function () {
       p.captions = {on: !!(p.captions || {}).on, lang: e.target.value};
     });
+    if (w === 'master') hl_change(function () { p.volume.master = +e.target.value; }, true);
+    if (w === 'captrack') {
+      var l = hl_line(hl.selId);
+      if (l) hl_change(function () { l.track = e.target.value; });
+    }
+  });
+  hl_el('hl-master').addEventListener('input', function (e) {
+    var m = +e.target.value;
+    hl_el('hl-master-v').textContent = (m > 0 ? '+' : '') + m + ' dB';
+    if (hl.p) hl.p.volume.master = m;
   });
   hl_el('hl-scale').addEventListener('input', function (e) {
     hl.pxs = +e.target.value; if (hl.p) hl_renderTrack();
   });
-  hl_el('hl-scroll').addEventListener('pointerdown', function (e) {
-    if (!hl.p || hl_edgeDown(e)) return;
-    if (e.target.closest('[data-hl]')) return;
-    /* the empty track: seek there */
-    var tr = hl_el('hl-track').getBoundingClientRect();
-    var T = (e.clientX - tr.left) / hl.pxs;
-    for (var i = 0; i < hl.p.cuts.length; i++) {
-      if (T < hl.at[i] + hl_len(hl.p.cuts[i]) || i === hl.p.cuts.length - 1) {
-        hl_seek(i, hl.p.cuts[i].start + (T - hl.at[i]), !hl_el('hl-video').paused); break;
-      }
-    }
+  hl_el('hl-scroll').addEventListener('pointerdown', hl_trackDown);
+  hl_el('hl-scroll').addEventListener('dblclick', function (e) {
+    var dot = e.target.closest('[data-vk]'), svg = e.target.closest('svg[data-vol]');
+    if (!dot || !svg || !hl.p) return;
+    var name = svg.getAttribute('data-vol'), n = +dot.getAttribute('data-vk');
+    hl_change(function () { hl_lane(name).keys.splice(n, 1); }, true);
   });
   hl_el('hl-box').addEventListener('pointerdown', hl_boxDown);
   document.addEventListener('pointermove', hl_move);
-  document.addEventListener('pointerup', function () {
-    var d = hl.drag;
-    if (d && d.box) {
-      hl.drag = null;
-      if (d.moved) { hl.undo.push(d.snap); hl.redo = []; hl_save(); hl_render(true); }
-      return;
-    }
-    hl_up();
-  });
+  document.addEventListener('pointerup', hl_up);
   /* A line's words: changed in place, saved after typing stops. One undo step per
-     line edited, not per key. */
-  var said = hl_el('hl-said');
-  said.addEventListener('focusin', function (e) {
-    var t = e.target;
-    if (t.classList && t.classList.contains('hl-line-text')) { hl.editing = {id: +t.getAttribute('data-l'), snap: hl_snap()}; }
-  });
-  said.addEventListener('input', function (e) {
-    var t = e.target, l = hl.p && hl_line(+t.getAttribute('data-l'));
+     line edited, not per key. The caption box in the inspector is the same. */
+  function wordsIn(t) {
+    if (!t || !t.getAttribute) return;
+    var l = hl.p && hl_line(+t.getAttribute('data-l'));
     if (!l) return;
     if (hl.editing && !hl.editing.pushed) { hl.undo.push(hl.editing.snap); hl.redo = []; hl.editing.pushed = true; }
-    l[t.getAttribute('data-field')] = t.textContent.replace(/\s+/g, ' ');
+    l[t.getAttribute('data-field')] = (t.value !== undefined ? t.value : t.textContent).replace(/\s+/g, ' ');
     hl.pieces = null;
     hl_save();
-  });
-  said.addEventListener('focusout', function () {
-    if (hl.editing && hl.editing.pushed) { hl_renderTrack(); hl_el('hl-undo').disabled = false; }
-    hl.editing = null;
-  });
-  said.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && e.target.classList.contains('hl-line-text')) { e.preventDefault(); e.target.blur(); }
+  }
+  [hl_el('hl-said'), hl_el('hl-insp')].forEach(function (host) {
+    host.addEventListener('focusin', function (e) {
+      var t = e.target;
+      if (t.classList && (t.classList.contains('hl-line-text') || t.id === 'hl-cap-input')) {
+        hl.editing = {id: +t.getAttribute('data-l'), snap: hl_snap()};
+      }
+    });
+    host.addEventListener('input', function (e) {
+      if (e.target.classList.contains('hl-line-text') || e.target.id === 'hl-cap-input') wordsIn(e.target);
+    });
+    host.addEventListener('focusout', function () {
+      if (hl.editing && hl.editing.pushed) { hl_renderTrack(); hl_el('hl-undo').disabled = false; }
+      if (hl.editing && hl.editing.pushed && host.id === 'hl-insp') hl_renderSaid();
+      hl.editing = null;
+    });
+    host.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && (e.target.classList.contains('hl-line-text') || e.target.id === 'hl-cap-input')) {
+        e.preventDefault(); e.target.blur();
+      }
+    });
   });
   document.addEventListener('keydown', function (e) {
     if (!hl.p || hl_el('hl-card').classList.contains('hide')) return;
@@ -894,6 +1385,9 @@ function hl_paintRender(r) {
     if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); hl_undoRedo(!e.shiftKey); }
     else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); hl_undoRedo(false); }
     else if (e.key === ' ' && !(t && t.tagName === 'BUTTON')) { e.preventDefault(); hl_togglePlay(); }
+    else if ((e.key === 'Delete' || e.key === 'Backspace') && (hl.selKind === 'cap' || hl.selKind === 'zoom')) {
+      e.preventDefault(); hl_delete();
+    }
   });
   var v = hl_el('hl-video');
   v.addEventListener('click', function () { if (!hl.boxMode) hl_togglePlay(); });
@@ -914,10 +1408,8 @@ HIGHLIGHT_CSS: str = r"""
    ========================================================================== */
 #view-clips.hl-on>:not(#hl-card){display:none !important}
 .hl-card{
-  --hl-lane:22px;
-  --hl-l1:4px; --hl-l2:calc(4px + var(--hl-lane) + 6px);
-  --hl-l3:calc(4px + 2 * (var(--hl-lane) + 6px)); --hl-l4:calc(4px + 3 * (var(--hl-lane) + 6px));
   --hl-gold:var(--warn);
+  --hl-team:#5ec8bd;
   display:flex;flex-direction:column;gap:var(--space-6);
   padding:var(--pad-card);
 }
@@ -937,6 +1429,9 @@ HIGHLIGHT_CSS: str = r"""
   padding:.2em .6em;border-radius:var(--radius-sm);background:var(--on-media-scrim);
   color:var(--on-media);font-weight:600;font-size:clamp(12px,2.2vw,22px);line-height:1.25;text-align:center;
   pointer-events:none;outline:var(--border-hair) dashed rgba(255,255,255,.35);outline-offset:3px}
+/* A team-mate on voice comms: a line above the player's, in the team colour --
+   stream_highlight.caption_image(who="game") draws it the same way. */
+.hl-cap.is-team{bottom:27%;color:#96e2da}
 /* Burned in: drawn exactly as the video will carry it. Off: a dashed outline says
    it is only a guide here. */
 .hl-cap.is-burned{outline:0}
@@ -951,45 +1446,71 @@ HIGHLIGHT_CSS: str = r"""
 .hl-play{min-width:72px}
 .hl-clock{font-variant-numeric:tabular-nums;color:var(--text-secondary);font-size:var(--text-sm);margin-left:var(--space-4)}
 .hl-spacer{flex:1 1 auto}
+.hl-audio-msg{font-size:var(--text-xs)}
 .hl-scale-label{font-size:var(--text-xs);color:var(--text-tertiary)}
 #hl-scale{width:120px;accent-color:var(--accent)}
 
 /* the lanes */
-.hl-lanes{display:grid;grid-template-columns:84px minmax(0,1fr);border:var(--border-hair) solid var(--border-subtle);
+.hl-lanes{display:grid;grid-template-columns:112px minmax(0,1fr);border:var(--border-hair) solid var(--border-subtle);
   border-radius:var(--radius-md);background:var(--surface-sunken);overflow:hidden}
 .hl-lane-names{display:flex;flex-direction:column;padding:4px 0 4px var(--space-4);gap:6px;
   border-right:var(--border-hair) solid var(--border-subtle)}
-.hl-lane-names span{height:var(--hl-lane);line-height:var(--hl-lane);font-size:var(--text-xs);color:var(--text-tertiary);white-space:nowrap}
+.hl-lane-name{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-2);
+  padding-right:var(--space-3);font-size:var(--text-xs);color:var(--text-tertiary);white-space:nowrap}
+.hl-lane-clear{background:none;border:0;padding:0 2px;font:inherit;font-size:11px;color:var(--text-tertiary);
+  cursor:pointer;text-decoration:underline}
+.hl-lane-clear:hover{color:var(--text-primary)}
 .hl-scroll{overflow-x:auto;overflow-y:hidden;cursor:pointer}
-.hl-track{position:relative;height:calc(4 * var(--hl-lane) + 3 * 6px + 8px)}
-.hl-blk{position:absolute;top:var(--hl-l1);height:var(--hl-lane);border-radius:var(--radius-xs);
+.hl-track{position:relative}
+.hl-ground{position:absolute;left:0;right:0}
+.hl-ground[data-lane="zoom"]{cursor:crosshair}
+.hl-blk{position:absolute;height:22px;border-radius:var(--radius-xs);
   box-sizing:border-box;min-width:2px;overflow:hidden}
-.hl-mom{background:var(--accent-muted);border:var(--border-hair) solid var(--accent);color:var(--text-primary);
+.hl-mom{height:24px;background:var(--accent-muted);border:var(--border-hair) solid var(--accent);color:var(--text-primary);
   display:flex;align-items:center;cursor:pointer}
 .hl-mom.is-cold{border-style:dashed}
 .hl-mom.is-off{background:repeating-linear-gradient(135deg,var(--surface) 0 6px,var(--surface-sunken) 6px 12px);
   border-color:var(--border-strong);color:var(--text-tertiary)}
 .hl-mom.is-sel{box-shadow:0 0 0 var(--border-thick) var(--text-primary) inset}
-.hl-blk-text{flex:1 1 auto;min-width:0;padding:0 6px;font-size:11px;line-height:var(--hl-lane);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hl-blk-text{flex:1 1 auto;min-width:0;padding:0 6px;font-size:11px;line-height:22px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
 .hl-mom.is-off .hl-blk-text{text-decoration:line-through}
 .hl-edge{flex:0 0 7px;align-self:stretch;cursor:ew-resize;background:var(--accent);opacity:0;touch-action:none}
 .hl-mom:hover .hl-edge,.hl-mom.is-sel .hl-edge{opacity:.75}
 .hl-zm{background:var(--warn-muted);border:var(--border-hair) solid var(--hl-gold);cursor:pointer}
 .hl-zm.is-line{background:var(--hl-gold);opacity:.8}
 .hl-zm.is-off{background:transparent;border-style:dashed;opacity:.8}
-.hl-cp{background:var(--surface-active);border:var(--border-hair) solid var(--border-strong);cursor:pointer}
-.hl-cp.is-off{background:transparent;border-style:dashed}
-.hl-cp.is-cut{background:var(--danger-muted);border-color:var(--danger)}
+.hl-zm.is-drawn{background:var(--hl-gold);opacity:.9;display:flex;cursor:grab}
+/* A caption block: its words in it, an edge to retime either end, its middle to move it. */
+.hl-cp{display:flex;align-items:stretch;background:var(--surface-active);border:var(--border-hair) solid var(--border-strong);
+  color:var(--text-primary);cursor:grab}
+.hl-cp.is-team{border-color:var(--hl-team);background:color-mix(in srgb,var(--hl-team) 18%,var(--surface-active))}
+.hl-cp.is-off{background:transparent;border-style:dashed;color:var(--text-tertiary)}
+.hl-cp.is-cut{background:var(--danger-muted);border-color:var(--danger);color:var(--text-tertiary)}
+.hl-cp.is-sel,.hl-zm.is-sel{box-shadow:0 0 0 var(--border-thick) var(--text-primary) inset}
+.hl-cedge{flex:0 0 6px;cursor:ew-resize;touch-action:none}
+.hl-cedge-b{margin-left:auto}
+.hl-cp:hover .hl-cedge,.hl-zm.is-drawn:hover .hl-cedge{background:rgba(127,127,127,.45)}
 .hl-end{background:var(--text-tertiary);cursor:pointer}
 .hl-end.is-off{background:transparent;border:var(--border-hair) dashed var(--text-tertiary)}
 .hl-blk.is-gone{opacity:.35}
+/* the volume lines: a point per keyframe, the line straight between them */
+.hl-vol{position:absolute;left:0;overflow:visible;cursor:copy}
+.hl-vol-bg{fill:transparent}
+.hl-v0{stroke:var(--border-strong);stroke-dasharray:3 4;stroke-width:1}
+.hl-vl{fill:none;stroke:var(--accent);stroke-width:2;pointer-events:none}
+.hl-vol[data-vol="game"] .hl-vl{stroke:var(--hl-team)}
+.hl-vl.is-gone{opacity:.35}
+.hl-vk{fill:var(--surface);stroke:var(--text-primary);stroke-width:2;cursor:grab}
+.hl-vk:hover{fill:var(--text-primary)}
 .hl-head-line{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--text-primary);pointer-events:none}
 
-/* the selected moment */
+/* the selected moment, caption or zoom */
 .hl-insp{display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-5);
   border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-md)}
 .hl-insp-head{display:flex;align-items:center;justify-content:space-between;gap:var(--space-5)}
+.hl-insp-acts{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3)}
+.hl-cap-input{width:100%}
 .hl-trim{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-3) var(--space-5)}
 .hl-trim-label{font-size:var(--text-sm);color:var(--text-secondary);font-variant-numeric:tabular-nums}
 .hl-nudge{display:inline-flex;gap:2px}
@@ -1004,9 +1525,15 @@ HIGHLIGHT_CSS: str = r"""
 /* what was said */
 .hl-said{display:flex;flex-direction:column;min-height:0;max-height:calc(var(--vh) * 100 - 220px);
   border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-md);overflow:hidden}
-.hl-said-head{padding:var(--space-5) var(--space-5) var(--space-3)}
+.hl-said-head{padding:var(--space-5) var(--space-5) var(--space-3);display:flex;flex-direction:column;gap:var(--space-3)}
 .hl-said-title{margin:0;font-size:var(--text-md);font-weight:600}
-.hl-said-help{margin:var(--space-2) 0 0;font-size:var(--text-xs)}
+.hl-said-help{margin:0;font-size:var(--text-xs)}
+.hl-said-tools{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:var(--space-3)}
+.hl-seg{display:inline-flex;border:var(--border-hair) solid var(--border-subtle);border-radius:var(--radius-sm);overflow:hidden}
+.hl-seg-btn{background:none;border:0;padding:var(--space-2) var(--space-4);font:inherit;font-size:var(--text-xs);
+  color:var(--text-secondary);cursor:pointer}
+.hl-seg-btn.is-on{background:var(--surface-active);color:var(--text-primary)}
+.hl-team-msg{margin:0;font-size:var(--text-xs)}
 .hl-said-list{overflow-y:auto;padding:0 var(--space-3) var(--space-5)}
 .hl-said-empty{padding:var(--space-5);font-size:var(--text-sm)}
 .hl-said-mom{padding:var(--space-3) 0;border-top:var(--border-hair) solid var(--border-subtle)}
@@ -1017,9 +1544,11 @@ HIGHLIGHT_CSS: str = r"""
 .hl-said-none{margin:0;padding:0 var(--space-3);font-size:var(--text-xs)}
 .hl-chip{display:inline-block;margin-left:var(--space-3);padding:0 var(--space-3);border-radius:var(--radius-xs);
   background:var(--surface-active);font-weight:500;font-size:11px;color:var(--text-secondary)}
+.hl-chip.is-team{margin:0;align-self:flex-start;color:var(--hl-team)}
 .hl-line{display:grid;grid-template-columns:38px minmax(0,1fr);gap:var(--space-2) var(--space-3);
   padding:var(--space-3);border-radius:var(--radius-sm)}
 .hl-line.is-now{background:var(--surface-active)}
+.hl-line.is-sel{box-shadow:inset 0 0 0 var(--border-hair) var(--border-strong)}
 .hl-line.is-face{box-shadow:inset 3px 0 0 var(--hl-gold)}
 .hl-line.is-out .hl-line-text{color:var(--text-tertiary)}
 .hl-line.is-cut .hl-line-text{text-decoration:line-through;color:var(--text-tertiary)}
@@ -1038,7 +1567,8 @@ HIGHLIGHT_CSS: str = r"""
 .hl-tog.is-on{background:var(--surface-active);color:var(--text-primary);border-color:var(--border-strong)}
 .hl-tog.is-on.is-danger{background:var(--danger-muted);border-color:var(--danger)}
 .hl-tog:disabled{opacity:var(--opacity-disabled);cursor:default}
-.hl-tog:focus-visible,.hl-said-name:focus-visible,.hl-line-t:focus-visible,.hl-part-seek:focus-visible{
+.hl-tog:focus-visible,.hl-said-name:focus-visible,.hl-line-t:focus-visible,.hl-part-seek:focus-visible,
+.hl-seg-btn:focus-visible,.hl-lane-clear:focus-visible{
   outline:var(--focus-ring-width) solid var(--border-focus);outline-offset:1px}
 
 /* the foot: the whole video's settings, and Make */
@@ -1046,6 +1576,8 @@ HIGHLIGHT_CSS: str = r"""
   padding-top:var(--space-5);border-top:var(--border-hair) solid var(--border-subtle)}
 .hl-opt{display:flex;align-items:center;gap:var(--space-4)}
 .hl-opt-label{font-size:var(--text-sm);color:var(--text-secondary)}
+#hl-master{width:120px;accent-color:var(--accent)}
+.hl-master-v{min-width:44px;font-size:var(--text-sm);font-variant-numeric:tabular-nums;color:var(--text-secondary)}
 .hl-make{display:flex;align-items:center;gap:var(--space-4);margin-left:auto}
 .hl-make-msg{font-size:var(--text-sm);font-variant-numeric:tabular-nums}
 

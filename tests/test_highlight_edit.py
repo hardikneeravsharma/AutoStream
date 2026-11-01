@@ -60,9 +60,9 @@ def test_as_built_it_renders_the_planned_video(tmp_path):
     assert cuts[3].punches == [104.0]
     assert cuts[1].caption.startswith("MATCH 1")
     # Captions are seconds into their cut, in English.
-    assert subs[1] == [(2.0, 5.0, "what a shot"), (10.0, 14.0, "bro rotate")]
+    assert subs[1] == [(2.0, 5.0, "what a shot", "mic"), (10.0, 14.0, "bro rotate", "mic")]
     # A line with no English is shown as said.
-    assert subs[4] == [(2.0, 6.0, "gg")]
+    assert subs[4] == [(2.0, 6.0, "gg", "mic")]
 
 
 def test_a_removed_moment_is_not_in_the_video(tmp_path):
@@ -82,7 +82,7 @@ def test_a_cut_line_is_taken_out_and_a_face_line_zooms(tmp_path):
     firsts = [c.caption for c in cuts if c.stretch == 0 and c.layout != "result"]
     assert firsts[0] and not any(firsts[1:])
     # The cut line is not a caption any more.
-    assert all("rotate" not in t for ss in subs for _a, _b, t in ss)
+    assert all("rotate" not in t for ss in subs for _a, _b, t, _w in ss)
     # And switching the flags off gives back exactly the plan.
     p["lines"][1]["cut"] = p["lines"][0]["face"] = False
     assert [(c.start, c.end) for c in he.pieces(p)[0]][1] == (10.0, 40.0)
@@ -106,7 +106,7 @@ def test_hidden_captions_and_the_language_choice(tmp_path):
     p["lines"][0]["show"] = False
     p["captions"]["lang"] = "said"
     subs = he.pieces(p)[1]
-    assert subs[1] == [(10.0, 14.0, "bhai rotate karo")]
+    assert subs[1] == [(10.0, 14.0, "bhai rotate karo", "mic")]
 
 
 def test_merge_takes_only_what_the_editor_may_change(tmp_path):
@@ -117,7 +117,12 @@ def test_merge_takes_only_what_the_editor_may_change(tmp_path):
                       {"id": 3, "start": -50, "end": 9e9},
                       {"id": 4, "start": 125.0, "end": 125.5},      # too short: refused
                       {"id": 99, "keep": False}],
-             "lines": [{"id": 0, "text": "  kya   baat\n hai!  ", "face": True, "start": 0}],
+             # The page sends every line it has: one it leaves out is deleted.
+             "lines": [{"id": 0, "text": "  kya   baat\n hai!  ", "face": True, "start": 11.5,
+                        "source": "C:/x"},
+                       {"id": 1, "start": 20.0, "end": 20.1},          # too short: keeps its times
+                       {"id": 9, "start": 50.0, "end": 52.0, "text": "new", "track": "game"},
+                       {"id": 7, "start": 1.0, "end": 1.1}],           # new and unreadable: dropped
              "cam_box": [0.1, 0.1, 0.3, 0.3], "cam_zoom": 9, "captions": {"on": True, "lang": "klingon"}}
     m = he.merge(p, edits)
     assert m["video"] == p["video"] and m["source"] == p["source"]
@@ -127,7 +132,10 @@ def test_merge_takes_only_what_the_editor_may_change(tmp_path):
     assert (m["cuts"][3]["start"], m["cuts"][3]["end"]) == (0.0, 600.0)
     assert (m["cuts"][4]["start"], m["cuts"][4]["end"]) == (120.0, 130.0)
     assert m["lines"][0]["text"] == "kya baat hai!" and m["lines"][0]["face"]
-    assert m["lines"][0]["start"] == 12.0
+    assert m["lines"][0]["start"] == 11.5 and "source" not in m["lines"][0]
+    assert (m["lines"][1]["start"], m["lines"][1]["end"]) == (20.0, 24.0)
+    assert [ln["id"] for ln in m["lines"]] == [0, 1, 9]            # line 2 deleted, 7 refused
+    assert m["lines"][2]["track"] == "game" and m["lines"][1]["track"] == "mic"
     assert m["cam_box"] == [0.1, 0.1, 0.3, 0.3]
     assert m["cam_zoom"] == he.ZOOM_MOST
     assert m["captions"] == {"on": True, "lang": "english"}
@@ -309,3 +317,178 @@ def test_the_last_run_says_whether_its_highlight_opens_in_the_editor(srv, tmp_pa
     assert got["match_video_edit"] is True
     he.project_path(p["video"]).unlink()
     assert srv._last_manifest(None)["match_video_edit"] is False
+
+
+# ------------------------------------------------- the second pass: a video editor's controls
+
+def test_a_drawn_face_zoom_zooms_for_exactly_as_long_as_it_is(tmp_path):
+    p = _project(tmp_path)
+    p["zooms"] = [{"id": 0, "start": 30.0, "end": 33.5}]
+    got = [(c.start, c.end, c.layout) for c in he.pieces(p)[0] if c.stretch == 0 and c.layout != "result"]
+    assert got == [(10.0, 30.0, "game"), (30.0, 33.5, "cam"), (33.5, 40.0, "game")]
+
+
+def test_zooms_are_checked_and_sorted(tmp_path):
+    p = _project(tmp_path)
+    m = he.merge(p, {"zooms": [{"id": 2, "start": 50, "end": 51}, [10, 12], {"id": 3, "start": 5, "end": 5.2},
+                               "x", {"id": 4, "start": -9, "end": 9e9}]})
+    assert [(z["start"], z["end"]) for z in m["zooms"]] == [(0.0, 600.0), (10.0, 12.0), (50.0, 51.0)]
+
+
+def test_a_team_mates_line_is_captioned_a_line_up_and_marked_in_the_srt(tmp_path):
+    p = _project(tmp_path)
+    p["lines"].append({"id": 9, "start": 25.0, "end": 27.0, "text": "push B", "english": "",
+                       "show": True, "cut": False, "face": False, "track": "game"})
+    cuts, subs = he.pieces(p)
+    assert (15.0, 17.0, "push B", "game") in subs[1]
+    assert "[Team] push B" in he.srt(cuts, subs)
+
+
+def test_volume_is_checked_and_an_old_project_is_upgraded(tmp_path):
+    p = _project(tmp_path)
+    for k in ("zooms", "volume", "audio"):
+        p.pop(k)
+    for ln in p["lines"]:
+        ln.pop("track")
+    p = he.upgrade(p)
+    assert p["zooms"] == [] and p["volume"]["mic"] == {"db": 0.0, "keys": []}
+    assert all(ln["track"] == "mic" for ln in p["lines"])
+    m = he.merge(p, {"volume": {"master": 40, "mic": {"keys": [[20, -6], [10, 3], ["x", 1], [30, 99]]},
+                                "game": {"db": -200}}})
+    assert m["volume"]["master"] == he.MASTER_MOST
+    assert m["volume"]["mic"]["keys"] == [[10.0, 3.0], [20.0, -6.0], [30.0, 12.0]]
+    assert m["volume"]["game"]["db"] == -60.0
+
+
+def test_untouched_volume_keeps_the_recordings_own_mix(tmp_path, monkeypatch):
+    p = _project(tmp_path)
+    monkeypatch.setattr(he, "track_count", lambda src: 3)
+    assert he.track_mix(p) is None
+    p["volume"]["game"]["keys"] = [[12.0, -10.0]]
+    assert he.track_mix(p) == {"mic": [], "mic_db": 0.0, "game": [[12.0, -10.0]], "game_db": 0.0}
+    monkeypatch.setattr(he, "track_count", lambda src: 1)
+    assert he.track_mix(p) is None
+
+
+def test_a_volume_line_on_one_cuts_own_clock():
+    from autostream.clips.studio import vol_at
+    keys = [[10.0, 0.0], [20.0, -20.0], [40.0, -20.0]]
+    c = sh.Cut(15.0, 25.0)
+    f = sh._vol_in_cut(keys, 0.0, c)
+    # Starts at the level the line has at 15 s (-10 dB), reaches -20 at 5 s in, holds.
+    assert f.startswith("volume='pow(10,(-10.00") and "(-10.00)*clip((t-0.000)/5.000,0,1)" in f
+    assert vol_at(keys, 0.0, 15.0) == -10.0
+    assert sh._vol_in_cut([], -3.0, c) == "volume=-3.0dB"
+
+
+def test_the_render_mixes_the_two_tracks_through_their_lines(tmp_path, monkeypatch):
+    """The cut's filter graph takes a:1 and a:2, each through its line, not a:0."""
+    seen = {}
+    monkeypatch.setattr("autostream.clips.tools.ffmpeg", lambda *a: seen.setdefault("args", a))
+    out = tmp_path / "c.mp4"
+    sh._cut_one(tmp_path / "src.mp4", sh.Cut(10.0, 14.0), out, size=(640, 360), encoder="auto", cq=23,
+                mix={"mic": [], "mic_db": 3.0, "game": [[12.0, -8.0]], "game_db": 0.0})
+    graph = out.with_suffix(".graph.txt").read_text(encoding="utf-8")
+    assert "[0:a:1]" in graph and "[0:a:2]" in graph and "[0:a:0]" not in graph
+    assert "volume=3.0dB" in graph and "amix=inputs=2" in graph
+
+
+def test_the_page_plays_drawn_zooms_too(tmp_path):
+    p = _project(tmp_path)
+    p["zooms"] = [{"id": 0, "start": 30.0, "end": 33.5}]
+    js = jsfn.call(ui.JS, ["hl_len", "hl_minus", "hl_pieces"], "hl_pieces()",
+                   prelude=f"const HL_SHORTEST = {he.SHORTEST}; const hl = {{p: {json.dumps(p)}, pieces: null}};")
+    assert [(x["a"], x["b"], x["layout"]) for x in js] == [(c.start, c.end, c.layout) for c in he.pieces(p)[0]]
+
+
+def test_the_pages_volume_line_is_the_render_s(tmp_path):
+    from autostream.clips.studio import vol_at
+    keys = [[10.0, 0.0], [20.0, -20.0], [40.0, 6.0]]
+    ts = [0.0, 10.0, 12.5, 20.0, 30.0, 45.0]
+    js = jsfn.call(ui.JS, ["hl_volAt"], f"{json.dumps(ts)}.map(t => hl_volAt({json.dumps(keys)}, 0, t))")
+    assert js == pytest.approx([vol_at(keys, 0.0, t) for t in ts])
+
+
+def test_copying_the_tracks_out(tmp_path, monkeypatch):
+    import subprocess
+    p = _saved(tmp_path)
+    monkeypatch.setattr(he, "track_count", lambda src: 3)
+    calls = []
+
+    def fake_run(args, **kw):
+        calls.append(args)
+        Path(args[-1]).write_bytes(b"m4a")
+        return subprocess.CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    made = he.copy_tracks(p)
+    assert set(made) == {"mic", "game"}
+    assert ["0:a:1" in a for a in calls] == [True, False] and "0:a:2" in calls[1]
+    assert all("-c:a" in a and a[a.index("-c:a") + 1] == "copy" for a in calls)     # never re-encoded
+    assert he.load(p["video"])["audio"]["game"].endswith(".game.m4a")
+    monkeypatch.setattr(he, "track_count", lambda src: 1)
+    with pytest.raises(ValueError):
+        he.copy_tracks(p)
+
+
+def test_the_teams_voice_replaces_only_the_game_tracks_lines(tmp_path, monkeypatch):
+    from autostream.clips import speech
+    p = _saved(tmp_path)
+    monkeypatch.setattr(he, "track_count", lambda src: 3)
+    monkeypatch.setattr(speech, "available", lambda: True)
+    monkeypatch.setattr(speech, "fast", lambda: True)
+    asked = {}
+
+    def fake(video, spans, track=1, lang=None, english=True):
+        asked.update(track=track, spans=spans)
+        return [Line(21.5, 23.0, "push", ""), Line(95.0, 96.0, "nice one", "")]
+    monkeypatch.setattr(speech, "transcribe", fake)
+    assert he.transcribe_track(p, "game") == 2
+    assert asked["track"] == 2
+    lines = he.load(p["video"])["lines"]
+    assert [ln["track"] for ln in lines].count("game") == 2 and [ln["track"] for ln in lines].count("mic") == 3
+    assert all(ln["show"] for ln in lines if ln["track"] == "game")
+    he.transcribe_track(he.load(p["video"]), "game")                 # again: replaced, not doubled
+    assert [ln["track"] for ln in he.load(p["video"])["lines"]].count("game") == 2
+
+
+def test_no_graphics_card_says_so(tmp_path, monkeypatch):
+    from autostream.clips import speech
+    p = _saved(tmp_path)
+    monkeypatch.setattr(speech, "available", lambda: True)
+    monkeypatch.setattr(speech, "fast", lambda: False)
+    with pytest.raises(RuntimeError, match="graphics card"):
+        he.transcribe_track(p, "game")
+
+
+def test_the_routes_for_tracks_and_the_teams_voice(srv, tmp_path, monkeypatch):
+    p = _saved(tmp_path)
+    started = []
+    monkeypatch.setattr(he.work(), "copy_tracks", lambda proj: started.append("tracks") or True)
+    monkeypatch.setattr(he.work(), "transcribe", lambda proj, t: started.append(t) or True)
+    assert "not on this PC" in srv.clips_highlight_tracks({"video": p["video"]})["error"]
+    Path(p["source"]).write_bytes(b"\0")
+    assert srv.clips_highlight_tracks({"video": p["video"]})["state"] == "running"
+    assert srv.clips_highlight_transcribe({"video": p["video"], "track": "game"})["ok"]
+    assert srv.clips_highlight_transcribe({"video": p["video"], "track": "x"})["error"] == "Which track?"
+    assert started == ["tracks", "game"]
+    assert srv.clips_highlight_work(p["video"])["audio"] == {"mic": False, "game": False}
+
+
+def test_a_job_with_the_teams_words_builds_them_in_as_team_captions(tmp_path):
+    p = he.build(video=tmp_path / "v.mp4", source=tmp_path / "r.mp4", source_seconds=100.0,
+                 cuts=[sh.Cut(0.0, 30.0, stretch=0)], chosen=[sh.Stretch(0, 30, 1.0, round=1, why="1 kill")],
+                 labels=["MATCH 1"], lines=[Line(5.0, 7.0, "mine", "")],
+                 team_lines=[Line(3.0, 4.0, "theirs", ""), Line(9.0, 10.0, "again", "")])
+    assert [(ln["text"], ln["track"]) for ln in p["lines"]] == [("theirs", "game"), ("mine", "mic"), ("again", "game")]
+    assert [ln["id"] for ln in p["lines"]] == [0, 1, 2]
+
+
+def test_words_written_over_and_over_are_one_line():
+    """Measured on the game track: "Close down" four times a second apart."""
+    got = he.collapse([Line(11.0, 12.0, "Close down", ""), Line(15.5, 16.4, "Close down.", ""),
+                       Line(16.5, 17.4, "close down", ""), Line(17.5, 18.0, "Close down", ""),
+                       Line(19.5, 20.0, "Reta", ""), Line(24.5, 25.4, "Nice round", ""),
+                       Line(29.0, 30.0, "Nice round", "")])
+    assert [(ln.start, ln.end, ln.text) for ln in got] == [
+        (11.0, 12.0, "Close down"), (15.5, 18.0, "Close down."), (19.5, 20.0, "Reta"),
+        (24.5, 25.4, "Nice round"), (29.0, 30.0, "Nice round")]
