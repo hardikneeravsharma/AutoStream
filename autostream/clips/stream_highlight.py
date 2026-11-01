@@ -584,7 +584,13 @@ def _cuts(chosen: list[Stretch], cold_open: bool) -> list[Cut]:
         b = min(a + COLD_LONGEST, max(pk, a + COLD_BEFORE) + COLD_AFTER)
         cuts.append(Cut(max(0.0, a), b, kind="cold", stretch=chosen.index(best)))
     for i, s in enumerate(chosen):
+        # A round with a later stretch of its own ends on that one: the first of two
+        # stretches in round 7 cut to round 7's banner and then went back in time.
+        later = any(t.round == s.round and t.round is not None and 0 < t.start - s.start < 200.0
+                    for t in chosen[i + 1:])
         for a, b, layout in s.shaped or [(a, b, "game") for a, b in s.cuts]:
+            if later and layout == "result":
+                continue
             cuts.append(Cut(a, b, punches=[p for p in s.punches if a <= p < b], stretch=i, layout=layout,
                             caption=s.result if layout == "result" else ""))
     return cuts

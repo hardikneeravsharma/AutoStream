@@ -330,3 +330,11 @@ def test_a_team_mates_fight_after_the_death_stays_on_the_game():
     # 716.0 is a team-mate's kill: the game from HOLD_BEFORE_CONTACT before it
     assert any(lay == "game" and a <= 715.0 and b >= 717.0 for a, b, lay in got)
     assert any(lay == "cam" for _, _, lay in got)
+
+
+def test_two_stretches_of_one_round_end_on_one_banner_in_order():
+    a = sh.Stretch(start=285.8, end=317.9, score=5, round=7, shaped=[(285.8, 317.9, "game"), (374.7, 377.2, "result")])
+    b = sh.Stretch(start=333.5, end=389.2, score=5, round=7, shaped=[(333.5, 369.2, "game"), (374.7, 377.2, "result")])
+    cuts = sh._cuts([a, b], cold_open=False)
+    assert [c.start for c in cuts] == sorted(c.start for c in cuts)
+    assert sum(c.layout == "result" for c in cuts) == 1
