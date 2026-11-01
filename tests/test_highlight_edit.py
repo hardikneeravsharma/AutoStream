@@ -465,6 +465,10 @@ def test_the_routes_for_tracks_and_the_teams_voice(srv, tmp_path, monkeypatch):
     started = []
     monkeypatch.setattr(he.work(), "copy_tracks", lambda proj: started.append("tracks") or True)
     monkeypatch.setattr(he.work(), "transcribe", lambda proj, t: started.append(t) or True)
+    # As on a machine that has it: without, the route asks for the download
+    # instead (test_packs) -- which is what CI, with no speech-to-text, saw.
+    from autostream.clips import speech
+    monkeypatch.setattr(speech, "available", lambda: True)
     assert "not on this PC" in srv.clips_highlight_tracks({"video": p["video"]})["error"]
     Path(p["source"]).write_bytes(b"\0")
     assert srv.clips_highlight_tracks({"video": p["video"]})["state"] == "running"
