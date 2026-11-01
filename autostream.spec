@@ -147,6 +147,11 @@ a = Analysis(
         "matplotlib", "scipy",
         "PyQt5", "PyQt6", "PySide2", "PySide6",
         "pytest", "setuptools",
+        # Speech-to-text (clips/speech.py) runs from a developer's venv for now: its
+        # CUDA libraries are a gigabyte of pip packages the frozen app cannot find,
+        # and on the CPU it is too slow for a clip job -- so the build would carry
+        # ctranslate2 for nothing. speech.available() is False without it.
+        "faster_whisper", "ctranslate2", "nvidia",
     ],
     noarchive=False,
 )
