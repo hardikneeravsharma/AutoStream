@@ -1034,6 +1034,8 @@ NOT_A_FLOW: dict[str, str] = {
     "sum-change": "opens one of the step screens from the summary's Change",
     "sum-made": "opens the moments screen on what an earlier run already cut; "
                 "reads /api/clips/existing, which is catalogued",
+    "res-highlight-edit": "opens the highlight editor from a finished run's results; "
+                          "reads /api/clips/highlight, which is catalogued (test_ui_highlight)",
     "sum-highlight": "opens the highlight editor over the Clips page; reads "
                      "/api/clips/highlight, which is catalogued (test_ui_highlight)",
     "mom-again": "goes back to the summary to clip a cut recording again",

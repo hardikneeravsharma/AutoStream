@@ -188,6 +188,9 @@ Its controls carry `data-hl`, not `data-act`, so they are not in the sweep's cou
 | 5.39 | Make video, captions on | An `_edited.mp4` and its `.srt` are written beside the original | yes |
 | 5.40 | Drag a moment's edge on the timeline | Its start or end moves, one undo step | **gap** |
 | 5.41 | Done | The Clips page comes back as it was | yes |
+| 5.42 | A finished run's results (v2.9.1) | The highlight video is listed first, with Edit; one made before the editor is listed without it | yes |
+| 5.43 | The "ready" toast of a run with a highlight | Offers Edit, which opens the editor | yes |
+| 5.44 | Make video while live or recording | Waits, says why, starts by itself afterwards; Stop cancels it | offline only (`test_highlight_edit`: the test app cannot go live) |
 
 # 6 · Studio — 165 controls
 

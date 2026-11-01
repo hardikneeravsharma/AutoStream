@@ -255,14 +255,24 @@ def length(project: dict) -> float:
     return sum(c.length for c in pieces(project)[0])
 
 
+WAIT_POLL = 3.0            # how often a waiting render asks whether it may start
+
+
 class Renderer:
-    """One edited video at a time, with a snapshot the page polls."""
+    """One edited video at a time, with a snapshot the page polls.
+
+    IT WAITS FOR THE BROADCAST. Make video saturates the encoder, and on a
+    session that is live or recording that is dropped frames in the stream --
+    so a render asked for then is held ("waiting", with the reason) and starts
+    by itself once `held()` says nothing is in the way. The player's own word
+    on the plan (2026-11-01): no Make video while live or recording; wait and
+    say so."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
-        self.state, self.video, self.out, self.error = "idle", "", "", ""
+        self.state, self.video, self.out, self.error, self.why = "idle", "", "", "", ""
         self.done, self.total, self.started = 0, 0, 0.0
 
     def busy(self) -> bool:
@@ -270,14 +280,20 @@ class Renderer:
             t = self._thread
         return bool(t and t.is_alive())
 
-    def start(self, project: dict, *, encoder: str = "auto") -> bool:
+    def encoding(self) -> bool:
+        """Rendering now, as opposed to waiting for its turn."""
+        with self._lock:
+            return self.state == "running" and bool(self._thread and self._thread.is_alive())
+
+    def start(self, project: dict, *, encoder: str = "auto", held=None) -> bool:
+        """`held()` -> why the render may not start yet, "" when it may."""
         if self.busy():
             return False
         with self._lock:
             self._stop.clear()
-            self.state, self.video, self.error = "running", project["video"], ""
+            self.state, self.video, self.error, self.why = "running", project["video"], "", ""
             self.out, self.done, self.total, self.started = "", 0, 0, time.time()
-            self._thread = threading.Thread(target=self._run, args=(project, encoder),
+            self._thread = threading.Thread(target=self._run, args=(project, encoder, held),
                                             name="autostream-highlight-edit", daemon=True)
             self._thread.start()
         return True
@@ -285,9 +301,31 @@ class Renderer:
     def cancel(self) -> None:
         self._stop.set()
 
-    def _run(self, project: dict, encoder: str) -> None:
+    def _wait(self, held) -> bool:
+        """Until nothing holds the encoder. False when stopped while waiting."""
+        while True:
+            try:
+                why = held() if held else ""
+            except Exception:  # noqa: BLE001 - a check that fails holds nothing
+                why = ""
+            if not why:
+                with self._lock:
+                    self.state, self.why, self.started = "running", "", time.time()
+                return True
+            with self._lock:
+                if self.state != "waiting":
+                    log.info("edited highlight waiting: %s", why)
+                self.state, self.why = "waiting", why
+            if self._stop.wait(WAIT_POLL):
+                return False
+
+    def _run(self, project: dict, encoder: str, held=None) -> None:
         out = edited_path(project["video"])
         try:
+            if not self._wait(held):
+                raise InterruptedError("stopped while waiting")
+            # From disk now, not as asked: edits saved while it waited are in.
+            project = load(project["video"]) or project
             cuts, subs = pieces(project)
             if sum(c.length for c in cuts) < 5.0:
                 raise ValueError("Nothing is kept: keep at least one moment.")
@@ -317,7 +355,7 @@ class Renderer:
                      sum(c.length for c in cuts))
         except InterruptedError:
             with self._lock:
-                self.state = "idle"
+                self.state, self.why = "idle", ""
             log.info("edited highlight stopped")
         except Exception as e:  # noqa: BLE001 - the page shows why
             log.exception("could not make the edited highlight: %s", e)
@@ -327,6 +365,7 @@ class Renderer:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {"state": self.state, "video": self.video, "out": self.out, "error": self.error,
+                    "why": self.why,
                     "done": self.done, "total": self.total,
                     "percent": int(100 * self.done / self.total) if self.total else 0,
                     "elapsed": int(time.time() - self.started) if self.started else 0}
