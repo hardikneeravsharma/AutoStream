@@ -877,6 +877,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.app.clips_highlight((q.get("video") or [""])[0]))
         elif u.path == "/api/clips/highlight/status":
             self._json(self.app.clips_highlight_status())
+        elif u.path == "/api/packs/progress":
+            self._json(self.app.packs_progress())
         elif u.path == "/api/clips/highlight/work":
             q = parse_qs(u.query)
             self._json(self.app.clips_highlight_work((q.get("video") or [""])[0]))
@@ -1430,6 +1432,12 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.clips_highlight_render(b))
             elif p == "/api/clips/highlight/cancel":
                 self._json(self.app.clips_highlight_cancel())
+            elif p == "/api/packs/plan":
+                self._json(self.app.packs_plan(b))
+            elif p == "/api/packs/install":
+                self._json(self.app.packs_install(b))
+            elif p == "/api/packs/cancel":
+                self._json(self.app.packs_cancel())
             elif p == "/api/clips/highlight/tracks":
                 self._json(self.app.clips_highlight_tracks(b))
             elif p == "/api/clips/highlight/transcribe":
@@ -3568,9 +3576,54 @@ class Server:
             return {"error": "Which track?"}
         if not Path(project.get("source") or "").is_file():
             return {"error": "The recording this was cut from is not on this PC any more."}
+        # Not here yet: the page offers the download (packs.py) and asks again.
+        from . import packs
+        from .clips import speech
+
+        if not speech.available():
+            why = packs.why_not(packs.SPEECH)
+            return {"error": why or "Speech-to-text is not downloaded yet.",
+                    **({} if why else {"need": "speech"})}
         if not highlight_edit.work().transcribe(project, track):
             return {"error": "Something is already being transcribed."}
         return {"ok": True, "state": "running"}
+
+    # ------------------------------------------------ heavy downloads (packs.py)
+
+    def packs_plan(self, body: dict) -> dict:
+        """What a pack would download, and whether this machine can use it --
+        asked before the person is offered the download."""
+        from . import packs
+
+        key = str(body.get("key") or "")
+        if key not in packs.PACKS:
+            return {"error": "There is no such download."}
+        try:
+            return {"ok": True, **packs.plan(key)}
+        except Exception as e:  # noqa: BLE001 - offline, or PyPI unreachable
+            log.info("could not plan the %s pack: %s", key, e)
+            return {"error": "The download could not be checked -- is this PC online?"}
+
+    def packs_install(self, body: dict) -> dict:
+        """Download a pack. Only ever from the page's Download button."""
+        from . import packs
+
+        ok, why = packs.installer().start(str(body.get("key") or ""))
+        if not ok:
+            return {"error": why}
+        log.info("downloading the %s pack at the user's request", body.get("key"))
+        return {"ok": True}
+
+    def packs_cancel(self) -> dict:
+        from . import packs
+
+        packs.installer().cancel()
+        return {"ok": True}
+
+    def packs_progress(self) -> dict:
+        from . import packs
+
+        return {"ok": True, **packs.installer().snapshot()}
 
     def clips_highlight_work(self, video: str) -> dict:
         from .clips import highlight_edit

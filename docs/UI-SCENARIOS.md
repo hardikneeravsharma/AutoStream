@@ -197,6 +197,8 @@ Its controls carry `data-hl`, not `data-act`, so they are not in the sweep's cou
 | 5.49 | Overall volume | Saved; the label follows | yes |
 | 5.50 | Opening the editor on a recording with mic and game tracks | Both are copied out once and the preview plays them at their own volumes (the video muted) | yes |
 | 5.51 | Write down the team's voice | The game track's lines arrive as Team captions | offline only (`test_highlight_edit`: speech-to-text needs a graphics card) |
+| 5.52 | A feature whose heavy pack is missing (v2.11.0): Write down the team's voice | Asks first, with the size; Download shows progress; when done, the feature runs | yes (server faked: PyPI and gigabytes are not a test) |
+| 5.53 | A highlight run with no speech-to-text | Offered once a session: Download, or Make it without captions | **gap** (needs a real run) |
 | 5.44 | Make video while live or recording | Waits, says why, starts by itself afterwards; Stop cancels it | offline only (`test_highlight_edit`: the test app cannot go live) |
 
 # 6 · Studio — 165 controls

@@ -370,6 +370,49 @@ def test_the_two_tracks_are_copied_out_and_played_at_their_own_volume(ui, app):
     ui.clean("the separate tracks")
 
 
+def test_a_missing_speech_pack_is_offered_downloaded_and_then_used(ui):
+    """The player (2026-11-02): a feature whose heavy parts are not here asks, and
+    downloads them. The server's side is faked: PyPI and six gigabytes are not a test."""
+    import json as _json
+    page = ui.page
+    calls = {"transcribe": 0, "progress": 0}
+
+    def transcribe(route):
+        calls["transcribe"] += 1
+        body = {"error": "Speech-to-text is not downloaded yet.", "need": "speech"} \
+            if calls["transcribe"] == 1 else {"ok": True, "state": "running"}
+        route.fulfill(status=200, content_type="application/json", body=_json.dumps(body))
+
+    def progress(route):
+        calls["progress"] += 1
+        body = ({"ok": True, "key": "speech", "state": "idle"} if calls["progress"] == 1 else
+                {"ok": True, "key": "speech", "state": "running", "percent": 40, "done": 2_500_000_000,
+                 "total": 6_200_000_000, "step": "Downloading speech-to-text: nvidia-cudnn-cu12 (25 of 26)"}
+                if calls["progress"] < 4 else {"ok": True, "key": "speech", "state": "done"})
+        route.fulfill(status=200, content_type="application/json", body=_json.dumps(body))
+
+    page.route("**/api/clips/highlight/transcribe**", transcribe)
+    page.route("**/api/packs/plan**", lambda r: r.fulfill(status=200, content_type="application/json", body=_json.dumps(
+        {"ok": True, "key": "speech", "label": "Speech-to-text", "what": "writes down what you and your team say",
+         "can": True, "installed": False, "bytes": 6_200_000_000})))
+    page.route("**/api/packs/install**", lambda r: r.fulfill(status=200, content_type="application/json",
+                                                             body='{"ok": true}'))
+    page.route("**/api/packs/progress**", progress)
+    page.click('[data-hl="team-stt"]')
+    page.wait_for_selector(".pack-modal", timeout=10_000)
+    assert "6.2 GB" in page.locator(".pack-modal").inner_text()
+    assert "Captioning your team" in page.locator(".pack-modal").inner_text()
+    page.click('.pack-modal [data-pack="go"]')
+    page.wait_for_function("() => /25 of 26/.test(document.getElementById('pack-step').textContent)",
+                           timeout=10_000)
+    page.wait_for_selector(".pack-modal", state="detached", timeout=15_000)
+    page.wait_for_function("() => true")
+    assert calls["transcribe"] == 2                # asked again once it was there
+    page.unroute("**/api/clips/highlight/transcribe**")
+    page.unroute("**/api/packs/progress**")
+    ui.clean("offering the speech download")
+
+
 def test_done_closes_it(ui):
     page = ui.page
     page.click('[data-hl="close"]')

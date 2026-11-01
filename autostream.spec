@@ -75,6 +75,32 @@ hidden += [
     "clr_loader",
 ]
 
+# THE WHOLE STANDARD LIBRARY, for the packs. A pack (autostream/packs.py) is a set
+# of wheels downloaded later -- speech-to-text's faster-whisper, huggingface_hub,
+# PyAV -- and imported by this frozen app, so they can only use the standard-
+# library modules frozen into it. PyInstaller keeps just the ones the app's own
+# code imports; a pack reaching for one it skipped (concurrent.futures.process,
+# email.utils, ...) would fail on the person's machine, after a 6 GB download.
+# Tests, IDLE and the like are left out; a module this platform has not got is
+# skipped.
+import importlib.util as _iu
+import sys as _sys
+
+_STDLIB_SKIP = {"idlelib", "test", "lib2to3", "turtledemo", "turtle", "ensurepip", "venv",
+                "pydoc_data", "antigravity", "this", "__phello__", "tkinter"}
+for _m in sorted(_sys.stdlib_module_names):
+    if _m in _STDLIB_SKIP:
+        continue
+    try:
+        if _iu.find_spec(_m) is None:
+            continue
+    except (ImportError, ValueError):
+        continue
+    try:
+        hidden += collect_submodules(_m, filter=lambda n: ".test" not in n and ".idle" not in n)
+    except Exception:                       # noqa: BLE001 - one module is not the build
+        hidden += [_m]
+
 # ---------------------------------------------------------------- data files
 datas = []
 # google-api-python-client ships static discovery JSON; without these the

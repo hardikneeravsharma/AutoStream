@@ -12,7 +12,9 @@ WHY THIS EXISTS
     the two large models (2026-11-01). All of it is optional: a machine without it,
     or without a model already on disk, gets None from here and the highlight cuts
     on the level as before. Nothing is ever downloaded from here -- gigabytes fetched
-    behind a person's back are not a side effect anyone agreed to.
+    behind a person's back are not a side effect anyone agreed to. The installed app
+    gets all of it as the "speech" pack (packs.py), downloaded when a feature that
+    needs it is used and the person has said yes to the size.
 
 TWO MODELS, ONE LANGUAGE (measured 2026-11-01 on an RTX 5060 Ti, 45 reaction windows
 of a Hindi-speaking player -- his own labels on the "small" model's output:
@@ -78,6 +80,10 @@ def _on_disk(name: str) -> bool:
 def models() -> tuple[str, str] | None:
     """(text model, English model) on this machine, or None."""
     try:
+        # The installed app carries none of it: it comes as a pack, downloaded
+        # when the person asks for it (packs.py). A developer's venv has it already.
+        from .. import packs
+        packs.activate("speech")
         import faster_whisper  # noqa: F401
     except Exception:  # noqa: BLE001
         return None

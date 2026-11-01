@@ -643,8 +643,9 @@ function hl_renderSaid() {
   var p = hl.p, host = hl_el('hl-said');
   var lines = (p.lines || []).filter(function (l) { return hl.who === 'all' || (l.track || 'mic') === hl.who; });
   if (!(p.lines || []).length) {
-    host.innerHTML = '<p class="muted hl-said-empty">No transcript for this video. What you said is ' +
-      'written down when the video is made on a PC with a graphics card and speech-to-text installed.</p>';
+    host.innerHTML = '<div class="hl-said-empty"><p class="muted">Nothing is written down for this video yet. ' +
+      'Speech-to-text listens to the recording and writes what you said, for captions.</p>' +
+      '<button class="btn btn-sm" type="button" data-hl="mic-stt">Write down what you said</button></div>';
     return;
   }
   if (!lines.length) {
@@ -1168,7 +1169,8 @@ function hl_click(e) {
     var segs = document.querySelectorAll('#hl-card .hl-seg-btn');
     for (var s = 0; s < segs.length; s++) segs[s].classList.toggle('is-on', segs[s] === b);
     hl_renderSaid();
-  } else if (act === 'team-stt') hl_teamStt();
+  } else if (act === 'team-stt') hl_teamStt('game');
+  else if (act === 'mic-stt') hl_teamStt('mic');
   else if (act === 'volclear') {
     var vn = b.getAttribute('data-v');
     hl_change(function () { hl_lane(vn).keys = []; }, true);
@@ -1216,10 +1218,17 @@ function hl_togglePlay() {
 
 /* ---- the slow jobs: tracks copied out, the team's voice written down -------------- */
 
-async function hl_teamStt() {
+async function hl_teamStt(track) {
+  track = track || 'game';
   await hl_save(true);
-  var r = await API.post('/api/clips/highlight/transcribe', {video: hl.video, track: 'game'});
-  if (!r || r.error) { toast((r && r.error) || 'The team\'s voice could not be written down.', 'error'); return; }
+  var r = await API.post('/api/clips/highlight/transcribe', {video: hl.video, track: track});
+  /* Speech-to-text is not on this PC: ask, download it, and carry on (shell's pack_need). */
+  if (r && r.need) {
+    if (await pack_need(r.need, {reason: track === 'game' ? 'Captioning your team' : 'Captioning what you said'}))
+      return hl_teamStt(track);
+    return;
+  }
+  if (!r || r.error) { toast((r && r.error) || 'That could not be written down.', 'error'); return; }
   hl_paintWork({transcribe: {state: 'running'}});
   hl_pollWork();
 }
@@ -1252,9 +1261,9 @@ function hl_paintWork(w) {
   var msg = hl_el('hl-team-msg'), btn = hl_el('hl-team-stt'), s = w.transcribe || {};
   btn.disabled = s.state === 'running';
   msg.classList.toggle('hide', !s.state || s.state === 'idle');
-  msg.textContent = s.state === 'running' ? 'Writing down what your team said... this takes a few minutes.'
+  msg.textContent = s.state === 'running' ? 'Writing down what was said... this takes a few minutes.'
     : s.state === 'failed' ? (s.error || 'It could not be written down.')
-    : s.state === 'done' ? ((s.result || 0) + ' lines from your team.') : '';
+    : s.state === 'done' ? ((s.result || 0) + ' lines written down.') : '';
 }
 
 async function hl_reloadLines(n) {
@@ -1263,7 +1272,7 @@ async function hl_reloadLines(n) {
   hl.undo.push(hl_snap()); hl.redo = [];
   hl.p.lines = r.project.lines || [];
   hl_layout(); hl_render();
-  toast((n || 0) + ' lines from your team were added as captions.', 'ok');
+  toast((n || 0) + ' lines were written down and added as captions.', 'ok');
 }
 
 /* ---- Make video ---------------------------------------------------------------------- */
