@@ -55,7 +55,11 @@ def _run(home: Path) -> Path:
     rec.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run([binary("ffmpeg"), "-y", "-v", "error", "-f", "lavfi", "-i",
                     f"testsrc2=size=640x360:rate=30:duration={SECONDS}",
-                    "-f", "lavfi", "-i", f"sine=frequency=300:duration={SECONDS}", "-shortest",
+                    # A recording's three tracks, as OBS writes them: the mix, the mic, the game.
+                    "-f", "lavfi", "-i", f"sine=frequency=300:duration={SECONDS}",
+                    "-f", "lavfi", "-i", f"sine=frequency=500:duration={SECONDS}",
+                    "-f", "lavfi", "-i", f"sine=frequency=800:duration={SECONDS}",
+                    "-map", "0", "-map", "1", "-map", "2", "-map", "3", "-shortest",
                     "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", "-c:a", "aac",
                     "-movflags", "+faststart", str(rec)],
                    check=True, timeout=300, capture_output=True, creationflags=appd.NO_WINDOW)
@@ -258,6 +262,112 @@ def test_the_ready_toast_offers_edit(ui, app):
     page.locator("#toasts .toast-act").click()
     page.wait_for_function("() => !document.getElementById('hl-card').classList.contains('hide')", timeout=10_000)
     ui.clean("the toast's Edit")
+
+
+# ------------------------------------------- the second pass: a video editor's controls
+
+def _lane_point(page, lane: str, recording_t: float, cut: int):
+    """Where on screen a recording second of one cut sits, in one lane."""
+    return page.evaluate("""([lane, t, i]) => {
+        const tr = document.getElementById('hl-track').getBoundingClientRect();
+        const tops = hl_laneTops(), l = hl.lanes.find(x => x.k === lane);
+        document.getElementById('hl-scroll').scrollLeft = Math.max(0, hl_x(i, t) * hl.pxs - 200);
+        const tr2 = document.getElementById('hl-track').getBoundingClientRect();
+        return {x: tr2.left + hl_x(i, t) * hl.pxs, y: tr2.top + tops[lane] + l.h / 2};
+    }""", [lane, recording_t, cut])
+
+
+def test_a_captions_end_is_dragged_to_show_it_longer(ui, app):
+    page = ui.page
+    page.evaluate("() => { hl.pxs = 20; hl_renderTrack(); }")
+    before = _disk(app)["lines"][0]
+    edge = page.locator('#hl-track .hl-cp[data-cap="0"] .hl-cedge-b').first
+    b = edge.bounding_box()
+    page.mouse.move(b["x"] + 2, b["y"] + b["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(b["x"] + 2 + 40, b["y"] + b["height"] / 2, steps=6)    # 40 px at 20 px/s: 2 s
+    page.mouse.up()
+    _settle(page)
+    after = [ln for ln in _disk(app)["lines"] if ln["id"] == 0][0]
+    assert after["start"] == before["start"]
+    assert after["end"] == pytest.approx(before["end"] + 2.0, abs=0.15)
+    # Chosen: the inspector shows its times, and Split / Join / Delete.
+    assert page.locator('#hl-insp [data-hl="capsplit"]').is_visible()
+    ui.clean("retiming a caption")
+
+
+def test_a_caption_is_added_split_and_deleted(ui, app):
+    page = ui.page
+    page.evaluate("() => hl_seek(3, 22.0)")
+    page.click('[data-hl="addcap"]')
+    page.locator("#hl-cap-input").fill("new words here now")
+    page.keyboard.press("Enter")
+    _settle(page)
+    new = [ln for ln in _disk(app)["lines"] if ln["text"] == "new words here now"]
+    assert len(new) == 1 and new[0]["start"] == pytest.approx(22.0, abs=0.1)
+    page.evaluate("() => hl_seek(3, 23.0)")
+    page.click('[data-hl="capsplit"]')
+    _settle(page)
+    halves = [ln for ln in _disk(app)["lines"] if ln["start"] >= 21.9 and ln["start"] < 24.1 and ln["id"] >= 3]
+    assert [h["text"] for h in sorted(halves, key=lambda x: x["start"])] == ["new words", "here now"]
+    page.click('[data-hl="capdel"]')
+    _settle(page)
+    assert len([ln for ln in _disk(app)["lines"] if ln["id"] >= 3]) == 1
+    ui.clean("adding, splitting and deleting a caption")
+
+
+def test_a_face_zoom_is_drawn_for_as_long_as_wanted(ui, app):
+    page = ui.page
+    page.evaluate("() => { hl.pxs = 20; hl_renderTrack(); }")
+    a = _lane_point(page, "zoom", 21.0, 3)
+    page.mouse.move(a["x"], a["y"])
+    page.mouse.down()
+    page.mouse.move(a["x"] + 60, a["y"], steps=6)                          # 3 s
+    page.mouse.up()
+    _settle(page)
+    z = _disk(app)["zooms"]
+    assert len(z) == 1 and z[0]["start"] == pytest.approx(21.0, abs=0.15)
+    assert z[0]["end"] - z[0]["start"] == pytest.approx(3.0, abs=0.2)
+    page.evaluate("() => hl_seek(3, 22.5)")
+    page.wait_for_function("() => /scale/.test(document.getElementById('hl-video').style.transform)", timeout=5_000)
+    page.keyboard.press("Delete")
+    _settle(page)
+    assert _disk(app)["zooms"] == []
+    ui.clean("drawing a face zoom")
+
+
+def test_volume_points_are_added_moved_and_removed(ui, app):
+    page = ui.page
+    page.evaluate("() => { hl.pxs = 20; hl_renderTrack(); }")
+    assert page.locator('#hl-track svg[data-vol="game"]').count() == 1
+    a = _lane_point(page, "volgame", 22.0, 3)
+    page.mouse.click(a["x"], a["y"] + 10)                                 # below 0 dB
+    _settle(page)
+    keys = _disk(app)["volume"]["game"]["keys"]
+    assert len(keys) == 1 and keys[0][0] == pytest.approx(22.0, abs=0.15) and keys[0][1] < 0
+    page.locator('#hl-track svg[data-vol="game"] .hl-vk').first.dblclick()
+    _settle(page)
+    assert _disk(app)["volume"]["game"]["keys"] == []
+    ui.clean("the game's volume line")
+
+
+def test_the_overall_volume_is_saved(ui, app):
+    page = ui.page
+    page.locator("#hl-master").fill("-4")
+    page.locator("#hl-master").dispatch_event("change")
+    _settle(page)
+    assert _disk(app)["volume"]["master"] == -4.0
+    assert page.locator("#hl-master-v").inner_text() == "-4 dB"
+
+
+def test_the_two_tracks_are_copied_out_and_played_at_their_own_volume(ui, app):
+    from autostream.clips import highlight_edit as he
+    page = ui.page
+    page.wait_for_function("() => !!hl.aud", timeout=60_000)
+    assert he.track_path(app["video"], "mic").is_file() and he.track_path(app["video"], "game").is_file()
+    assert page.evaluate("() => document.getElementById('hl-video').muted")
+    assert page.locator("#hl-team-stt").is_visible()
+    ui.clean("the separate tracks")
 
 
 def test_done_closes_it(ui):

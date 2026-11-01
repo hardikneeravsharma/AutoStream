@@ -512,6 +512,19 @@ class _Handler(BaseHTTPRequestHandler):
         src = Path(project.get("source") or "")
         self._media(str(src), src.parent, tuple(self.app.FRAME_TYPES), "video")
 
+    def _highlight_audio(self, video: str, track: str) -> None:
+        """Stream one of the tracks copied out of a highlight's recording -- the
+        mic or the game -- so the editor can play each at its own volume. The file
+        is found from the project, never named by the request."""
+        from .clips import highlight_edit
+
+        project, why = self.app._highlight_project(video)
+        if project is None or track not in highlight_edit.TRACKS:
+            self._json({"error": why or "Which track?"}, 404)
+            return
+        f = highlight_edit.track_path(project["video"], track)
+        self._media(str(f), f.parent, (".m4a",), "audio")
+
     def _facecam_video(self, path: str) -> None:
         """Stream a facecam video, so it can be lined up with the game by eye.
 
@@ -864,6 +877,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(self.app.clips_highlight((q.get("video") or [""])[0]))
         elif u.path == "/api/clips/highlight/status":
             self._json(self.app.clips_highlight_status())
+        elif u.path == "/api/clips/highlight/work":
+            q = parse_qs(u.query)
+            self._json(self.app.clips_highlight_work((q.get("video") or [""])[0]))
+        elif u.path == "/api/clips/highlight/audio":
+            q = parse_qs(u.query)
+            self._highlight_audio((q.get("video") or [""])[0], (q.get("track") or [""])[0])
         elif u.path == "/api/clips/highlight/source":
             q = parse_qs(u.query)
             self._highlight_source((q.get("video") or [""])[0])
@@ -1411,6 +1430,10 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(self.app.clips_highlight_render(b))
             elif p == "/api/clips/highlight/cancel":
                 self._json(self.app.clips_highlight_cancel())
+            elif p == "/api/clips/highlight/tracks":
+                self._json(self.app.clips_highlight_tracks(b))
+            elif p == "/api/clips/highlight/transcribe":
+                self._json(self.app.clips_highlight_transcribe(b))
             elif p == "/api/setup/scan":
                 self._json(self.app.setup.scan())
             elif p == "/api/setup/apps":
@@ -3463,8 +3486,14 @@ class Server:
             return {"error": why}
         src = Path(project.get("source") or "")
         made = project.get("made") or ""
+        audio = {t: highlight_edit.track_path(project["video"], t).is_file()
+                 for t in highlight_edit.TRACKS}
         return {"ok": True, "project": project,
                 "source_ok": src.is_file(),
+                # Separate mic and game tracks, and whether each is copied out yet.
+                "tracks": highlight_edit.track_count(src) if src.is_file() else 0,
+                "audio": audio,
+                "work": highlight_edit.work().snapshot(project["video"]),
                 "length": round(highlight_edit.length(project), 2),
                 "made": made if made and Path(made).is_file() else "",
                 "render": highlight_edit.renderer().snapshot()}
@@ -3511,6 +3540,47 @@ class Server:
         why = self.studio_encoder_held()
         return {"ok": True, "out": str(highlight_edit.edited_path(project["video"])),
                 **({"waiting": why} if why else {})}
+
+    def clips_highlight_tracks(self, body: dict) -> dict:
+        """Copy the mic and the game out of the recording, for the editor's preview."""
+        from .clips import highlight_edit
+
+        project, why = self._highlight_project(str(body.get("video") or ""))
+        if project is None:
+            return {"error": why}
+        if not Path(project.get("source") or "").is_file():
+            return {"error": "The recording this was cut from is not on this PC any more."}
+        if all(highlight_edit.track_path(project["video"], t).is_file() for t in highlight_edit.TRACKS):
+            return {"ok": True, "state": "done"}
+        highlight_edit.work().copy_tracks(project)     # False: already copying
+        return {"ok": True, "state": "running"}
+
+    def clips_highlight_transcribe(self, body: dict) -> dict:
+        """Write down what was said on one of the recording's tracks -- the game's is
+        the team-mates' voice comms -- in place of that track's lines."""
+        from .clips import highlight_edit
+
+        project, why = self._highlight_project(str(body.get("video") or ""))
+        if project is None:
+            return {"error": why}
+        track = str(body.get("track") or "game")
+        if track not in highlight_edit.TRACKS:
+            return {"error": "Which track?"}
+        if not Path(project.get("source") or "").is_file():
+            return {"error": "The recording this was cut from is not on this PC any more."}
+        if not highlight_edit.work().transcribe(project, track):
+            return {"error": "Something is already being transcribed."}
+        return {"ok": True, "state": "running"}
+
+    def clips_highlight_work(self, video: str) -> dict:
+        from .clips import highlight_edit
+
+        project, why = self._highlight_project(video)
+        if project is None:
+            return {"error": why}
+        return {"ok": True, "work": highlight_edit.work().snapshot(project["video"]),
+                "audio": {t: highlight_edit.track_path(project["video"], t).is_file()
+                          for t in highlight_edit.TRACKS}}
 
     def clips_highlight_cancel(self) -> dict:
         from .clips import highlight_edit

@@ -190,6 +190,13 @@ Its controls carry `data-hl`, not `data-act`, so they are not in the sweep's cou
 | 5.41 | Done | The Clips page comes back as it was | yes |
 | 5.42 | A finished run's results (v2.9.1) | The highlight video is listed first, with Edit; one made before the editor is listed without it | yes |
 | 5.43 | The "ready" toast of a run with a highlight | Offers Edit, which opens the editor | yes |
+| 5.45 | Drag a caption's edge (v2.10.0) | It shows for that much longer; the inspector shows its times with Split, Join and Delete | yes |
+| 5.46 | Add a caption at the playhead, split it, delete one half | Saved each time; the words split where the playhead was | yes |
+| 5.47 | Draw a face zoom across its lane, then Delete | A zoom of that length is saved and drawn in the preview; Delete removes it | yes |
+| 5.48 | Click a volume line, double-click the point | A keyframe below 0 dB is saved, then removed | yes |
+| 5.49 | Overall volume | Saved; the label follows | yes |
+| 5.50 | Opening the editor on a recording with mic and game tracks | Both are copied out once and the preview plays them at their own volumes (the video muted) | yes |
+| 5.51 | Write down the team's voice | The game track's lines arrive as Team captions | offline only (`test_highlight_edit`: speech-to-text needs a graphics card) |
 | 5.44 | Make video while live or recording | Waits, says why, starts by itself afterwards; Stop cancels it | offline only (`test_highlight_edit`: the test app cannot go live) |
 
 # 6 · Studio — 165 controls

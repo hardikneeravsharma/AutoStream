@@ -519,7 +519,7 @@ class ClipJob:
         # WHAT WAS SAID, where faster-whisper, its model and a graphics card to run it
         # on are all here (speech.fast): only around the stretches kept, so a 4-hour
         # stream is minutes of work. The cuts move to the edges of sentences.
-        lines = None
+        lines, team = None, []
         if cuts:
             from . import speech as stt
             if stt.fast():
@@ -527,6 +527,15 @@ class ClipJob:
                 windows = [(max(0.0, s.start - sh.SNAP - 2), s.end + sh.SNAP + 2) for s in chosen]
                 lines = stt.transcribe(self.source, windows)
                 cuts = sh.snap(cuts, lines)
+                # And the team-mates' voice comms, on the game's track: the player
+                # wants them captioned too (2026-11-01). Their own language, voted
+                # on their own track; never what the cuts snap to.
+                if react.tracks(self.source) > 2:
+                    self._set(message="Listening to what your team said")
+                    from .highlight_edit import collapse
+                    team = collapse(stt.transcribe(self.source, windows, track=2) or [])
+                else:
+                    team = []
         spent = sum(c.length for c in cuts)
         if not cuts or spent < sh.FLOOR:
             log.info("not cutting a highlight: %.0fs worth keeping in %d match(es)", spent, len(matches))
@@ -593,7 +602,7 @@ class ClipJob:
             from . import highlight_edit
             highlight_edit.save(highlight_edit.build(
                 video=out, source=self.source, source_seconds=dur, cuts=cuts, chosen=chosen,
-                labels=[matches[o].label for o in owner], lines=lines, cam_box=box,
+                labels=[matches[o].label for o in owner], lines=lines, team_lines=team, cam_box=box,
                 channel=str(self.options.get("channel") or ""), game=self.game))
         except Exception as e:  # noqa: BLE001 - the video is made; only the editor misses it
             log.warning("could not write the highlight's edit project: %s", e)

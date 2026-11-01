@@ -944,6 +944,8 @@ CAPTION_SIZE = 0.040       # of the frame's height
 CAPTION_BOTTOM = 0.835     # the caption's lowest line ends here: above the abilities bar
 CAPTION_WIDTH = 0.72       # longest line, of the frame's width
 CAPTION_FADE = 4 / 60
+CAPTION_TEAM_RISE = 0.105  # a team-mate's caption sits this much higher than the player's
+CAPTION_TEAM = (150, 226, 218, 255)   # and in the team colour (match_video.WIN), lightened
 # Hindi said as Hindi arrives in Devanagari, which nothing in the player's font pack
 # draws. Windows' own Indic face is the fallback for a line the pack cannot set.
 SCRIPT_FALLBACKS = (("Nirmala.ttc", 1), ("Nirmala.ttc", 0), ("Nirmala.ttf", 0))
@@ -977,12 +979,16 @@ def _wrap(d, f, text: str, width: float) -> list[str]:
     return lines
 
 
-def caption_image(text: str, size: tuple[int, int] = (1920, 1080)):
+def caption_image(text: str, size: tuple[int, int] = (1920, 1080), who: str = "mic"):
     """One line of what the player said, as a burned-in caption: white on the same
     73 % plate as the lower third, bottom centre, at most two lines -- a longer one
     is set smaller rather than as a paragraph. A transparent full-frame PNG, laid
     over the picture after any zoom, so it stays put when the frame pushes in on
-    the facecam."""
+    the facecam.
+
+    `who` "game" is a team-mate on voice comms (the game's track): a line higher
+    (CAPTION_TEAM_RISE) and tinted, so the player and a team-mate talking at once
+    are both readable and never confused."""
     from PIL import Image, ImageDraw
     from . import match_video as mv
     w, h = size
@@ -1001,7 +1007,7 @@ def caption_image(text: str, size: tuple[int, int] = (1920, 1080)):
     asc, desc = f.getmetrics()
     lh = asc + desc
     pad_x, pad_y = round(f.size * 0.6), round(f.size * 0.3)
-    bottom = round(h * CAPTION_BOTTOM)
+    bottom = round(h * (CAPTION_BOTTOM - (CAPTION_TEAM_RISE if who == "game" else 0.0)))
     top = bottom - len(lines) * lh
     # The plates are drawn opaque into one mask and laid down once, so where two
     # lines' plates overlap the overlap is not darker than the rest.
@@ -1019,7 +1025,7 @@ def caption_image(text: str, size: tuple[int, int] = (1920, 1080)):
     img = Image.alpha_composite(img, plate)
     d = ImageDraw.Draw(img)
     for x, y, line in spots:
-        d.text((x, y), line, font=f, fill=mv.OFF_WHITE)
+        d.text((x, y), line, font=f, fill=CAPTION_TEAM if who == "game" else mv.OFF_WHITE)
     return img
 
 
@@ -1055,9 +1061,14 @@ def cam_zoom(box, length: float, most: float | None = None) -> tuple[str, str, s
 
 def _cut_one(source: Path, c: Cut, out: Path, *, size: tuple[int, int], encoder: str, cq: int,
              last: bool = False, cam_box=None, cam_most: float | None = None,
-             subs: list[tuple[float, float, str]] | None = None) -> None:
-    """One cut, encoded. `subs` are the captions to burn in: (start, end, text) in
-    seconds into the cut."""
+             subs: list[tuple] | None = None, mix: dict | None = None) -> None:
+    """One cut, encoded. `subs` are the captions to burn in: (start, end, text) or
+    (start, end, text, who) in seconds into the cut (caption_image's `who`).
+
+    `mix`, from the editor, mixes the recording's own two tracks -- the microphone
+    (a:1) and the game (a:2) -- each through its volume line, in place of the
+    recording's mix (a:0): {"mic": keys, "mic_db": flat, "game": ..., "game_db": ...},
+    keys [[recording seconds, dB], ...] as studio.vol_at reads them."""
     from .tools import decode_args, ffmpeg, filter_script_flag, video_codec_args
     w, h = size
     vf = [f"fps={FPS}"]
@@ -1089,12 +1100,14 @@ def _cut_one(source: Path, c: Cut, out: Path, *, size: tuple[int, int], encoder:
                      f"[{at}][l]overlay=0:0:shortest=1:enable='between(t,{a:.3f},{b:.3f})'[lo]")
         at = "lo"
     k = 2 if c.caption else 1
-    for n, (a, b, text) in enumerate(subs or []):
+    for n, sub in enumerate(subs or []):
+        a, b, text = sub[0], sub[1], sub[2]
+        who = sub[3] if len(sub) > 3 else "mic"
         a, b = max(0.0, a), min(c.length, b)
         if b - a < 0.2 or not text.strip():
             continue
         png = out.with_name(f"{out.stem}.cap{n}.png")
-        caption_image(text, size).save(png)
+        caption_image(text, size, who).save(png)
         inputs += ["-loop", "1", "-framerate", str(FPS), "-t", f"{c.length:.3f}", "-i", str(png)]
         fade = min(CAPTION_FADE, (b - a) / 3)
         graph.append(f"[{k}:v]format=rgba,fade=t=in:st={a:.3f}:d={fade:.3f}:alpha=1,"
@@ -1104,7 +1117,14 @@ def _cut_one(source: Path, c: Cut, out: Path, *, size: tuple[int, int], encoder:
     if last:
         graph.append(f"[{at}]fade=t=out:st={max(0.0, c.length - FADE_OUT):.3f}:d={FADE_OUT}[fo]")
         at = "fo"
-    graph.append(f"[{at}]null[vout];[0:a:0]{af}[aout]")
+    if mix:
+        lanes = [f"[0:a:{n}]aformat=sample_rates=48000:channel_layouts=stereo,"
+                 f"{_vol_in_cut(mix.get(name) or [], mix.get(name + '_db', 0.0), c)}[{name}]"
+                 for n, name in ((1, "mic"), (2, "game"))]
+        graph.append(f"[{at}]null[vout];{';'.join(lanes)};"
+                     f"[mic][game]amix=inputs=2:normalize=0:duration=longest,{af}[aout]")
+    else:
+        graph.append(f"[{at}]null[vout];[0:a:0]{af}[aout]")
     script = out.with_suffix(".graph.txt")
     script.write_text(";".join(graph), encoding="utf-8")
     ffmpeg(*decode_args(), *inputs, filter_script_flag(), str(script), "-map", "[vout]", "-map", "[aout]",
@@ -1112,12 +1132,25 @@ def _cut_one(source: Path, c: Cut, out: Path, *, size: tuple[int, int], encoder:
            "-y", str(out))
 
 
-def _loudness(path: Path) -> dict | None:
-    """loudnorm's first-pass measurement of a file's audio."""
+def _vol_in_cut(keys: list, flat: float, c: Cut) -> str:
+    """A volume line on the recording's clock as a volume filter on one cut's own
+    clock (its t starts at 0): the level at the cut's two ends and every keyframe
+    between them, so the expression stays short however long the line is."""
+    from .studio import vol_at, vol_filter
+    if not keys:
+        return vol_filter([], flat)
+    inside = [[0.0, vol_at(keys, flat, c.start)]]
+    inside += [[float(t) - c.start, float(d)] for t, d in keys if c.start < float(t) < c.end]
+    inside.append([c.length, vol_at(keys, flat, c.end)])
+    return vol_filter(inside, flat)
+
+
+def _loudness(path: Path, target: float = -16.0) -> dict | None:
+    """loudnorm's first-pass measurement of a file's audio, against `target` LUFS."""
     import subprocess
     from .tools import binary
     p = subprocess.run([binary("ffmpeg"), "-hide_banner", "-nostdin", "-i", str(path), "-vn",
-                        "-af", "loudnorm=I=-16:TP=-1:LRA=11:print_format=json", "-f", "null", "-"],
+                        "-af", f"loudnorm=I={target:.1f}:TP=-1:LRA=11:print_format=json", "-f", "null", "-"],
                        capture_output=True, text=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", p.stderr or "")
     return json.loads(m.group(0)) if m else None
@@ -1176,8 +1209,8 @@ def _end_clip(still: Path, out: Path, *, encoder: str, cq: int) -> None:
 def render(source: Path, cuts: list[Cut], out: Path, *, size: tuple[int, int] = (1920, 1080),
            encoder: str = "auto", cq: int = 19, channel: str = "", game: str = "", cam_box=None,
            progress: Callable[[int, int], None] | None = None, cam_most: float | None = None,
-           subs: list[list[tuple[float, float, str]]] | None = None,
-           cancelled: Callable[[], bool] | None = None) -> Path:
+           subs: list[list[tuple]] | None = None, mix: dict | None = None,
+           loudness: float = -16.0, cancelled: Callable[[], bool] | None = None) -> Path:
     """Cut, join, and bring the loudness to -16 LUFS without flattening it. With a
     `channel`, the video ends on its end screen. `subs[i]` are cut i's burned-in
     captions (_cut_one); `cam_most` the editor's facecam zoom.
@@ -1201,7 +1234,7 @@ def render(source: Path, cuts: list[Cut], out: Path, *, size: tuple[int, int] = 
             # With an end screen the last cut hands over to it rather than fading.
             _cut_one(source, c, f, size=size, encoder=encoder, cq=cq,
                      last=i == len(cuts) - 1 and not channel, cam_box=cam_box, cam_most=cam_most,
-                     subs=subs[i] if subs and i < len(subs) else None)
+                     subs=subs[i] if subs and i < len(subs) else None, mix=mix)
             names.append(f.name)
         if channel and cuts:
             from . import match_video as mv
@@ -1214,8 +1247,11 @@ def render(source: Path, cuts: list[Cut], out: Path, *, size: tuple[int, int] = 
         ffmpeg("-f", "concat", "-safe", "0", "-i", str(work / "list.txt"), "-c", "copy", "-y", str(joined))
         if progress:
             progress(len(cuts), len(cuts) + 2)
-        m = _loudness(joined)
-        norm = "loudnorm=I=-16:TP=-1:LRA=11"
+        target = max(-30.0, min(-9.0, float(loudness)))
+        m = _loudness(joined, target)
+        # The editor's overall volume moves the target: a gain before this would be
+        # undone by it.
+        norm = f"loudnorm=I={target:.1f}:TP=-1:LRA=11"
         if m:
             norm += (f":measured_I={m['input_i']}:measured_TP={m['input_tp']}:measured_LRA={m['input_lra']}"
                      f":measured_thresh={m['input_thresh']}:offset={m['target_offset']}:linear=true")
