@@ -1611,6 +1611,77 @@ def test_the_look_step_frames_the_reel_live_and_sends_what_was_chosen(rp, rich_a
     assert rp.evaluate("() => studio.gd.fit") == "custom" and rp.evaluate("() => studio.gd.frame.keep") == 0.6
 
 
+
+def test_the_facecam_is_chosen_beside_the_shape_and_goes_with_the_plan(rp):
+    """6.117: the facecam was only on the timeline, so a reel made step by step was rendered without
+    the camera and again with it ("give facecam setting option on the make a reel step by step flow on
+    the aspect ratio selection page", 2026-11-02). Chosen beside the Shape: the source, the box round
+    the camera drawn on one of the clips, and the layout -- on the preview, and in the plan's `cam`."""
+    rp.evaluate("() => { try { localStorage.removeItem('autostream.guide'); } catch (e) {} }")
+    _to_clips(rp, "drop", "drop song")
+    rp.click('[data-gd="pickall"]')
+    _filled(rp)
+    rp.click("#studio-gd-next")
+    rp.click("#studio-gd-next")
+    rp.wait_for_selector("#studio-gd-lookpv")
+    body = rp.inner_text("#studio-gd-body")
+    assert body.index("Shape") < body.index("Facecam") < body.index("Framing")
+    assert rp.get_attribute('[data-gd="set"][data-k="camsource"][data-v="none"]', "aria-pressed") == "true"
+    assert "cam" not in (rp.evaluate("() => studio_gdBody().keep") or {})
+    assert rp.is_hidden("#studio-gd-lkcam")
+    # in the recording: drawn on a frame of the clip; without a box, no camera is sent and it says so
+    rp.evaluate("() => { studio.fc.inset = null; studio.gdFcLoaded = true; }")
+    rp.click('[data-gd="set"][data-k="camsource"][data-v="inset"]')
+    rp.wait_for_function("() => { const i = document.getElementById('studio-gd-fcimg'); return i && i.naturalWidth > 0; }",
+                         timeout=30_000)
+    assert "Drag a box round your camera" in rp.inner_text("#studio-gd-fcnote")
+    assert "cam" not in (rp.evaluate("() => studio_gdBody().keep") or {})
+    box = rp.locator("#studio-gd-fcstage").bounding_box()
+    rp.mouse.move(box["x"] + box["width"] * 0.6, box["y"] + box["height"] * 0.1)
+    rp.mouse.down()
+    rp.mouse.move(box["x"] + box["width"] * 0.9, box["y"] + box["height"] * 0.5, steps=6)
+    rp.mouse.up()
+    rp.wait_for_function("() => studio.fc.inset && document.getElementById('studio-gd-fcimg')")
+    got = rp.evaluate("() => studio.fc.inset")
+    assert got[0] == pytest.approx(0.6, abs=0.03) and got[2] == pytest.approx(0.3, abs=0.03)
+    cam = rp.evaluate("() => studio_gdBody().keep.cam")
+    assert cam["source"] == "inset" and cam["layout"] == "stack" and cam["box"] == got
+    # the preview: the camera on top, the game in what is left
+    assert rp.is_visible("#studio-gd-lkcam")
+    assert rp.evaluate("() => parseFloat(document.getElementById('studio-gd-lkcam').style.height)") == pytest.approx(38, abs=0.2)
+    assert rp.evaluate("() => parseFloat(document.getElementById('studio-gd-lkback').style.top)") == pytest.approx(38, abs=0.2)
+    assert rp.locator("#studio-gd-lkcam img").count() == 1
+    # the box is saved for every reel, as the Facecam tab saves it
+    saved = rp.evaluate("async () => (await API.get('/api/studio/facecam')).inset")
+    assert saved == got
+    # its height, live
+    rp.evaluate("""() => { const r = document.querySelector('[data-gdlook="camsplit"]'); r.value = 50;
+                           r.dispatchEvent(new Event('input', {bubbles: true})); r.dispatchEvent(new Event('change', {bubbles: true})); }""")
+    assert rp.evaluate("() => studio_gdBody().keep.cam.split") == 0.5
+    assert rp.evaluate("() => parseFloat(document.getElementById('studio-gd-lkcam').style.height)") == pytest.approx(50, abs=0.2)
+    # in a corner, where it was put
+    rp.click('[data-gd="set"][data-k="camlayout"][data-v="corner"]')
+    rp.click('[data-gd="set"][data-k="campos"][data-v="1,1"]')
+    cam = rp.evaluate("() => studio_gdBody().keep.cam")
+    assert cam["layout"] == "corner" and cam["pos"] == [1, 1]
+    assert rp.evaluate("() => document.getElementById('studio-gd-lkcam').classList.contains('is-corner')")
+    assert rp.evaluate("() => parseFloat(document.getElementById('studio-gd-lkback').style.top)") == 0
+    # a separate video: chosen here, lined up on the Facecam tab, and said which
+    rp.click('[data-gd="set"][data-k="camsource"][data-v="file"]')
+    assert "No camera video is linked to these clips yet" in rp.inner_text("#studio-gd-body")
+    assert rp.evaluate("() => studio_gdBody().keep.cam.source") == "file"
+    # a 16:9 reel keeps the camera in a corner
+    rp.click('[data-gd="set"][data-k="fmt"][data-v="landscape"]')
+    assert rp.evaluate("() => studio_gdBody().keep.cam.layout") == "corner"
+    assert rp.locator('[data-gd="set"][data-k="camlayout"]').count() == 0
+    # remembered for the next reel
+    rp.evaluate("() => { studio_gdRemember(); studio.gd.cam = null; studio_gdRecall(); }")
+    assert rp.evaluate("() => studio.gd.cam.source") == "file"
+    # and the plan keeps it: the made reel has the camera
+    rp.evaluate("() => { studio.gd.fmt = 'vertical'; studio.gd.cam = {source: 'inset', layout: 'stack', split: 0.4}; }")
+    made = rp.evaluate("async () => (await API.post('/api/studio/plan', studio_gdBody())).project")
+    assert made["cam"]["source"] == "inset" and made["cam"]["split"] == 0.4 and made["cam"]["box"] == got
+
 def test_the_song_step_is_icons_two_word_titles_and_a_question_mark(rp):
     """#260: the Song step speaks the Song tab's language -- titles of two words with a ? for the
     paragraph, the part, drops and kill marks as icon tools with their words on hover, and the same

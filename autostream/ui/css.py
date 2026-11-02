@@ -4208,6 +4208,14 @@ STUDIO_CSS = r"""
 .lk-band{position:absolute;left:0;right:0;overflow:hidden;display:grid;place-items:center}
 .lk-band video{width:100%;height:100%;object-fit:cover}
 .lk-says{margin:0;font-size:12px}
+/* The camera on the preview, where facecam.layout puts it; and the frame its box is drawn on. */
+.lk-cam{position:absolute;overflow:hidden;background:#2a2f3a;display:grid;place-items:center;z-index:1}
+.lk-cam.is-corner{outline:2px solid rgba(255,255,255,.9);outline-offset:-2px}
+.lk-cam img{position:absolute;max-width:none}
+.lk-cam span{color:#9aa3b2;font:700 11px/1 var(--font-text);letter-spacing:.04em}
+.lk-fc{position:relative;max-width:520px;cursor:crosshair;touch-action:none;user-select:none;border-radius:var(--radius-sm);overflow:hidden}
+.lk-fc img{display:block;width:100%;height:auto;pointer-events:none}
+.lk-fcbox{position:absolute;border:2px solid var(--accent);box-shadow:0 0 0 9999px rgba(0,0,0,.45);pointer-events:none}
 .lk-range{display:grid;grid-template-columns:7.5em minmax(0,1fr);align-items:center;gap:var(--space-3);max-width:520px}
 .lk-range span{color:var(--text-secondary);font-size:13px}
 .lk-range input[type=range]{accent-color:var(--accent);width:100%}
@@ -4373,7 +4381,9 @@ STUDIO_CSS = r"""
 .studio-player.is-vertical.is-custom .studio-pv-v{object-fit:cover;inset:auto 0;width:100%;transform:none;
   height:min(100cqh,calc(100cqw * 9 / (16 * var(--kp,0.75))));
   top:calc((100cqh - min(100cqh,calc(100cqw * 9 / (16 * var(--kp,0.75))))) * var(--fy,0.5));
-  object-position:calc(var(--fx,0.5) * 100%) 50%}
+  object-position:calc(var(--fx,0.5) * 100%) 50%;
+  transform:scale(var(--fo,1));transform-origin:calc(var(--fx,0.5) * 100%) 50%}
+.studio-rframe{display:grid;gap:var(--space-2);margin:var(--space-2) 0}
 .studio-player.is-vertical.is-plainbg .studio-pv-bg{display:none}
 .studio-player.is-vertical.is-plainbg .studio-pv{background:var(--pvbg,#000)}
 .studio-pv-tag{position:absolute;top:var(--space-5);left:var(--space-5);z-index:1;

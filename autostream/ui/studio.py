@@ -9639,8 +9639,9 @@ function studio_drawInspectorBody() {
       studio_seg('studio-rfmt', 'fmt', p.format, [['landscape', 'Normal 16:9'], ['vertical', 'Vertical 9:16']]) + '</div>' +
       '<div class="studio-field"><span class="field-label">Framing</span>' +
       studio_seg('studio-rfit', 'fit', p.vfit || 'zoom', studio_fitsFor(p)) +
-      '<span class="muted studio-small">' + ((p.vfit || 'zoom') === 'custom'
-        ? 'Your own frame, set on the Look step: ' + Math.round(((p.frame || {}).keep || 0.75) * 100) + '% of the game’s width.'
+      (vertical ? studio_rframeRanges(p) : '') +
+      '<span class="muted studio-small" id="studio-rframe-says">' + ((p.vfit || 'zoom') === 'custom'
+        ? studio_rframeSays(studio_frameOf(p))
         : (p.vfit || 'zoom') === 'fit'
         ? 'All of the game shows, over a blurred copy of itself.'
         : (p.vfit || 'zoom') === 'near'
@@ -10589,6 +10590,8 @@ function studio_fitEditor() {
     pl.style.setProperty('--kp', String(fr.keep || 0.75));
     pl.style.setProperty('--fx', String(fr.x == null ? 0.5 : fr.x));
     pl.style.setProperty('--fy', String(fr.y == null ? 0.5 : fr.y));
+    /* zoomed past filling the height: the render crops the rows too (studio._frame_box) */
+    pl.style.setProperty('--fo', String(Math.max(1, GD_FILL_KEEP / (fr.keep || 0.75))));
     const bg = studio.project.bg || {};
     pl.classList.toggle('is-plainbg', pf !== 'zoom' && (bg.kind === 'black' || bg.kind === 'color' || bg.kind === 'file'));
     pl.style.setProperty('--pvbg', bg.kind === 'color' ? (bg.color || '#000') : '#000');
@@ -11225,6 +11228,58 @@ function studio_fcMock() {
 const STUDIO_FITS = [['zoom', 'Zoom to fill'], ['fit', 'Fit the whole picture'], ['near', 'Near fit']];
 /* ...and the frame set by hand on the guide's Look step, offered back only on a reel that has one */
 function studio_fitsFor(p) { return p && p.vfit === 'custom' ? STUDIO_FITS.concat([['custom', 'Your own frame']]) : STUDIO_FITS; }
+
+/* THE FRAME BY HAND, ON THE TIMELINE TOO. The Zoom, Left - right and Up - down sliders were only on
+   the guide's Look step, so a vertical reel already rendered could be reframed only by building it
+   again ("there is no option to adjust zoom on the vertical aspect ratio in reel timeline after it is
+   rendered", the player, 2026-11-02). The same three numbers (studio.frame_settings), starting from
+   whichever framing the reel is on; moving one makes it the reel's own frame. The preview follows
+   while the slider moves; the edit lands, once, when it is let go. */
+function studio_frameOf(p) {
+  const fit = (p && p.vfit) || 'zoom';
+  return fit === 'custom' ? Object.assign({}, GD_PRESETS.near, p.frame || {}) : Object.assign({}, GD_PRESETS[fit] || GD_PRESETS.zoom);
+}
+function studio_rframeSays(fr) {
+  const band = studio_gdBand(fr);
+  return 'Your own frame: ' + Math.round(fr.keep * 100) + '% of the game’s width' +
+    (band.fills ? ', filling the frame.' : ', in a band ' + Math.round(band.h * 100) + '% of the frame’s height.');
+}
+function studio_rframeRanges(p) {
+  const fr = studio_frameOf(p), band = studio_gdBand(fr);
+  const r = (label, input, v, on) => '<label class="lk-range"><span>' + esc(label) + '</span>' + input +
+    ' step="1" value="' + v + '"' + (on === false ? ' disabled' : '') + '></label>';
+  return '<div class="studio-rframe">' +
+    r('Zoom', '<input type="range" id="studio-rframe-zoom" data-rframe="zoom" min="0" max="75"', Math.round((1 - fr.keep) * 100)) +
+    r('Left – right', '<input type="range" id="studio-rframe-x" data-rframe="x" min="0" max="100"', Math.round(fr.x * 100), fr.keep < 0.999) +
+    r('Up – down', '<input type="range" id="studio-rframe-y" data-rframe="y" min="0" max="100"', Math.round(fr.y * 100), !band.fills) + '</div>';
+}
+function studio_rframeInput(e) {
+  const t = e.target, k = t && t.getAttribute ? t.getAttribute('data-rframe') : null, p = studio.project;
+  if (!k || !p) return;
+  const fr = Object.assign({}, studio.rframe || studio_frameOf(p)), v = Number(t.value);
+  if (k === 'zoom') fr.keep = Math.max(0.25, Math.min(1, 1 - v / 100));
+  else fr[k] = v / 100;
+  if (e.type === 'input') {
+    studio.rframe = fr;
+    const pl = studio_el('studio-player');
+    if (pl) {
+      pl.classList.remove('is-fit', 'is-near');
+      pl.classList.add('is-custom');
+      pl.style.setProperty('--kp', String(fr.keep));
+      pl.style.setProperty('--fx', String(fr.x));
+      pl.style.setProperty('--fy', String(fr.y));
+      pl.style.setProperty('--fo', String(Math.max(1, GD_FILL_KEEP / fr.keep)));
+    }
+    const band = studio_gdBand(fr), xs = studio_el('studio-rframe-x'), ys = studio_el('studio-rframe-y'), says = studio_el('studio-rframe-says');
+    if (xs) xs.disabled = fr.keep >= 0.999;
+    if (ys) ys.disabled = band.fills;
+    if (says) says.textContent = studio_rframeSays(fr);
+    return;
+  }
+  studio.rframe = null;
+  studio_change(pr => { pr.vfit = 'custom'; pr.frame = {keep: Math.round(fr.keep * 10000) / 10000, x: fr.x, y: fr.y}; },
+    'Framing · ' + (k === 'zoom' ? 'zoom ' + Math.round((1 - fr.keep) * 100) : k === 'x' ? 'left – right' : 'up – down'));
+}
 
 function studio_camLayout(fmt, W, H, cam, fit, has) {
   const even = v => Math.max(2, Math.round(v / 2) * 2);
@@ -11938,7 +11993,7 @@ function studio_wire() {
     else if (act === 'studio-rfmt' && p) studio_change(pr => { pr.format = b.getAttribute('data-fmt'); },
       'Format · ' + (b.getAttribute('data-fmt') === 'vertical' ? '9:16' : '16:9'));
     else if (act === 'studio-rfit' && p) studio_change(pr => { pr.vfit = b.getAttribute('data-fit'); },
-      'Framing · ' + ({fit: 'fit the whole picture', near: 'near fit'}[b.getAttribute('data-fit')] || 'zoom to fill'));
+      'Framing · ' + ({fit: 'fit the whole picture', near: 'near fit', custom: 'your own frame'}[b.getAttribute('data-fit')] || 'zoom to fill'));
     else if (act === 'studio-cam-src' && p) {
       const src = b.getAttribute('data-src');
       studio_change(pr => {
@@ -12072,6 +12127,9 @@ function studio_wire() {
   document.addEventListener('change', studio_gdViewChange);
   document.addEventListener('input', studio_gdLookInput);
   document.addEventListener('change', studio_gdLookInput);
+  document.addEventListener('input', studio_rframeInput);
+  ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach(ev => document.addEventListener(ev, studio_gdFcPointer));
+  document.addEventListener('change', studio_rframeInput);
   document.addEventListener('change', e => {
     if (!e.target || e.target.id !== 'studio-gd-lensecs') return;
     studio.gd.lenCustom = Math.max(10, Math.min(180, Number(e.target.value) || GD_LEN_CUSTOM));
@@ -13349,6 +13407,7 @@ const GD_KEY = 'autostream.guide';
 function studio_gdRemember() {
   const gd = studio.gd;
   try { localStorage.setItem(GD_KEY, JSON.stringify({style: gd.style, fmt: gd.fmt, fit: gd.fit, frame: gd.frame || null, bg: gd.bg || null,
+                                                      cam: gd.cam || null,
                                                       lyrics: gd.lyrics, song: studio.song || '',
                                                       setup: gd.setup, quick: gd.quick})); } catch (e) { /* private window: nothing remembered */ }
 }
@@ -13364,6 +13423,7 @@ function studio_gdRecall() {
   /* the last frame and background are where a new reel starts (never laid over a reel already made) */
   if (m.frame && typeof m.frame === 'object') gd.frame = m.frame;
   if (m.bg && typeof m.bg === 'object' && ['blur', 'black', 'color', 'file'].includes(m.bg.kind)) gd.bg = m.bg;
+  if (m.cam && typeof m.cam === 'object' && ['none', 'inset', 'file'].includes(m.cam.source)) gd.cam = m.cam;
   if (typeof m.lyrics === 'string' && (m.lyrics === 'off' || studio_gdLyricLooks().some(l => l.key === m.lyrics))) gd.lyrics = m.lyrics;
   gd.setup = have(m.setup) ? m.setup : '';
   gd.quick = (Array.isArray(m.quick) ? m.quick : []).filter(have);
@@ -13613,6 +13673,9 @@ function studio_gdBody(draft) {
     body.bg = studio_gdBg(d);
     body.keep = Object.assign(body.keep || {}, {bg: body.bg});
   }
+  /* the facecam chosen beside the shape: the reel's own, as the timeline's Facecam would set it */
+  const cam = studio_gdCamSent(d);
+  if (cam) body.keep = Object.assign(body.keep || {}, {cam: cam});
   return body;
 }
 
@@ -13715,7 +13778,7 @@ function studio_gdDraw() {
   studio_gdSumDraw();
   const draw = [studio_gdDrawStyle, studio_gdDrawClips, studio_gdDrawSong, studio_gdDrawLook, studio_gdDrawCheck][gd.step];
   studio_el('studio-gd-body').innerHTML = draw();
-  if (gd.step === GD.look) studio_gdLookApply();
+  if (gd.step === GD.look) { studio_gdLookApply(); studio_gdFcBox(); }
   if (gd.step === GD.song) studio_gdDropWire();
   else { const a = studio_el('studio-gd-audio'); if (a && !a.paused) a.pause(); }
   const back = studio_el('studio-gd-back');
@@ -14680,10 +14743,125 @@ function studio_gdBgDefault(d) {
   const b = studio_gdBg(d);
   return b.kind === 'blur' && b.blur === GD_BG_DEFAULT.blur && Math.abs(b.dim - GD_BG_DEFAULT.dim) < 1e-6;
 }
-/* the band inside the 9:16 frame, as shares of it: (top, height), and the zoom past filling it */
-function studio_gdBand(fr) {
-  const tall = GD_FRAME_W * 9 / 16 / fr.keep, h = Math.min(GD_FRAME_H, tall);
-  return {top: (GD_FRAME_H - h) * fr.y / GD_FRAME_H, h: h / GD_FRAME_H, over: tall > GD_FRAME_H ? tall / GD_FRAME_H : 1};
+/* the band inside the 9:16 frame, as shares of it: (top, height), and the zoom past filling it --
+   inside the game's own area, `area` {top, h} in frame pixels, which a camera stacked on top makes
+   shorter (studio._frame_box frames the game in its area, never the whole frame). `fills`: the band
+   is as tall as that area, so Up - down has nothing to move. */
+function studio_gdBand(fr, area) {
+  const a = area || {top: 0, h: GD_FRAME_H};
+  const tall = GD_FRAME_W * 9 / 16 / fr.keep, h = Math.min(a.h, tall);
+  return {top: (a.top + (a.h - h) * fr.y) / GD_FRAME_H, h: h / GD_FRAME_H, over: tall > a.h ? tall / a.h : 1, fills: h >= a.h - 0.5};
+}
+/* THE FACECAM, ASKED WHERE THE SHAPE IS (the player, 2026-11-02: "give facecam setting option on the
+   make a reel step by step flow on the aspect ratio selection page"). It was only on the timeline, so a
+   reel made step by step was rendered once without the camera and again with it. The same `cam` the
+   Facecam tab edits (facecam.settings), and the same box: drawn here or there, it is one box, saved
+   for every reel (/api/studio/facecam/inset). A separate camera video is lined up per recording on the
+   Facecam tab, as before; here it is only chosen, and how many of the clips have one is said. */
+const GD_CAM_DEFAULT = {source: 'none', layout: 'stack', split: 0.38, size: 0.3, pos: [0, 0]};
+function studio_gdCam(d) {
+  const c = Object.assign({}, GD_CAM_DEFAULT, (d || studio.gd).cam || {});
+  c.pos = Array.isArray(c.pos) && c.pos.length === 2 ? c.pos.map(Number) : [0, 0];
+  return c;
+}
+/* the camera as the reel gets it, or null: one in the recording needs the box round it first */
+function studio_gdCamSent(d) {
+  d = d || studio.gd;
+  const c = studio_gdCam(d);
+  if (c.source === 'none' || (c.source === 'inset' && !studio.fc.inset)) return null;
+  const out = {source: c.source, layout: d.fmt === 'vertical' ? c.layout : 'corner', split: c.split, size: c.size,
+               pos: c.pos.slice(), border: true};
+  if (c.source === 'inset') out.box = studio.fc.inset.slice();
+  return out;
+}
+/* where the game and the camera go in the 9:16 frame (studio_camLayout, facecam.layout) */
+function studio_gdArea(d) {
+  const c = studio_gdCamSent(d);
+  const lay = studio_camLayout('vertical', GD_FRAME_W, GD_FRAME_H, c || {}, 'fit', !!c);
+  return {top: lay.game[1], h: lay.game[3], cam: lay.cam, sent: c};
+}
+/* the frame the preview draws: Zoom to fill fills the game's area, however tall a camera leaves it */
+function studio_gdFrameIn(area, d) {
+  d = d || studio.gd;
+  return d.fit === 'zoom' ? {keep: Math.min(1, GD_FRAME_W * 9 / 16 / area.h), x: 0.5, y: 0.5} : studio_gdFrame(d);
+}
+function studio_gdLookThumb(w) {
+  const c = studio_gdLookClip();
+  if (!c) return '';
+  const at = Math.max(0, ((c.kills || [])[0] || 1) - 1.5).toFixed(2);
+  return studio_media('/api/studio/thumb', c.path, '&t=' + at + '&w=' + (w || 640));
+}
+function studio_gdFcLoad() {
+  if (studio.gdFcLoaded) return;
+  studio.gdFcLoaded = true;
+  studio_fcLoad().then(() => { if (studio.gd.step === GD.look) studio_gdDraw(); });
+}
+function studio_gdCamField(vert) {
+  const cam = studio_gdCam();
+  if (cam.source !== 'none') studio_gdFcLoad();
+  let h = '<div class="gd-field"><h4>Facecam</h4>' +
+    studio_gdSeg('camsource', cam.source, [['none', 'None'], ['inset', 'In my recording'], ['file', 'A separate video']]);
+  if (cam.source === 'none') return h + '<p class="muted" style="margin:0">No camera on the reel. It can be added on the timeline later.</p></div>';
+  if (cam.source === 'inset') {
+    const src = studio_gdLookThumb(640);
+    h += src ? '<div class="lk-fc" id="studio-gd-fcstage" title="Drag a box round your camera">' +
+        '<img id="studio-gd-fcimg" alt="A frame of your clip" draggable="false" src="' + esc(src) + '">' +
+        '<div class="lk-fcbox hide" id="studio-gd-fcbox"></div></div>' +
+        '<p class="muted lk-says" id="studio-gd-fcnote">' + (studio.fc.inset ? 'The box you drew round your camera. Drag a new one to change it.'
+          : 'Drag a box round your camera. Without one the reel is made with no camera.') + '</p>'
+      : '<p class="muted" style="margin:0">Choose clips first: the box round your camera is drawn on one of them.</p>';
+  } else {
+    const runs = {};
+    studio_gdIds().forEach(id => { const c = studio.clipIndex[id]; if (c) runs[studio_fcKey(c.path)] = 1; });
+    const keys = Object.keys(runs), linked = keys.filter(k => (studio.fc.links || {})[k]).length;
+    h += '<p class="muted" style="margin:0">' + (keys.length && linked === keys.length
+      ? 'Your camera video is linked for every recording these clips come from.'
+      : (linked ? 'Your camera video is linked for ' + linked + ' of the ' + keys.length + ' recordings these clips come from. '
+                : 'No camera video is linked to these clips yet. ') +
+        'Link one and line it up on the Facecam tab once the reel is made.') + '</p>';
+  }
+  const layout = vert ? cam.layout : 'corner';
+  if (vert) h += studio_gdSeg('camlayout', layout, [['stack', 'Camera on top, game below'], ['corner', 'Camera in a corner']]);
+  h += layout === 'stack'
+    ? studio_gdRange('camsplit', 'Camera height', 20, 60, 1, Math.round(cam.split * 100))
+    : studio_gdRange('camsize', 'Size', 12, 60, 1, Math.round(cam.size * 100)) +
+      studio_gdSeg('campos', cam.pos.join(','), [['0,0', 'Top left'], ['1,0', 'Top right'], ['0,1', 'Bottom left'], ['1,1', 'Bottom right']]);
+  return h + '</div>';
+}
+/* the box over the frame it is drawn on, as shares of it */
+function studio_gdFcBox(b) {
+  const el = studio_el('studio-gd-fcbox');
+  if (!el) return;
+  b = b || studio.fc.inset;
+  el.classList.toggle('hide', !b);
+  if (!b) return;
+  el.style.left = (b[0] * 100) + '%'; el.style.top = (b[1] * 100) + '%';
+  el.style.width = (b[2] * 100) + '%'; el.style.height = (b[3] * 100) + '%';
+}
+function studio_gdFcPointer(e) {
+  const img = studio_el('studio-gd-fcimg');
+  if (!img) return;
+  if (e.type === 'pointerdown') {
+    if (!e.target.closest || !e.target.closest('#studio-gd-fcstage')) return;
+    const r = img.getBoundingClientRect();
+    studio.gdFcDrag = {r: r, x0: (e.clientX - r.left) / r.width, y0: (e.clientY - r.top) / r.height, id: e.pointerId};
+    try { studio_el('studio-gd-fcstage').setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
+    e.preventDefault();
+    return;
+  }
+  const g = studio.gdFcDrag;
+  if (!g || e.pointerId !== g.id) return;
+  const cl = v => Math.max(0, Math.min(1, v));
+  const x1 = cl((e.clientX - g.r.left) / g.r.width), y1 = cl((e.clientY - g.r.top) / g.r.height);
+  g.box = [Math.min(g.x0, x1), Math.min(g.y0, y1), Math.abs(x1 - g.x0), Math.abs(y1 - g.y0)];
+  if (e.type === 'pointermove') { studio_gdFcBox(g.box); return; }
+  studio.gdFcDrag = null;
+  if (!g.box || g.box[2] < 0.03 || g.box[3] < 0.03) { studio_gdFcBox(); return; }   /* a click, not a box */
+  const box = g.box.map(v => Math.round(v * 10000) / 10000);
+  studio.fc.inset = box;
+  API.post('/api/studio/facecam/inset', {box: box});
+  studio.gd.verdict = null;
+  studio_gdDraw();
 }
 /* the clip the preview shows: the build, else the first chosen, at its first kill */
 function studio_gdLookClip() {
@@ -14704,15 +14882,35 @@ function studio_gdLookPv() {
   }
   return '<div class="lk-pv" id="studio-gd-lookpv" aria-label="How the reel will be framed">' +
     '<div class="lk-back" id="studio-gd-lkback">' + back + '</div>' +
-    '<div class="lk-band" id="studio-gd-lkband">' + (vid('lk-game') || '<span class="muted">Choose clips to see them here</span>') + '</div></div>' +
+    '<div class="lk-band" id="studio-gd-lkband">' + (vid('lk-game') || '<span class="muted">Choose clips to see them here</span>') + '</div>' +
+    '<div class="lk-cam hide" id="studio-gd-lkcam" aria-hidden="true"></div></div>' +
     '<p class="muted lk-says" id="studio-gd-lksays"></p>';
 }
 /* the preview's styles from the frame and background now -- run on every slider move, never a redraw */
 function studio_gdLookApply() {
   const pv = studio_el('studio-gd-lookpv');
   if (!pv) return;
-  const fr = studio_gdFrame(), bg = studio_gdBg(), band = studio_gdBand(fr);
+  const area = studio_gdArea(), fr = studio_gdFrameIn(area), bg = studio_gdBg(), band = studio_gdBand(fr, area);
   const b = studio_el('studio-gd-lkband'), back = studio_el('studio-gd-lkback'), says = studio_el('studio-gd-lksays');
+  back.style.top = (area.top / GD_FRAME_H * 100).toFixed(2) + '%';
+  back.style.height = (area.h / GD_FRAME_H * 100).toFixed(2) + '%';
+  back.style.bottom = 'auto';
+  const camEl = studio_el('studio-gd-lkcam');
+  if (camEl) {
+    camEl.classList.toggle('hide', !area.cam);
+    if (area.cam) {
+      const [cx, cy, cw, ch] = area.cam, k = pv.clientWidth / GD_FRAME_W, box = area.sent.box, src = studio_gdLookThumb(640);
+      camEl.style.left = (cx / GD_FRAME_W * 100).toFixed(2) + '%'; camEl.style.top = (cy / GD_FRAME_H * 100).toFixed(2) + '%';
+      camEl.style.width = (cw / GD_FRAME_W * 100).toFixed(2) + '%'; camEl.style.height = (ch / GD_FRAME_H * 100).toFixed(2) + '%';
+      camEl.classList.toggle('is-corner', cw < GD_FRAME_W);
+      if (area.sent.source === 'inset' && box && src) {
+        /* the box's part of the frame, covering the camera's cell as the render's crop does */
+        const pw = cw * k, ph = ch * k, bw = box[2] * 16, bh = box[3] * 9, sc = Math.max(pw / bw, ph / bh);
+        camEl.innerHTML = '<img alt="" src="' + esc(src) + '" style="width:' + (16 * sc).toFixed(1) + 'px;height:' + (9 * sc).toFixed(1) +
+          'px;left:' + (-(box[0] * 16 * sc) - (bw * sc - pw) / 2).toFixed(1) + 'px;top:' + (-(box[1] * 9 * sc) - (bh * sc - ph) / 2).toFixed(1) + 'px">';
+      } else camEl.innerHTML = '<span>Camera</span>';
+    }
+  }
   b.style.top = (band.top * 100).toFixed(2) + '%';
   b.style.height = (band.h * 100).toFixed(2) + '%';
   const g = b.querySelector('.lk-game');
@@ -14729,7 +14927,8 @@ function studio_gdLookApply() {
     soft.style.filter = 'blur(' + px.toFixed(1) + 'px) brightness(' + (1 - bg.dim).toFixed(2) + ')' + (bg.kind === 'blur' ? ' saturate(.8)' : '');
   }
   if (says) says.textContent = 'Shows ' + Math.round(fr.keep * 100) + '% of the game’s width' +
-    (band.h >= 0.999 ? ', filling the frame.' : ', in a band ' + Math.round(band.h * 100) + '% of the frame’s height.');
+    (band.fills ? (area.cam && area.top > 0 ? ', filling the frame below the camera.' : ', filling the frame.')
+                : ', in a band ' + Math.round(band.h * 100) + '% of the frame’s height.');
 }
 function studio_gdRange(k, label, min, max, step, v, on) {
   return '<label class="lk-range"><span>' + esc(label) + '</span><input type="range" data-gdlook="' + k + '" min="' + min + '" max="' + max +
@@ -14763,7 +14962,7 @@ async function studio_gdBgLoad() {
 function studio_gdDrawLook() {
   const gd = studio.gd, looks = studio_gdLyricLooks();
   const look = looks.find(l => l.key === gd.lyrics), fr = studio_gdFrame(), bg = studio_gdBg(), vert = gd.fmt === 'vertical';
-  const band = studio_gdBand(fr);
+  const band = studio_gdBand(fr, studio_gdArea());
   const kinds = [['blur', 'Blurred game'], ['black', 'Black'], ['color', 'Colour'], ['file', 'Your own']];
   const bgSeg = '<div class="seg" role="group" aria-label="Background">' + kinds.map(o => '<button type="button" class="seg-btn' + (bg.kind === o[0] ? ' is-active' : '') +
     '" data-act="studio-gd" data-gd="bg-kind" data-v="' + o[0] + '" aria-pressed="' + (bg.kind === o[0]) + '">' + esc(o[1]) + '</button>').join('') + '</div>';
@@ -14772,7 +14971,7 @@ function studio_gdDrawLook() {
       studio_gdSeg('fit', gd.fit, [['fit', 'Whole picture'], ['near', 'Near fit'], ['zoom', 'Zoom to fill'], ['custom', 'Custom']]) +
       studio_gdRange('zoom', 'Zoom', 0, 75, 1, Math.round((1 - fr.keep) * 100)) +
       studio_gdRange('x', 'Left – right', 0, 100, 1, Math.round(fr.x * 100), fr.keep < 0.999) +
-      studio_gdRange('y', 'Up – down', 0, 100, 1, Math.round(fr.y * 100), band.h < 0.999) + '</div>' +
+      studio_gdRange('y', 'Up – down', 0, 100, 1, Math.round(fr.y * 100), !band.fills) + '</div>' +
     '<div class="gd-field"><h4>Behind the picture</h4>' + bgSeg +
       (bg.kind === 'blur' || bg.kind === 'file' ? studio_gdRange('blur', 'Blur', 0, bg.kind === 'blur' ? 60 : 30, 1, bg.blur) : '') +
       (bg.kind !== 'black' && bg.kind !== 'color' ? studio_gdRange('dim', 'Darken', 0, 80, 1, Math.round(bg.dim * 100)) : '') +
@@ -14781,6 +14980,7 @@ function studio_gdDrawLook() {
   return '<div class="gd-q"><h3>How should it look?</h3><p class="muted">Only what changes the picture. The effects come with the style; the rest is under All settings.</p></div>' +
     '<div class="lk-wrap' + (vert ? '' : ' is-wide') + '">' + (vert ? '<div class="lk-left">' + studio_gdLookPv() + '</div>' : '') +
     '<div class="lk-right"><div class="gd-field"><h4>Shape</h4>' + studio_gdSeg('fmt', gd.fmt, [['vertical', '9:16 Short or Reel'], ['landscape', '16:9 YouTube']]) + '</div>' +
+    studio_gdCamField(vert) +
     framing +
     (looks.length ? '<div class="gd-field"><h4>Lyrics</h4>' + studio_gdSeg('lyrics', gd.lyrics, [['off', 'No lyrics']].concat(looks.map(l => [l.key, l.label]))) +
       '<p class="muted" style="margin:0">' + esc(look ? look.blurb : 'The song’s own words, each on its sung syllable; the look, size and place can be changed on the timeline.') +
@@ -14802,10 +15002,15 @@ function studio_gdLookInput(e) {
       b.classList.toggle('is-active', b.getAttribute('data-v') === 'custom');
       b.setAttribute('aria-pressed', String(b.getAttribute('data-v') === 'custom'));
     });
-    const band = studio_gdBand(gd.frame);
+    const band = studio_gdBand(gd.frame, studio_gdArea());
     const xs = document.querySelector('[data-gdlook="x"]'), ys = document.querySelector('[data-gdlook="y"]');
     if (xs) xs.disabled = gd.frame.keep >= 0.999;
-    if (ys) ys.disabled = band.h >= 0.999;
+    if (ys) ys.disabled = band.fills;
+  } else if (k === 'camsplit' || k === 'camsize') {
+    gd.cam = studio_gdCam();
+    gd.cam[k === 'camsplit' ? 'split' : 'size'] = v / 100;
+    const band = studio_gdBand(studio_gdFrame(), studio_gdArea()), ys = document.querySelector('[data-gdlook="y"]');
+    if (ys) ys.disabled = band.fills;
   } else {
     gd.bg = studio_gdBg();
     gd.bg[k] = k === 'dim' ? v / 100 : v;
@@ -14823,6 +15028,8 @@ function studio_gdFacts() {
   return '<div class="gd-facts" id="studio-gd-facts"><span><b>Style</b> ' + esc(s ? s.label : '') + '</span><span><b>Song</b> ' + esc(song) + '</span>' +
     '<span><b>Clips</b> ' + ids.length + ' (' + studio_gdKillsIn(ids) + ' kills)' + (out.length ? ', ' + out.length + ' left out' : '') + '</span>' +
     '<span><b>Shape</b> ' + (gd.fmt === 'vertical' ? '9:16' : '16:9') + '</span>' +
+    '<span><b>Facecam</b> ' + (studio_gdCamSent() ? (studio_gdCam().source === 'inset' ? 'From your recording' : 'Separate video')
+      : studio_gdCam().source === 'inset' ? 'None (no box drawn)' : 'None') + '</span>' +
     '<span><b>Lyrics</b> ' + esc(lyr ? lyr.label + ', if found' : 'None') + '</span>' +
     (gd.verdict && gd.verdict.length ? '<span><b>Length</b> ' + Math.round(gd.verdict.length) + ' s</span>' : '') + '</div>';
 }
@@ -15087,6 +15294,13 @@ function studio_gdAct(b) {
   else if (what === 'pickall') return studio_gdPickAll(false);
   else if (what === 'set') {
     const k = b.getAttribute('data-k'), v = b.getAttribute('data-v');
+    if (k.indexOf('cam') === 0) {
+      gd.cam = studio_gdCam();
+      gd.cam[k.slice(3)] = k === 'campos' ? v.split(',').map(Number) : v;
+      gd.verdict = null;
+      studio_gdRemember();
+      return studio_gdDraw();
+    }
     /* Custom starts from the framing it was on, so choosing it moves nothing until a slider does */
     if (k === 'fit' && v === 'custom' && gd.fit !== 'custom') gd.frame = studio_gdFrame();
     gd[k] = v; gd.verdict = null;
