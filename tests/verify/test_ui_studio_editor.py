@@ -309,3 +309,46 @@ def test_unlock_lets_them_move_on_their_own_again(pg):
     assert pg.locator(".st-lockband").count() == 0
     # locking is not a change to the video
     assert pg.evaluate("studio.pending.filter(x => /lock/i.test(x.label)).length") == 0
+
+
+# ------------------------------------------------------------------ the frame, after a render
+
+def test_a_vertical_reel_is_reframed_on_the_timeline_with_the_looks_sliders(pg):
+    """5.58: the Zoom, Left - right and Up - down sliders were only on the guide's Look step, so a
+    vertical reel already rendered could not be reframed ("there is no option to adjust zoom on the
+    vertical aspect ratio in reel timeline after it is rendered", 2026-11-02). They start from the
+    framing the reel is on, the preview follows while one moves, and letting go is one edit."""
+    pg.evaluate("() => { studio.project.format = 'vertical'; studio.project.vfit = 'near'; studio_select(-1); }")
+    pg.wait_for_timeout(200)
+    assert pg.locator("#studio-rframe-zoom").count() == 1
+    assert pg.get_attribute("#studio-rframe-zoom", "value") == "25"          # near fit: 75% of the width
+    assert pg.is_enabled("#studio-rframe-x") and pg.is_enabled("#studio-rframe-y")
+    undo = pg.evaluate("studio.undo.length")
+    # moving: the preview only, no edit yet
+    pg.evaluate("""() => { const z = document.getElementById('studio-rframe-zoom'); z.value = 50;
+                           z.dispatchEvent(new Event('input', {bubbles: true})); }""")
+    assert pg.evaluate("studio.undo.length") == undo
+    assert pg.evaluate("document.getElementById('studio-player').classList.contains('is-custom')")
+    assert pg.evaluate("getComputedStyle(document.getElementById('studio-player')).getPropertyValue('--kp').trim()") == "0.5"
+    assert "50% of the game" in pg.inner_text("#studio-rframe-says")
+    # let go: one edit, the reel's own frame
+    pg.evaluate("""() => document.getElementById('studio-rframe-zoom').dispatchEvent(new Event('change', {bubbles: true}))""")
+    assert pg.evaluate("studio.undo.length") == undo + 1
+    assert pg.evaluate("studio.project.vfit") == "custom"
+    assert pg.evaluate("studio.project.frame") == {"keep": 0.5, "x": 0.5, "y": 0.5}
+    assert pg.evaluate("studio.pending.some(x => /Framing/.test(x.label))")
+    # redrawn as the reel's own frame, the slider where it was left
+    assert pg.get_attribute("#studio-rframe-zoom", "value") == "50"
+    assert pg.locator('[data-act="studio-rfit"][data-fit="custom"].is-active').count() == 1
+    pg.evaluate("""() => { const x = document.getElementById('studio-rframe-x'); x.value = 20;
+                           x.dispatchEvent(new Event('input', {bubbles: true})); x.dispatchEvent(new Event('change', {bubbles: true})); }""")
+    assert pg.evaluate("studio.project.frame") == {"keep": 0.5, "x": 0.2, "y": 0.5}
+    # zoomed past filling the height, the preview scales the rows too
+    pg.evaluate("""() => { const z = document.getElementById('studio-rframe-zoom'); z.value = 75;
+                           z.dispatchEvent(new Event('input', {bubbles: true})); z.dispatchEvent(new Event('change', {bubbles: true})); }""")
+    fo = float(pg.evaluate("getComputedStyle(document.getElementById('studio-player')).getPropertyValue('--fo')"))
+    assert fo > 1.2
+    assert pg.is_disabled("#studio-rframe-y")                                 # the band fills the frame
+    # a 16:9 reel has no sliders: the game is the frame
+    pg.evaluate("() => { studio.project.format = 'landscape'; studio_drawAll(); }")
+    assert pg.locator("#studio-rframe-zoom").count() == 0
